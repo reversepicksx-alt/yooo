@@ -20,7 +20,9 @@ import {
   CheckCircle2,
   XCircle,
   Clock,
-  Activity
+  Activity,
+  Target,
+  ShieldAlert
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -179,7 +181,10 @@ export default function App() {
         </div>
         <div className="flex items-center gap-4">
           <Badge variant="neon">v1.2.4-BETA</Badge>
-          <button className="p-2 hover:bg-zinc-800 rounded-full transition-colors">
+          <button 
+            onClick={() => window.location.reload()}
+            className="p-2 hover:bg-zinc-800 rounded-full transition-colors"
+          >
             <RefreshCw className="w-5 h-5 text-zinc-400" />
           </button>
         </div>
@@ -199,7 +204,7 @@ export default function App() {
                 <>
                   <div className="flex items-center justify-between">
                     <div className="space-y-1">
-                      <h2 className="text-2xl font-bold tracking-tight">Query Wizard</h2>
+                      <h2 className="text-2xl font-bold tracking-tight">Predict</h2>
                       <p className="text-zinc-500 text-sm">Step {wizardStep} of 6</p>
                     </div>
                     {wizardStep > 1 && (
@@ -300,10 +305,10 @@ export default function App() {
 
                   {wizardStep === 5 && (
                     <div className="space-y-3">
-                      {(['passes', 'shots', 'saves'] as PropType[]).map((type) => (
+                      {(['pass_attempts', 'shots', 'saves', 'clearances', 'tackles'] as PropType[]).map((type) => (
                         <Card key={type} className={`p-4 cursor-pointer transition-all ${wizardData.propType === type ? 'border-emerald-500 bg-emerald-500/10' : ''}`} onClick={() => { setWizardData({ ...wizardData, propType: type }); setWizardStep(6); }}>
                           <div className="flex items-center justify-between">
-                            <span className="font-bold capitalize">{type}</span>
+                            <span className="font-bold capitalize">{type.replace('_', ' ')}</span>
                             <ChevronRight className="w-4 h-4 text-zinc-600" />
                           </div>
                         </Card>
@@ -320,7 +325,8 @@ export default function App() {
                           <input 
                             type="number" 
                             step="0.5" 
-                            value={wizardData.line || 0} 
+                            placeholder="0.0"
+                            value={wizardData.line === 0 ? '' : wizardData.line} 
                             onChange={(e) => setWizardData({ ...wizardData, line: parseFloat(e.target.value) || 0 })}
                             className="text-5xl font-black text-emerald-400 bg-transparent text-center w-32 outline-none appearance-none"
                             style={{ WebkitAppearance: 'none', MozAppearance: 'textfield' }}
@@ -418,11 +424,12 @@ export default function App() {
                             {projection.recentSamples.filter((s, idx) => !excludedSampleIndices.includes(idx) && (projection.recommendation === 'over' ? s.value > projection.line : s.value < projection.line)).length} / {projection.recentSamples.filter((_, idx) => !excludedSampleIndices.includes(idx)).length} HIT RATE
                           </div>
                         </div>
-                        <div className="flex gap-2 overflow-x-auto pb-2 snap-x hide-scrollbar">
+                        <div className="grid grid-cols-5 gap-2">
                           {projection.recentSamples.map((sample, idx) => {
                             const isExcluded = excludedSampleIndices.includes(idx);
                             const isHit = projection.recommendation === 'over' ? sample.value > projection.line : sample.value < projection.line;
                             const isPush = sample.value === projection.line;
+                            const diffColor = sample.matchDifficulty === 'high' ? 'bg-rose-500' : sample.matchDifficulty === 'medium' ? 'bg-amber-500' : 'bg-emerald-500';
                             
                             return (
                               <div 
@@ -434,37 +441,100 @@ export default function App() {
                                     setExcludedSampleIndices([...excludedSampleIndices, idx]);
                                   }
                                 }}
-                                className={`snap-center shrink-0 w-20 h-24 rounded-xl flex flex-col items-center justify-between p-2 border-2 transition-all hover:scale-105 active:scale-95 cursor-pointer relative ${
+                                className={`relative p-2 rounded-lg border transition-all hover:scale-105 active:scale-95 cursor-pointer flex flex-col items-center justify-between min-h-[60px] ${
                                   isExcluded ? 'bg-zinc-900/50 border-zinc-800 text-zinc-600 opacity-50' :
                                   isPush ? 'bg-zinc-800 border-zinc-700 text-zinc-300' :
-                                  isHit ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400 hover:bg-emerald-500/30 hover:shadow-[0_0_15px_rgba(16,185,129,0.3)]' : 'bg-rose-500/20 border-rose-500/50 text-rose-400 hover:bg-rose-500/30 hover:shadow-[0_0_15px_rgba(244,63,94,0.3)]'
+                                  isHit ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-rose-500/10 border-rose-500/30 text-rose-400'
                                 }`}
-                                title={`${sample.date} vs ${sample.opponent}`}
+                                title={`${sample.date} vs ${sample.opponent} (Difficulty: ${sample.matchDifficulty})`}
                               >
-                                {isExcluded && <div className="absolute inset-0 flex items-center justify-center"><div className="w-full h-0.5 bg-zinc-500 rotate-45 absolute"></div></div>}
-                                <span className="text-[9px] font-bold uppercase opacity-70 truncate w-full text-center">{sample.opponent.substring(0, 5)}</span>
-                                <span className="text-2xl font-black">{sample.value}</span>
-                                <span className="text-[8px] font-medium text-zinc-400">{sample.minutesPlayed ? `${sample.minutesPlayed}'` : 'N/A'}</span>
+                                <div className={`absolute -top-1 -right-1 w-2 h-2 rounded-full ${diffColor} shadow-[0_0_5px_rgba(0,0,0,0.5)]`} />
+                                <div className="flex flex-col items-center">
+                                  <span className="text-xs font-black leading-none">{sample.value}</span>
+                                  <span className="text-[8px] font-bold opacity-60 mt-0.5">{sample.minutesPlayed}'</span>
+                                </div>
+                                <span className="text-[7px] font-bold uppercase opacity-60 truncate w-full text-center mt-1">{sample.opponent.substring(0, 3)}</span>
                               </div>
                             );
                           })}
                         </div>
-                        <p className="text-[10px] text-zinc-500 mt-2 italic text-center">Tap a game to exclude it from the hit rate calculation.</p>
+                        <p className="text-[9px] text-zinc-500 mt-3 italic text-center">Tiles show opponent difficulty (Red=Hard, Yellow=Med, Green=Easy). Tap to exclude.</p>
                       </div>
                     )}
 
                     <div className="space-y-4">
-                      <div className="space-y-2">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="bg-zinc-900/50 p-3 rounded-xl border border-zinc-800">
+                          <div className="text-[9px] text-zinc-500 uppercase font-bold mb-1">Position</div>
+                          <div className="text-sm font-bold text-white">{projection.player.position}</div>
+                        </div>
+                        <div className="bg-zinc-900/50 p-3 rounded-xl border border-zinc-800">
+                          <div className="text-[9px] text-zinc-500 uppercase font-bold mb-1">Tactical Role</div>
+                          <div className="text-sm font-bold text-emerald-400">{projection.player.role}</div>
+                        </div>
+                      </div>
+
+                      <div className="bg-zinc-900/80 p-4 rounded-xl border border-zinc-800 space-y-3">
+                        <div className="text-[10px] text-zinc-500 uppercase font-bold flex items-center gap-2">
+                          <Zap className="w-3 h-3 text-emerald-400" /> Bayesian Model Metrics
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <div className="text-[8px] text-zinc-500 uppercase font-bold">Prior Mean</div>
+                            <div className="text-sm font-bold text-white">{projection.bayesianMetrics.priorMean}</div>
+                          </div>
+                          <div>
+                            <div className="text-[8px] text-zinc-500 uppercase font-bold">Momentum</div>
+                            <div className="text-sm font-bold text-emerald-400">{projection.bayesianMetrics.momentumEffect > 0 ? '+' : ''}{projection.bayesianMetrics.momentumEffect}</div>
+                          </div>
+                          <div>
+                            <div className="text-[8px] text-zinc-500 uppercase font-bold">Covariates</div>
+                            <div className="text-sm font-bold text-white">{projection.bayesianMetrics.covariateAdjustment > 0 ? '+' : ''}{projection.bayesianMetrics.covariateAdjustment}</div>
+                          </div>
+                          <div>
+                            <div className="text-[8px] text-zinc-500 uppercase font-bold">Reversal</div>
+                            <div className="text-[10px] font-bold text-zinc-300 capitalize">{projection.bayesianMetrics.reversalFlag.replace(/_/g, ' ')}</div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="space-y-3 pt-2">
+                        <h4 className="text-xs font-bold text-zinc-500 uppercase tracking-widest flex items-center gap-2">
+                          <ShieldAlert className="w-3 h-3" /> Tactical Analysis
+                        </h4>
+                        
+                        <div className="space-y-3">
+                          <div className="bg-zinc-900/30 p-3 rounded-xl border border-zinc-800/50">
+                            <div className="text-[10px] font-bold text-zinc-400 mb-1 flex items-center gap-1.5">
+                              <Target className="w-3 h-3" /> Pressing & Space
+                            </div>
+                            <p className="text-xs text-zinc-300 leading-relaxed">{projection.tacticalAnalysis.pressingStyle}</p>
+                            <p className="text-xs text-zinc-300 leading-relaxed mt-2">{projection.tacticalAnalysis.spaceAndTime}</p>
+                          </div>
+
+                          <div className="bg-zinc-900/30 p-3 rounded-xl border border-zinc-800/50">
+                            <div className="text-[10px] font-bold text-zinc-400 mb-1 flex items-center gap-1.5">
+                              <BarChart3 className="w-3 h-3" /> Possession & Matchup
+                            </div>
+                            <p className="text-xs text-zinc-300 leading-relaxed">{projection.tacticalAnalysis.possessionImpact}</p>
+                          </div>
+
+                          {projection.propType === 'saves' && projection.tacticalAnalysis.opponentShotProfile && (
+                            <div className="bg-zinc-900/30 p-3 rounded-xl border border-zinc-800/50">
+                              <div className="text-[10px] font-bold text-zinc-400 mb-1 flex items-center gap-1.5">
+                                <Zap className="w-3 h-3" /> Shot Profile
+                              </div>
+                              <p className="text-xs text-zinc-300 leading-relaxed">{projection.tacticalAnalysis.opponentShotProfile}</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="space-y-2 pt-2">
                         <h4 className="text-xs font-bold text-zinc-500 uppercase tracking-widest flex items-center gap-2">
                           <BarChart3 className="w-3 h-3" /> Model Reasoning
                         </h4>
                         <p className="text-sm text-zinc-300 leading-relaxed whitespace-pre-wrap">{projection.reasoning}</p>
-                      </div>
-                      <div className="space-y-2">
-                        <h4 className="text-xs font-bold text-zinc-500 uppercase tracking-widest flex items-center gap-2">
-                          <Info className="w-3 h-3" /> Tactical Insight
-                        </h4>
-                        <p className="text-sm text-zinc-300 leading-relaxed italic whitespace-pre-wrap">"{projection.tacticalInsights}"</p>
                       </div>
                     </div>
                   </Card>
@@ -515,37 +585,60 @@ export default function App() {
                   </div>
                 ) : (
                   savedPicks.filter(p => trackingView === 'live' ? p.status === 'live' : p.status === 'settled').map((pick) => (
-                    <Card key={pick.id} className="p-5 relative group cursor-pointer hover:border-zinc-700 transition-colors" onClick={() => setSelectedPick(pick)}>
-                      <div className="flex justify-between items-start mb-4">
+                    <Card key={pick.id} className="p-4 relative group cursor-pointer hover:border-zinc-700 transition-colors" onClick={() => setSelectedPick(pick)}>
+                      <div className="flex justify-between items-start mb-3">
                         <div className="flex items-center gap-2">
                           <div className={`w-2 h-2 rounded-full ${pick.status === 'live' ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-600'}`} />
-                          <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{pick.status}</span>
+                          <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest">{pick.status}</span>
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1.5">
                           {pick.status === 'settled' && (
-                            <Badge variant={pick.result === 'won' ? 'neon' : 'danger'}>{pick.result}</Badge>
+                            <Badge variant={pick.result === 'win' ? 'neon' : 'danger'}>{pick.result}</Badge>
                           )}
-                          <Badge variant={pick.recommendation === 'over' ? 'neon' : 'danger'}>{pick.recommendation}</Badge>
+                          <div className={`px-2 py-0.5 rounded-md text-[8px] font-black uppercase tracking-tighter ${pick.recommendation === 'over' ? 'bg-emerald-500 text-black' : 'bg-rose-500 text-white'}`}>
+                            {pick.recommendation}
+                          </div>
                         </div>
                       </div>
                       
-                      <div className="flex justify-between items-end">
+                      <div className="flex justify-between items-start mb-4">
                         <div>
-                          <h4 className="font-black text-lg leading-none">{pick.player.name}</h4>
-                          <p className="text-xs text-zinc-500 mt-1">{pick.player.team} vs {pick.opponent}</p>
+                          <h4 className="font-black text-base leading-tight">{pick.player.name}</h4>
+                          <p className="text-[10px] text-zinc-500 mt-0.5">{pick.player.team} vs {pick.opponent}</p>
                         </div>
                         <div className="text-right">
-                          <div className="text-[10px] text-zinc-500 uppercase font-bold">Line</div>
-                          <div className="text-xl font-black">{pick.line}</div>
+                          <div className="text-[8px] text-zinc-500 uppercase font-bold">Line</div>
+                          <div className="text-lg font-black">{pick.line}</div>
                         </div>
                       </div>
 
-                      <div className="mt-4 pt-4 border-t border-zinc-800 flex items-center justify-between">
+                      <div className="grid grid-cols-4 gap-2 mb-4">
+                        <div className="bg-zinc-900/80 p-2 rounded-lg border border-zinc-800/50">
+                          <div className="text-[7px] text-zinc-500 uppercase font-bold">Proj</div>
+                          <div className="text-xs font-black text-emerald-400">{pick.projectedValue}</div>
+                        </div>
+                        <div className="bg-zinc-900/80 p-2 rounded-lg border border-zinc-800/50">
+                          <div className="text-[7px] text-zinc-500 uppercase font-bold">Now</div>
+                          <div className="text-xs font-black text-white">{pick.actualValue || 0}</div>
+                        </div>
+                        <div className="bg-zinc-900/80 p-2 rounded-lg border border-zinc-800/50">
+                          <div className="text-[7px] text-zinc-500 uppercase font-bold">Pace</div>
+                          <div className="text-xs font-black text-zinc-400">{(pick.actualValue || 0) > 0 ? ((pick.actualValue || 0) * 1.2).toFixed(1) : '-'}</div>
+                        </div>
+                        <div className="bg-zinc-900/80 p-2 rounded-lg border border-zinc-800/50">
+                          <div className="text-[7px] text-zinc-500 uppercase font-bold">Hit Rate</div>
+                          <div className="text-xs font-black text-amber-400">
+                            {Math.round((pick.recentSamples.filter(s => pick.recommendation === 'over' ? s.value > pick.line : s.value < pick.line).length / pick.recentSamples.length) * 100)}%
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="pt-3 border-t border-zinc-800 flex items-center justify-between">
                         <div className="flex items-center gap-2">
                           <BarChart3 className="w-3 h-3 text-zinc-600" />
-                          <span className="text-[10px] text-zinc-600 font-mono">ID: {pick.player.id}</span>
+                          <span className="text-[9px] text-zinc-600 font-mono">ID: {pick.player.id}</span>
                         </div>
-                        <div className="text-[10px] text-zinc-600">
+                        <div className="text-[9px] text-zinc-600">
                           {new Date(pick.timestamp).toLocaleDateString()}
                         </div>
                       </div>
@@ -603,8 +696,81 @@ export default function App() {
                   </div>
 
                   <div className="space-y-4">
-                    <h4 className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Full Write-up</h4>
-                    <p className="text-zinc-300 leading-relaxed whitespace-pre-wrap">{selectedPick.explanation}</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="bg-zinc-900/50 p-3 rounded-xl border border-zinc-800">
+                        <div className="text-[9px] text-zinc-500 uppercase font-bold mb-1">Position</div>
+                        <div className="text-sm font-bold text-white">{selectedPick.player.position}</div>
+                      </div>
+                      <div className="bg-zinc-900/50 p-3 rounded-xl border border-zinc-800">
+                        <div className="text-[9px] text-zinc-500 uppercase font-bold mb-1">Tactical Role</div>
+                        <div className="text-sm font-bold text-emerald-400">{selectedPick.player.role}</div>
+                      </div>
+                    </div>
+
+                    {selectedPick.bayesianMetrics && (
+                      <div className="bg-zinc-900/80 p-4 rounded-xl border border-zinc-800 space-y-3">
+                        <div className="text-[10px] text-zinc-500 uppercase font-bold flex items-center gap-2">
+                          <Zap className="w-3 h-3 text-emerald-400" /> Bayesian Model Metrics
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <div className="text-[8px] text-zinc-500 uppercase font-bold">Prior Mean</div>
+                            <div className="text-sm font-bold text-white">{selectedPick.bayesianMetrics.priorMean}</div>
+                          </div>
+                          <div>
+                            <div className="text-[8px] text-zinc-500 uppercase font-bold">Momentum</div>
+                            <div className="text-sm font-bold text-emerald-400">{selectedPick.bayesianMetrics.momentumEffect > 0 ? '+' : ''}{selectedPick.bayesianMetrics.momentumEffect}</div>
+                          </div>
+                          <div>
+                            <div className="text-[8px] text-zinc-500 uppercase font-bold">Covariates</div>
+                            <div className="text-sm font-bold text-white">{selectedPick.bayesianMetrics.covariateAdjustment > 0 ? '+' : ''}{selectedPick.bayesianMetrics.covariateAdjustment}</div>
+                          </div>
+                          <div>
+                            <div className="text-[8px] text-zinc-500 uppercase font-bold">Reversal</div>
+                            <div className="text-[10px] font-bold text-zinc-300 capitalize">{selectedPick.bayesianMetrics.reversalFlag.replace(/_/g, ' ')}</div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="space-y-3 pt-2">
+                      <h4 className="text-xs font-bold text-zinc-500 uppercase tracking-widest flex items-center gap-2">
+                        <ShieldAlert className="w-3 h-3" /> Tactical Analysis
+                      </h4>
+                      
+                      <div className="space-y-3">
+                        <div className="bg-zinc-900/30 p-3 rounded-xl border border-zinc-800/50">
+                          <div className="text-[10px] font-bold text-zinc-400 mb-1 flex items-center gap-1.5">
+                            <Target className="w-3 h-3" /> Pressing & Space
+                          </div>
+                          <p className="text-xs text-zinc-300 leading-relaxed">{selectedPick.tacticalAnalysis.pressingStyle}</p>
+                          <p className="text-xs text-zinc-300 leading-relaxed mt-2">{selectedPick.tacticalAnalysis.spaceAndTime}</p>
+                        </div>
+
+                        <div className="bg-zinc-900/30 p-3 rounded-xl border border-zinc-800/50">
+                          <div className="text-[10px] font-bold text-zinc-400 mb-1 flex items-center gap-1.5">
+                            <BarChart3 className="w-3 h-3" /> Possession & Matchup
+                          </div>
+                          <p className="text-xs text-zinc-300 leading-relaxed">{selectedPick.tacticalAnalysis.possessionImpact}</p>
+                        </div>
+
+                        {selectedPick.propType === 'saves' && selectedPick.tacticalAnalysis.opponentShotProfile && (
+                          <div className="bg-zinc-900/30 p-3 rounded-xl border border-zinc-800/50">
+                            <div className="text-[10px] font-bold text-zinc-400 mb-1 flex items-center gap-1.5">
+                              <Zap className="w-3 h-3" /> Shot Profile
+                            </div>
+                            <p className="text-xs text-zinc-300 leading-relaxed">{selectedPick.tacticalAnalysis.opponentShotProfile}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="space-y-2 pt-2">
+                      <h4 className="text-xs font-bold text-zinc-500 uppercase tracking-widest flex items-center gap-2">
+                        <BarChart3 className="w-3 h-3" /> Model Reasoning
+                      </h4>
+                      <p className="text-sm text-zinc-300 leading-relaxed whitespace-pre-wrap">{selectedPick.reasoning}</p>
+                    </div>
                     
                     <div className="pt-4 border-t border-zinc-800">
                       <div className="flex items-center justify-between mb-3">
@@ -615,11 +781,12 @@ export default function App() {
                           {selectedPick.recentSamples.filter((s, idx) => !(selectedPick.excludedSampleIndices || []).includes(idx) && (selectedPick.recommendation === 'over' ? s.value > selectedPick.line : s.value < selectedPick.line)).length} / {selectedPick.recentSamples.filter((_, idx) => !(selectedPick.excludedSampleIndices || []).includes(idx)).length} HIT RATE
                         </div>
                       </div>
-                      <div className="flex gap-2 overflow-x-auto pb-2 snap-x hide-scrollbar">
+                      <div className="grid grid-cols-5 gap-2">
                         {selectedPick.recentSamples.map((sample, idx) => {
                           const isExcluded = (selectedPick.excludedSampleIndices || []).includes(idx);
                           const isHit = selectedPick.recommendation === 'over' ? sample.value > selectedPick.line : sample.value < selectedPick.line;
                           const isPush = sample.value === selectedPick.line;
+                          const diffColor = sample.matchDifficulty === 'high' ? 'bg-rose-500' : sample.matchDifficulty === 'medium' ? 'bg-amber-500' : 'bg-emerald-500';
                           
                           return (
                             <div 
@@ -634,22 +801,24 @@ export default function App() {
                                 setSelectedPick(updatedPick);
                                 setSavedPicks(savedPicks.map(p => p.id === updatedPick.id ? updatedPick : p));
                               }}
-                              className={`snap-center shrink-0 w-20 h-24 rounded-xl flex flex-col items-center justify-between p-2 border-2 transition-all hover:scale-105 active:scale-95 cursor-pointer relative ${
+                              className={`relative p-2 rounded-lg border transition-all hover:scale-105 active:scale-95 cursor-pointer flex flex-col items-center justify-between min-h-[60px] ${
                                 isExcluded ? 'bg-zinc-900/50 border-zinc-800 text-zinc-600 opacity-50' :
                                 isPush ? 'bg-zinc-800 border-zinc-700 text-zinc-300' :
-                                isHit ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400 hover:bg-emerald-500/30 hover:shadow-[0_0_15px_rgba(16,185,129,0.3)]' : 'bg-rose-500/20 border-rose-500/50 text-rose-400 hover:bg-rose-500/30 hover:shadow-[0_0_15px_rgba(244,63,94,0.3)]'
+                                isHit ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-rose-500/10 border-rose-500/30 text-rose-400'
                               }`}
-                              title={`${sample.date} vs ${sample.opponent}`}
+                              title={`${sample.date} vs ${sample.opponent} (Difficulty: ${sample.matchDifficulty})`}
                             >
-                              {isExcluded && <div className="absolute inset-0 flex items-center justify-center"><div className="w-full h-0.5 bg-zinc-500 rotate-45 absolute"></div></div>}
-                              <span className="text-[9px] font-bold uppercase opacity-70 truncate w-full text-center">{sample.opponent.substring(0, 5)}</span>
-                              <span className="text-2xl font-black">{sample.value}</span>
-                              <span className="text-[8px] font-medium text-zinc-400">{sample.minutesPlayed ? `${sample.minutesPlayed}'` : 'N/A'}</span>
+                              <div className={`absolute -top-1 -right-1 w-2 h-2 rounded-full ${diffColor} shadow-[0_0_5px_rgba(0,0,0,0.5)]`} />
+                              <div className="flex flex-col items-center">
+                                <span className="text-xs font-black leading-none">{sample.value}</span>
+                                <span className="text-[8px] font-bold opacity-60 mt-0.5">{sample.minutesPlayed}'</span>
+                              </div>
+                              <span className="text-[7px] font-bold uppercase opacity-60 truncate w-full text-center mt-1">{sample.opponent.substring(0, 3)}</span>
                             </div>
                           );
                         })}
                       </div>
-                      <p className="text-[10px] text-zinc-500 mt-2 italic text-center">Tap a game to exclude it from the hit rate calculation.</p>
+                      <p className="text-[9px] text-zinc-500 mt-3 italic text-center">Tiles show opponent difficulty (Red=Hard, Yellow=Med, Green=Easy). Tap to exclude.</p>
                     </div>
                   </div>
                 </Card>
@@ -659,7 +828,7 @@ export default function App() {
                     <div className="grid grid-cols-2 gap-3">
                       <button 
                         onClick={() => {
-                          const updatedPick = { ...selectedPick, status: 'settled' as const, result: 'won' as const };
+                          const updatedPick = { ...selectedPick, status: 'settled' as const, result: 'win' as const };
                           setSelectedPick(updatedPick);
                           setSavedPicks(savedPicks.map(p => p.id === updatedPick.id ? updatedPick : p));
                         }}
@@ -669,7 +838,7 @@ export default function App() {
                       </button>
                       <button 
                         onClick={() => {
-                          const updatedPick = { ...selectedPick, status: 'settled' as const, result: 'lost' as const };
+                          const updatedPick = { ...selectedPick, status: 'settled' as const, result: 'loss' as const };
                           setSelectedPick(updatedPick);
                           setSavedPicks(savedPicks.map(p => p.id === updatedPick.id ? updatedPick : p));
                         }}
@@ -705,7 +874,7 @@ export default function App() {
             <div className={`p-3 rounded-2xl -mt-10 mb-1 shadow-lg transition-all ${activeTab === 'wizard' ? 'bg-emerald-500 text-black shadow-emerald-500/20' : 'bg-zinc-800 text-zinc-400'}`}>
               <Plus className="w-7 h-7" />
             </div>
-            <span className="text-[10px] font-bold uppercase tracking-widest">Wizard</span>
+            <span className="text-[10px] font-bold uppercase tracking-widest">Predict</span>
           </button>
 
           <button 

@@ -26,7 +26,7 @@ export interface Player {
   teamName: string;
 }
 
-export type PropType = 'passes' | 'shots' | 'saves';
+export type PropType = 'pass_attempts' | 'shots' | 'saves' | 'clearances' | 'tackles';
 
 export interface PredictionRequest {
   leagueId: number;
@@ -45,6 +45,8 @@ export interface PredictionResponse {
     id: number;
     name: string;
     team: string;
+    role: string;
+    position: string;
   };
   opponent: string;
   league: string;
@@ -61,7 +63,21 @@ export interface PredictionResponse {
     opponent: string;
     value: number;
     minutesPlayed: number;
+    matchDifficulty: 'low' | 'medium' | 'high';
   }[];
+  tacticalAnalysis: {
+    pressingStyle: string;
+    possessionImpact: string;
+    spaceAndTime: string;
+    opponentShotProfile?: string;
+    defensiveWorkload?: string;
+  };
+  bayesianMetrics: {
+    priorMean: number;
+    momentumEffect: number;
+    covariateAdjustment: number;
+    reversalFlag: 'upward_reversal_likely' | 'downward_reversal_likely' | 'stable';
+  };
   tacticalInsights: string;
   reasoning: string;
 }
