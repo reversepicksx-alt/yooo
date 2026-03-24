@@ -19,7 +19,7 @@ export async function generateProjection(request: PredictionRequest, historicalD
 
     BAYESIAN MODEL LOGIC (CRITICAL):
     1. Layer 1: Position Prior. Establish a base mean and standard deviation for the player's position (${request.propType} for this role).
-    2. Layer 2: Gaussian Random Walk. Analyze time-varying recent form (momentum). Is the player trending up or down?
+    2. Layer 2: Gaussian Random Walk. Analyze time-varying recent form (momentum) using the provided 'matchHistory'. Is the player trending up or down?
     3. Layer 3: Covariates & Role Adjustments.
        - Opponent Strength: Adjust based on the opponent's defensive/offensive metrics.
        - Home/Away: Factor in venue impact.
@@ -27,19 +27,20 @@ export async function generateProjection(request: PredictionRequest, historicalD
        - Reversal Flag: Identify if an upward or downward reversal is likely (e.g., over-performance due for regression).
     4. Likelihood: Use a Zero-Inflated Negative Binomial approach (best for soccer count stats like ${request.propType}).
 
-    PROP-SPECIFIC LOGIC:
-    - Pass Attempts: Analyze team possession %, pressing intensity of opponent, and player's role in buildup.
-    - Shots: Analyze xG per 90, opponent's shots allowed, and player's proximity to goal.
-    - Saves: Analyze opponent's shot volume/profile (outside vs. inside box) and goalkeeper's save %.
-    - Clearances: Analyze opponent's cross volume and team's defensive style (low block vs. high line).
-    - Tackles: Analyze opponent's dribble volume and player's defensive engagement/role.
+    PROP-SPECIFIC LOGIC (DO NOT MIX):
+    - Pass Attempts: Analyze team possession %, pressing intensity of opponent, and player's role in buildup. Focus on 'passes.total'.
+    - Shots: Analyze xG per 90, opponent's shots allowed, and player's proximity to goal. Focus on 'shots.total'.
+    - Saves: Analyze opponent's shot volume/profile (outside vs. inside box) and goalkeeper's save %. Focus on 'goals.saves'.
+    - Clearances: Analyze opponent's cross volume, team's defensive style (low block vs. high line), and player's aerial dominance. Focus on 'tackles.blocks' and 'tackles.interceptions' as proxies if 'clearances' is missing.
+    - Tackles: Analyze opponent's dribble volume, player's defensive engagement/role, and 'tackles.total'.
 
     CRITICAL INSTRUCTIONS:
     1. Detect and specify the Player's Exact Position and Tactical Role.
     2. Provide a DEEP tactical analysis covering pressing, possession, space/time, and matchup.
-    3. Extract 10-20 recent match samples with 'matchDifficulty'.
+    3. Extract 10-20 recent match samples from the 'matchHistory' provided. For each, assign a 'matchDifficulty' (low/medium/high) and 'blockType' if applicable.
     4. Provide a multi-paragraph explanation (at least 3-4 paragraphs).
     5. Return the response in JSON format matching the PredictionResponse interface.
+    6. Ensure the 'recentSamples' values are derived from the 'matchHistory' provided, not hallucinated.
   `;
 
   const response = await ai.models.generateContent({
@@ -83,7 +84,8 @@ export async function generateProjection(request: PredictionRequest, historicalD
                 opponent: { type: Type.STRING },
                 value: { type: Type.NUMBER },
                 minutesPlayed: { type: Type.NUMBER },
-                matchDifficulty: { type: Type.STRING, enum: ["low", "medium", "high"] }
+                matchDifficulty: { type: Type.STRING, enum: ["low", "medium", "high"] },
+                blockType: { type: Type.STRING }
               },
               required: ["date", "opponent", "value", "minutesPlayed", "matchDifficulty"]
             }

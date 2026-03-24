@@ -64,6 +64,7 @@ export interface PredictionResponse {
     value: number;
     minutesPlayed: number;
     matchDifficulty: 'low' | 'medium' | 'high';
+    blockType?: string; // e.g., "Interception", "Block", "Tackle"
   }[];
   tacticalAnalysis: {
     pressingStyle: string;

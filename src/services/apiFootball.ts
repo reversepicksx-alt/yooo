@@ -139,9 +139,55 @@ export async function getFixtures(teamId: number, last: number = 5): Promise<any
     const response = await fetch(`${BASE_URL}/fixtures?team=${teamId}&last=${last}`, { headers });
     if (!response.ok) throw new Error(`API Error: ${response.status}`);
     const data = await response.json();
-    return data.response;
+    return data.response || [];
   } catch (error) {
     console.error('getFixtures failed:', error);
+    return [];
+  }
+}
+
+export async function getMatchPlayerStats(fixtureId: number, playerId: number): Promise<any> {
+  try {
+    const response = await fetch(`${BASE_URL}/fixtures/players?fixture=${fixtureId}`, { headers });
+    if (!response.ok) throw new Error(`API Error: ${response.status}`);
+    const data = await response.json();
+    
+    if (!data.response) return null;
+    
+    // Find the player in the response
+    for (const teamData of data.response) {
+      const playerStats = teamData.players.find((p: any) => p.player.id === playerId);
+      if (playerStats) return playerStats;
+    }
+    
+    return null;
+  } catch (error) {
+    console.error(`getMatchPlayerStats failed for fixture ${fixtureId}:`, error);
+    return null;
+  }
+}
+
+export async function getRecentPlayerMatchHistory(playerId: number, teamId: number, count: number = 10): Promise<any[]> {
+  try {
+    // 1. Get recent fixtures for the team
+    const fixtures = await getFixtures(teamId, count);
+    if (fixtures.length === 0) return [];
+    
+    // 2. Fetch player stats for each fixture in parallel
+    const statsPromises = fixtures.map(f => getMatchPlayerStats(f.fixture.id, playerId));
+    const statsResults = await Promise.all(statsPromises);
+    
+    // 3. Combine fixture info with player stats
+    return fixtures.map((f, index) => ({
+      fixture: f.fixture,
+      league: f.league,
+      teams: f.teams,
+      goals: f.goals,
+      score: f.score,
+      playerStats: statsResults[index]
+    })).filter(item => item.playerStats !== null);
+  } catch (error) {
+    console.error('getRecentPlayerMatchHistory failed:', error);
     return [];
   }
 }

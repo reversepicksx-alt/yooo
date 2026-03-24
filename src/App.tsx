@@ -31,7 +31,8 @@ import {
   getTeamsByLeague, 
   getFixtures, 
   getPlayerStats,
-  getUpcomingFixtures
+  getUpcomingFixtures,
+  getRecentPlayerMatchHistory
 } from './services/apiFootball';
 import { generateProjection, parseNaturalLanguageQuery } from './services/geminiService';
 import { Player, Team, PredictionRequest, PredictionResponse, SavedPick, PropType } from './types';
@@ -136,8 +137,15 @@ export default function App() {
         actualTeamId = playerStats.statistics[0].team?.id || 0;
       }
       
+      // Fetch real match-by-match history for the player (last 15 games)
+      const matchHistory = await getRecentPlayerMatchHistory(data.playerId, actualTeamId, 15);
+      
       const teamStats = await getFixtures(actualTeamId, 30);
-      const historicalData = { playerStats, teamStats };
+      const historicalData = { 
+        playerStats, 
+        teamStats,
+        matchHistory // Real match-by-match data
+      };
       
       const result = await generateProjection(data, historicalData);
       setProjection(result);
@@ -811,7 +819,12 @@ export default function App() {
                               <div className={`absolute -top-1 -right-1 w-2 h-2 rounded-full ${diffColor} shadow-[0_0_5px_rgba(0,0,0,0.5)]`} />
                               <div className="flex flex-col items-center">
                                 <span className="text-xs font-black leading-none">{sample.value}</span>
-                                <span className="text-[8px] font-bold opacity-60 mt-0.5">{sample.minutesPlayed}'</span>
+                                <div className="flex flex-col items-center mt-0.5">
+                                  <span className="text-[8px] font-bold opacity-60 leading-none">{sample.minutesPlayed}'</span>
+                                  {sample.blockType && (
+                                    <span className="text-[6px] font-black uppercase text-emerald-400 mt-0.5 leading-none">{sample.blockType}</span>
+                                  )}
+                                </div>
                               </div>
                               <span className="text-[7px] font-bold uppercase opacity-60 truncate w-full text-center mt-1">{sample.opponent.substring(0, 3)}</span>
                             </div>
