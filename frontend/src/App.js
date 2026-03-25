@@ -13,7 +13,23 @@ import {
 } from './api';
 import './App.css';
 
-const PROP_TYPES = ['pass_attempts', 'shots', 'saves', 'clearances', 'tackles'];
+const PROP_TYPES = [
+  { key: 'pass_attempts', label: 'Pass Attempts', stat: 'passes.total', desc: 'Total passes attempted' },
+  { key: 'shots', label: 'Shots', stat: 'shots.total', desc: 'Total shots taken' },
+  { key: 'shots_on_target', label: 'Shots on Target', stat: 'shots.on', desc: 'Shots on goal' },
+  { key: 'tackles', label: 'Tackles', stat: 'tackles.total', desc: 'Total tackles won' },
+  { key: 'key_passes', label: 'Key Passes', stat: 'passes.key', desc: 'Passes leading to a shot' },
+  { key: 'saves', label: 'Saves', stat: 'goals.saves', desc: 'Goalkeeper saves' },
+  { key: 'interceptions', label: 'Interceptions', stat: 'tackles.interceptions', desc: 'Passes intercepted' },
+  { key: 'blocks', label: 'Blocks', stat: 'tackles.blocks', desc: 'Shots/passes blocked' },
+  { key: 'dribbles', label: 'Dribble Attempts', stat: 'dribbles.attempts', desc: 'Dribble attempts made' },
+  { key: 'fouls_drawn', label: 'Fouls Drawn', stat: 'fouls.drawn', desc: 'Fouls won by player' },
+];
+
+function getPropLabel(key) {
+  const p = PROP_TYPES.find(pt => pt.key === key);
+  return p ? p.label : key.replace(/_/g, ' ');
+}
 
 function ProbabilityChart({ data }) {
   if (!data || data.length === 0) return null;
@@ -84,7 +100,7 @@ function ProjectionCard({ projection, onSave, excludedIndices, onToggleSample })
             <div className="stat-label">Prop Line</div>
             <div className="flex items-center gap-2">
               <span className="stat-value">{projection.line}</span>
-              <span className="stat-suffix">{projection.propType?.replace('_', ' ')}</span>
+              <span className="stat-suffix">{getPropLabel(projection.propType)}</span>
             </div>
           </div>
           <div className="stat-box">
@@ -424,12 +440,34 @@ export default function App() {
                   )}
                 </div>
 
-                <div className="tab-switcher">
-                  <button className={`tab-btn ${searchMode === 'wizard' ? 'active' : ''}`}
-                    onClick={() => setSearchMode('wizard')} data-testid="step-by-step-tab">Step-by-Step</button>
-                  <button className={`tab-btn ${searchMode === 'natural' ? 'active' : ''}`}
-                    onClick={() => setSearchMode('natural')} data-testid="natural-search-tab">Natural Search</button>
-                </div>
+                {(searchMode === 'natural' || wizardStep === 1) && (
+                  <div className="tab-switcher">
+                    <button className={`tab-btn ${searchMode === 'wizard' ? 'active' : ''}`}
+                      onClick={() => { setSearchMode('wizard'); setWizardStep(1); setWizardData({}); setWizardError(null); }}
+                      data-testid="step-by-step-tab">Step-by-Step</button>
+                    <button className={`tab-btn ${searchMode === 'natural' ? 'active' : ''}`}
+                      onClick={() => { setSearchMode('natural'); setWizardStep(1); setWizardData({}); setWizardError(null); }}
+                      data-testid="natural-search-tab">Natural Search</button>
+                  </div>
+                )}
+
+                {searchMode === 'wizard' && wizardStep > 1 && (
+                  <div className="wizard-breadcrumb" data-testid="wizard-breadcrumb">
+                    <div className="breadcrumb-steps">
+                      {['League', 'Player', 'Opponent', 'Venue', 'Prop', 'Line'].map((label, i) => {
+                        const step = i + 1;
+                        const isActive = wizardStep === step;
+                        const isDone = wizardStep > step;
+                        return (
+                          <div key={label} className={`breadcrumb-step ${isActive ? 'active' : ''} ${isDone ? 'done' : ''}`}>
+                            <div className="breadcrumb-dot">{isDone ? '\u2713' : step}</div>
+                            <span className="breadcrumb-label">{label}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
 
                 {searchMode === 'natural' && (
                   <form onSubmit={handleNaturalSearch} className="space-y-4">
@@ -549,11 +587,15 @@ export default function App() {
 
                 {searchMode === 'wizard' && wizardStep === 5 && (
                   <div className="space-y-2" data-testid="prop-type-step">
-                    {PROP_TYPES.map(type => (
-                      <div key={type} className="card card-clickable" onClick={() => { setWizardData({ ...wizardData, propType: type }); setWizardStep(6); }}
-                        data-testid={`prop-${type}`}>
+                    <div className="stat-label" style={{ marginBottom: 8 }}>Select Prop Type</div>
+                    {PROP_TYPES.map(prop => (
+                      <div key={prop.key} className="card card-clickable" onClick={() => { setWizardData({ ...wizardData, propType: prop.key }); setWizardStep(6); }}
+                        data-testid={`prop-${prop.key}`}>
                         <div className="prop-item">
-                          <span className="name">{type.replace('_', ' ')}</span>
+                          <div>
+                            <span className="name">{prop.label}</span>
+                            <span style={{ display: 'block', fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>{prop.desc}</span>
+                          </div>
                           <ChevronRight />
                         </div>
                       </div>
@@ -757,7 +799,7 @@ export default function App() {
               <div className="grid-2 mb-4">
                 <div className="stat-box">
                   <div className="stat-label">Prop Line</div>
-                  <div className="stat-value">{selectedPick.line} <span className="stat-suffix">{selectedPick.propType?.replace('_', ' ')}</span></div>
+                  <div className="stat-value">{selectedPick.line} <span className="stat-suffix">{getPropLabel(selectedPick.propType)}</span></div>
                 </div>
                 <div className="stat-box">
                   <div className="stat-label">Projected</div>

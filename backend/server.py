@@ -364,7 +364,18 @@ Historical Data (from API-Sports):
 
 CRITICAL: 
 1. Use ONLY the provided data. Extract actual stat values from match history for recentSamples.
-2. For propType '{req.propType}': map to the relevant stat in the data (pass_attempts=passes.total, shots=shots.total, saves=goals.saves, clearances=tackles.blocks, tackles=tackles.total)
+2. For propType '{req.propType}': map to the CORRECT API-Sports stat field:
+   - pass_attempts → statistics[].passes.total
+   - shots → statistics[].shots.total
+   - shots_on_target → statistics[].shots.on
+   - tackles → statistics[].tackles.total
+   - key_passes → statistics[].passes.key
+   - saves → statistics[].goals.saves (goalkeeper stat)
+   - interceptions → statistics[].tackles.interceptions
+   - blocks → statistics[].tackles.blocks
+   - dribbles → statistics[].dribbles.attempts
+   - fouls_drawn → statistics[].fouls.drawn
+   Extract the ACTUAL numeric value from each match in the playerStats data for this exact field.
 3. Generate a probability curve with 10-15 data points
 4. Provide deep tactical analysis
 5. You MUST include AT LEAST 15 recentSamples entries (up to 20). Each MUST have a "venue" field ("home" or "away"). The venue for each match is provided in the matchHistory data.
@@ -485,7 +496,8 @@ async def parse_natural_query(req: NaturalQueryRequest):
     )
     chat.with_model("gemini", "gemini-2.5-flash")
     prompt = f"""Parse this soccer prop query into a structured object: "{req.query}"
-Extract: playerName, opponentName, venue (home/away), propType (pass_attempts/shots/saves/clearances/tackles), line (number).
+Extract: playerName, opponentName, venue (home/away), propType, line (number).
+Valid propType values: pass_attempts, shots, shots_on_target, tackles, key_passes, saves, interceptions, blocks, dribbles, fouls_drawn.
 Return ONLY valid JSON like: {{"playerName": "...", "opponentName": "...", "venue": "home", "propType": "pass_attempts", "line": 0}}"""
     try:
         response = await chat.send_message(UserMessage(text=prompt))
