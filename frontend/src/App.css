@@ -792,21 +792,22 @@
 .samples-grid {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
-  gap: 8px;
+  gap: 6px;
 }
 
 .sample-cell {
   position: relative;
-  padding: 8px;
+  padding: 6px 4px;
   border-radius: 10px;
   border: 1px solid;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: space-between;
-  min-height: 56px;
+  min-height: 60px;
   cursor: pointer;
   transition: all 0.15s;
+  gap: 1px;
 }
 
 .sample-cell:hover {
@@ -853,6 +854,48 @@
   text-overflow: ellipsis;
   width: 100%;
   text-align: center;
+}
+
+.sample-venue-tag {
+  font-size: 6px;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  background: var(--bg-primary);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.venue-filter-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.venue-filter-btn {
+  padding: 5px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border-primary);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: 'Outfit', sans-serif;
+}
+
+.venue-filter-btn:hover {
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
+}
+
+.venue-filter-btn.active {
+  background: var(--accent-dim);
+  border-color: rgba(16, 185, 129, 0.3);
+  color: var(--accent);
 }
 
 .difficulty-dot {

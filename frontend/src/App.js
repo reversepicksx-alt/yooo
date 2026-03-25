@@ -45,6 +45,11 @@ function ProbabilityChart({ data }) {
 
 function ProjectionCard({ projection, onSave, excludedIndices, onToggleSample }) {
   const rec = projection.recommendation;
+  const [venueFilter, setVenueFilter] = React.useState('all');
+
+  const filteredSamples = (projection.recentSamples || []).map((s, i) => ({ ...s, _idx: i }))
+    .filter(s => venueFilter === 'all' || s.venue === venueFilter);
+
   return (
     <div className="animate-fade-in space-y-6">
       <div className="projection-card">
@@ -109,23 +114,29 @@ function ProjectionCard({ projection, onSave, excludedIndices, onToggleSample })
         {projection.recentSamples?.length > 0 && (
           <div className="mt-6">
             <div className="flex justify-between items-center mb-4">
-              <div className="stat-label flex items-center gap-2"><Activity style={{ width: 12, height: 12 }} /> Recent Form</div>
+              <div className="stat-label flex items-center gap-2"><Activity style={{ width: 12, height: 12 }} /> Recent Form ({filteredSamples.length} Games)</div>
               <div className="badge default">
-                {projection.recentSamples.filter((s, i) => !excludedIndices.includes(i) && (rec === 'over' ? s.value > projection.line : s.value < projection.line)).length} / {projection.recentSamples.filter((_, i) => !excludedIndices.includes(i)).length} HIT RATE
+                {filteredSamples.filter(s => !excludedIndices.includes(s._idx) && (rec === 'over' ? s.value > projection.line : s.value < projection.line)).length} / {filteredSamples.filter(s => !excludedIndices.includes(s._idx)).length} HIT RATE
               </div>
             </div>
+            <div className="venue-filter-row">
+              <button className={`venue-filter-btn ${venueFilter === 'all' ? 'active' : ''}`} onClick={() => setVenueFilter('all')} data-testid="venue-filter-all">All</button>
+              <button className={`venue-filter-btn ${venueFilter === 'home' ? 'active' : ''}`} onClick={() => setVenueFilter('home')} data-testid="venue-filter-home">Home</button>
+              <button className={`venue-filter-btn ${venueFilter === 'away' ? 'active' : ''}`} onClick={() => setVenueFilter('away')} data-testid="venue-filter-away">Away</button>
+            </div>
             <div className="samples-grid">
-              {projection.recentSamples.map((sample, idx) => {
-                const excluded = excludedIndices.includes(idx);
+              {filteredSamples.map((sample) => {
+                const excluded = excludedIndices.includes(sample._idx);
                 const isHit = rec === 'over' ? sample.value > projection.line : sample.value < projection.line;
                 const cls = excluded ? 'excluded' : isHit ? 'hit' : 'miss';
                 const diffColor = sample.matchDifficulty === 'high' ? '#f43f5e' : sample.matchDifficulty === 'medium' ? '#f59e0b' : '#10b981';
                 return (
-                  <div key={idx} className={`sample-cell ${cls}`} onClick={() => onToggleSample(idx)}
-                    title={`${sample.date} vs ${sample.opponent} (${sample.matchDifficulty})`}>
+                  <div key={sample._idx} className={`sample-cell ${cls}`} onClick={() => onToggleSample(sample._idx)}
+                    title={`${sample.date} vs ${sample.opponent} (${sample.matchDifficulty}) - ${sample.venue || 'unknown'}`}>
                     <div className="difficulty-dot" style={{ background: diffColor }} />
                     <span className="sample-value">{sample.value}</span>
                     <span className="sample-minutes">{sample.minutesPlayed}'</span>
+                    <span className="sample-venue-tag">{sample.venue === 'home' ? 'H' : 'A'}</span>
                     <span className="sample-opponent">{(sample.opponent || '').substring(0, 3)}</span>
                   </div>
                 );

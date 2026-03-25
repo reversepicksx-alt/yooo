@@ -190,12 +190,15 @@ async def fetch_match_player_stats(fixture_id: int, player_id: int):
     return None
 
 
-async def get_recent_match_history(player_id: int, team_id: int, count: int = 10):
+async def get_recent_match_history(player_id: int, team_id: int, count: int = 20):
     try:
         fixtures = await api_football_request("fixtures", {"team": team_id, "last": count})
         results = []
         for f in fixtures[:count]:
             fid = f["fixture"]["id"]
+            # Determine venue for this fixture
+            home_team_id = f.get("teams", {}).get("home", {}).get("id")
+            venue = "home" if home_team_id == team_id else "away"
             ps = await fetch_match_player_stats(fid, player_id)
             if ps:
                 results.append({
@@ -203,7 +206,8 @@ async def get_recent_match_history(player_id: int, team_id: int, count: int = 10
                     "league": f.get("league"),
                     "teams": f.get("teams"),
                     "goals": f.get("goals"),
-                    "playerStats": ps
+                    "playerStats": ps,
+                    "venue": venue
                 })
         return results
     except Exception:
@@ -242,7 +246,7 @@ async def predict(req: PredictionRequest):
             if stats_list:
                 actual_team_id = stats_list[0].get("team", {}).get("id", 0)
 
-        match_history = await get_recent_match_history(req.playerId, actual_team_id, 10)
+        match_history = await get_recent_match_history(req.playerId, actual_team_id, 20)
 
         league_id = req.leagueId
         if not league_id and player_stats:
@@ -329,14 +333,20 @@ ALWAYS return valid JSON matching this exact structure:
   "confidenceLevel": "Low" | "Medium" | "High" | "Very High",
   "confidenceInterval": [number, number],
   "explanation": string,
-  "recentSamples": [{ "date": string, "opponent": string, "value": number, "minutesPlayed": number, "matchDifficulty": "low"|"medium"|"high" }],
+  "recentSamples": [{ "date": string, "opponent": string, "value": number, "minutesPlayed": number, "matchDifficulty": "low"|"medium"|"high", "venue": "home"|"away" }],
   "tacticalAnalysis": { "pressingStyle": string, "possessionImpact": string, "spaceAndTime": string },
   "bayesianMetrics": { "priorMean": number, "momentumEffect": number, "covariateAdjustment": number, "reversalFlag": "stable"|"upward_reversal_likely"|"downward_reversal_likely" },
   "probabilityCurve": [{ "value": number, "probability": number }],
   "tacticalAlerts": [{ "type": "injury"|"lineup"|"tactical", "message": string, "severity": "low"|"medium"|"high" }],
   "tacticalInsights": string,
   "reasoning": string
-}"""
+}
+
+CRITICAL RULES for recentSamples:
+- You MUST include AT LEAST 15 entries in recentSamples (up to 20 if data available)
+- Each entry MUST have a "venue" field set to "home" or "away" based on the match data
+- Extract the actual venue from the match history data provided (check teams.home.id vs the player's team)
+- Sort by date descending (most recent first)"""
         )
         chat.with_model("gemini", "gemini-2.5-flash")
 
@@ -350,14 +360,16 @@ Prop Type: {req.propType}
 Line: {req.line}
 
 Historical Data (from API-Sports):
-{json.dumps(historical_data, default=str)[:15000]}
+{json.dumps(historical_data, default=str)[:18000]}
 
 CRITICAL: 
 1. Use ONLY the provided data. Extract actual stat values from match history for recentSamples.
 2. For propType '{req.propType}': map to the relevant stat in the data (pass_attempts=passes.total, shots=shots.total, saves=goals.saves, clearances=tackles.blocks, tackles=tackles.total)
 3. Generate a probability curve with 10-15 data points
 4. Provide deep tactical analysis
-5. Return ONLY valid JSON, no markdown or extra text"""
+5. You MUST include AT LEAST 15 recentSamples entries (up to 20). Each MUST have a "venue" field ("home" or "away"). The venue for each match is provided in the matchHistory data.
+6. Sort recentSamples by date descending (most recent first)
+7. Return ONLY valid JSON, no markdown or extra text"""
 
         response = await chat.send_message(UserMessage(text=prompt))
         response_text = response.strip()
