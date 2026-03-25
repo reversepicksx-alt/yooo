@@ -39,9 +39,12 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 - [x] Projection card with confidence intervals, probability curves, recommendations
 - [x] Pick tracking with save/remove functionality
 - [x] Pick detail modal
-- [x] **15+ recent match samples with venue tags (H/A)**
-- [x] **Venue filter (All/Home/Away) for recent form section**
-- [x] **Backend fetches 20 matches with venue classification**
+- [x] **Tab toggle fix**: Only visible on Step 1, hidden on Steps 2-6
+- [x] **Wizard breadcrumb**: Progress tracker (League→Player→Opponent→Venue→Prop→Line)
+- [x] **Mode switching resets wizard** to Step 1 cleanly
+- [x] **10 prop types** with correct API-Sports stat mappings and descriptions
+  - Pass Attempts, Shots, Shots on Target, Tackles, Key Passes
+  - Saves, Interceptions, Blocks, Dribble Attempts, Fouls Drawn
 
 ## API Keys
 - API-Sports: 8154742f66d14cb52548c73c3edfbee3
