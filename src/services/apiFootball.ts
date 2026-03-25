@@ -11,20 +11,41 @@ const headers = {
 };
 
 export const SUPPORTED_LEAGUES = [
-  { id: 39, name: 'Premier League' },
-  { id: 140, name: 'La Liga' },
-  { id: 135, name: 'Serie A' },
-  { id: 78, name: 'Bundesliga' },
-  { id: 61, name: 'Ligue 1' },
-  { id: 2, name: 'Champions League' },
-  { id: 3, name: 'Europa League' },
-  { id: 40, name: 'Championship' },
-  { id: 188, name: 'A-League' },
-  { id: 253, name: 'MLS' },
-  { id: 262, name: 'Liga MX' },
-  { id: 128, name: 'Liga Profesional Argentina' },
-  { id: 71, name: 'Brasileirao' },
-  { id: 307, name: 'Saudi Pro League' },
+  // Domestic Leagues
+  { id: 39, name: 'Premier League', type: 'Domestic' },
+  { id: 140, name: 'La Liga', type: 'Domestic' },
+  { id: 135, name: 'Serie A', type: 'Domestic' },
+  { id: 78, name: 'Bundesliga', type: 'Domestic' },
+  { id: 61, name: 'Ligue 1', type: 'Domestic' },
+  { id: 40, name: 'Championship', type: 'Domestic' },
+  { id: 188, name: 'A-League', type: 'Domestic' },
+  { id: 253, name: 'MLS', type: 'Domestic' },
+  { id: 262, name: 'Liga MX', type: 'Domestic' },
+  { id: 128, name: 'Liga Profesional Argentina', type: 'Domestic' },
+  { id: 71, name: 'Brasileirao', type: 'Domestic' },
+  { id: 307, name: 'Saudi Pro League', type: 'Domestic' },
+  { id: 254, name: 'NWSL', type: 'Domestic' },
+  
+  // International Club
+  { id: 2, name: 'Champions League', type: 'International Club' },
+  { id: 3, name: 'Europa League', type: 'International Club' },
+  
+  // International Team
+  { id: 1, name: 'World Cup', type: 'International Team' },
+  { id: 34, name: 'World Cup Qualifiers (UEFA)', type: 'International Team' },
+  { id: 30, name: 'World Cup Qualifiers (CONMEBOL)', type: 'International Team' },
+  { id: 32, name: 'World Cup Qualifiers (CONCACAF)', type: 'International Team' },
+  { id: 31, name: 'World Cup Qualifiers (CAF)', type: 'International Team' },
+  { id: 33, name: 'World Cup Qualifiers (AFC)', type: 'International Team' },
+  { id: 4, name: 'Euro Championship', type: 'International Team' },
+  { id: 96, name: 'Euro Qualifiers', type: 'International Team' },
+  { id: 9, name: 'Copa America', type: 'International Team' },
+  { id: 5, name: 'UEFA Nations League', type: 'International Team' },
+  { id: 13, name: 'CONCACAF Nations League', type: 'International Team' },
+  { id: 6, name: 'Africa Cup of Nations', type: 'International Team' },
+  { id: 115, name: 'AFCON Qualifiers', type: 'International Team' },
+  { id: 7, name: 'Asian Cup', type: 'International Team' },
+  { id: 10, name: 'International Friendlies', type: 'International Team' },
 ];
 
 export async function searchPlayers(query: string, leagueId?: number, season?: number, attempts: number = 0): Promise<Player[]> {
@@ -40,16 +61,30 @@ export async function searchPlayers(query: string, leagueId?: number, season?: n
     }
 
     const response = await fetch(url, { headers });
-    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(`API Error: ${response.status} ${response.statusText}`);
+    }
+    const text = await response.text();
+    if (!text || !text.trim()) return [];
+    const data = JSON.parse(text);
     
     console.log('API-Football Search Data:', data);
     
     if (data.errors && Object.keys(data.errors).length > 0) {
-      console.error('API-Football Errors:', data.errors);
-      return [];
+      const errorMsg = typeof data.errors === 'object' ? JSON.stringify(data.errors) : data.errors;
+      throw new Error(`API-Football Error: ${errorMsg}`);
     }
 
     if (!data.response || !Array.isArray(data.response) || data.response.length === 0) {
+      // If we searched with a full name and got no results, try searching by last name
+      if (query.includes(' ') && attempts === 0) {
+        const lastName = query.split(' ').pop();
+        if (lastName && lastName.length >= 3) {
+          console.log(`No results for "${query}", trying last name "${lastName}"...`);
+          return searchPlayers(lastName, leagueId, season, attempts + 1);
+        }
+      }
+
       // If we searched with a league and current season, try previous seasons (up to 3 years back)
       if (leagueId && attempts < 3) {
         const nextSeason = (season || CURRENT_SEASON) - 1;
@@ -76,7 +111,7 @@ export async function searchPlayers(query: string, leagueId?: number, season?: n
       nationality: item.player.nationality,
       height: item.player.height,
       weight: item.player.weight,
-      photo: item.player.photo,
+      photo: '',
       teamId: item.statistics?.[0]?.team?.id || 0,
       teamName: item.statistics?.[0]?.team?.name || 'Unknown Team',
     }));
@@ -89,13 +124,21 @@ export async function searchPlayers(query: string, leagueId?: number, season?: n
 export async function getTeamsByLeague(leagueId: number, season: number = CURRENT_SEASON): Promise<Team[]> {
   try {
     const response = await fetch(`${BASE_URL}/teams?league=${leagueId}&season=${season}`, { headers });
-    if (!response.ok) throw new Error(`API Error: ${response.status}`);
-    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(`API Error: ${response.status} ${response.statusText}`);
+    }
+    const text = await response.text();
+    if (!text || !text.trim()) return [];
+    const data = JSON.parse(text);
+    if (data.errors && Object.keys(data.errors).length > 0) {
+      const errorMsg = typeof data.errors === 'object' ? JSON.stringify(data.errors) : data.errors;
+      throw new Error(`API-Football Error: ${errorMsg}`);
+    }
     if (!data.response) return [];
     return data.response.map((item: any) => ({
       id: item.team.id,
       name: item.team.name,
-      logo: item.team.logo,
+      logo: '',
     }));
   } catch (error) {
     console.error('getTeamsByLeague failed:', error);
@@ -106,8 +149,17 @@ export async function getTeamsByLeague(leagueId: number, season: number = CURREN
 export async function getPlayerStats(playerId: number, season: number = CURRENT_SEASON, attempts: number = 0): Promise<any> {
   try {
     const response = await fetch(`${BASE_URL}/players?id=${playerId}&season=${season}`, { headers });
-    if (!response.ok) throw new Error(`API Error: ${response.status}`);
-    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(`API Error: ${response.status} ${response.statusText}`);
+    }
+    const text = await response.text();
+    if (!text || !text.trim()) return null;
+    const data = JSON.parse(text);
+    
+    if (data.errors && Object.keys(data.errors).length > 0) {
+      const errorMsg = typeof data.errors === 'object' ? JSON.stringify(data.errors) : data.errors;
+      throw new Error(`API-Football Error: ${errorMsg}`);
+    }
     
     // If current season returns nothing, try previous seasons (up to 3 years back)
     if ((!data.response || data.response.length === 0) && attempts < 3) {
@@ -125,8 +177,16 @@ export async function getPlayerStats(playerId: number, season: number = CURRENT_
 export async function getTeamStats(teamId: number, leagueId: number, season: number = CURRENT_SEASON): Promise<any> {
   try {
     const response = await fetch(`${BASE_URL}/teams/statistics?team=${teamId}&league=${leagueId}&season=${season}`, { headers });
-    if (!response.ok) throw new Error(`API Error: ${response.status}`);
-    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(`API Error: ${response.status} ${response.statusText}`);
+    }
+    const text = await response.text();
+    if (!text || !text.trim()) return null;
+    const data = JSON.parse(text);
+    if (data.errors && Object.keys(data.errors).length > 0) {
+      const errorMsg = typeof data.errors === 'object' ? JSON.stringify(data.errors) : data.errors;
+      throw new Error(`API-Football Error (getTeamStats): ${errorMsg}`);
+    }
     return data.response;
   } catch (error) {
     console.error('getTeamStats failed:', error);
@@ -137,8 +197,16 @@ export async function getTeamStats(teamId: number, leagueId: number, season: num
 export async function getFixtures(teamId: number, last: number = 5): Promise<any[]> {
   try {
     const response = await fetch(`${BASE_URL}/fixtures?team=${teamId}&last=${last}`, { headers });
-    if (!response.ok) throw new Error(`API Error: ${response.status}`);
-    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(`API Error: ${response.status} ${response.statusText}`);
+    }
+    const text = await response.text();
+    if (!text || !text.trim()) return [];
+    const data = JSON.parse(text);
+    if (data.errors && Object.keys(data.errors).length > 0) {
+      const errorMsg = typeof data.errors === 'object' ? JSON.stringify(data.errors) : data.errors;
+      throw new Error(`API-Football Error: ${errorMsg}`);
+    }
     return data.response || [];
   } catch (error) {
     console.error('getFixtures failed:', error);
@@ -149,8 +217,17 @@ export async function getFixtures(teamId: number, last: number = 5): Promise<any
 export async function getMatchPlayerStats(fixtureId: number, playerId: number): Promise<any> {
   try {
     const response = await fetch(`${BASE_URL}/fixtures/players?fixture=${fixtureId}`, { headers });
-    if (!response.ok) throw new Error(`API Error: ${response.status}`);
-    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(`API Error: ${response.status} ${response.statusText}`);
+    }
+    const text = await response.text();
+    if (!text || !text.trim()) return null;
+    const data = JSON.parse(text);
+    
+    if (data.errors && Object.keys(data.errors).length > 0) {
+      const errorMsg = typeof data.errors === 'object' ? JSON.stringify(data.errors) : data.errors;
+      throw new Error(`API-Football Error (getMatchPlayerStats): ${errorMsg}`);
+    }
     
     if (!data.response) return null;
     
@@ -173,9 +250,13 @@ export async function getRecentPlayerMatchHistory(playerId: number, teamId: numb
     const fixtures = await getFixtures(teamId, count);
     if (fixtures.length === 0) return [];
     
-    // 2. Fetch player stats for each fixture in parallel
-    const statsPromises = fixtures.map(f => getMatchPlayerStats(f.fixture.id, playerId));
-    const statsResults = await Promise.all(statsPromises);
+    // 2. Fetch player stats for each fixture in batches of 5 to avoid rate limits
+    const statsResults: any[] = [];
+    for (let i = 0; i < fixtures.length; i += 5) {
+      const batch = fixtures.slice(i, i + 5);
+      const batchResults = await Promise.all(batch.map(f => getMatchPlayerStats(f.fixture.id, playerId)));
+      statsResults.push(...batchResults);
+    }
     
     // 3. Combine fixture info with player stats
     return fixtures.map((f, index) => ({
@@ -195,11 +276,155 @@ export async function getRecentPlayerMatchHistory(playerId: number, teamId: numb
 export async function getUpcomingFixtures(teamId: number, next: number = 1): Promise<any[]> {
   try {
     const response = await fetch(`${BASE_URL}/fixtures?team=${teamId}&next=${next}`, { headers });
-    if (!response.ok) throw new Error(`API Error: ${response.status}`);
-    const data = await response.json();
-    return data.response;
+    if (!response.ok) {
+      throw new Error(`API Error: ${response.status} ${response.statusText}`);
+    }
+    const text = await response.text();
+    if (!text || !text.trim()) return [];
+    const data = JSON.parse(text);
+    if (data.errors && Object.keys(data.errors).length > 0) {
+      const errorMsg = typeof data.errors === 'object' ? JSON.stringify(data.errors) : data.errors;
+      throw new Error(`API-Football Error (getUpcomingFixtures): ${errorMsg}`);
+    }
+    return data.response || [];
   } catch (error) {
     console.error('getUpcomingFixtures failed:', error);
     return [];
+  }
+}
+
+export async function getH2H(team1Id: number, team2Id: number, last: number = 5): Promise<any[]> {
+  try {
+    const response = await fetch(`${BASE_URL}/fixtures/headtohead?h2h=${team1Id}-${team2Id}&last=${last}`, { headers });
+    if (!response.ok) throw new Error(`API Error: ${response.status}`);
+    const text = await response.text();
+    if (!text || !text.trim()) return [];
+    const data = JSON.parse(text);
+    
+    if (data.errors && Object.keys(data.errors).length > 0) {
+      const errorMsg = typeof data.errors === 'object' ? JSON.stringify(data.errors) : data.errors;
+      throw new Error(`API-Football Error: ${errorMsg}`);
+    }
+    
+    return data.response || [];
+  } catch (error) {
+    console.error('getH2H failed:', error);
+    return [];
+  }
+}
+
+export async function getStandings(leagueId: number, season: number = CURRENT_SEASON): Promise<any[]> {
+  try {
+    const response = await fetch(`${BASE_URL}/standings?league=${leagueId}&season=${season}`, { headers });
+    if (!response.ok) throw new Error(`API Error: ${response.status}`);
+    const text = await response.text();
+    if (!text || !text.trim()) return [];
+    const data = JSON.parse(text);
+    
+    if (data.errors && Object.keys(data.errors).length > 0) {
+      const errorMsg = typeof data.errors === 'object' ? JSON.stringify(data.errors) : data.errors;
+      throw new Error(`API-Football Error: ${errorMsg}`);
+    }
+    
+    return data.response?.[0]?.league?.standings?.[0] || [];
+  } catch (error) {
+    console.error('getStandings failed:', error);
+    return [];
+  }
+}
+
+export async function getOdds(fixtureId: number): Promise<any> {
+  try {
+    const response = await fetch(`${BASE_URL}/odds?fixture=${fixtureId}`, { headers });
+    if (!response.ok) throw new Error(`API Error: ${response.status}`);
+    const text = await response.text();
+    if (!text || !text.trim()) return null;
+    const data = JSON.parse(text);
+    
+    if (data.errors && Object.keys(data.errors).length > 0) {
+      const errorMsg = typeof data.errors === 'object' ? JSON.stringify(data.errors) : data.errors;
+      throw new Error(`API-Football Error: ${errorMsg}`);
+    }
+    
+    // Return the first bookmaker's odds (usually 10Bet or Bet365)
+    return data.response?.[0]?.bookmakers?.[0]?.bets?.find((b: any) => b.name === 'Match Winner') || null;
+  } catch (error) {
+    console.error('getOdds failed:', error);
+    return null;
+  }
+}
+
+export async function getLivePlayerStats(fixtureId: number, playerId: number): Promise<any> {
+  try {
+    const response = await fetch(`${BASE_URL}/fixtures/players?fixture=${fixtureId}`, { headers });
+    if (!response.ok) {
+      throw new Error(`API Error: ${response.status} ${response.statusText}`);
+    }
+    const text = await response.text();
+    if (!text || !text.trim()) return null;
+    const data = JSON.parse(text);
+    
+    if (data.errors && Object.keys(data.errors).length > 0) {
+      const errorMsg = typeof data.errors === 'object' ? JSON.stringify(data.errors) : data.errors;
+      throw new Error(`API-Football Error (getLivePlayerStats): ${errorMsg}`);
+    }
+    
+    if (!data.response) return null;
+    
+    // Find the player in the response
+    for (const teamData of data.response) {
+      const playerStats = teamData.players.find((p: any) => p.player.id === playerId);
+      if (playerStats) {
+        return {
+          minutes: playerStats.statistics[0].games.minutes,
+          value: playerStats.statistics[0]
+        };
+      }
+    }
+    
+    return null;
+  } catch (error) {
+    console.error(`getLivePlayerStats failed for fixture ${fixtureId}:`, error);
+    return null;
+  }
+}
+
+export async function getFixtureLineups(fixtureId: number): Promise<any[]> {
+  try {
+    const response = await fetch(`${BASE_URL}/fixtures/lineups?fixture=${fixtureId}`, { headers });
+    if (!response.ok) {
+      throw new Error(`API Error: ${response.status} ${response.statusText}`);
+    }
+    const text = await response.text();
+    if (!text || !text.trim()) return [];
+    const data = JSON.parse(text);
+    if (data.errors && Object.keys(data.errors).length > 0) {
+      const errorMsg = typeof data.errors === 'object' ? JSON.stringify(data.errors) : data.errors;
+      throw new Error(`API-Football Error (getFixtureLineups): ${errorMsg}`);
+    }
+    return data.response || [];
+  } catch (error) {
+    console.error('getFixtureLineups failed:', error);
+    return [];
+  }
+}
+
+export async function checkApiStatus(): Promise<any> {
+  try {
+    const response = await fetch(`${BASE_URL}/status`, { headers });
+    if (!response.ok) {
+      throw new Error(`API Error: ${response.status} ${response.statusText}`);
+    }
+    const text = await response.text();
+    if (!text || !text.trim()) return null;
+    const data = JSON.parse(text);
+    if (data.errors && Object.keys(data.errors).length > 0) {
+      const errorMsg = typeof data.errors === 'object' ? JSON.stringify(data.errors) : data.errors;
+      throw new Error(`API-Football Status Error: ${errorMsg}`);
+    }
+    return data.response;
+  } catch (error) {
+    console.error('checkApiStatus failed:', error);
+    return null;
   }
 }

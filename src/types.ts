@@ -2,8 +2,9 @@
 export interface League {
   id: number;
   name: string;
-  country: string;
-  logo: string;
+  country?: string;
+  logo?: string;
+  type?: string;
 }
 
 export interface Team {
@@ -58,6 +59,23 @@ export interface PredictionResponse {
   confidenceLevel: 'Low' | 'Medium' | 'High' | 'Very High';
   confidenceInterval: [number, number];
   explanation: string;
+  odds?: {
+    home: number;
+    draw: number;
+    away: number;
+  };
+  gameType?: 'Dominance' | 'Fragment' | 'Pressure';
+  matchContext?: {
+    isKnockout: boolean;
+    roundName: string;
+    isDerby: boolean;
+    rivalryContext?: string;
+  };
+  roleMultipliers?: {
+    role: string;
+    multiplier: number;
+    reason: string;
+  };
   recentSamples: {
     date: string;
     opponent: string;
@@ -79,6 +97,18 @@ export interface PredictionResponse {
     covariateAdjustment: number;
     reversalFlag: 'upward_reversal_likely' | 'downward_reversal_likely' | 'stable';
   };
+  probabilityCurve: { value: number; probability: number }[];
+  tacticalAlerts?: {
+    type: 'injury' | 'lineup' | 'tactical';
+    message: string;
+    severity: 'low' | 'medium' | 'high';
+  }[];
+  correlations?: {
+    player: string;
+    prop: string;
+    effect: string;
+    impact: number; // -1 to 1
+  }[];
   tacticalInsights: string;
   reasoning: string;
 }
@@ -91,4 +121,10 @@ export interface SavedPick extends PredictionResponse {
   actualValue?: number;
   fixtureId?: number;
   excludedSampleIndices?: number[];
+  liveStats?: {
+    minutes: number;
+    value: number;
+    onTrack: boolean;
+    lastUpdated: number;
+  };
 }
