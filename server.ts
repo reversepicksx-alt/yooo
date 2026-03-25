@@ -7,6 +7,7 @@ import path from 'path';
 import dotenv from 'dotenv';
 import bcrypt from 'bcryptjs';
 import fs from 'fs';
+import { generateProjection } from './src/services/grokService.js';
 
 dotenv.config();
 
@@ -29,8 +30,9 @@ const TEAM_EMAILS = [
 ].map(e => e.toLowerCase());
 
 const LIFETIME_SUB_EMAILS = [
-  "faron2allen@gmail.com", "jossel0701@gmail.com",
-  "brayanfgaleas@icloud.com", "odr310@gmail.com"
+  "faron2allen@gmail.com", "jossel0701@gmail.com", "josselj001@gmail.com",
+  "brayanfgaleas@icloud.com", "odr310@gmail.com",
+  "joseharo197@gmail.com", "rijulgauchan1@gmail.com", "gordo0210@icloud.com"
 ].map(e => e.toLowerCase());
 
 // In-memory fallback if MongoDB is not connected
@@ -86,6 +88,7 @@ async function fetchWhopMemberships() {
   try {
     while (hasMore) {
       const url = `https://api.whop.com/api/v2/memberships?company_id=${WHOP_COMPANY_ID}&per_page=50&page=${page}`;
+      console.log(`[WHOP] Fetching page ${page} from ${url}`);
       const res = await fetchWithTimeout(url, {
         headers: { 
           'Authorization': `Bearer ${WHOP_API_KEY}`,
@@ -99,6 +102,7 @@ async function fetchWhopMemberships() {
       }
 
       const data = await res.json();
+      console.log(`[WHOP] Received ${data.data?.length || 0} memberships on page ${page}`);
       const memberships = data.data || [];
       allMemberships = allMemberships.concat(memberships);
 
@@ -139,31 +143,33 @@ if (MONGO_URL) {
     db = client.db(DB_NAME);
     console.log('Connected to MongoDB');
     
-    // Check if already seeded
+    // Seed/Update manual access grants
+    const seedData = [
+      { email: OWNER_EMAIL, access_type: 'Owner' },
+      ...TEAM_EMAILS.map(e => ({ email: e, access_type: 'Team' })),
+      ...LIFETIME_SUB_EMAILS.map(e => ({ email: e, access_type: 'Lifetime' }))
+    ];
+    
+    const bulkOps = seedData.map(data => ({
+      updateOne: {
+        filter: { email: data.email },
+        update: { $set: data }, // Use $set to ensure updates
+        upsert: true
+      }
+    }));
+    
+    await db.collection('manual_access_grants').bulkWrite(bulkOps);
+    
     const seeded = await db.collection('app_meta').findOne({ key: 'manual_access_seed_v2' });
     if (!seeded) {
-      // Seed manual access grants
-      const seedData = [
-        { email: OWNER_EMAIL, access_type: 'Owner' },
-        ...TEAM_EMAILS.map(e => ({ email: e, access_type: 'Team' })),
-        ...LIFETIME_SUB_EMAILS.map(e => ({ email: e, access_type: 'Lifetime' }))
-      ];
-      
-      const bulkOps = seedData.map(data => ({
-        updateOne: {
-          filter: { email: data.email },
-          update: { $setOnInsert: data },
-          upsert: true
-        }
-      }));
-      
-      await db.collection('manual_access_grants').bulkWrite(bulkOps);
       await db.collection('app_meta').updateOne(
         { key: 'manual_access_seed_v2' },
         { $set: { seeded_at: new Date().toISOString() } },
         { upsert: true }
       );
       console.log('Seeded manual access grants');
+    } else {
+      console.log('Updated manual access grants');
     }
   }).catch(err => {
     console.error('\n=========================================');
@@ -281,6 +287,18 @@ async function verifyOwner(req: any, res: any, next: any) {
   }
   next();
 }
+
+// Prediction route
+app.post('/api/predict', async (req, res) => {
+  try {
+    const { request, historicalData } = req.body;
+    const prediction = await generateProjection(request, historicalData);
+    res.json(prediction);
+  } catch (error: any) {
+    console.error('Prediction error:', error.message || error);
+    res.status(500).json({ error: 'Failed to generate prediction', details: error.message || 'Unknown error' });
+  }
+});
 
 app.get('/api/admin/grants', verifyOwner, async (req, res) => {
   if (!db) {

@@ -180,18 +180,18 @@ export function LoginPage({ onLogin }: { onLogin: (data: any) => void }) {
   };
 
   return (
-    <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-4">
-      <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-3xl p-8 shadow-2xl">
+    <div className="min-h-screen bg-zinc-50 text-zinc-900 flex flex-col items-center justify-center p-4">
+      <div className="w-full max-w-md bg-white border border-zinc-200 rounded-3xl p-8 shadow-xl">
         <div className="flex justify-center mb-6">
           <div className="w-16 h-16 bg-emerald-500/10 rounded-full flex items-center justify-center border border-emerald-500/20">
             {step === 'email' ? <ShieldAlert className="w-8 h-8 text-emerald-500" /> : <Lock className="w-8 h-8 text-emerald-500" />}
           </div>
         </div>
-        <h1 className="text-2xl font-black text-center mb-2">Reverse Picks</h1>
+        <h1 className="text-2xl font-black text-center mb-2 text-zinc-900">Reverse Picks</h1>
         
         {step === 'email' && (
           <>
-            <p className="text-zinc-400 text-center mb-8 text-sm">Enter your email to access premium predictions.</p>
+            <p className="text-zinc-500 text-center mb-8 text-sm font-medium">Enter your email to access premium predictions.</p>
             <form onSubmit={handleEmailSubmit} className="space-y-4">
               <div>
                 <input
@@ -199,13 +199,13 @@ export function LoginPage({ onLogin }: { onLogin: (data: any) => void }) {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="Email address"
-                  className="w-full bg-black border border-zinc-800 rounded-xl px-4 py-3 text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500 transition-colors"
+                  className="w-full bg-white border border-zinc-200 rounded-xl px-4 py-3 text-zinc-900 placeholder-zinc-400 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all shadow-sm"
                   required
                 />
               </div>
               
               {error && (
-                <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 text-sm p-3 rounded-xl text-center">
+                <div className="bg-rose-500/10 border border-rose-500/20 text-rose-600 text-sm p-3 rounded-xl text-center font-medium">
                   {error}
                 </div>
               )}
@@ -213,7 +213,7 @@ export function LoginPage({ onLogin }: { onLogin: (data: any) => void }) {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full bg-emerald-500 text-black font-black py-3 rounded-xl hover:bg-emerald-400 transition-colors flex items-center justify-center disabled:opacity-50"
+                className="w-full bg-emerald-500 text-white font-black py-3 rounded-xl hover:bg-emerald-600 transition-all shadow-lg shadow-emerald-500/20 flex items-center justify-center disabled:opacity-50"
               >
                 {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Continue'}
               </button>
@@ -223,14 +223,14 @@ export function LoginPage({ onLogin }: { onLogin: (data: any) => void }) {
 
         {step === 'login' && (
           <>
-            <p className="text-zinc-400 text-center mb-8 text-sm">Welcome back. Please enter your password.</p>
+            <p className="text-zinc-500 text-center mb-8 text-sm font-medium">Welcome back. Please enter your password.</p>
             <form onSubmit={handleLoginSubmit} className="space-y-4">
               <div>
                 <input
                   type="email"
                   value={email}
                   disabled
-                  className="w-full bg-black/50 border border-zinc-800 rounded-xl px-4 py-3 text-zinc-500 cursor-not-allowed"
+                  className="w-full bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-3 text-zinc-400 cursor-not-allowed shadow-inner"
                 />
               </div>
               <div>
@@ -239,13 +239,13 @@ export function LoginPage({ onLogin }: { onLogin: (data: any) => void }) {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Password"
-                  className="w-full bg-black border border-zinc-800 rounded-xl px-4 py-3 text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500 transition-colors"
+                  className="w-full bg-white border border-zinc-200 rounded-xl px-4 py-3 text-zinc-900 placeholder-zinc-400 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all shadow-sm"
                   required
                 />
               </div>
               
               {error && (
-                <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 text-sm p-3 rounded-xl text-center">
+                <div className="bg-rose-500/10 border border-rose-500/20 text-rose-600 text-sm p-3 rounded-xl text-center font-medium">
                   {error}
                 </div>
               )}
@@ -259,7 +259,7 @@ export function LoginPage({ onLogin }: { onLogin: (data: any) => void }) {
                     setConfirmPassword('');
                     setError('');
                   }}
-                  className="text-sm text-emerald-500 hover:text-emerald-400 transition-colors"
+                  className="text-sm text-emerald-600 hover:text-emerald-700 font-bold transition-colors"
                 >
                   Forgot Password?
                 </button>
@@ -268,7 +268,7 @@ export function LoginPage({ onLogin }: { onLogin: (data: any) => void }) {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full bg-emerald-500 text-black font-black py-3 rounded-xl hover:bg-emerald-400 transition-colors flex items-center justify-center disabled:opacity-50"
+                className="w-full bg-emerald-500 text-white font-black py-3 rounded-xl hover:bg-emerald-600 transition-all shadow-lg shadow-emerald-500/20 flex items-center justify-center disabled:opacity-50"
               >
                 {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Sign In'}
               </button>
@@ -276,7 +276,7 @@ export function LoginPage({ onLogin }: { onLogin: (data: any) => void }) {
               <button
                 type="button"
                 onClick={() => { setStep('email'); setPassword(''); setError(''); }}
-                className="w-full text-zinc-500 text-sm hover:text-white transition-colors mt-4"
+                className="w-full text-zinc-500 text-sm hover:text-zinc-800 font-bold transition-colors mt-4"
               >
                 Use a different email
               </button>
@@ -286,14 +286,14 @@ export function LoginPage({ onLogin }: { onLogin: (data: any) => void }) {
 
         {step === 'reset' && (
           <>
-            <p className="text-zinc-400 text-center mb-8 text-sm">Reset your password.</p>
+            <p className="text-zinc-500 text-center mb-8 text-sm font-medium">Reset your password.</p>
             <form onSubmit={handleResetSubmit} className="space-y-4">
               <div>
                 <input
                   type="email"
                   value={email}
                   disabled
-                  className="w-full bg-black/50 border border-zinc-800 rounded-xl px-4 py-3 text-zinc-500 cursor-not-allowed"
+                  className="w-full bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-3 text-zinc-400 cursor-not-allowed shadow-inner"
                 />
               </div>
               <div>
@@ -302,7 +302,7 @@ export function LoginPage({ onLogin }: { onLogin: (data: any) => void }) {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="New Password (min. 6 characters)"
-                  className="w-full bg-black border border-zinc-800 rounded-xl px-4 py-3 text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500 transition-colors"
+                  className="w-full bg-white border border-zinc-200 rounded-xl px-4 py-3 text-zinc-900 placeholder-zinc-400 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all shadow-sm"
                   required
                 />
               </div>
@@ -312,13 +312,13 @@ export function LoginPage({ onLogin }: { onLogin: (data: any) => void }) {
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   placeholder="Confirm New Password"
-                  className="w-full bg-black border border-zinc-800 rounded-xl px-4 py-3 text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500 transition-colors"
+                  className="w-full bg-white border border-zinc-200 rounded-xl px-4 py-3 text-zinc-900 placeholder-zinc-400 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all shadow-sm"
                   required
                 />
               </div>
               
               {error && (
-                <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 text-sm p-3 rounded-xl text-center">
+                <div className="bg-rose-500/10 border border-rose-500/20 text-rose-600 text-sm p-3 rounded-xl text-center font-medium">
                   {error}
                 </div>
               )}
@@ -333,14 +333,14 @@ export function LoginPage({ onLogin }: { onLogin: (data: any) => void }) {
                     setError('');
                   }}
                   disabled={loading}
-                  className="w-1/3 bg-zinc-800 text-white font-bold py-3 rounded-xl hover:bg-zinc-700 transition-colors flex items-center justify-center disabled:opacity-50"
+                  className="w-1/3 bg-zinc-100 text-zinc-600 font-bold py-3 rounded-xl hover:bg-zinc-200 transition-colors flex items-center justify-center disabled:opacity-50"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={loading}
-                  className="w-2/3 bg-emerald-500 text-black font-black py-3 rounded-xl hover:bg-emerald-400 transition-colors flex items-center justify-center disabled:opacity-50"
+                  className="w-2/3 bg-emerald-500 text-white font-black py-3 rounded-xl hover:bg-emerald-600 transition-all shadow-lg shadow-emerald-500/20 flex items-center justify-center disabled:opacity-50"
                 >
                   {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Reset Password'}
                 </button>
@@ -351,17 +351,17 @@ export function LoginPage({ onLogin }: { onLogin: (data: any) => void }) {
 
         {step === 'setup' && (
           <>
-            <p className="text-emerald-400 text-center mb-2 text-sm font-bold flex items-center justify-center gap-2">
+            <p className="text-emerald-600 text-center mb-2 text-sm font-bold flex items-center justify-center gap-2">
               <CheckCircle2 className="w-4 h-4" /> Subscription Verified
             </p>
-            <p className="text-zinc-400 text-center mb-8 text-sm">Please set a password for future logins.</p>
+            <p className="text-zinc-500 text-center mb-8 text-sm font-medium">Please set a password for future logins.</p>
             <form onSubmit={handleSetupSubmit} className="space-y-4">
               <div>
                 <input
                   type="email"
                   value={email}
                   disabled
-                  className="w-full bg-black/50 border border-zinc-800 rounded-xl px-4 py-3 text-zinc-500 cursor-not-allowed"
+                  className="w-full bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-3 text-zinc-400 cursor-not-allowed shadow-inner"
                 />
               </div>
               <div>
@@ -370,7 +370,7 @@ export function LoginPage({ onLogin }: { onLogin: (data: any) => void }) {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Create Password (min 6 chars)"
-                  className="w-full bg-black border border-zinc-800 rounded-xl px-4 py-3 text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500 transition-colors"
+                  className="w-full bg-white border border-zinc-200 rounded-xl px-4 py-3 text-zinc-900 placeholder-zinc-400 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all shadow-sm"
                   required
                   minLength={6}
                 />
@@ -381,14 +381,14 @@ export function LoginPage({ onLogin }: { onLogin: (data: any) => void }) {
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   placeholder="Confirm Password"
-                  className="w-full bg-black border border-zinc-800 rounded-xl px-4 py-3 text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500 transition-colors"
+                  className="w-full bg-white border border-zinc-200 rounded-xl px-4 py-3 text-zinc-900 placeholder-zinc-400 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all shadow-sm"
                   required
                   minLength={6}
                 />
               </div>
               
               {error && (
-                <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 text-sm p-3 rounded-xl text-center">
+                <div className="bg-rose-500/10 border border-rose-500/20 text-rose-600 text-sm p-3 rounded-xl text-center font-medium">
                   {error}
                 </div>
               )}
@@ -396,7 +396,7 @@ export function LoginPage({ onLogin }: { onLogin: (data: any) => void }) {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full bg-emerald-500 text-black font-black py-3 rounded-xl hover:bg-emerald-400 transition-colors flex items-center justify-center disabled:opacity-50 gap-2"
+                className="w-full bg-emerald-500 text-white font-black py-3 rounded-xl hover:bg-emerald-600 transition-all shadow-lg shadow-emerald-500/20 flex items-center justify-center disabled:opacity-50 gap-2"
               >
                 {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : (
                   <>Set Password & Enter <ArrowRight className="w-4 h-4" /></>
@@ -408,7 +408,7 @@ export function LoginPage({ onLogin }: { onLogin: (data: any) => void }) {
         
         {step === 'email' && (
           <div className="mt-6 text-center">
-            <a href="https://whop.com/biz_xLCux4k1X7U3AU" target="_blank" rel="noreferrer" className="text-xs text-zinc-500 hover:text-emerald-400 transition-colors">
+            <a href="https://whop.com/biz_xLCux4k1X7U3AU" target="_blank" rel="noreferrer" className="text-xs text-zinc-500 hover:text-emerald-600 font-bold transition-colors">
               Don't have access? Get Premium
             </a>
           </div>

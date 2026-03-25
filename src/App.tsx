@@ -60,14 +60,12 @@ import {
   checkApiStatus
 } from './services/apiFootball';
 import { 
-  generateProjection, 
   parseNaturalLanguageQuery, 
   startTacticalChat,
   getMarketSentiment
-} from './services/geminiService';
+} from './services/aiService';
 import { Player, Team, PredictionRequest, PredictionResponse, SavedPick, PropType } from './types';
 import { LoginPage } from './components/LoginPage';
-import { AdminPanel } from './components/AdminPanel';
 
 // --- Components ---
 
@@ -82,10 +80,10 @@ const ProbabilityChart = ({ data, projectedValue, line }: { data: { value: numbe
               <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
             </linearGradient>
           </defs>
-          <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+          <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" vertical={false} />
           <XAxis 
             dataKey="value" 
-            stroke="#71717a" 
+            stroke="#a1a1aa" 
             fontSize={10} 
             tickLine={false} 
             axisLine={false}
@@ -93,7 +91,7 @@ const ProbabilityChart = ({ data, projectedValue, line }: { data: { value: numbe
           />
           <YAxis hide />
           <Tooltip 
-            contentStyle={{ backgroundColor: '#18181b', border: '1px solid #27272a', borderRadius: '8px', fontSize: '10px' }}
+            contentStyle={{ backgroundColor: '#ffffff', border: '1px solid #e4e4e7', borderRadius: '8px', fontSize: '10px' }}
             itemStyle={{ color: '#10b981' }}
             labelStyle={{ color: '#71717a' }}
           />
@@ -145,10 +143,10 @@ const TacticalAlerts = ({ alerts }: { alerts: { type: string, message: string, s
 
 const Badge = ({ children, variant = 'default' }: { children: React.ReactNode, variant?: 'default' | 'neon' | 'danger' | 'warning' }) => {
   const variants = {
-    default: 'bg-zinc-800 text-zinc-400',
-    neon: 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20',
-    danger: 'bg-rose-500/10 text-rose-400 border border-rose-500/20',
-    warning: 'bg-amber-500/10 text-amber-400 border border-amber-500/20',
+    default: 'bg-zinc-100 text-zinc-500 border border-zinc-200',
+    neon: 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20',
+    danger: 'bg-rose-500/10 text-rose-600 border border-rose-500/20',
+    warning: 'bg-amber-500/10 text-amber-600 border border-amber-500/20',
   };
   return (
     <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${variants[variant]}`}>
@@ -158,7 +156,7 @@ const Badge = ({ children, variant = 'default' }: { children: React.ReactNode, v
 };
 
 const Card = ({ children, className = '', ...props }: { children: React.ReactNode, className?: string, [key: string]: any }) => (
-  <div className={`bg-zinc-900/50 border border-zinc-800 rounded-2xl overflow-hidden backdrop-blur-sm ${className}`} {...props}>
+  <div className={`bg-zinc-100/50 border border-zinc-200 rounded-2xl overflow-hidden backdrop-blur-sm ${className}`} {...props}>
     {children}
   </div>
 );
@@ -181,7 +179,7 @@ const ProjectionCard = ({
           <div>
             <Badge variant="neon">Projection Ready</Badge>
             <h3 className="text-3xl font-black mt-2 tracking-tighter">{projection.player.name}</h3>
-            <p className="text-zinc-400 text-sm">{projection.player.team} vs {projection.opponent}</p>
+            <p className="text-zinc-500 text-sm">{projection.player.team} vs {projection.opponent}</p>
           </div>
           <div className="text-right">
             <div className="text-xs text-zinc-500 uppercase font-bold">Confidence</div>
@@ -192,14 +190,14 @@ const ProjectionCard = ({
         {projection.tacticalAlerts && <TacticalAlerts alerts={projection.tacticalAlerts} />}
 
         <div className="grid grid-cols-2 gap-4 mb-8">
-          <div className="bg-zinc-900/80 p-4 rounded-xl border border-zinc-800">
+          <div className="bg-zinc-100/80 p-4 rounded-xl border border-zinc-200">
             <div className="text-[10px] text-zinc-500 uppercase font-bold mb-1">Prop Line</div>
             <div className="flex items-baseline gap-1">
-              <span className="text-2xl font-black text-white">{projection.line}</span>
+              <span className="text-2xl font-black text-zinc-900">{projection.line}</span>
               <span className="text-sm text-zinc-500 font-medium capitalize">{projection.propType}</span>
             </div>
           </div>
-          <div className="bg-zinc-900/80 p-4 rounded-xl border border-zinc-800">
+          <div className="bg-zinc-100/80 p-4 rounded-xl border border-zinc-200">
             <div className="text-[10px] text-zinc-500 uppercase font-bold mb-1 flex justify-between">
               <span>Projected</span>
               <span className="text-[8px] opacity-50">95% CI</span>
@@ -240,7 +238,7 @@ const ProjectionCard = ({
               <h4 className="text-xs font-bold text-zinc-500 uppercase tracking-widest flex items-center gap-2">
                 <Activity className="w-3 h-3" /> Recent Form
               </h4>
-              <div className="text-[10px] font-bold text-zinc-400 bg-zinc-900 px-2 py-1 rounded-md border border-zinc-800">
+              <div className="text-[10px] font-bold text-zinc-500 bg-zinc-100 px-2 py-1 rounded-md border border-zinc-200">
                 {projection.recentSamples.filter((s, idx) => !excludedIndices.includes(idx) && (projection.recommendation === 'over' ? s.value > projection.line : s.value < projection.line)).length} / {projection.recentSamples.filter((_, idx) => !excludedIndices.includes(idx)).length} HIT RATE
               </div>
             </div>
@@ -256,9 +254,9 @@ const ProjectionCard = ({
                     key={idx} 
                     onClick={() => onToggleSample(idx)}
                     className={`relative p-2 rounded-lg border transition-all hover:scale-105 active:scale-95 cursor-pointer flex flex-col items-center justify-between min-h-[60px] ${
-                      isExcluded ? 'bg-zinc-900/50 border-zinc-800 text-zinc-600 opacity-50' :
-                      isPush ? 'bg-zinc-800 border-zinc-700 text-zinc-300' :
-                      isHit ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-rose-500/10 border-rose-500/30 text-rose-400'
+                      isExcluded ? 'bg-zinc-100/50 border-zinc-200 text-zinc-500 opacity-50' :
+                      isPush ? 'bg-zinc-200 border-zinc-300 text-zinc-600' :
+                      isHit ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600' : 'bg-rose-500/10 border-rose-500/30 text-rose-600'
                     }`}
                     title={`${sample.date} vs ${sample.opponent} (Difficulty: ${sample.matchDifficulty})`}
                   >
@@ -277,28 +275,28 @@ const ProjectionCard = ({
 
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
-            <div className="bg-zinc-900/50 p-3 rounded-xl border border-zinc-800">
+            <div className="bg-zinc-100/50 p-3 rounded-xl border border-zinc-200">
               <div className="text-[9px] text-zinc-500 uppercase font-bold mb-1">Position</div>
-              <div className="text-sm font-bold text-white">{projection.player.position}</div>
+              <div className="text-sm font-bold text-zinc-900">{projection.player.position}</div>
             </div>
-            <div className="bg-zinc-900/50 p-3 rounded-xl border border-zinc-800">
+            <div className="bg-zinc-100/50 p-3 rounded-xl border border-zinc-200">
               <div className="text-[9px] text-zinc-500 uppercase font-bold mb-1">Tactical Role</div>
-              <div className="text-sm font-bold text-emerald-400">{projection.player.role}</div>
+              <div className="text-sm font-bold text-emerald-600">{projection.player.role}</div>
             </div>
           </div>
 
-          <div className="bg-zinc-900/80 p-4 rounded-xl border border-zinc-800 space-y-3">
+          <div className="bg-zinc-100/80 p-4 rounded-xl border border-zinc-200 space-y-3">
             <div className="text-[10px] text-zinc-500 uppercase font-bold flex items-center gap-2">
               <Zap className="w-3 h-3 text-emerald-400" /> Bayesian Model Metrics
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <div className="text-[8px] text-zinc-500 uppercase font-bold">Prior Mean</div>
-                <div className="text-sm font-bold text-white">{projection.bayesianMetrics.priorMean}</div>
+                <div className="text-sm font-bold text-zinc-900">{projection.bayesianMetrics.priorMean}</div>
               </div>
               <div>
                 <div className="text-[8px] text-zinc-500 uppercase font-bold">Momentum</div>
-                <div className="text-sm font-bold text-emerald-400">{projection.bayesianMetrics.momentumEffect > 0 ? '+' : ''}{projection.bayesianMetrics.momentumEffect}</div>
+                <div className="text-sm font-bold text-emerald-600">{projection.bayesianMetrics.momentumEffect > 0 ? '+' : ''}{projection.bayesianMetrics.momentumEffect}</div>
               </div>
             </div>
           </div>
@@ -307,7 +305,7 @@ const ProjectionCard = ({
             <h4 className="text-xs font-bold text-zinc-500 uppercase tracking-widest flex items-center gap-2">
               <BarChart3 className="w-3 h-3" /> Model Reasoning
             </h4>
-            <p className="text-sm text-zinc-300 leading-relaxed whitespace-pre-wrap">{projection.reasoning}</p>
+            <p className="text-sm text-zinc-600 leading-relaxed whitespace-pre-wrap">{projection.reasoning}</p>
           </div>
         </div>
       </Card>
@@ -323,7 +321,7 @@ const ProjectionCard = ({
 
 export default function App() {
   const [user, setUser] = useState<{email: string, accessType: string, sessionToken: string} | null>(null);
-  const [activeTab, setActiveTab] = useState<'predict' | 'tracking' | 'admin' | 'chat'>('predict');
+  const [activeTab, setActiveTab] = useState<'predict' | 'tracking' | 'chat'>('predict');
   const [trackingView, setTrackingView] = useState<'live' | 'history'>('live');
   
   const [wizardStep, setWizardStep] = useState(1);
@@ -609,7 +607,52 @@ export default function App() {
       fixtureMetadata
     };
     
-    return await generateProjection(data, historicalData);
+    try {
+      const response = await fetch('/api/predict', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ request: data, historicalData })
+      });
+      if (!response.ok) throw new Error('Prediction failed');
+      return await response.json();
+    } catch (error) {
+      console.error('Gemini projection failed, falling back to raw data:', error);
+      // Fallback projection with more raw data to prevent UI breakage
+      return {
+        player: { 
+          id: data.playerId, 
+          name: data.playerName, 
+          team: data.teamId.toString(), 
+          role: 'Unknown', 
+          position: 'Unknown' 
+        },
+        opponent: data.opponentName,
+        league: 'Unknown',
+        propType: data.propType,
+        line: data.line,
+        projectedValue: data.line, // Use line as a neutral projection
+        recommendation: 'over',
+        confidenceScore: 0.5,
+        confidenceLevel: 'Medium',
+        confidenceInterval: [data.line * 0.9, data.line * 1.1],
+        explanation: 'AI analysis currently unavailable. Displaying raw data.',
+        recentSamples: (Array.isArray(historicalData.playerStats) ? historicalData.playerStats : []).slice(0, 5),
+        tacticalAnalysis: { 
+          pressingStyle: 'N/A', 
+          possessionImpact: 'N/A', 
+          spaceAndTime: 'N/A' 
+        },
+        bayesianMetrics: { 
+          priorMean: data.line, 
+          momentumEffect: 0, 
+          covariateAdjustment: 0, 
+          reversalFlag: 'stable' 
+        },
+        probabilityCurve: [],
+        tacticalInsights: 'AI analysis currently unavailable.',
+        reasoning: 'AI analysis currently unavailable due to rate limits. Displaying raw data based on recent performance.'
+      } as PredictionResponse;
+    }
   };
 
   const reAnalyzePick = async (pick: SavedPick, e: React.MouseEvent) => {
@@ -712,9 +755,9 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-black text-zinc-100 font-sans selection:bg-emerald-500/30">
+    <div className="min-h-screen bg-zinc-50 text-zinc-900 font-sans selection:bg-emerald-500/30">
       {/* Header */}
-      <header className="sticky top-0 z-50 bg-black/80 backdrop-blur-xl border-b border-zinc-800 px-6 pt-[calc(1rem+env(safe-area-inset-top))] pb-4 flex items-center justify-between">
+      <header className="sticky top-0 z-50 bg-inherit/80 backdrop-blur-xl border-b border-zinc-200 px-6 pt-[calc(1rem+env(safe-area-inset-top))] pb-4 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 bg-emerald-500 rounded-lg flex items-center justify-center shadow-[0_0_15px_rgba(16,185,129,0.4)]">
             <Zap className="w-5 h-5 text-black fill-current" />
@@ -724,25 +767,25 @@ export default function App() {
           </h1>
         </div>
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-zinc-900 border border-zinc-800">
+          <div className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-zinc-100 border border-zinc-200">
             <div className={`w-1.5 h-1.5 rounded-full ${
               apiStatus === 'online' ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]' : 
               apiStatus === 'offline' ? 'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.6)]' : 
-              'bg-zinc-600 animate-pulse'
+              'bg-zinc-300 animate-pulse'
             }`} />
             <span className="text-[8px] font-black uppercase tracking-widest text-zinc-500">API</span>
           </div>
           <Badge variant="neon">v1.2.4-BETA</Badge>
           <button 
             onClick={() => window.location.reload()}
-            className="p-2 hover:bg-zinc-800 rounded-full transition-colors"
+            className="p-2 hover:bg-zinc-100 rounded-full transition-colors"
             title="Refresh"
           >
-            <RefreshCw className="w-5 h-5 text-zinc-400" />
+            <RefreshCw className="w-5 h-5 text-zinc-500" />
           </button>
           <button
             onClick={handleLogout}
-            className="text-xs font-bold text-zinc-400 hover:text-white transition-colors uppercase tracking-wider"
+            className="text-xs font-bold text-zinc-500 hover:text-zinc-900 transition-colors uppercase tracking-wider"
           >
             Logout
           </button>
@@ -771,23 +814,23 @@ export default function App() {
                     </div>
                     <div className="flex items-center gap-4">
                       {searchMode === 'wizard' && wizardStep > 1 && (
-                        <button onClick={() => setWizardStep(wizardStep - 1)} className="text-zinc-400 text-sm flex items-center gap-1">
+                        <button onClick={() => setWizardStep(wizardStep - 1)} className="text-zinc-500 text-sm flex items-center gap-1">
                           <ArrowLeft className="w-4 h-4" /> Back
                         </button>
                       )}
                     </div>
                   </div>
 
-                  <div className="flex bg-zinc-900 p-1 rounded-xl border border-zinc-800">
+                  <div className="flex bg-zinc-100 p-1 rounded-xl border border-zinc-200">
                     <button 
                       onClick={() => setSearchMode('wizard')}
-                      className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${searchMode === 'wizard' ? 'bg-zinc-800 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
+                      className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${searchMode === 'wizard' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}
                     >
                       Step-by-Step
                     </button>
                     <button 
                       onClick={() => setSearchMode('natural')}
-                      className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${searchMode === 'natural' ? 'bg-zinc-800 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
+                      className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${searchMode === 'natural' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}
                     >
                       Natural Search
                     </button>
@@ -802,13 +845,13 @@ export default function App() {
                           value={naturalQuery}
                           onChange={(e) => setNaturalQuery(e.target.value)}
                           placeholder="e.g. Lamine Yamal 52.5 passes vs Villarreal" 
-                          className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl py-5 pl-12 pr-4 focus:outline-none focus:border-emerald-500/50 text-sm"
+                          className="w-full bg-zinc-100 border border-zinc-200 rounded-2xl py-5 pl-12 pr-4 focus:outline-none focus:border-emerald-500/50 text-sm"
                         />
                       </div>
                       <button 
                         type="submit"
                         disabled={isParsingQuery || !naturalQuery.trim()}
-                        className="w-full bg-emerald-500 hover:bg-emerald-400 text-black font-black py-5 rounded-2xl shadow-[0_0_30px_rgba(16,185,129,0.3)] transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                        className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-black py-5 rounded-2xl shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
                       >
                         {isParsingQuery ? <Loader2 className="w-5 h-5 animate-spin" /> : <Zap className="w-5 h-5 fill-current" />}
                         {isParsingQuery ? 'PARSING QUERY...' : 'ANALYZE QUERY'}
@@ -833,10 +876,10 @@ export default function App() {
                             <h3 className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em] px-1">{type}</h3>
                             <div className="grid grid-cols-1 gap-2">
                               {leaguesOfType.map((league) => (
-                                <Card key={league.id} className="p-4 hover:bg-zinc-800/50 cursor-pointer transition-colors" onClick={() => handleWizardLeagueSelect(league.id)}>
+                                <Card key={league.id} className="p-4 hover:bg-zinc-100 cursor-pointer transition-colors" onClick={() => handleWizardLeagueSelect(league.id)}>
                                   <div className="flex items-center justify-between">
                                     <span className="font-bold text-sm">{league.name}</span>
-                                    <ChevronRight className="w-4 h-4 text-zinc-600" />
+                                    <ChevronRight className="w-4 h-4 text-zinc-500" />
                                   </div>
                                 </Card>
                               ))}
@@ -860,20 +903,20 @@ export default function App() {
                         <input 
                           type="text" 
                           placeholder="Search player name..." 
-                          className="w-full bg-zinc-900 border border-zinc-800 rounded-xl py-3 pl-10 pr-4 focus:outline-none focus:border-emerald-500/50"
+                          className="w-full bg-zinc-100 border border-zinc-200 rounded-xl py-3 pl-10 pr-4 focus:outline-none focus:border-emerald-500/50"
                           onChange={(e) => handleWizardPlayerSearch(e.target.value)}
                         />
                         {isWizardPlayersLoading && (
-                          <RefreshCw className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-400 animate-spin" />
+                          <RefreshCw className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-500 animate-spin" />
                         )}
                       </form>
                       
                       <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1">
                         {wizardPlayers.map((player) => (
-                          <Card key={player.id} className="p-3 hover:bg-zinc-800/50 cursor-pointer transition-colors" onClick={() => handleWizardPlayerSelect(player)}>
+                          <Card key={player.id} className="p-3 hover:bg-zinc-100 cursor-pointer transition-colors" onClick={() => handleWizardPlayerSelect(player)}>
                             <div className="flex items-center gap-3">
-                              <div className="w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center border border-zinc-700">
-                                <User className="w-4 h-4 text-zinc-400" />
+                              <div className="w-8 h-8 rounded-full bg-zinc-100 flex items-center justify-center border border-zinc-200">
+                                <User className="w-4 h-4 text-zinc-500" />
                               </div>
                               <div>
                                 <div className="text-sm font-bold">{player.name}</div>
@@ -901,9 +944,9 @@ export default function App() {
                       ) : teams.length > 0 ? (
                         <div className="grid grid-cols-2 gap-3">
                           {teams.map((team) => (
-                            <Card key={team.id} className="p-4 flex flex-col items-center gap-3 hover:bg-zinc-800/50 cursor-pointer transition-colors" onClick={() => handleWizardOpponentSelect(team)}>
-                              <div className="w-12 h-12 rounded-xl bg-zinc-800 flex items-center justify-center border border-zinc-700">
-                                <Shield className="w-6 h-6 text-zinc-400" />
+                            <Card key={team.id} className="p-4 flex flex-col items-center gap-3 hover:bg-zinc-100 cursor-pointer transition-colors" onClick={() => handleWizardOpponentSelect(team)}>
+                              <div className="w-12 h-12 rounded-xl bg-zinc-100 flex items-center justify-center border border-zinc-200">
+                                <Shield className="w-6 h-6 text-zinc-500" />
                               </div>
                               <span className="text-xs font-bold text-center">{team.name}</span>
                             </Card>
@@ -912,7 +955,7 @@ export default function App() {
                       ) : (
                         <div className="text-center py-8 text-zinc-500 text-sm">
                           No teams found for this player's league. Please go back and select a league manually.
-                          <button onClick={() => setWizardStep(1)} className="mt-4 px-4 py-2 bg-zinc-800 rounded-lg text-white hover:bg-zinc-700 block mx-auto">
+                          <button onClick={() => setWizardStep(1)} className="mt-4 px-4 py-2 bg-zinc-100 rounded-lg text-zinc-900 hover:bg-zinc-200 block mx-auto border border-zinc-200">
                             Go to League Selection
                           </button>
                         </div>
@@ -922,11 +965,11 @@ export default function App() {
 
                   {searchMode === 'wizard' && wizardStep === 4 && (
                     <div className="grid grid-cols-2 gap-4">
-                      <button onClick={() => { setWizardData({ ...wizardData, venue: 'home' }); setWizardStep(5); }} className={`p-6 rounded-2xl border-2 transition-all ${wizardData.venue === 'home' ? 'border-emerald-500 bg-emerald-500/10' : 'border-zinc-800 bg-zinc-900'}`}>
+                      <button onClick={() => { setWizardData({ ...wizardData, venue: 'home' }); setWizardStep(5); }} className={`p-6 rounded-2xl border-2 transition-all ${wizardData.venue === 'home' ? 'border-emerald-500 bg-emerald-500/10' : 'border-zinc-200 bg-zinc-100'}`}>
                         <span className="block text-lg font-bold">Home</span>
                         <span className="text-xs text-zinc-500 uppercase">Venue</span>
                       </button>
-                      <button onClick={() => { setWizardData({ ...wizardData, venue: 'away' }); setWizardStep(5); }} className={`p-6 rounded-2xl border-2 transition-all ${wizardData.venue === 'away' ? 'border-emerald-500 bg-emerald-500/10' : 'border-zinc-800 bg-zinc-900'}`}>
+                      <button onClick={() => { setWizardData({ ...wizardData, venue: 'away' }); setWizardStep(5); }} className={`p-6 rounded-2xl border-2 transition-all ${wizardData.venue === 'away' ? 'border-emerald-500 bg-emerald-500/10' : 'border-zinc-200 bg-zinc-100'}`}>
                         <span className="block text-lg font-bold">Away</span>
                         <span className="text-xs text-zinc-500 uppercase">Venue</span>
                       </button>
@@ -951,17 +994,17 @@ export default function App() {
                       <div className="text-center space-y-2">
                         <label className="text-zinc-500 text-xs uppercase font-bold tracking-widest">Set Prop Line</label>
                         <div className="flex items-center justify-center gap-6">
-                          <button onClick={() => setWizardData({ ...wizardData, line: Math.max(0, (wizardData.line || 0) - 0.5) })} className="w-12 h-12 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center text-2xl font-bold">-</button>
+                          <button onClick={() => setWizardData({ ...wizardData, line: Math.max(0, (wizardData.line || 0) - 0.5) })} className="w-12 h-12 rounded-full bg-white border border-zinc-200 flex items-center justify-center text-2xl font-bold text-zinc-900 shadow-sm">-</button>
                           <input 
                             type="number" 
-                            step="0.5" 
+                            step="0.5"
                             placeholder="0.0"
                             value={wizardData.line === 0 ? '' : wizardData.line} 
                             onChange={(e) => setWizardData({ ...wizardData, line: parseFloat(e.target.value) || 0 })}
-                            className="text-5xl font-black text-emerald-400 bg-transparent text-center w-32 outline-none appearance-none"
+                            className="text-5xl font-black text-emerald-500 bg-transparent text-center w-32 outline-none appearance-none"
                             style={{ WebkitAppearance: 'none', MozAppearance: 'textfield' }}
                           />
-                          <button onClick={() => setWizardData({ ...wizardData, line: (wizardData.line || 0) + 0.5 })} className="w-12 h-12 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center text-2xl font-bold">+</button>
+                          <button onClick={() => setWizardData({ ...wizardData, line: (wizardData.line || 0) + 0.5 })} className="w-12 h-12 rounded-full bg-white border border-zinc-200 flex items-center justify-center text-2xl font-bold text-zinc-900 shadow-sm">+</button>
                         </div>
                       </div>
                       {wizardError && (
@@ -991,10 +1034,10 @@ export default function App() {
                 <div className="py-20 flex flex-col items-center justify-center space-y-6 text-center">
                   <div className="relative">
                     <div className="w-24 h-24 rounded-full border-4 border-emerald-500/20 border-t-emerald-500 animate-spin" />
-                    <Zap className="w-8 h-8 text-emerald-400 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 animate-pulse" />
+                    <Zap className="w-8 h-8 text-emerald-500 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 animate-pulse" />
                   </div>
                   <div className="space-y-2">
-                    <h3 className="text-xl font-bold text-white">Analyzing Matchup...</h3>
+                    <h3 className="text-xl font-bold text-zinc-900">Analyzing Matchup...</h3>
                     <p className="text-zinc-500 text-sm animate-pulse">Running Bayesian simulations & searching live data</p>
                   </div>
                 </div>
@@ -1005,7 +1048,7 @@ export default function App() {
                   <div className="flex items-center gap-2 mb-4">
                     <button 
                       onClick={() => setProjection(null)}
-                      className="p-2 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white transition-colors"
+                      className="p-2 rounded-xl bg-white border border-zinc-200 text-zinc-500 hover:text-zinc-900 transition-colors shadow-sm"
                     >
                       <ArrowLeft className="w-5 h-5" />
                     </button>
@@ -1038,16 +1081,16 @@ export default function App() {
               <div className="flex items-center justify-between">
                 <h2 className="text-2xl font-bold tracking-tight">Tracking</h2>
                 <div className="flex items-center gap-3">
-                  <div className="flex bg-zinc-900 p-1 rounded-lg border border-zinc-800">
+                  <div className="flex bg-zinc-100 p-1 rounded-lg border border-zinc-200">
                     <button 
                       onClick={() => setTrackingView('live')}
-                      className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${trackingView === 'live' ? 'bg-zinc-800 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
+                      className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${trackingView === 'live' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}
                     >
                       Live
                     </button>
                     <button 
                       onClick={() => setTrackingView('history')}
-                      className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${trackingView === 'history' ? 'bg-zinc-800 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
+                      className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${trackingView === 'history' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}
                     >
                       History
                     </button>
@@ -1058,14 +1101,14 @@ export default function App() {
               <div className="space-y-4">
                 {savedPicks.filter(p => trackingView === 'live' ? p.status === 'live' : p.status === 'settled').length === 0 ? (
                   <div className="text-center py-24 space-y-4">
-                    <div className="w-16 h-16 bg-zinc-900 rounded-full flex items-center justify-center mx-auto border border-zinc-800">
-                      <Clock className="w-8 h-8 text-zinc-700" />
+                    <div className="w-16 h-16 bg-zinc-50 rounded-full flex items-center justify-center mx-auto border border-zinc-100">
+                      <Clock className="w-8 h-8 text-zinc-500" />
                     </div>
                     <p className="text-zinc-500 text-sm">No {trackingView} picks being tracked.</p>
                   </div>
                 ) : (
                   savedPicks.filter(p => trackingView === 'live' ? p.status === 'live' : p.status === 'settled').map((pick) => (
-                    <Card key={pick.id} className="p-4 relative group cursor-pointer hover:border-zinc-700 transition-colors" onClick={() => setSelectedPick(pick)}>
+                    <Card key={pick.id} className="p-4 relative group cursor-pointer hover:border-zinc-300 transition-colors" onClick={() => setSelectedPick(pick)}>
                       <div className="flex justify-between items-start mb-3">
                         <div className="flex items-center gap-2">
                           <div className={`w-2 h-2 rounded-full ${pick.status === 'live' ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-600'}`} />
@@ -1075,7 +1118,7 @@ export default function App() {
                           {pick.status === 'settled' && (
                             <Badge variant={pick.result === 'win' ? 'neon' : 'danger'}>{pick.result}</Badge>
                           )}
-                          <div className={`px-2 py-0.5 rounded-md text-[8px] font-black uppercase tracking-tighter ${pick.recommendation === 'over' ? 'bg-emerald-500 text-black' : 'bg-rose-500 text-white'}`}>
+                          <div className={`px-2 py-0.5 rounded-md text-[8px] font-black uppercase tracking-tighter ${pick.recommendation === 'over' ? 'bg-emerald-500 text-white' : 'bg-rose-500 text-white'}`}>
                             {pick.recommendation}
                           </div>
                           <button 
@@ -1119,23 +1162,23 @@ export default function App() {
                       )}
 
                       <div className="grid grid-cols-4 gap-2 mb-4">
-                        <div className="bg-zinc-900/80 p-2 rounded-lg border border-zinc-800/50">
+                        <div className="bg-zinc-50 p-2 rounded-lg border border-zinc-100">
                           <div className="text-[7px] text-zinc-500 uppercase font-bold">Proj</div>
-                          <div className="text-xs font-black text-emerald-400">{pick.projectedValue}</div>
+                          <div className="text-xs font-black text-emerald-600">{pick.projectedValue}</div>
                         </div>
-                        <div className="bg-zinc-900/80 p-2 rounded-lg border border-zinc-800/50">
+                        <div className="bg-zinc-50 p-2 rounded-lg border border-zinc-100">
                           <div className="text-[7px] text-zinc-500 uppercase font-bold">Now</div>
-                          <div className="text-xs font-black text-white">{pick.liveStats?.value || pick.actualValue || 0}</div>
+                          <div className="text-xs font-black text-zinc-900">{pick.liveStats?.value || pick.actualValue || 0}</div>
                         </div>
-                        <div className="bg-zinc-900/80 p-2 rounded-lg border border-zinc-800/50">
+                        <div className="bg-zinc-50 p-2 rounded-lg border border-zinc-100">
                           <div className="text-[7px] text-zinc-500 uppercase font-bold">95% CI</div>
-                          <div className="text-[9px] font-black text-zinc-400">
+                          <div className="text-[9px] font-black text-zinc-500">
                             {pick.confidenceInterval[0]}-{pick.confidenceInterval[1]}
                           </div>
                         </div>
-                        <div className="bg-zinc-900/80 p-2 rounded-lg border border-zinc-800/50">
+                        <div className="bg-zinc-50 p-2 rounded-lg border border-zinc-100">
                           <div className="text-[7px] text-zinc-500 uppercase font-bold">Hit Rate</div>
-                          <div className="text-xs font-black text-amber-400">
+                          <div className="text-xs font-black text-amber-600">
                             {Math.round((pick.recentSamples.filter(s => pick.recommendation === 'over' ? s.value > pick.line : s.value < pick.line).length / pick.recentSamples.length) * 100)}%
                           </div>
                         </div>
@@ -1151,11 +1194,11 @@ export default function App() {
                               {pick.liveStats.onTrack ? 'ON TRACK' : 'BEHIND'} • {pick.liveStats.minutes}'
                             </div>
                           </div>
-                          <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden border border-zinc-700/50">
+                          <div className="h-1.5 bg-zinc-100 rounded-full overflow-hidden border border-zinc-200">
                             <motion.div 
                               initial={{ width: 0 }}
                               animate={{ width: `${Math.min((pick.liveStats.value / pick.line) * 100, 100)}%` }}
-                              className={`h-full ${pick.liveStats.onTrack ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]' : 'bg-rose-500'}`}
+                              className={`h-full ${pick.liveStats.onTrack ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.3)]' : 'bg-rose-500'}`}
                             />
                           </div>
                           <div className="flex justify-between text-[8px] text-zinc-500 font-bold">
@@ -1166,12 +1209,12 @@ export default function App() {
                         </div>
                       )}
 
-                      <div className="pt-3 border-t border-zinc-800 flex items-center justify-between">
+                      <div className="pt-3 border-t border-zinc-100 flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          <BarChart3 className="w-3 h-3 text-zinc-600" />
-                          <span className="text-[9px] text-zinc-600 font-mono">ID: {pick.player.id}</span>
+                          <BarChart3 className="w-3 h-3 text-zinc-500" />
+                          <span className="text-[9px] text-zinc-500 font-mono">ID: {pick.player.id}</span>
                         </div>
-                        <div className="text-[9px] text-zinc-600">
+                        <div className="text-[9px] text-zinc-500">
                           {new Date(pick.timestamp).toLocaleDateString()}
                         </div>
                       </div>
@@ -1198,7 +1241,7 @@ export default function App() {
                 </div>
                 <button 
                   onClick={startNewChat}
-                  className="p-2 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white transition-colors"
+                  className="p-2 rounded-xl bg-white border border-zinc-200 text-zinc-500 hover:text-zinc-900 transition-colors shadow-sm"
                   title="Reset Session"
                 >
                   <RefreshCw className="w-4 h-4" />
@@ -1211,7 +1254,7 @@ export default function App() {
                     <div className={`max-w-[85%] p-4 rounded-2xl text-sm leading-relaxed ${
                       msg.role === 'user' 
                         ? 'bg-emerald-500 text-black font-medium rounded-tr-none' 
-                        : 'bg-zinc-900 border border-zinc-800 text-zinc-200 rounded-tl-none'
+                        : 'bg-zinc-100 border border-zinc-200 text-zinc-800 rounded-tl-none'
                     }`}>
                       {msg.text}
                     </div>
@@ -1219,8 +1262,8 @@ export default function App() {
                 ))}
                 {isChatting && (
                   <div className="flex justify-start">
-                    <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-2xl rounded-tl-none">
-                      <Loader2 className="w-4 h-4 text-emerald-400 animate-spin" />
+                    <div className="bg-zinc-100 border border-zinc-200 p-4 rounded-2xl rounded-tl-none">
+                      <Loader2 className="w-4 h-4 text-emerald-500 animate-spin" />
                     </div>
                   </div>
                 )}
@@ -1233,7 +1276,7 @@ export default function App() {
                   onChange={(e) => setChatInput(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
                   placeholder="Ask for tactical insights..."
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl py-4 pl-5 pr-14 focus:outline-none focus:border-emerald-500/50 text-sm"
+                  className="w-full bg-white border border-zinc-200 rounded-2xl py-4 pl-5 pr-14 focus:outline-none focus:border-emerald-500/50 text-sm text-zinc-900 shadow-sm"
                 />
                 <button 
                   onClick={handleSendMessage}
@@ -1246,17 +1289,7 @@ export default function App() {
             </motion.div>
           )}
 
-          {activeTab === 'admin' && user.accessType === 'Owner' && (
-            <motion.div
-              key="admin"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.2, ease: "easeOut" }}
-            >
-              <AdminPanel user={user} />
-            </motion.div>
-          )}
+          {/* Admin panel removed */}
         </AnimatePresence>
       </main>
 
@@ -1267,10 +1300,10 @@ export default function App() {
             initial={{ opacity: 0 }} 
             animate={{ opacity: 1 }} 
             exit={{ opacity: 0 }} 
-            className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-md p-6 overflow-y-auto"
+            className="fixed inset-0 z-[100] bg-white/95 backdrop-blur-md p-6 overflow-y-auto"
           >
             <div className="max-w-md mx-auto space-y-8">
-              <button onClick={() => setSelectedPick(null)} className="flex items-center gap-2 text-zinc-400 hover:text-white transition-colors">
+              <button onClick={() => setSelectedPick(null)} className="flex items-center gap-2 text-zinc-500 hover:text-zinc-900 transition-colors">
                 <ArrowLeft className="w-5 h-5" /> Back to Tracking
               </button>
 
@@ -1278,14 +1311,14 @@ export default function App() {
                 <div className="flex justify-between items-start">
                   <div>
                     <Badge variant="neon">Analysis Detail</Badge>
-                    <h2 className="text-4xl font-black mt-2 tracking-tighter">{selectedPick.player.name}</h2>
-                    <p className="text-zinc-400">{selectedPick.player.team} vs {selectedPick.opponent}</p>
+                    <h2 className="text-4xl font-black mt-2 tracking-tighter text-zinc-900">{selectedPick.player.name}</h2>
+                    <p className="text-zinc-500">{selectedPick.player.team} vs {selectedPick.opponent}</p>
                   </div>
                   <div className="text-right">
                     <div className="text-xs text-zinc-500 uppercase font-bold">Status</div>
-                    <div className="text-xl font-black text-emerald-400 uppercase">{selectedPick.status}</div>
+                    <div className="text-xl font-black text-emerald-600 uppercase">{selectedPick.status}</div>
                     {selectedPick.status === 'settled' && (
-                      <div className={`text-sm font-bold uppercase mt-1 ${selectedPick.result === 'won' ? 'text-emerald-500' : 'text-rose-500'}`}>
+                      <div className={`text-sm font-bold uppercase mt-1 ${selectedPick.result === 'won' ? 'text-emerald-600' : 'text-rose-600'}`}>
                         {selectedPick.result}
                       </div>
                     )}
@@ -1294,49 +1327,49 @@ export default function App() {
 
                 <Card className="p-6 space-y-6">
                   <div className="grid grid-cols-2 gap-4">
-                    <div className="bg-zinc-900/80 p-4 rounded-xl border border-zinc-800">
+                    <div className="bg-zinc-50 p-4 rounded-xl border border-zinc-100">
                       <div className="text-[10px] text-zinc-500 uppercase font-bold mb-1">Prop Line</div>
-                      <div className="text-2xl font-black">{selectedPick.line} <span className="text-xs text-zinc-500 capitalize">{selectedPick.propType}</span></div>
+                      <div className="text-2xl font-black text-zinc-900">{selectedPick.line} <span className="text-xs text-zinc-500 capitalize">{selectedPick.propType}</span></div>
                     </div>
-                    <div className="bg-zinc-900/80 p-4 rounded-xl border border-zinc-800">
+                    <div className="bg-zinc-50 p-4 rounded-xl border border-zinc-100">
                       <div className="text-[10px] text-zinc-500 uppercase font-bold mb-1">Projected</div>
-                      <div className="text-2xl font-black text-emerald-400">{selectedPick.projectedValue}</div>
+                      <div className="text-2xl font-black text-emerald-600">{selectedPick.projectedValue}</div>
                     </div>
                   </div>
 
                   <div className="space-y-4">
                     <div className="grid grid-cols-2 gap-3">
-                      <div className="bg-zinc-900/50 p-3 rounded-xl border border-zinc-800">
+                      <div className="bg-zinc-50 p-3 rounded-xl border border-zinc-100">
                         <div className="text-[9px] text-zinc-500 uppercase font-bold mb-1">Position</div>
-                        <div className="text-sm font-bold text-white">{selectedPick.player.position}</div>
+                        <div className="text-sm font-bold text-zinc-900">{selectedPick.player.position}</div>
                       </div>
-                      <div className="bg-zinc-900/50 p-3 rounded-xl border border-zinc-800">
+                      <div className="bg-zinc-50 p-3 rounded-xl border border-zinc-100">
                         <div className="text-[9px] text-zinc-500 uppercase font-bold mb-1">Tactical Role</div>
-                        <div className="text-sm font-bold text-emerald-400">{selectedPick.player.role}</div>
+                        <div className="text-sm font-bold text-emerald-600">{selectedPick.player.role}</div>
                       </div>
                     </div>
 
                     {selectedPick.bayesianMetrics && (
-                      <div className="bg-zinc-900/80 p-4 rounded-xl border border-zinc-800 space-y-3">
+                      <div className="bg-zinc-50 p-4 rounded-xl border border-zinc-100 space-y-3">
                         <div className="text-[10px] text-zinc-500 uppercase font-bold flex items-center gap-2">
-                          <Zap className="w-3 h-3 text-emerald-400" /> Bayesian Model Metrics
+                          <Zap className="w-3 h-3 text-emerald-500" /> Bayesian Model Metrics
                         </div>
                         <div className="grid grid-cols-2 gap-4">
                           <div>
                             <div className="text-[8px] text-zinc-500 uppercase font-bold">Prior Mean</div>
-                            <div className="text-sm font-bold text-white">{selectedPick.bayesianMetrics.priorMean}</div>
+                            <div className="text-sm font-bold text-zinc-900">{selectedPick.bayesianMetrics.priorMean}</div>
                           </div>
                           <div>
                             <div className="text-[8px] text-zinc-500 uppercase font-bold">Momentum</div>
-                            <div className="text-sm font-bold text-emerald-400">{selectedPick.bayesianMetrics.momentumEffect > 0 ? '+' : ''}{selectedPick.bayesianMetrics.momentumEffect}</div>
+                            <div className="text-sm font-bold text-emerald-600">{selectedPick.bayesianMetrics.momentumEffect > 0 ? '+' : ''}{selectedPick.bayesianMetrics.momentumEffect}</div>
                           </div>
                           <div>
                             <div className="text-[8px] text-zinc-500 uppercase font-bold">Covariates</div>
-                            <div className="text-sm font-bold text-white">{selectedPick.bayesianMetrics.covariateAdjustment > 0 ? '+' : ''}{selectedPick.bayesianMetrics.covariateAdjustment}</div>
+                            <div className="text-sm font-bold text-zinc-900">{selectedPick.bayesianMetrics.covariateAdjustment > 0 ? '+' : ''}{selectedPick.bayesianMetrics.covariateAdjustment}</div>
                           </div>
                           <div>
                             <div className="text-[8px] text-zinc-500 uppercase font-bold">Reversal</div>
-                            <div className="text-[10px] font-bold text-zinc-300 capitalize">{selectedPick.bayesianMetrics.reversalFlag.replace(/_/g, ' ')}</div>
+                            <div className="text-[10px] font-bold text-zinc-600 capitalize">{selectedPick.bayesianMetrics.reversalFlag.replace(/_/g, ' ')}</div>
                           </div>
                         </div>
                       </div>
@@ -1348,27 +1381,27 @@ export default function App() {
                       </h4>
                       
                       <div className="space-y-3">
-                        <div className="bg-zinc-900/30 p-3 rounded-xl border border-zinc-800/50">
-                          <div className="text-[10px] font-bold text-zinc-400 mb-1 flex items-center gap-1.5">
+                        <div className="bg-zinc-50 p-3 rounded-xl border border-zinc-100">
+                          <div className="text-[10px] font-bold text-zinc-500 mb-1 flex items-center gap-1.5">
                             <Target className="w-3 h-3" /> Pressing & Space
                           </div>
-                          <p className="text-xs text-zinc-300 leading-relaxed">{selectedPick.tacticalAnalysis.pressingStyle}</p>
-                          <p className="text-xs text-zinc-300 leading-relaxed mt-2">{selectedPick.tacticalAnalysis.spaceAndTime}</p>
+                          <p className="text-xs text-zinc-600 leading-relaxed">{selectedPick.tacticalAnalysis.pressingStyle}</p>
+                          <p className="text-xs text-zinc-600 leading-relaxed mt-2">{selectedPick.tacticalAnalysis.spaceAndTime}</p>
                         </div>
 
-                        <div className="bg-zinc-900/30 p-3 rounded-xl border border-zinc-800/50">
-                          <div className="text-[10px] font-bold text-zinc-400 mb-1 flex items-center gap-1.5">
+                        <div className="bg-zinc-50 p-3 rounded-xl border border-zinc-100">
+                          <div className="text-[10px] font-bold text-zinc-500 mb-1 flex items-center gap-1.5">
                             <BarChart3 className="w-3 h-3" /> Possession & Matchup
                           </div>
-                          <p className="text-xs text-zinc-300 leading-relaxed">{selectedPick.tacticalAnalysis.possessionImpact}</p>
+                          <p className="text-xs text-zinc-600 leading-relaxed">{selectedPick.tacticalAnalysis.possessionImpact}</p>
                         </div>
 
                         {selectedPick.propType === 'saves' && selectedPick.tacticalAnalysis.opponentShotProfile && (
-                          <div className="bg-zinc-900/30 p-3 rounded-xl border border-zinc-800/50">
-                            <div className="text-[10px] font-bold text-zinc-400 mb-1 flex items-center gap-1.5">
-                              <Zap className="w-3 h-3" /> Shot Profile
+                          <div className="bg-zinc-50 p-3 rounded-xl border border-zinc-100">
+                            <div className="text-[10px] font-bold text-zinc-500 mb-1 flex items-center gap-1.5">
+                              <Zap className="w-3 h-3 text-emerald-500" /> Shot Profile
                             </div>
-                            <p className="text-xs text-zinc-300 leading-relaxed">{selectedPick.tacticalAnalysis.opponentShotProfile}</p>
+                            <p className="text-xs text-zinc-600 leading-relaxed">{selectedPick.tacticalAnalysis.opponentShotProfile}</p>
                           </div>
                         )}
                       </div>
@@ -1378,15 +1411,15 @@ export default function App() {
                       <h4 className="text-xs font-bold text-zinc-500 uppercase tracking-widest flex items-center gap-2">
                         <BarChart3 className="w-3 h-3" /> Model Reasoning
                       </h4>
-                      <p className="text-sm text-zinc-300 leading-relaxed whitespace-pre-wrap">{selectedPick.reasoning}</p>
+                      <p className="text-sm text-zinc-700 leading-relaxed whitespace-pre-wrap">{selectedPick.reasoning}</p>
                     </div>
                     
-                    <div className="pt-4 border-t border-zinc-800">
+                    <div className="pt-4 border-t border-zinc-100">
                       <div className="flex items-center justify-between mb-3">
                         <h4 className="text-xs font-bold text-zinc-500 uppercase tracking-widest flex items-center gap-2">
                           <Activity className="w-3 h-3" /> Recent Form
                         </h4>
-                        <div className="text-[10px] font-bold text-zinc-400 bg-zinc-900 px-2 py-1 rounded-md border border-zinc-800">
+                        <div className="text-[10px] font-bold text-zinc-500 bg-zinc-50 px-2 py-1 rounded-md border border-zinc-100">
                           {selectedPick.recentSamples.filter((s, idx) => !(selectedPick.excludedSampleIndices || []).includes(idx) && (selectedPick.recommendation === 'over' ? s.value > selectedPick.line : s.value < selectedPick.line)).length} / {selectedPick.recentSamples.filter((_, idx) => !(selectedPick.excludedSampleIndices || []).includes(idx)).length} HIT RATE
                         </div>
                       </div>
@@ -1411,9 +1444,9 @@ export default function App() {
                                 setSavedPicks(savedPicks.map(p => p.id === updatedPick.id ? updatedPick : p));
                               }}
                               className={`relative p-2 rounded-lg border transition-all hover:scale-105 active:scale-95 cursor-pointer flex flex-col items-center justify-between min-h-[60px] ${
-                                isExcluded ? 'bg-zinc-900/50 border-zinc-800 text-zinc-600 opacity-50' :
-                                isPush ? 'bg-zinc-800 border-zinc-700 text-zinc-300' :
-                                isHit ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-rose-500/10 border-rose-500/30 text-rose-400'
+                                isExcluded ? 'bg-zinc-50 border-zinc-100 text-zinc-500 opacity-50' :
+                                isPush ? 'bg-zinc-100 border-zinc-200 text-zinc-600' :
+                                isHit ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600' : 'bg-rose-500/10 border-rose-500/30 text-rose-600'
                               }`}
                               title={`${sample.date} vs ${sample.opponent} (Difficulty: ${sample.matchDifficulty})`}
                             >
@@ -1423,7 +1456,7 @@ export default function App() {
                                 <div className="flex flex-col items-center mt-0.5">
                                   <span className="text-[8px] font-bold opacity-60 leading-none">{sample.minutesPlayed}'</span>
                                   {sample.blockType && (
-                                    <span className="text-[6px] font-black uppercase text-emerald-400 mt-0.5 leading-none">{sample.blockType}</span>
+                                    <span className="text-[6px] font-black uppercase text-emerald-600 mt-0.5 leading-none">{sample.blockType}</span>
                                   )}
                                 </div>
                               </div>
@@ -1479,11 +1512,11 @@ export default function App() {
       </AnimatePresence>
 
       {/* Navigation */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-black/80 backdrop-blur-xl border-t border-zinc-800 px-8 pt-6 pb-[calc(1.5rem+env(safe-area-bottom))] z-50">
+      <nav className="fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-xl border-t border-zinc-200 px-8 pt-6 pb-[calc(1.5rem+env(safe-area-bottom))] z-50">
         <div className="max-w-md mx-auto flex items-center justify-around">
           <button 
             onClick={() => { setActiveTab('predict'); setWizardStep(1); setProjection(null); setWizardData({}); }}
-            className={`flex flex-col items-center gap-1 transition-all ${activeTab === 'predict' ? 'text-emerald-400 scale-110' : 'text-zinc-500 hover:text-zinc-300'}`}
+            className={`flex flex-col items-center gap-1 transition-all ${activeTab === 'predict' ? 'text-emerald-600 scale-110' : 'text-zinc-500 hover:text-zinc-800'}`}
           >
             <Zap className="w-6 h-6" />
             <span className="text-[10px] font-bold uppercase tracking-widest">Predict</span>
@@ -1491,7 +1524,7 @@ export default function App() {
 
           <button 
             onClick={() => { setActiveTab('tracking'); setWizardStep(1); setProjection(null); setWizardData({}); }}
-            className={`flex flex-col items-center gap-1 transition-all ${activeTab === 'tracking' ? 'text-emerald-400 scale-110' : 'text-zinc-500 hover:text-zinc-300'}`}
+            className={`flex flex-col items-center gap-1 transition-all ${activeTab === 'tracking' ? 'text-emerald-600 scale-110' : 'text-zinc-500 hover:text-zinc-800'}`}
           >
             <Activity className="w-6 h-6" />
             <span className="text-[10px] font-bold uppercase tracking-widest">Tracking</span>
@@ -1502,21 +1535,13 @@ export default function App() {
               setActiveTab('chat');
               if (!chatSession) startNewChat();
             }}
-            className={`flex flex-col items-center gap-1 transition-all ${activeTab === 'chat' ? 'text-emerald-400 scale-110' : 'text-zinc-500 hover:text-zinc-300'}`}
+            className={`flex flex-col items-center gap-1 transition-all ${activeTab === 'chat' ? 'text-emerald-600 scale-110' : 'text-zinc-500 hover:text-zinc-800'}`}
           >
             <MessageSquare className="w-6 h-6" />
             <span className="text-[10px] font-bold uppercase tracking-widest">Chat</span>
           </button>
 
-          {user.accessType === 'Owner' && (
-            <button 
-              onClick={() => setActiveTab('admin')}
-              className={`flex flex-col items-center gap-1 transition-all ${activeTab === 'admin' ? 'text-emerald-400 scale-110' : 'text-zinc-500 hover:text-zinc-300'}`}
-            >
-              <ShieldAlert className="w-6 h-6" />
-              <span className="text-[10px] font-bold uppercase tracking-widest">Admin</span>
-            </button>
-          )}
+          {/* Admin button removed */}
         </div>
       </nav>
     </div>
