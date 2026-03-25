@@ -39,6 +39,9 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 - [x] Projection card with confidence intervals, probability curves, recommendations
 - [x] Pick tracking with save/remove functionality
 - [x] Pick detail modal
+- [x] **15+ recent match samples with venue tags (H/A)**
+- [x] **Venue filter (All/Home/Away) for recent form section**
+- [x] **Backend fetches 20 matches with venue classification**
 
 ## API Keys
 - API-Sports: 8154742f66d14cb52548c73c3edfbee3
