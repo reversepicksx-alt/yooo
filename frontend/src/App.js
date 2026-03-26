@@ -926,10 +926,7 @@ export default function App() {
                         <div key={player.id} className="card card-clickable" onClick={() => handlePlayerSelect(player)}
                           data-testid={`player-${player.id}`}>
                           <div className="player-item">
-                            {player.photo ? (
-                              <img src={player.photo} alt="" className="player-photo" onError={e => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }} />
-                            ) : null}
-                            <div className="player-avatar" style={player.photo ? { display: 'none' } : {}}><User /></div>
+                            <div className="player-avatar"><User /></div>
                             <div style={{ flex: 1 }}>
                               <div className="player-name">{player.name}</div>
                               <div className="player-team">

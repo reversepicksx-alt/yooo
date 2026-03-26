@@ -1162,6 +1162,12 @@
   padding: 20px;
   position: relative;
   overflow: hidden;
+  animation: potd-fade-in 0.4s ease-out;
+}
+
+@keyframes potd-fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .potd-card::before {
@@ -1317,9 +1323,11 @@
   border: 1px solid var(--border-primary);
   border-radius: 16px;
   padding: 20px;
+  min-height: 280px;
   display: flex;
   flex-direction: column;
   gap: 10px;
+  justify-content: center;
 }
 
 .potd-skeleton-line {
