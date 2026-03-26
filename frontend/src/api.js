@@ -93,6 +93,10 @@ export async function checkApiStatus() {
   }
 }
 
+export async function getPickOfTheDay() {
+  return apiCall('/api/pick-of-the-day');
+}
+
 export const SUPPORTED_LEAGUES = [
   { id: 39, name: "Premier League", type: "Domestic" },
   { id: 140, name: "La Liga", type: "Domestic" },

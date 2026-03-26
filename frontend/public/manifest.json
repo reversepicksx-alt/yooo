@@ -1,0 +1,24 @@
+{
+  "short_name": "ReversePicks",
+  "name": "ReversePicks - Elite Prop Intelligence",
+  "description": "AI-powered soccer player prop predictions with Bayesian analysis",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#0a0a12",
+  "background_color": "#0a0a12",
+  "icons": [
+    {
+      "src": "/rp-logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/rp-logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

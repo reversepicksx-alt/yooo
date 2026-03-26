@@ -10,7 +10,8 @@ import {
 import {
   getTeamsByLeague, searchPlayers, predict, startChat, sendChatMessage,
   parseNaturalQuery, checkApiStatus, SUPPORTED_LEAGUES,
-  verifyWhop, authLogin, setPassword as apiSetPassword, resetPassword, verifySession, authLogout
+  verifyWhop, authLogin, setPassword as apiSetPassword, resetPassword, verifySession, authLogout,
+  getPickOfTheDay
 } from './api';
 import './App.css';
 
@@ -457,6 +458,51 @@ function LoginPage({ onAuth }) {
   );
 }
 
+function PickOfTheDayCard({ potd, onUse }) {
+  if (!potd || !potd.available || !potd.pick) return null;
+  const p = potd.pick;
+  const isOver = p.recommendation === 'over';
+  return (
+    <div className="potd-card" data-testid="potd-card">
+      <div className="potd-header">
+        <div className="potd-badge">
+          <Zap style={{ width: 12, height: 12, fill: 'currentColor' }} />
+          <span>Pick of the Day</span>
+        </div>
+        <div className="potd-date">{potd.date}</div>
+      </div>
+      <div className="potd-player" data-testid="potd-player-name">{p.playerName}</div>
+      <div className="potd-matchup">{p.teamName} vs {p.opponentName}</div>
+      <div className="potd-league">{p.league}</div>
+      <div className="potd-stats-row">
+        <div className="potd-stat">
+          <div className="potd-stat-label">Prop</div>
+          <div className="potd-stat-value">{getPropLabel(p.propType)}</div>
+        </div>
+        <div className="potd-stat">
+          <div className="potd-stat-label">Line</div>
+          <div className="potd-stat-value">{p.suggestedLine}</div>
+        </div>
+        <div className="potd-stat">
+          <div className="potd-stat-label">Confidence</div>
+          <div className="potd-stat-value accent">{p.confidenceScore}%</div>
+        </div>
+      </div>
+      <div className={`potd-rec ${p.recommendation}`}>
+        {isOver ? <TrendingUp style={{ width: 16, height: 16 }} /> : <TrendingDown style={{ width: 16, height: 16 }} />}
+        <span>{p.recommendation}</span>
+        <span className={`badge ${isOver ? 'neon' : 'danger'}`}>{p.confidenceLevel}</span>
+      </div>
+      <p className="potd-summary">{p.sharpSummary}</p>
+      {onUse && (
+        <button className="potd-use-btn" onClick={onUse} data-testid="potd-use-btn">
+          <Target style={{ width: 14, height: 14 }} /> Run Full Analysis
+        </button>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   const [auth, setAuth] = useState(null);
   const [authChecking, setAuthChecking] = useState(true);
@@ -487,6 +533,8 @@ export default function App() {
   const [isChatting, setIsChatting] = useState(false);
   const [chatSessionId, setChatSessionId] = useState(null);
   const [apiStatus, setApiStatus] = useState('checking');
+  const [potd, setPotd] = useState(null);
+  const [potdLoading, setPotdLoading] = useState(true);
 
   const searchTimeout = useRef(null);
   const chatEndRef = useRef(null);
@@ -523,6 +571,11 @@ export default function App() {
     const saved = localStorage.getItem('reverse_picks_v2');
     if (saved) setSavedPicks(JSON.parse(saved));
     checkApiStatus().then(ok => setApiStatus(ok ? 'online' : 'offline')).catch(() => setApiStatus('offline'));
+    // Fetch Pick of the Day
+    getPickOfTheDay()
+      .then(data => setPotd(data))
+      .catch(() => setPotd(null))
+      .finally(() => setPotdLoading(false));
   }, []);
 
   useEffect(() => {
@@ -736,6 +789,33 @@ export default function App() {
           <div className="animate-fade-in space-y-6">
             {!projection && !isProjecting && (
               <>
+                {/* Pick of the Day */}
+                {potdLoading ? (
+                  <div className="potd-skeleton" data-testid="potd-loading">
+                    <div className="potd-skeleton-line wide" />
+                    <div className="potd-skeleton-line" />
+                    <div className="potd-skeleton-line narrow" />
+                  </div>
+                ) : potd?.available ? (
+                  <PickOfTheDayCard
+                    potd={potd}
+                    onUse={() => {
+                      const p = potd.pick;
+                      const league = SUPPORTED_LEAGUES.find(l => l.id === p.leagueId) || SUPPORTED_LEAGUES[0];
+                      setWizardData({
+                        leagueId: league.id,
+                        playerName: p.playerName,
+                        opponentName: p.opponentName,
+                        propType: p.propType,
+                        line: p.suggestedLine,
+                        venue: 'home',
+                      });
+                      setSearchMode('natural');
+                      setNaturalQuery(`${p.playerName} ${p.suggestedLine} ${p.propType.replace(/_/g, ' ')} vs ${p.opponentName}`);
+                    }}
+                  />
+                ) : null}
+
                 <div className="flex justify-between items-center">
                   <div>
                     <h2 className="section-title" data-testid="wizard-title">AI Wizard</h2>

@@ -1139,3 +1139,362 @@
   opacity: 0.4;
   cursor: not-allowed;
 }
+
+/* ===== PICK OF THE DAY ===== */
+.potd-card {
+  background: linear-gradient(135deg, rgba(16,185,129,0.06) 0%, rgba(16,185,129,0.02) 100%);
+  border: 1px solid rgba(16,185,129,0.2);
+  border-radius: 16px;
+  padding: 20px;
+  position: relative;
+  overflow: hidden;
+}
+
+.potd-card::before {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+}
+
+.potd-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.potd-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--accent);
+  color: #000;
+  padding: 4px 12px;
+  border-radius: 100px;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.potd-date {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.potd-player {
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: -0.5px;
+  color: var(--text-primary);
+}
+
+.potd-matchup {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+.potd-league {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-top: 4px;
+}
+
+.potd-stats-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.potd-stat {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-primary);
+  border-radius: 10px;
+  padding: 10px;
+  text-align: center;
+}
+
+.potd-stat-label {
+  font-size: 8px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.potd-stat-value {
+  font-size: 14px;
+  font-weight: 900;
+  color: var(--text-primary);
+  text-transform: capitalize;
+}
+
+.potd-stat-value.accent {
+  color: var(--accent);
+}
+
+.potd-rec {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  margin-top: 14px;
+  font-size: 14px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: -0.2px;
+}
+
+.potd-rec.over { background: var(--accent-dim); color: var(--accent); }
+.potd-rec.under { background: var(--danger-dim); color: var(--danger); }
+.potd-rec .badge { margin-left: auto; }
+
+.potd-summary {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin-top: 12px;
+}
+
+.potd-use-btn {
+  width: 100%;
+  margin-top: 14px;
+  padding: 11px;
+  border-radius: 10px;
+  border: 1px solid rgba(16,185,129,0.25);
+  background: rgba(16,185,129,0.08);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-family: 'Outfit', sans-serif;
+  transition: all var(--transition-fast);
+}
+
+.potd-use-btn:hover {
+  background: rgba(16,185,129,0.15);
+  border-color: rgba(16,185,129,0.4);
+  transform: translateY(-1px);
+}
+
+/* POTD Skeleton Loader */
+.potd-skeleton {
+  background: var(--bg-card);
+  border: 1px solid var(--border-primary);
+  border-radius: 16px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.potd-skeleton-line {
+  height: 14px;
+  border-radius: 6px;
+  background: linear-gradient(90deg, var(--bg-surface) 25%, var(--bg-card-hover) 50%, var(--bg-surface) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+  width: 70%;
+}
+
+.potd-skeleton-line.wide { width: 90%; height: 20px; }
+.potd-skeleton-line.narrow { width: 50%; }
+
+/* ===== PWA / MOBILE OPTIMIZATIONS ===== */
+
+/* iOS safe areas */
+.header {
+  padding-top: max(14px, env(safe-area-inset-top));
+  padding-left: max(20px, env(safe-area-inset-left));
+  padding-right: max(20px, env(safe-area-inset-right));
+}
+
+.bottom-nav {
+  padding-bottom: max(10px, env(safe-area-inset-bottom));
+}
+
+/* Prevent pull-to-refresh interfering */
+html, body {
+  overscroll-behavior-y: contain;
+}
+
+/* Better touch targets */
+@media (max-width: 480px) {
+  .main-content {
+    padding: 16px 14px 100px;
+  }
+
+  .section-title {
+    font-size: 20px;
+  }
+
+  .projection-player {
+    font-size: 22px;
+  }
+
+  .confidence-value {
+    font-size: 20px;
+  }
+
+  .stat-value {
+    font-size: 18px;
+  }
+
+  .league-item {
+    padding: 16px;
+  }
+
+  .player-item {
+    padding: 14px 16px;
+  }
+
+  .prop-item {
+    padding: 16px;
+  }
+
+  .venue-btn {
+    padding: 24px 20px;
+  }
+
+  .line-input {
+    font-size: 40px;
+    width: 100px;
+  }
+
+  .line-btn {
+    width: 44px;
+    height: 44px;
+  }
+
+  .chat-msg {
+    max-width: 90%;
+    font-size: 14px;
+  }
+
+  .chat-input {
+    font-size: 16px;
+    padding: 16px 56px 16px 18px;
+  }
+
+  .samples-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+
+  .pick-stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .nav-items {
+    gap: 32px;
+  }
+
+  .nav-item {
+    padding: 8px 16px;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .card-clickable {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .card-clickable:active {
+    transform: scale(0.98);
+    transition: transform 0.1s;
+  }
+
+  .btn-primary {
+    padding: 16px;
+    font-size: 14px;
+    min-height: 52px;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .btn-secondary {
+    padding: 14px;
+    min-height: 48px;
+  }
+
+  .potd-player {
+    font-size: 19px;
+  }
+
+  .potd-stats-row {
+    gap: 8px;
+  }
+
+  .potd-stat {
+    padding: 8px;
+  }
+
+  .potd-stat-value {
+    font-size: 12px;
+  }
+
+  /* Disable hover effects on touch devices */
+  .card-clickable:hover {
+    transform: none;
+    box-shadow: none;
+    background: var(--bg-card);
+  }
+
+  .btn-primary:hover {
+    transform: none;
+  }
+
+  .icon-btn:hover {
+    transform: none;
+  }
+}
+
+/* Standalone PWA mode adjustments */
+@media (display-mode: standalone) {
+  .header {
+    padding-top: max(14px, env(safe-area-inset-top));
+  }
+
+  .login-page {
+    padding-top: max(60px, calc(env(safe-area-inset-top) + 40px));
+  }
+}
+
+/* Prevent text selection on interactive elements */
+.btn-primary, .btn-secondary, .nav-item, .card-clickable, .venue-btn, .tab-btn,
+.line-btn, .potd-use-btn, .forgot-password-link, .back-btn, .icon-btn {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Smooth scrolling on iOS */
+.main-content,
+.chat-messages {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Fix 100vh on mobile browsers */
+.app {
+  min-height: 100dvh;
+}
+
+.login-page {
+  min-height: 100dvh;
+}
