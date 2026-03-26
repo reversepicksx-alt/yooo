@@ -53,6 +53,9 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 - [x] **NEW (Feb 2026)**: Forgot Password - re-verifies Whop membership, allows password reset
 - [x] **NEW (Feb 2026)**: Pick of the Day - AI-generated daily best prop bet, cached in MongoDB, featured card with "Run Full Analysis" button
 - [x] **NEW (Feb 2026)**: PWA Mobile Optimization - service worker, web manifest, mobile CSS, installable, safe-area support
+- [x] **FIXED (Feb 2026)**: Player search - full names (not abbreviated), photos, nationality, dedup by ID, major-league fallback for team info
+- [x] **FIXED (Feb 2026)**: International tournaments - teams now load for WCQ/Euro Qualifiers (tries 5 seasons)
+- [x] **FIXED (Feb 2026)**: Natural search - last-name fallback when full name returns 0 results
 
 ## Auth System Details
 - Owner email (josselj001@gmail.com): Bypasses password entirely, instant login
