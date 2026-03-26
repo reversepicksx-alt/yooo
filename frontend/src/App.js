@@ -163,6 +163,18 @@ function ProjectionCard({ projection, onSave, excludedIndices, onToggleSample })
         )}
 
         <div className="space-y-4 mt-6">
+          {/* Sharp Summary - the headline */}
+          {projection.sharpSummary && (
+            <div className="stat-box" style={{ borderColor: 'rgba(16,185,129,0.2)', background: 'rgba(16,185,129,0.04)' }}>
+              <div className="stat-label flex items-center gap-2">
+                <Target style={{ width: 12, height: 12, color: 'var(--accent)' }} /> Sharp Take
+              </div>
+              <p style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.6, marginTop: 6 }}>
+                {projection.sharpSummary}
+              </p>
+            </div>
+          )}
+
           <div className="grid-2">
             <div className="stat-box">
               <div className="stat-label">Position</div>
@@ -194,8 +206,49 @@ function ProjectionCard({ projection, onSave, excludedIndices, onToggleSample })
             </div>
           )}
 
+          {/* Matchup Breakdown */}
+          {projection.matchupBreakdown && (
+            <div className="space-y-2">
+              <div className="stat-label flex items-center gap-2"><Shield style={{ width: 12, height: 12 }} /> Opponent Matchup Breakdown</div>
+              <p className="reasoning-text">{projection.matchupBreakdown}</p>
+            </div>
+          )}
+
+          {/* Venue & Form side by side */}
+          {(projection.venueAnalysis || projection.formTrend) && (
+            <div className="space-y-3">
+              {projection.venueAnalysis && (
+                <div className="stat-box">
+                  <div className="stat-label flex items-center gap-2" style={{ marginBottom: 6 }}>
+                    <Activity style={{ width: 12, height: 12 }} /> Venue Splits
+                  </div>
+                  <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6 }}>{projection.venueAnalysis}</p>
+                </div>
+              )}
+              {projection.formTrend && (
+                <div className="stat-box">
+                  <div className="stat-label flex items-center gap-2" style={{ marginBottom: 6 }}>
+                    <TrendingUp style={{ width: 12, height: 12 }} /> Form & Momentum
+                  </div>
+                  <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6 }}>{projection.formTrend}</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Floor/Ceiling */}
+          {projection.floorCeiling && (
+            <div className="stat-box">
+              <div className="stat-label flex items-center gap-2" style={{ marginBottom: 6 }}>
+                <BarChart3 style={{ width: 12, height: 12 }} /> Floor / Ceiling Scenarios
+              </div>
+              <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6 }}>{projection.floorCeiling}</p>
+            </div>
+          )}
+
+          {/* Full Reasoning */}
           <div className="space-y-2">
-            <div className="stat-label flex items-center gap-2"><BarChart3 style={{ width: 12, height: 12 }} /> Model Reasoning</div>
+            <div className="stat-label flex items-center gap-2"><BarChart3 style={{ width: 12, height: 12 }} /> Full Analysis</div>
             <p className="reasoning-text">{projection.reasoning}</p>
           </div>
         </div>

@@ -130,42 +130,68 @@ class ReversePicsAPITester:
         return success, response
 
     def test_prediction_endpoint(self):
-        """Test prediction endpoint with sample data"""
-        # First get a player from search
-        search_success, search_response = self.test_player_search()
-        if not search_success or not search_response.get('players'):
-            print("❌ Skipping prediction test - no players found")
-            return False, {}
-        
-        player = search_response['players'][0]
-        
-        # Get teams for opponent
-        teams_success, teams_response = self.test_premier_league_teams()
-        if not teams_success or not teams_response.get('teams'):
-            print("❌ Skipping prediction test - no teams found")
-            return False, {}
-        
-        opponent = teams_response['teams'][0]
-        
+        """Test prediction endpoint with M. Salah as suggested"""
+        # Use the specific test case mentioned in agent context
         prediction_data = {
             "leagueId": 39,
-            "playerId": player['id'],
-            "playerName": player['name'],
-            "teamId": player.get('teamId', 0),
-            "opponentId": opponent['id'],
-            "opponentName": opponent['name'],
+            "playerId": 306,
+            "playerName": "M. Salah",
+            "teamId": 40,
+            "opponentId": 42,
+            "opponentName": "Arsenal",
             "venue": "home",
             "propType": "pass_attempts",
-            "line": 50.5
+            "line": 30.5
         }
         
-        print(f"   Testing prediction for: {player['name']} vs {opponent['name']}")
+        print(f"   Testing prediction for: {prediction_data['playerName']} vs {prediction_data['opponentName']}")
+        print(f"   Note: This may take 30-60 seconds due to API data gathering...")
         success, response = self.run_test("AI Prediction", "POST", "/api/predict", 200, prediction_data, timeout=120)
+        
         if success:
+            # Test basic prediction fields
             if 'player' in response and 'projectedValue' in response:
                 print(f"   Prediction: {response.get('projectedValue')} {response.get('propType')}")
                 print(f"   Recommendation: {response.get('recommendation')}")
                 print(f"   Confidence: {response.get('confidenceScore')}%")
+                
+                # Test NEW deep analysis fields (iteration 5 focus)
+                new_fields = ['sharpSummary', 'matchupBreakdown', 'venueAnalysis', 'formTrend', 'floorCeiling']
+                missing_fields = []
+                for field in new_fields:
+                    if field not in response:
+                        missing_fields.append(field)
+                    else:
+                        field_content = response.get(field, '')
+                        if isinstance(field_content, str) and len(field_content) > 0:
+                            print(f"   ✅ {field}: {len(field_content)} characters")
+                        else:
+                            print(f"   ❌ {field}: Empty or invalid")
+                            missing_fields.append(field)
+                
+                if missing_fields:
+                    print(f"   ❌ Missing new analysis fields: {missing_fields}")
+                else:
+                    print(f"   ✅ All new deep analysis fields present")
+                
+                # Test reasoning field (should be detailed multi-paragraph)
+                reasoning = response.get('reasoning', '')
+                if isinstance(reasoning, str) and len(reasoning) > 500:
+                    paragraph_count = reasoning.count('\n\n') + 1
+                    print(f"   ✅ Reasoning: {len(reasoning)} characters, ~{paragraph_count} paragraphs")
+                else:
+                    print(f"   ❌ Reasoning too short or missing: {len(reasoning) if isinstance(reasoning, str) else 0} characters")
+                
+                # Test recentSamples (should have at least 15 with venue tags)
+                recent_samples = response.get('recentSamples', [])
+                if isinstance(recent_samples, list) and len(recent_samples) >= 15:
+                    venue_tagged = sum(1 for sample in recent_samples if isinstance(sample, dict) and 'venue' in sample)
+                    print(f"   ✅ Recent samples: {len(recent_samples)} total, {venue_tagged} with venue tags")
+                    if venue_tagged < len(recent_samples):
+                        print(f"   ⚠️  Some samples missing venue tags")
+                else:
+                    print(f"   ❌ Insufficient recent samples: {len(recent_samples) if isinstance(recent_samples, list) else 0} (need 15+)")
+                
             else:
                 print(f"   Response keys: {list(response.keys()) if isinstance(response, dict) else 'Not a dict'}")
         return success, response
@@ -260,7 +286,7 @@ def main():
     tester.test_natural_query_parsing()
     
     # AI Prediction (most complex test)
-    print("\n🎯 PREDICTION TESTS")
+    print("\n🎯 PREDICTION TESTS (NEW DEEP ANALYSIS)")
     print("-" * 30)
     tester.test_prediction_endpoint()
     
