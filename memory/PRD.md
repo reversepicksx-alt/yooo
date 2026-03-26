@@ -5,7 +5,7 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 
 ## Architecture
 - **Backend**: Python FastAPI (port 8001) with Gemini AI via emergentintegrations library
-- **Frontend**: React (port 3000) with custom dark CSS
+- **Frontend**: React (port 3000) with custom dark CSS, PWA-enabled
 - **Database**: MongoDB (local)
 - **AI**: Gemini 2.5 Flash via Emergent Universal Key
 - **Data Source**: API-Sports v3 (api-sports.io)
@@ -13,6 +13,7 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 
 ## Core Requirements
 - 3-tab layout: PREDICT, TRACKING, CHAT
+- Pick of the Day featured card on Predict tab
 - AI Wizard: Step-by-Step (6 steps) + Natural Language Search
 - 30+ supported leagues (Domestic, International Club, International Team)
 - Player props: pass_attempts, shots, saves, tackles, key_passes, interceptions, blocks, dribbles, fouls_drawn, shots_on_target
@@ -21,13 +22,15 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 - Pick tracking with live/history views
 - Dark mode theme
 - Whop-based authentication with owner bypass, lifetime subs, and premium subscriptions
+- Forgot Password via Whop re-verification
+- PWA: installable, offline static caching, mobile-optimized
 
 ## User Personas
 - Sports bettors looking for data-driven prop predictions
 - Soccer analysts wanting tactical insights
 - App owner (josselj001@gmail.com)
 
-## What's Been Implemented (Feb 2026)
+## What's Been Implemented
 - [x] Full backend with FastAPI + Gemini AI integration
 - [x] API-Sports proxy (leagues, teams, players, stats, fixtures, H2H, standings)
 - [x] Gemini-powered prediction engine with Bayesian metrics
@@ -46,14 +49,17 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 - [x] Login page with RP crown logo, animated glow background
 - [x] Logout button in header
 - [x] Parallel API-Sports calls (~29s prediction time vs ~60s original)
-- [x] **FIXED (Feb 2026)**: Critical auth bug - `setPassword` React state setter was being called instead of `apiSetPassword` API function in password setup flow
-- [x] **NEW (Feb 2026)**: Forgot Password feature - re-verifies Whop membership, then allows password reset without email sending
+- [x] **FIXED (Feb 2026)**: Critical auth bug - `setPassword` state shadowing
+- [x] **NEW (Feb 2026)**: Forgot Password - re-verifies Whop membership, allows password reset
+- [x] **NEW (Feb 2026)**: Pick of the Day - AI-generated daily best prop bet, cached in MongoDB, featured card with "Run Full Analysis" button
+- [x] **NEW (Feb 2026)**: PWA Mobile Optimization - service worker, web manifest, mobile CSS, installable, safe-area support
 
 ## Auth System Details
 - Owner email (josselj001@gmail.com): Bypasses password entirely, instant login
 - Lifetime sub emails: Hardcoded in server.py, require password setup on first login
 - Whop premium members: Verified via Whop API, require password setup
 - Non-members: Rejected with "No active membership" message
+- Forgot Password: Re-verifies membership, allows new password
 - Sessions: Stored in MongoDB, verified on page load
 
 ## API Keys (in .env)
@@ -70,12 +76,10 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 - Push notifications for pick results
 
 ### P2 (Medium)
+- Slip correlation analysis
 - Re-analyze pick button for saved picks
 - Market sentiment analysis
-- Slip correlation analysis
 - Player photo integration
-- Team logo integration
-- PWA/mobile optimization
 
 ### Future
 - Add more prop types based on user feedback
