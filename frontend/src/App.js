@@ -782,13 +782,13 @@ export default function App() {
                     {isTeamsLoading ? (
                       <div className="loading-wrap"><div className="spinner-ring" /></div>
                     ) : teams.length > 0 ? (
-                      <div className="teams-grid">
+                      <div className="space-y-2" style={{ maxHeight: 480, overflowY: 'auto' }}>
                         {teams.map(team => (
                           <div key={team.id} className="card card-clickable" onClick={() => handleOpponentSelect(team)}
                             data-testid={`team-${team.id}`}>
-                            <div className="team-card">
-                              <div className="team-icon"><Shield /></div>
-                              <div className="team-name">{team.name}</div>
+                            <div className="league-item">
+                              <span className="name">{team.name}</span>
+                              <ChevronRight />
                             </div>
                           </div>
                         ))}
