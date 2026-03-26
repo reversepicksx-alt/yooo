@@ -1,21 +1,8 @@
 {
-  "name": "react-example",
+  "name": "reversepicks",
   "private": true,
-  "version": "0.0.0",
-  "type": "module",
-  "scripts": {
-    "dev": "tsx server.ts",
-    "start": "tsx server.ts",
-    "build": "tsc --noEmit && vite build && npx cap sync",
-    "preview": "vite preview",
-    "clean": "rm -rf dist",
-    "lint": "tsc --noEmit",
-    "cap:sync": "npx cap sync",
-    "cap:open:ios": "npx cap open ios",
-    "cap:open:android": "npx cap open android",
-    "cap:add:ios": "npx cap add ios",
-    "cap:add:android": "npx cap add android"
-  },
+  "version": "2.0.0"
+}
   "dependencies": {
     "@capacitor/android": "^8.2.0",
     "@capacitor/cli": "^8.2.0",

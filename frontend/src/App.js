@@ -10,7 +10,7 @@ import {
 import {
   getTeamsByLeague, searchPlayers, predict, startChat, sendChatMessage,
   parseNaturalQuery, checkApiStatus, SUPPORTED_LEAGUES,
-  verifyWhop, authLogin, setPassword, verifySession, authLogout
+  verifyWhop, authLogin, setPassword as apiSetPassword, verifySession, authLogout
 } from './api';
 import './App.css';
 
@@ -286,7 +286,7 @@ function LoginPage({ onAuth }) {
     setLoading(true);
     setError(null);
     try {
-      const res = await setPassword(email, password);
+      const res = await apiSetPassword(email, password);
       if (res.verified) {
         localStorage.setItem('rp_email', res.email);
         localStorage.setItem('rp_token', res.session_token);
