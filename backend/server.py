@@ -2,8 +2,10 @@ import os
 import json
 import httpx
 import uuid
+import time
+import bcrypt
 from datetime import datetime, timezone
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
@@ -28,9 +30,34 @@ DB_NAME = os.environ.get("DB_NAME")
 EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY")
 API_FOOTBALL_KEY = os.environ.get("API_FOOTBALL_KEY")
 API_FOOTBALL_BASE = "https://v3.football.api-sports.io"
+WHOP_API_KEY = os.environ.get("WHOP_API_KEY")
+WHOP_COMPANY_ID = os.environ.get("WHOP_COMPANY_ID")
+OWNER_EMAIL = (os.environ.get("OWNER_EMAIL") or "josselj001@gmail.com").lower().strip()
+
+LIFETIME_SUB_EMAILS = [
+    "faron2allen@gmail.com", "jossel0701@gmail.com", "josselj001@gmail.com",
+    "brayanfgaleas@icloud.com", "odr310@gmail.com",
+    "joseharo197@gmail.com", "rijulgauchan1@gmail.com", "gordo0210@icloud.com"
+]
+LIFETIME_SUB_EMAILS = [e.lower() for e in LIFETIME_SUB_EMAILS]
+
+whop_cache = None
+whop_cache_time = 0
 
 mongo_client = AsyncIOMotorClient(MONGO_URL)
 db = mongo_client[DB_NAME]
+
+
+@app.on_event("startup")
+async def seed_grants():
+    seed_data = [{"email": OWNER_EMAIL, "access_type": "Owner"}]
+    seed_data.extend([{"email": e, "access_type": "Lifetime"} for e in LIFETIME_SUB_EMAILS if e != OWNER_EMAIL])
+    for item in seed_data:
+        await db.manual_access_grants.update_one(
+            {"email": item["email"]},
+            {"$set": item},
+            upsert=True
+        )
 
 SUPPORTED_LEAGUES = [
     {"id": 39, "name": "Premier League", "type": "Domestic"},
@@ -69,6 +96,178 @@ CURRENT_SEASON = 2025
 
 # Chat sessions stored in memory
 chat_sessions: dict = {}
+
+
+# ======= WHOP AUTH SYSTEM =======
+
+async def fetch_whop_memberships():
+    global whop_cache, whop_cache_time
+    now = time.time()
+    if whop_cache is not None and (now - whop_cache_time < 60):
+        return whop_cache
+
+    all_memberships = []
+    page = 1
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        while True:
+            url = f"https://api.whop.com/api/v2/memberships?company_id={WHOP_COMPANY_ID}&per_page=50&page={page}"
+            resp = await client.get(url, headers={"Authorization": f"Bearer {WHOP_API_KEY}", "Accept": "application/json"})
+            if resp.status_code != 200:
+                break
+            data = resp.json()
+            memberships = data.get("data", [])
+            all_memberships.extend(memberships)
+            total_pages = data.get("pagination", {}).get("total_page", 1)
+            if page >= total_pages:
+                break
+            page += 1
+
+    whop_cache = all_memberships
+    whop_cache_time = now
+    return all_memberships
+
+
+async def check_access(email_lower: str):
+    if email_lower == OWNER_EMAIL:
+        return "Owner"
+
+    # Check lifetime subs
+    if email_lower in LIFETIME_SUB_EMAILS:
+        return "Lifetime"
+
+    # Check manual grants in MongoDB
+    grant = await db.manual_access_grants.find_one({"email": email_lower}, {"_id": 0})
+    if grant:
+        return grant.get("access_type", "Manual")
+
+    # Check Whop memberships
+    try:
+        all_memberships = await fetch_whop_memberships()
+        user_memberships = [m for m in all_memberships if (m.get("email") or "").lower() == email_lower]
+        for m in user_memberships:
+            company_match = m.get("company_id") == WHOP_COMPANY_ID or m.get("page_id") == WHOP_COMPANY_ID
+            if not company_match:
+                continue
+            status = (m.get("status") or "").lower()
+            if status in ["active", "trialing", "completed"] or m.get("valid") is True:
+                return "Premium"
+    except Exception:
+        pass
+
+    return None
+
+
+async def create_session(email: str, access_type: str):
+    session_token = str(uuid.uuid4())
+    await db.sessions.update_one(
+        {"email": email},
+        {"$set": {"email": email, "session_token": session_token, "access_type": access_type, "last_active": datetime.now(timezone.utc).isoformat()}},
+        upsert=True
+    )
+    return session_token
+
+
+class VerifyWhopRequest(BaseModel):
+    email: str
+
+
+@app.post("/api/auth/verify-whop")
+async def verify_whop(req: VerifyWhopRequest):
+    email_lower = req.email.lower().strip()
+    access_type = await check_access(email_lower)
+
+    if not access_type:
+        return {"verified": False, "email": email_lower, "message": "No active membership found. Please subscribe via Whop to gain access."}
+
+    # Owner bypasses password
+    if email_lower == OWNER_EMAIL:
+        token = await create_session(email_lower, "Owner")
+        return {"verified": True, "email": email_lower, "session_token": token, "access_type": "Owner", "message": "Premium access granted"}
+
+    # Check if user has password set
+    user_record = await db.users.find_one({"email": email_lower}, {"_id": 0})
+    if user_record and user_record.get("passwordHash"):
+        return {"requires_password": True, "email": email_lower}
+
+    return {"requires_password_setup": True, "email": email_lower, "access_type": access_type}
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+@app.post("/api/auth/login")
+async def login(req: LoginRequest):
+    email_lower = req.email.lower().strip()
+    user_record = await db.users.find_one({"email": email_lower}, {"_id": 0, "passwordHash": 1, "email": 1})
+
+    if not user_record or not user_record.get("passwordHash"):
+        raise HTTPException(status_code=401, detail="Invalid credentials or password not set.")
+
+    if not bcrypt.checkpw(req.password.encode("utf-8"), user_record["passwordHash"].encode("utf-8")):
+        raise HTTPException(status_code=401, detail="Invalid password.")
+
+    access_type = await check_access(email_lower)
+    if not access_type:
+        raise HTTPException(status_code=401, detail="Your subscription has expired or been revoked.")
+
+    token = await create_session(email_lower, access_type)
+    return {"verified": True, "email": email_lower, "session_token": token, "access_type": access_type, "message": "Login successful"}
+
+
+class SetPasswordRequest(BaseModel):
+    email: str
+    password: str
+
+
+@app.post("/api/auth/set-password")
+async def set_password(req: SetPasswordRequest):
+    email_lower = req.email.lower().strip()
+    if len(req.password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters.")
+
+    access_type = await check_access(email_lower)
+    if not access_type:
+        raise HTTPException(status_code=401, detail="No active subscription found.")
+
+    salt = bcrypt.gensalt()
+    password_hash = bcrypt.hashpw(req.password.encode("utf-8"), salt).decode("utf-8")
+
+    await db.users.update_one(
+        {"email": email_lower},
+        {"$set": {"email": email_lower, "passwordHash": password_hash, "created_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True
+    )
+
+    token = await create_session(email_lower, access_type)
+    return {"verified": True, "email": email_lower, "session_token": token, "access_type": access_type, "message": "Password set successfully"}
+
+
+class VerifySessionRequest(BaseModel):
+    email: str
+    session_token: str
+
+
+@app.post("/api/auth/verify-session")
+async def verify_session(req: VerifySessionRequest):
+    email_lower = req.email.lower().strip()
+    session = await db.sessions.find_one({"email": email_lower, "session_token": req.session_token}, {"_id": 0})
+    if not session:
+        return {"valid": False}
+
+    access_type = await check_access(email_lower)
+    if not access_type:
+        await db.sessions.delete_one({"email": email_lower, "session_token": req.session_token})
+        return {"valid": False}
+
+    return {"valid": True, "access_type": access_type}
+
+
+@app.post("/api/auth/logout")
+async def logout(req: VerifySessionRequest):
+    await db.sessions.delete_one({"email": req.email.lower().strip(), "session_token": req.session_token})
+    return {"success": True}
 
 
 async def api_football_request(endpoint: str, params: dict = None):

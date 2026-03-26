@@ -12,6 +12,27 @@ async function apiCall(endpoint, options = {}) {
   return resp.json();
 }
 
+// Auth APIs
+export async function verifyWhop(email) {
+  return apiCall('/api/auth/verify-whop', { method: 'POST', body: JSON.stringify({ email }) });
+}
+
+export async function authLogin(email, password) {
+  return apiCall('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
+}
+
+export async function setPassword(email, password) {
+  return apiCall('/api/auth/set-password', { method: 'POST', body: JSON.stringify({ email, password }) });
+}
+
+export async function verifySession(email, session_token) {
+  return apiCall('/api/auth/verify-session', { method: 'POST', body: JSON.stringify({ email, session_token }) });
+}
+
+export async function authLogout(email, session_token) {
+  return apiCall('/api/auth/logout', { method: 'POST', body: JSON.stringify({ email, session_token }) });
+}
+
 export async function getLeagues() {
   return apiCall('/api/leagues');
 }

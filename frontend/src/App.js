@@ -2,14 +2,15 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Zap, ChevronRight, RefreshCw, ArrowLeft, Clock, Activity,
   Shield, MessageSquare, Send, Loader2, Trash2, Search, User,
-  TrendingUp, TrendingDown, BarChart3, ShieldAlert, Target
+  TrendingUp, TrendingDown, BarChart3, ShieldAlert, Target, LogOut, Lock, Mail
 } from 'lucide-react';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts';
 import {
   getTeamsByLeague, searchPlayers, predict, startChat, sendChatMessage,
-  parseNaturalQuery, checkApiStatus, SUPPORTED_LEAGUES
+  parseNaturalQuery, checkApiStatus, SUPPORTED_LEAGUES,
+  verifyWhop, authLogin, setPassword, verifySession, authLogout
 } from './api';
 import './App.css';
 
@@ -207,7 +208,162 @@ function ProjectionCard({ projection, onSave, excludedIndices, onToggleSample })
   );
 }
 
+function LoginPage({ onAuth }) {
+  const [step, setStep] = useState('email'); // email, password, setup
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [accessType, setAccessType] = useState(null);
+
+  const handleEmailSubmit = async (e) => {
+    e.preventDefault();
+    if (!email.trim()) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await verifyWhop(email);
+      if (res.verified) {
+        localStorage.setItem('rp_email', res.email);
+        localStorage.setItem('rp_token', res.session_token);
+        localStorage.setItem('rp_access', res.access_type);
+        onAuth({ email: res.email, token: res.session_token, accessType: res.access_type });
+      } else if (res.requires_password) {
+        setStep('password');
+      } else if (res.requires_password_setup) {
+        setAccessType(res.access_type);
+        setStep('setup');
+      } else {
+        setError(res.message || 'No active membership found.');
+      }
+    } catch (err) {
+      setError(err.message || 'Verification failed.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    if (!password) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await authLogin(email, password);
+      if (res.verified) {
+        localStorage.setItem('rp_email', res.email);
+        localStorage.setItem('rp_token', res.session_token);
+        localStorage.setItem('rp_access', res.access_type);
+        onAuth({ email: res.email, token: res.session_token, accessType: res.access_type });
+      } else {
+        setError(res.message || 'Login failed.');
+      }
+    } catch (err) {
+      setError(err.message || 'Login failed.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSetPassword = async (e) => {
+    e.preventDefault();
+    if (password.length < 6) { setError('Password must be at least 6 characters.'); return; }
+    if (password !== confirmPassword) { setError('Passwords do not match.'); return; }
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await setPassword(email, password);
+      if (res.verified) {
+        localStorage.setItem('rp_email', res.email);
+        localStorage.setItem('rp_token', res.session_token);
+        localStorage.setItem('rp_access', res.access_type);
+        onAuth({ email: res.email, token: res.session_token, accessType: res.access_type });
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to set password.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="login-page" data-testid="login-page">
+      <div className="login-container">
+        <div className="login-logo">
+          <div className="logo-icon" style={{ width: 56, height: 56, borderRadius: 16 }}><Zap style={{ width: 28, height: 28 }} /></div>
+          <div className="logo-text" style={{ fontSize: 28 }}>Reverse<span>Picks</span></div>
+          <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.15em', textTransform: 'uppercase', color: 'var(--text-muted)', marginTop: 4 }}>Elite Prop Intelligence</p>
+        </div>
+
+        {step === 'email' && (
+          <form onSubmit={handleEmailSubmit} className="login-form" data-testid="email-form">
+            <div className="login-field">
+              <div className="login-field-icon"><Mail style={{ width: 16, height: 16 }} /></div>
+              <input type="email" placeholder="Enter your email" value={email}
+                onChange={e => setEmail(e.target.value)} autoFocus data-testid="email-input" />
+            </div>
+            <button className="btn-primary" type="submit" disabled={loading || !email.trim()} data-testid="verify-btn">
+              {loading ? <Loader2 className="animate-spin" /> : <Zap style={{ fill: 'currentColor' }} />}
+              {loading ? 'Verifying...' : 'Verify Access'}
+            </button>
+          </form>
+        )}
+
+        {step === 'password' && (
+          <form onSubmit={handleLogin} className="login-form" data-testid="password-form">
+            <div className="badge neon" style={{ alignSelf: 'center', marginBottom: 8 }}>Membership Verified</div>
+            <div className="login-field">
+              <div className="login-field-icon"><Lock style={{ width: 16, height: 16 }} /></div>
+              <input type="password" placeholder="Enter your password" value={password}
+                onChange={e => setPassword(e.target.value)} autoFocus data-testid="password-input" />
+            </div>
+            <button className="btn-primary" type="submit" disabled={loading || !password} data-testid="login-btn">
+              {loading ? <Loader2 className="animate-spin" /> : <Zap style={{ fill: 'currentColor' }} />}
+              {loading ? 'Logging in...' : 'Log In'}
+            </button>
+            <button type="button" className="btn-secondary" onClick={() => { setStep('email'); setPassword(''); setError(null); }}>
+              Back
+            </button>
+          </form>
+        )}
+
+        {step === 'setup' && (
+          <form onSubmit={handleSetPassword} className="login-form" data-testid="setup-form">
+            <div className="badge neon" style={{ alignSelf: 'center', marginBottom: 8 }}>
+              {accessType} Access Confirmed
+            </div>
+            <p style={{ fontSize: 12, color: 'var(--text-secondary)', textAlign: 'center' }}>Set a password for future logins</p>
+            <div className="login-field">
+              <div className="login-field-icon"><Lock style={{ width: 16, height: 16 }} /></div>
+              <input type="password" placeholder="Create password (min 6 chars)" value={password}
+                onChange={e => setPassword(e.target.value)} autoFocus data-testid="new-password-input" />
+            </div>
+            <div className="login-field">
+              <div className="login-field-icon"><Lock style={{ width: 16, height: 16 }} /></div>
+              <input type="password" placeholder="Confirm password" value={confirmPassword}
+                onChange={e => setConfirmPassword(e.target.value)} data-testid="confirm-password-input" />
+            </div>
+            <button className="btn-primary" type="submit" disabled={loading || password.length < 6} data-testid="set-password-btn">
+              {loading ? <Loader2 className="animate-spin" /> : <Zap style={{ fill: 'currentColor' }} />}
+              {loading ? 'Setting up...' : 'Set Password & Enter'}
+            </button>
+          </form>
+        )}
+
+        {error && (
+          <div className="error-box" style={{ marginTop: 16 }}>
+            <ShieldAlert /><p>{error}</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
+  const [auth, setAuth] = useState(null);
+  const [authChecking, setAuthChecking] = useState(true);
   const [activeTab, setActiveTab] = useState('predict');
   const [trackingView, setTrackingView] = useState('live');
 
@@ -238,6 +394,34 @@ export default function App() {
 
   const searchTimeout = useRef(null);
   const chatEndRef = useRef(null);
+
+  // Auth check on mount
+  useEffect(() => {
+    const checkAuth = async () => {
+      const email = localStorage.getItem('rp_email');
+      const token = localStorage.getItem('rp_token');
+      const access = localStorage.getItem('rp_access');
+      if (email && token) {
+        try {
+          const res = await verifySession(email, token);
+          if (res.valid) {
+            setAuth({ email, token, accessType: res.access_type || access });
+          } else {
+            localStorage.removeItem('rp_email');
+            localStorage.removeItem('rp_token');
+            localStorage.removeItem('rp_access');
+          }
+        } catch {
+          // Session check failed, clear auth
+          localStorage.removeItem('rp_email');
+          localStorage.removeItem('rp_token');
+          localStorage.removeItem('rp_access');
+        }
+      }
+      setAuthChecking(false);
+    };
+    checkAuth();
+  }, []);
 
   useEffect(() => {
     const saved = localStorage.getItem('reverse_picks_v2');
@@ -397,7 +581,34 @@ export default function App() {
     setSavedPicks(updated);
   };
 
+  const handleLogout = async () => {
+    if (auth) {
+      try { await authLogout(auth.email, auth.token); } catch {}
+    }
+    localStorage.removeItem('rp_email');
+    localStorage.removeItem('rp_token');
+    localStorage.removeItem('rp_access');
+    setAuth(null);
+  };
+
   const leaguesByType = (type) => SUPPORTED_LEAGUES.filter(l => l.type === type);
+
+  // Auth loading state
+  if (authChecking) {
+    return (
+      <div className="app" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
+        <div className="loading-wrap">
+          <div className="spinner-ring"><Zap className="inner-icon" style={{ width: 28, height: 28 }} /></div>
+          <div className="loading-title">Loading...</div>
+        </div>
+      </div>
+    );
+  }
+
+  // Show login if not authenticated
+  if (!auth) {
+    return <LoginPage onAuth={setAuth} />;
+  }
 
   return (
     <div className="app">
@@ -415,6 +626,9 @@ export default function App() {
           <div className="version-badge">v2.0.0</div>
           <button className="icon-btn" onClick={() => window.location.reload()} data-testid="refresh-btn">
             <RefreshCw />
+          </button>
+          <button className="icon-btn" onClick={handleLogout} data-testid="logout-btn" title="Logout">
+            <LogOut />
           </button>
         </div>
       </header>
