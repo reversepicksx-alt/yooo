@@ -335,7 +335,7 @@ function LoginPage({ onAuth }) {
         localStorage.setItem('rp_access', res.access_type);
         onAuth({ email: res.email, token: res.session_token, accessType: res.access_type });
       } else if (res.requires_password || res.requires_password_setup) {
-        setAccessType(res.access_type || 'Verified');
+        setAccessType(res.access_type || accessType || 'Member');
         setStep('reset');
       } else {
         setError(res.message || 'No active membership found. Cannot reset password.');

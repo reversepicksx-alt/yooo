@@ -47,6 +47,7 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 - [x] Logout button in header
 - [x] Parallel API-Sports calls (~29s prediction time vs ~60s original)
 - [x] **FIXED (Feb 2026)**: Critical auth bug - `setPassword` React state setter was being called instead of `apiSetPassword` API function in password setup flow
+- [x] **NEW (Feb 2026)**: Forgot Password feature - re-verifies Whop membership, then allows password reset without email sending
 
 ## Auth System Details
 - Owner email (josselj001@gmail.com): Bypasses password entirely, instant login

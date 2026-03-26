@@ -188,7 +188,7 @@ async def verify_whop(req: VerifyWhopRequest):
     # Check if user has password set
     user_record = await db.users.find_one({"email": email_lower}, {"_id": 0})
     if user_record and user_record.get("passwordHash"):
-        return {"requires_password": True, "email": email_lower}
+        return {"requires_password": True, "email": email_lower, "access_type": access_type}
 
     return {"requires_password_setup": True, "email": email_lower, "access_type": access_type}
 
