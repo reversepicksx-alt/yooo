@@ -245,6 +245,37 @@ async def set_password(req: SetPasswordRequest):
     return {"verified": True, "email": email_lower, "session_token": token, "access_type": access_type, "message": "Password set successfully"}
 
 
+class ResetPasswordRequest(BaseModel):
+    email: str
+    new_password: str
+
+
+@app.post("/api/auth/reset-password")
+async def reset_password(req: ResetPasswordRequest):
+    email_lower = req.email.lower().strip()
+    if len(req.new_password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters.")
+
+    access_type = await check_access(email_lower)
+    if not access_type:
+        raise HTTPException(status_code=401, detail="No active subscription found. Cannot reset password.")
+
+    user_record = await db.users.find_one({"email": email_lower}, {"_id": 0})
+    if not user_record:
+        raise HTTPException(status_code=404, detail="No account found for this email. Please sign up first.")
+
+    salt = bcrypt.gensalt()
+    password_hash = bcrypt.hashpw(req.new_password.encode("utf-8"), salt).decode("utf-8")
+
+    await db.users.update_one(
+        {"email": email_lower},
+        {"$set": {"passwordHash": password_hash, "password_reset_at": datetime.now(timezone.utc).isoformat()}}
+    )
+
+    token = await create_session(email_lower, access_type)
+    return {"verified": True, "email": email_lower, "session_token": token, "access_type": access_type, "message": "Password reset successfully"}
+
+
 class VerifySessionRequest(BaseModel):
     email: str
     session_token: str

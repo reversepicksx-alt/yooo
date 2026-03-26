@@ -10,7 +10,7 @@ import {
 import {
   getTeamsByLeague, searchPlayers, predict, startChat, sendChatMessage,
   parseNaturalQuery, checkApiStatus, SUPPORTED_LEAGUES,
-  verifyWhop, authLogin, setPassword as apiSetPassword, verifySession, authLogout
+  verifyWhop, authLogin, setPassword as apiSetPassword, resetPassword, verifySession, authLogout
 } from './api';
 import './App.css';
 
@@ -222,7 +222,7 @@ function ProjectionCard({ projection, onSave, excludedIndices, onToggleSample })
 }
 
 function LoginPage({ onAuth }) {
-  const [step, setStep] = useState('email'); // email, password, setup
+  const [step, setStep] = useState('email'); // email, password, setup, reset
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -300,6 +300,53 @@ function LoginPage({ onAuth }) {
     }
   };
 
+  const handleResetPassword = async (e) => {
+    e.preventDefault();
+    if (password.length < 6) { setError('Password must be at least 6 characters.'); return; }
+    if (password !== confirmPassword) { setError('Passwords do not match.'); return; }
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await resetPassword(email, password);
+      if (res.verified) {
+        localStorage.setItem('rp_email', res.email);
+        localStorage.setItem('rp_token', res.session_token);
+        localStorage.setItem('rp_access', res.access_type);
+        onAuth({ email: res.email, token: res.session_token, accessType: res.access_type });
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to reset password.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const startForgotPassword = async () => {
+    setLoading(true);
+    setError(null);
+    setPassword('');
+    setConfirmPassword('');
+    try {
+      const res = await verifyWhop(email);
+      if (res.verified) {
+        // Owner - just log them in
+        localStorage.setItem('rp_email', res.email);
+        localStorage.setItem('rp_token', res.session_token);
+        localStorage.setItem('rp_access', res.access_type);
+        onAuth({ email: res.email, token: res.session_token, accessType: res.access_type });
+      } else if (res.requires_password || res.requires_password_setup) {
+        setAccessType(res.access_type || 'Verified');
+        setStep('reset');
+      } else {
+        setError(res.message || 'No active membership found. Cannot reset password.');
+      }
+    } catch (err) {
+      setError(err.message || 'Verification failed.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="login-page" data-testid="login-page">
       <div className="login-bg-glow" />
@@ -339,8 +386,40 @@ function LoginPage({ onAuth }) {
               {loading ? <Loader2 className="animate-spin" /> : <Zap style={{ fill: 'currentColor' }} />}
               {loading ? 'Logging in...' : 'Log In'}
             </button>
-            <button type="button" className="btn-secondary" onClick={() => { setStep('email'); setPassword(''); setError(null); }}>
-              Back
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <button type="button" className="btn-secondary" onClick={() => { setStep('email'); setPassword(''); setError(null); }}>
+                Back
+              </button>
+              <button type="button" className="forgot-password-link" onClick={startForgotPassword}
+                disabled={loading} data-testid="forgot-password-btn">
+                Forgot Password?
+              </button>
+            </div>
+          </form>
+        )}
+
+        {step === 'reset' && (
+          <form onSubmit={handleResetPassword} className="login-form" data-testid="reset-form">
+            <div className="badge neon" style={{ alignSelf: 'center', marginBottom: 8 }}>
+              {accessType} Access Re-Verified
+            </div>
+            <p style={{ fontSize: 12, color: 'var(--text-secondary)', textAlign: 'center' }}>Set a new password for your account</p>
+            <div className="login-field">
+              <div className="login-field-icon"><Lock style={{ width: 16, height: 16 }} /></div>
+              <input type="password" placeholder="New password (min 6 chars)" value={password}
+                onChange={e => setPassword(e.target.value)} autoFocus data-testid="reset-new-password-input" />
+            </div>
+            <div className="login-field">
+              <div className="login-field-icon"><Lock style={{ width: 16, height: 16 }} /></div>
+              <input type="password" placeholder="Confirm new password" value={confirmPassword}
+                onChange={e => setConfirmPassword(e.target.value)} data-testid="reset-confirm-password-input" />
+            </div>
+            <button className="btn-primary" type="submit" disabled={loading || password.length < 6} data-testid="reset-password-btn">
+              {loading ? <Loader2 className="animate-spin" /> : <Zap style={{ fill: 'currentColor' }} />}
+              {loading ? 'Resetting...' : 'Reset Password & Enter'}
+            </button>
+            <button type="button" className="btn-secondary" onClick={() => { setStep('password'); setPassword(''); setConfirmPassword(''); setError(null); }}>
+              Back to Login
             </button>
           </form>
         )}

@@ -1115,3 +1115,27 @@
 }
 
 .login-field input::placeholder { color: var(--text-muted); }
+
+
+.forgot-password-link {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 0;
+  font-family: 'Outfit', sans-serif;
+  letter-spacing: 0.02em;
+  transition: opacity var(--transition-fast);
+}
+
+.forgot-password-link:hover {
+  opacity: 0.8;
+  text-decoration: underline;
+}
+
+.forgot-password-link:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}

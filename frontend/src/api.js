@@ -25,6 +25,10 @@ export async function setPassword(email, password) {
   return apiCall('/api/auth/set-password', { method: 'POST', body: JSON.stringify({ email, password }) });
 }
 
+export async function resetPassword(email, new_password) {
+  return apiCall('/api/auth/reset-password', { method: 'POST', body: JSON.stringify({ email, new_password }) });
+}
+
 export async function verifySession(email, session_token) {
   return apiCall('/api/auth/verify-session', { method: 'POST', body: JSON.stringify({ email, session_token }) });
 }
