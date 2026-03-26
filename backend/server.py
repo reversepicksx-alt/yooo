@@ -359,8 +359,9 @@ async def search_players(req: PlayerSearchRequest):
     def extract_player(item):
         p = item.get("player", {})
         stats = item.get("statistics", [])
-        team_id = stats[0]["team"]["id"] if stats else 0
-        team_name = stats[0]["team"]["name"] if stats else ""
+        # Use LAST statistics entry (most recent team after transfers)
+        team_id = stats[-1]["team"]["id"] if stats else 0
+        team_name = stats[-1]["team"]["name"] if stats else ""
         firstname = p.get("firstname", "") or ""
         lastname = p.get("lastname", "") or ""
         display_name = f"{firstname} {lastname}".strip() if firstname and lastname else p.get("name", "")
