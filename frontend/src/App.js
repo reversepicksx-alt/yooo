@@ -289,9 +289,13 @@ function LoginPage({ onAuth }) {
 
   return (
     <div className="login-page" data-testid="login-page">
+      <div className="login-bg-glow" />
+      <div className="login-bg-logo">
+        <img src="/rp-logo.png" alt="" />
+      </div>
       <div className="login-container">
         <div className="login-logo">
-          <div className="logo-icon" style={{ width: 56, height: 56, borderRadius: 16 }}><Zap style={{ width: 28, height: 28 }} /></div>
+          <img src="/rp-logo.png" alt="ReversePicks" className="login-logo-img" />
           <div className="logo-text" style={{ fontSize: 28 }}>Reverse<span>Picks</span></div>
           <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.15em', textTransform: 'uppercase', color: 'var(--text-muted)', marginTop: 4 }}>Elite Prop Intelligence</p>
         </div>

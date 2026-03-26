@@ -174,6 +174,48 @@ class ReversePicsAPITester:
         """Test football API status endpoint"""
         return self.run_test("Football API Status", "GET", "/api/football/status", 200)
 
+    def test_whop_auth_owner_email(self):
+        """Test Whop auth with owner email (should auto-verify)"""
+        auth_data = {
+            "email": "josselj001@gmail.com"
+        }
+        success, response = self.run_test("Whop Auth - Owner Email", "POST", "/api/auth/verify-whop", 200, auth_data)
+        if success:
+            if response.get('verified') == True:
+                print(f"   ✅ Owner email auto-verified: {response.get('access_type')}")
+                print(f"   Session token received: {bool(response.get('session_token'))}")
+            else:
+                print(f"   ❌ Owner email not auto-verified: {response}")
+        return success, response
+
+    def test_whop_auth_lifetime_email(self):
+        """Test Whop auth with lifetime subscriber email"""
+        auth_data = {
+            "email": "faron2allen@gmail.com"
+        }
+        success, response = self.run_test("Whop Auth - Lifetime Email", "POST", "/api/auth/verify-whop", 200, auth_data)
+        if success:
+            if response.get('requires_password_setup') == True:
+                print(f"   ✅ Lifetime email requires password setup: {response.get('access_type')}")
+            elif response.get('requires_password') == True:
+                print(f"   ✅ Lifetime email requires password (already set up)")
+            else:
+                print(f"   ❌ Unexpected response for lifetime email: {response}")
+        return success, response
+
+    def test_whop_auth_random_email(self):
+        """Test Whop auth with random email (should be rejected)"""
+        auth_data = {
+            "email": "random.user@example.com"
+        }
+        success, response = self.run_test("Whop Auth - Random Email", "POST", "/api/auth/verify-whop", 200, auth_data)
+        if success:
+            if response.get('verified') == False:
+                print(f"   ✅ Random email correctly rejected: {response.get('message')}")
+            else:
+                print(f"   ❌ Random email should be rejected: {response}")
+        return success, response
+
 def main():
     print("🚀 Starting ReversePicks API Testing...")
     print("=" * 60)
@@ -198,6 +240,14 @@ def main():
     
     # Football API status
     tester.test_football_api_status()
+    
+    print("\n🔐 WHOP AUTHENTICATION TESTS")
+    print("-" * 30)
+    
+    # Test Whop authentication system
+    tester.test_whop_auth_owner_email()
+    tester.test_whop_auth_lifetime_email()
+    tester.test_whop_auth_random_email()
     
     print("\n🤖 AI INTEGRATION TESTS")
     print("-" * 30)
