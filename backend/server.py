@@ -547,7 +547,7 @@ CRITICAL RULES for recentSamples:
 - Extract the actual venue from the match history data provided (check teams.home.id vs the player's team)
 - Sort by date descending (most recent first)"""
         )
-        chat.with_model("gemini", "gemini-2.5-flash")
+        chat.with_model("gemini", "gemini-2.5-flash-lite")
 
         prompt = f"""Analyze this soccer player prop bet using ONLY the provided API data:
 
@@ -673,7 +673,7 @@ async def chat_message(req: ChatMessageRequest):
             session_id=req.session_id,
             system_message="You are an elite soccer tactical analyst and prop betting expert. You help users understand deep tactical nuances of player performances. Be concise but insightful."
         )
-        chat.with_model("gemini", "gemini-2.5-flash")
+        chat.with_model("gemini", "gemini-2.5-flash-lite")
         chat_sessions[req.session_id] = chat
     try:
         response = await chat.send_message(UserMessage(text=req.message))
