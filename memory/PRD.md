@@ -39,12 +39,11 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 - [x] Projection card with confidence intervals, probability curves, recommendations
 - [x] Pick tracking with save/remove functionality
 - [x] Pick detail modal
-- [x] **Tab toggle fix**: Only visible on Step 1, hidden on Steps 2-6
-- [x] **Wizard breadcrumb**: Progress tracker (League→Player→Opponent→Venue→Prop→Line)
-- [x] **Mode switching resets wizard** to Step 1 cleanly
-- [x] **10 prop types** with correct API-Sports stat mappings and descriptions
-  - Pass Attempts, Shots, Shots on Target, Tackles, Key Passes
-  - Saves, Interceptions, Blocks, Dribble Attempts, Fouls Drawn
+- [x] **Whop authentication system** (owner auto-login, lifetime subs, password setup/login)
+- [x] **Premium UI overhaul**: glass-morphism header/nav, smooth transitions, shimmer buttons, glow effects
+- [x] **Login page** with RP crown logo, animated glow background, premium feel
+- [x] **Logout button** in header
+- [x] **Lifetime subscriber emails** hardcoded: faron2allen, brayanfgaleas, odr310, joseharo197, rijulgauchan1, gordo0210
 
 ## API Keys
 - API-Sports: 8154742f66d14cb52548c73c3edfbee3
