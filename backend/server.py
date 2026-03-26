@@ -377,44 +377,27 @@ async def get_player_stats(player_id: int, season: int = CURRENT_SEASON):
     return {"stats": None}
 
 
-async def fetch_match_player_stats(fixture_id: int, player_id: int):
-    try:
-        data = await api_football_request("fixtures/players", {"fixture": fixture_id})
-        for team_data in (data or []):
-            for p in team_data.get("players", []):
-                if p.get("player", {}).get("id") == player_id:
-                    return p
-    except Exception:
-        pass
-    return None
-
-
-async def get_recent_match_history(player_id: int, team_id: int, count: int = 20):
+async def get_recent_fixtures_fast(team_id: int, count: int = 20):
+    """Get recent fixtures WITHOUT individual player stats (fast - 1 API call)."""
     try:
         fixtures = await api_football_request("fixtures", {"team": team_id, "last": count})
-
-        async def process_fixture(f):
-            fid = f["fixture"]["id"]
+        results = []
+        for f in fixtures[:count]:
             home_team_id = f.get("teams", {}).get("home", {}).get("id")
             venue = "home" if home_team_id == team_id else "away"
-            ps = await fetch_match_player_stats(fid, player_id)
-            if ps:
-                return {
-                    "fixture": f["fixture"],
-                    "league": f.get("league"),
-                    "teams": f.get("teams"),
-                    "goals": f.get("goals"),
-                    "playerStats": ps,
-                    "venue": venue
-                }
-            return None
-
-        # Fetch all match stats in parallel (batches of 5 to avoid rate limits)
-        results = []
-        for i in range(0, len(fixtures[:count]), 5):
-            batch = fixtures[i:i+5]
-            batch_results = await aio.gather(*[process_fixture(f) for f in batch], return_exceptions=True)
-            results.extend([r for r in batch_results if r and not isinstance(r, Exception)])
+            home_goals = f.get("goals", {}).get("home", 0) or 0
+            away_goals = f.get("goals", {}).get("away", 0) or 0
+            opponent_name = f.get("teams", {}).get("away" if venue == "home" else "home", {}).get("name", "Unknown")
+            results.append({
+                "date": f.get("fixture", {}).get("date", ""),
+                "opponent": opponent_name,
+                "venue": venue,
+                "homeGoals": home_goals,
+                "awayGoals": away_goals,
+                "result": f.get("teams", {}).get("home" if venue == "home" else "away", {}).get("winner"),
+                "league": f.get("league", {}).get("name", ""),
+                "round": f.get("league", {}).get("round", ""),
+            })
         return results
     except Exception:
         return []
@@ -435,47 +418,47 @@ class PredictionRequest(BaseModel):
 @app.post("/api/predict")
 async def predict(req: PredictionRequest):
     try:
-        # 1. Gather data from API-Sports
-        player_stats = None
-        for s in [CURRENT_SEASON, CURRENT_SEASON - 1, CURRENT_SEASON - 2]:
-            try:
-                data = await api_football_request("players", {"id": req.playerId, "season": s})
-                if data:
-                    player_stats = data[0]
-                    break
-            except Exception:
-                continue
-
-        actual_team_id = req.teamId
-        if actual_team_id == 0 and player_stats:
-            stats_list = player_stats.get("statistics", [])
-            if stats_list:
-                actual_team_id = stats_list[0].get("team", {}).get("id", 0)
-
-        match_history = await get_recent_match_history(req.playerId, actual_team_id, 20)
-
-        league_id = req.leagueId
-        if not league_id and player_stats:
-            stats_list = player_stats.get("statistics", [])
-            if stats_list:
-                league_id = stats_list[0].get("league", {}).get("id", 39)
-
-        # Fetch supplementary data in PARALLEL for speed
+        # Fetch player stats + recent fixtures + supplementary data ALL IN PARALLEL
         async def safe_fetch(endpoint, params, fallback=None):
             try:
                 return await api_football_request(endpoint, params)
             except Exception:
                 return fallback
 
-        team_stats_task = safe_fetch("teams/statistics", {"team": actual_team_id, "league": league_id, "season": CURRENT_SEASON})
-        opponent_stats_task = safe_fetch("teams/statistics", {"team": req.opponentId, "league": league_id, "season": CURRENT_SEASON})
-        h2h_task = safe_fetch("fixtures/headtohead", {"h2h": f"{actual_team_id}-{req.opponentId}", "last": 5}, [])
-        standings_task = safe_fetch("standings", {"league": league_id, "season": CURRENT_SEASON})
-        fixtures_task = safe_fetch("fixtures", {"team": actual_team_id, "last": 20}, [])
+        async def get_player_data():
+            for s in [CURRENT_SEASON, CURRENT_SEASON - 1, CURRENT_SEASON - 2]:
+                try:
+                    data = await api_football_request("players", {"id": req.playerId, "season": s})
+                    if data:
+                        return data[0]
+                except Exception:
+                    continue
+            return None
 
-        team_stats, opponent_stats, h2h_data, standings_raw, team_fixtures = await aio.gather(
-            team_stats_task, opponent_stats_task, h2h_task, standings_task, fixtures_task
+        actual_team_id = req.teamId
+        league_id = req.leagueId or 39
+
+        # Fire ALL API calls at once
+        player_data_task = get_player_data()
+        team_stats_task = safe_fetch("teams/statistics", {"team": actual_team_id or 40, "league": league_id, "season": CURRENT_SEASON})
+        opponent_stats_task = safe_fetch("teams/statistics", {"team": req.opponentId, "league": league_id, "season": CURRENT_SEASON})
+        h2h_task = safe_fetch("fixtures/headtohead", {"h2h": f"{actual_team_id or 40}-{req.opponentId}", "last": 5}, [])
+        standings_task = safe_fetch("standings", {"league": league_id, "season": CURRENT_SEASON})
+        fixtures_task = get_recent_fixtures_fast(actual_team_id or 40, 20)
+
+        player_stats, team_stats, opponent_stats, h2h_data, standings_raw, recent_fixtures = await aio.gather(
+            player_data_task, team_stats_task, opponent_stats_task, h2h_task, standings_task, fixtures_task
         )
+
+        if actual_team_id == 0 and player_stats:
+            stats_list = player_stats.get("statistics", [])
+            if stats_list:
+                actual_team_id = stats_list[0].get("team", {}).get("id", 0)
+
+        if not league_id and player_stats:
+            stats_list = player_stats.get("statistics", [])
+            if stats_list:
+                league_id = stats_list[0].get("league", {}).get("id", 39)
 
         standings = []
         if standings_raw:
@@ -484,127 +467,42 @@ async def predict(req: PredictionRequest):
             except (IndexError, AttributeError):
                 pass
 
-        odds = None
-        fixture_metadata = None
-        upcoming = [f for f in (team_fixtures or []) if f.get("fixture", {}).get("status", {}).get("short") == "NS"]
-        if upcoming:
-            uf = upcoming[0]
-            fixture_metadata = {
-                "round": uf.get("league", {}).get("round", ""),
-                "venue": uf.get("fixture", {}).get("venue", {}).get("name", ""),
-                "city": uf.get("fixture", {}).get("venue", {}).get("city", ""),
-            }
-            try:
-                odds_data = await api_football_request("odds", {"fixture": uf["fixture"]["id"]})
-                if odds_data:
-                    bookmakers = odds_data[0].get("bookmakers", [])
-                    if bookmakers:
-                        bets = bookmakers[0].get("bets", [])
-                        odds = next((b for b in bets if b.get("name") == "Match Winner"), None)
-            except Exception:
-                pass
-
         historical_data = {
             "playerStats": player_stats,
             "teamStats": team_stats,
             "opponentStats": opponent_stats,
             "h2hData": h2h_data,
             "standings": standings,
-            "teamFixtures": team_fixtures,
-            "matchHistory": match_history,
-            "odds": odds,
-            "fixtureMetadata": fixture_metadata,
+            "recentFixtures": recent_fixtures,
         }
 
-        # 2. Send to Gemini for AI analysis
+        # 2. Send to Gemini — balanced: rich but fast
         chat = LlmChat(
             api_key=EMERGENT_LLM_KEY,
             session_id=f"predict-{uuid.uuid4().hex[:8]}",
-            system_message="""You are an elite soccer prop betting analyst used by sharp bettors. You produce structured JSON predictions with deep, convincing research that explains WHY a prop should hit or miss — not just surface-level stats.
+            system_message="""You are an elite soccer prop analyst. Return ONLY valid JSON (no markdown).
 
-Your analysis MUST cover these layers (the kind of breakdown that makes people trust the pick even if it misses):
+JSON structure:
+{"player":{"id":int,"name":"","team":"","role":"","position":""},"opponent":"","league":"","propType":"","line":0,"projectedValue":0,"recommendation":"over|under","confidenceScore":0-100,"confidenceLevel":"Low|Medium|High|Very High","confidenceInterval":[lo,hi],"recentSamples":[{"date":"","opponent":"","value":0,"minutesPlayed":0,"matchDifficulty":"low|medium|high","venue":"home|away"}],"bayesianMetrics":{"priorMean":0,"momentumEffect":0,"covariateAdjustment":0,"reversalFlag":"stable|upward_reversal_likely|downward_reversal_likely"},"probabilityCurve":[{"value":0,"probability":0}],"tacticalAlerts":[{"type":"injury|lineup|tactical","message":"","severity":"low|medium|high"}],"sharpSummary":"","reasoning":""}
 
-1. MATCHUP EDGE: How the opponent's defensive weaknesses/strengths directly impact THIS specific stat. What does the opponent concede in this category? Are they a high-press team that forces turnovers (fewer passes) or a low-block team that invites possession (more passes)? Cite actual opponent defensive data.
-
-2. PLAYER ROLE & USAGE: Is the player the primary creator, set-piece taker, focal point of attacks? How does their tactical role guarantee volume? What percentage of team actions flow through them? What's their per-90 average and consistency?
-
-3. PACE & GAME SCRIPT: What's the expected tempo? If one team is a heavy favorite, does that change possession split? Does a blowout risk reduce minutes? Will the game be open (more chances) or cagey (fewer touches)?
-
-4. VENUE SPLITS: How does this player perform at home vs away for THIS specific stat? Is there a significant venue differential? Show the numbers.
-
-5. FORM & MOMENTUM: Recent 5-game rolling average vs season average. Is the player trending up or down? Any tactical changes, new teammates, or system shifts that explain the trend?
-
-6. HEAD-TO-HEAD HISTORY: What has this player done against this specific opponent historically? Any patterns?
-
-7. FLOOR/CEILING ANALYSIS: What's the realistic worst case (floor) and best case (ceiling) for this stat? What scenarios lead to each?
-
-ALWAYS return valid JSON matching this exact structure:
-{
-  "player": { "id": number, "name": string, "team": string, "role": string, "position": string },
-  "opponent": string,
-  "league": string,
-  "propType": string,
-  "line": number,
-  "projectedValue": number,
-  "recommendation": "over" or "under",
-  "confidenceScore": number (0-100),
-  "confidenceLevel": "Low" | "Medium" | "High" | "Very High",
-  "confidenceInterval": [number, number],
-  "explanation": string (2-3 sentence executive summary),
-  "recentSamples": [{ "date": string, "opponent": string, "value": number, "minutesPlayed": number, "matchDifficulty": "low"|"medium"|"high", "venue": "home"|"away" }],
-  "tacticalAnalysis": { "pressingStyle": string, "possessionImpact": string, "spaceAndTime": string },
-  "bayesianMetrics": { "priorMean": number, "momentumEffect": number, "covariateAdjustment": number, "reversalFlag": "stable"|"upward_reversal_likely"|"downward_reversal_likely" },
-  "probabilityCurve": [{ "value": number, "probability": number }],
-  "tacticalAlerts": [{ "type": "injury"|"lineup"|"tactical", "message": string, "severity": "low"|"medium"|"high" }],
-  "matchupBreakdown": string (3-4 paragraphs covering opponent defensive profile, how they concede this specific stat, and what creates the edge or risk),
-  "venueAnalysis": string (home vs away splits for this stat with numbers),
-  "formTrend": string (recent form analysis — rolling average, trend direction, explaining WHY the trend exists),
-  "floorCeiling": string (worst/best case scenarios with reasoning),
-  "sharpSummary": string (the key 2-3 sentences a sharp bettor would focus on — the CORE reason this pick has or lacks value),
-  "reasoning": string (comprehensive 4-6 paragraph analysis tying everything together — matchup, role, game script, venue, form, H2H, floor/ceiling. This should read like a professional analyst breakdown that makes the reader trust the research)
-}
-
-CRITICAL RULES for recentSamples:
-- You MUST include AT LEAST 15 entries (up to 20 if data available)
-- Each entry MUST have a "venue" field set to "home" or "away"
-- Sort by date descending (most recent first)"""
+Field requirements:
+- sharpSummary: 2-3 sharp sentences. The CORE edge or fade reason. Why this line is wrong or right.
+- reasoning: 2-3 rich paragraphs that cover: (1) matchup edge — how opponent's style/defense impacts this stat, with data (2) player usage/role + per-90 averages + recent form trend (rolling 5-game vs season) (3) venue splits + game script + floor/ceiling scenarios. Write like a professional analyst note — confident, specific, data-backed.
+- recentSamples: 15-20 entries with venue tags, sorted date descending
+- probabilityCurve: 10 data points"""
         )
         chat.with_model("gemini", "gemini-2.5-flash")
 
-        prompt = f"""Analyze this soccer player prop bet using ONLY the provided API data:
+        trimmed_data = json.dumps(historical_data, default=str)[:10000]
 
-Player: {req.playerName}
-Team ID: {req.teamId}
-Opponent: {req.opponentName}
-Venue: {req.venue}
-Prop Type: {req.propType}
-Line: {req.line}
+        prompt = f"""Player: {req.playerName} | Opponent: {req.opponentName} | Venue: {req.venue} | Prop: {req.propType} | Line: {req.line}
 
-Historical Data (from API-Sports):
-{json.dumps(historical_data, default=str)[:18000]}
+Stat mapping: pass_attempts=passes.total, shots=shots.total, shots_on_target=shots.on, tackles=tackles.total, key_passes=passes.key, saves=goals.saves, interceptions=tackles.interceptions, blocks=tackles.blocks, dribbles=dribbles.attempts, fouls_drawn=fouls.drawn
 
-CRITICAL INSTRUCTIONS:
-1. Use ONLY the provided data. Extract actual stat values from match history for recentSamples.
-2. For propType '{req.propType}': map to the CORRECT API-Sports stat field:
-   - pass_attempts → statistics[].passes.total
-   - shots → statistics[].shots.total
-   - shots_on_target → statistics[].shots.on
-   - tackles → statistics[].tackles.total
-   - key_passes → statistics[].passes.key
-   - saves → statistics[].goals.saves (goalkeeper stat)
-   - interceptions → statistics[].tackles.interceptions
-   - blocks → statistics[].tackles.blocks
-   - dribbles → statistics[].dribbles.attempts
-   - fouls_drawn → statistics[].fouls.drawn
-3. Generate a probability curve with 10-15 data points
-4. Write the "reasoning" field as a DEEP 4-6 paragraph professional analysis covering: matchup edge, player usage, game script, venue splits, form trend, H2H, and floor/ceiling. This should convince a sharp bettor.
-5. Write "matchupBreakdown" as 3-4 paragraphs about the opponent's defensive profile and how they concede this specific stat.
-6. Include venue home/away stat splits in "venueAnalysis" with actual numbers.
-7. Include "formTrend" with rolling 5-game average vs season average.
-8. Include "floorCeiling" with worst/best case reasoning.
-9. Write "sharpSummary" as the 2-3 sentence KEY takeaway a sharp bettor cares about.
-10. Include AT LEAST 15 recentSamples with venue tags.
-11. Return ONLY valid JSON, no markdown or extra text."""
+Data:
+{trimmed_data}
+
+Return ONLY valid JSON. 15+ recentSamples with venue. Rich reasoning (2-3 paragraphs). 10pt probabilityCurve."""
 
         response = await chat.send_message(UserMessage(text=prompt))
         response_text = response.strip()

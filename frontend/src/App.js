@@ -206,49 +206,9 @@ function ProjectionCard({ projection, onSave, excludedIndices, onToggleSample })
             </div>
           )}
 
-          {/* Matchup Breakdown */}
-          {projection.matchupBreakdown && (
-            <div className="space-y-2">
-              <div className="stat-label flex items-center gap-2"><Shield style={{ width: 12, height: 12 }} /> Opponent Matchup Breakdown</div>
-              <p className="reasoning-text">{projection.matchupBreakdown}</p>
-            </div>
-          )}
-
-          {/* Venue & Form side by side */}
-          {(projection.venueAnalysis || projection.formTrend) && (
-            <div className="space-y-3">
-              {projection.venueAnalysis && (
-                <div className="stat-box">
-                  <div className="stat-label flex items-center gap-2" style={{ marginBottom: 6 }}>
-                    <Activity style={{ width: 12, height: 12 }} /> Venue Splits
-                  </div>
-                  <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6 }}>{projection.venueAnalysis}</p>
-                </div>
-              )}
-              {projection.formTrend && (
-                <div className="stat-box">
-                  <div className="stat-label flex items-center gap-2" style={{ marginBottom: 6 }}>
-                    <TrendingUp style={{ width: 12, height: 12 }} /> Form & Momentum
-                  </div>
-                  <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6 }}>{projection.formTrend}</p>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Floor/Ceiling */}
-          {projection.floorCeiling && (
-            <div className="stat-box">
-              <div className="stat-label flex items-center gap-2" style={{ marginBottom: 6 }}>
-                <BarChart3 style={{ width: 12, height: 12 }} /> Floor / Ceiling Scenarios
-              </div>
-              <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6 }}>{projection.floorCeiling}</p>
-            </div>
-          )}
-
-          {/* Full Reasoning */}
+          {/* Full Analysis */}
           <div className="space-y-2">
-            <div className="stat-label flex items-center gap-2"><BarChart3 style={{ width: 12, height: 12 }} /> Full Analysis</div>
+            <div className="stat-label flex items-center gap-2"><BarChart3 style={{ width: 12, height: 12 }} /> Analysis</div>
             <p className="reasoning-text">{projection.reasoning}</p>
           </div>
         </div>
