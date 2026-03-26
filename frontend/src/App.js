@@ -680,9 +680,17 @@ export default function App() {
     try {
       const parsed = await parseNaturalQuery(naturalQuery);
       if (!parsed.playerName) throw new Error('Could not identify player. Try a more specific query.');
-      const playersData = await searchPlayers(parsed.playerName);
-      const players = playersData.players || [];
-      if (!players.length) throw new Error(`Player "${parsed.playerName}" not found.`);
+
+      // Try full name first, then last name fallback
+      let playersData = await searchPlayers(parsed.playerName);
+      let players = playersData.players || [];
+      if (!players.length && parsed.playerName.includes(' ')) {
+        const lastName = parsed.playerName.split(' ').pop();
+        playersData = await searchPlayers(lastName);
+        players = playersData.players || [];
+      }
+      if (!players.length) throw new Error(`Player "${parsed.playerName}" not found. Try searching by last name.`);
+
       const player = players[0];
       const teamsData = await getTeamsByLeague(39);
       const leagueTeams = teamsData.teams || [];
@@ -693,7 +701,7 @@ export default function App() {
         playerName: player.name,
         teamId: player.teamId,
         opponentId: opponent?.id || 0,
-        opponentName: opponent?.name || 'Unknown',
+        opponentName: opponent?.name || parsed.opponentName || 'Unknown',
         venue: parsed.venue || 'home',
         propType: parsed.propType || 'pass_attempts',
         line: parsed.line || 0,
@@ -918,10 +926,17 @@ export default function App() {
                         <div key={player.id} className="card card-clickable" onClick={() => handlePlayerSelect(player)}
                           data-testid={`player-${player.id}`}>
                           <div className="player-item">
-                            <div className="player-avatar"><User /></div>
-                            <div>
+                            {player.photo ? (
+                              <img src={player.photo} alt="" className="player-photo" onError={e => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }} />
+                            ) : null}
+                            <div className="player-avatar" style={player.photo ? { display: 'none' } : {}}><User /></div>
+                            <div style={{ flex: 1 }}>
                               <div className="player-name">{player.name}</div>
-                              <div className="player-team">{player.teamName}</div>
+                              <div className="player-team">
+                                {player.nationality && <span className="player-nationality">{player.nationality}</span>}
+                                {player.nationality && player.teamName ? ' · ' : ''}
+                                {player.teamName || 'Free Agent'}
+                              </div>
                             </div>
                           </div>
                         </div>

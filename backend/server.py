@@ -329,18 +329,17 @@ async def get_leagues():
 
 @app.get("/api/leagues/{league_id}/teams")
 async def get_teams_by_league(league_id: int, season: int = CURRENT_SEASON):
-    try:
-        data = await api_football_request("teams", {"league": league_id, "season": season})
-        teams = [{"id": item["team"]["id"], "name": item["team"]["name"], "logo": item["team"].get("logo", "")} for item in data]
-        return {"teams": teams}
-    except Exception as e:
-        # Try previous season
+    # Try multiple seasons - international comps often use future seasons
+    seasons_to_try = [season + 1, season, season - 1, season - 2, season - 3]
+    for s in seasons_to_try:
         try:
-            data = await api_football_request("teams", {"league": league_id, "season": season - 1})
-            teams = [{"id": item["team"]["id"], "name": item["team"]["name"], "logo": item["team"].get("logo", "")} for item in data]
-            return {"teams": teams}
+            data = await api_football_request("teams", {"league": league_id, "season": s})
+            if data:
+                teams = [{"id": item["team"]["id"], "name": item["team"]["name"], "logo": item["team"].get("logo", "")} for item in data]
+                return {"teams": teams}
         except Exception:
-            raise HTTPException(status_code=500, detail=str(e))
+            continue
+    return {"teams": []}
 
 
 class PlayerSearchRequest(BaseModel):
@@ -354,47 +353,95 @@ async def search_players(req: PlayerSearchRequest):
     if len(req.query) < 3:
         return {"players": []}
     season = req.season or CURRENT_SEASON
-    params = {"search": req.query}
+    query_lower = req.query.lower().strip()
+
+    def extract_player(item):
+        p = item.get("player", {})
+        stats = item.get("statistics", [])
+        team_id = stats[0]["team"]["id"] if stats else 0
+        team_name = stats[0]["team"]["name"] if stats else ""
+        firstname = p.get("firstname", "") or ""
+        lastname = p.get("lastname", "") or ""
+        display_name = f"{firstname} {lastname}".strip() if firstname and lastname else p.get("name", "")
+        return {
+            "id": p.get("id", 0),
+            "name": display_name,
+            "firstname": firstname,
+            "lastname": lastname,
+            "age": p.get("age", 0),
+            "nationality": p.get("nationality", ""),
+            "photo": p.get("photo", ""),
+            "teamId": team_id,
+            "teamName": team_name,
+        }
+
+    all_players = []
+
+    # Strategy 1: Search within specified league
     if req.league_id:
-        params["league"] = req.league_id
-        params["season"] = season
-        endpoint = "players"
-    else:
-        endpoint = "players/profiles"
-    try:
-        data = await api_football_request(endpoint, params)
-        if not data and req.league_id:
-            # Try previous season
-            params["season"] = season - 1
-            data = await api_football_request(endpoint, params)
-        if not data and req.league_id:
-            params["season"] = season - 2
-            data = await api_football_request(endpoint, params)
-        if not data and req.league_id:
-            # Fallback to global search
+        for s in [season, season - 1, season + 1, season - 2]:
+            try:
+                data = await api_football_request("players", {"search": req.query, "league": req.league_id, "season": s})
+                if data:
+                    all_players.extend([extract_player(item) for item in data])
+                    break
+            except Exception:
+                continue
+
+    # Strategy 2: If no results, try major domestic leagues in parallel for better team info
+    if not all_players:
+        major_leagues = [39, 140, 135, 78, 61, 253, 71, 307]
+        async def try_league(lid):
+            try:
+                data = await api_football_request("players", {"search": req.query, "league": lid, "season": season})
+                return [extract_player(item) for item in (data or [])]
+            except Exception:
+                return []
+        results = await aio.gather(*[try_league(lid) for lid in major_leagues])
+        for r in results:
+            all_players.extend(r)
+
+    # Strategy 3: If still nothing, use profiles as last resort
+    if not all_players:
+        try:
             data = await api_football_request("players/profiles", {"search": req.query})
-        players = []
-        for item in (data or []):
-            p = item.get("player", {})
-            stats = item.get("statistics", [])
-            team_id = stats[0]["team"]["id"] if stats else 0
-            team_name = stats[0]["team"]["name"] if stats else "Unknown"
-            players.append({
-                "id": p.get("id", 0),
-                "name": p.get("name", ""),
-                "firstname": p.get("firstname", ""),
-                "lastname": p.get("lastname", ""),
-                "age": p.get("age", 0),
-                "nationality": p.get("nationality", ""),
-                "photo": p.get("photo", ""),
-                "teamId": team_id,
-                "teamName": team_name,
-            })
-        return {"players": players}
-    except HTTPException:
-        raise
-    except Exception as e:
-        return {"players": [], "error": str(e)}
+            if data:
+                all_players.extend([extract_player(item) for item in data])
+        except Exception:
+            pass
+
+    # Strategy 4: If full name returned nothing from profiles, try last name
+    if not all_players and " " in req.query:
+        last_name = req.query.strip().split()[-1]
+        try:
+            data = await api_football_request("players/profiles", {"search": last_name})
+            if data:
+                all_players.extend([extract_player(item) for item in data])
+        except Exception:
+            pass
+
+    # De-duplicate by player ID, prefer entries with team info
+    seen_ids = {}
+    for p in all_players:
+        pid = p["id"]
+        if pid not in seen_ids:
+            seen_ids[pid] = p
+        elif p["teamName"] and not seen_ids[pid]["teamName"]:
+            seen_ids[pid] = p
+
+    players = list(seen_ids.values())
+
+    # Sort: players with team info first, then relevance (name match)
+    def sort_key(p):
+        has_team = 0 if p["teamName"] else 1
+        name_lower = p["name"].lower()
+        lastname_lower = (p["lastname"] or "").lower()
+        # Exact lastname match gets priority
+        exact = 0 if lastname_lower == query_lower or query_lower in name_lower.split() else 1
+        return (has_team, exact, p["name"])
+
+    players.sort(key=sort_key)
+    return {"players": players[:15]}
 
 
 @app.get("/api/player/{player_id}/stats")

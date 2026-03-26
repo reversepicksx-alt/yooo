@@ -318,6 +318,20 @@
 .player-name { font-size: 14px; font-weight: 700; }
 .player-team { font-size: 10px; color: var(--text-secondary); }
 
+.player-photo {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid var(--border-secondary);
+  background: var(--bg-surface);
+}
+
+.player-nationality {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
 /* ===== INPUTS ===== */
 .search-input-wrap { position: relative; }
 
