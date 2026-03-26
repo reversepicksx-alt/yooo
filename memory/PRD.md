@@ -56,6 +56,9 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 - [x] **FIXED (Feb 2026)**: Player search - full names (not abbreviated), photos, nationality, dedup by ID, major-league fallback for team info
 - [x] **FIXED (Feb 2026)**: International tournaments - teams now load for WCQ/Euro Qualifiers (tries 5 seasons)
 - [x] **FIXED (Feb 2026)**: Natural search - last-name fallback when full name returns 0 results
+- [x] **FIXED (Feb 2026)**: International league IDs corrected: UEFA=32, CONMEBOL=34, AFC=30, CAF=29, OFC=33, Euro Qual=960
+- [x] **FIXED (Feb 2026)**: Removed player photos from search cards (copyright), kept nationality text display
+- [x] **FIXED (Feb 2026)**: POTD loading layout jank - fixed with skeleton min-height + fade-in animation
 
 ## Auth System Details
 - Owner email (josselj001@gmail.com): Bypasses password entirely, instant login
