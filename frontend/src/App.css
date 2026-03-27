@@ -805,6 +805,7 @@
 
 /* ===== CHAT ===== */
 .chat-container { display: flex; flex-direction: column; height: calc(100vh - 200px); }
+.chat-container-inline { display: flex; flex-direction: column; background: var(--surface); border-radius: 16px; padding: 16px; border: 1px solid var(--border); }
 
 .chat-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
 .chat-title { font-size: 24px; font-weight: 800; }

@@ -78,8 +78,7 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 - [x] Substitution Risk Quantification: Calculates % of games with early sub, avg stat volume lost, weighted projection drag
 - [x] Game Flow Dynamics: First-to-score possession impact, leading vs trailing stat adjustments
 - [x] PPDA Approximation: Estimates opponent pressing intensity from tackles/interceptions to predict pass volume shifts
-- [x] Frontend displays all new fields: Key Evidence, Scenario Analysis, Risk Factor, Sensitivity Tests (purple), Sub Risk + Game Flow (side-by-side grid)
-- [x] Data payload increased from 10k to 12k chars for richer context
+- [x] Tactical Uplink moved inline to Predict tab (replaces Natural Search). Only 2 tabs: PREDICT + TRACKING
 
 ## Auth System Details
 - Owner email (josselj001@gmail.com): Bypasses password entirely, instant login

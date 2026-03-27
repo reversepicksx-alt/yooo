@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Zap, ChevronRight, RefreshCw, ArrowLeft, Clock, Activity,
-  Shield, MessageSquare, Send, Loader2, Trash2, Search, User,
+  Shield, Send, Loader2, Trash2, User,
   TrendingUp, TrendingDown, BarChart3, ShieldAlert, Target, LogOut, Lock, Mail
 } from 'lucide-react';
 import {
@@ -9,7 +9,7 @@ import {
 } from 'recharts';
 import {
   getTeamsByLeague, searchPlayers, predict, startChat, sendChatMessage,
-  parseNaturalQuery, checkApiStatus, SUPPORTED_LEAGUES,
+  checkApiStatus, SUPPORTED_LEAGUES,
   verifyWhop, authLogin, setPassword as apiSetPassword, resetPassword, verifySession, authLogout,
   getPickOfTheDay, settlePicks
 } from './api';
@@ -587,8 +587,6 @@ export default function App() {
   const [wizardData, setWizardData] = useState({});
   const [wizardError, setWizardError] = useState(null);
   const [searchMode, setSearchMode] = useState('wizard');
-  const [naturalQuery, setNaturalQuery] = useState('');
-  const [isParsingQuery, setIsParsingQuery] = useState(false);
 
   const [teams, setTeams] = useState([]);
   const [isTeamsLoading, setIsTeamsLoading] = useState(false);
@@ -712,8 +710,8 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (activeTab === 'chat' && !chatSessionId) handleStartChat();
-  }, [activeTab, chatSessionId, handleStartChat]);
+    if (searchMode === 'chat' && !chatSessionId) handleStartChat();
+  }, [searchMode, chatSessionId, handleStartChat]);
 
   const handleSendMessage = async () => {
     if (!chatInput.trim() || !chatSessionId) return;
@@ -784,61 +782,6 @@ export default function App() {
       setWizardError(err.message || 'Projection failed.');
     } finally {
       setIsProjecting(false);
-    }
-  };
-
-  const handleNaturalSearch = async (e) => {
-    e.preventDefault();
-    if (!naturalQuery.trim()) return;
-    setIsParsingQuery(true);
-    setWizardError(null);
-    try {
-      const parsed = await parseNaturalQuery(naturalQuery);
-      if (!parsed.playerName) throw new Error('Could not identify player. Try a more specific query.');
-
-      // Try full name first, then last name fallback
-      let playersData = await searchPlayers(parsed.playerName);
-      let players = playersData.players || [];
-      if (!players.length && parsed.playerName.includes(' ')) {
-        const lastName = parsed.playerName.split(' ').pop();
-        playersData = await searchPlayers(lastName);
-        players = playersData.players || [];
-      }
-      if (!players.length) throw new Error(`Player "${parsed.playerName}" not found. Try searching by last name.`);
-
-      const player = players[0];
-
-      // Detect league from player's team — search ALL supported leagues, not just EPL
-      let detectedLeagueId = null;
-      const majorLeagues = [39, 140, 135, 78, 61, 253, 262, 128, 71, 307, 254, 2, 3];
-      for (const lid of majorLeagues) {
-        try {
-          const td = await getTeamsByLeague(lid);
-          const match = (td.teams || []).find(t => t.id === player.teamId);
-          if (match) { detectedLeagueId = lid; break; }
-        } catch { /* skip */ }
-      }
-      const leagueId = detectedLeagueId || 39;
-
-      // Get opponent from the correct league
-      const teamsData = await getTeamsByLeague(leagueId);
-      const leagueTeams = teamsData.teams || [];
-      const opponent = leagueTeams.find(t => t.name.toLowerCase().includes((parsed.opponentName || '').toLowerCase())) || leagueTeams[0];
-      await runProjection({
-        leagueId,
-        playerId: player.id,
-        playerName: player.name,
-        teamId: player.teamId,
-        opponentId: opponent?.id || 0,
-        opponentName: opponent?.name || parsed.opponentName || 'Unknown',
-        venue: parsed.venue || 'home',
-        propType: parsed.propType || 'pass_attempts',
-        line: parsed.line || 0,
-      });
-    } catch (err) {
-      setWizardError(err.message);
-    } finally {
-      setIsParsingQuery(false);
     }
   };
 
@@ -962,7 +905,7 @@ export default function App() {
                   <div>
                     <h2 className="section-title" data-testid="wizard-title">AI Wizard</h2>
                     <p className="section-subtitle">
-                      {searchMode === 'wizard' ? `Step ${wizardStep} of 6` : 'Natural Language Search'}
+                      {searchMode === 'wizard' ? `Step ${wizardStep} of 6` : 'Tactical Uplink'}
                     </p>
                   </div>
                   {searchMode === 'wizard' && wizardStep > 1 && (
@@ -972,14 +915,14 @@ export default function App() {
                   )}
                 </div>
 
-                {(searchMode === 'natural' || wizardStep === 1) && (
+                {(searchMode === 'chat' || wizardStep === 1) && (
                   <div className="tab-switcher">
                     <button className={`tab-btn ${searchMode === 'wizard' ? 'active' : ''}`}
                       onClick={() => { setSearchMode('wizard'); setWizardStep(1); setWizardData({}); setWizardError(null); }}
                       data-testid="step-by-step-tab">Step-by-Step</button>
-                    <button className={`tab-btn ${searchMode === 'natural' ? 'active' : ''}`}
-                      onClick={() => { setSearchMode('natural'); setWizardStep(1); setWizardData({}); setWizardError(null); }}
-                      data-testid="natural-search-tab">Natural Search</button>
+                    <button className={`tab-btn ${searchMode === 'chat' ? 'active' : ''}`}
+                      onClick={() => { setSearchMode('chat'); }}
+                      data-testid="tactical-uplink-tab">Tactical Uplink</button>
                   </div>
                 )}
 
@@ -1001,24 +944,44 @@ export default function App() {
                   </div>
                 )}
 
-                {searchMode === 'natural' && (
-                  <form onSubmit={handleNaturalSearch} className="space-y-4">
-                    <div className="search-input-wrap">
-                      <Search className="search-icon" />
-                      <input className="search-input" type="text" value={naturalQuery}
-                        onChange={e => setNaturalQuery(e.target.value)}
-                        placeholder="e.g. Lamine Yamal 52.5 passes vs Villarreal"
-                        data-testid="natural-search-input" />
+                {searchMode === 'chat' && (
+                  <div className="chat-container-inline" data-testid="tactical-uplink-inline">
+                    <div className="chat-header">
+                      <div>
+                        <h3 className="chat-title" style={{ fontSize: 18 }}>Tactical Uplink</h3>
+                        <p className="chat-subtitle">AI Strategic Analyst</p>
+                      </div>
+                      <button className="icon-btn" onClick={handleStartChat} data-testid="chat-reset-btn">
+                        <RefreshCw />
+                      </button>
                     </div>
-                    <button className="btn-primary" type="submit" disabled={isParsingQuery || !naturalQuery.trim()}
-                      data-testid="analyze-query-btn">
-                      {isParsingQuery ? <Loader2 className="animate-spin" /> : <Zap style={{ fill: 'currentColor' }} />}
-                      {isParsingQuery ? 'Parsing Query...' : 'Analyze Query'}
-                    </button>
-                    {wizardError && (
-                      <div className="error-box"><ShieldAlert /><p>{wizardError}</p></div>
-                    )}
-                  </form>
+
+                    <div className="chat-messages" data-testid="chat-messages" style={{ minHeight: 300, maxHeight: 450 }}>
+                      {chatMessages.map((msg, i) => (
+                        <div key={i} className={`chat-msg ${msg.role}`} data-testid={`chat-msg-${i}`}>
+                          {msg.text}
+                        </div>
+                      ))}
+                      {isChatting && (
+                        <div className="chat-msg model">
+                          <Loader2 className="animate-spin" style={{ width: 16, height: 16, color: 'var(--accent)' }} />
+                        </div>
+                      )}
+                      <div ref={chatEndRef} />
+                    </div>
+
+                    <div className="chat-input-wrap">
+                      <input className="chat-input" type="text" value={chatInput}
+                        onChange={e => setChatInput(e.target.value)}
+                        onKeyDown={e => e.key === 'Enter' && handleSendMessage()}
+                        placeholder="Ask for tactical insights..."
+                        data-testid="chat-input" />
+                      <button className="chat-send-btn" onClick={handleSendMessage}
+                        disabled={isChatting || !chatInput.trim()} data-testid="chat-send-btn">
+                        <Send />
+                      </button>
+                    </div>
+                  </div>
                 )}
 
                 {searchMode === 'wizard' && wizardStep === 1 && (
@@ -1283,46 +1246,6 @@ export default function App() {
           </div>
         )}
 
-        {/* CHAT TAB */}
-        {activeTab === 'chat' && (
-          <div className="animate-fade-in chat-container" data-testid="chat-tab">
-            <div className="chat-header">
-              <div>
-                <h2 className="chat-title">Tactical Uplink</h2>
-                <p className="chat-subtitle">AI Strategic Analyst</p>
-              </div>
-              <button className="icon-btn" onClick={handleStartChat} data-testid="chat-reset-btn">
-                <RefreshCw />
-              </button>
-            </div>
-
-            <div className="chat-messages" data-testid="chat-messages">
-              {chatMessages.map((msg, i) => (
-                <div key={i} className={`chat-msg ${msg.role}`} data-testid={`chat-msg-${i}`}>
-                  {msg.text}
-                </div>
-              ))}
-              {isChatting && (
-                <div className="chat-msg model">
-                  <Loader2 className="animate-spin" style={{ width: 16, height: 16, color: 'var(--accent)' }} />
-                </div>
-              )}
-              <div ref={chatEndRef} />
-            </div>
-
-            <div className="chat-input-wrap">
-              <input className="chat-input" type="text" value={chatInput}
-                onChange={e => setChatInput(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleSendMessage()}
-                placeholder="Ask for tactical insights..."
-                data-testid="chat-input" />
-              <button className="chat-send-btn" onClick={handleSendMessage}
-                disabled={isChatting || !chatInput.trim()} data-testid="chat-send-btn">
-                <Send />
-              </button>
-            </div>
-          </div>
-        )}
       </main>
 
       {/* Selected Pick Modal */}
@@ -1380,11 +1303,6 @@ export default function App() {
             onClick={() => setActiveTab('tracking')} data-testid="nav-tracking">
             <Activity />
             <span>Tracking</span>
-          </button>
-          <button className={`nav-item ${activeTab === 'chat' ? 'active' : ''}`}
-            onClick={() => setActiveTab('chat')} data-testid="nav-chat">
-            <MessageSquare />
-            <span>Chat</span>
           </button>
         </div>
       </nav>
