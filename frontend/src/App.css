@@ -718,6 +718,8 @@
 .status-dot { width: 7px; height: 7px; border-radius: 50%; }
 .status-dot.live { background: var(--accent); animation: pulse 2s ease-in-out infinite; box-shadow: 0 0 6px var(--accent-glow); }
 .status-dot.settled { background: var(--text-muted); }
+.status-dot.settled.hit { background: var(--accent); box-shadow: 0 0 6px var(--accent-glow); }
+.status-dot.settled.miss { background: var(--danger); box-shadow: 0 0 6px rgba(244,63,94,0.4); }
 .status-label { font-size: 9px; font-weight: 800; letter-spacing: 0.15em; text-transform: uppercase; color: var(--text-secondary); }
 
 .pick-actions { display: flex; align-items: center; gap: 6px; }
@@ -753,6 +755,7 @@
 .pick-stat-label { font-size: 7px; font-weight: 800; text-transform: uppercase; color: var(--text-muted); }
 .pick-stat-value { font-size: 12px; font-weight: 900; }
 .pick-stat-value.accent { color: var(--accent); }
+.pick-stat-value.danger { color: var(--danger); }
 .pick-stat-value.warning { color: var(--warning); }
 
 .pick-footer {

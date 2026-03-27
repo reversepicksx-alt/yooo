@@ -557,20 +557,47 @@ async def predict(req: PredictionRequest):
             "recentFixtures": recent_fixtures,
         }
 
-        # 2. Send to Gemini — balanced: rich but fast
+        # 2. Send to Gemini — enhanced with role + opponent analysis
         chat = LlmChat(
             api_key=EMERGENT_LLM_KEY,
             session_id=f"predict-{uuid.uuid4().hex[:8]}",
-            system_message="""You are an elite soccer prop analyst. Return ONLY valid JSON (no markdown).
+            system_message="""You are an elite soccer prop analyst with deep tactical knowledge. Return ONLY valid JSON (no markdown).
+
+CRITICAL ANALYSIS RULES:
+1. PLAYER ROLE MULTIPLIERS: A player's position/role is the #1 predictor of stat volume.
+   - Deep-lying playmaker (CDM/CM holding): Pass attempts are EXTREMELY HIGH (80-110+ per 90). They recycle possession constantly.
+   - Box-to-box midfielder: Moderate-high passes (50-80), moderate tackles/interceptions
+   - Attacking midfielder / #10: High key passes, moderate total passes, low tackles
+   - Centre-back: High passes in own half, low key passes, high blocks/interceptions
+   - Goalkeeper: Saves only, extremely low passes
+   - Winger: High dribbles, shots, low pass attempts
+   - Striker: High shots, low passes
+   ALWAYS identify the player's ACTUAL role and adjust projections accordingly. A CDM/holding midfielder will ALWAYS have inflated pass numbers.
+
+2. OPPONENT DEFENSIVE STYLE ANALYSIS:
+   - Low-block teams (sit deep, defend, counter): Opponents will have MORE possession, MORE passes, FEWER shots
+   - High-press teams: More turnovers, fewer passes, more tackles/interceptions
+   - Teams that concede possession: Check their avg. opposition possession% — if they give up 55%+ possession, the opposing team's passers will have inflated numbers
+   - Weaker teams in the league: Often sit back → more passes for dominant team's midfielders
+
+3. POSSESSION CONTEXT:
+   - If the player's team is projected to dominate possession (55%+), ALL passing stats get a 15-25% boost
+   - If the team is the underdog/away and will press high, expect fewer passes, more tackles
+
+4. RECENT FORM vs SEASON AVERAGES:
+   - Rolling 5-game average is MORE predictive than season average for streaky players
+   - Look for FLOOR games (injury return, substituted early, tactical changes) and adjust
 
 JSON structure:
 {"player":{"id":int,"name":"","team":"","role":"","position":""},"opponent":"","league":"","propType":"","line":0,"projectedValue":0,"recommendation":"over|under","confidenceScore":0-100,"confidenceLevel":"Low|Medium|High|Very High","confidenceInterval":[lo,hi],"recentSamples":[{"date":"","opponent":"","value":0,"minutesPlayed":0,"matchDifficulty":"low|medium|high","venue":"home|away"}],"bayesianMetrics":{"priorMean":0,"momentumEffect":0,"covariateAdjustment":0,"reversalFlag":"stable|upward_reversal_likely|downward_reversal_likely"},"probabilityCurve":[{"value":0,"probability":0}],"tacticalAlerts":[{"type":"injury|lineup|tactical","message":"","severity":"low|medium|high"}],"sharpSummary":"","reasoning":""}
 
 Field requirements:
-- sharpSummary: 2-3 sharp sentences. The CORE edge or fade reason. Why this line is wrong or right.
-- reasoning: 2-3 rich paragraphs that cover: (1) matchup edge — how opponent's style/defense impacts this stat, with data (2) player usage/role + per-90 averages + recent form trend (rolling 5-game vs season) (3) venue splits + game script + floor/ceiling scenarios. Write like a professional analyst note — confident, specific, data-backed.
+- role: MUST be specific (e.g., "Deep-Lying Playmaker", "CDM Holding", "Box-to-Box CM", "Inside Forward", "Target Striker", "Sweeper Keeper")
+- sharpSummary: 2-3 sharp sentences. The CORE edge including role context and opponent defensive matchup.
+- reasoning: 2-3 rich paragraphs covering: (1) PLAYER ROLE — what position they play, how that role inflates/deflates the specific stat, with per-90 context (2) OPPONENT DEFENSIVE PROFILE — do they press high or sit deep? What possession% do they concede? Where do they allow the ball? (3) venue splits + game script + expected possession + floor/ceiling. Write like an elite sharp analyst.
 - recentSamples: 15-20 entries with venue tags, sorted date descending
-- probabilityCurve: 10 data points"""
+- probabilityCurve: 10 data points
+- covariateAdjustment: Factor in role + opponent style adjustment (positive = stat boost, negative = stat suppression)"""
         )
         chat.with_model("gemini", "gemini-2.5-flash")
 
@@ -580,10 +607,12 @@ Field requirements:
 
 Stat mapping: pass_attempts=passes.total, shots=shots.total, shots_on_target=shots.on, tackles=tackles.total, key_passes=passes.key, saves=goals.saves, interceptions=tackles.interceptions, blocks=tackles.blocks, dribbles=dribbles.attempts, fouls_drawn=fouls.drawn
 
+IMPORTANT: First determine the player's EXACT role/position from the data. Then analyze the opponent's defensive style (high press vs low block, possession conceded %). Use role-based multipliers to adjust your projection. A deep-lying playmaker/CDM will have 80-110+ pass attempts. Do NOT under-project high-volume passers.
+
 Data:
 {trimmed_data}
 
-Return ONLY valid JSON. 15+ recentSamples with venue. Rich reasoning (2-3 paragraphs). 10pt probabilityCurve."""
+Return ONLY valid JSON. 15+ recentSamples with venue. Rich role+opponent reasoning (2-3 paragraphs). 10pt probabilityCurve."""
 
         response = await chat.send_message(UserMessage(text=prompt))
         response_text = response.strip()
@@ -721,6 +750,119 @@ async def football_status():
         return {"status": "online", "data": data}
     except Exception:
         return {"status": "offline"}
+
+
+class SettlePicksRequest(BaseModel):
+    picks: list
+
+
+@app.post("/api/settle-picks")
+async def settle_picks(req: SettlePicksRequest):
+    """Check match results and settle picks that have finished."""
+    settled = []
+    for pick in req.picks:
+        if pick.get("status") != "live":
+            continue
+
+        player_id = pick.get("player", {}).get("id", 0)
+        team_name = pick.get("player", {}).get("team", "")
+        prop_type = pick.get("propType", "")
+        opponent = pick.get("opponent", "")
+        league_id = pick.get("_request", {}).get("leagueId", 39)
+
+        stat_map = {
+            "pass_attempts": lambda s: s.get("passes", {}).get("total"),
+            "shots": lambda s: s.get("shots", {}).get("total"),
+            "shots_on_target": lambda s: s.get("shots", {}).get("on"),
+            "tackles": lambda s: s.get("tackles", {}).get("total"),
+            "key_passes": lambda s: s.get("passes", {}).get("key"),
+            "saves": lambda s: s.get("goals", {}).get("saves"),
+            "interceptions": lambda s: s.get("tackles", {}).get("interceptions"),
+            "blocks": lambda s: s.get("tackles", {}).get("blocks"),
+            "dribbles": lambda s: s.get("dribbles", {}).get("attempts"),
+            "fouls_drawn": lambda s: s.get("fouls", {}).get("drawn"),
+        }
+
+        try:
+            # Find the player's team ID from recent data
+            team_id = pick.get("_request", {}).get("teamId", 0)
+            if not team_id:
+                # Try to get from player search
+                for s in [CURRENT_SEASON, CURRENT_SEASON + 1]:
+                    try:
+                        pdata = await api_football_request("players", {"id": player_id, "season": s, "league": league_id})
+                        if pdata:
+                            stats_list = pdata[0].get("statistics", [])
+                            if stats_list:
+                                team_id = stats_list[-1]["team"]["id"]
+                                break
+                    except Exception:
+                        continue
+
+            if not team_id:
+                continue
+
+            # Find the relevant finished fixture (try current and next season)
+            recent = None
+            for s in [CURRENT_SEASON + 1, CURRENT_SEASON]:
+                try:
+                    data = await api_football_request("fixtures", {"team": team_id, "last": 3, "season": s})
+                    if data:
+                        # Find fixture matching opponent
+                        for f in data:
+                            home = f.get("teams", {}).get("home", {}).get("name", "")
+                            away = f.get("teams", {}).get("away", {}).get("name", "")
+                            status = f.get("fixture", {}).get("status", {}).get("short", "")
+                            if status in ("FT", "AET", "PEN") and \
+                               (opponent.lower() in home.lower() or opponent.lower() in away.lower()):
+                                recent = f
+                                break
+                        if recent:
+                            break
+                except Exception:
+                    continue
+
+            if not recent:
+                continue
+
+            fixture_id = recent.get("fixture", {}).get("id")
+            fixture_date = recent.get("fixture", {}).get("date", "")
+
+            # Get player stats from fixtures/players endpoint
+            fixture_players = await api_football_request("fixtures/players", {"fixture": fixture_id})
+            actual_value = None
+
+            if fixture_players:
+                for team_data in fixture_players:
+                    for p in team_data.get("players", []):
+                        if p.get("player", {}).get("id") == player_id:
+                            pstats = p.get("statistics", [{}])[0]
+                            getter = stat_map.get(prop_type)
+                            if getter:
+                                actual_value = getter(pstats)
+                            break
+                    if actual_value is not None:
+                        break
+
+            if actual_value is not None:
+                line = pick.get("line", 0)
+                recommendation = pick.get("recommendation", "over")
+                hit = (actual_value > line and recommendation == "over") or \
+                      (actual_value < line and recommendation == "under")
+
+                settled.append({
+                    "pickId": pick.get("id"),
+                    "status": "settled",
+                    "result": "hit" if hit else "miss",
+                    "actualValue": actual_value,
+                    "fixtureDate": fixture_date,
+                    "matchScore": f"{recent.get('goals',{}).get('home',0)}-{recent.get('goals',{}).get('away',0)}",
+                })
+
+        except Exception:
+            continue
+
+    return {"settled": settled}
 
 
 @app.get("/api/pick-of-the-day")

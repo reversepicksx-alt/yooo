@@ -59,6 +59,8 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 - [x] **FIXED (Feb 2026)**: International league IDs corrected: UEFA=32, CONMEBOL=34, AFC=30, CAF=29, OFC=33, Euro Qual=960
 - [x] **FIXED (Feb 2026)**: Removed player photos from search cards (copyright), kept nationality text display
 - [x] **FIXED (Feb 2026)**: POTD loading layout jank - fixed with skeleton min-height + fade-in animation
+- [x] **NEW (Mar 2026)**: Pick settling system - auto-checks match results via API-Sports fixtures/players endpoint, settles live picks to history with HIT/MISS + actual values
+- [x] **ENHANCED (Mar 2026)**: Gemini prediction prompt - now includes player role multipliers (CDM=80-110+ passes), opponent defensive style (low-block vs high-press), possession context, floor/ceiling analysis
 
 ## Auth System Details
 - Owner email (josselj001@gmail.com): Bypasses password entirely, instant login

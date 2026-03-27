@@ -97,6 +97,10 @@ export async function getPickOfTheDay() {
   return apiCall('/api/pick-of-the-day');
 }
 
+export async function settlePicks(picks) {
+  return apiCall('/api/settle-picks', { method: 'POST', body: JSON.stringify({ picks }) });
+}
+
 export const SUPPORTED_LEAGUES = [
   { id: 39, name: "Premier League", type: "Domestic" },
   { id: 140, name: "La Liga", type: "Domestic" },

@@ -11,7 +11,7 @@ import {
   getTeamsByLeague, searchPlayers, predict, startChat, sendChatMessage,
   parseNaturalQuery, checkApiStatus, SUPPORTED_LEAGUES,
   verifyWhop, authLogin, setPassword as apiSetPassword, resetPassword, verifySession, authLogout,
-  getPickOfTheDay
+  getPickOfTheDay, settlePicks
 } from './api';
 import './App.css';
 
@@ -578,6 +578,44 @@ export default function App() {
       .finally(() => setPotdLoading(false));
   }, []);
 
+  // Poll to settle live picks every 5 minutes
+  useEffect(() => {
+    const livePicks = savedPicks.filter(p => p.status === 'live');
+    if (livePicks.length === 0) return;
+
+    const checkSettled = async () => {
+      try {
+        const result = await settlePicks(livePicks);
+        if (result.settled && result.settled.length > 0) {
+          setSavedPicks(prev => {
+            const updated = [...prev];
+            for (const s of result.settled) {
+              const idx = updated.findIndex(p => p.id === s.pickId);
+              if (idx !== -1) {
+                updated[idx] = {
+                  ...updated[idx],
+                  status: s.status,
+                  result: s.result,
+                  actualValue: s.actualValue,
+                  matchScore: s.matchScore,
+                  settledAt: Date.now(),
+                };
+              }
+            }
+            return updated;
+          });
+        }
+      } catch {}
+    };
+
+    // Check immediately on mount
+    checkSettled();
+
+    // Then every 5 minutes
+    const interval = setInterval(checkSettled, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [savedPicks.filter(p => p.status === 'live').length]);
+
   useEffect(() => {
     localStorage.setItem('reverse_picks_v2', JSON.stringify(savedPicks));
   }, [savedPicks]);
@@ -722,6 +760,11 @@ export default function App() {
       status: 'live',
       result: 'pending',
       excludedSampleIndices,
+      _request: {
+        leagueId: wizardData.leagueId,
+        teamId: wizardData.teamId || projection.player?.teamId,
+        opponentId: wizardData.opponentId,
+      },
     };
     const updated = [newPick, ...savedPicks];
     setSavedPicks(updated);
@@ -1084,8 +1127,8 @@ export default function App() {
                     <div className="pick-card">
                       <div className="pick-status-row">
                         <div className="status-indicator">
-                          <div className={`status-dot ${pick.status}`} />
-                          <span className="status-label">{pick.status}</span>
+                          <div className={`status-dot ${pick.status} ${pick.result || ''}`} />
+                          <span className="status-label">{pick.status === 'settled' ? (pick.result === 'hit' ? 'HIT' : 'MISS') : pick.status}</span>
                         </div>
                         <div className="pick-actions">
                           <div className={`rec-tag ${pick.recommendation}`}>{pick.recommendation}</div>
@@ -1097,7 +1140,7 @@ export default function App() {
                       <div className="pick-info">
                         <div>
                           <div className="pick-player-name">{pick.player?.name}</div>
-                          <div className="pick-matchup">{pick.player?.team} vs {pick.opponent}</div>
+                          <div className="pick-matchup">{pick.player?.team} vs {pick.opponent}{pick.matchScore ? ` (${pick.matchScore})` : ''}</div>
                         </div>
                         <div style={{ textAlign: 'right' }}>
                           <div className="pick-line-label">Line</div>
@@ -1109,6 +1152,12 @@ export default function App() {
                           <div className="pick-stat-label">Proj</div>
                           <div className="pick-stat-value accent">{pick.projectedValue}</div>
                         </div>
+                        {pick.actualValue != null && (
+                          <div className="pick-stat">
+                            <div className="pick-stat-label">Actual</div>
+                            <div className={`pick-stat-value ${pick.result === 'hit' ? 'accent' : 'danger'}`}>{pick.actualValue}</div>
+                          </div>
+                        )}
                         <div className="pick-stat">
                           <div className="pick-stat-label">Conf</div>
                           <div className="pick-stat-value">{pick.confidenceScore}%</div>
