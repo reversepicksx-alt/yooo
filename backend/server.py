@@ -683,7 +683,7 @@ async def predict(req: PredictionRequest):
 
         team_stats_task = get_team_stats_multi_season(actual_team_id or 40, league_id)
         opponent_stats_task = get_team_stats_multi_season(req.opponentId, league_id)
-        h2h_task = safe_fetch("fixtures/headtohead", {"h2h": f"{actual_team_id or 40}-{req.opponentId}", "last": 5}, [])
+        h2h_task = safe_fetch("fixtures/headtohead", {"h2h": f"{actual_team_id or 40}-{req.opponentId}", "last": 10}, [])
 
         async def get_standings_multi_season():
             for s in [CURRENT_SEASON + 1, CURRENT_SEASON, CURRENT_SEASON - 1]:
@@ -943,7 +943,7 @@ DATA:
                     "opponent_formations": opponent_formations,
                     "opponent_stats": opponent_stats,
                     "team_stats": team_stats,
-                    "h2h": h2h_data[:3] if h2h_data else [],
+                    "h2h": h2h_data[:5] if h2h_data else [],
                     "standings": standings[:6] if standings else [],
                     "prematch": prematch_pred,
                     "injuries": injuries_data[:10] if injuries_data else [],
@@ -1126,7 +1126,7 @@ DATA:
         h2h_player_stats = []
         if h2h_data:
             h2h_fixture_ids = []
-            for h in h2h_data[:3]:  # Max 3 H2H matches to avoid rate limits
+            for h in h2h_data[:10]:
                 fid = h.get("fixture", {}).get("id")
                 if fid:
                     h2h_fixture_ids.append((fid, h))
