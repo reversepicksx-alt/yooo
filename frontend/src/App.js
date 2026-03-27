@@ -212,6 +212,44 @@ function ProjectionCard({ projection, onSave, excludedIndices, onToggleSample })
             </div>
           )}
 
+          {/* Sensitivity Tests */}
+          {projection.sensitivityTests && (
+            <div className="stat-box" style={{ borderColor: 'rgba(168,85,247,0.2)', background: 'rgba(168,85,247,0.04)' }}>
+              <div className="stat-label flex items-center gap-2">
+                <Shield style={{ width: 12, height: 12, color: '#a855f7' }} /> Sensitivity Tests
+              </div>
+              <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.7, marginTop: 6 }}>
+                {projection.sensitivityTests}
+              </p>
+            </div>
+          )}
+
+          {/* Sub Risk + Game Flow in a grid */}
+          {(projection.subRisk || projection.gameFlowDynamics) && (
+            <div className="grid-2">
+              {projection.subRisk && (
+                <div className="stat-box" style={{ borderColor: 'rgba(245,158,11,0.15)' }}>
+                  <div className="stat-label flex items-center gap-2">
+                    <Clock style={{ width: 12, height: 12, color: '#f59e0b' }} /> Sub Risk
+                  </div>
+                  <p style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.6, marginTop: 4 }}>
+                    {projection.subRisk}
+                  </p>
+                </div>
+              )}
+              {projection.gameFlowDynamics && (
+                <div className="stat-box" style={{ borderColor: 'rgba(16,185,129,0.15)' }}>
+                  <div className="stat-label flex items-center gap-2">
+                    <TrendingUp style={{ width: 12, height: 12, color: 'var(--accent)' }} /> Game Flow
+                  </div>
+                  <p style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.6, marginTop: 4 }}>
+                    {projection.gameFlowDynamics}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="grid-2">
             <div className="stat-box">
               <div className="stat-label">Position</div>

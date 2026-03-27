@@ -68,13 +68,17 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 - [x] settle-picks timestamp guard — only settles against fixtures AFTER the pick was created (prevents matching old meetings)
 
 ## Enhanced Gemini Reasoning (Mar 2026 - Grok-style upgrade)
-- [x] Chain-of-thought reasoning: Gemini now follows a 6-step structured analysis before giving projection
+- [x] Chain-of-thought reasoning: Gemini now follows a 10-step structured analysis before giving projection
 - [x] Key Evidence field: Quotes exact stat values with dates, opponents, and venue splits
 - [x] Scenario Analysis field: Covers base case, blowout, trailing, cagey game scenarios with probability weights
 - [x] Uncertainty Note field: Explicitly flags small sample sizes, missing data, coin-flip zones
 - [x] Injury data integration: Fetches injuries/suspensions for the upcoming fixture via API-Sports
 - [x] Injury impact rules in prompt: How missing players affect stat distributions
-- [x] Frontend displays all new fields: Key Evidence (purple), Scenario Analysis (amber), Risk Factor (red)
+- [x] Sensitivity Tests: Explicit "what if" checks — sub at 60', down 2-0, bus parking, red card. Rates pick as ROBUST/MODERATE/FRAGILE
+- [x] Substitution Risk Quantification: Calculates % of games with early sub, avg stat volume lost, weighted projection drag
+- [x] Game Flow Dynamics: First-to-score possession impact, leading vs trailing stat adjustments
+- [x] PPDA Approximation: Estimates opponent pressing intensity from tackles/interceptions to predict pass volume shifts
+- [x] Frontend displays all new fields: Key Evidence, Scenario Analysis, Risk Factor, Sensitivity Tests (purple), Sub Risk + Game Flow (side-by-side grid)
 - [x] Data payload increased from 10k to 12k chars for richer context
 
 ## Auth System Details
