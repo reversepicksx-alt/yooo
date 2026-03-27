@@ -645,7 +645,32 @@ async def predict(req: PredictionRequest):
             except Exception:
                 return None
 
-        # Fire ALL API calls at once — including tactical intel
+        # Injury fetcher — get injuries for the upcoming fixture
+        async def get_fixture_injuries():
+            """Get injuries/suspensions for both teams in the upcoming fixture"""
+            try:
+                # Find the next fixture between these teams
+                fixtures = None
+                for s in [CURRENT_SEASON + 1, CURRENT_SEASON]:
+                    try:
+                        fixtures = await api_football_request("fixtures", {
+                            "team": actual_team_id or 40,
+                            "next": 1,
+                            "season": s
+                        })
+                        if fixtures:
+                            break
+                    except Exception:
+                        continue
+                if not fixtures:
+                    return []
+                fid = fixtures[0].get("fixture", {}).get("id")
+                injuries = await api_football_request("injuries", {"fixture": fid})
+                return injuries or []
+            except Exception:
+                return []
+
+        # Fire ALL API calls at once — including tactical intel + injuries
         player_data_task = get_player_data()
         async def get_team_stats_multi_season(team_id, lid):
             for s in [CURRENT_SEASON + 1, CURRENT_SEASON, CURRENT_SEASON - 1]:
@@ -669,9 +694,10 @@ async def predict(req: PredictionRequest):
         fixtures_task = get_recent_fixtures_fast(actual_team_id or 40, 20)
         formations_task = get_opponent_formations()
         prediction_task = get_prematch_prediction()
+        injuries_task = get_fixture_injuries()
 
-        player_stats, team_stats, opponent_stats, h2h_data, standings_raw, recent_fixtures, opponent_formations, prematch_pred = await aio.gather(
-            player_data_task, team_stats_task, opponent_stats_task, h2h_task, standings_task, fixtures_task, formations_task, prediction_task
+        player_stats, team_stats, opponent_stats, h2h_data, standings_raw, recent_fixtures, opponent_formations, prematch_pred, injuries_data = await aio.gather(
+            player_data_task, team_stats_task, opponent_stats_task, h2h_task, standings_task, fixtures_task, formations_task, prediction_task, injuries_task
         )
 
         if actual_team_id == 0 and player_stats:
@@ -700,6 +726,18 @@ async def predict(req: PredictionRequest):
             "recentFixtures": recent_fixtures,
             "opponentRecentFormations": opponent_formations,
         }
+
+        # Format injuries for prompt
+        injuries_summary = []
+        if injuries_data:
+            for inj in injuries_data:
+                injuries_summary.append({
+                    "player": inj.get("player", {}).get("name", ""),
+                    "team": inj.get("team", {}).get("name", ""),
+                    "type": inj.get("player", {}).get("type", ""),
+                    "reason": inj.get("player", {}).get("reason", ""),
+                })
+            historical_data["injuries"] = injuries_summary
 
         # Only include prematch data if it matches the requested opponent
         prematch_for_prompt = None
@@ -733,69 +771,86 @@ async def predict(req: PredictionRequest):
                         player_position = pos
                         break
 
-        # 2. Send to Gemini — enhanced with role + opponent analysis
+        # 2. Send to Gemini — elite chain-of-thought reasoning with tactical depth
         chat = LlmChat(
             api_key=EMERGENT_LLM_KEY,
             session_id=f"predict-{uuid.uuid4().hex[:8]}",
-            system_message="""You are an elite soccer prop analyst with deep tactical knowledge. Return ONLY valid JSON (no markdown).
+            system_message="""You are an elite soccer prop analyst who thinks rigorously, transparently, and step-by-step. Return ONLY valid JSON (no markdown).
 
-CRITICAL ANALYSIS RULES:
-1. PLAYER ROLE MULTIPLIERS: A player's position/role is the #1 predictor of stat volume.
-   - Deep-lying playmaker (CDM/CM holding): Pass attempts are EXTREMELY HIGH (80-110+ per 90). They recycle possession constantly.
-   - Box-to-box midfielder: Moderate-high passes (50-80), moderate tackles/interceptions
-   - Attacking midfielder / #10: High key passes, moderate total passes, low tackles
-   - Centre-back: High passes in own half, low key passes, high blocks/interceptions
-   - Goalkeeper: Saves only, extremely low passes
-   - Winger: High dribbles, shots, low pass attempts
-   - Striker: High shots, low passes
-   ALWAYS identify the player's ACTUAL role and adjust projections accordingly. A CDM/holding midfielder will ALWAYS have inflated pass numbers.
+REASONING METHOD — You MUST think through every prediction using this chain-of-thought:
 
-2. OPPONENT DEFENSIVE STYLE ANALYSIS:
-   - Low-block teams (sit deep, defend, counter): Opponents will have MORE possession, MORE passes, FEWER shots
-   - High-press teams: More turnovers, fewer passes, more tackles/interceptions
-   - Teams that concede possession: Check their avg. opposition possession% — if they give up 55%+ possession, the opposing team's passers will have inflated numbers
-   - Weaker teams in the league: Often sit back → more passes for dominant team's midfielders
+STEP 1: IDENTIFY THE PLAYER'S ROLE (this is the #1 predictor of stat volume)
+- Deep-lying playmaker (CDM/CM holding): Pass attempts 80-110+ per 90. They recycle possession constantly.
+- Box-to-box midfielder: Moderate-high passes (50-80), moderate tackles/interceptions
+- Attacking midfielder / #10: High key passes, moderate total passes, low tackles
+- Centre-back: High passes in own half, low key passes, high blocks/interceptions
+- Goalkeeper: Saves only, extremely low passes
+- Winger: High dribbles, shots, low pass attempts
+- Striker: High shots, low passes
+Quote the player's ACTUAL position from API data. If the data says "Midfielder", infer the specific sub-role from their stat profile (high passes + low shots = holding; high key passes + moderate shots = attacking).
 
-3. POSSESSION CONTEXT:
-   - If the player's team is projected to dominate possession (55%+), ALL passing stats get a 15-25% boost
-   - If the team is the underdog/away and will press high, expect fewer passes, more tackles
+STEP 2: EXTRACT KEY EVIDENCE (quote specific numbers — never make vague claims)
+- List the player's last 5-10 game values for this specific stat, with venue and opponent
+- Calculate: season average, home average, away average, last-5 rolling average
+- Identify FLOOR games (sub, injury return, blowout sub-off) and FLAG them
+- Note the standard deviation — how volatile is this stat for this player?
 
-4. RECENT FORM vs SEASON AVERAGES:
-   - Rolling 5-game average is MORE predictive than season average for streaky players
-   - Look for FLOOR games (injury return, substituted early, tactical changes) and adjust
+STEP 3: ANALYZE THE MATCHUP
+- Opponent defensive style: Low-block (sit deep) → more possession/passes for dominant team. High-press → turnovers, fewer passes, more tackles.
+- Opponent possession conceded: If they give up 55%+, the opposing midfielders get inflated pass numbers
+- Formation matchup: 5-back = ultra-defensive = massive pass boost. 4-3-3 press = open game = fewer passes, more dribble space.
+- Injuries/suspensions: If a key teammate is out, does the workload shift to this player? If an opponent's presser is out, does the pressure drop?
 
-5. DRIBBLE-SPECIFIC ANALYSIS (for dribbles/dribble_attempts prop):
-   - Dribbles are the MOST matchup-dependent AND volatile stat. Standard deviation is typically 40-50% of the mean.
-   - AWAY games: Dribble attempts drop 15-30% compared to home. Less space, more defensive structure from opponents.
-   - Low-block opponents (compact shape, doubled fullbacks): Dribble attempts DROP 30-50% — no space for 1v1 isolation
-   - High-line / aggressive fullback opponents: Dribble attempts INCREASE — more space behind, more isolated 1v1 duels
-   - Game script: Trailing team = more desperate dribbles. Leading comfortably = fewer (possession recycling)
-   - Physical/disciplined opponents (high tackles won): Physically shut down dribblers
-   - CRITICAL: When the line is CLOSE to the player's per-game average (within 0.5), default to UNDER for away games and UNDER against organized/defensive teams. The line is set BY THE BOOKS to exploit "over" bias.
-   - Wide players (LW/RW) have more attempts than central players
-   - Always check venue splits: home dribbles vs away dribbles separately
+STEP 4: SCENARIO ANALYSIS (consider ALL plausible game flows)
+- Base case (most likely): Team dominates as expected → player gets normal minutes, normal rhythm
+- Blowout scenario: If team goes up big early → player might be subbed off at 60-70' → LOWER volume
+- Trailing scenario: If team falls behind → more urgent attacking → different stat distribution
+- Cagey/tight game: Low possession for both sides → compressed stat ceilings
+- Early red card (either team): Completely changes game dynamics
+- Assign rough probability weights to each scenario and factor into the projection
 
-6. STAT-SPECIFIC MATCHUP ADJUSTMENTS:
-   - Shots/shots_on_target: Check opponent's shots conceded per game and defensive block height
-   - Tackles/interceptions: Higher when team is OUT of possession more — check expected possession split
-   - Key passes: Higher in open, end-to-end games. Lower in cagey, low-possession games
-   - Saves: Check opponent's shots per game and xG. More shots = more saves needed
-   - Fouls drawn: Physical opponents = more fouls. Technical/disciplined opponents = fewer
+STEP 5: VENUE + GAME SCRIPT ADJUSTMENT
+- Home vs away splits for this specific stat (home players typically get 10-20% more of most stats)
+- Expected game script from bookmaker odds (favorite team = more possession = more stats for their midfielders)
+- If bookmaker odds show a heavy favorite, the favorite's players get stat boosts from expected possession dominance
+
+STEP 6: FINAL CALIBRATION + UNCERTAINTY
+- Compare your projected value to the line. How many standard deviations away is the line from the mean?
+- If data is limited (< 5 games this season), explicitly reduce confidence
+- If the line is within 0.5 of the player's average, acknowledge this is a COIN FLIP zone
+- State what would need to happen for your prediction to be WRONG (the key risk factor)
+
+DRIBBLE-SPECIFIC RULES:
+- Most volatile stat (SD typically 40-50% of mean)
+- AWAY: Drop 15-30%. Low-block opponents: Drop 30-50%. High-line opponents: Increase.
+- When line is close to average (within 0.5): Default UNDER for away + organized defenses
+- Wide players (LW/RW) > central players for attempts
+
+STAT-SPECIFIC NOTES:
+- Shots/SOT: Check opponent's shots conceded per game
+- Tackles/interceptions: Higher when team is OUT of possession more
+- Key passes: Higher in open games, lower in cagey games
+- Saves: Check opponent's shots per game
+- Fouls drawn: Physical opponents = more, disciplined = fewer
 
 JSON structure:
-{"player":{"id":int,"name":"","team":"","role":"","position":""},"opponent":"","league":"","propType":"","line":0,"projectedValue":0,"recommendation":"over|under","confidenceScore":0-100,"confidenceLevel":"Low|Medium|High|Very High","confidenceInterval":[lo,hi],"recentSamples":[{"date":"","opponent":"","value":0,"minutesPlayed":0,"matchDifficulty":"low|medium|high","venue":"home|away"}],"bayesianMetrics":{"priorMean":0,"momentumEffect":0,"covariateAdjustment":0,"reversalFlag":"stable|upward_reversal_likely|downward_reversal_likely"},"probabilityCurve":[{"value":0,"probability":0}],"tacticalAlerts":[{"type":"injury|lineup|tactical","message":"","severity":"low|medium|high"}],"sharpSummary":"","reasoning":""}
+{"player":{"id":int,"name":"","team":"","role":"","position":""},"opponent":"","league":"","propType":"","line":0,"projectedValue":0,"recommendation":"over|under","confidenceScore":0-100,"confidenceLevel":"Low|Medium|High|Very High","confidenceInterval":[lo,hi],"recentSamples":[{"date":"","opponent":"","value":0,"minutesPlayed":0,"matchDifficulty":"low|medium|high","venue":"home|away"}],"bayesianMetrics":{"priorMean":0,"momentumEffect":0,"covariateAdjustment":0,"reversalFlag":"stable|upward_reversal_likely|downward_reversal_likely"},"probabilityCurve":[{"value":0,"probability":0}],"tacticalAlerts":[{"type":"injury|lineup|tactical","message":"","severity":"low|medium|high"}],"sharpSummary":"","reasoning":"","scenarioAnalysis":"","keyEvidence":"","uncertaintyNote":""}
 
 Field requirements:
 - role: MUST be specific (e.g., "Deep-Lying Playmaker", "CDM Holding", "Box-to-Box CM", "Inside Forward", "Target Striker", "Sweeper Keeper")
-- sharpSummary: 2-3 sharp sentences. The CORE edge including role context and opponent defensive matchup.
-- reasoning: 2-3 rich paragraphs covering: (1) PLAYER ROLE — what position they play, how that role inflates/deflates the specific stat, with per-90 context (2) OPPONENT DEFENSIVE PROFILE — do they press high or sit deep? What possession% do they concede? Where do they allow the ball? (3) venue splits + game script + expected possession + floor/ceiling. Write like an elite sharp analyst.
+- sharpSummary: 2-3 sharp sentences. The CORE edge — what makes this over or under the line. Be direct.
+- reasoning: 3-4 rich paragraphs following the chain-of-thought: (1) ROLE identification with per-90 context (2) KEY EVIDENCE — quote the exact stat values from recent games, calculate averages (3) MATCHUP ANALYSIS — opponent style, formation, possession expectations (4) SCENARIO WEIGHTING — base case + alt scenarios, venue adjustment, final calibration
+- scenarioAnalysis: 1 paragraph covering base case (60%), blowout (15%), trailing (15%), cagey (10%) — adjust percentages based on matchup. Explain how each scenario affects the specific stat.
+- keyEvidence: Quote 5-8 specific stat values with dates/opponents. Example: "Last 5: 87 (vs Arsenal, H), 74 (vs Wolves, A), 91 (vs Brighton, H), 82 (vs Fulham, A), 78 (vs Palace, H). Home avg: 85.3, Away avg: 78.0"
+- uncertaintyNote: 1-2 sentences on what could go wrong. Example: "Small sample (4 games this season). If subbed before 75', projection drops to 55."
 - recentSamples: 15-20 entries with venue tags, sorted date descending
 - probabilityCurve: 10 data points
-- covariateAdjustment: Factor in role + opponent style adjustment (positive = stat boost, negative = stat suppression)"""
+- covariateAdjustment: Factor in role + opponent style + injury impact (positive = stat boost, negative = stat suppression)
+- tacticalAlerts: Include injury alerts if any key players are missing from either team"""
         )
         chat.with_model("gemini", "gemini-2.5-flash")
 
-        trimmed_data = json.dumps(historical_data, default=str)[:10000]
+        trimmed_data = json.dumps(historical_data, default=str)[:12000]
 
         prompt = f"""Player: {req.playerName} (ID: {req.playerId}) | Position from API: {player_position or 'Unknown'} | Opponent: {req.opponentName} | Venue: {req.venue} | Prop: {req.propType} | Line: {req.line}
 
@@ -803,22 +858,37 @@ Stat mapping: pass_attempts=passes.total, shots=shots.total, shots_on_target=sho
 
 CRITICAL: The player's official position from API-Sports is "{player_position or 'Unknown'}". Use THIS as the base for role analysis. Do NOT contradict it.
 
-TACTICAL INTEL (use this heavily in your analysis):
+THINK STEP-BY-STEP before giving your projection:
+1. What is this player's specific role and how does it affect {req.propType}?
+2. What are the exact stat values from recent games? (quote numbers with opponents and venues)
+3. What is the opponent's defensive style and how does it shift {req.propType}?
+4. What are the plausible game scenarios and how does each affect the stat?
+5. What is the venue adjustment? What do the odds tell us about expected game flow?
+6. Given all of the above, where does the projection land relative to the line of {req.line}?
+
+TACTICAL INTEL:
 - Opponent recent formations: {json.dumps(opponent_formations, default=str) if opponent_formations else 'Not available'}
 - Pre-match data (odds + prediction): {json.dumps(prematch_for_prompt, default=str) if prematch_for_prompt else 'Not available for this specific matchup'}
+- Injuries/Suspensions: {json.dumps(injuries_summary, default=str) if injuries_summary else 'None reported'}
 
-CRITICAL ODDS RULE: If "bookmakerOdds" is present, ALWAYS use it to determine the favorite. Bookmaker odds are MORE RELIABLE than the API prediction model (especially early season with small sample sizes). Lower odds = favored team. Home odds 1.80 vs Away odds 4.10 means HOME is strongly favored. If the API prediction contradicts bookmaker odds, TRUST THE BOOKMAKER ODDS.
+CRITICAL ODDS RULE: If "bookmakerOdds" is present, ALWAYS use it to determine the favorite. Lower odds = favored team. If the API prediction contradicts bookmaker odds, TRUST THE BOOKMAKER ODDS.
 
-FORMATION ANALYSIS RULES:
-- If opponent plays 5-back (5-3-2, 5-4-1, 3-5-2 with wingbacks): ULTRA DEFENSIVE → massive pass boost for dominant team's midfielders, dribble suppression
-- If opponent plays 4-4-2 compact: Organized mid-block → moderate pass boost, strong dribble suppression (2 banks of 4)
-- If opponent plays 4-3-3 / 4-2-3-1 high press: Open game → fewer passes (turnovers), more dribble opportunities (space behind press)
-- Coach matters: Defensive coaches (Pellegrino, Simeone-style) = more compact = more recycling passes for opponent CDMs
+FORMATION ANALYSIS:
+- 5-back (5-3-2, 5-4-1): ULTRA DEFENSIVE → massive pass boost for dominant team's midfielders, dribble suppression
+- 4-4-2 compact: Mid-block → moderate pass boost, strong dribble suppression
+- 4-3-3 / 4-2-3-1 high press: Open game → fewer passes (turnovers), more dribble opportunities
+- Coach style matters: Defensive coaches = compact = more recycling passes for opponent CDMs
+
+INJURY IMPACT RULES:
+- If a key midfielder is OUT for the player's team → remaining midfielders get MORE passes/touches
+- If an opponent's key presser is OUT → less pressure on the ball → more comfortable passing
+- If the player himself has a minor knock → possible early sub → LOWER stat ceiling
+- Always mention relevant injuries in tacticalAlerts
 
 Data:
 {trimmed_data}
 
-Return ONLY valid JSON. 15+ recentSamples with venue. Rich role+formation+opponent reasoning (2-3 paragraphs). 10pt probabilityCurve."""
+Return ONLY valid JSON. Follow the chain-of-thought. Quote specific evidence. 15+ recentSamples with venue. 10pt probabilityCurve. Include scenarioAnalysis, keyEvidence, and uncertaintyNote fields."""
 
         response = await chat.send_message(UserMessage(text=prompt))
         response_text = response.strip()

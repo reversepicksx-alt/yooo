@@ -176,6 +176,42 @@ function ProjectionCard({ projection, onSave, excludedIndices, onToggleSample })
             </div>
           )}
 
+          {/* Key Evidence - quoted stats */}
+          {projection.keyEvidence && (
+            <div className="stat-box" style={{ borderColor: 'rgba(99,102,241,0.2)', background: 'rgba(99,102,241,0.04)' }}>
+              <div className="stat-label flex items-center gap-2">
+                <BarChart3 style={{ width: 12, height: 12, color: '#6366f1' }} /> Key Evidence
+              </div>
+              <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.7, marginTop: 6, fontFamily: 'monospace' }}>
+                {projection.keyEvidence}
+              </p>
+            </div>
+          )}
+
+          {/* Scenario Analysis */}
+          {projection.scenarioAnalysis && (
+            <div className="stat-box" style={{ borderColor: 'rgba(245,158,11,0.2)', background: 'rgba(245,158,11,0.04)' }}>
+              <div className="stat-label flex items-center gap-2">
+                <Activity style={{ width: 12, height: 12, color: '#f59e0b' }} /> Scenario Analysis
+              </div>
+              <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.7, marginTop: 6 }}>
+                {projection.scenarioAnalysis}
+              </p>
+            </div>
+          )}
+
+          {/* Uncertainty Note */}
+          {projection.uncertaintyNote && (
+            <div className="stat-box" style={{ borderColor: 'rgba(244,63,94,0.15)', background: 'rgba(244,63,94,0.03)' }}>
+              <div className="stat-label flex items-center gap-2">
+                <ShieldAlert style={{ width: 12, height: 12, color: '#f43f5e' }} /> Risk Factor
+              </div>
+              <p style={{ fontSize: 12, color: '#f43f5e', lineHeight: 1.6, marginTop: 6, fontWeight: 600 }}>
+                {projection.uncertaintyNote}
+              </p>
+            </div>
+          )}
+
           <div className="grid-2">
             <div className="stat-box">
               <div className="stat-label">Position</div>

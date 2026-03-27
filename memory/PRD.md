@@ -65,6 +65,17 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 - [x] localStorage race condition fixed (picksInitialized ref skips first render write)
 - [x] Frontend displays "PUSH" label for push results in tracking history
 - [x] Standings fetcher also uses multi-season fallback
+- [x] settle-picks timestamp guard — only settles against fixtures AFTER the pick was created (prevents matching old meetings)
+
+## Enhanced Gemini Reasoning (Mar 2026 - Grok-style upgrade)
+- [x] Chain-of-thought reasoning: Gemini now follows a 6-step structured analysis before giving projection
+- [x] Key Evidence field: Quotes exact stat values with dates, opponents, and venue splits
+- [x] Scenario Analysis field: Covers base case, blowout, trailing, cagey game scenarios with probability weights
+- [x] Uncertainty Note field: Explicitly flags small sample sizes, missing data, coin-flip zones
+- [x] Injury data integration: Fetches injuries/suspensions for the upcoming fixture via API-Sports
+- [x] Injury impact rules in prompt: How missing players affect stat distributions
+- [x] Frontend displays all new fields: Key Evidence (purple), Scenario Analysis (amber), Risk Factor (red)
+- [x] Data payload increased from 10k to 12k chars for richer context
 
 ## Auth System Details
 - Owner email (josselj001@gmail.com): Bypasses password entirely, instant login
