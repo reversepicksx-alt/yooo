@@ -894,15 +894,84 @@ DATA:
             except Exception:
                 return None
 
+        # =============================================
+        # TRIPLE AI: Claude Sonnet runs tactical analysis in parallel
+        # =============================================
+        async def claude_tactical_analysis():
+            """Claude analyzes matchup, scenarios, PPDA, sub risk, game flow — the strategic brain"""
+            try:
+                tactical_ai = LlmChat(
+                    api_key=EMERGENT_LLM_KEY,
+                    session_id=f"tac-{uuid.uuid4().hex[:8]}",
+                    system_message="You are an elite soccer tactical analyst. You analyze matchups, game scripts, and player props with mathematical precision. Always quote numbers. Be concise but thorough."
+                )
+                tactical_ai.with_model("anthropic", "claude-sonnet-4-5-20250929")
+
+                # Build a focused tactical brief for Claude
+                tactical_brief = {
+                    "opponent_formations": opponent_formations,
+                    "opponent_stats": opponent_stats,
+                    "team_stats": team_stats,
+                    "h2h": h2h_data[:3] if h2h_data else [],
+                    "standings": standings[:6] if standings else [],
+                    "prematch": prematch_pred,
+                    "injuries": injuries_data[:10] if injuries_data else [],
+                }
+                tactical_json = json.dumps(tactical_brief, default=str)[:6000]
+
+                result = await tactical_ai.send_message(UserMessage(text=f"""Analyze this matchup for a {req.propType} prop on {req.playerName} ({player_position or 'Unknown'}) playing for team vs {req.opponentName} ({req.venue}).
+Line: {req.line}
+
+Do this analysis:
+
+1. PPDA ESTIMATE: From the opponent's tackles/interceptions data, estimate their pressing intensity.
+   - Calculate: (opponent total passes) / (opponent tackles + interceptions + fouls)
+   - Classify: Aggressive (6-9), Standard (10-12), Passive (13+)
+   - Impact on {req.propType}: How does this pressing level shift the stat?
+
+2. SUB RISK QUANTIFICATION: From the player's recent minutes data in recentFixtures:
+   - What % of games was the player subbed before 75'?
+   - What's the average stat volume lost per early sub?
+   - Weighted drag on projection?
+
+3. GAME FLOW PREDICTION:
+   - Who is favored? (use odds if available, else standings)
+   - Expected possession split
+   - When the favored team scores first, what happens to {req.propType}?
+   - When trailing, how does the stat shift?
+
+4. SCENARIO ANALYSIS with probabilities:
+   - Base case (most likely): probability % and expected {req.propType} value
+   - Blowout (team dominates): probability % and value (sub risk!)
+   - Trailing (team falls behind): probability % and value
+   - Cagey/tight: probability % and value
+   - Weighted projection = sum of (probability × value) for each scenario
+
+5. SENSITIVITY TESTS:
+   - If subbed at 60': pick survives or fails?
+   - If team down 2-0 early: survives or fails?
+   - If opponent parks bus: survives or fails?
+   - If red card at 30': survives or fails?
+   - Rating: ROBUST (3-4 pass) / MODERATE (2 pass) / FRAGILE (0-1 pass)
+
+6. FINAL VERDICT: Over or under {req.line}? Confidence 0-100? Key risk?
+
+DATA:
+{tactical_json}"""))
+                return result
+            except Exception:
+                return None
+
         gpt_summary_task = gpt_summarize_data()
+        claude_tactical_task = claude_tactical_analysis()
 
         try:
-            team_fixture_stats, opponent_fixture_stats, player_game_logs, gpt_data_summary = await aio.wait_for(
-                aio.gather(team_fixture_stats_task, opponent_fixture_stats_task, player_game_logs_task, gpt_summary_task),
-                timeout=20
+            team_fixture_stats, opponent_fixture_stats, player_game_logs, gpt_data_summary, claude_analysis = await aio.wait_for(
+                aio.gather(team_fixture_stats_task, opponent_fixture_stats_task, player_game_logs_task, gpt_summary_task, claude_tactical_task),
+                timeout=25
             )
         except aio.TimeoutError:
-            team_fixture_stats, opponent_fixture_stats, player_game_logs, gpt_data_summary = [], [], [], None
+            team_fixture_stats, opponent_fixture_stats, player_game_logs, gpt_data_summary, claude_analysis = [], [], [], None, None
 
         historical_data = {
             "playerStats": player_stats,
@@ -1134,147 +1203,47 @@ DATA:
                         player_position = pos
                         break
 
-        # 2. Send to Gemini — elite chain-of-thought reasoning with tactical depth
+        # 2. Send to Gemini — FINAL PREDICTOR (receives pre-analyzed intel from GPT + Claude)
         chat = LlmChat(
             api_key=EMERGENT_LLM_KEY,
             session_id=f"predict-{uuid.uuid4().hex[:8]}",
-            system_message="""You are an elite soccer prop analyst who thinks rigorously, transparently, and step-by-step. Return ONLY valid JSON (no markdown).
+            system_message="""You are the final-stage predictor in a triple-AI pipeline. You receive:
+1. A DATA SUMMARY from GPT (compact stats brief)
+2. A TACTICAL ANALYSIS from Claude (matchup analysis, PPDA, scenarios, sensitivity tests, sub risk)
+3. DEEP MATCH DATA (per-fixture stats and player game logs)
 
-REASONING METHOD — You MUST think through every prediction using this chain-of-thought:
+Your job: SYNTHESIZE all three inputs into a single, calibrated prediction JSON. Do NOT re-derive what Claude already analyzed — USE their analysis directly. Focus on:
 
-STEP 1: IDENTIFY THE PLAYER'S ROLE (this is the #1 predictor of stat volume)
-- Deep-lying playmaker (CDM/CM holding): Pass attempts 80-110+ per 90. They recycle possession constantly.
-- Box-to-box midfielder: Moderate-high passes (50-80), moderate tackles/interceptions
-- Attacking midfielder / #10: High key passes, moderate total passes, low tackles
-- Centre-back: High passes in own half, low key passes, high blocks/interceptions
-- Goalkeeper: Saves only, extremely low passes
-- Winger: High dribbles, shots, low pass attempts
-- Striker: High shots, low passes
-Quote the player's ACTUAL position from API data. If the data says "Midfielder", infer the specific sub-role from their stat profile (high passes + low shots = holding; high key passes + moderate shots = attacking).
+STEP 1: VALIDATE the player's role from the data summary
+STEP 2: CROSS-REFERENCE Claude's scenario analysis with the game log data — does the evidence support Claude's assessment?
+STEP 3: CALIBRATE the final projected value using:
+- Claude's weighted scenario projection as the starting point
+- Game log data as the ground truth (per-90 rates, home/away splits)
+- GPT's per-90 rates and recent form numbers
+- If Claude and the data disagree, explain why and choose the more evidence-based number
+STEP 4: SET CONFIDENCE based on:
+- Data quality (sample size, recency)
+- Claude's sensitivity test results (ROBUST = 75+, MODERATE = 55-74, FRAGILE = 40-54)
+- How close the projection is to the line (within 0.5 = coin flip = max 55 confidence)
 
-STEP 2: EXTRACT KEY EVIDENCE (quote specific numbers — never make vague claims)
-- List the player's last 5-10 game values for this specific stat, with venue and opponent
-- Calculate: season average, home average, away average, last-5 rolling average
-- Identify FLOOR games (sub, injury return, blowout sub-off) and FLAG them
-- Note the standard deviation — how volatile is this stat for this player?
+DRIBBLE-SPECIFIC: Most volatile stat. AWAY + low-block = default UNDER when line is close to average.
 
-STEP 2B: PER-90 MINUTE NORMALIZATION (CRITICAL — use this, not raw totals)
-- If "per90Analysis" is present in the data, USE IT as the primary reference for the player's stat rates
-- Per-90 = (raw total / total minutes) × 90. This normalizes for games where the player was subbed early
-- A player with 25 passes in 65 minutes is actually a 34.6 per-90 player — very different from 25 in 90 minutes (25.0 per-90)
-- Always compare per-90 rates, not raw per-game averages, when assessing volume
-- Quote both: "Season per-90: 34.6 (raw per-game: 28.3 due to 73 avg minutes)"
-- Use avgMinutesPerGame to flag minute risk: if avg < 80, there's consistent sub risk dragging raw numbers down
-
-STEP 2C: HEAD-TO-HEAD OPPONENT HISTORY (the sharpest edge)
-- If "h2hPlayerStats" is present in the data, THIS IS GOLD — the player's actual stats in previous meetings against this SPECIFIC opponent
-- Quote exact values: "In 4 meetings vs [opponent]: 34, 28, 41, 31 passes. Avg vs this opponent: 33.5"
-- Compare H2H average to season average: If H2H avg is significantly higher/lower than season avg, explain WHY (opponent style, venue, game script)
-- H2H sample size matters: 4+ games = strong signal. 1-2 games = weak signal, use cautiously
-- If H2H data shows a clear trend against this opponent, it should HEAVILY influence the projection (weight 30-40% of final number)
-
-STEP 2D: PLAYER GAME LOGS (match-by-match box scores — THE MOST IMPORTANT DATA)
-- If "playerGameLogs" is present, THIS IS YOUR PRIMARY DATA SOURCE — the player's actual stat line from each recent match
-- Each entry has: date, opponent, venue, score, minutes played, AND every stat (passes, shots, tackles, dribbles, etc.)
-- Quote EVERY game: "vs Arsenal (H, 85min): 34 passes. vs Wolves (A, 90min): 28 passes. vs Brighton (H, 78min): 31 passes."
-- Calculate from the raw numbers: mean, home mean, away mean, stddev
-- Flag FLOOR GAMES by checking minutes: If minutes < 70, that's an early sub → flag it and note the stat was suppressed
-- Per-90 normalization: Use targetStatPer90 field. A player with 25 passes in 65 min = 34.6/90, very different from 25 in 90 min
-- This data SUPERSEDES season averages. Game logs are the ground truth.
-
-STEP 2E: PER-FIXTURE TEAM & OPPONENT STATS (tactical fingerprint per match)
-- If "teamMatchStats" is present, use it to see HOW the team played in each recent game
-- Key metrics per game: possession%, totalShots, shotsOnTarget, totalPasses, passAccuracy
-- Look for PATTERNS: "In their last 5 home games, team averaged 58% possession and 492 passes"
-- If "opponentMatchStats" is present, this shows WHAT THE OPPONENT ALLOWS per game
-- Critical: "Opponent allowed 54% possession in last 5, faced avg 12.4 shots per game"
-- Cross-reference: If opponent allows high possession AND player's game logs show more passes in high-possession games → OVER signal
-- If opponent restricts possession to 45% → player's stat ceiling drops
-
-STEP 3: SUBSTITUTION RISK QUANTIFICATION
-- Check the player's minutes played in recent games. How often are they subbed before 70'? Before 80'?
-- Calculate the % of games where early substitution occurred and the average stat volume lost per early sub
-- Example: "Subbed before 70' in 3 of last 15 games (20%). In those 3, averaged only 18 passes vs 31 in full games. That's ~13 attempts lost per early sub."
-- Factor this into the projection as a weighted drag: projection = (full_game_projection × %_full_games) + (sub_projection × %_sub_games)
-- If the team is heavy favorites (odds < 1.50), sub risk INCREASES because blowout subs are more likely
-
-STEP 4: FIRST-TO-SCORE POSSESSION DYNAMICS
-- Analyze from recent fixtures: When the player's team scores first, do they sit back and protect (fewer passes) or keep pressing (more passes)?
-- When trailing, does the team become more direct (bypassing midfield = fewer midfielder passes, more striker shots) or keep patient buildup?
-- Cross-reference with opponent tendencies: Some teams sit deep after conceding (giving the other team MORE possession), while others chase the game
-- Expected game flow from odds: If the player's team is favored, the base case is they score first → apply the leading-team possession adjustment
-
-STEP 5: PRESSING INTENSITY (PPDA APPROXIMATION)
-- Estimate the opponent's Passes Per Defensive Action (PPDA) from their tackles, interceptions, and fouls data
-- Low PPDA (6-9): Aggressive pressing team — they win the ball back quickly, giving LESS time on the ball to opposing players → FEWER passes, MORE turnovers, but MORE tackles/interceptions for both sides
-- Medium PPDA (10-12): Standard pressing — neutral effect
-- High PPDA (13+): Passive/low-block team — they let the opposition have the ball → MORE passes, MORE possession, but FEWER tackles opportunities
-- This is the single best metric for predicting pass volume against a specific opponent. A CDM facing a PPDA-7 team will have 15-20% fewer passes than against a PPDA-15 team.
-
-STEP 6: ANALYZE THE MATCHUP
-- Opponent defensive style: Low-block (sit deep) → more possession/passes for dominant team. High-press → turnovers, fewer passes, more tackles.
-- Opponent possession conceded: If they give up 55%+, the opposing midfielders get inflated pass numbers
-- Formation matchup: 5-back = ultra-defensive = massive pass boost. 4-3-3 press = open game = fewer passes, more dribble space.
-- Injuries/suspensions: If a key teammate is out, does the workload shift to this player? If an opponent's presser is out, does the pressure drop?
-
-STEP 7: SCENARIO ANALYSIS (consider ALL plausible game flows)
-- Base case (most likely): Team dominates as expected → player gets normal minutes, normal rhythm
-- Blowout scenario: If team goes up big early → player might be subbed off at 60-70' → LOWER volume
-- Trailing scenario: If team falls behind → more urgent attacking → different stat distribution
-- Cagey/tight game: Low possession for both sides → compressed stat ceilings
-- Early red card (either team): Completely changes game dynamics
-- Assign rough probability weights to each scenario and factor into the projection
-
-STEP 8: VENUE + GAME SCRIPT ADJUSTMENT
-- Home vs away splits for this specific stat (home players typically get 10-20% more of most stats)
-- Expected game script from bookmaker odds (favorite team = more possession = more stats for their midfielders)
-- If bookmaker odds show a heavy favorite, the favorite's players get stat boosts from expected possession dominance
-
-STEP 9: SENSITIVITY TESTS (what breaks the pick?)
-- Answer these explicitly:
-  * "If the player is subbed at 60', does the pick still hit?" → recalculate with 67% of projected volume
-  * "If the team goes down 2-0 early, does the pick still hit?" → apply trailing-team adjustments
-  * "If the opponent parks the bus from minute 1, does the pick still hit?" → apply max-possession boost but also min-shot/dribble suppression
-  * "If a red card happens at 30', does the pick still hit?" → 10-man dynamics
-- A ROBUST pick survives 3 of 4 sensitivity tests. A FRAGILE pick only works in the base case. Flag fragile picks explicitly.
-
-STEP 10: FINAL CALIBRATION + UNCERTAINTY
-- Compare your projected value to the line. How many standard deviations away is the line from the mean?
-- If data is limited (< 5 games this season), explicitly reduce confidence
-- If the line is within 0.5 of the player's average, acknowledge this is a COIN FLIP zone
-- State what would need to happen for your prediction to be WRONG (the key risk factor)
-- A pick that passes all sensitivity tests and has strong evidence deserves 75+ confidence. A pick that only works in the base case should be 40-55 max.
-
-DRIBBLE-SPECIFIC RULES:
-- Most volatile stat (SD typically 40-50% of mean)
-- AWAY: Drop 15-30%. Low-block opponents: Drop 30-50%. High-line opponents: Increase.
-- When line is close to average (within 0.5): Default UNDER for away + organized defenses
-- Wide players (LW/RW) > central players for attempts
-
-STAT-SPECIFIC NOTES:
-- Shots/SOT: Check opponent's shots conceded per game
-- Tackles/interceptions: Higher when team is OUT of possession more
-- Key passes: Higher in open games, lower in cagey games
-- Saves: Check opponent's shots per game
-- Fouls drawn: Physical opponents = more, disciplined = fewer
+Return ONLY valid JSON (no markdown).
 
 JSON structure:
 {"player":{"id":int,"name":"","team":"","role":"","position":""},"opponent":"","league":"","propType":"","line":0,"projectedValue":0,"recommendation":"over|under","confidenceScore":0-100,"confidenceLevel":"Low|Medium|High|Very High","confidenceInterval":[lo,hi],"recentSamples":[{"date":"","opponent":"","value":0,"minutesPlayed":0,"matchDifficulty":"low|medium|high","venue":"home|away"}],"bayesianMetrics":{"priorMean":0,"momentumEffect":0,"covariateAdjustment":0,"reversalFlag":"stable|upward_reversal_likely|downward_reversal_likely"},"probabilityCurve":[{"value":0,"probability":0}],"tacticalAlerts":[{"type":"injury|lineup|tactical|sub_risk","message":"","severity":"low|medium|high"}],"sharpSummary":"","reasoning":"","scenarioAnalysis":"","keyEvidence":"","uncertaintyNote":"","sensitivityTests":"","subRisk":"","gameFlowDynamics":""}
 
 Field requirements:
-- role: MUST be specific (e.g., "Deep-Lying Playmaker", "CDM Holding", "Box-to-Box CM", "Inside Forward", "Target Striker", "Sweeper Keeper")
-- sharpSummary: 2-3 sharp sentences. The CORE edge — what makes this over or under the line. Be direct.
-- reasoning: 3-4 rich paragraphs following the chain-of-thought: (1) ROLE identification with per-90 context (2) KEY EVIDENCE — quote the exact stat values from recent games, calculate averages (3) MATCHUP ANALYSIS — opponent style, formation, possession expectations, PPDA approximation (4) SCENARIO WEIGHTING — base case + alt scenarios, venue adjustment, final calibration
-- scenarioAnalysis: 1 paragraph covering base case (60%), blowout (15%), trailing (15%), cagey (10%) — adjust percentages based on matchup. Explain how each scenario affects the specific stat.
-- keyEvidence: Quote 5-8 specific stat values with dates/opponents. Example: "Last 5: 87 (vs Arsenal, H), 74 (vs Wolves, A), 91 (vs Brighton, H), 82 (vs Fulham, A), 78 (vs Palace, H). Home avg: 85.3, Away avg: 78.0. SD: 6.2"
-- uncertaintyNote: 1-2 sentences on what could go wrong. Example: "Small sample (4 games this season). If subbed before 75', projection drops to 55."
-- sensitivityTests: Answer 3-4 "what if" scenarios: "Sub at 60': projection drops to X (pick SURVIVES/FAILS). Down 2-0: projection shifts to Y (SURVIVES/FAILS). Opponent parks bus: Z (SURVIVES/FAILS). Red card: W (SURVIVES/FAILS)." Then state: "Pick survives X/4 tests = ROBUST/MODERATE/FRAGILE"
-- subRisk: 1-2 sentences quantifying sub probability and impact. Example: "Subbed before 70' in 20% of games. Average attempts lost per early sub: 13. Weighted drag on projection: -2.6 attempts."
-- gameFlowDynamics: 1-2 sentences on first-to-score impact. Example: "When leading, team averages 58% possession (+3% vs trailing). Player's passes increase by ~5 per 90 when team leads. Favored to score first (odds 1.60), boosting base case."
-- recentSamples: 15-20 entries with venue tags, sorted date descending
-- probabilityCurve: 10 data points
-- covariateAdjustment: Factor in role + opponent PPDA + injury impact + sub risk drag (positive = stat boost, negative = stat suppression)
-- tacticalAlerts: Include injury alerts, sub risk warnings, and pressing intensity notes"""
+- sharpSummary: 2-3 sentences. Core edge. Be direct.
+- reasoning: 2-3 paragraphs synthesizing all three AI inputs. Quote numbers from GPT's summary AND Claude's analysis. Cross-reference with game log data.
+- scenarioAnalysis: Take Claude's scenario breakdown directly — refine if game log data contradicts it.
+- keyEvidence: Quote 5-8 specific values from the data. Format: "Last 5: X (vs Team, venue), Y (vs Team, venue)..."
+- sensitivityTests: Take Claude's sensitivity results directly.
+- subRisk: Take Claude's sub risk quantification directly.
+- gameFlowDynamics: Take Claude's game flow analysis directly.
+- uncertaintyNote: Key risk factor + data limitations.
+- recentSamples: 15+ from game logs with venue. If game logs unavailable, generate from season stats.
+- probabilityCurve: 10 data points centered on projection."""
         )
         chat.with_model("gemini", "gemini-2.5-flash")
 
@@ -1304,58 +1273,48 @@ Field requirements:
         if opponent_fixture_stats:
             wave2_supplement["opponentMatchStats"] = opponent_fixture_stats
 
-        # Compose final data: GPT summary (compact) + Wave 2 deep data + tactical intel
+        # Compose final data: GPT summary (compact) + Claude tactical analysis + Wave 2 deep data
+        final_data_parts = []
         if gpt_data_summary:
-            final_data = f"""[GPT DATA SUMMARY]\n{gpt_data_summary}\n\n[DEEP MATCH DATA]\n{json.dumps(wave2_supplement, default=str)[:5000]}"""
+            final_data_parts.append(f"[GPT DATA SUMMARY]\n{gpt_data_summary}")
+        if claude_analysis:
+            final_data_parts.append(f"[CLAUDE TACTICAL ANALYSIS]\n{claude_analysis}")
+        if wave2_supplement:
+            final_data_parts.append(f"[DEEP MATCH DATA]\n{json.dumps(wave2_supplement, default=str)[:5000]}")
+
+        if final_data_parts:
+            final_data = "\n\n".join(final_data_parts)
         else:
-            # Fallback: raw data if GPT failed
+            # Fallback: raw data if both AIs failed
             final_data = json.dumps(historical_data, default=str)[:18000]
 
-        prompt = f"""Player: {req.playerName} (ID: {req.playerId}) | Position from API: {player_position or 'Unknown'} | Opponent: {req.opponentName} | Venue: {req.venue} | Prop: {req.propType} | Line: {req.line}
+        prompt = f"""TRIPLE AI PREDICTION — FINAL STAGE
+
+Player: {req.playerName} (ID: {req.playerId}) | Position: {player_position or 'Unknown'} | Opponent: {req.opponentName} | Venue: {req.venue} | Prop: {req.propType} | Line: {req.line}
 
 Stat mapping: pass_attempts=passes.total, shots=shots.total, shots_on_target=shots.on, tackles=tackles.total, key_passes=passes.key, saves=goals.saves, interceptions=tackles.interceptions, blocks=tackles.blocks, dribbles=dribbles.attempts, fouls_drawn=fouls.drawn
 
-CRITICAL: The player's official position from API-Sports is "{player_position or 'Unknown'}". Use THIS as the base for role analysis. Do NOT contradict it.
+You have received pre-analyzed intel from two AI systems:
+1. GPT's DATA SUMMARY — compact statistical brief with per-90 rates, recent form, H2H, standings
+2. Claude's TACTICAL ANALYSIS — PPDA estimate, sub risk quantification, scenario analysis with probabilities, sensitivity tests, game flow prediction
 
-THINK STEP-BY-STEP (follow all 10 steps from your instructions):
-1. What is this player's specific role and how does it affect {req.propType}?
-2. What are the exact stat values from recent games? (quote numbers with opponents and venues)
-2B. PER-90 CHECK: What is the player's per-90 rate for {req.propType}? How does it differ from raw per-game? What's their avg minutes per game?
-2C. H2H CHECK: If h2hPlayerStats data is present, what are the player's EXACT stat values against {req.opponentName} in previous meetings? How does the H2H average compare to the season average?
-2D. GAME LOG CHECK: If playerGameLogs is present, list EVERY game's stat line with minutes, opponent, venue. Calculate home avg vs away avg. Flag any game with < 70 minutes as a floor game.
-2E. TEAM/OPPONENT MATCH STATS: If teamMatchStats and opponentMatchStats are present, what was the team's possession% and pass volume per game? What does the opponent typically allow? Cross-reference with player's game logs.
-3. SUBSTITUTION RISK: How often is this player subbed early? What's the stat volume impact per early sub? Quantify the drag.
-4. FIRST-TO-SCORE: When the team leads, does possession/stat volume go up or down? When trailing? What does the expected game flow look like based on odds?
-5. PRESSING INTENSITY: Estimate the opponent's PPDA from their tackles/interceptions. Are they aggressive pressers (PPDA 6-9) or passive (PPDA 13+)? How does that shift {req.propType}?
-6. What is the opponent's defensive style and formation matchup?
-7. What are the plausible game scenarios (base, blowout, trailing, cagey) and how does each affect the stat?
-8. What is the venue adjustment and expected game script from odds?
-9. SENSITIVITY TESTS: Does this pick survive: (a) sub at 60'? (b) team down 2-0? (c) opponent parks bus? (d) red card? How many of 4 tests does it pass?
-10. Final calibration: where does the projection land vs the line of {req.line}? Is this robust or fragile?
+YOUR JOB: Synthesize both into the final calibrated prediction JSON.
+- Use Claude's scenario weights as your starting framework
+- Cross-check against GPT's data numbers
+- If they disagree, explain why in your reasoning and go with the more evidence-based number
+- Pull recentSamples from the game log data
+- Take Claude's sensitivityTests, subRisk, and gameFlowDynamics assessments — refine only if game log data contradicts them
 
 TACTICAL INTEL:
-- Opponent recent formations: {json.dumps(opponent_formations, default=str) if opponent_formations else 'Not available'}
-- Pre-match data (odds + prediction): {json.dumps(prematch_for_prompt, default=str) if prematch_for_prompt else 'Not available for this specific matchup'}
-- Injuries/Suspensions: {json.dumps(injuries_summary, default=str) if injuries_summary else 'None reported'}
+- Opponent formations: {json.dumps(opponent_formations, default=str) if opponent_formations else 'See Claude analysis'}
+- Injuries: {json.dumps(injuries_summary, default=str) if injuries_summary else 'See Claude analysis'}
 
-CRITICAL ODDS RULE: If "bookmakerOdds" is present, ALWAYS use it to determine the favorite. Lower odds = favored team. If the API prediction contradicts bookmaker odds, TRUST THE BOOKMAKER ODDS.
+CRITICAL ODDS RULE: If bookmaker odds present, lower odds = favored team. Trust bookmaker odds over all other signals.
 
-FORMATION ANALYSIS:
-- 5-back (5-3-2, 5-4-1): ULTRA DEFENSIVE → massive pass boost for dominant team's midfielders, dribble suppression
-- 4-4-2 compact: Mid-block → moderate pass boost, strong dribble suppression
-- 4-3-3 / 4-2-3-1 high press: Open game → fewer passes (turnovers), more dribble opportunities
-- Coach style matters: Defensive coaches = compact = more recycling passes for opponent CDMs
-
-INJURY IMPACT RULES:
-- If a key midfielder is OUT for the player's team → remaining midfielders get MORE passes/touches
-- If an opponent's key presser is OUT → less pressure on the ball → more comfortable passing
-- If the player himself has a minor knock → possible early sub → LOWER stat ceiling
-- Always mention relevant injuries in tacticalAlerts
-
-Data:
+ALL PRE-ANALYZED DATA:
 {final_data}
 
-Return ONLY valid JSON. Follow ALL 10 steps. Quote specific evidence. Include sensitivityTests, subRisk, and gameFlowDynamics fields. 15+ recentSamples with venue. 10pt probabilityCurve."""
+Return ONLY valid JSON. Synthesize all inputs. 15+ recentSamples with venue. 10pt probabilityCurve."""
 
         response = await chat.send_message(UserMessage(text=prompt))
         response_text = response.strip()

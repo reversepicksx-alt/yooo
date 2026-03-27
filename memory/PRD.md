@@ -78,14 +78,17 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 - [x] Substitution Risk Quantification: Calculates % of games with early sub, avg stat volume lost, weighted projection drag
 - [x] Game Flow Dynamics: First-to-score possession impact, leading vs trailing stat adjustments
 - [x] PPDA Approximation: Estimates opponent pressing intensity from tackles/interceptions to predict pass volume shifts
-## Intelligence Upgrades v4 (Mar 2026 - Per-Fixture Deep Data + Dual AI)
-- [x] Per-fixture team match stats: Fetches possession%, shots, passes, accuracy for team's last 3 games via fixtures/statistics
-- [x] Per-fixture opponent match stats: Same for opponent — shows exactly what they allow per game
-- [x] Player game-by-game box scores: Fetches individual player stat lines from last 5 fixtures via fixtures/players
-- [x] Dual AI Pipeline: GPT-4.1-mini pre-summarizes Wave 1 data IN PARALLEL with Wave 2 fetches, Gemini gets compact digest → ~40s (down from ~58s)
-- [x] Match Stat Zones visual component: Side-by-side team vs opponent stat bars (possession, shots, passes, inside/outside box)
-- [x] Graceful degradation: 20s timeout on Wave 2 + GPT, falls back to raw data if needed
-- [x] Data payload optimized: GPT summary (~3k) + Wave 2 deep data (~5k) instead of raw 20k JSON
+## Intelligence Upgrades v4 (Mar 2026 - Triple AI Pipeline + Heat Maps)
+- [x] TRIPLE AI ARCHITECTURE:
+  - GPT-4.1-mini (Data Processor): Compresses 15k raw JSON into compact analytical brief
+  - Claude Sonnet 4.5 (Tactical Analyst): PPDA estimation, sub risk quantification, scenario analysis, sensitivity tests, game flow prediction
+  - Gemini 2.5 Flash (Final Predictor): Synthesizes GPT + Claude outputs into calibrated prediction JSON
+  - All three run IN PARALLEL during Wave 2 (~38s total, down from ~58s original)
+- [x] Per-fixture team/opponent match stats via fixtures/statistics (possession, shots, passes per game)
+- [x] Player game-by-game box scores via fixtures/players (individual stat lines with minutes)
+- [x] Match Stat Zones visual component: Side-by-side team vs opponent stat bars
+- [x] Graceful degradation: 25s timeout on Wave 2 + AI analysis, falls back to raw data if needed
+- [x] Gemini prompt optimized: Receives pre-analyzed intel, focuses on calibration and JSON formatting
 
 ## Auth System Details
 - Owner email (josselj001@gmail.com): Bypasses password entirely, instant login
