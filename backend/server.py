@@ -577,7 +577,7 @@ async def predict(req: PredictionRequest):
                 return []
 
         async def get_prematch_prediction():
-            """Get API-Sports pre-match prediction if a scheduled fixture exists"""
+            """Get API-Sports pre-match prediction + actual bookmaker odds"""
             try:
                 fixtures = None
                 for s in [CURRENT_SEASON + 1, CURRENT_SEASON]:
@@ -591,20 +591,59 @@ async def predict(req: PredictionRequest):
                             break
                     except Exception:
                         continue
-                if fixtures:
-                    fid = fixtures[0].get("fixture", {}).get("id")
+                if not fixtures:
+                    return None
+
+                fid = fixtures[0].get("fixture", {}).get("id")
+                result = {}
+
+                # Get prediction
+                try:
                     pred = await api_football_request("predictions", {"fixture": fid})
                     if pred:
                         p = pred[0]
-                        return {
+                        result["apiPrediction"] = {
                             "winner": p.get("predictions", {}).get("winner", {}).get("name", ""),
                             "advice": p.get("predictions", {}).get("advice", ""),
+                            "homeWinPct": p.get("predictions", {}).get("percent", {}).get("home", ""),
+                            "drawPct": p.get("predictions", {}).get("percent", {}).get("draw", ""),
+                            "awayWinPct": p.get("predictions", {}).get("percent", {}).get("away", ""),
                             "homeForm": p.get("teams", {}).get("home", {}).get("league", {}).get("form", ""),
                             "awayForm": p.get("teams", {}).get("away", {}).get("league", {}).get("form", ""),
                         }
+                except Exception:
+                    pass
+
+                # Get actual bookmaker odds (MORE RELIABLE than prediction model)
+                try:
+                    odds = await api_football_request("odds", {"fixture": fid})
+                    if odds:
+                        for bk in odds[0].get("bookmakers", [])[:1]:
+                            for bet in bk.get("bets", []):
+                                if bet.get("name") == "Match Winner":
+                                    vals = {v["value"]: v["odd"] for v in bet.get("values", [])}
+                                    result["bookmakerOdds"] = {
+                                        "source": bk.get("name", ""),
+                                        "homeWin": vals.get("Home", ""),
+                                        "draw": vals.get("Draw", ""),
+                                        "awayWin": vals.get("Away", ""),
+                                    }
+                                    # Determine actual favorite from odds
+                                    try:
+                                        home_odd = float(vals.get("Home", 99))
+                                        away_odd = float(vals.get("Away", 99))
+                                        if home_odd < away_odd:
+                                            result["actualFavorite"] = "home"
+                                        else:
+                                            result["actualFavorite"] = "away"
+                                    except Exception:
+                                        pass
+                except Exception:
+                    pass
+
+                return result if result else None
             except Exception:
-                pass
-            return None
+                return None
 
         # Fire ALL API calls at once — including tactical intel
         player_data_task = get_player_data()
@@ -645,8 +684,17 @@ async def predict(req: PredictionRequest):
             "standings": standings,
             "recentFixtures": recent_fixtures,
             "opponentRecentFormations": opponent_formations,
-            "prematchPrediction": prematch_pred,
         }
+
+        # Only include prematch data if it matches the requested opponent
+        prematch_for_prompt = None
+        if prematch_pred:
+            # Check if the next fixture is actually against the requested opponent
+            pred_str = json.dumps(prematch_pred, default=str).lower()
+            opp_lower = req.opponentName.lower().split()[0]  # First word of opponent name
+            if opp_lower in pred_str:
+                prematch_for_prompt = prematch_pred
+                historical_data["prematchPrediction"] = prematch_pred
 
         # Extract player's ACTUAL position from API-Sports data
         player_position = ""
@@ -742,7 +790,9 @@ CRITICAL: The player's official position from API-Sports is "{player_position or
 
 TACTICAL INTEL (use this heavily in your analysis):
 - Opponent recent formations: {json.dumps(opponent_formations, default=str) if opponent_formations else 'Not available'}
-- Pre-match prediction: {json.dumps(prematch_pred, default=str) if prematch_pred else 'Not available'}
+- Pre-match data (odds + prediction): {json.dumps(prematch_for_prompt, default=str) if prematch_for_prompt else 'Not available for this specific matchup'}
+
+CRITICAL ODDS RULE: If "bookmakerOdds" is present, ALWAYS use it to determine the favorite. Bookmaker odds are MORE RELIABLE than the API prediction model (especially early season with small sample sizes). Lower odds = favored team. Home odds 1.80 vs Away odds 4.10 means HOME is strongly favored. If the API prediction contradicts bookmaker odds, TRUST THE BOOKMAKER ODDS.
 
 FORMATION ANALYSIS RULES:
 - If opponent plays 5-back (5-3-2, 5-4-1, 3-5-2 with wingbacks): ULTRA DEFENSIVE → massive pass boost for dominant team's midfielders, dribble suppression
