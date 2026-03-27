@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Zap, ChevronRight, RefreshCw, ArrowLeft, Clock, Activity,
-  Shield, Send, Loader2, Trash2, User,
+  Shield, Send, Loader2, Trash2, User, Search,
   TrendingUp, TrendingDown, BarChart3, ShieldAlert, Target, LogOut, Lock, Mail
 } from 'lucide-react';
 import {
@@ -979,8 +979,6 @@ export default function App() {
                         line: p.suggestedLine,
                         venue: 'home',
                       });
-                      setSearchMode('natural');
-                      setNaturalQuery(`${p.playerName} ${p.suggestedLine} ${p.propType.replace(/_/g, ' ')} vs ${p.opponentName}`);
                     }}
                   />
                 ) : null}
