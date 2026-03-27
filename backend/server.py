@@ -1009,20 +1009,38 @@ async def settle_picks(req: SettlePicksRequest):
                 continue
 
             # Find the relevant finished fixture (try current and next season)
+            # CRITICAL: Only match fixtures that happened AFTER the pick was created
+            # to avoid settling against old meetings between the same teams
+            pick_timestamp = pick.get("timestamp", 0)
+            pick_created = datetime.fromtimestamp(pick_timestamp / 1000, tz=timezone.utc) if pick_timestamp else datetime.min.replace(tzinfo=timezone.utc)
+
             recent = None
             for s in [CURRENT_SEASON + 1, CURRENT_SEASON]:
                 try:
-                    data = await api_football_request("fixtures", {"team": team_id, "last": 3, "season": s})
+                    data = await api_football_request("fixtures", {"team": team_id, "last": 5, "season": s})
                     if data:
-                        # Find fixture matching opponent
                         for f in data:
                             home = f.get("teams", {}).get("home", {}).get("name", "")
                             away = f.get("teams", {}).get("away", {}).get("name", "")
                             status = f.get("fixture", {}).get("status", {}).get("short", "")
-                            if status in ("FT", "AET", "PEN") and \
-                               (opponent.lower() in home.lower() or opponent.lower() in away.lower()):
-                                recent = f
-                                break
+                            fixture_date_str = f.get("fixture", {}).get("date", "")
+
+                            # Only consider finished matches
+                            if status not in ("FT", "AET", "PEN"):
+                                continue
+                            # Must match opponent name
+                            if not (opponent.lower() in home.lower() or opponent.lower() in away.lower()):
+                                continue
+                            # MUST have occurred AFTER the pick was saved
+                            try:
+                                fixture_dt = datetime.fromisoformat(fixture_date_str.replace("Z", "+00:00"))
+                                if fixture_dt < pick_created:
+                                    continue  # This is an OLD match, skip it
+                            except Exception:
+                                continue  # Can't parse date, skip to be safe
+
+                            recent = f
+                            break
                         if recent:
                             break
                 except Exception:
