@@ -105,7 +105,7 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 
 ## Prioritized Backlog
 ### P0 (Critical)
-- None remaining
+- [x] H2H match limit increased from 3 to 10, parallelized fetches (DONE - Mar 2026)
 
 ### P1 (High)
 - Push notifications for pick results
@@ -113,7 +113,7 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 ### P2 (Medium)
 - Slip correlation analysis
 - Re-analyze pick button for saved picks
-- Market sentiment analysis
+- Prediction self-correction feedback loop (store outcomes → improve calibration)
 
 ### Future
 - Add more prop types based on user feedback

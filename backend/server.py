@@ -1184,10 +1184,8 @@ DATA:
                     return None
 
             if h2h_fixture_ids:
-                for fid, fi in h2h_fixture_ids:
-                    result = await fetch_h2h_player_stat(fid, fi)
-                    if result:
-                        h2h_player_stats.append(result)
+                h2h_results = await aio.gather(*[fetch_h2h_player_stat(fid, fi) for fid, fi in h2h_fixture_ids])
+                h2h_player_stats = [r for r in h2h_results if r]
 
         if h2h_player_stats:
             # Calculate H2H averages for the target stat
