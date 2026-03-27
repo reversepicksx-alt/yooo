@@ -723,7 +723,7 @@ export default function App() {
       const data = await sendChatMessage(chatSessionId, msg);
       setChatMessages(prev => [...prev, { role: 'model', text: data.response }]);
     } catch {
-      setChatMessages(prev => [...prev, { role: 'model', text: 'Error connecting to tactical uplink. Please try again.' }]);
+      setChatMessages(prev => [...prev, { role: 'model', text: 'Error connecting to tactical search. Please try again.' }]);
     } finally {
       setIsChatting(false);
     }
@@ -905,7 +905,7 @@ export default function App() {
                   <div>
                     <h2 className="section-title" data-testid="wizard-title">AI Wizard</h2>
                     <p className="section-subtitle">
-                      {searchMode === 'wizard' ? `Step ${wizardStep} of 6` : 'Tactical Uplink'}
+                      {searchMode === 'wizard' ? `Step ${wizardStep} of 6` : 'Tactical Search'}
                     </p>
                   </div>
                   {searchMode === 'wizard' && wizardStep > 1 && (
@@ -922,7 +922,7 @@ export default function App() {
                       data-testid="step-by-step-tab">Step-by-Step</button>
                     <button className={`tab-btn ${searchMode === 'chat' ? 'active' : ''}`}
                       onClick={() => { setSearchMode('chat'); }}
-                      data-testid="tactical-uplink-tab">Tactical Uplink</button>
+                      data-testid="tactical-uplink-tab">Tactical Search</button>
                   </div>
                 )}
 
@@ -948,7 +948,7 @@ export default function App() {
                   <div className="chat-container-inline" data-testid="tactical-uplink-inline">
                     <div className="chat-header">
                       <div>
-                        <h3 className="chat-title" style={{ fontSize: 18 }}>Tactical Uplink</h3>
+                        <h3 className="chat-title" style={{ fontSize: 18 }}>Tactical Search</h3>
                         <p className="chat-subtitle">AI Strategic Analyst</p>
                       </div>
                       <button className="icon-btn" onClick={handleStartChat} data-testid="chat-reset-btn">
