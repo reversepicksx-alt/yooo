@@ -579,12 +579,13 @@ export default function App() {
   }, []);
 
   // Poll to settle live picks every 5 minutes
+  const livePickCount = savedPicks.filter(p => p.status === 'live').length;
   useEffect(() => {
-    const livePicks = savedPicks.filter(p => p.status === 'live');
-    if (livePicks.length === 0) return;
+    if (livePickCount === 0) return;
 
     const checkSettled = async () => {
       try {
+        const livePicks = savedPicks.filter(p => p.status === 'live');
         const result = await settlePicks(livePicks);
         if (result.settled && result.settled.length > 0) {
           setSavedPicks(prev => {
@@ -608,15 +609,17 @@ export default function App() {
       } catch {}
     };
 
-    // Check immediately on mount
     checkSettled();
-
-    // Then every 5 minutes
     const interval = setInterval(checkSettled, 5 * 60 * 1000);
     return () => clearInterval(interval);
-  }, [savedPicks.filter(p => p.status === 'live').length]);
+  }, [livePickCount, savedPicks]);
 
+  const picksInitialized = useRef(false);
   useEffect(() => {
+    if (!picksInitialized.current) {
+      picksInitialized.current = true;
+      return; // Skip first render to avoid overwriting localStorage with empty array
+    }
     localStorage.setItem('reverse_picks_v2', JSON.stringify(savedPicks));
   }, [savedPicks]);
 
@@ -730,11 +733,25 @@ export default function App() {
       if (!players.length) throw new Error(`Player "${parsed.playerName}" not found. Try searching by last name.`);
 
       const player = players[0];
-      const teamsData = await getTeamsByLeague(39);
+
+      // Detect league from player's team — search ALL supported leagues, not just EPL
+      let detectedLeagueId = null;
+      const majorLeagues = [39, 140, 135, 78, 61, 253, 262, 128, 71, 307, 254, 2, 3];
+      for (const lid of majorLeagues) {
+        try {
+          const td = await getTeamsByLeague(lid);
+          const match = (td.teams || []).find(t => t.id === player.teamId);
+          if (match) { detectedLeagueId = lid; break; }
+        } catch { /* skip */ }
+      }
+      const leagueId = detectedLeagueId || 39;
+
+      // Get opponent from the correct league
+      const teamsData = await getTeamsByLeague(leagueId);
       const leagueTeams = teamsData.teams || [];
       const opponent = leagueTeams.find(t => t.name.toLowerCase().includes((parsed.opponentName || '').toLowerCase())) || leagueTeams[0];
       await runProjection({
-        leagueId: 39,
+        leagueId,
         playerId: player.id,
         playerName: player.name,
         teamId: player.teamId,
@@ -1128,7 +1145,7 @@ export default function App() {
                       <div className="pick-status-row">
                         <div className="status-indicator">
                           <div className={`status-dot ${pick.status} ${pick.result || ''}`} />
-                          <span className="status-label">{pick.status === 'settled' ? (pick.result === 'hit' ? 'HIT' : 'MISS') : pick.status}</span>
+                          <span className="status-label">{pick.status === 'settled' ? (pick.result === 'hit' ? 'HIT' : pick.result === 'push' ? 'PUSH' : 'MISS') : pick.status}</span>
                         </div>
                         <div className="pick-actions">
                           <div className={`rec-tag ${pick.recommendation}`}>{pick.recommendation}</div>
@@ -1155,7 +1172,7 @@ export default function App() {
                         {pick.actualValue != null && (
                           <div className="pick-stat">
                             <div className="pick-stat-label">Actual</div>
-                            <div className={`pick-stat-value ${pick.result === 'hit' ? 'accent' : 'danger'}`}>{pick.actualValue}</div>
+                            <div className={`pick-stat-value ${pick.result === 'hit' ? 'accent' : pick.result === 'push' ? 'warning' : 'danger'}`}>{pick.actualValue}</div>
                           </div>
                         )}
                         <div className="pick-stat">

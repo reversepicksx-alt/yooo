@@ -647,10 +647,25 @@ async def predict(req: PredictionRequest):
 
         # Fire ALL API calls at once — including tactical intel
         player_data_task = get_player_data()
-        team_stats_task = safe_fetch("teams/statistics", {"team": actual_team_id or 40, "league": league_id, "season": CURRENT_SEASON})
-        opponent_stats_task = safe_fetch("teams/statistics", {"team": req.opponentId, "league": league_id, "season": CURRENT_SEASON})
+        async def get_team_stats_multi_season(team_id, lid):
+            for s in [CURRENT_SEASON + 1, CURRENT_SEASON, CURRENT_SEASON - 1]:
+                result = await safe_fetch("teams/statistics", {"team": team_id, "league": lid, "season": s})
+                if result:
+                    return result
+            return None
+
+        team_stats_task = get_team_stats_multi_season(actual_team_id or 40, league_id)
+        opponent_stats_task = get_team_stats_multi_season(req.opponentId, league_id)
         h2h_task = safe_fetch("fixtures/headtohead", {"h2h": f"{actual_team_id or 40}-{req.opponentId}", "last": 5}, [])
-        standings_task = safe_fetch("standings", {"league": league_id, "season": CURRENT_SEASON})
+
+        async def get_standings_multi_season():
+            for s in [CURRENT_SEASON + 1, CURRENT_SEASON, CURRENT_SEASON - 1]:
+                result = await safe_fetch("standings", {"league": league_id, "season": s})
+                if result:
+                    return result
+            return None
+
+        standings_task = get_standings_multi_season()
         fixtures_task = get_recent_fixtures_fast(actual_team_id or 40, 20)
         formations_task = get_opponent_formations()
         prediction_task = get_prematch_prediction()
@@ -662,12 +677,12 @@ async def predict(req: PredictionRequest):
         if actual_team_id == 0 and player_stats:
             stats_list = player_stats.get("statistics", [])
             if stats_list:
-                actual_team_id = stats_list[0].get("team", {}).get("id", 0)
+                actual_team_id = stats_list[-1].get("team", {}).get("id", 0)
 
         if not league_id and player_stats:
             stats_list = player_stats.get("statistics", [])
             if stats_list:
-                league_id = stats_list[0].get("league", {}).get("id", 39)
+                league_id = stats_list[-1].get("league", {}).get("id", 39)
 
         standings = []
         if standings_raw:
@@ -1038,13 +1053,20 @@ async def settle_picks(req: SettlePicksRequest):
             if actual_value is not None:
                 line = pick.get("line", 0)
                 recommendation = pick.get("recommendation", "over")
-                hit = (actual_value > line and recommendation == "over") or \
-                      (actual_value < line and recommendation == "under")
+
+                # Handle push (exact match on whole-number lines)
+                if actual_value == line:
+                    result_str = "push"
+                elif (actual_value > line and recommendation == "over") or \
+                     (actual_value < line and recommendation == "under"):
+                    result_str = "hit"
+                else:
+                    result_str = "miss"
 
                 settled.append({
                     "pickId": pick.get("id"),
                     "status": "settled",
-                    "result": "hit" if hit else "miss",
+                    "result": result_str,
                     "actualValue": actual_value,
                     "fixtureDate": fixture_date,
                     "matchScore": f"{recent.get('goals',{}).get('home',0)}-{recent.get('goals',{}).get('away',0)}",
