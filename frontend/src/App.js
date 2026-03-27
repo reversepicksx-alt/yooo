@@ -1217,7 +1217,7 @@ export default function App() {
                   <Zap className="inner-icon" style={{ width: 28, height: 28 }} />
                 </div>
                 <div className="loading-title">Analyzing Matchup...</div>
-                <div className="loading-sub">Running Bayesian simulations & searching live data</div>
+                <div className="loading-sub">Running analysis simulation</div>
               </div>
             )}
 
