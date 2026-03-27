@@ -49,18 +49,22 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 - [x] Login page with RP crown logo, animated glow background
 - [x] Logout button in header
 - [x] Parallel API-Sports calls (~29s prediction time vs ~60s original)
-- [x] **FIXED (Feb 2026)**: Critical auth bug - `setPassword` state shadowing
-- [x] **NEW (Feb 2026)**: Forgot Password - re-verifies Whop membership, allows password reset
-- [x] **NEW (Feb 2026)**: Pick of the Day - AI-generated daily best prop bet, cached in MongoDB, featured card with "Run Full Analysis" button
-- [x] **NEW (Feb 2026)**: PWA Mobile Optimization - service worker, web manifest, mobile CSS, installable, safe-area support
-- [x] **FIXED (Feb 2026)**: Player search - full names (not abbreviated), photos, nationality, dedup by ID, major-league fallback for team info
-- [x] **FIXED (Feb 2026)**: International tournaments - teams now load for WCQ/Euro Qualifiers (tries 5 seasons)
-- [x] **FIXED (Feb 2026)**: Natural search - last-name fallback when full name returns 0 results
-- [x] **FIXED (Feb 2026)**: International league IDs corrected: UEFA=32, CONMEBOL=34, AFC=30, CAF=29, OFC=33, Euro Qual=960
-- [x] **FIXED (Feb 2026)**: Removed player photos from search cards (copyright), kept nationality text display
-- [x] **FIXED (Feb 2026)**: POTD loading layout jank - fixed with skeleton min-height + fade-in animation
-- [x] **NEW (Mar 2026)**: Pick settling system - auto-checks match results via API-Sports fixtures/players endpoint, settles live picks to history with HIT/MISS + actual values
-- [x] **ENHANCED (Mar 2026)**: Gemini prediction prompt - now includes player role multipliers (CDM=80-110+ passes), opponent defensive style (low-block vs high-press), possession context, floor/ceiling analysis
+- [x] Pick of the Day - AI-generated daily best prop bet
+- [x] PWA Mobile Optimization - service worker, web manifest
+- [x] Pick settling system - auto-checks match results via API-Sports
+- [x] Enhanced Gemini prompt with pre-game tactical intel
+- [x] Bookmaker Odds integration for accurate favorites/underdogs
+- [x] Forgot Password feature
+
+## Bug Fixes (Mar 2026 - Code Audit)
+- [x] Natural search no longer hardcoded to league 39 - detects player's actual league from majorLeagues array
+- [x] Team/opponent stats now try multiple seasons (2026, 2025, 2024) instead of only CURRENT_SEASON
+- [x] stats_list[-1] used for current team (transferred players get correct team, not old one)
+- [x] settle-picks handles "push" (actual == line) instead of marking as miss
+- [x] useEffect savedPicks dependency fixed (livePickCount instead of filter().length)
+- [x] localStorage race condition fixed (picksInitialized ref skips first render write)
+- [x] Frontend displays "PUSH" label for push results in tracking history
+- [x] Standings fetcher also uses multi-season fallback
 
 ## Auth System Details
 - Owner email (josselj001@gmail.com): Bypasses password entirely, instant login
@@ -80,14 +84,12 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 - None remaining
 
 ### P1 (High)
-- Live pick polling (track in-game stats in real-time)
 - Push notifications for pick results
 
 ### P2 (Medium)
 - Slip correlation analysis
 - Re-analyze pick button for saved picks
 - Market sentiment analysis
-- Player photo integration
 
 ### Future
 - Add more prop types based on user feedback
