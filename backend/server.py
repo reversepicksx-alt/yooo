@@ -1137,13 +1137,26 @@ DATA:
                     pstats = await api_football_request("fixtures/players", {"fixture": fid})
                     if not pstats:
                         return None
+
+                    # Determine which team is the player's team in this fixture
+                    home_id = fixture_info.get("teams", {}).get("home", {}).get("id")
+                    away_id = fixture_info.get("teams", {}).get("away", {}).get("id")
+                    home_name = fixture_info.get("teams", {}).get("home", {}).get("name", "")
+                    away_name = fixture_info.get("teams", {}).get("away", {}).get("name", "")
+                    home_goals = fixture_info.get("goals", {}).get("home", 0)
+                    away_goals = fixture_info.get("goals", {}).get("away", 0)
+
+                    # Player's team is home → opponent is away, and vice versa
+                    player_is_home = (home_id == actual_team_id)
+                    opponent_name = away_name if player_is_home else home_name
+                    venue_in_match = "home" if player_is_home else "away"
+
                     # Find our player in the fixture stats
                     for team_data in pstats:
                         for p in team_data.get("players", []):
                             if p.get("player", {}).get("id") == req.playerId:
                                 stats = p.get("statistics", [{}])[0] if p.get("statistics") else {}
                                 minutes_played = stats.get("games", {}).get("minutes") or 0
-                                # Extract the relevant stat
                                 stat_key_map_h2h = {
                                     "pass_attempts": stats.get("passes", {}).get("total"),
                                     "shots": stats.get("shots", {}).get("total"),
@@ -1156,13 +1169,10 @@ DATA:
                                     "dribbles": stats.get("dribbles", {}).get("attempts"),
                                     "fouls_drawn": stats.get("fouls", {}).get("drawn"),
                                 }
-                                home_name = fixture_info.get("teams", {}).get("home", {}).get("name", "")
-                                away_name = fixture_info.get("teams", {}).get("away", {}).get("name", "")
-                                home_goals = fixture_info.get("goals", {}).get("home", 0)
-                                away_goals = fixture_info.get("goals", {}).get("away", 0)
                                 return {
                                     "date": fixture_info.get("fixture", {}).get("date", ""),
-                                    "opponent": away_name if team_data.get("team", {}).get("id") == actual_team_id else home_name,
+                                    "opponent": opponent_name,
+                                    "venue": venue_in_match,
                                     "minutesPlayed": minutes_played,
                                     "statValues": {k: v for k, v in stat_key_map_h2h.items() if v is not None},
                                     "targetStat": stat_key_map_h2h.get(req.propType),

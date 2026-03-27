@@ -181,6 +181,11 @@ function H2HSection({ h2hData, propType }) {
               <span style={{ color: 'var(--text-secondary)' }}>vs {m.opponent}</span>
               <span style={{
                 fontSize: 9, padding: '1px 6px', borderRadius: 4, fontWeight: 700,
+                background: m.venue === 'home' ? 'rgba(16,185,129,0.1)' : 'rgba(99,102,241,0.1)',
+                color: m.venue === 'home' ? '#10b981' : '#6366f1'
+              }}>{m.venue === 'home' ? 'H' : 'A'}</span>
+              <span style={{
+                fontSize: 9, padding: '1px 6px', borderRadius: 4, fontWeight: 700,
                 background: (m.date && m.matchScore) ? 'rgba(255,255,255,0.06)' : 'transparent',
                 color: 'var(--text-muted)'
               }}>{m.matchScore}</span>
