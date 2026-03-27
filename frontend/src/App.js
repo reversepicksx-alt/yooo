@@ -110,7 +110,7 @@ function MatchStatZones({ teamStats, opponentStats }) {
   return (
     <div className="stat-box" style={{ borderColor: 'rgba(99,102,241,0.2)', background: 'rgba(99,102,241,0.03)' }} data-testid="match-stat-zones">
       <div className="stat-label flex items-center gap-2" style={{ marginBottom: 12 }}>
-        <BarChart3 style={{ width: 12, height: 12, color: '#6366f1' }} /> Match Stat Zones (Last 3 Games Avg)
+        <BarChart3 style={{ width: 12, height: 12, color: '#6366f1' }} /> Match Stat Zones (Last 5 Games Avg)
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: teamAvg && oppAvg ? '1fr 1fr' : '1fr', gap: 16 }}>
         {teamAvg && (

@@ -833,10 +833,10 @@ async def predict(req: PredictionRequest):
             return results
 
         # Get opponent's recent fixtures (need fixture IDs)
-        opponent_recent_raw = await api_football_request("fixtures", {"team": req.opponentId, "last": 5})
+        opponent_recent_raw = await api_football_request("fixtures", {"team": req.opponentId, "last": 8})
         opponent_fixture_list = []
         if opponent_recent_raw:
-            for f in opponent_recent_raw[:5]:
+            for f in opponent_recent_raw[:8]:
                 opp_home_id = f.get("teams", {}).get("home", {}).get("id")
                 opp_venue = "home" if opp_home_id == req.opponentId else "away"
                 opponent_fixture_list.append({
@@ -849,9 +849,9 @@ async def predict(req: PredictionRequest):
                 })
 
         # Run Wave 2 fetches in parallel with timeout (graceful degradation)
-        team_fixture_stats_task = fetch_fixture_team_stats(recent_fixtures, actual_team_id or 40, 3)
-        opponent_fixture_stats_task = fetch_fixture_team_stats(opponent_fixture_list, req.opponentId, 3)
-        player_game_logs_task = fetch_player_game_logs(recent_fixtures, req.playerId, 5)
+        team_fixture_stats_task = fetch_fixture_team_stats(recent_fixtures, actual_team_id or 40, 5)
+        opponent_fixture_stats_task = fetch_fixture_team_stats(opponent_fixture_list, req.opponentId, 5)
+        player_game_logs_task = fetch_player_game_logs(recent_fixtures, req.playerId, 10)
 
         # Build a preliminary data blob for GPT to summarize while Wave 2 runs
         wave1_data = {
@@ -968,7 +968,7 @@ DATA:
         try:
             team_fixture_stats, opponent_fixture_stats, player_game_logs, gpt_data_summary, claude_analysis = await aio.wait_for(
                 aio.gather(team_fixture_stats_task, opponent_fixture_stats_task, player_game_logs_task, gpt_summary_task, claude_tactical_task),
-                timeout=25
+                timeout=30
             )
         except aio.TimeoutError:
             team_fixture_stats, opponent_fixture_stats, player_game_logs, gpt_data_summary, claude_analysis = [], [], [], None, None
