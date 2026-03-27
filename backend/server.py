@@ -467,7 +467,7 @@ async def search_players(req: PlayerSearchRequest):
 
 @app.get("/api/player/{player_id}/stats")
 async def get_player_stats(player_id: int, season: int = CURRENT_SEASON):
-    for s in [season, season - 1, season - 2]:
+    for s in [season + 1, season, season - 1, season - 2]:
         try:
             data = await api_football_request("players", {"id": player_id, "season": s})
             if data:
