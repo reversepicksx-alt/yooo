@@ -1392,6 +1392,8 @@ Return ONLY valid JSON. Synthesize all inputs. 15+ recentSamples with venue. 10p
             prediction["teamMatchStats"] = team_fixture_stats
         if opponent_fixture_stats:
             prediction["opponentMatchStats"] = opponent_fixture_stats
+        if historical_data.get("h2hPlayerStats"):
+            prediction["h2hPlayerStats"] = historical_data["h2hPlayerStats"]
 
         await db.predictions.insert_one(prediction)
         prediction.pop("_id", None)
