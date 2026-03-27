@@ -588,6 +588,22 @@ CRITICAL ANALYSIS RULES:
    - Rolling 5-game average is MORE predictive than season average for streaky players
    - Look for FLOOR games (injury return, substituted early, tactical changes) and adjust
 
+5. DRIBBLE-SPECIFIC ANALYSIS (for dribbles/dribble_attempts prop):
+   - Dribbles are the MOST matchup-dependent stat. A winger's attempts drop 40-60% against packed defenses.
+   - Low-block opponents (compact shape, doubled fullbacks): Dribble attempts DROP sharply — there's no space to run at defenders 1v1
+   - High-line / aggressive fullback opponents: Dribble attempts INCREASE — more space behind, more isolated 1v1 duels
+   - Game script matters: If team is trailing, wingers attempt more desperate dribbles. If team leads comfortably, fewer dribbles (possession recycling instead)
+   - Check opponent's fouls conceded and tackles won — high-tackle teams physically shut down dribblers
+   - Wide players (LW/RW) have MORE dribble attempts than inside forwards or central players
+   - Always check the player's dribble attempts in SIMILAR matchups (vs similar defensive styles), not just raw average
+
+6. STAT-SPECIFIC MATCHUP ADJUSTMENTS:
+   - Shots/shots_on_target: Check opponent's shots conceded per game and defensive block height
+   - Tackles/interceptions: Higher when team is OUT of possession more — check expected possession split
+   - Key passes: Higher in open, end-to-end games. Lower in cagey, low-possession games
+   - Saves: Check opponent's shots per game and xG. More shots = more saves needed
+   - Fouls drawn: Physical opponents = more fouls. Technical/disciplined opponents = fewer
+
 JSON structure:
 {"player":{"id":int,"name":"","team":"","role":"","position":""},"opponent":"","league":"","propType":"","line":0,"projectedValue":0,"recommendation":"over|under","confidenceScore":0-100,"confidenceLevel":"Low|Medium|High|Very High","confidenceInterval":[lo,hi],"recentSamples":[{"date":"","opponent":"","value":0,"minutesPlayed":0,"matchDifficulty":"low|medium|high","venue":"home|away"}],"bayesianMetrics":{"priorMean":0,"momentumEffect":0,"covariateAdjustment":0,"reversalFlag":"stable|upward_reversal_likely|downward_reversal_likely"},"probabilityCurve":[{"value":0,"probability":0}],"tacticalAlerts":[{"type":"injury|lineup|tactical","message":"","severity":"low|medium|high"}],"sharpSummary":"","reasoning":""}
 
