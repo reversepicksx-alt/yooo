@@ -61,8 +61,11 @@ function ProbabilityChart({ data }) {
   );
 }
 
-function MatchStatZones({ teamStats, opponentStats }) {
+function MatchStatZones({ teamStats, opponentStats, venue }) {
   if (!teamStats?.length && !opponentStats?.length) return null;
+
+  const playerVenue = (venue || 'home').toLowerCase();
+  const oppVenue = playerVenue === 'home' ? 'away' : 'home';
 
   const StatBar = ({ label, value, max, color }) => {
     const pct = max > 0 ? Math.min((value / max) * 100, 100) : 0;
@@ -110,12 +113,12 @@ function MatchStatZones({ teamStats, opponentStats }) {
   return (
     <div className="stat-box" style={{ borderColor: 'rgba(99,102,241,0.2)', background: 'rgba(99,102,241,0.03)' }} data-testid="match-stat-zones">
       <div className="stat-label flex items-center gap-2" style={{ marginBottom: 12 }}>
-        <BarChart3 style={{ width: 12, height: 12, color: '#6366f1' }} /> Match Stat Zones (Last 5 Games Avg)
+        <BarChart3 style={{ width: 12, height: 12, color: '#6366f1' }} /> Match Stat Zones (Venue-Filtered)
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: teamAvg && oppAvg ? '1fr 1fr' : '1fr', gap: 16 }}>
         {teamAvg && (
           <div>
-            <div style={{ fontSize: 10, fontWeight: 700, color: '#10b981', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>Team</div>
+            <div style={{ fontSize: 10, fontWeight: 700, color: '#10b981', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>Team ({playerVenue})</div>
             <StatBar label="Possession" value={`${teamAvg.possession}%`} max={100} color="#10b981" />
             <StatBar label="Total Shots" value={teamAvg.shots} max={20} color="#10b981" />
             <StatBar label="Shots On Target" value={teamAvg.shotsOnTarget} max={10} color="#10b981" />
@@ -127,7 +130,7 @@ function MatchStatZones({ teamStats, opponentStats }) {
         )}
         {oppAvg && (
           <div>
-            <div style={{ fontSize: 10, fontWeight: 700, color: '#f43f5e', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>Opponent</div>
+            <div style={{ fontSize: 10, fontWeight: 700, color: '#f43f5e', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>Opponent ({oppVenue})</div>
             <StatBar label="Possession" value={`${oppAvg.possession}%`} max={100} color="#f43f5e" />
             <StatBar label="Total Shots" value={oppAvg.shots} max={20} color="#f43f5e" />
             <StatBar label="Shots On Target" value={oppAvg.shotsOnTarget} max={10} color="#f43f5e" />
@@ -203,7 +206,7 @@ function ProjectionCard({ projection, onSave, excludedIndices, onToggleSample })
         {projection.probabilityCurve && <ProbabilityChart data={projection.probabilityCurve} />}
 
         {/* Match Stat Zones - Visual heat map of team vs opponent */}
-        <MatchStatZones teamStats={projection.teamMatchStats} opponentStats={projection.opponentMatchStats} />
+        <MatchStatZones teamStats={projection.teamMatchStats} opponentStats={projection.opponentMatchStats} venue={projection._request?.venue || 'home'} />
 
         <div className={`rec-banner ${rec} mt-6`} data-testid="recommendation-banner">
           <div className={`rec-label ${rec}`}>

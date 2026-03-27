@@ -832,11 +832,24 @@ async def predict(req: PredictionRequest):
                     continue
             return results
 
+        # =============================================
+        # VENUE-FILTERED DATA: Everything is venue-based
+        # =============================================
+        # If player is HOME → team's HOME games + opponent's AWAY games
+        # If player is AWAY → team's AWAY games + opponent's HOME games
+        player_venue = req.venue.lower()  # "home" or "away"
+        opponent_venue = "away" if player_venue == "home" else "home"
+
+        # Filter team's recent fixtures by venue
+        venue_filtered_team_fixtures = [f for f in recent_fixtures if f.get("venue") == player_venue]
+        # Also keep all fixtures for general context
+        all_team_fixtures = recent_fixtures
+
         # Get opponent's recent fixtures (need fixture IDs)
-        opponent_recent_raw = await api_football_request("fixtures", {"team": req.opponentId, "last": 8})
+        opponent_recent_raw = await api_football_request("fixtures", {"team": req.opponentId, "last": 15})
         opponent_fixture_list = []
         if opponent_recent_raw:
-            for f in opponent_recent_raw[:8]:
+            for f in opponent_recent_raw[:15]:
                 opp_home_id = f.get("teams", {}).get("home", {}).get("id")
                 opp_venue = "home" if opp_home_id == req.opponentId else "away"
                 opponent_fixture_list.append({
@@ -848,10 +861,24 @@ async def predict(req: PredictionRequest):
                     "awayGoals": f.get("goals", {}).get("away", 0) or 0,
                 })
 
-        # Run Wave 2 fetches in parallel with timeout (graceful degradation)
-        team_fixture_stats_task = fetch_fixture_team_stats(recent_fixtures, actual_team_id or 40, 5)
-        opponent_fixture_stats_task = fetch_fixture_team_stats(opponent_fixture_list, req.opponentId, 5)
-        player_game_logs_task = fetch_player_game_logs(recent_fixtures, req.playerId, 10)
+        # Filter opponent fixtures by their venue in THIS matchup
+        venue_filtered_opp_fixtures = [f for f in opponent_fixture_list if f.get("venue") == opponent_venue]
+
+        # Wave 2: Use VENUE-FILTERED fixtures for deep stats
+        # Team's last 5 HOME/AWAY games (matching this match's venue)
+        team_fixture_stats_task = fetch_fixture_team_stats(
+            venue_filtered_team_fixtures[:5] if len(venue_filtered_team_fixtures) >= 3 else all_team_fixtures[:5],
+            actual_team_id or 40, 5
+        )
+        # Opponent's last 5 AWAY/HOME games (opposite venue — how they perform when visiting/hosting)
+        opponent_fixture_stats_task = fetch_fixture_team_stats(
+            venue_filtered_opp_fixtures[:5] if len(venue_filtered_opp_fixtures) >= 3 else opponent_fixture_list[:5],
+            req.opponentId, 5
+        )
+        # Player game logs: prioritize venue-matching games but include all for sample size
+        venue_player_fixtures = [f for f in all_team_fixtures if f.get("venue") == player_venue]
+        mixed_player_fixtures = venue_player_fixtures[:6] + [f for f in all_team_fixtures if f.get("venue") != player_venue][:4]
+        player_game_logs_task = fetch_player_game_logs(mixed_player_fixtures[:10], req.playerId, 10)
 
         # Build a preliminary data blob for GPT to summarize while Wave 2 runs
         wave1_data = {
@@ -876,12 +903,16 @@ async def predict(req: PredictionRequest):
                 summarizer.with_model("openai", "gpt-4.1-mini")
                 result = await summarizer.send_message(UserMessage(text=f"""Summarize this raw API data for a {req.propType} prop prediction on {req.playerName} (line {req.line}) vs {req.opponentName} ({req.venue}).
 
+CRITICAL VENUE CONTEXT: Player is playing {player_venue.upper()}. All analysis must be venue-weighted.
+- For the player's team: Focus on their {player_venue.upper()} performance
+- For the opponent: Focus on their {opponent_venue.upper()} performance (how they play when {opponent_venue})
+
 Extract ONLY what matters:
-1. PLAYER: Position, key per-90 rates by season/league, appearances, avg minutes
-2. LAST 5 GAMES: {req.propType} values with opponent, venue, minutes
-3. HOME/AWAY SPLITS: Separate averages
-4. TEAM: Possession%, goals for/against rates
-5. OPPONENT: Defensive stats, goals conceded, formations used
+1. PLAYER: Position, per-90 rates SPLIT BY HOME vs AWAY, appearances, avg minutes
+2. LAST 5 {player_venue.upper()} GAMES: {req.propType} values with opponent and minutes (prioritize venue-matching games)
+3. HOME/AWAY SPLITS: Separate averages — highlight the {player_venue.upper()} average prominently
+4. TEAM {player_venue.upper()} PROFILE: Possession%, goals for/against at {player_venue}
+5. OPPONENT {opponent_venue.upper()} PROFILE: How they perform when {opponent_venue} — defensive stats, goals conceded, possession allowed
 6. H2H: Any head-to-head data
 7. STANDINGS: League positions
 8. ODDS: Bookmaker odds if present
@@ -922,30 +953,33 @@ DATA:
                 result = await tactical_ai.send_message(UserMessage(text=f"""Analyze this matchup for a {req.propType} prop on {req.playerName} ({player_position or 'Unknown'}) playing for team vs {req.opponentName} ({req.venue}).
 Line: {req.line}
 
+CRITICAL: Player is {player_venue.upper()}. Opponent is {opponent_venue.upper()}.
+ALL analysis must be venue-specific. Use {player_venue} splits for the player's team and {opponent_venue} splits for the opponent.
+
 Do this analysis:
 
-1. PPDA ESTIMATE: From the opponent's tackles/interceptions data, estimate their pressing intensity.
+1. PPDA ESTIMATE: From the opponent's {opponent_venue.upper()} tackles/interceptions data, estimate their pressing intensity when {opponent_venue}.
    - Calculate: (opponent total passes) / (opponent tackles + interceptions + fouls)
    - Classify: Aggressive (6-9), Standard (10-12), Passive (13+)
    - Impact on {req.propType}: How does this pressing level shift the stat?
 
-2. SUB RISK QUANTIFICATION: From the player's recent minutes data in recentFixtures:
-   - What % of games was the player subbed before 75'?
+2. SUB RISK QUANTIFICATION: From the player's recent minutes data:
+   - What % of {player_venue.upper()} games was the player subbed before 75'?
    - What's the average stat volume lost per early sub?
    - Weighted drag on projection?
 
 3. GAME FLOW PREDICTION:
    - Who is favored? (use odds if available, else standings)
-   - Expected possession split
+   - Expected possession split AT {player_venue.upper()} for this team
+   - {player_venue.upper()} teams typically get 3-5% possession boost — factor this in
    - When the favored team scores first, what happens to {req.propType}?
-   - When trailing, how does the stat shift?
 
 4. SCENARIO ANALYSIS with probabilities:
-   - Base case (most likely): probability % and expected {req.propType} value
-   - Blowout (team dominates): probability % and value (sub risk!)
-   - Trailing (team falls behind): probability % and value
+   - Base case (most likely): probability % and expected {req.propType} value at {player_venue}
+   - Blowout (team dominates at {player_venue}): probability % and value
+   - Trailing (team falls behind at {player_venue}): probability % and value
    - Cagey/tight: probability % and value
-   - Weighted projection = sum of (probability × value) for each scenario
+   - Weighted projection = sum of (probability x value) for each scenario
 
 5. SENSITIVITY TESTS:
    - If subbed at 60': pick survives or fails?
@@ -1290,7 +1324,13 @@ Field requirements:
 
         prompt = f"""TRIPLE AI PREDICTION — FINAL STAGE
 
-Player: {req.playerName} (ID: {req.playerId}) | Position: {player_position or 'Unknown'} | Opponent: {req.opponentName} | Venue: {req.venue} | Prop: {req.propType} | Line: {req.line}
+Player: {req.playerName} (ID: {req.playerId}) | Position: {player_position or 'Unknown'} | Opponent: {req.opponentName} | Venue: {req.venue.upper()} | Prop: {req.propType} | Line: {req.line}
+
+CRITICAL VENUE CONTEXT: Player is {player_venue.upper()}. ALL data below is venue-filtered:
+- Team stats = their {player_venue.upper()} performance
+- Opponent stats = their {opponent_venue.upper()} performance
+- Player game logs = prioritized {player_venue.upper()} games
+- The {player_venue.upper()} average is MORE predictive than the overall average. Weight it 60-70%.
 
 Stat mapping: pass_attempts=passes.total, shots=shots.total, shots_on_target=shots.on, tackles=tackles.total, key_passes=passes.key, saves=goals.saves, interceptions=tackles.interceptions, blocks=tackles.blocks, dribbles=dribbles.attempts, fouls_drawn=fouls.drawn
 
