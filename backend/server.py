@@ -853,13 +853,56 @@ async def predict(req: PredictionRequest):
         opponent_fixture_stats_task = fetch_fixture_team_stats(opponent_fixture_list, req.opponentId, 3)
         player_game_logs_task = fetch_player_game_logs(recent_fixtures, req.playerId, 5)
 
+        # Build a preliminary data blob for GPT to summarize while Wave 2 runs
+        wave1_data = {
+            "playerStats": player_stats,
+            "teamStats": team_stats,
+            "opponentStats": opponent_stats,
+            "h2hData": h2h_data,
+            "standings": standings,
+            "recentFixtures": recent_fixtures,
+            "opponentRecentFormations": opponent_formations,
+        }
+        raw_wave1_json = json.dumps(wave1_data, default=str)[:12000]
+
+        async def gpt_summarize_data():
+            """GPT-4.1-mini creates a compact data digest while Wave 2 runs"""
+            try:
+                summarizer = LlmChat(
+                    api_key=EMERGENT_LLM_KEY,
+                    session_id=f"sum-{uuid.uuid4().hex[:8]}",
+                    system_message="You are a data processor. Extract and organize soccer statistics into a compact analytical brief. Numbers only, no fluff. Be extremely concise."
+                )
+                summarizer.with_model("openai", "gpt-4.1-mini")
+                result = await summarizer.send_message(UserMessage(text=f"""Summarize this raw API data for a {req.propType} prop prediction on {req.playerName} (line {req.line}) vs {req.opponentName} ({req.venue}).
+
+Extract ONLY what matters:
+1. PLAYER: Position, key per-90 rates by season/league, appearances, avg minutes
+2. LAST 5 GAMES: {req.propType} values with opponent, venue, minutes
+3. HOME/AWAY SPLITS: Separate averages
+4. TEAM: Possession%, goals for/against rates
+5. OPPONENT: Defensive stats, goals conceded, formations used
+6. H2H: Any head-to-head data
+7. STANDINGS: League positions
+8. ODDS: Bookmaker odds if present
+
+Bullet list format. Exact numbers only.
+
+DATA:
+{raw_wave1_json}"""))
+                return result
+            except Exception:
+                return None
+
+        gpt_summary_task = gpt_summarize_data()
+
         try:
-            team_fixture_stats, opponent_fixture_stats, player_game_logs = await aio.wait_for(
-                aio.gather(team_fixture_stats_task, opponent_fixture_stats_task, player_game_logs_task),
-                timeout=15  # Max 15 seconds for Wave 2 — degrade gracefully if slow
+            team_fixture_stats, opponent_fixture_stats, player_game_logs, gpt_data_summary = await aio.wait_for(
+                aio.gather(team_fixture_stats_task, opponent_fixture_stats_task, player_game_logs_task, gpt_summary_task),
+                timeout=20
             )
         except aio.TimeoutError:
-            team_fixture_stats, opponent_fixture_stats, player_game_logs = [], [], []
+            team_fixture_stats, opponent_fixture_stats, player_game_logs, gpt_data_summary = [], [], [], None
 
         historical_data = {
             "playerStats": player_stats,
@@ -1235,7 +1278,38 @@ Field requirements:
         )
         chat.with_model("gemini", "gemini-2.5-flash")
 
-        trimmed_data = json.dumps(historical_data, default=str)[:20000]
+        # Build the data payload — use GPT summary as primary + Wave 2 deep data as supplement
+        wave2_supplement = {}
+        if player_game_logs:
+            target_field_map = {
+                "pass_attempts": "passes_total", "shots": "shots_total", "shots_on_target": "shots_on",
+                "tackles": "tackles_total", "key_passes": "passes_key", "interceptions": "tackles_interceptions",
+                "blocks": "tackles_blocks", "dribbles": "dribbles_attempts", "fouls_drawn": "fouls_drawn",
+            }
+            target_field = target_field_map.get(req.propType, "passes_total")
+            values = [g.get(target_field) for g in player_game_logs if g.get(target_field) is not None]
+            game_log_brief = []
+            for g in player_game_logs:
+                val = g.get(target_field)
+                game_log_brief.append(f"{g.get('date','')[:10]} vs {g.get('opponent','')} ({g.get('venue','')}, {g.get('minutes',0)}min): {val}")
+            wave2_supplement["playerGameLogs"] = {
+                "games": game_log_brief,
+                "rawAvg": round(sum(values) / len(values), 2) if values else 0,
+                "homeAvg": round(sum(v for g, v in zip(player_game_logs, [g.get(target_field) for g in player_game_logs]) if g.get("venue") == "home" and v) / max(1, sum(1 for g in player_game_logs if g.get("venue") == "home" and g.get(target_field))), 2) if values else 0,
+                "awayAvg": round(sum(v for g, v in zip(player_game_logs, [g.get(target_field) for g in player_game_logs]) if g.get("venue") == "away" and v) / max(1, sum(1 for g in player_game_logs if g.get("venue") == "away" and g.get(target_field))), 2) if values else 0,
+                "sampleSize": len(values),
+            }
+        if team_fixture_stats:
+            wave2_supplement["teamMatchStats"] = team_fixture_stats
+        if opponent_fixture_stats:
+            wave2_supplement["opponentMatchStats"] = opponent_fixture_stats
+
+        # Compose final data: GPT summary (compact) + Wave 2 deep data + tactical intel
+        if gpt_data_summary:
+            final_data = f"""[GPT DATA SUMMARY]\n{gpt_data_summary}\n\n[DEEP MATCH DATA]\n{json.dumps(wave2_supplement, default=str)[:5000]}"""
+        else:
+            # Fallback: raw data if GPT failed
+            final_data = json.dumps(historical_data, default=str)[:18000]
 
         prompt = f"""Player: {req.playerName} (ID: {req.playerId}) | Position from API: {player_position or 'Unknown'} | Opponent: {req.opponentName} | Venue: {req.venue} | Prop: {req.propType} | Line: {req.line}
 
@@ -1279,7 +1353,7 @@ INJURY IMPACT RULES:
 - Always mention relevant injuries in tacticalAlerts
 
 Data:
-{trimmed_data}
+{final_data}
 
 Return ONLY valid JSON. Follow ALL 10 steps. Quote specific evidence. Include sensitivityTests, subRisk, and gameFlowDynamics fields. 15+ recentSamples with venue. 10pt probabilityCurve."""
 
@@ -1313,6 +1387,13 @@ Return ONLY valid JSON. Follow ALL 10 steps. Quote specific evidence. Include se
         # Save to MongoDB
         prediction["_created"] = datetime.now(timezone.utc).isoformat()
         prediction["_request"] = req.model_dump()
+
+        # Attach match stat data for frontend heat maps/visualizations
+        if team_fixture_stats:
+            prediction["teamMatchStats"] = team_fixture_stats
+        if opponent_fixture_stats:
+            prediction["opponentMatchStats"] = opponent_fixture_stats
+
         await db.predictions.insert_one(prediction)
         prediction.pop("_id", None)
 

@@ -78,14 +78,14 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 - [x] Substitution Risk Quantification: Calculates % of games with early sub, avg stat volume lost, weighted projection drag
 - [x] Game Flow Dynamics: First-to-score possession impact, leading vs trailing stat adjustments
 - [x] PPDA Approximation: Estimates opponent pressing intensity from tackles/interceptions to predict pass volume shifts
-## Intelligence Upgrades v4 (Mar 2026 - Per-Fixture Deep Data)
+## Intelligence Upgrades v4 (Mar 2026 - Per-Fixture Deep Data + Dual AI)
 - [x] Per-fixture team match stats: Fetches possession%, shots, passes, accuracy for team's last 3 games via fixtures/statistics
 - [x] Per-fixture opponent match stats: Same for opponent — shows exactly what they allow per game
-- [x] Player game-by-game box scores: Fetches individual player stat lines from last 5 fixtures via fixtures/players (minutes, passes, shots, tackles, dribbles, etc.)
-- [x] Game log summary with computed stats: rawAvg, rawMin, rawMax, stdDev, homeAvg, awayAvg, per90Avg, avgMinutes
-- [x] Wave 2 parallel fetch with 15s timeout for graceful degradation (prevents proxy timeout)
-- [x] Data payload increased to 20k chars
-- [x] Prompt updated with Steps 2D (game logs) and 2E (team/opponent match stats) instructions
+- [x] Player game-by-game box scores: Fetches individual player stat lines from last 5 fixtures via fixtures/players
+- [x] Dual AI Pipeline: GPT-4.1-mini pre-summarizes Wave 1 data IN PARALLEL with Wave 2 fetches, Gemini gets compact digest → ~40s (down from ~58s)
+- [x] Match Stat Zones visual component: Side-by-side team vs opponent stat bars (possession, shots, passes, inside/outside box)
+- [x] Graceful degradation: 20s timeout on Wave 2 + GPT, falls back to raw data if needed
+- [x] Data payload optimized: GPT summary (~3k) + Wave 2 deep data (~5k) instead of raw 20k JSON
 
 ## Auth System Details
 - Owner email (josselj001@gmail.com): Bypasses password entirely, instant login
