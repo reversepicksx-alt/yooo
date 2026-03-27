@@ -78,7 +78,12 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 - [x] Substitution Risk Quantification: Calculates % of games with early sub, avg stat volume lost, weighted projection drag
 - [x] Game Flow Dynamics: First-to-score possession impact, leading vs trailing stat adjustments
 - [x] PPDA Approximation: Estimates opponent pressing intensity from tackles/interceptions to predict pass volume shifts
-- [x] Tactical Uplink moved inline to Predict tab (replaces Natural Search). Only 2 tabs: PREDICT + TRACKING
+## Intelligence Upgrades v3 (Mar 2026 - Per-90 + H2H + Data-Aware Chat)
+- [x] Per-90 minute normalization: Raw stats normalized to per-90 rates before Gemini analysis. Shows "31.64/90 (raw: 29.81/game, 84.77 avg min)"
+- [x] H2H player-specific stat extraction: Fetches player's individual stats from each H2H fixture against the specific opponent. Calculates avg/min/max vs opponent
+- [x] Data-aware Tactical Search: Chat now detects player mentions → fetches live API-Sports data (season stats, per-90 rates, recent team fixtures) → injects into context
+- [x] Tactical Search system prompt upgraded from 1-line to full 7-point reasoning framework
+- [x] Data payload increased from 12k to 15k chars for richer context with new fields
 
 ## Auth System Details
 - Owner email (josselj001@gmail.com): Bypasses password entirely, instant login

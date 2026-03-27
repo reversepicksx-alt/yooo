@@ -727,6 +727,132 @@ async def predict(req: PredictionRequest):
             "opponentRecentFormations": opponent_formations,
         }
 
+        # =============================================
+        # UPGRADE #4: Per-90 minute normalization
+        # =============================================
+        # Extract per-90 rates from player's season stats so Gemini sees
+        # normalized numbers, not raw totals skewed by minutes played
+        per90_stats = {}
+        if player_stats:
+            stat_key_map = {
+                "pass_attempts": ("passes", "total"),
+                "shots": ("shots", "total"),
+                "shots_on_target": ("shots", "on"),
+                "tackles": ("tackles", "total"),
+                "key_passes": ("passes", "key"),
+                "saves": ("goals", "saves"),
+                "interceptions": ("tackles", "interceptions"),
+                "blocks": ("tackles", "blocks"),
+                "dribbles": ("dribbles", "attempts"),
+                "fouls_drawn": ("fouls", "drawn"),
+            }
+            for stat_entry in player_stats.get("statistics", []):
+                league_name = stat_entry.get("league", {}).get("name", "Unknown")
+                season = stat_entry.get("league", {}).get("season", "")
+                games = stat_entry.get("games", {})
+                minutes = games.get("minutes") or 0
+                appearances = games.get("appearences") or 0
+                if minutes < 90 or appearances < 2:
+                    continue  # Skip tiny samples
+
+                entry = {
+                    "league": league_name,
+                    "season": season,
+                    "appearances": appearances,
+                    "totalMinutes": minutes,
+                    "avgMinutesPerGame": round(minutes / appearances, 1) if appearances else 0,
+                    "per90": {},
+                    "rawPerGame": {},
+                }
+
+                for prop_key, (cat, sub) in stat_key_map.items():
+                    raw_val = stat_entry.get(cat, {}).get(sub)
+                    if raw_val is not None and raw_val > 0:
+                        per_90 = round((raw_val / minutes) * 90, 2)
+                        per_game = round(raw_val / appearances, 2) if appearances else 0
+                        entry["per90"][prop_key] = per_90
+                        entry["rawPerGame"][prop_key] = per_game
+
+                if entry["per90"]:
+                    per90_stats[f"{league_name}_{season}"] = entry
+
+        if per90_stats:
+            historical_data["per90Analysis"] = per90_stats
+
+        # =============================================
+        # UPGRADE #3: H2H player-specific stat extraction
+        # =============================================
+        # For each H2H fixture, fetch the player's individual stats in THAT match
+        h2h_player_stats = []
+        if h2h_data:
+            h2h_fixture_ids = []
+            for h in h2h_data[:3]:  # Max 3 H2H matches to avoid rate limits
+                fid = h.get("fixture", {}).get("id")
+                if fid:
+                    h2h_fixture_ids.append((fid, h))
+
+            async def fetch_h2h_player_stat(fid, fixture_info):
+                """Fetch the target player's stats from a specific H2H fixture"""
+                try:
+                    pstats = await api_football_request("fixtures/players", {"fixture": fid})
+                    if not pstats:
+                        return None
+                    # Find our player in the fixture stats
+                    for team_data in pstats:
+                        for p in team_data.get("players", []):
+                            if p.get("player", {}).get("id") == req.playerId:
+                                stats = p.get("statistics", [{}])[0] if p.get("statistics") else {}
+                                minutes_played = stats.get("games", {}).get("minutes") or 0
+                                # Extract the relevant stat
+                                stat_key_map_h2h = {
+                                    "pass_attempts": stats.get("passes", {}).get("total"),
+                                    "shots": stats.get("shots", {}).get("total"),
+                                    "shots_on_target": stats.get("shots", {}).get("on"),
+                                    "tackles": stats.get("tackles", {}).get("total"),
+                                    "key_passes": stats.get("passes", {}).get("key"),
+                                    "saves": stats.get("goals", {}).get("saves"),
+                                    "interceptions": stats.get("tackles", {}).get("interceptions"),
+                                    "blocks": stats.get("tackles", {}).get("blocks"),
+                                    "dribbles": stats.get("dribbles", {}).get("attempts"),
+                                    "fouls_drawn": stats.get("fouls", {}).get("drawn"),
+                                }
+                                home_name = fixture_info.get("teams", {}).get("home", {}).get("name", "")
+                                away_name = fixture_info.get("teams", {}).get("away", {}).get("name", "")
+                                home_goals = fixture_info.get("goals", {}).get("home", 0)
+                                away_goals = fixture_info.get("goals", {}).get("away", 0)
+                                return {
+                                    "date": fixture_info.get("fixture", {}).get("date", ""),
+                                    "opponent": away_name if team_data.get("team", {}).get("id") == actual_team_id else home_name,
+                                    "minutesPlayed": minutes_played,
+                                    "statValues": {k: v for k, v in stat_key_map_h2h.items() if v is not None},
+                                    "targetStat": stat_key_map_h2h.get(req.propType),
+                                    "targetStatPer90": round((stat_key_map_h2h.get(req.propType, 0) or 0) / minutes_played * 90, 2) if minutes_played > 0 and stat_key_map_h2h.get(req.propType) else None,
+                                    "matchScore": f"{home_goals}-{away_goals}",
+                                }
+                    return None
+                except Exception:
+                    return None
+
+            if h2h_fixture_ids:
+                for fid, fi in h2h_fixture_ids:
+                    result = await fetch_h2h_player_stat(fid, fi)
+                    if result:
+                        h2h_player_stats.append(result)
+
+        if h2h_player_stats:
+            # Calculate H2H averages for the target stat
+            h2h_values = [s["targetStat"] for s in h2h_player_stats if s.get("targetStat") is not None]
+            h2h_summary = {
+                "matches": h2h_player_stats,
+                "targetProp": req.propType,
+                "sampleSize": len(h2h_values),
+            }
+            if h2h_values:
+                h2h_summary["avgVsOpponent"] = round(sum(h2h_values) / len(h2h_values), 2)
+                h2h_summary["minVsOpponent"] = min(h2h_values)
+                h2h_summary["maxVsOpponent"] = max(h2h_values)
+            historical_data["h2hPlayerStats"] = h2h_summary
+
         # Format injuries for prompt
         injuries_summary = []
         if injuries_data:
@@ -794,6 +920,21 @@ STEP 2: EXTRACT KEY EVIDENCE (quote specific numbers — never make vague claims
 - Calculate: season average, home average, away average, last-5 rolling average
 - Identify FLOOR games (sub, injury return, blowout sub-off) and FLAG them
 - Note the standard deviation — how volatile is this stat for this player?
+
+STEP 2B: PER-90 MINUTE NORMALIZATION (CRITICAL — use this, not raw totals)
+- If "per90Analysis" is present in the data, USE IT as the primary reference for the player's stat rates
+- Per-90 = (raw total / total minutes) × 90. This normalizes for games where the player was subbed early
+- A player with 25 passes in 65 minutes is actually a 34.6 per-90 player — very different from 25 in 90 minutes (25.0 per-90)
+- Always compare per-90 rates, not raw per-game averages, when assessing volume
+- Quote both: "Season per-90: 34.6 (raw per-game: 28.3 due to 73 avg minutes)"
+- Use avgMinutesPerGame to flag minute risk: if avg < 80, there's consistent sub risk dragging raw numbers down
+
+STEP 2C: HEAD-TO-HEAD OPPONENT HISTORY (the sharpest edge)
+- If "h2hPlayerStats" is present in the data, THIS IS GOLD — the player's actual stats in previous meetings against this SPECIFIC opponent
+- Quote exact values: "In 4 meetings vs [opponent]: 34, 28, 41, 31 passes. Avg vs this opponent: 33.5"
+- Compare H2H average to season average: If H2H avg is significantly higher/lower than season avg, explain WHY (opponent style, venue, game script)
+- H2H sample size matters: 4+ games = strong signal. 1-2 games = weak signal, use cautiously
+- If H2H data shows a clear trend against this opponent, it should HEAVILY influence the projection (weight 30-40% of final number)
 
 STEP 3: SUBSTITUTION RISK QUANTIFICATION
 - Check the player's minutes played in recent games. How often are they subbed before 70'? Before 80'?
@@ -882,7 +1023,7 @@ Field requirements:
         )
         chat.with_model("gemini", "gemini-2.5-flash")
 
-        trimmed_data = json.dumps(historical_data, default=str)[:12000]
+        trimmed_data = json.dumps(historical_data, default=str)[:15000]
 
         prompt = f"""Player: {req.playerName} (ID: {req.playerId}) | Position from API: {player_position or 'Unknown'} | Opponent: {req.opponentName} | Venue: {req.venue} | Prop: {req.propType} | Line: {req.line}
 
@@ -893,6 +1034,8 @@ CRITICAL: The player's official position from API-Sports is "{player_position or
 THINK STEP-BY-STEP (follow all 10 steps from your instructions):
 1. What is this player's specific role and how does it affect {req.propType}?
 2. What are the exact stat values from recent games? (quote numbers with opponents and venues)
+2B. PER-90 CHECK: What is the player's per-90 rate for {req.propType}? How does it differ from raw per-game? What's their avg minutes per game?
+2C. H2H CHECK: If h2hPlayerStats data is present, what are the player's EXACT stat values against {req.opponentName} in previous meetings? How does the H2H average compare to the season average?
 3. SUBSTITUTION RISK: How often is this player subbed early? What's the stat volume impact per early sub? Quantify the drag.
 4. FIRST-TO-SCORE: When the team leads, does possession/stat volume go up or down? When trailing? What does the expected game flow look like based on odds?
 5. PRESSING INTENSITY: Estimate the opponent's PPDA from their tackles/interceptions. Are they aggressive pressers (PPDA 6-9) or passive (PPDA 13+)? How does that shift {req.propType}?
@@ -1054,8 +1197,123 @@ async def chat_message(req: ChatMessageRequest):
         )
         chat.with_model("gemini", "gemini-2.5-flash")
         chat_sessions[req.session_id] = chat
+
+    # =============================================
+    # UPGRADE #2: Data-aware chat — fetch live data
+    # =============================================
+    # Use a quick LLM call to extract player/team names, then fetch real API-Sports data
+    live_context = ""
     try:
-        response = await chat.send_message(UserMessage(text=req.message))
+        # Step 1: Extract entities from user message
+        extractor = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"extract-{uuid.uuid4().hex[:8]}",
+            system_message="Extract soccer entities from the user message. Return ONLY valid JSON."
+        )
+        extractor.with_model("gemini", "gemini-2.5-flash")
+        extract_prompt = f"""From this message, extract any soccer player names, team names, or league references.
+Return JSON: {{"playerName": "name or null", "teamName": "name or null", "leagueName": "name or null", "needsData": true/false}}
+Set needsData=true if the user is asking about a specific player's stats, matchup, or performance.
+Message: "{req.message}" """
+        extract_resp = await extractor.send_message(UserMessage(text=extract_prompt))
+        extract_text = extract_resp.strip()
+        if extract_text.startswith("```"):
+            lines = extract_text.split("\n")
+            lines = [l for l in lines if not l.strip().startswith("```")]
+            extract_text = "\n".join(lines)
+        entities = json.loads(extract_text)
+
+        if entities.get("needsData") and entities.get("playerName"):
+            player_name = entities["playerName"]
+            # Step 2: Search for player in API-Sports
+            search_data = await api_football_request("players", {"search": player_name, "league": 39})
+            if not search_data:
+                # Try broader search without league filter
+                for lid in [140, 135, 78, 61, 253, 262]:
+                    search_data = await api_football_request("players", {"search": player_name, "league": lid})
+                    if search_data:
+                        break
+            if not search_data:
+                # Last resort: search by last name
+                last_name = player_name.split()[-1] if " " in player_name else player_name
+                search_data = await api_football_request("players", {"search": last_name})
+
+            if search_data:
+                player = search_data[0]
+                p_id = player.get("player", {}).get("id")
+                p_name = player.get("player", {}).get("name", player_name)
+
+                # Step 3: Fetch real stats from API-Sports
+                stats_parts = []
+
+                # Get player season stats (try multiple seasons)
+                for s in [CURRENT_SEASON + 1, CURRENT_SEASON, CURRENT_SEASON - 1]:
+                    try:
+                        pdata = await api_football_request("players", {"id": p_id, "season": s})
+                        if pdata and pdata[0].get("statistics"):
+                            for stat_entry in pdata[0]["statistics"]:
+                                league_name = stat_entry.get("league", {}).get("name", "")
+                                games = stat_entry.get("games", {})
+                                minutes = games.get("minutes") or 0
+                                appearances = games.get("appearences") or 0
+                                position = games.get("position", "")
+                                if appearances < 1:
+                                    continue
+
+                                # Extract key stats with per-90 normalization
+                                raw_stats = {}
+                                per90 = {}
+                                stat_cats = {
+                                    "passes.total": stat_entry.get("passes", {}).get("total"),
+                                    "shots.total": stat_entry.get("shots", {}).get("total"),
+                                    "shots.on": stat_entry.get("shots", {}).get("on"),
+                                    "tackles.total": stat_entry.get("tackles", {}).get("total"),
+                                    "passes.key": stat_entry.get("passes", {}).get("key"),
+                                    "dribbles.attempts": stat_entry.get("dribbles", {}).get("attempts"),
+                                    "fouls.drawn": stat_entry.get("fouls", {}).get("drawn"),
+                                    "tackles.interceptions": stat_entry.get("tackles", {}).get("interceptions"),
+                                }
+                                for k, v in stat_cats.items():
+                                    if v is not None and v > 0:
+                                        raw_stats[k] = v
+                                        per_game = round(v / appearances, 2)
+                                        p90 = round((v / minutes) * 90, 2) if minutes > 0 else 0
+                                        per90[k] = f"{per_game}/game ({p90}/90)"
+
+                                if raw_stats:
+                                    stats_parts.append(f"  {league_name} {s}: {appearances} apps, {minutes} min, position: {position}")
+                                    for k, v in per90.items():
+                                        stats_parts.append(f"    {k}: {v}")
+                    except Exception:
+                        continue
+
+                # Get recent fixtures for the player's team
+                if player.get("statistics"):
+                    team_id = player["statistics"][-1].get("team", {}).get("id")
+                    if team_id:
+                        try:
+                            fixtures = await api_football_request("fixtures", {"team": team_id, "last": 5})
+                            if fixtures:
+                                stats_parts.append(f"\n  Last 5 team results:")
+                                for f in fixtures:
+                                    home = f.get("teams", {}).get("home", {}).get("name", "")
+                                    away = f.get("teams", {}).get("away", {}).get("name", "")
+                                    hg = f.get("goals", {}).get("home", 0)
+                                    ag = f.get("goals", {}).get("away", 0)
+                                    date = f.get("fixture", {}).get("date", "")[:10]
+                                    stats_parts.append(f"    {date}: {home} {hg}-{ag} {away}")
+                        except Exception:
+                            pass
+
+                if stats_parts:
+                    live_context = f"\n\n[LIVE API-SPORTS DATA for {p_name}]\n" + "\n".join(stats_parts) + "\n[END LIVE DATA]\n\nUse this REAL data in your analysis. Quote specific numbers from above."
+
+    except Exception:
+        pass  # If data fetch fails, proceed without context — don't break the chat
+
+    try:
+        augmented_message = req.message + live_context if live_context else req.message
+        response = await chat.send_message(UserMessage(text=augmented_message))
         return {"response": response, "session_id": req.session_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
