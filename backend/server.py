@@ -5,6 +5,7 @@ import uuid
 import asyncio as aio
 import time
 import bcrypt
+import statistics as stats_mod
 from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -478,7 +479,7 @@ async def get_player_stats(player_id: int, season: int = CURRENT_SEASON):
 
 
 async def get_recent_fixtures_fast(team_id: int, count: int = 20):
-    """Get recent fixtures WITHOUT individual player stats (fast - 1 API call)."""
+    """Get recent fixtures with fixture IDs for deeper stat lookups."""
     try:
         fixtures = await api_football_request("fixtures", {"team": team_id, "last": count})
         results = []
@@ -489,6 +490,7 @@ async def get_recent_fixtures_fast(team_id: int, count: int = 20):
             away_goals = f.get("goals", {}).get("away", 0) or 0
             opponent_name = f.get("teams", {}).get("away" if venue == "home" else "home", {}).get("name", "Unknown")
             results.append({
+                "fixtureId": f.get("fixture", {}).get("id"),
                 "date": f.get("fixture", {}).get("date", ""),
                 "opponent": opponent_name,
                 "venue": venue,
@@ -717,6 +719,148 @@ async def predict(req: PredictionRequest):
             except (IndexError, AttributeError):
                 pass
 
+        # =============================================
+        # WAVE 2: Deep per-fixture data (uses fixture IDs from Wave 1)
+        # =============================================
+
+        # 1. Per-fixture team stats (possession, shots, passes per match)
+        async def fetch_fixture_team_stats(fixture_list, team_id, limit=5):
+            """Fetch per-match team stats (possession, shots, passes) from fixtures/statistics"""
+            results = []
+            for fix in fixture_list[:limit]:
+                fid = fix.get("fixtureId")
+                if not fid:
+                    continue
+                try:
+                    data = await api_football_request("fixtures/statistics", {"fixture": fid})
+                    if not data:
+                        continue
+                    # Find the stats for our team
+                    for team_data in data:
+                        if team_data.get("team", {}).get("id") == team_id:
+                            raw_stats = {}
+                            for s in team_data.get("statistics", []):
+                                raw_stats[s.get("type", "")] = s.get("value")
+                            results.append({
+                                "date": fix.get("date", "")[:10],
+                                "opponent": fix.get("opponent", ""),
+                                "venue": fix.get("venue", ""),
+                                "score": f"{fix.get('homeGoals',0)}-{fix.get('awayGoals',0)}",
+                                "possession": raw_stats.get("Ball Possession", ""),
+                                "totalShots": raw_stats.get("Total Shots"),
+                                "shotsOnTarget": raw_stats.get("Shots on Goal"),
+                                "shotsOffTarget": raw_stats.get("Shots off Goal"),
+                                "blockedShots": raw_stats.get("Blocked Shots"),
+                                "shotsInsideBox": raw_stats.get("Shots insidebox"),
+                                "shotsOutsideBox": raw_stats.get("Shots outsidebox"),
+                                "totalPasses": raw_stats.get("Total passes"),
+                                "passAccuracy": raw_stats.get("Passes %"),
+                                "accuratePasses": raw_stats.get("Passes accurate"),
+                                "fouls": raw_stats.get("Fouls"),
+                                "corners": raw_stats.get("Corner Kicks"),
+                                "expectedGoals": raw_stats.get("expected_goals"),
+                            })
+                            break
+                except Exception:
+                    continue
+            return results
+
+        # 2. Player game-by-game box scores from recent fixtures
+        async def fetch_player_game_logs(fixture_list, player_id, limit=8):
+            """Fetch player's individual stats from each recent fixture"""
+            results = []
+            for fix in fixture_list[:limit]:
+                fid = fix.get("fixtureId")
+                if not fid:
+                    continue
+                try:
+                    data = await api_football_request("fixtures/players", {"fixture": fid})
+                    if not data:
+                        continue
+                    # Find our player in the fixture
+                    found = False
+                    for team_data in data:
+                        for p in team_data.get("players", []):
+                            if p.get("player", {}).get("id") == player_id:
+                                stats = p.get("statistics", [{}])[0] if p.get("statistics") else {}
+                                minutes = stats.get("games", {}).get("minutes") or 0
+                                rating = stats.get("games", {}).get("rating")
+                                # Extract ALL prop-relevant stats
+                                game_log = {
+                                    "date": fix.get("date", "")[:10],
+                                    "opponent": fix.get("opponent", ""),
+                                    "venue": fix.get("venue", ""),
+                                    "score": f"{fix.get('homeGoals',0)}-{fix.get('awayGoals',0)}",
+                                    "minutes": minutes,
+                                    "rating": float(rating) if rating else None,
+                                    "passes_total": stats.get("passes", {}).get("total"),
+                                    "passes_key": stats.get("passes", {}).get("key"),
+                                    "passes_accuracy": stats.get("passes", {}).get("accuracy"),
+                                    "shots_total": stats.get("shots", {}).get("total"),
+                                    "shots_on": stats.get("shots", {}).get("on"),
+                                    "tackles_total": stats.get("tackles", {}).get("total"),
+                                    "tackles_interceptions": stats.get("tackles", {}).get("interceptions"),
+                                    "tackles_blocks": stats.get("tackles", {}).get("blocks"),
+                                    "dribbles_attempts": stats.get("dribbles", {}).get("attempts"),
+                                    "dribbles_success": stats.get("dribbles", {}).get("success"),
+                                    "fouls_drawn": stats.get("fouls", {}).get("drawn"),
+                                    "fouls_committed": stats.get("fouls", {}).get("committed"),
+                                    "duels_total": stats.get("duels", {}).get("total"),
+                                    "duels_won": stats.get("duels", {}).get("won"),
+                                }
+                                # Calculate per-90 for the target stat
+                                stat_field_map = {
+                                    "pass_attempts": "passes_total",
+                                    "shots": "shots_total",
+                                    "shots_on_target": "shots_on",
+                                    "tackles": "tackles_total",
+                                    "key_passes": "passes_key",
+                                    "interceptions": "tackles_interceptions",
+                                    "blocks": "tackles_blocks",
+                                    "dribbles": "dribbles_attempts",
+                                    "fouls_drawn": "fouls_drawn",
+                                }
+                                raw_val = game_log.get(stat_field_map.get(req.propType, ""), None)
+                                if raw_val is not None and minutes > 0:
+                                    game_log["targetStatPer90"] = round((raw_val / minutes) * 90, 2)
+                                results.append(game_log)
+                                found = True
+                                break
+                        if found:
+                            break
+                except Exception:
+                    continue
+            return results
+
+        # Get opponent's recent fixtures (need fixture IDs)
+        opponent_recent_raw = await api_football_request("fixtures", {"team": req.opponentId, "last": 5})
+        opponent_fixture_list = []
+        if opponent_recent_raw:
+            for f in opponent_recent_raw[:5]:
+                opp_home_id = f.get("teams", {}).get("home", {}).get("id")
+                opp_venue = "home" if opp_home_id == req.opponentId else "away"
+                opponent_fixture_list.append({
+                    "fixtureId": f.get("fixture", {}).get("id"),
+                    "date": f.get("fixture", {}).get("date", ""),
+                    "opponent": f.get("teams", {}).get("away" if opp_venue == "home" else "home", {}).get("name", "Unknown"),
+                    "venue": opp_venue,
+                    "homeGoals": f.get("goals", {}).get("home", 0) or 0,
+                    "awayGoals": f.get("goals", {}).get("away", 0) or 0,
+                })
+
+        # Run Wave 2 fetches in parallel with timeout (graceful degradation)
+        team_fixture_stats_task = fetch_fixture_team_stats(recent_fixtures, actual_team_id or 40, 3)
+        opponent_fixture_stats_task = fetch_fixture_team_stats(opponent_fixture_list, req.opponentId, 3)
+        player_game_logs_task = fetch_player_game_logs(recent_fixtures, req.playerId, 5)
+
+        try:
+            team_fixture_stats, opponent_fixture_stats, player_game_logs = await aio.wait_for(
+                aio.gather(team_fixture_stats_task, opponent_fixture_stats_task, player_game_logs_task),
+                timeout=15  # Max 15 seconds for Wave 2 — degrade gracefully if slow
+            )
+        except aio.TimeoutError:
+            team_fixture_stats, opponent_fixture_stats, player_game_logs = [], [], []
+
         historical_data = {
             "playerStats": player_stats,
             "teamStats": team_stats,
@@ -726,6 +870,56 @@ async def predict(req: PredictionRequest):
             "recentFixtures": recent_fixtures,
             "opponentRecentFormations": opponent_formations,
         }
+
+        # =============================================
+        # Per-fixture deep data (Wave 2 results)
+        # =============================================
+        if team_fixture_stats:
+            historical_data["teamMatchStats"] = team_fixture_stats
+        if opponent_fixture_stats:
+            historical_data["opponentMatchStats"] = opponent_fixture_stats
+        if player_game_logs:
+            # Add summary stats for the game logs
+            target_field_map = {
+                "pass_attempts": "passes_total",
+                "shots": "shots_total",
+                "shots_on_target": "shots_on",
+                "tackles": "tackles_total",
+                "key_passes": "passes_key",
+                "interceptions": "tackles_interceptions",
+                "blocks": "tackles_blocks",
+                "dribbles": "dribbles_attempts",
+                "fouls_drawn": "fouls_drawn",
+            }
+            target_field = target_field_map.get(req.propType, "passes_total")
+            values = [g.get(target_field) for g in player_game_logs if g.get(target_field) is not None]
+            minutes_list = [g.get("minutes", 0) for g in player_game_logs if g.get("minutes")]
+            per90_values = [g.get("targetStatPer90") for g in player_game_logs if g.get("targetStatPer90") is not None]
+
+            game_log_summary = {
+                "games": player_game_logs,
+                "targetProp": req.propType,
+                "sampleSize": len(values),
+            }
+            if values:
+                game_log_summary["rawAvg"] = round(sum(values) / len(values), 2)
+                game_log_summary["rawMin"] = min(values)
+                game_log_summary["rawMax"] = max(values)
+                if len(values) >= 3:
+                    game_log_summary["stdDev"] = round(stats_mod.stdev(values), 2)
+                # Home/away splits
+                home_vals = [g.get(target_field) for g in player_game_logs if g.get("venue") == "home" and g.get(target_field) is not None]
+                away_vals = [g.get(target_field) for g in player_game_logs if g.get("venue") == "away" and g.get(target_field) is not None]
+                if home_vals:
+                    game_log_summary["homeAvg"] = round(sum(home_vals) / len(home_vals), 2)
+                if away_vals:
+                    game_log_summary["awayAvg"] = round(sum(away_vals) / len(away_vals), 2)
+            if per90_values:
+                game_log_summary["per90Avg"] = round(sum(per90_values) / len(per90_values), 2)
+            if minutes_list:
+                game_log_summary["avgMinutes"] = round(sum(minutes_list) / len(minutes_list), 1)
+
+            historical_data["playerGameLogs"] = game_log_summary
 
         # =============================================
         # UPGRADE #4: Per-90 minute normalization
@@ -936,6 +1130,24 @@ STEP 2C: HEAD-TO-HEAD OPPONENT HISTORY (the sharpest edge)
 - H2H sample size matters: 4+ games = strong signal. 1-2 games = weak signal, use cautiously
 - If H2H data shows a clear trend against this opponent, it should HEAVILY influence the projection (weight 30-40% of final number)
 
+STEP 2D: PLAYER GAME LOGS (match-by-match box scores — THE MOST IMPORTANT DATA)
+- If "playerGameLogs" is present, THIS IS YOUR PRIMARY DATA SOURCE — the player's actual stat line from each recent match
+- Each entry has: date, opponent, venue, score, minutes played, AND every stat (passes, shots, tackles, dribbles, etc.)
+- Quote EVERY game: "vs Arsenal (H, 85min): 34 passes. vs Wolves (A, 90min): 28 passes. vs Brighton (H, 78min): 31 passes."
+- Calculate from the raw numbers: mean, home mean, away mean, stddev
+- Flag FLOOR GAMES by checking minutes: If minutes < 70, that's an early sub → flag it and note the stat was suppressed
+- Per-90 normalization: Use targetStatPer90 field. A player with 25 passes in 65 min = 34.6/90, very different from 25 in 90 min
+- This data SUPERSEDES season averages. Game logs are the ground truth.
+
+STEP 2E: PER-FIXTURE TEAM & OPPONENT STATS (tactical fingerprint per match)
+- If "teamMatchStats" is present, use it to see HOW the team played in each recent game
+- Key metrics per game: possession%, totalShots, shotsOnTarget, totalPasses, passAccuracy
+- Look for PATTERNS: "In their last 5 home games, team averaged 58% possession and 492 passes"
+- If "opponentMatchStats" is present, this shows WHAT THE OPPONENT ALLOWS per game
+- Critical: "Opponent allowed 54% possession in last 5, faced avg 12.4 shots per game"
+- Cross-reference: If opponent allows high possession AND player's game logs show more passes in high-possession games → OVER signal
+- If opponent restricts possession to 45% → player's stat ceiling drops
+
 STEP 3: SUBSTITUTION RISK QUANTIFICATION
 - Check the player's minutes played in recent games. How often are they subbed before 70'? Before 80'?
 - Calculate the % of games where early substitution occurred and the average stat volume lost per early sub
@@ -1023,7 +1235,7 @@ Field requirements:
         )
         chat.with_model("gemini", "gemini-2.5-flash")
 
-        trimmed_data = json.dumps(historical_data, default=str)[:15000]
+        trimmed_data = json.dumps(historical_data, default=str)[:20000]
 
         prompt = f"""Player: {req.playerName} (ID: {req.playerId}) | Position from API: {player_position or 'Unknown'} | Opponent: {req.opponentName} | Venue: {req.venue} | Prop: {req.propType} | Line: {req.line}
 
@@ -1036,6 +1248,8 @@ THINK STEP-BY-STEP (follow all 10 steps from your instructions):
 2. What are the exact stat values from recent games? (quote numbers with opponents and venues)
 2B. PER-90 CHECK: What is the player's per-90 rate for {req.propType}? How does it differ from raw per-game? What's their avg minutes per game?
 2C. H2H CHECK: If h2hPlayerStats data is present, what are the player's EXACT stat values against {req.opponentName} in previous meetings? How does the H2H average compare to the season average?
+2D. GAME LOG CHECK: If playerGameLogs is present, list EVERY game's stat line with minutes, opponent, venue. Calculate home avg vs away avg. Flag any game with < 70 minutes as a floor game.
+2E. TEAM/OPPONENT MATCH STATS: If teamMatchStats and opponentMatchStats are present, what was the team's possession% and pass volume per game? What does the opponent typically allow? Cross-reference with player's game logs.
 3. SUBSTITUTION RISK: How often is this player subbed early? What's the stat volume impact per early sub? Quantify the drag.
 4. FIRST-TO-SCORE: When the team leads, does possession/stat volume go up or down? When trailing? What does the expected game flow look like based on odds?
 5. PRESSING INTENSITY: Estimate the opponent's PPDA from their tackles/interceptions. Are they aggressive pressers (PPDA 6-9) or passive (PPDA 13+)? How does that shift {req.propType}?
