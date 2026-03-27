@@ -390,6 +390,18 @@ async def search_players(req: PlayerSearchRequest):
             except Exception:
                 continue
 
+        # Strategy 1b: If full name returned nothing in league, try last name within SAME league
+        if not all_players and " " in req.query:
+            last_name = req.query.strip().split()[-1]
+            for s in [season, season - 1, season + 1]:
+                try:
+                    data = await api_football_request("players", {"search": last_name, "league": req.league_id, "season": s})
+                    if data:
+                        all_players.extend([extract_player(item) for item in data])
+                        break
+                except Exception:
+                    continue
+
     # Strategy 2: If no results, try major domestic leagues in parallel for better team info
     if not all_players:
         major_leagues = [39, 140, 135, 78, 61, 253, 71, 307]
@@ -434,13 +446,20 @@ async def search_players(req: PlayerSearchRequest):
     players = list(seen_ids.values())
 
     # Sort: players with team info first, then relevance (name match)
+    import unicodedata
+    def strip_accents(s):
+        return ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn')
+
+    query_parts = [strip_accents(w.lower()) for w in req.query.strip().split()]
     def sort_key(p):
         has_team = 0 if p["teamName"] else 1
-        name_lower = p["name"].lower()
-        lastname_lower = (p["lastname"] or "").lower()
-        # Exact lastname match gets priority
-        exact = 0 if lastname_lower == query_lower or query_lower in name_lower.split() else 1
-        return (has_team, exact, p["name"])
+        name_norm = strip_accents(p["name"].lower())
+        firstname_norm = strip_accents((p["firstname"] or "").lower())
+        # Best: all query words match (e.g., "hernan" + "lopez" both in name)
+        all_match = 0 if all(w in name_norm for w in query_parts) else 1
+        # Good: first name matches first query word
+        first_match = 0 if query_parts and firstname_norm.startswith(query_parts[0]) else 1
+        return (has_team, all_match, first_match, p["name"])
 
     players.sort(key=sort_key)
     return {"players": players[:15]}
@@ -507,14 +526,20 @@ async def predict(req: PredictionRequest):
                 return fallback
 
         async def get_player_data():
-            for s in [CURRENT_SEASON, CURRENT_SEASON - 1, CURRENT_SEASON - 2]:
+            # Try to get data from multiple seasons for richer context
+            all_data = None
+            for s in [CURRENT_SEASON + 1, CURRENT_SEASON, CURRENT_SEASON - 1, CURRENT_SEASON - 2]:
                 try:
                     data = await api_football_request("players", {"id": req.playerId, "season": s})
                     if data:
-                        return data[0]
+                        if all_data is None:
+                            all_data = data[0]
+                        else:
+                            # Merge additional season stats
+                            all_data.setdefault("statistics", []).extend(data[0].get("statistics", []))
                 except Exception:
                     continue
-            return None
+            return all_data
 
         actual_team_id = req.teamId
         league_id = req.leagueId or 39
@@ -557,6 +582,28 @@ async def predict(req: PredictionRequest):
             "recentFixtures": recent_fixtures,
         }
 
+        # Extract player's ACTUAL position from API-Sports data
+        player_position = ""
+        if player_stats:
+            stats_list = player_stats.get("statistics", [])
+            # Find the stat entry with most appearances (most relevant)
+            best_entry = None
+            best_apps = 0
+            for s in stats_list:
+                apps = s.get("games", {}).get("appearences") or 0
+                pos = s.get("games", {}).get("position", "")
+                if apps > best_apps and pos:
+                    best_apps = apps
+                    best_entry = s
+                    player_position = pos
+            # If we found a better entry, also try to get stats from multiple seasons
+            if not player_position:
+                for s in stats_list:
+                    pos = s.get("games", {}).get("position", "")
+                    if pos:
+                        player_position = pos
+                        break
+
         # 2. Send to Gemini — enhanced with role + opponent analysis
         chat = LlmChat(
             api_key=EMERGENT_LLM_KEY,
@@ -589,13 +636,15 @@ CRITICAL ANALYSIS RULES:
    - Look for FLOOR games (injury return, substituted early, tactical changes) and adjust
 
 5. DRIBBLE-SPECIFIC ANALYSIS (for dribbles/dribble_attempts prop):
-   - Dribbles are the MOST matchup-dependent stat. A winger's attempts drop 40-60% against packed defenses.
-   - Low-block opponents (compact shape, doubled fullbacks): Dribble attempts DROP sharply — there's no space to run at defenders 1v1
+   - Dribbles are the MOST matchup-dependent AND volatile stat. Standard deviation is typically 40-50% of the mean.
+   - AWAY games: Dribble attempts drop 15-30% compared to home. Less space, more defensive structure from opponents.
+   - Low-block opponents (compact shape, doubled fullbacks): Dribble attempts DROP 30-50% — no space for 1v1 isolation
    - High-line / aggressive fullback opponents: Dribble attempts INCREASE — more space behind, more isolated 1v1 duels
-   - Game script matters: If team is trailing, wingers attempt more desperate dribbles. If team leads comfortably, fewer dribbles (possession recycling instead)
-   - Check opponent's fouls conceded and tackles won — high-tackle teams physically shut down dribblers
-   - Wide players (LW/RW) have MORE dribble attempts than inside forwards or central players
-   - Always check the player's dribble attempts in SIMILAR matchups (vs similar defensive styles), not just raw average
+   - Game script: Trailing team = more desperate dribbles. Leading comfortably = fewer (possession recycling)
+   - Physical/disciplined opponents (high tackles won): Physically shut down dribblers
+   - CRITICAL: When the line is CLOSE to the player's per-game average (within 0.5), default to UNDER for away games and UNDER against organized/defensive teams. The line is set BY THE BOOKS to exploit "over" bias.
+   - Wide players (LW/RW) have more attempts than central players
+   - Always check venue splits: home dribbles vs away dribbles separately
 
 6. STAT-SPECIFIC MATCHUP ADJUSTMENTS:
    - Shots/shots_on_target: Check opponent's shots conceded per game and defensive block height
@@ -619,11 +668,11 @@ Field requirements:
 
         trimmed_data = json.dumps(historical_data, default=str)[:10000]
 
-        prompt = f"""Player: {req.playerName} | Opponent: {req.opponentName} | Venue: {req.venue} | Prop: {req.propType} | Line: {req.line}
+        prompt = f"""Player: {req.playerName} (ID: {req.playerId}) | Position from API: {player_position or 'Unknown'} | Opponent: {req.opponentName} | Venue: {req.venue} | Prop: {req.propType} | Line: {req.line}
 
 Stat mapping: pass_attempts=passes.total, shots=shots.total, shots_on_target=shots.on, tackles=tackles.total, key_passes=passes.key, saves=goals.saves, interceptions=tackles.interceptions, blocks=tackles.blocks, dribbles=dribbles.attempts, fouls_drawn=fouls.drawn
 
-IMPORTANT: First determine the player's EXACT role/position from the data. Then analyze the opponent's defensive style (high press vs low block, possession conceded %). Use role-based multipliers to adjust your projection. A deep-lying playmaker/CDM will have 80-110+ pass attempts. Do NOT under-project high-volume passers.
+CRITICAL: The player's official position from API-Sports is "{player_position or 'Unknown'}". Use THIS as the base for role analysis. Do NOT contradict it. An "Attacker" or "Midfielder" is NOT a defender. Determine the specific sub-role (e.g., Right Winger, Attacking Midfielder, Deep-Lying Playmaker) based on their stats pattern + official position.
 
 Data:
 {trimmed_data}
