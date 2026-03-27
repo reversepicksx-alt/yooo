@@ -544,16 +544,80 @@ async def predict(req: PredictionRequest):
         actual_team_id = req.teamId
         league_id = req.leagueId or 39
 
-        # Fire ALL API calls at once
+        # Tactical intel fetchers
+        async def get_opponent_formations():
+            """Get opponent's recent formations from last 5 fixtures"""
+            try:
+                fixtures = None
+                for s in [CURRENT_SEASON + 1, CURRENT_SEASON]:
+                    try:
+                        fixtures = await api_football_request("fixtures", {"team": req.opponentId, "last": 5, "season": s})
+                        if fixtures:
+                            break
+                    except Exception:
+                        continue
+                if not fixtures:
+                    return []
+                formations = []
+                fids = [f.get("fixture", {}).get("id") for f in fixtures if f.get("fixture", {}).get("id")]
+                # Fetch lineups for most recent match only (less API calls)
+                if fids:
+                    try:
+                        lineups = await api_football_request("fixtures/lineups", {"fixture": fids[0]})
+                        for l in (lineups or []):
+                            if l.get("team", {}).get("id") == req.opponentId:
+                                formations.append({
+                                    "formation": l.get("formation", ""),
+                                    "coach": l.get("coach", {}).get("name", ""),
+                                })
+                    except Exception:
+                        pass
+                return formations
+            except Exception:
+                return []
+
+        async def get_prematch_prediction():
+            """Get API-Sports pre-match prediction if a scheduled fixture exists"""
+            try:
+                fixtures = None
+                for s in [CURRENT_SEASON + 1, CURRENT_SEASON]:
+                    try:
+                        fixtures = await api_football_request("fixtures", {
+                            "team": actual_team_id or 40,
+                            "next": 1,
+                            "season": s
+                        })
+                        if fixtures:
+                            break
+                    except Exception:
+                        continue
+                if fixtures:
+                    fid = fixtures[0].get("fixture", {}).get("id")
+                    pred = await api_football_request("predictions", {"fixture": fid})
+                    if pred:
+                        p = pred[0]
+                        return {
+                            "winner": p.get("predictions", {}).get("winner", {}).get("name", ""),
+                            "advice": p.get("predictions", {}).get("advice", ""),
+                            "homeForm": p.get("teams", {}).get("home", {}).get("league", {}).get("form", ""),
+                            "awayForm": p.get("teams", {}).get("away", {}).get("league", {}).get("form", ""),
+                        }
+            except Exception:
+                pass
+            return None
+
+        # Fire ALL API calls at once — including tactical intel
         player_data_task = get_player_data()
         team_stats_task = safe_fetch("teams/statistics", {"team": actual_team_id or 40, "league": league_id, "season": CURRENT_SEASON})
         opponent_stats_task = safe_fetch("teams/statistics", {"team": req.opponentId, "league": league_id, "season": CURRENT_SEASON})
         h2h_task = safe_fetch("fixtures/headtohead", {"h2h": f"{actual_team_id or 40}-{req.opponentId}", "last": 5}, [])
         standings_task = safe_fetch("standings", {"league": league_id, "season": CURRENT_SEASON})
         fixtures_task = get_recent_fixtures_fast(actual_team_id or 40, 20)
+        formations_task = get_opponent_formations()
+        prediction_task = get_prematch_prediction()
 
-        player_stats, team_stats, opponent_stats, h2h_data, standings_raw, recent_fixtures = await aio.gather(
-            player_data_task, team_stats_task, opponent_stats_task, h2h_task, standings_task, fixtures_task
+        player_stats, team_stats, opponent_stats, h2h_data, standings_raw, recent_fixtures, opponent_formations, prematch_pred = await aio.gather(
+            player_data_task, team_stats_task, opponent_stats_task, h2h_task, standings_task, fixtures_task, formations_task, prediction_task
         )
 
         if actual_team_id == 0 and player_stats:
@@ -580,6 +644,8 @@ async def predict(req: PredictionRequest):
             "h2hData": h2h_data,
             "standings": standings,
             "recentFixtures": recent_fixtures,
+            "opponentRecentFormations": opponent_formations,
+            "prematchPrediction": prematch_pred,
         }
 
         # Extract player's ACTUAL position from API-Sports data
@@ -672,12 +738,22 @@ Field requirements:
 
 Stat mapping: pass_attempts=passes.total, shots=shots.total, shots_on_target=shots.on, tackles=tackles.total, key_passes=passes.key, saves=goals.saves, interceptions=tackles.interceptions, blocks=tackles.blocks, dribbles=dribbles.attempts, fouls_drawn=fouls.drawn
 
-CRITICAL: The player's official position from API-Sports is "{player_position or 'Unknown'}". Use THIS as the base for role analysis. Do NOT contradict it. An "Attacker" or "Midfielder" is NOT a defender. Determine the specific sub-role (e.g., Right Winger, Attacking Midfielder, Deep-Lying Playmaker) based on their stats pattern + official position.
+CRITICAL: The player's official position from API-Sports is "{player_position or 'Unknown'}". Use THIS as the base for role analysis. Do NOT contradict it.
+
+TACTICAL INTEL (use this heavily in your analysis):
+- Opponent recent formations: {json.dumps(opponent_formations, default=str) if opponent_formations else 'Not available'}
+- Pre-match prediction: {json.dumps(prematch_pred, default=str) if prematch_pred else 'Not available'}
+
+FORMATION ANALYSIS RULES:
+- If opponent plays 5-back (5-3-2, 5-4-1, 3-5-2 with wingbacks): ULTRA DEFENSIVE → massive pass boost for dominant team's midfielders, dribble suppression
+- If opponent plays 4-4-2 compact: Organized mid-block → moderate pass boost, strong dribble suppression (2 banks of 4)
+- If opponent plays 4-3-3 / 4-2-3-1 high press: Open game → fewer passes (turnovers), more dribble opportunities (space behind press)
+- Coach matters: Defensive coaches (Pellegrino, Simeone-style) = more compact = more recycling passes for opponent CDMs
 
 Data:
 {trimmed_data}
 
-Return ONLY valid JSON. 15+ recentSamples with venue. Rich role+opponent reasoning (2-3 paragraphs). 10pt probabilityCurve."""
+Return ONLY valid JSON. 15+ recentSamples with venue. Rich role+formation+opponent reasoning (2-3 paragraphs). 10pt probabilityCurve."""
 
         response = await chat.send_message(UserMessage(text=prompt))
         response_text = response.strip()
