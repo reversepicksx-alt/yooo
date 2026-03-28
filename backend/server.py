@@ -958,6 +958,22 @@ Line: {req.line}
 CRITICAL: Player is {player_venue.upper()}. Opponent is {opponent_venue.upper()}.
 ALL analysis must be venue-specific. Use {player_venue} splits for the player's team and {opponent_venue} splits for the opponent.
 
+POSITION-AWARE BASELINES (use these as sanity checks):
+- Goalkeeper saves: DIRECTLY tied to OPPONENT shots per game. If opponent averages 10 shots/game away, ~30-40% are on target = 3-4 shots on target. GK save rate ~70% = ~2-3 saves. NEVER predict saves higher than opponent's avg shots on target.
+- Goalkeeper saves INVERSE RULE: If the GK's team is FAVORED (home advantage, better form, higher in standings), the opponent will likely have FEWER shots → FEWER saves. Underdogs' GKs get MORE saves.
+- Defender: tackles 2-4/game, interceptions 1-3, blocks 0-2, shots 0-1
+- Midfielder: shots 1-2/game (attacking mid 2-3), key passes 1-3, tackles 1-3, dribbles 1-3
+- Forward/Striker: shots 2-4/game (elite 3-5), key passes 0-2, dribbles 1-4
+
+SAVES-SPECIFIC ANALYSIS (MANDATORY if propType is saves):
+1. Calculate opponent's expected shots: From opponent {opponent_venue} stats, what is their avg total shots per game?
+2. Of those, what % are on target? (League avg ~30-35%)
+3. Expected shots on target = total shots * on-target %
+4. Expected saves = shots on target - goals conceded
+5. If GK's team is favored → opponent attacks LESS → saves go DOWN
+6. If GK's team is underdog → opponent attacks MORE → saves go UP
+7. USE THIS AS YOUR SAVES CEILING. Do not predict above it.
+
 Do this analysis:
 
 1. PPDA ESTIMATE: From the opponent's {opponent_venue.upper()} tackles/interceptions data, estimate their pressing intensity when {opponent_venue}.
@@ -1284,8 +1300,17 @@ DATA:
 
 Your job: SYNTHESIZE all three inputs into a single, calibrated prediction JSON. Do NOT re-derive what Claude already analyzed — USE their analysis directly. Focus on:
 
-STEP 1: VALIDATE the player's role from the data summary
+STEP 1: VALIDATE the player's role and POSITION from the data summary. Apply position baselines:
+  - GK saves: Capped by opponent shots on target. If opponent avg 10 shots/game with 35% on target = 3.5 SOT. GK saves ~70% = ~2.5 saves. NEVER project above opponent SOT avg.
+  - GK saves INVERSE: Favored team's GK = FEWER saves. Underdog GK = MORE saves.
+  - Defender: tackles 2-4, interceptions 1-3, blocks 0-2, shots 0-1
+  - Midfielder: shots 1-2 (AM 2-3), passes 30-50, key passes 1-3
+  - Forward: shots 2-4 (elite 3-5), key passes 0-2
+
 STEP 2: CROSS-REFERENCE Claude's scenario analysis with the game log data — does the evidence support Claude's assessment?
+  - For SAVES: Check if Claude's saves projection exceeds opponent's shots-on-target average. If yes, CAP IT.
+  - For SHOTS: Check if projection exceeds what's normal for this position. Midfielders rarely exceed 3 shots/game.
+
 STEP 3: CALIBRATE the final projected value using:
 - Claude's weighted scenario projection as the starting point
 - Game log data as the ground truth (per-90 rates, home/away splits)
@@ -1344,6 +1369,41 @@ Field requirements:
         if opponent_fixture_stats:
             wave2_supplement["opponentMatchStats"] = opponent_fixture_stats
 
+        # SAVES-SPECIFIC: Compute opponent shots-per-game for saves ceiling
+        saves_context = ""
+        if req.propType == "saves":
+            opp_shots_list = []
+            if opponent_fixture_stats:
+                for mf in opponent_fixture_stats:
+                    shots = mf.get("totalShots")
+                    shots_on = mf.get("shotsOnTarget")
+                    if shots is not None:
+                        opp_shots_list.append({"total": shots, "on_target": shots_on or 0, "date": mf.get("date", ""), "venue": mf.get("venue", "")})
+            opp_avg_shots = round(sum(s["total"] for s in opp_shots_list) / len(opp_shots_list), 1) if opp_shots_list else 0
+            opp_avg_sot = round(sum(s["on_target"] for s in opp_shots_list) / len(opp_shots_list), 1) if opp_shots_list else 0
+            saves_context = f"""
+[SAVES CEILING ANALYSIS]
+Opponent ({req.opponentName}) {opponent_venue.upper()} shooting stats (last {len(opp_shots_list)} games):
+- Avg total shots/game: {opp_avg_shots}
+- Avg shots on target/game: {opp_avg_sot}
+- Max realistic saves = shots on target - goals scored = ~{max(0, round(opp_avg_sot - 1, 1))}
+- If GK's team is FAVORED: opponent takes even fewer shots → saves likely BELOW average
+- If GK's team is UNDERDOG: opponent attacks more → saves likely ABOVE average
+HARD RULE: Do NOT project saves above {round(opp_avg_sot * 0.85, 1)} unless extraordinary evidence exists.
+"""
+            wave2_supplement["savesAnalysis"] = {
+                "opponentAvgShots": opp_avg_shots,
+                "opponentAvgSOT": opp_avg_sot,
+                "maxRealisticSaves": max(0, round(opp_avg_sot - 1, 1)),
+            }
+
+        # POSITION CONTEXT: Compute position-specific baseline from game logs
+        position_context = ""
+        if player_position and player_game_logs:
+            pos_map = {"Goalkeeper": "GK", "Defender": "DEF", "Midfielder": "MID", "Attacker": "FWD"}
+            pos_short = pos_map.get(player_position, player_position)
+            position_context = f"\n[POSITION BASELINE] Player position: {player_position} ({pos_short}). Calibrate expectations for this position — {pos_short}s have different stat ceilings than other positions."
+
         # Compose final data: GPT summary (compact) + Claude tactical analysis + Wave 2 deep data
         final_data_parts = []
         if gpt_data_summary:
@@ -1355,6 +1415,10 @@ Field requirements:
 
         if final_data_parts:
             final_data = "\n\n".join(final_data_parts)
+            if saves_context:
+                final_data += f"\n\n{saves_context}"
+            if position_context:
+                final_data += f"\n{position_context}"
         else:
             # Fallback: raw data if both AIs failed
             final_data = json.dumps(historical_data, default=str)[:18000]

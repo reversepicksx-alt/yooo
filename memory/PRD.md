@@ -111,6 +111,7 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 - [x] Picks persistence moved from localStorage to MongoDB — no more data loss (DONE - Mar 2026)
 - [x] Live Tracking Cards with NOW/LINE/PACE/HIT%/progress bar, auto-refresh 2min (DONE - Mar 2026)
 - [x] Whop signup link on login page (DONE - Mar 2026)
+- [x] Systematic prediction fixes: saves ceiling from opponent SOT, position baselines, game flow logic (DONE - Mar 2026)
 
 ### P1 (High)
 - Push notifications for pick results
