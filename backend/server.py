@@ -969,35 +969,37 @@ async def predict(req: PredictionRequest):
                 loop = aio.get_event_loop()
                 def _call_grok():
                     return grok_client.responses.create(
-                        model="grok-4-1-fast-non-reasoning",
+                        model="grok-4.20-reasoning",
                         tools=[{"type": "web_search"}],
                         input=[
-                            {"role": "system", "content": "Elite soccer tactical analyst with web search. You MUST search for real-time data. Be concise, quote exact numbers from search results."},
+                            {"role": "system", "content": "Elite soccer analyst with deep web research. You MUST use web search to find ACTUAL per-game player statistics from FotMob, SofaScore, WhoScored, or Flashscore. Do NOT guess or estimate — search and report exact numbers you find. Be concise."},
                             {"role": "user", "content": f"""Analyze {req.propType} prop on {req.playerName} ({player_position or 'Unknown'}) — {player_team} vs {req.opponentName} ({player_venue.upper()}). Line: {req.line}. {odds_context}
 
-CRITICAL TASK 1 — STAT VERIFICATION (most important):
-Search for "{req.playerName} {player_team} stats 2025 2026" and "{req.playerName} recent match stats" on FotMob, SofaScore, WhoScored, or any source.
-Find the player's ACTUAL {req.propType} stats from their last 3-5 games. Report EXACT numbers per game (e.g. "vs Kansas City: 2 shots, vs Seattle: 1 shot").
-This is critical because our API data may be incomplete or wrong.
+TASK 1 — FIND REAL STATS (MOST IMPORTANT):
+Search for "{req.playerName} stats" on FotMob, SofaScore, or WhoScored.
+Find the player's ACTUAL {req.propType} numbers from their last 5 games.
+Report per game: date, opponent, exact {req.propType} count, minutes played.
+Example format: "Mar 14 vs Kansas City: 2 shots (90 min)"
 
-CRITICAL TASK 2 — LIVE NEWS:
-Search for current injuries, lineup news, key absences for both teams.
+TASK 2 — LIVE NEWS:
+Search for injuries, confirmed lineups, key absences for {player_team} and {req.opponentName}.
 
-3. MATCHUP: Home vs Away, favorite (from odds), expected possession %, game type (open/cagey/one-sided)
-4. POSITION BASELINE: {player_position} expected range for {req.propType}
-5. SAVES (if saves): Opponent SOT avg → saves ceiling. Favored GK = fewer saves.
-6. SCENARIOS: Base/Blowout/Trailing/Cagey — probability % and expected value for {req.propType}
-7. SENSITIVITY: Sub risk, red card — ROBUST/MODERATE/FRAGILE
-8. VERDICT: Over or under {req.line}? Confidence 0-100?
+TASK 3 — TACTICAL ANALYSIS:
+- Matchup: favorite (from odds), expected possession %, game type (open/cagey/one-sided)
+- Position baseline: {player_position} expected range for {req.propType}
+- If saves prop: Opponent SOT avg → saves ceiling. Favored GK = fewer saves.
+- Scenarios: Base/Blowout/Trailing/Cagey — probability % and expected {req.propType} value
+- Sensitivity: Sub risk, red card impact — ROBUST/MODERATE/FRAGILE
+- Verdict: Over or under {req.line}? Confidence 0-100?
 
-Format your response with clear sections:
-[VERIFIED STATS] — player's actual recent {req.propType} numbers from web search (per game)
-[LIVE NEWS] — injuries, lineups, team news
-[TACTICAL ANALYSIS] — matchup, scenarios, verdict
+Format your response:
+[VERIFIED STATS] — exact per-game {req.propType} numbers from web sources (cite the source)
+[LIVE NEWS] — injuries, lineups
+[ANALYSIS] — scenarios, verdict
 
 DATA: {tactical_json}"""}
                         ],
-                        max_output_tokens=1500,
+                        max_output_tokens=2000,
                     )
                 result = await loop.run_in_executor(None, _call_grok)
                 return result.output_text if result else None
@@ -1009,7 +1011,7 @@ DATA: {tactical_json}"""}
         try:
             team_fixture_stats, opponent_fixture_stats, player_game_logs, grok_analysis = await aio.wait_for(
                 aio.gather(team_fixture_stats_task, opponent_fixture_stats_task, player_game_logs_task, grok_tactical_task),
-                timeout=45
+                timeout=90
             )
         except aio.TimeoutError:
             team_fixture_stats, opponent_fixture_stats, player_game_logs, grok_analysis = [], [], [], None
