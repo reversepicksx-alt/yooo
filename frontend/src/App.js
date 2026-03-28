@@ -246,6 +246,26 @@ function ProjectionCard({ projection, onSave, excludedIndices, onToggleSample })
           </div>
         )}
 
+        {projection.dataQuality && projection.dataQuality.level !== 'good' && (
+          <div data-testid="data-quality-warning" style={{
+            background: projection.dataQuality.level === 'low' ? 'rgba(244,63,94,0.08)' : 'rgba(245,158,11,0.08)',
+            border: `1px solid ${projection.dataQuality.level === 'low' ? 'rgba(244,63,94,0.25)' : 'rgba(245,158,11,0.25)'}`,
+            borderRadius: 10, padding: '10px 14px', marginBottom: 16, display: 'flex', alignItems: 'flex-start', gap: 10,
+          }}>
+            <ShieldAlert style={{ width: 16, height: 16, flexShrink: 0, marginTop: 1,
+              color: projection.dataQuality.level === 'low' ? '#f43f5e' : '#f59e0b' }} />
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 2,
+                color: projection.dataQuality.level === 'low' ? '#f43f5e' : '#f59e0b' }}>
+                {projection.dataQuality.level === 'low' ? 'Limited Data' : 'Data Gap Detected'}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                {projection.dataQuality.message}
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="grid-2 mb-6">
           <div className="stat-box">
             <div className="stat-label">Prop Line</div>

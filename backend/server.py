@@ -946,7 +946,7 @@ async def predict(req: PredictionRequest):
         # DUAL AI: Grok runs tactical analysis with LIVE WEB SEARCH
         # =============================================
         async def grok_tactical_analysis():
-            """Grok-4 with web search for real-time injury/lineup intel + tactical analysis"""
+            """Grok-4 with web search for real-time injury/lineup intel + stat verification + tactical analysis"""
             try:
                 grok_client = OpenAI(api_key=XAI_API_KEY, base_url="https://api.x.ai/v1")
                 player_team = player_stats.get("statistics", [{}])[0].get("team", {}).get("name", "") if player_stats else ""
@@ -972,20 +972,32 @@ async def predict(req: PredictionRequest):
                         model="grok-4-1-fast-non-reasoning",
                         tools=[{"type": "web_search"}],
                         input=[
-                            {"role": "system", "content": "Elite soccer tactical analyst with web search. Search for CURRENT injury reports, confirmed lineups, team news. Combine with API data. Be concise, quote numbers."},
+                            {"role": "system", "content": "Elite soccer tactical analyst with web search. You MUST search for real-time data. Be concise, quote exact numbers from search results."},
                             {"role": "user", "content": f"""Analyze {req.propType} prop on {req.playerName} ({player_position or 'Unknown'}) — {player_team} vs {req.opponentName} ({player_venue.upper()}). Line: {req.line}. {odds_context}
 
-1. WEB SEARCH: Current injuries, lineup news, key absences for both teams
-2. MATCHUP: Home vs Away, favorite (from odds), expected possession %, game type (open/cagey/one-sided)
-3. POSITION BASELINE: {player_position} expected range for {req.propType}
-4. SAVES (if saves): Opponent SOT avg → saves ceiling. Favored GK = fewer saves.
-5. SCENARIOS: Base/Blowout/Trailing/Cagey — probability % and expected value
-6. SENSITIVITY: Sub risk, red card — ROBUST/MODERATE/FRAGILE
-7. VERDICT: Over or under {req.line}? Confidence 0-100?
+CRITICAL TASK 1 — STAT VERIFICATION (most important):
+Search for "{req.playerName} {player_team} stats 2025 2026" and "{req.playerName} recent match stats" on FotMob, SofaScore, WhoScored, or any source.
+Find the player's ACTUAL {req.propType} stats from their last 3-5 games. Report EXACT numbers per game (e.g. "vs Kansas City: 2 shots, vs Seattle: 1 shot").
+This is critical because our API data may be incomplete or wrong.
+
+CRITICAL TASK 2 — LIVE NEWS:
+Search for current injuries, lineup news, key absences for both teams.
+
+3. MATCHUP: Home vs Away, favorite (from odds), expected possession %, game type (open/cagey/one-sided)
+4. POSITION BASELINE: {player_position} expected range for {req.propType}
+5. SAVES (if saves): Opponent SOT avg → saves ceiling. Favored GK = fewer saves.
+6. SCENARIOS: Base/Blowout/Trailing/Cagey — probability % and expected value for {req.propType}
+7. SENSITIVITY: Sub risk, red card — ROBUST/MODERATE/FRAGILE
+8. VERDICT: Over or under {req.line}? Confidence 0-100?
+
+Format your response with clear sections:
+[VERIFIED STATS] — player's actual recent {req.propType} numbers from web search (per game)
+[LIVE NEWS] — injuries, lineups, team news
+[TACTICAL ANALYSIS] — matchup, scenarios, verdict
 
 DATA: {tactical_json}"""}
                         ],
-                        max_output_tokens=1200,
+                        max_output_tokens=1500,
                     )
                 result = await loop.run_in_executor(None, _call_grok)
                 return result.output_text if result else None
@@ -1267,10 +1279,11 @@ STEP 2: CROSS-REFERENCE Grok's scenario analysis with the game log data — does
   - For SHOTS: Check if projection exceeds what's normal for this position. Midfielders rarely exceed 3 shots/game.
 
 STEP 3: CALIBRATE the final projected value using:
+- Grok's VERIFIED STATS section as ground truth (web-searched actual game numbers)
 - Grok's weighted scenario projection as the starting point
-- Game log data as the ground truth (per-90 rates, home/away splits)
-- Data digest numbers for verification
-- If Grok and the data disagree, explain why and choose the more evidence-based number
+- Game log data as secondary reference (API data may be incomplete — Grok's web-verified stats take priority)
+- Data digest numbers for team/opponent context
+- If Grok's verified stats and API game logs disagree, USE GROK'S NUMBERS and note the discrepancy
 STEP 4: SET CONFIDENCE based on:
 - Data quality (sample size, recency)
 - Grok's sensitivity test results (ROBUST = 75+, MODERATE = 55-74, FRAGILE = 40-54)
@@ -1589,6 +1602,39 @@ Return ONLY valid JSON. recentSamples MUST be []. 10pt probabilityCurve."""
         real_matchup["homeTeam"] = player_team if player_venue == "home" else req.opponentName
         real_matchup["awayTeam"] = req.opponentName if player_venue == "home" else player_team
         prediction["matchupOverview"] = real_matchup
+
+        # DATA QUALITY INDICATOR — flag when API data might be unreliable
+        total_game_logs = len(player_game_logs)
+        gl_target_field_map_check = {
+            "pass_attempts": "passes_total", "shots": "shots_total", "shots_on_target": "shots_on",
+            "tackles": "tackles_total", "key_passes": "passes_key", "saves": "goals_saves",
+            "interceptions": "tackles_interceptions", "blocks": "tackles_blocks",
+            "dribbles": "dribbles_attempts", "fouls_drawn": "fouls_drawn",
+        }
+        target_check = gl_target_field_map_check.get(req.propType, "passes_total")
+        games_with_data = sum(1 for g in player_game_logs if g.get(target_check) is not None)
+        games_with_none = total_game_logs - games_with_data
+        if total_game_logs > 0 and games_with_none / total_game_logs >= 0.3:
+            prediction["dataQuality"] = {
+                "level": "limited",
+                "message": f"API data incomplete — {games_with_none} of {total_game_logs} recent games missing {req.propType} stats. Web-verified stats from Grok used for analysis.",
+                "gamesWithData": games_with_data,
+                "totalGames": total_game_logs,
+            }
+        elif total_game_logs < 3:
+            prediction["dataQuality"] = {
+                "level": "low",
+                "message": f"Only {total_game_logs} game logs available. Limited sample size for accurate projection.",
+                "gamesWithData": games_with_data,
+                "totalGames": total_game_logs,
+            }
+        else:
+            prediction["dataQuality"] = {
+                "level": "good",
+                "message": "",
+                "gamesWithData": games_with_data,
+                "totalGames": total_game_logs,
+            }
 
         # Save to MongoDB
         prediction["_created"] = datetime.now(timezone.utc).isoformat()
