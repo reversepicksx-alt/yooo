@@ -1071,6 +1071,31 @@ DATA:
             historical_data["playerGameLogs"] = game_log_summary
 
         # =============================================
+        # BUILD REAL RECENT SAMPLES FROM GAME LOGS
+        # =============================================
+        # These replace Gemini-generated samples with actual API-Sports data
+        real_recent_samples = []
+        if player_game_logs:
+            gl_target_field_map = {
+                "pass_attempts": "passes_total", "shots": "shots_total", "shots_on_target": "shots_on",
+                "tackles": "tackles_total", "key_passes": "passes_key", "saves": "goals_saves",
+                "interceptions": "tackles_interceptions", "blocks": "tackles_blocks",
+                "dribbles": "dribbles_attempts", "fouls_drawn": "fouls_drawn",
+            }
+            gl_target = gl_target_field_map.get(req.propType, "passes_total")
+            for g in player_game_logs:
+                stat_val = g.get(gl_target)
+                if stat_val is not None and g.get("minutes", 0) > 0:
+                    real_recent_samples.append({
+                        "date": g.get("date", ""),
+                        "opponent": g.get("opponent", ""),
+                        "value": stat_val,
+                        "minutesPlayed": g.get("minutes", 0),
+                        "matchDifficulty": "medium",
+                        "venue": g.get("venue", ""),
+                    })
+
+        # =============================================
         # UPGRADE #4: Per-90 minute normalization
         # =============================================
         # Extract per-90 rates from player's season stats so Gemini sees
@@ -1287,7 +1312,7 @@ Field requirements:
 - subRisk: Take Claude's sub risk quantification directly.
 - gameFlowDynamics: Take Claude's game flow analysis directly.
 - uncertaintyNote: Key risk factor + data limitations.
-- recentSamples: 15+ from game logs with venue. If game logs unavailable, generate from season stats.
+- recentSamples: LEAVE EMPTY ([]). Backend will inject real data from API-Sports game logs.
 - probabilityCurve: 10 data points centered on projection."""
         )
         chat.with_model("gemini", "gemini-2.5-flash")
@@ -1390,6 +1415,9 @@ Return ONLY valid JSON. Synthesize all inputs. 15+ recentSamples with venue. 10p
         prediction.setdefault("confidenceLevel", "Medium")
         prediction.setdefault("confidenceInterval", [req.line * 0.8, req.line * 1.2])
         prediction.setdefault("recentSamples", [])
+        # OVERRIDE: Always use real game log data instead of AI-generated samples
+        if real_recent_samples:
+            prediction["recentSamples"] = real_recent_samples
         prediction.setdefault("bayesianMetrics", {"priorMean": req.line, "momentumEffect": 0, "covariateAdjustment": 0, "reversalFlag": "stable"})
         prediction.setdefault("probabilityCurve", [])
         prediction.setdefault("reasoning", "Analysis based on available data.")
@@ -1406,6 +1434,8 @@ Return ONLY valid JSON. Synthesize all inputs. 15+ recentSamples with venue. 10p
             prediction["opponentMatchStats"] = opponent_fixture_stats
         if historical_data.get("h2hPlayerStats"):
             prediction["h2hPlayerStats"] = historical_data["h2hPlayerStats"]
+        if historical_data.get("playerGameLogs"):
+            prediction["playerGameLogs"] = historical_data["playerGameLogs"]
 
         await db.predictions.insert_one(prediction)
         prediction.pop("_id", None)
