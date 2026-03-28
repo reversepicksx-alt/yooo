@@ -14,6 +14,7 @@ from typing import Optional
 from dotenv import load_dotenv
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 from motor.motor_asyncio import AsyncIOMotorClient
+from openai import OpenAI
 
 load_dotenv()
 
@@ -35,6 +36,7 @@ API_FOOTBALL_BASE = "https://v3.football.api-sports.io"
 WHOP_API_KEY = os.environ.get("WHOP_API_KEY")
 WHOP_COMPANY_ID = os.environ.get("WHOP_COMPANY_ID")
 OWNER_EMAIL = (os.environ.get("OWNER_EMAIL") or "josselj001@gmail.com").lower().strip()
+XAI_API_KEY = os.environ.get("XAI_API_KEY")
 
 LIFETIME_SUB_EMAILS = [
     "faron2allen@gmail.com", "jossel0701@gmail.com", "josselj001@gmail.com",
@@ -546,133 +548,7 @@ async def predict(req: PredictionRequest):
         actual_team_id = req.teamId
         league_id = req.leagueId or 39
 
-        # Tactical intel fetchers
-        async def get_opponent_formations():
-            """Get opponent's recent formations from last 5 fixtures"""
-            try:
-                fixtures = None
-                for s in [CURRENT_SEASON + 1, CURRENT_SEASON]:
-                    try:
-                        fixtures = await api_football_request("fixtures", {"team": req.opponentId, "last": 5, "season": s})
-                        if fixtures:
-                            break
-                    except Exception:
-                        continue
-                if not fixtures:
-                    return []
-                formations = []
-                fids = [f.get("fixture", {}).get("id") for f in fixtures if f.get("fixture", {}).get("id")]
-                # Fetch lineups for most recent match only (less API calls)
-                if fids:
-                    try:
-                        lineups = await api_football_request("fixtures/lineups", {"fixture": fids[0]})
-                        for l in (lineups or []):
-                            if l.get("team", {}).get("id") == req.opponentId:
-                                formations.append({
-                                    "formation": l.get("formation", ""),
-                                    "coach": l.get("coach", {}).get("name", ""),
-                                })
-                    except Exception:
-                        pass
-                return formations
-            except Exception:
-                return []
-
-        async def get_prematch_prediction():
-            """Get API-Sports pre-match prediction + actual bookmaker odds"""
-            try:
-                fixtures = None
-                for s in [CURRENT_SEASON + 1, CURRENT_SEASON]:
-                    try:
-                        fixtures = await api_football_request("fixtures", {
-                            "team": actual_team_id or 40,
-                            "next": 1,
-                            "season": s
-                        })
-                        if fixtures:
-                            break
-                    except Exception:
-                        continue
-                if not fixtures:
-                    return None
-
-                fid = fixtures[0].get("fixture", {}).get("id")
-                result = {}
-
-                # Get prediction
-                try:
-                    pred = await api_football_request("predictions", {"fixture": fid})
-                    if pred:
-                        p = pred[0]
-                        result["apiPrediction"] = {
-                            "winner": p.get("predictions", {}).get("winner", {}).get("name", ""),
-                            "advice": p.get("predictions", {}).get("advice", ""),
-                            "homeWinPct": p.get("predictions", {}).get("percent", {}).get("home", ""),
-                            "drawPct": p.get("predictions", {}).get("percent", {}).get("draw", ""),
-                            "awayWinPct": p.get("predictions", {}).get("percent", {}).get("away", ""),
-                            "homeForm": p.get("teams", {}).get("home", {}).get("league", {}).get("form", ""),
-                            "awayForm": p.get("teams", {}).get("away", {}).get("league", {}).get("form", ""),
-                        }
-                except Exception:
-                    pass
-
-                # Get actual bookmaker odds (MORE RELIABLE than prediction model)
-                try:
-                    odds = await api_football_request("odds", {"fixture": fid})
-                    if odds:
-                        for bk in odds[0].get("bookmakers", [])[:1]:
-                            for bet in bk.get("bets", []):
-                                if bet.get("name") == "Match Winner":
-                                    vals = {v["value"]: v["odd"] for v in bet.get("values", [])}
-                                    result["bookmakerOdds"] = {
-                                        "source": bk.get("name", ""),
-                                        "homeWin": vals.get("Home", ""),
-                                        "draw": vals.get("Draw", ""),
-                                        "awayWin": vals.get("Away", ""),
-                                    }
-                                    # Determine actual favorite from odds
-                                    try:
-                                        home_odd = float(vals.get("Home", 99))
-                                        away_odd = float(vals.get("Away", 99))
-                                        if home_odd < away_odd:
-                                            result["actualFavorite"] = "home"
-                                        else:
-                                            result["actualFavorite"] = "away"
-                                    except Exception:
-                                        pass
-                except Exception:
-                    pass
-
-                return result if result else None
-            except Exception:
-                return None
-
-        # Injury fetcher — get injuries for the upcoming fixture
-        async def get_fixture_injuries():
-            """Get injuries/suspensions for both teams in the upcoming fixture"""
-            try:
-                # Find the next fixture between these teams
-                fixtures = None
-                for s in [CURRENT_SEASON + 1, CURRENT_SEASON]:
-                    try:
-                        fixtures = await api_football_request("fixtures", {
-                            "team": actual_team_id or 40,
-                            "next": 1,
-                            "season": s
-                        })
-                        if fixtures:
-                            break
-                    except Exception:
-                        continue
-                if not fixtures:
-                    return []
-                fid = fixtures[0].get("fixture", {}).get("id")
-                injuries = await api_football_request("injuries", {"fixture": fid})
-                return injuries or []
-            except Exception:
-                return []
-
-        # Fire ALL API calls at once — including tactical intel + injuries
+        # Fire ALL API calls at once (optimized — removed formations, prematch, injuries)
         player_data_task = get_player_data()
         async def get_team_stats_multi_season(team_id, lid):
             for s in [CURRENT_SEASON + 1, CURRENT_SEASON, CURRENT_SEASON - 1]:
@@ -693,13 +569,10 @@ async def predict(req: PredictionRequest):
             return None
 
         standings_task = get_standings_multi_season()
-        fixtures_task = get_recent_fixtures_fast(actual_team_id or 40, 20)
-        formations_task = get_opponent_formations()
-        prediction_task = get_prematch_prediction()
-        injuries_task = get_fixture_injuries()
+        fixtures_task = get_recent_fixtures_fast(actual_team_id or 40, 30)
 
-        player_stats, team_stats, opponent_stats, h2h_data, standings_raw, recent_fixtures, opponent_formations, prematch_pred, injuries_data = await aio.gather(
-            player_data_task, team_stats_task, opponent_stats_task, h2h_task, standings_task, fixtures_task, formations_task, prediction_task, injuries_task
+        player_stats, team_stats, opponent_stats, h2h_data, standings_raw, recent_fixtures = await aio.gather(
+            player_data_task, team_stats_task, opponent_stats_task, h2h_task, standings_task, fixtures_task
         )
 
         if actual_team_id == 0 and player_stats:
@@ -877,10 +750,9 @@ async def predict(req: PredictionRequest):
             venue_filtered_opp_fixtures[:5] if len(venue_filtered_opp_fixtures) >= 3 else opponent_fixture_list[:5],
             req.opponentId, 5
         )
-        # Player game logs: prioritize venue-matching games but include all for sample size
-        venue_player_fixtures = [f for f in all_team_fixtures if f.get("venue") == player_venue]
-        mixed_player_fixtures = venue_player_fixtures[:6] + [f for f in all_team_fixtures if f.get("venue") != player_venue][:4]
-        player_game_logs_task = fetch_player_game_logs(mixed_player_fixtures[:10], req.playerId, 10)
+        # Player game logs: use ALL recent fixtures for maximum sample size
+        # AI will weight venue-matching games higher in analysis
+        player_game_logs_task = fetch_player_game_logs(all_team_fixtures[:20], req.playerId, 15)
 
         # Build a preliminary data blob for GPT to summarize while Wave 2 runs
         wave1_data = {
@@ -890,7 +762,6 @@ async def predict(req: PredictionRequest):
             "h2hData": h2h_data,
             "standings": standings,
             "recentFixtures": recent_fixtures,
-            "opponentRecentFormations": opponent_formations,
         }
         raw_wave1_json = json.dumps(wave1_data, default=str)[:12000]
 
@@ -928,31 +799,27 @@ DATA:
                 return None
 
         # =============================================
-        # TRIPLE AI: Claude Sonnet runs tactical analysis in parallel
+        # TRIPLE AI: Grok runs tactical analysis in parallel
         # =============================================
-        async def claude_tactical_analysis():
-            """Claude analyzes matchup, scenarios, PPDA, sub risk, game flow — the strategic brain"""
+        async def grok_tactical_analysis():
+            """Grok analyzes matchup, scenarios, PPDA, sub risk, game flow — the strategic brain"""
             try:
-                tactical_ai = LlmChat(
-                    api_key=EMERGENT_LLM_KEY,
-                    session_id=f"tac-{uuid.uuid4().hex[:8]}",
-                    system_message="You are an elite soccer tactical analyst. You analyze matchups, game scripts, and player props with mathematical precision. Always quote numbers. Be concise but thorough."
-                )
-                tactical_ai.with_model("anthropic", "claude-sonnet-4-5-20250929")
-
-                # Build a focused tactical brief for Claude
+                grok_client = OpenAI(api_key=XAI_API_KEY, base_url="https://api.x.ai/v1")
                 tactical_brief = {
-                    "opponent_formations": opponent_formations,
                     "opponent_stats": opponent_stats,
                     "team_stats": team_stats,
                     "h2h": h2h_data[:5] if h2h_data else [],
                     "standings": standings[:6] if standings else [],
-                    "prematch": prematch_pred,
-                    "injuries": injuries_data[:10] if injuries_data else [],
                 }
                 tactical_json = json.dumps(tactical_brief, default=str)[:6000]
 
-                result = await tactical_ai.send_message(UserMessage(text=f"""Analyze this matchup for a {req.propType} prop on {req.playerName} ({player_position or 'Unknown'}) playing for team vs {req.opponentName} ({req.venue}).
+                loop = aio.get_event_loop()
+                def _call_grok():
+                    return grok_client.chat.completions.create(
+                        model="grok-3-fast",
+                        messages=[
+                            {"role": "system", "content": "You are an elite soccer tactical analyst. You analyze matchups, game scripts, and player props with mathematical precision. Always quote numbers. Be concise but thorough."},
+                            {"role": "user", "content": f"""Analyze this matchup for a {req.propType} prop on {req.playerName} ({player_position or 'Unknown'}) playing for team vs {req.opponentName} ({req.venue}).
 Line: {req.line}
 
 CRITICAL: Player is {player_venue.upper()}. Opponent is {opponent_venue.upper()}.
@@ -966,64 +833,51 @@ POSITION-AWARE BASELINES (use these as sanity checks):
 - Forward/Striker: shots 2-4/game (elite 3-5), key passes 0-2, dribbles 1-4
 
 SAVES-SPECIFIC ANALYSIS (MANDATORY if propType is saves):
-1. Calculate opponent's expected shots: From opponent {opponent_venue} stats, what is their avg total shots per game?
+1. Calculate opponent's expected shots from {opponent_venue} stats.
 2. Of those, what % are on target? (League avg ~30-35%)
-3. Expected shots on target = total shots * on-target %
-4. Expected saves = shots on target - goals conceded
-5. If GK's team is favored → opponent attacks LESS → saves go DOWN
-6. If GK's team is underdog → opponent attacks MORE → saves go UP
-7. USE THIS AS YOUR SAVES CEILING. Do not predict above it.
+3. Expected saves = shots on target - goals conceded
+4. If GK's team is favored → opponent attacks LESS → saves go DOWN
+5. If GK's team is underdog → opponent attacks MORE → saves go UP
 
 Do this analysis:
 
-1. PPDA ESTIMATE: From the opponent's {opponent_venue.upper()} tackles/interceptions data, estimate their pressing intensity when {opponent_venue}.
-   - Calculate: (opponent total passes) / (opponent tackles + interceptions + fouls)
+1. PPDA ESTIMATE: From the opponent's {opponent_venue.upper()} data, estimate pressing intensity.
    - Classify: Aggressive (6-9), Standard (10-12), Passive (13+)
-   - Impact on {req.propType}: How does this pressing level shift the stat?
+   - Impact on {req.propType}?
 
-2. SUB RISK QUANTIFICATION: From the player's recent minutes data:
-   - What % of {player_venue.upper()} games was the player subbed before 75'?
-   - What's the average stat volume lost per early sub?
-   - Weighted drag on projection?
+2. SUB RISK: What % of {player_venue.upper()} games was the player subbed before 75'? Weighted drag?
 
-3. GAME FLOW PREDICTION:
-   - Who is favored? (use odds if available, else standings)
-   - Expected possession split AT {player_venue.upper()} for this team
-   - {player_venue.upper()} teams typically get 3-5% possession boost — factor this in
-   - When the favored team scores first, what happens to {req.propType}?
+3. GAME FLOW: Who is favored? Expected possession split? Impact of scoring first on {req.propType}?
 
 4. SCENARIO ANALYSIS with probabilities:
-   - Base case (most likely): probability % and expected {req.propType} value at {player_venue}
-   - Blowout (team dominates at {player_venue}): probability % and value
-   - Trailing (team falls behind at {player_venue}): probability % and value
-   - Cagey/tight: probability % and value
-   - Weighted projection = sum of (probability x value) for each scenario
+   - Base case, Blowout, Trailing, Cagey — each with probability % and expected value
+   - Weighted projection = sum of (probability x value)
 
-5. SENSITIVITY TESTS:
-   - If subbed at 60': pick survives or fails?
-   - If team down 2-0 early: survives or fails?
-   - If opponent parks bus: survives or fails?
-   - If red card at 30': survives or fails?
-   - Rating: ROBUST (3-4 pass) / MODERATE (2 pass) / FRAGILE (0-1 pass)
+5. SENSITIVITY: If subbed at 60'? Team down 2-0? Opponent parks bus? Red card? Rating: ROBUST/MODERATE/FRAGILE
 
 6. FINAL VERDICT: Over or under {req.line}? Confidence 0-100? Key risk?
 
 DATA:
-{tactical_json}"""))
-                return result
+{tactical_json}"""}
+                        ],
+                        max_tokens=1500,
+                        temperature=0.3,
+                    )
+                result = await loop.run_in_executor(None, _call_grok)
+                return result.choices[0].message.content if result.choices else None
             except Exception:
                 return None
 
         gpt_summary_task = gpt_summarize_data()
-        claude_tactical_task = claude_tactical_analysis()
+        grok_tactical_task = grok_tactical_analysis()
 
         try:
-            team_fixture_stats, opponent_fixture_stats, player_game_logs, gpt_data_summary, claude_analysis = await aio.wait_for(
-                aio.gather(team_fixture_stats_task, opponent_fixture_stats_task, player_game_logs_task, gpt_summary_task, claude_tactical_task),
+            team_fixture_stats, opponent_fixture_stats, player_game_logs, gpt_data_summary, grok_analysis = await aio.wait_for(
+                aio.gather(team_fixture_stats_task, opponent_fixture_stats_task, player_game_logs_task, gpt_summary_task, grok_tactical_task),
                 timeout=30
             )
         except aio.TimeoutError:
-            team_fixture_stats, opponent_fixture_stats, player_game_logs, gpt_data_summary, claude_analysis = [], [], [], None, None
+            team_fixture_stats, opponent_fixture_stats, player_game_logs, gpt_data_summary, grok_analysis = [], [], [], None, None
 
         historical_data = {
             "playerStats": player_stats,
@@ -1032,7 +886,6 @@ DATA:
             "h2hData": h2h_data,
             "standings": standings,
             "recentFixtures": recent_fixtures,
-            "opponentRecentFormations": opponent_formations,
         }
 
         # =============================================
@@ -1245,28 +1098,6 @@ DATA:
                 h2h_summary["maxVsOpponent"] = max(h2h_values)
             historical_data["h2hPlayerStats"] = h2h_summary
 
-        # Format injuries for prompt
-        injuries_summary = []
-        if injuries_data:
-            for inj in injuries_data:
-                injuries_summary.append({
-                    "player": inj.get("player", {}).get("name", ""),
-                    "team": inj.get("team", {}).get("name", ""),
-                    "type": inj.get("player", {}).get("type", ""),
-                    "reason": inj.get("player", {}).get("reason", ""),
-                })
-            historical_data["injuries"] = injuries_summary
-
-        # Only include prematch data if it matches the requested opponent
-        prematch_for_prompt = None
-        if prematch_pred:
-            # Check if the next fixture is actually against the requested opponent
-            pred_str = json.dumps(prematch_pred, default=str).lower()
-            opp_lower = req.opponentName.lower().split()[0]  # First word of opponent name
-            if opp_lower in pred_str:
-                prematch_for_prompt = prematch_pred
-                historical_data["prematchPrediction"] = prematch_pred
-
         # Extract player's ACTUAL position from API-Sports data
         player_position = ""
         if player_stats:
@@ -1289,16 +1120,16 @@ DATA:
                         player_position = pos
                         break
 
-        # 2. Send to Gemini — FINAL PREDICTOR (receives pre-analyzed intel from GPT + Claude)
+        # 2. Send to Gemini — FINAL PREDICTOR (receives pre-analyzed intel from GPT + Grok)
         chat = LlmChat(
             api_key=EMERGENT_LLM_KEY,
             session_id=f"predict-{uuid.uuid4().hex[:8]}",
             system_message="""You are the final-stage predictor in a triple-AI pipeline. You receive:
 1. A DATA SUMMARY from GPT (compact stats brief)
-2. A TACTICAL ANALYSIS from Claude (matchup analysis, PPDA, scenarios, sensitivity tests, sub risk)
+2. A TACTICAL ANALYSIS from Grok (matchup analysis, PPDA, scenarios, sensitivity tests, sub risk)
 3. DEEP MATCH DATA (per-fixture stats and player game logs)
 
-Your job: SYNTHESIZE all three inputs into a single, calibrated prediction JSON. Do NOT re-derive what Claude already analyzed — USE their analysis directly. Focus on:
+Your job: SYNTHESIZE all three inputs into a single, calibrated prediction JSON. Do NOT re-derive what Grok already analyzed — USE their analysis directly. Focus on:
 
 STEP 1: VALIDATE the player's role and POSITION from the data summary. Apply position baselines:
   - GK saves: Capped by opponent shots on target. If opponent avg 10 shots/game with 35% on target = 3.5 SOT. GK saves ~70% = ~2.5 saves. NEVER project above opponent SOT avg.
@@ -1307,18 +1138,18 @@ STEP 1: VALIDATE the player's role and POSITION from the data summary. Apply pos
   - Midfielder: shots 1-2 (AM 2-3), passes 30-50, key passes 1-3
   - Forward: shots 2-4 (elite 3-5), key passes 0-2
 
-STEP 2: CROSS-REFERENCE Claude's scenario analysis with the game log data — does the evidence support Claude's assessment?
-  - For SAVES: Check if Claude's saves projection exceeds opponent's shots-on-target average. If yes, CAP IT.
+STEP 2: CROSS-REFERENCE Grok's scenario analysis with the game log data — does the evidence support Grok's assessment?
+  - For SAVES: Check if Grok's saves projection exceeds opponent's shots-on-target average. If yes, CAP IT.
   - For SHOTS: Check if projection exceeds what's normal for this position. Midfielders rarely exceed 3 shots/game.
 
 STEP 3: CALIBRATE the final projected value using:
-- Claude's weighted scenario projection as the starting point
+- Grok's weighted scenario projection as the starting point
 - Game log data as the ground truth (per-90 rates, home/away splits)
 - GPT's per-90 rates and recent form numbers
-- If Claude and the data disagree, explain why and choose the more evidence-based number
+- If Grok and the data disagree, explain why and choose the more evidence-based number
 STEP 4: SET CONFIDENCE based on:
 - Data quality (sample size, recency)
-- Claude's sensitivity test results (ROBUST = 75+, MODERATE = 55-74, FRAGILE = 40-54)
+- Grok's sensitivity test results (ROBUST = 75+, MODERATE = 55-74, FRAGILE = 40-54)
 - How close the projection is to the line (within 0.5 = coin flip = max 55 confidence)
 
 DRIBBLE-SPECIFIC: Most volatile stat. AWAY + low-block = default UNDER when line is close to average.
@@ -1330,12 +1161,12 @@ JSON structure:
 
 Field requirements:
 - sharpSummary: 2-3 sentences. Core edge. Be direct.
-- reasoning: 2-3 paragraphs synthesizing all three AI inputs. Quote numbers from GPT's summary AND Claude's analysis. Cross-reference with game log data.
-- scenarioAnalysis: Take Claude's scenario breakdown directly — refine if game log data contradicts it.
+- reasoning: 2-3 paragraphs synthesizing all three AI inputs. Quote numbers from GPT's summary AND Grok's analysis. Cross-reference with game log data.
+- scenarioAnalysis: Take Grok's scenario breakdown directly — refine if game log data contradicts it.
 - keyEvidence: Quote 5-8 specific values from the data. Format: "Last 5: X (vs Team, venue), Y (vs Team, venue)..."
-- sensitivityTests: Take Claude's sensitivity results directly.
-- subRisk: Take Claude's sub risk quantification directly.
-- gameFlowDynamics: Take Claude's game flow analysis directly.
+- sensitivityTests: Take Grok's sensitivity results directly.
+- subRisk: Take Grok's sub risk quantification directly.
+- gameFlowDynamics: Take Grok's game flow analysis directly.
 - uncertaintyNote: Key risk factor + data limitations.
 - recentSamples: LEAVE EMPTY ([]). Backend will inject real data from API-Sports game logs.
 - probabilityCurve: 10 data points centered on projection."""
@@ -1404,12 +1235,12 @@ HARD RULE: Do NOT project saves above {round(opp_avg_sot * 0.85, 1)} unless extr
             pos_short = pos_map.get(player_position, player_position)
             position_context = f"\n[POSITION BASELINE] Player position: {player_position} ({pos_short}). Calibrate expectations for this position — {pos_short}s have different stat ceilings than other positions."
 
-        # Compose final data: GPT summary (compact) + Claude tactical analysis + Wave 2 deep data
+        # Compose final data: GPT summary (compact) + Grok tactical analysis + Wave 2 deep data
         final_data_parts = []
         if gpt_data_summary:
             final_data_parts.append(f"[GPT DATA SUMMARY]\n{gpt_data_summary}")
-        if claude_analysis:
-            final_data_parts.append(f"[CLAUDE TACTICAL ANALYSIS]\n{claude_analysis}")
+        if grok_analysis:
+            final_data_parts.append(f"[GROK TACTICAL ANALYSIS]\n{grok_analysis}")
         if wave2_supplement:
             final_data_parts.append(f"[DEEP MATCH DATA]\n{json.dumps(wave2_supplement, default=str)[:5000]}")
 
@@ -1437,18 +1268,17 @@ Stat mapping: pass_attempts=passes.total, shots=shots.total, shots_on_target=sho
 
 You have received pre-analyzed intel from two AI systems:
 1. GPT's DATA SUMMARY — compact statistical brief with per-90 rates, recent form, H2H, standings
-2. Claude's TACTICAL ANALYSIS — PPDA estimate, sub risk quantification, scenario analysis with probabilities, sensitivity tests, game flow prediction
+2. Grok's TACTICAL ANALYSIS — PPDA estimate, sub risk quantification, scenario analysis with probabilities, sensitivity tests, game flow prediction
 
 YOUR JOB: Synthesize both into the final calibrated prediction JSON.
-- Use Claude's scenario weights as your starting framework
+- Use Grok's scenario weights as your starting framework
 - Cross-check against GPT's data numbers
 - If they disagree, explain why in your reasoning and go with the more evidence-based number
 - Pull recentSamples from the game log data
-- Take Claude's sensitivityTests, subRisk, and gameFlowDynamics assessments — refine only if game log data contradicts them
+- Take Grok's sensitivityTests, subRisk, and gameFlowDynamics assessments — refine only if game log data contradicts them
 
 TACTICAL INTEL:
-- Opponent formations: {json.dumps(opponent_formations, default=str) if opponent_formations else 'See Claude analysis'}
-- Injuries: {json.dumps(injuries_summary, default=str) if injuries_summary else 'See Claude analysis'}
+- See Grok's tactical analysis above for formations, injuries, and matchup context
 
 CRITICAL ODDS RULE: If bookmaker odds present, lower odds = favored team. Trust bookmaker odds over all other signals.
 

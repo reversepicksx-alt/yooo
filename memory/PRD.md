@@ -112,6 +112,8 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 - [x] Live Tracking Cards with NOW/LINE/PACE/HIT%/progress bar, auto-refresh 2min (DONE - Mar 2026)
 - [x] Whop signup link on login page (DONE - Mar 2026)
 - [x] Systematic prediction fixes: saves ceiling from opponent SOT, position baselines, game flow logic (DONE - Mar 2026)
+- [x] Replaced Claude with Grok (xAI) for tactical analysis in Triple AI pipeline (DONE - Mar 2026)
+- [x] Optimized API calls: removed formations/prematch/injuries (-8 calls), increased fixture pool 20→30, game logs 10→15 (DONE - Mar 2026)
 
 ### P1 (High)
 - Push notifications for pick results
