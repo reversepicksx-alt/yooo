@@ -108,6 +108,9 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 - [x] H2H match limit increased from 3 to 10, parallelized fetches (DONE - Mar 2026)
 - [x] Saves prop stat mapping fix — was showing pass_attempts instead of actual saves (DONE - Mar 2026)
 - [x] recentSamples now built from REAL API-Sports game logs, not AI-generated (DONE - Mar 2026)
+- [x] Picks persistence moved from localStorage to MongoDB — no more data loss (DONE - Mar 2026)
+- [x] Live Tracking Cards with NOW/LINE/PACE/HIT%/progress bar, auto-refresh 2min (DONE - Mar 2026)
+- [x] Whop signup link on login page (DONE - Mar 2026)
 
 ### P1 (High)
 - Push notifications for pick results
