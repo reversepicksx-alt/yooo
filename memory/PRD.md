@@ -7,23 +7,24 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 - **Backend**: Python FastAPI (port 8001) with Gemini AI via emergentintegrations library
 - **Frontend**: React (port 3000) with custom dark CSS, PWA-enabled
 - **Database**: MongoDB (local)
-- **AI**: Gemini 2.5 Flash via Emergent Universal Key
+- **AI Pipeline**: Triple AI — GPT-4o-mini (data compression) -> Grok-4 (tactical analysis + web search) -> Gemini 2.5 Flash (final JSON calibration)
 - **Data Source**: API-Sports v3 (api-sports.io)
 - **Auth**: Whop API (subscription verification) + bcrypt password hashing + session tokens
 
 ## Core Requirements
-- 3-tab layout: PREDICT, TRACKING, CHAT
+- 2-tab layout: PREDICT, TRACKING
 - Pick of the Day featured card on Predict tab
-- AI Wizard: Step-by-Step (6 steps) + Natural Language Search
+- AI Wizard: Step-by-Step (6 steps single, 8 steps combo) + Natural Language Search (Tactical Search)
 - 30+ supported leagues (Domestic, International Club, International Team)
 - Player props: pass_attempts, shots, saves, tackles, key_passes, interceptions, blocks, dribbles, fouls_drawn, shots_on_target
 - Over/Under line predictions with confidence scores
-- Tactical chat AI assistant ("Tactical Uplink")
+- Tactical chat AI assistant ("Tactical Search")
 - Pick tracking with live/history views
 - Dark mode theme
 - Whop-based authentication with owner bypass, lifetime subs, and premium subscriptions
 - Forgot Password via Whop re-verification
 - PWA: installable, offline static caching, mobile-optimized
+- Combo/Stack predictions: 2-player combined analysis for same prop type
 
 ## User Personas
 - Sports bettors looking for data-driven prop predictions
@@ -31,14 +32,15 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 - App owner (josselj001@gmail.com)
 
 ## What's Been Implemented
-- [x] Full backend with FastAPI + Gemini AI integration
+- [x] Full backend with FastAPI + Triple AI integration (GPT-4o-mini -> Grok-4 -> Gemini 2.5 Flash)
 - [x] API-Sports proxy (leagues, teams, players, stats, fixtures, H2H, standings)
 - [x] Gemini-powered prediction engine with Bayesian metrics
-- [x] Tactical Uplink chat with multi-turn Gemini conversations
+- [x] Tactical Search chat with multi-turn Gemini conversations
 - [x] Natural language query parsing
 - [x] React frontend with dark mode
-- [x] 3-tab navigation (Predict/Tracking/Chat)
+- [x] 2-tab navigation (Predict/Tracking)
 - [x] AI Wizard with 6-step flow + breadcrumbs
+- [x] Combo/Stack mode: 8-step flow for 2-player combined predictions
 - [x] League selection organized by category
 - [x] Player search with fallback across seasons
 - [x] Projection card with confidence intervals, probability curves, recommendations
@@ -55,40 +57,23 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 - [x] Enhanced Gemini prompt with pre-game tactical intel
 - [x] Bookmaker Odds integration for accurate favorites/underdogs
 - [x] Forgot Password feature
-
-## Bug Fixes (Mar 2026 - Code Audit)
-- [x] Natural search no longer hardcoded to league 39 - detects player's actual league from majorLeagues array
-- [x] Team/opponent stats now try multiple seasons (2026, 2025, 2024) instead of only CURRENT_SEASON
-- [x] stats_list[-1] used for current team (transferred players get correct team, not old one)
-- [x] settle-picks handles "push" (actual == line) instead of marking as miss
-- [x] useEffect savedPicks dependency fixed (livePickCount instead of filter().length)
-- [x] localStorage race condition fixed (picksInitialized ref skips first render write)
-- [x] Frontend displays "PUSH" label for push results in tracking history
-- [x] Standings fetcher also uses multi-season fallback
-- [x] settle-picks timestamp guard — only settles against fixtures AFTER the pick was created (prevents matching old meetings)
-
-## Enhanced Gemini Reasoning (Mar 2026 - Grok-style upgrade)
-- [x] Chain-of-thought reasoning: Gemini now follows a 10-step structured analysis before giving projection
-- [x] Key Evidence field: Quotes exact stat values with dates, opponents, and venue splits
-- [x] Scenario Analysis field: Covers base case, blowout, trailing, cagey game scenarios with probability weights
-- [x] Uncertainty Note field: Explicitly flags small sample sizes, missing data, coin-flip zones
-- [x] Injury data integration: Fetches injuries/suspensions for the upcoming fixture via API-Sports
-- [x] Injury impact rules in prompt: How missing players affect stat distributions
-- [x] Sensitivity Tests: Explicit "what if" checks — sub at 60', down 2-0, bus parking, red card. Rates pick as ROBUST/MODERATE/FRAGILE
-- [x] Substitution Risk Quantification: Calculates % of games with early sub, avg stat volume lost, weighted projection drag
-- [x] Game Flow Dynamics: First-to-score possession impact, leading vs trailing stat adjustments
-- [x] PPDA Approximation: Estimates opponent pressing intensity from tackles/interceptions to predict pass volume shifts
-## Intelligence Upgrades v4 (Mar 2026 - Triple AI Pipeline + Heat Maps)
-- [x] TRIPLE AI ARCHITECTURE:
-  - GPT-4.1-mini (Data Processor): Compresses 15k raw JSON into compact analytical brief
-  - Claude Sonnet 4.5 (Tactical Analyst): PPDA estimation, sub risk quantification, scenario analysis, sensitivity tests, game flow prediction
-  - Gemini 2.5 Flash (Final Predictor): Synthesizes GPT + Claude outputs into calibrated prediction JSON
-  - All three run IN PARALLEL during Wave 2 (~38s total, down from ~58s original)
-- [x] Per-fixture team/opponent match stats via fixtures/statistics (possession, shots, passes per game)
-- [x] Player game-by-game box scores via fixtures/players (individual stat lines with minutes)
-- [x] Match Stat Zones visual component: Side-by-side team vs opponent stat bars
-- [x] Graceful degradation: 25s timeout on Wave 2 + AI analysis, falls back to raw data if needed
-- [x] Gemini prompt optimized: Receives pre-analyzed intel, focuses on calibration and JSON formatting
+- [x] H2H match limit increased from 3 to 10, parallelized fetches
+- [x] Saves prop stat mapping fix
+- [x] recentSamples built from REAL API-Sports game logs (not AI hallucinated)
+- [x] Picks persistence in MongoDB (no more localStorage data loss)
+- [x] Live Tracking Cards with NOW/LINE/PACE/HIT%/progress bar, auto-refresh 2min
+- [x] Whop signup link on login page
+- [x] Systematic prediction fixes: saves ceiling, position baselines, game flow logic
+- [x] Replaced Claude with Grok (xAI) for tactical analysis in Triple AI pipeline
+- [x] Grok with live web search for real-time injuries, lineups, team news
+- [x] Fixed duplicate player ID issue — name-based fallback for game log matching
+- [x] Elite GK Saves Formula: Opp SoT x Save% x Context Multiplier with full UI breakdown
+- [x] Matchup Overview on analysis page: possession bar, game type, moneyline, tactical alerts
+- [x] Push notifications: in-app toast + notification bell with history
+- [x] Re-analyze button on saved picks
+- [x] Optimized API calls: removed formations/injuries endpoints, increased fixture pool
+- [x] **Matchup Overview locked to real data** — possession, moneyline, game type, team names computed from actual API-Sports fixture stats instead of AI-generated (prevents inconsistency between predictions)
+- [x] **Combo/Stack Prediction feature** — Stack 2 players from same game/league, same prop type, get combined projected total vs combined line with individual breakdowns
 
 ## Auth System Details
 - Owner email (josselj001@gmail.com): Bypasses password entirely, instant login
@@ -102,36 +87,21 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 - API-Sports key in backend/.env
 - Emergent LLM Key in backend/.env
 - Whop API key + Company ID in backend/.env
+- xAI (Grok) API key in backend/.env
 
 ## Prioritized Backlog
 ### P0 (Critical)
-- [x] H2H match limit increased from 3 to 10, parallelized fetches (DONE - Mar 2026)
-- [x] Saves prop stat mapping fix — was showing pass_attempts instead of actual saves (DONE - Mar 2026)
-- [x] recentSamples now built from REAL API-Sports game logs, not AI-generated (DONE - Mar 2026)
-- [x] Picks persistence moved from localStorage to MongoDB — no more data loss (DONE - Mar 2026)
-- [x] Live Tracking Cards with NOW/LINE/PACE/HIT%/progress bar, auto-refresh 2min (DONE - Mar 2026)
-- [x] Whop signup link on login page (DONE - Mar 2026)
-- [x] Systematic prediction fixes: saves ceiling from opponent SOT, position baselines, game flow logic (DONE - Mar 2026)
-- [x] Replaced Claude with Grok (xAI) for tactical analysis in Triple AI pipeline (DONE - Mar 2026)
-- [x] Upgraded Grok with live web search for real-time injuries, lineups, team news (DONE - Mar 2026)
-- [x] Switched to grok-4-1-fast-non-reasoning with tools=[web_search] for real web intel (DONE - Mar 2026)
-- [x] Restored bookmaker odds (critical for determining favorite/game flow) (DONE - Mar 2026)
-- [x] Fixed duplicate player ID issue — name-based fallback for game log matching (DONE - Mar 2026)
-- [x] Elite GK Saves Formula: Opp SoT × Save% × Context Multiplier with full UI breakdown (DONE - Mar 2026)
-- [x] Added matchup overview to analysis page: possession bar, game type, moneyline, tactical alerts (DONE - Mar 2026)
-- [x] Push notifications: in-app toast + notification bell with history (DONE - Mar 2026)
-- [x] Re-analyze button on saved picks (DONE - Mar 2026)
-- [x] Optimized API calls: removed formations/injuries endpoints (-6 calls), increased fixture pool 20→30, game logs up to 15 (DONE - Mar 2026)
+All P0 items completed.
 
 ### P1 (High)
-- [x] Push notifications for pick results — in-app toast + notification bell with history (DONE - Mar 2026)
-- [x] Re-analyze button on saved picks — re-runs prediction with fresh data (DONE - Mar 2026)
+All P1 items completed.
 
 ### P2 (Medium)
-- Slip correlation analysis
-- Re-analyze pick button for saved picks
-- Prediction self-correction feedback loop (store outcomes → improve calibration)
+- Slip correlation analysis — analyze multiple saved picks for the same game to flag conflicting or boosting correlations
+- Prediction self-correction feedback loop — store outcomes after settlement and feed calibration patterns back to Gemini
 
 ### Future
 - Add more prop types based on user feedback
 - Performance optimization for API-Sports rate limits
+- Refactor server.py (2200+ lines) and App.js (2000+ lines) into modular files
+- Combo pick saving to tracking (currently view-only)
