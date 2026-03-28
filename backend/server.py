@@ -1429,6 +1429,71 @@ Return ONLY valid JSON. Synthesize all inputs. 15+ recentSamples with venue. 10p
         prediction.setdefault("reasoning", "Analysis based on available data.")
         prediction.setdefault("tacticalInsights", "")
 
+        # OVERRIDE: Lock matchupOverview to REAL DATA so it never fluctuates between predictions
+        real_matchup = prediction.get("matchupOverview", {})
+        # 1. Possession from real fixture stats (venue-filtered averages)
+        if team_fixture_stats or opponent_fixture_stats:
+            def avg_possession(stats_list):
+                vals = []
+                for s in (stats_list or []):
+                    p = s.get("possession")
+                    if p is not None:
+                        try:
+                            vals.append(float(str(p).replace("%", "")))
+                        except (ValueError, TypeError):
+                            pass
+                return round(sum(vals) / len(vals), 0) if vals else None
+            team_poss = avg_possession(team_fixture_stats)
+            opp_poss = avg_possession(opponent_fixture_stats)
+            if team_poss is not None and opp_poss is not None:
+                # Normalize so they add to 100
+                total = team_poss + opp_poss
+                if total > 0:
+                    team_poss = round(team_poss / total * 100)
+                    opp_poss = 100 - team_poss
+                real_matchup["expectedPossession"] = {
+                    "home": team_poss if player_venue == "home" else opp_poss,
+                    "away": opp_poss if player_venue == "home" else team_poss
+                }
+            elif team_poss is not None:
+                real_matchup["expectedPossession"] = {
+                    "home": team_poss if player_venue == "home" else (100 - team_poss),
+                    "away": (100 - team_poss) if player_venue == "home" else team_poss
+                }
+        # 2. Moneyline + favorite from real odds data
+        if match_odds:
+            if match_odds.get("bookmakerOdds"):
+                bo = match_odds["bookmakerOdds"]
+                real_matchup["moneyline"] = {
+                    "home": bo.get("homeWin", "N/A"),
+                    "draw": bo.get("draw", "N/A"),
+                    "away": bo.get("awayWin", "N/A")
+                }
+            if match_odds.get("favorite"):
+                real_matchup["favorite"] = match_odds["favorite"]
+        # 3. Game type from real stats — deterministic classification
+        if team_fixture_stats and opponent_fixture_stats:
+            def avg_stat(stats_list, key):
+                vals = [s.get(key) for s in stats_list if s.get(key) is not None]
+                return sum(vals) / len(vals) if vals else 0
+            team_avg_shots = avg_stat(team_fixture_stats, "totalShots")
+            opp_avg_shots = avg_stat(opponent_fixture_stats, "totalShots")
+            combined_shots = team_avg_shots + opp_avg_shots
+            poss_diff = abs((real_matchup.get("expectedPossession", {}).get("home", 50)) - 50)
+            if combined_shots >= 28:
+                real_matchup["expectedGameType"] = "open"
+            elif combined_shots <= 18:
+                real_matchup["expectedGameType"] = "cagey"
+            elif poss_diff >= 12:
+                real_matchup["expectedGameType"] = "one-sided"
+            else:
+                real_matchup["expectedGameType"] = "high-tempo" if combined_shots >= 23 else "cagey"
+        # 4. Always set team names from request data (deterministic)
+        player_team = player_stats.get("statistics", [{}])[0].get("team", {}).get("name", "") if player_stats else ""
+        real_matchup["homeTeam"] = player_team if player_venue == "home" else req.opponentName
+        real_matchup["awayTeam"] = req.opponentName if player_venue == "home" else player_team
+        prediction["matchupOverview"] = real_matchup
+
         # Save to MongoDB
         prediction["_created"] = datetime.now(timezone.utc).isoformat()
         prediction["_request"] = req.model_dump()
