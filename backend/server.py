@@ -382,38 +382,89 @@ async def search_players(req: PlayerSearchRequest):
 
     all_players = []
 
-    # Strategy 1: Search within specified league
+    # Strategy 1: Search within specified league — search MULTIPLE seasons in parallel and merge
+    # This catches both transferred players (in newest season) AND players not yet registered (in current season)
     if req.league_id:
-        for s in [season, season - 1, season + 1, season - 2]:
+        async def search_season(s):
             try:
                 data = await api_football_request("players", {"search": req.query, "league": req.league_id, "season": s})
-                if data:
-                    all_players.extend([extract_player(item) for item in data])
-                    break
+                return [(extract_player(item), s) for item in (data or [])]
             except Exception:
-                continue
+                return []
 
-        # Strategy 1b: If full name returned nothing in league, try last name within SAME league
-        if not all_players and " " in req.query:
-            last_name = req.query.strip().split()[-1]
-            for s in [season, season - 1, season + 1]:
+        # Search newest + current season in parallel
+        results_by_season = await aio.gather(
+            search_season(season + 1),
+            search_season(season),
+        )
+        # Merge: newer season data wins for team assignment
+        season_data = {}
+        for season_results in results_by_season:
+            for player_data, found_season in season_results:
+                pid = player_data["id"]
+                if pid not in season_data or found_season > season_data[pid][1]:
+                    season_data[pid] = (player_data, found_season)
+                elif found_season == season_data[pid][1]:
+                    pass  # Same season, keep first
+                else:
+                    # Older season — only add if we don't have this player yet, keep newer team
+                    if pid not in season_data:
+                        season_data[pid] = (player_data, found_season)
+        all_players = [v[0] for v in season_data.values()]
+
+        # If still nothing, try older seasons
+        if not all_players:
+            for s in [season - 1, season - 2]:
                 try:
-                    data = await api_football_request("players", {"search": last_name, "league": req.league_id, "season": s})
+                    data = await api_football_request("players", {"search": req.query, "league": req.league_id, "season": s})
                     if data:
                         all_players.extend([extract_player(item) for item in data])
                         break
                 except Exception:
                     continue
 
-    # Strategy 2: If no results, try major domestic leagues in parallel for better team info
+        # Strategy 1b: If full name returned nothing in league, try last name within SAME league
+        if not all_players and " " in req.query:
+            last_name = req.query.strip().split()[-1]
+            async def search_season_lastname(s):
+                try:
+                    data = await api_football_request("players", {"search": last_name, "league": req.league_id, "season": s})
+                    return [(extract_player(item), s) for item in (data or [])]
+                except Exception:
+                    return []
+            results_by_season = await aio.gather(
+                search_season_lastname(season + 1),
+                search_season_lastname(season),
+            )
+            season_data = {}
+            for season_results in results_by_season:
+                for player_data, found_season in season_results:
+                    pid = player_data["id"]
+                    if pid not in season_data or found_season > season_data[pid][1]:
+                        season_data[pid] = (player_data, found_season)
+            all_players = [v[0] for v in season_data.values()]
+            if not all_players:
+                for s in [season - 1]:
+                    try:
+                        data = await api_football_request("players", {"search": last_name, "league": req.league_id, "season": s})
+                        if data:
+                            all_players.extend([extract_player(item) for item in data])
+                            break
+                    except Exception:
+                        continue
+
+    # Strategy 2: If no results, try major domestic leagues — newest season first
     if not all_players:
         major_leagues = [39, 140, 135, 78, 61, 253, 71, 307]
         async def try_league(lid):
-            try:
-                data = await api_football_request("players", {"search": req.query, "league": lid, "season": season})
-                return [extract_player(item) for item in (data or [])]
-            except Exception:
-                return []
+            for s in [season + 1, season]:
+                try:
+                    data = await api_football_request("players", {"search": req.query, "league": lid, "season": s})
+                    if data:
+                        return [extract_player(item) for item in data]
+                except Exception:
+                    continue
+            return []
         results = await aio.gather(*[try_league(lid) for lid in major_leagues])
         for r in results:
             all_players.extend(r)
@@ -445,6 +496,30 @@ async def search_players(req: PlayerSearchRequest):
             seen_ids[pid] = p
         elif p["teamName"] and not seen_ids[pid]["teamName"]:
             seen_ids[pid] = p
+
+    # TEAM FRESHNESS CHECK: Verify player teams against newest season data
+    # This catches off-season transfers that older season data doesn't reflect
+    newest_season = season + 1
+    pids_to_refresh = list(seen_ids.keys())[:10]  # Cap at 10 to limit API calls
+    if pids_to_refresh:
+        async def refresh_team(player_id):
+            try:
+                data = await api_football_request("players", {"id": player_id, "season": newest_season})
+                if data:
+                    stats = data[0].get("statistics", [])
+                    if stats:
+                        newest_team = stats[-1].get("team", {})
+                        return (player_id, newest_team.get("id", 0), newest_team.get("name", ""))
+            except Exception:
+                pass
+            return None
+        refreshed = await aio.gather(*[refresh_team(pid) for pid in pids_to_refresh])
+        for r in refreshed:
+            if r and r[1] and r[2]:
+                pid, new_tid, new_tname = r
+                if pid in seen_ids and seen_ids[pid]["teamId"] != new_tid:
+                    seen_ids[pid]["teamId"] = new_tid
+                    seen_ids[pid]["teamName"] = new_tname
 
     players = list(seen_ids.values())
 
