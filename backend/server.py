@@ -680,8 +680,9 @@ async def predict(req: PredictionRequest):
 
         # 2. Player game-by-game box scores from recent fixtures
         async def fetch_player_game_logs(fixture_list, player_id, limit=8):
-            """Fetch player's individual stats from each recent fixture"""
+            """Fetch player's individual stats from each recent fixture. Falls back to name match for duplicate IDs."""
             results = []
+            player_name_lower = req.playerName.lower().split()[-1] if req.playerName else ""
             for fix in fixture_list[:limit]:
                 fid = fix.get("fixtureId")
                 if not fid:
@@ -690,59 +691,64 @@ async def predict(req: PredictionRequest):
                     data = await api_football_request("fixtures/players", {"fixture": fid})
                     if not data:
                         continue
-                    # Find our player in the fixture
-                    found = False
+                    # Find our player — try ID first, then name fallback for duplicate ID cases
+                    matched_stats = None
                     for team_data in data:
                         for p in team_data.get("players", []):
-                            if p.get("player", {}).get("id") == player_id:
+                            pid = p.get("player", {}).get("id")
+                            pname = (p.get("player", {}).get("name") or "").lower()
+                            if pid == player_id or (player_name_lower and player_name_lower in pname):
                                 stats = p.get("statistics", [{}])[0] if p.get("statistics") else {}
                                 minutes = stats.get("games", {}).get("minutes") or 0
-                                rating = stats.get("games", {}).get("rating")
-                                # Extract ALL prop-relevant stats
-                                game_log = {
-                                    "date": fix.get("date", "")[:10],
-                                    "opponent": fix.get("opponent", ""),
-                                    "venue": fix.get("venue", ""),
-                                    "score": f"{fix.get('homeGoals',0)}-{fix.get('awayGoals',0)}",
-                                    "minutes": minutes,
-                                    "rating": float(rating) if rating else None,
-                                    "passes_total": stats.get("passes", {}).get("total"),
-                                    "passes_key": stats.get("passes", {}).get("key"),
-                                    "passes_accuracy": stats.get("passes", {}).get("accuracy"),
-                                    "shots_total": stats.get("shots", {}).get("total"),
-                                    "shots_on": stats.get("shots", {}).get("on"),
-                                    "tackles_total": stats.get("tackles", {}).get("total"),
-                                    "tackles_interceptions": stats.get("tackles", {}).get("interceptions"),
-                                    "tackles_blocks": stats.get("tackles", {}).get("blocks"),
-                                    "dribbles_attempts": stats.get("dribbles", {}).get("attempts"),
-                                    "dribbles_success": stats.get("dribbles", {}).get("success"),
-                                    "fouls_drawn": stats.get("fouls", {}).get("drawn"),
-                                    "fouls_committed": stats.get("fouls", {}).get("committed"),
-                                    "duels_total": stats.get("duels", {}).get("total"),
-                                    "duels_won": stats.get("duels", {}).get("won"),
-                                    "goals_saves": stats.get("goals", {}).get("saves"),
-                                }
-                                # Calculate per-90 for the target stat
-                                stat_field_map = {
-                                    "pass_attempts": "passes_total",
-                                    "shots": "shots_total",
-                                    "shots_on_target": "shots_on",
-                                    "tackles": "tackles_total",
-                                    "key_passes": "passes_key",
-                                    "saves": "goals_saves",
-                                    "interceptions": "tackles_interceptions",
-                                    "blocks": "tackles_blocks",
-                                    "dribbles": "dribbles_attempts",
-                                    "fouls_drawn": "fouls_drawn",
-                                }
-                                raw_val = game_log.get(stat_field_map.get(req.propType, ""), None)
-                                if raw_val is not None and minutes > 0:
-                                    game_log["targetStatPer90"] = round((raw_val / minutes) * 90, 2)
-                                results.append(game_log)
-                                found = True
-                                break
-                        if found:
+                                if minutes > 0:
+                                    matched_stats = stats
+                                    break
+                        if matched_stats:
                             break
+                    if not matched_stats:
+                        continue
+                    stats = matched_stats
+                    minutes = stats.get("games", {}).get("minutes") or 0
+                    rating = stats.get("games", {}).get("rating")
+                    game_log = {
+                        "date": fix.get("date", "")[:10],
+                        "opponent": fix.get("opponent", ""),
+                        "venue": fix.get("venue", ""),
+                        "score": f"{fix.get('homeGoals',0)}-{fix.get('awayGoals',0)}",
+                        "minutes": minutes,
+                        "rating": float(rating) if rating else None,
+                        "passes_total": stats.get("passes", {}).get("total"),
+                        "passes_key": stats.get("passes", {}).get("key"),
+                        "passes_accuracy": stats.get("passes", {}).get("accuracy"),
+                        "shots_total": stats.get("shots", {}).get("total"),
+                        "shots_on": stats.get("shots", {}).get("on"),
+                        "tackles_total": stats.get("tackles", {}).get("total"),
+                        "tackles_interceptions": stats.get("tackles", {}).get("interceptions"),
+                        "tackles_blocks": stats.get("tackles", {}).get("blocks"),
+                        "dribbles_attempts": stats.get("dribbles", {}).get("attempts"),
+                        "dribbles_success": stats.get("dribbles", {}).get("success"),
+                        "fouls_drawn": stats.get("fouls", {}).get("drawn"),
+                        "fouls_committed": stats.get("fouls", {}).get("committed"),
+                        "duels_total": stats.get("duels", {}).get("total"),
+                        "duels_won": stats.get("duels", {}).get("won"),
+                        "goals_saves": stats.get("goals", {}).get("saves"),
+                    }
+                    stat_field_map = {
+                        "pass_attempts": "passes_total",
+                        "shots": "shots_total",
+                        "shots_on_target": "shots_on",
+                        "tackles": "tackles_total",
+                        "key_passes": "passes_key",
+                        "saves": "goals_saves",
+                        "interceptions": "tackles_interceptions",
+                        "blocks": "tackles_blocks",
+                        "dribbles": "dribbles_attempts",
+                        "fouls_drawn": "fouls_drawn",
+                    }
+                    raw_val = game_log.get(stat_field_map.get(req.propType, ""), None)
+                    if raw_val is not None and minutes > 0:
+                        game_log["targetStatPer90"] = round((raw_val / minutes) * 90, 2)
+                    results.append(game_log)
                 except Exception:
                     continue
             return results
@@ -843,73 +849,49 @@ DATA:
         # TRIPLE AI: Grok runs tactical analysis with LIVE WEB SEARCH
         # =============================================
         async def grok_tactical_analysis():
-            """Grok analyzes matchup using API data + real-time web search for injuries, lineups, news"""
+            """Grok-4 with web search for real-time injury/lineup intel + tactical analysis"""
             try:
                 grok_client = OpenAI(api_key=XAI_API_KEY, base_url="https://api.x.ai/v1")
+                player_team = player_stats.get("statistics", [{}])[0].get("team", {}).get("name", "") if player_stats else ""
+
                 tactical_brief = {
                     "opponent_stats": opponent_stats,
                     "team_stats": team_stats,
-                    "h2h": h2h_data[:5] if h2h_data else [],
+                    "h2h": h2h_data[:3] if h2h_data else [],
                     "standings": standings[:6] if standings else [],
                     "odds": match_odds,
                 }
-                tactical_json = json.dumps(tactical_brief, default=str)[:6000]
+                tactical_json = json.dumps(tactical_brief, default=str)[:5000]
 
                 odds_context = ""
                 if match_odds and match_odds.get("bookmakerOdds"):
                     bo = match_odds["bookmakerOdds"]
                     fav = match_odds.get("favorite", "unknown")
-                    odds_context = f"""
-BOOKMAKER ODDS ({bo.get('source','')})
-Home: {bo.get('homeWin','')} | Draw: {bo.get('draw','')} | Away: {bo.get('awayWin','')}
-FAVORITE: {fav.upper()} team. Lower odds = more favored. Trust these over standings."""
+                    odds_context = f"ODDS: Home={bo.get('homeWin','')} Draw={bo.get('draw','')} Away={bo.get('awayWin','')} FAV={fav.upper()}"
 
                 loop = aio.get_event_loop()
                 def _call_grok():
-                    return grok_client.chat.completions.create(
-                        model="grok-3-fast",
-                        messages=[
-                            {"role": "system", "content": "You are an elite soccer tactical analyst with access to live web search. Use your web search to find CURRENT injury news, confirmed lineups, team news, and recent form for this specific matchup. Combine web intel with the provided API data for the most accurate analysis. Always quote numbers. Be concise but thorough."},
-                            {"role": "user", "content": f"""Analyze this matchup for a {req.propType} prop on {req.playerName} ({player_position or 'Unknown'}) playing for team vs {req.opponentName} ({req.venue}).
-Line: {req.line}
-{odds_context}
+                    return grok_client.responses.create(
+                        model="grok-4-1-fast-non-reasoning",
+                        tools=[{"type": "web_search"}],
+                        input=[
+                            {"role": "system", "content": "Elite soccer tactical analyst with web search. Search for CURRENT injury reports, confirmed lineups, team news. Combine with API data. Be concise, quote numbers."},
+                            {"role": "user", "content": f"""Analyze {req.propType} prop on {req.playerName} ({player_position or 'Unknown'}) — {player_team} vs {req.opponentName} ({player_venue.upper()}). Line: {req.line}. {odds_context}
 
-CRITICAL: Player is {player_venue.upper()}. Opponent is {opponent_venue.upper()}.
+1. WEB SEARCH: Current injuries, lineup news, key absences for both teams
+2. MATCHUP: Home vs Away, favorite (from odds), expected possession %, game type (open/cagey/one-sided)
+3. POSITION BASELINE: {player_position} expected range for {req.propType}
+4. SAVES (if saves): Opponent SOT avg → saves ceiling. Favored GK = fewer saves.
+5. SCENARIOS: Base/Blowout/Trailing/Cagey — probability % and expected value
+6. SENSITIVITY: Sub risk, red card — ROBUST/MODERATE/FRAGILE
+7. VERDICT: Over or under {req.line}? Confidence 0-100?
 
-STEP 0 — WEB SEARCH: Search for the latest news on this matchup:
-- Is {req.playerName} confirmed fit/starting?
-- Any injuries, suspensions, or roster changes for either team?
-- Recent team news that could impact this prop?
-
-POSITION BASELINES:
-- GK saves: Tied to OPPONENT shots per game. If opponent avg 10 shots/game, ~35% on target = 3.5 SOT. GK save rate ~70% = ~2.5 saves. NEVER predict saves above opponent SOT avg.
-- GK saves INVERSE: Favored team GK = FEWER saves. Underdog GK = MORE saves.
-- Defender: tackles 2-4, interceptions 1-3, blocks 0-2, shots 0-1
-- Midfielder: shots 1-2 (AM 2-3), key passes 1-3, tackles 1-3
-- Forward: shots 2-4 (elite 3-5), key passes 0-2
-
-SAVES-SPECIFIC (if saves prop):
-1. Opponent expected shots from {opponent_venue} stats
-2. Expected SOT = total shots * 35%
-3. Expected saves = SOT - goals conceded
-4. Favored team GK → saves DOWN. Underdog GK → saves UP.
-
-ANALYSIS:
-1. PPDA ESTIMATE: Opponent pressing intensity. Impact on {req.propType}?
-2. SUB RISK: Likelihood of early sub? Weighted drag on stat?
-3. GAME FLOW: Who is favored (USE ODDS)? Possession split? Scoring first impact?
-4. SCENARIO ANALYSIS: Base case, Blowout, Trailing, Cagey — probability % and expected value each. Weighted projection.
-5. SENSITIVITY: Subbed 60'? Down 2-0? Opponent parks bus? Red card? ROBUST/MODERATE/FRAGILE
-6. FINAL VERDICT: Over or under {req.line}? Confidence 0-100? Key risk?
-
-API DATA:
-{tactical_json}"""}
+DATA: {tactical_json}"""}
                         ],
-                        max_tokens=1500,
-                        temperature=0.3,
+                        max_output_tokens=1200,
                     )
                 result = await loop.run_in_executor(None, _call_grok)
-                return result.choices[0].message.content if result.choices else None
+                return result.output_text if result else None
             except Exception:
                 return None
 
@@ -919,7 +901,7 @@ API DATA:
         try:
             team_fixture_stats, opponent_fixture_stats, player_game_logs, gpt_data_summary, grok_analysis = await aio.wait_for(
                 aio.gather(team_fixture_stats_task, opponent_fixture_stats_task, player_game_logs_task, gpt_summary_task, grok_tactical_task),
-                timeout=30
+                timeout=45
             )
         except aio.TimeoutError:
             team_fixture_stats, opponent_fixture_stats, player_game_logs, gpt_data_summary, grok_analysis = [], [], [], None, None
@@ -1203,9 +1185,10 @@ DRIBBLE-SPECIFIC: Most volatile stat. AWAY + low-block = default UNDER when line
 Return ONLY valid JSON (no markdown).
 
 JSON structure:
-{"player":{"id":int,"name":"","team":"","role":"","position":""},"opponent":"","league":"","propType":"","line":0,"projectedValue":0,"recommendation":"over|under","confidenceScore":0-100,"confidenceLevel":"Low|Medium|High|Very High","confidenceInterval":[lo,hi],"recentSamples":[{"date":"","opponent":"","value":0,"minutesPlayed":0,"matchDifficulty":"low|medium|high","venue":"home|away"}],"bayesianMetrics":{"priorMean":0,"momentumEffect":0,"covariateAdjustment":0,"reversalFlag":"stable|upward_reversal_likely|downward_reversal_likely"},"probabilityCurve":[{"value":0,"probability":0}],"tacticalAlerts":[{"type":"injury|lineup|tactical|sub_risk","message":"","severity":"low|medium|high"}],"sharpSummary":"","reasoning":"","scenarioAnalysis":"","keyEvidence":"","uncertaintyNote":"","sensitivityTests":"","subRisk":"","gameFlowDynamics":""}
+{"player":{"id":int,"name":"","team":"","role":"","position":""},"opponent":"","league":"","propType":"","line":0,"projectedValue":0,"recommendation":"over|under","confidenceScore":0-100,"confidenceLevel":"Low|Medium|High|Very High","confidenceInterval":[lo,hi],"matchupOverview":{"homeTeam":"","awayTeam":"","favorite":"home|away|even","moneyline":{"home":"","draw":"","away":""},"expectedPossession":{"home":0,"away":0},"expectedGameType":"open|cagey|one-sided|high-tempo","keyMatchupFactor":""},"recentSamples":[],"bayesianMetrics":{"priorMean":0,"momentumEffect":0,"covariateAdjustment":0,"reversalFlag":"stable|upward_reversal_likely|downward_reversal_likely"},"probabilityCurve":[{"value":0,"probability":0}],"tacticalAlerts":[{"type":"injury|lineup|tactical|sub_risk","message":"","severity":"low|medium|high"}],"sharpSummary":"","reasoning":"","scenarioAnalysis":"","keyEvidence":"","uncertaintyNote":"","sensitivityTests":"","subRisk":"","gameFlowDynamics":""}
 
 Field requirements:
+- matchupOverview: Home/away teams, moneyline odds, expected possession split, expected game type, key matchup factor. Use Grok's web intel + odds data. This is displayed prominently on the analysis page.
 - sharpSummary: 2-3 sentences. Core edge. Be direct.
 - reasoning: 2-3 paragraphs synthesizing all three AI inputs. Quote numbers from GPT's summary AND Grok's analysis. Cross-reference with game log data.
 - scenarioAnalysis: Take Grok's scenario breakdown directly — refine if game log data contradicts it.

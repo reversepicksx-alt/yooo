@@ -1732,6 +1732,14 @@ html, body {
 }
 }
 
+/* Matchup Overview */
+.matchup-overview {
+  background: var(--bg-card);
+  border: 1px solid var(--border-primary);
+  border-radius: 12px;
+  padding: 16px;
+}
+
 /* Notification Bell */
 .notif-badge {
   position: absolute;

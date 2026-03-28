@@ -284,6 +284,93 @@ function ProjectionCard({ projection, onSave, excludedIndices, onToggleSample })
           <span className={`badge ${rec === 'over' ? 'neon' : 'danger'}`}>{projection.confidenceLevel}</span>
         </div>
 
+        {/* MATCHUP OVERVIEW — Home vs Away, Possession, Moneyline, Game Type */}
+        {projection.matchupOverview && (
+          <div className="matchup-overview mt-6" data-testid="matchup-overview">
+            <div className="stat-label flex items-center gap-2 mb-3">
+              <Shield style={{ width: 12, height: 12, color: 'var(--accent)' }} /> Matchup Overview
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 12, alignItems: 'center', marginBottom: 12 }}>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-primary)' }}>{projection.matchupOverview.homeTeam || 'Home'}</div>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.05em' }}>HOME</div>
+                {projection.matchupOverview.moneyline?.home && (
+                  <div style={{ fontSize: 16, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: projection.matchupOverview.favorite === 'home' ? 'var(--accent)' : 'var(--text-primary)', marginTop: 4 }}>
+                    {projection.matchupOverview.moneyline.home}
+                  </div>
+                )}
+              </div>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)' }}>VS</div>
+                {projection.matchupOverview.moneyline?.draw && (
+                  <div style={{ fontSize: 12, fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-muted)', marginTop: 2 }}>
+                    Draw: {projection.matchupOverview.moneyline.draw}
+                  </div>
+                )}
+              </div>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-primary)' }}>{projection.matchupOverview.awayTeam || 'Away'}</div>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.05em' }}>AWAY</div>
+                {projection.matchupOverview.moneyline?.away && (
+                  <div style={{ fontSize: 16, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: projection.matchupOverview.favorite === 'away' ? 'var(--accent)' : 'var(--text-primary)', marginTop: 4 }}>
+                    {projection.matchupOverview.moneyline.away}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Expected Possession Bar */}
+            {projection.matchupOverview.expectedPossession && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 4 }}>Expected Possession</div>
+                <div style={{ display: 'flex', height: 8, borderRadius: 4, overflow: 'hidden', background: 'rgba(255,255,255,0.06)' }}>
+                  <div style={{ width: `${projection.matchupOverview.expectedPossession.home || 50}%`, background: 'var(--accent)', transition: 'width 0.6s' }} />
+                  <div style={{ width: `${projection.matchupOverview.expectedPossession.away || 50}%`, background: '#f43f5e', transition: 'width 0.6s' }} />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
+                  <span style={{ fontSize: 12, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: 'var(--accent)' }}>{projection.matchupOverview.expectedPossession.home || 50}%</span>
+                  <span style={{ fontSize: 12, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: '#f43f5e' }}>{projection.matchupOverview.expectedPossession.away || 50}%</span>
+                </div>
+              </div>
+            )}
+
+            {/* Game Type + Key Factor */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              {projection.matchupOverview.expectedGameType && (
+                <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 8, padding: '8px 10px' }}>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Game Type</div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-primary)', marginTop: 2, textTransform: 'capitalize' }}>{projection.matchupOverview.expectedGameType}</div>
+                </div>
+              )}
+              {projection.matchupOverview.keyMatchupFactor && (
+                <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 8, padding: '8px 10px' }}>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Key Factor</div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', marginTop: 2 }}>{projection.matchupOverview.keyMatchupFactor}</div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Tactical Alerts from Grok web search */}
+        {projection.tacticalAlerts?.length > 0 && (
+          <div className="mt-4 space-y-2" data-testid="tactical-alerts">
+            {projection.tacticalAlerts.map((alert, i) => (
+              <div key={i} style={{
+                display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8,
+                background: alert.severity === 'high' ? 'rgba(244,63,94,0.08)' : alert.severity === 'medium' ? 'rgba(245,158,11,0.08)' : 'rgba(255,255,255,0.03)',
+                border: `1px solid ${alert.severity === 'high' ? 'rgba(244,63,94,0.2)' : alert.severity === 'medium' ? 'rgba(245,158,11,0.2)' : 'rgba(255,255,255,0.06)'}`,
+              }}>
+                <div style={{ fontSize: 9, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em',
+                  color: alert.severity === 'high' ? '#f43f5e' : alert.severity === 'medium' ? '#f59e0b' : 'var(--text-muted)',
+                  flexShrink: 0, width: 60
+                }}>{alert.type}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-primary)' }}>{alert.message}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
         {projection.recentSamples?.length > 0 && (
           <div className="mt-6">
             <div className="flex justify-between items-center mb-4">

@@ -114,7 +114,12 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 - [x] Systematic prediction fixes: saves ceiling from opponent SOT, position baselines, game flow logic (DONE - Mar 2026)
 - [x] Replaced Claude with Grok (xAI) for tactical analysis in Triple AI pipeline (DONE - Mar 2026)
 - [x] Upgraded Grok with live web search for real-time injuries, lineups, team news (DONE - Mar 2026)
+- [x] Switched to grok-4-1-fast-non-reasoning with tools=[web_search] for real web intel (DONE - Mar 2026)
 - [x] Restored bookmaker odds (critical for determining favorite/game flow) (DONE - Mar 2026)
+- [x] Fixed duplicate player ID issue — name-based fallback for game log matching (DONE - Mar 2026)
+- [x] Added matchup overview to analysis page: possession bar, game type, moneyline, tactical alerts (DONE - Mar 2026)
+- [x] Push notifications: in-app toast + notification bell with history (DONE - Mar 2026)
+- [x] Re-analyze button on saved picks (DONE - Mar 2026)
 - [x] Optimized API calls: removed formations/injuries endpoints (-6 calls), increased fixture pool 20→30, game logs up to 15 (DONE - Mar 2026)
 
 ### P1 (High)
