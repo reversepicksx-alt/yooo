@@ -548,7 +548,7 @@ async def predict(req: PredictionRequest):
         actual_team_id = req.teamId
         league_id = req.leagueId or 39
 
-        # Fire ALL API calls at once (optimized — removed formations, prematch, injuries)
+        # Fire ALL API calls at once (optimized — kept odds for game context)
         player_data_task = get_player_data()
         async def get_team_stats_multi_season(team_id, lid):
             for s in [CURRENT_SEASON + 1, CURRENT_SEASON, CURRENT_SEASON - 1]:
@@ -556,6 +556,45 @@ async def predict(req: PredictionRequest):
                 if result:
                     return result
             return None
+
+        async def get_match_odds():
+            """Get bookmaker odds for the upcoming fixture — critical for determining favorite"""
+            try:
+                for s in [CURRENT_SEASON + 1, CURRENT_SEASON]:
+                    try:
+                        fixtures = await api_football_request("fixtures", {"team": actual_team_id or 40, "next": 1, "season": s})
+                        if fixtures:
+                            break
+                    except Exception:
+                        continue
+                if not fixtures:
+                    return None
+                fid = fixtures[0].get("fixture", {}).get("id")
+                result = {}
+                try:
+                    odds = await api_football_request("odds", {"fixture": fid})
+                    if odds:
+                        for bk in odds[0].get("bookmakers", [])[:1]:
+                            for bet in bk.get("bets", []):
+                                if bet.get("name") == "Match Winner":
+                                    vals = {v["value"]: v["odd"] for v in bet.get("values", [])}
+                                    result["bookmakerOdds"] = {
+                                        "source": bk.get("name", ""),
+                                        "homeWin": vals.get("Home", ""),
+                                        "draw": vals.get("Draw", ""),
+                                        "awayWin": vals.get("Away", ""),
+                                    }
+                                    try:
+                                        home_odd = float(vals.get("Home", 99))
+                                        away_odd = float(vals.get("Away", 99))
+                                        result["favorite"] = "home" if home_odd < away_odd else "away"
+                                    except Exception:
+                                        pass
+                except Exception:
+                    pass
+                return result if result else None
+            except Exception:
+                return None
 
         team_stats_task = get_team_stats_multi_season(actual_team_id or 40, league_id)
         opponent_stats_task = get_team_stats_multi_season(req.opponentId, league_id)
@@ -570,9 +609,10 @@ async def predict(req: PredictionRequest):
 
         standings_task = get_standings_multi_season()
         fixtures_task = get_recent_fixtures_fast(actual_team_id or 40, 30)
+        odds_task = get_match_odds()
 
-        player_stats, team_stats, opponent_stats, h2h_data, standings_raw, recent_fixtures = await aio.gather(
-            player_data_task, team_stats_task, opponent_stats_task, h2h_task, standings_task, fixtures_task
+        player_stats, team_stats, opponent_stats, h2h_data, standings_raw, recent_fixtures, match_odds = await aio.gather(
+            player_data_task, team_stats_task, opponent_stats_task, h2h_task, standings_task, fixtures_task, odds_task
         )
 
         if actual_team_id == 0 and player_stats:
@@ -762,6 +802,7 @@ async def predict(req: PredictionRequest):
             "h2hData": h2h_data,
             "standings": standings,
             "recentFixtures": recent_fixtures,
+            "matchOdds": match_odds,
         }
         raw_wave1_json = json.dumps(wave1_data, default=str)[:12000]
 
@@ -799,10 +840,10 @@ DATA:
                 return None
 
         # =============================================
-        # TRIPLE AI: Grok runs tactical analysis in parallel
+        # TRIPLE AI: Grok runs tactical analysis with LIVE WEB SEARCH
         # =============================================
         async def grok_tactical_analysis():
-            """Grok analyzes matchup, scenarios, PPDA, sub risk, game flow — the strategic brain"""
+            """Grok analyzes matchup using API data + real-time web search for injuries, lineups, news"""
             try:
                 grok_client = OpenAI(api_key=XAI_API_KEY, base_url="https://api.x.ai/v1")
                 tactical_brief = {
@@ -810,54 +851,58 @@ DATA:
                     "team_stats": team_stats,
                     "h2h": h2h_data[:5] if h2h_data else [],
                     "standings": standings[:6] if standings else [],
+                    "odds": match_odds,
                 }
                 tactical_json = json.dumps(tactical_brief, default=str)[:6000]
+
+                odds_context = ""
+                if match_odds and match_odds.get("bookmakerOdds"):
+                    bo = match_odds["bookmakerOdds"]
+                    fav = match_odds.get("favorite", "unknown")
+                    odds_context = f"""
+BOOKMAKER ODDS ({bo.get('source','')})
+Home: {bo.get('homeWin','')} | Draw: {bo.get('draw','')} | Away: {bo.get('awayWin','')}
+FAVORITE: {fav.upper()} team. Lower odds = more favored. Trust these over standings."""
 
                 loop = aio.get_event_loop()
                 def _call_grok():
                     return grok_client.chat.completions.create(
                         model="grok-3-fast",
                         messages=[
-                            {"role": "system", "content": "You are an elite soccer tactical analyst. You analyze matchups, game scripts, and player props with mathematical precision. Always quote numbers. Be concise but thorough."},
+                            {"role": "system", "content": "You are an elite soccer tactical analyst with access to live web search. Use your web search to find CURRENT injury news, confirmed lineups, team news, and recent form for this specific matchup. Combine web intel with the provided API data for the most accurate analysis. Always quote numbers. Be concise but thorough."},
                             {"role": "user", "content": f"""Analyze this matchup for a {req.propType} prop on {req.playerName} ({player_position or 'Unknown'}) playing for team vs {req.opponentName} ({req.venue}).
 Line: {req.line}
+{odds_context}
 
 CRITICAL: Player is {player_venue.upper()}. Opponent is {opponent_venue.upper()}.
-ALL analysis must be venue-specific. Use {player_venue} splits for the player's team and {opponent_venue} splits for the opponent.
 
-POSITION-AWARE BASELINES (use these as sanity checks):
-- Goalkeeper saves: DIRECTLY tied to OPPONENT shots per game. If opponent averages 10 shots/game away, ~30-40% are on target = 3-4 shots on target. GK save rate ~70% = ~2-3 saves. NEVER predict saves higher than opponent's avg shots on target.
-- Goalkeeper saves INVERSE RULE: If the GK's team is FAVORED (home advantage, better form, higher in standings), the opponent will likely have FEWER shots → FEWER saves. Underdogs' GKs get MORE saves.
-- Defender: tackles 2-4/game, interceptions 1-3, blocks 0-2, shots 0-1
-- Midfielder: shots 1-2/game (attacking mid 2-3), key passes 1-3, tackles 1-3, dribbles 1-3
-- Forward/Striker: shots 2-4/game (elite 3-5), key passes 0-2, dribbles 1-4
+STEP 0 — WEB SEARCH: Search for the latest news on this matchup:
+- Is {req.playerName} confirmed fit/starting?
+- Any injuries, suspensions, or roster changes for either team?
+- Recent team news that could impact this prop?
 
-SAVES-SPECIFIC ANALYSIS (MANDATORY if propType is saves):
-1. Calculate opponent's expected shots from {opponent_venue} stats.
-2. Of those, what % are on target? (League avg ~30-35%)
-3. Expected saves = shots on target - goals conceded
-4. If GK's team is favored → opponent attacks LESS → saves go DOWN
-5. If GK's team is underdog → opponent attacks MORE → saves go UP
+POSITION BASELINES:
+- GK saves: Tied to OPPONENT shots per game. If opponent avg 10 shots/game, ~35% on target = 3.5 SOT. GK save rate ~70% = ~2.5 saves. NEVER predict saves above opponent SOT avg.
+- GK saves INVERSE: Favored team GK = FEWER saves. Underdog GK = MORE saves.
+- Defender: tackles 2-4, interceptions 1-3, blocks 0-2, shots 0-1
+- Midfielder: shots 1-2 (AM 2-3), key passes 1-3, tackles 1-3
+- Forward: shots 2-4 (elite 3-5), key passes 0-2
 
-Do this analysis:
+SAVES-SPECIFIC (if saves prop):
+1. Opponent expected shots from {opponent_venue} stats
+2. Expected SOT = total shots * 35%
+3. Expected saves = SOT - goals conceded
+4. Favored team GK → saves DOWN. Underdog GK → saves UP.
 
-1. PPDA ESTIMATE: From the opponent's {opponent_venue.upper()} data, estimate pressing intensity.
-   - Classify: Aggressive (6-9), Standard (10-12), Passive (13+)
-   - Impact on {req.propType}?
-
-2. SUB RISK: What % of {player_venue.upper()} games was the player subbed before 75'? Weighted drag?
-
-3. GAME FLOW: Who is favored? Expected possession split? Impact of scoring first on {req.propType}?
-
-4. SCENARIO ANALYSIS with probabilities:
-   - Base case, Blowout, Trailing, Cagey — each with probability % and expected value
-   - Weighted projection = sum of (probability x value)
-
-5. SENSITIVITY: If subbed at 60'? Team down 2-0? Opponent parks bus? Red card? Rating: ROBUST/MODERATE/FRAGILE
-
+ANALYSIS:
+1. PPDA ESTIMATE: Opponent pressing intensity. Impact on {req.propType}?
+2. SUB RISK: Likelihood of early sub? Weighted drag on stat?
+3. GAME FLOW: Who is favored (USE ODDS)? Possession split? Scoring first impact?
+4. SCENARIO ANALYSIS: Base case, Blowout, Trailing, Cagey — probability % and expected value each. Weighted projection.
+5. SENSITIVITY: Subbed 60'? Down 2-0? Opponent parks bus? Red card? ROBUST/MODERATE/FRAGILE
 6. FINAL VERDICT: Over or under {req.line}? Confidence 0-100? Key risk?
 
-DATA:
+API DATA:
 {tactical_json}"""}
                         ],
                         max_tokens=1500,
@@ -886,6 +931,7 @@ DATA:
             "h2hData": h2h_data,
             "standings": standings,
             "recentFixtures": recent_fixtures,
+            "matchOdds": match_odds,
         }
 
         # =============================================
@@ -1278,7 +1324,8 @@ YOUR JOB: Synthesize both into the final calibrated prediction JSON.
 - Take Grok's sensitivityTests, subRisk, and gameFlowDynamics assessments — refine only if game log data contradicts them
 
 TACTICAL INTEL:
-- See Grok's tactical analysis above for formations, injuries, and matchup context
+- See Grok's tactical analysis above for live web intel (injuries, lineups, news) and matchup context
+- Bookmaker odds: {json.dumps(match_odds, default=str) if match_odds else 'Not available — use Grok analysis and standings'}
 
 CRITICAL ODDS RULE: If bookmaker odds present, lower odds = favored team. Trust bookmaker odds over all other signals.
 
