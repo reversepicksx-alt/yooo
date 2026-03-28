@@ -101,6 +101,22 @@ export async function settlePicks(picks) {
   return apiCall('/api/settle-picks', { method: 'POST', body: JSON.stringify({ picks }) });
 }
 
+export async function savePick(email, token, pick) {
+  return apiCall('/api/picks/save', { method: 'POST', body: JSON.stringify({ email, token, pick }) });
+}
+
+export async function listPicks(email, token) {
+  return apiCall('/api/picks/list', { method: 'POST', body: JSON.stringify({ email, token }) });
+}
+
+export async function deletePick(email, token, pickId) {
+  return apiCall('/api/picks/delete', { method: 'POST', body: JSON.stringify({ email, token, pickId }) });
+}
+
+export async function liveUpdatePicks(email, token) {
+  return apiCall('/api/picks/live-update', { method: 'POST', body: JSON.stringify({ email, token }) });
+}
+
 export const SUPPORTED_LEAGUES = [
   { id: 39, name: "Premier League", type: "Domestic" },
   { id: 140, name: "La Liga", type: "Domestic" },

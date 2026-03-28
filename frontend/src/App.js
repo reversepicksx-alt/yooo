@@ -11,7 +11,7 @@ import {
   getTeamsByLeague, searchPlayers, predict, startChat, sendChatMessage,
   checkApiStatus, SUPPORTED_LEAGUES,
   verifyWhop, authLogin, setPassword as apiSetPassword, resetPassword, verifySession, authLogout,
-  getPickOfTheDay, settlePicks
+  getPickOfTheDay, savePick, listPicks, deletePick, liveUpdatePicks
 } from './api';
 import './App.css';
 
@@ -763,6 +763,7 @@ export default function App() {
 
   const [savedPicks, setSavedPicks] = useState([]);
   const [selectedPick, setSelectedPick] = useState(null);
+  const [liveData, setLiveData] = useState({}); // pickId -> {currentValue, pace, hitPct, elapsed, matchStatus, matchScore}
 
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState('');
@@ -803,61 +804,50 @@ export default function App() {
     checkAuth();
   }, []);
 
+  // Load picks from MongoDB on auth
   useEffect(() => {
-    const saved = localStorage.getItem('reverse_picks_v2');
-    if (saved) setSavedPicks(JSON.parse(saved));
+    if (!auth) return;
+    listPicks(auth.email, auth.token)
+      .then(data => setSavedPicks(data.picks || []))
+      .catch(() => {});
     checkApiStatus().then(ok => setApiStatus(ok ? 'online' : 'offline')).catch(() => setApiStatus('offline'));
-    // Fetch Pick of the Day
     getPickOfTheDay()
       .then(data => setPotd(data))
       .catch(() => setPotd(null))
       .finally(() => setPotdLoading(false));
-  }, []);
+  }, [auth]);
 
-  // Poll to settle live picks every 5 minutes
+  // Poll live picks every 2 minutes for real-time stats
   const livePickCount = savedPicks.filter(p => p.status === 'live').length;
   useEffect(() => {
-    if (livePickCount === 0) return;
+    if (!auth || livePickCount === 0) return;
 
-    const checkSettled = async () => {
+    const fetchLiveUpdates = async () => {
       try {
-        const livePicks = savedPicks.filter(p => p.status === 'live');
-        const result = await settlePicks(livePicks);
-        if (result.settled && result.settled.length > 0) {
-          setSavedPicks(prev => {
-            const updated = [...prev];
-            for (const s of result.settled) {
-              const idx = updated.findIndex(p => p.id === s.pickId);
-              if (idx !== -1) {
-                updated[idx] = {
-                  ...updated[idx],
-                  status: s.status,
-                  result: s.result,
-                  actualValue: s.actualValue,
-                  matchScore: s.matchScore,
-                  settledAt: Date.now(),
-                };
-              }
+        const result = await liveUpdatePicks(auth.email, auth.token);
+        if (result.updates && result.updates.length > 0) {
+          const newLiveData = {};
+          const settledIds = [];
+          for (const u of result.updates) {
+            newLiveData[u.pickId] = u;
+            if (u.matchStatus === 'final' && u.result) {
+              settledIds.push(u.pickId);
             }
-            return updated;
-          });
+          }
+          setLiveData(prev => ({ ...prev, ...newLiveData }));
+          // Refresh picks from DB if any were settled
+          if (settledIds.length > 0) {
+            const refreshed = await listPicks(auth.email, auth.token);
+            setSavedPicks(refreshed.picks || []);
+          }
         }
       } catch {}
     };
 
-    checkSettled();
-    const interval = setInterval(checkSettled, 5 * 60 * 1000);
+    fetchLiveUpdates();
+    const interval = setInterval(fetchLiveUpdates, 2 * 60 * 1000);
     return () => clearInterval(interval);
-  }, [livePickCount, savedPicks]);
-
-  const picksInitialized = useRef(false);
-  useEffect(() => {
-    if (!picksInitialized.current) {
-      picksInitialized.current = true;
-      return; // Skip first render to avoid overwriting localStorage with empty array
-    }
-    localStorage.setItem('reverse_picks_v2', JSON.stringify(savedPicks));
-  }, [savedPicks]);
+  }, [auth, livePickCount]);
 
   useEffect(() => {
     if (chatEndRef.current) chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
@@ -949,8 +939,8 @@ export default function App() {
     }
   };
 
-  const savePick = () => {
-    if (!projection) return;
+  const savePickFn = async () => {
+    if (!projection || !auth) return;
     const newPick = {
       ...projection,
       id: Math.random().toString(36).substring(2, 9),
@@ -962,10 +952,14 @@ export default function App() {
         leagueId: wizardData.leagueId,
         teamId: wizardData.teamId || projection.player?.teamId,
         opponentId: wizardData.opponentId,
+        venue: wizardData.venue || 'home',
       },
     };
-    const updated = [newPick, ...savedPicks];
-    setSavedPicks(updated);
+    try {
+      await savePick(auth.email, auth.token, newPick);
+      const refreshed = await listPicks(auth.email, auth.token);
+      setSavedPicks(refreshed.picks || []);
+    } catch {}
     setProjection(null);
     setExcludedSampleIndices([]);
     setWizardStep(1);
@@ -973,10 +967,13 @@ export default function App() {
     setActiveTab('tracking');
   };
 
-  const removePick = (id, e) => {
+  const removePickFn = async (pickId, e) => {
     e.stopPropagation();
-    const updated = savedPicks.filter(p => p.id !== id);
-    setSavedPicks(updated);
+    if (!auth) return;
+    try {
+      await deletePick(auth.email, auth.token, pickId);
+      setSavedPicks(prev => prev.filter(p => p.pickId !== pickId));
+    } catch {}
   };
 
   const handleLogout = async () => {
@@ -1306,7 +1303,7 @@ export default function App() {
                 </button>
                 <ProjectionCard
                   projection={projection}
-                  onSave={savePick}
+                  onSave={savePickFn}
                   excludedIndices={excludedSampleIndices}
                   onToggleSample={idx => setExcludedSampleIndices(prev =>
                     prev.includes(idx) ? prev.filter(i => i !== idx) : [...prev, idx]
@@ -1322,11 +1319,19 @@ export default function App() {
           <div className="animate-fade-in space-y-6" data-testid="tracking-tab">
             <div className="flex justify-between items-center">
               <h2 className="section-title">Tracking</h2>
-              <div className="tab-switcher" style={{ width: 'auto' }}>
-                <button className={`tab-btn ${trackingView === 'live' ? 'active' : ''}`}
-                  onClick={() => setTrackingView('live')} data-testid="tracking-live-btn">Live</button>
-                <button className={`tab-btn ${trackingView === 'history' ? 'active' : ''}`}
-                  onClick={() => setTrackingView('history')} data-testid="tracking-history-btn">History</button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                {livePickCount > 0 && (
+                  <div className="badge neon" style={{ fontSize: 10 }} data-testid="auto-refresh-badge">
+                    <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#10b981', animation: 'pulse 2s infinite' }} />
+                    Auto 2m
+                  </div>
+                )}
+                <div className="tab-switcher" style={{ width: 'auto' }}>
+                  <button className={`tab-btn ${trackingView === 'live' ? 'active' : ''}`}
+                    onClick={() => setTrackingView('live')} data-testid="tracking-live-btn">Live</button>
+                  <button className={`tab-btn ${trackingView === 'history' ? 'active' : ''}`}
+                    onClick={() => setTrackingView('history')} data-testid="tracking-history-btn">History</button>
+                </div>
               </div>
             </div>
 
@@ -1337,72 +1342,110 @@ export default function App() {
                   <p className="empty-text">No {trackingView} picks being tracked.</p>
                 </div>
               ) : (
-                savedPicks.filter(p => trackingView === 'live' ? p.status === 'live' : p.status === 'settled').map(pick => (
-                  <div key={pick.id} className="card card-clickable" onClick={() => setSelectedPick(pick)}
-                    data-testid={`pick-${pick.id}`}>
-                    <div className="pick-card">
-                      <div className="pick-status-row">
-                        <div className="status-indicator">
-                          <div className={`status-dot ${pick.status} ${pick.result || ''}`} />
-                          <span className="status-label">{pick.status === 'settled' ? (pick.result === 'hit' ? 'HIT' : pick.result === 'push' ? 'PUSH' : 'MISS') : pick.status}</span>
+                savedPicks.filter(p => trackingView === 'live' ? p.status === 'live' : p.status === 'settled').map(pick => {
+                  const live = liveData[pick.pickId];
+                  const isMatchLive = live?.matchStatus === 'live';
+                  const isMatchFinal = live?.matchStatus === 'final' || pick.status === 'settled';
+                  const nowVal = isMatchLive ? (live?.currentValue ?? '-') : (pick.actualValue ?? '-');
+                  const paceVal = isMatchLive ? (live?.pace ?? '-') : nowVal;
+                  const hitPct = live?.hitPct ?? null;
+                  const elapsed = live?.elapsed ?? 0;
+                  const matchScore = live?.matchScore || pick.matchScore || '';
+                  const propLabel = PROP_TYPES.find(pt => pt.key === pick.propType)?.label || pick.propType;
+                  const isOver = pick.recommendation === 'over';
+                  const paceNum = typeof paceVal === 'number' ? paceVal : 0;
+                  const lineNum = pick.line || 1;
+                  const progressPct = Math.min(100, Math.max(0, (paceNum / (lineNum * 1.5)) * 100));
+                  const onTrack = isOver ? paceNum > lineNum : paceNum < lineNum;
+                  const resultLabel = pick.result === 'hit' ? 'HIT' : pick.result === 'push' ? 'PUSH' : pick.result === 'miss' ? 'MISS' : '';
+
+                  return (
+                    <div key={pick.pickId} className="live-pick-card" data-testid={`pick-${pick.pickId}`}
+                      style={{ background: 'var(--bg-card)', borderRadius: 12, padding: 16, border: `1px solid ${isMatchLive ? 'rgba(16,185,129,0.4)' : isMatchFinal ? 'rgba(100,100,120,0.3)' : 'rgba(100,100,120,0.2)'}` }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
+                        <div>
+                          <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.3px' }} data-testid="pick-player-name">{pick.playerName}</div>
+                          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: 2 }}>{pick.teamName} &middot; {(pick.venue || 'home').toUpperCase()}</div>
                         </div>
-                        <div className="pick-actions">
-                          <div className={`rec-tag ${pick.recommendation}`}>{pick.recommendation}</div>
-                          <button className="remove-btn" onClick={e => removePick(pick.id, e)} data-testid={`remove-pick-${pick.id}`}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          {isMatchLive && (
+                            <div className="live-badge" data-testid="live-indicator">
+                              <div className="live-dot" />
+                              LIVE
+                            </div>
+                          )}
+                          {isMatchFinal && (
+                            <div className="final-badge" data-testid="final-indicator">
+                              <div className="final-dot" />
+                              FINAL
+                            </div>
+                          )}
+                          {!isMatchLive && !isMatchFinal && (
+                            <div className="scheduled-badge">SCHEDULED</div>
+                          )}
+                          <button className="remove-btn" onClick={e => removePickFn(pick.pickId, e)} data-testid={`remove-pick-${pick.pickId}`}>
                             <Trash2 style={{ width: 14, height: 14 }} />
                           </button>
                         </div>
                       </div>
-                      <div className="pick-info">
-                        <div>
-                          <div className="pick-player-name">{pick.player?.name}</div>
-                          <div className="pick-matchup">{pick.player?.team} vs {pick.opponent}{pick.matchScore ? ` (${pick.matchScore})` : ''}</div>
-                        </div>
-                        <div style={{ textAlign: 'right' }}>
-                          <div className="pick-line-label">Line</div>
-                          <div className="pick-line-value">{pick.line}</div>
-                        </div>
+
+                      <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: '0.05em', marginBottom: 12, color: isOver ? 'var(--accent)' : '#f43f5e' }} data-testid="pick-type-label">
+                        PICK: {isOver ? 'OVER' : 'UNDER'} {pick.line}
                       </div>
-                      <div className="pick-stats-grid">
-                        <div className="pick-stat">
-                          <div className="pick-stat-label">Proj</div>
-                          <div className="pick-stat-value accent">{pick.projectedValue}</div>
-                        </div>
-                        {pick.actualValue != null && (
-                          <div className="pick-stat">
-                            <div className="pick-stat-label">Actual</div>
-                            <div className={`pick-stat-value ${pick.result === 'hit' ? 'accent' : pick.result === 'push' ? 'warning' : 'danger'}`}>{pick.actualValue}</div>
+
+                      {(isMatchLive || isMatchFinal) && (
+                        <>
+                          <div className="live-stats-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 10 }}>
+                            <div className="live-stat" style={{ textAlign: 'center' }}>
+                              <div className="live-stat-label">NOW</div>
+                              <div className={`live-stat-value ${onTrack ? 'accent' : 'danger'}`}>{nowVal}</div>
+                            </div>
+                            <div className="live-stat" style={{ textAlign: 'center' }}>
+                              <div className="live-stat-label">LINE</div>
+                              <div className="live-stat-value">{pick.line}</div>
+                            </div>
+                            <div className="live-stat" style={{ textAlign: 'center' }}>
+                              <div className="live-stat-label">PACE</div>
+                              <div className={`live-stat-value ${onTrack ? 'accent' : 'danger'}`}>{paceVal}</div>
+                            </div>
+                            <div className="live-stat" style={{ textAlign: 'center' }}>
+                              <div className="live-stat-label">HIT%</div>
+                              <div className={`live-stat-value ${hitPct > 50 ? 'accent' : 'danger'}`}>{hitPct != null ? `${hitPct}%` : '-'}</div>
+                            </div>
                           </div>
-                        )}
-                        <div className="pick-stat">
-                          <div className="pick-stat-label">Conf</div>
-                          <div className="pick-stat-value">{pick.confidenceScore}%</div>
-                        </div>
-                        <div className="pick-stat">
-                          <div className="pick-stat-label">95% CI</div>
-                          <div className="pick-stat-value" style={{ fontSize: 9 }}>
-                            {pick.confidenceInterval?.[0]}-{pick.confidenceInterval?.[1]}
+
+                          <div className="live-progress-bar-container">
+                            <div className={`live-progress-bar ${onTrack ? 'on-track' : 'off-track'}`}
+                              style={{ width: `${progressPct}%` }} />
+                            <div className="live-progress-line-marker" style={{ left: `${Math.min(95, (lineNum / (lineNum * 1.5)) * 100)}%` }} />
+                          </div>
+                        </>
+                      )}
+
+                      {!isMatchLive && !isMatchFinal && (
+                        <div className="live-stats-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 10 }}>
+                          <div className="live-stat" style={{ textAlign: 'center' }}>
+                            <div className="live-stat-label">PROJ</div>
+                            <div className="live-stat-value accent">{pick.projectedValue}</div>
+                          </div>
+                          <div className="live-stat" style={{ textAlign: 'center' }}>
+                            <div className="live-stat-label">LINE</div>
+                            <div className="live-stat-value">{pick.line}</div>
+                          </div>
+                          <div className="live-stat" style={{ textAlign: 'center' }}>
+                            <div className="live-stat-label">CONF</div>
+                            <div className="live-stat-value">{pick.confidenceScore}%</div>
                           </div>
                         </div>
-                        <div className="pick-stat">
-                          <div className="pick-stat-label">Hit Rate</div>
-                          <div className="pick-stat-value warning">
-                            {pick.recentSamples?.length > 0
-                              ? Math.round((pick.recentSamples.filter(s => pick.recommendation === 'over' ? s.value > pick.line : s.value < pick.line).length / pick.recentSamples.length) * 100)
-                              : 0}%
-                          </div>
-                        </div>
-                      </div>
-                      <div className="pick-footer">
-                        <div className="flex items-center gap-2">
-                          <BarChart3 style={{ width: 12, height: 12 }} />
-                          <span style={{ fontFamily: 'JetBrains Mono' }}>ID: {pick.player?.id}</span>
-                        </div>
-                        <span>{new Date(pick.timestamp).toLocaleDateString()}</span>
+                      )}
+
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-muted)' }}>
+                        <span>{isMatchLive ? `${elapsed}'` : ''} {matchScore ? `(${matchScore})` : ''} {resultLabel && <span className={`result-tag ${pick.result}`}>{resultLabel}</span>}</span>
+                        <span style={{ fontWeight: 800, color: 'var(--accent)', fontSize: 12 }}>{propLabel.toUpperCase()}</span>
                       </div>
                     </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           </div>
