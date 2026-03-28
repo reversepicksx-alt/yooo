@@ -1109,7 +1109,7 @@ export default function App() {
         const data = await searchPlayers(query, wizardData.leagueId);
         setWizardPlayers(data.players || []);
       } catch (err) {
-        setWizardError(err.message);
+        setWizardError(err.message === 'Failed to fetch' ? 'Network error — check your connection and try again.' : err.message || 'Search failed. Please try again.');
       } finally {
         setIsPlayersLoading(false);
       }

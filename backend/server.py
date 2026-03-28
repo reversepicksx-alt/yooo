@@ -99,6 +99,9 @@ SUPPORTED_LEAGUES = [
 
 CURRENT_SEASON = 2025
 
+# Rate limit: max 5 concurrent API-Sports requests
+_api_semaphore = aio.Semaphore(5)
+
 # Chat sessions stored in memory
 chat_sessions: dict = {}
 
@@ -311,14 +314,29 @@ async def api_football_request(endpoint: str, params: dict = None):
         "x-apisports-key": API_FOOTBALL_KEY,
         "x-rapidapi-key": API_FOOTBALL_KEY,
     }
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        resp = await client.get(f"{API_FOOTBALL_BASE}/{endpoint}", headers=headers, params=params or {})
-        if resp.status_code != 200:
-            raise HTTPException(status_code=resp.status_code, detail=f"API-Sports error: {resp.text}")
-        data = resp.json()
-        if data.get("errors") and len(data["errors"]) > 0:
-            raise HTTPException(status_code=400, detail=f"API-Sports error: {json.dumps(data['errors'])}")
-        return data.get("response", [])
+    async with _api_semaphore:
+        for attempt in range(3):
+            try:
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    resp = await client.get(f"{API_FOOTBALL_BASE}/{endpoint}", headers=headers, params=params or {})
+                    if resp.status_code == 429:
+                        await aio.sleep(1.5 * (attempt + 1))
+                        continue
+                    if resp.status_code != 200:
+                        raise HTTPException(status_code=resp.status_code, detail=f"API-Sports error: {resp.text}")
+                    data = resp.json()
+                    if data.get("errors") and len(data["errors"]) > 0:
+                        error_msg = json.dumps(data["errors"])
+                        if "Too many requests" in error_msg or "rate limit" in error_msg.lower():
+                            await aio.sleep(1.5 * (attempt + 1))
+                            continue
+                        raise HTTPException(status_code=400, detail=f"API-Sports error: {error_msg}")
+                    return data.get("response", [])
+            except httpx.TimeoutException:
+                if attempt < 2:
+                    continue
+                raise HTTPException(status_code=504, detail="API-Sports timeout")
+        raise HTTPException(status_code=429, detail="API-Sports rate limit — try again in a few seconds")
 
 
 @app.get("/api/health")
@@ -488,7 +506,7 @@ async def search_players(req: PlayerSearchRequest):
         except Exception:
             pass
 
-    # De-duplicate by player ID, prefer entries with team info
+    # De-duplicate by player ID, prefer entries with team info from newest season
     seen_ids = {}
     for p in all_players:
         pid = p["id"]
@@ -496,30 +514,6 @@ async def search_players(req: PlayerSearchRequest):
             seen_ids[pid] = p
         elif p["teamName"] and not seen_ids[pid]["teamName"]:
             seen_ids[pid] = p
-
-    # TEAM FRESHNESS CHECK: Verify player teams against newest season data
-    # This catches off-season transfers that older season data doesn't reflect
-    newest_season = season + 1
-    pids_to_refresh = list(seen_ids.keys())[:10]  # Cap at 10 to limit API calls
-    if pids_to_refresh:
-        async def refresh_team(player_id):
-            try:
-                data = await api_football_request("players", {"id": player_id, "season": newest_season})
-                if data:
-                    stats = data[0].get("statistics", [])
-                    if stats:
-                        newest_team = stats[-1].get("team", {})
-                        return (player_id, newest_team.get("id", 0), newest_team.get("name", ""))
-            except Exception:
-                pass
-            return None
-        refreshed = await aio.gather(*[refresh_team(pid) for pid in pids_to_refresh])
-        for r in refreshed:
-            if r and r[1] and r[2]:
-                pid, new_tid, new_tname = r
-                if pid in seen_ids and seen_ids[pid]["teamId"] != new_tid:
-                    seen_ids[pid]["teamId"] = new_tid
-                    seen_ids[pid]["teamName"] = new_tname
 
     players = list(seen_ids.values())
 

@@ -1,10 +1,15 @@
 const API_URL = process.env.REACT_APP_BACKEND_URL || '';
 
 async function apiCall(endpoint, options = {}) {
-  const resp = await fetch(`${API_URL}${endpoint}`, {
-    ...options,
-    headers: { 'Content-Type': 'application/json', ...options.headers },
-  });
+  let resp;
+  try {
+    resp = await fetch(`${API_URL}${endpoint}`, {
+      ...options,
+      headers: { 'Content-Type': 'application/json', ...options.headers },
+    });
+  } catch (e) {
+    throw new Error('Network error — check your connection and try again.');
+  }
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ detail: resp.statusText }));
     throw new Error(err.detail || 'Request failed');
