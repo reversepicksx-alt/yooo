@@ -972,14 +972,18 @@ async def predict(req: PredictionRequest):
                         model="grok-4.20-reasoning",
                         tools=[{"type": "web_search"}],
                         input=[
-                            {"role": "system", "content": "Elite soccer analyst with deep web research. You MUST use web search to find ACTUAL per-game player statistics from FotMob, SofaScore, WhoScored, or Flashscore. Do NOT guess or estimate — search and report exact numbers you find. Be concise."},
+                            {"role": "system", "content": "Elite soccer analyst with deep web research. You MUST use web search to find ACTUAL per-game player statistics. Search SofaScore, FotMob, and WhoScored specifically. Do NOT guess or estimate — search and report exact numbers you find. Be concise."},
                             {"role": "user", "content": f"""Analyze {req.propType} prop on {req.playerName} ({player_position or 'Unknown'}) — {player_team} vs {req.opponentName} ({player_venue.upper()}). Line: {req.line}. {odds_context}
 
 TASK 1 — FIND REAL STATS (MOST IMPORTANT):
-Search for "{req.playerName} stats" on FotMob, SofaScore, or WhoScored.
-Find the player's ACTUAL {req.propType} numbers from their last 5 games.
+Search specifically for:
+- "site:sofascore.com {req.playerName}" to find the player's SofaScore profile
+- "{req.playerName} {player_team} player statistics {req.propType}"
+- "{req.playerName} recent matches stats"
+Go to SofaScore.com or FotMob and find this player's ACTUAL per-game {req.propType} from their last 5 matches.
 Report per game: date, opponent, exact {req.propType} count, minutes played.
-Example format: "Mar 14 vs Kansas City: 2 shots (90 min)"
+Example format: "Mar 14 vs Kansas City: 2 shots (90 min) — source: SofaScore"
+DO NOT use any numbers I gave you in the DATA section below — those may be wrong. Only report what you find from your web search.
 
 TASK 2 — LIVE NEWS:
 Search for injuries, confirmed lineups, key absences for {player_team} and {req.opponentName}.
