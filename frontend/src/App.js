@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Zap, ChevronRight, RefreshCw, ArrowLeft, Clock, Activity,
-  Shield, Send, Loader2, Trash2, User, Search,
+  Shield, Send, Loader2, Trash2, User, Search, Users,
   TrendingUp, TrendingDown, BarChart3, ShieldAlert, Target, LogOut, Lock, Mail, Bell, RotateCcw
 } from 'lucide-react';
 import {
@@ -911,6 +911,13 @@ export default function App() {
   const [showNotifications, setShowNotifications] = useState(false);
   const [reanalyzingPick, setReanalyzingPick] = useState(null);
 
+  // Combo mode state
+  const [comboMode, setComboMode] = useState(false);
+  const [comboPlayer2, setComboPlayer2] = useState(null); // {playerId, playerName, teamId, teamName}
+  const [comboLine, setComboLine] = useState(0);
+  const [comboProjection, setComboProjection] = useState(null);
+  const [isComboProjecting, setIsComboProjecting] = useState(false);
+
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState('');
   const [isChatting, setIsChatting] = useState(false);
@@ -1089,7 +1096,7 @@ export default function App() {
   };
 
   const handlePlayerSelect = (player) => {
-    setWizardData({ ...wizardData, playerId: player.id, playerName: player.name, teamId: player.teamId });
+    setWizardData({ ...wizardData, playerId: player.id, playerName: player.name, teamId: player.teamId, teamName: player.teamName || '' });
     setWizardStep(3);
   };
 
@@ -1111,6 +1118,87 @@ export default function App() {
     } finally {
       setIsProjecting(false);
     }
+  };
+
+  const handlePlayer2Select = (player) => {
+    setComboPlayer2({ playerId: player.id, playerName: player.name, teamId: player.teamId, teamName: player.teamName || '' });
+    setWizardStep(8);
+  };
+
+  const runComboProjection = async () => {
+    if (!comboPlayer2) return;
+    setIsComboProjecting(true);
+    setWizardError(null);
+    try {
+      // Determine Player 2's matchup context
+      let p2OpponentId = wizardData.opponentId;
+      let p2OpponentName = wizardData.opponentName;
+      let p2Venue = wizardData.venue;
+
+      if (comboPlayer2.teamId === wizardData.opponentId) {
+        // Player 2 is on the opponent's team — flip perspective
+        p2OpponentId = wizardData.teamId;
+        p2OpponentName = wizardData.teamName || wizardData.playerName?.split(' ')[0] || 'Team';
+        p2Venue = wizardData.venue === 'home' ? 'away' : 'home';
+      }
+
+      const [result1, result2] = await Promise.all([
+        predict({
+          leagueId: wizardData.leagueId,
+          playerId: wizardData.playerId,
+          playerName: wizardData.playerName,
+          teamId: wizardData.teamId,
+          opponentId: wizardData.opponentId,
+          opponentName: wizardData.opponentName,
+          venue: wizardData.venue,
+          propType: wizardData.propType,
+          line: wizardData.line || 0,
+        }),
+        predict({
+          leagueId: wizardData.leagueId,
+          playerId: comboPlayer2.playerId,
+          playerName: comboPlayer2.playerName,
+          teamId: comboPlayer2.teamId,
+          opponentId: p2OpponentId,
+          opponentName: p2OpponentName,
+          venue: p2Venue,
+          propType: wizardData.propType,
+          line: 0,
+        }),
+      ]);
+
+      if (!result1?.player || !result2?.player) throw new Error('One or both predictions failed.');
+
+      const combinedValue = Math.round(((result1.projectedValue || 0) + (result2.projectedValue || 0)) * 10) / 10;
+      const avgConfidence = Math.round(((result1.confidenceScore || 50) + (result2.confidenceScore || 50)) / 2);
+
+      setComboProjection({
+        player1: result1,
+        player2: result2,
+        combined: {
+          projectedValue: combinedValue,
+          line: comboLine,
+          recommendation: combinedValue > comboLine ? 'over' : combinedValue < comboLine ? 'under' : 'push',
+          confidenceScore: avgConfidence,
+          confidenceLevel: avgConfidence >= 75 ? 'High' : avgConfidence >= 55 ? 'Medium' : 'Low',
+        }
+      });
+    } catch (err) {
+      setWizardError(err.message || 'Combo projection failed.');
+    } finally {
+      setIsComboProjecting(false);
+    }
+  };
+
+  const resetCombo = () => {
+    setComboMode(false);
+    setComboPlayer2(null);
+    setComboLine(0);
+    setComboProjection(null);
+    setIsComboProjecting(false);
+    setWizardStep(1);
+    setWizardData({});
+    setWizardError(null);
   };
 
   const savePickFn = async () => {
@@ -1293,7 +1381,7 @@ export default function App() {
         {/* PREDICT TAB */}
         {activeTab === 'predict' && (
           <div className="animate-fade-in space-y-6">
-            {!projection && !isProjecting && (
+            {!projection && !isProjecting && !comboProjection && !isComboProjecting && (
               <>
                 {/* Pick of the Day */}
                 {potdLoading ? (
@@ -1324,11 +1412,18 @@ export default function App() {
                   <div>
                     <h2 className="section-title" data-testid="wizard-title">AI Wizard</h2>
                     <p className="section-subtitle">
-                      {searchMode === 'wizard' ? `Step ${wizardStep} of 6` : 'Tactical Search'}
+                      {searchMode === 'wizard' ? `Step ${wizardStep} of ${comboMode ? 8 : 6}` : 'Tactical Search'}
                     </p>
                   </div>
                   {searchMode === 'wizard' && wizardStep > 1 && (
-                    <button className="back-btn" onClick={() => setWizardStep(wizardStep - 1)} data-testid="wizard-back-btn">
+                    <button className="back-btn" onClick={() => {
+                      if (wizardStep === 7 && comboMode) {
+                        setComboMode(false);
+                        setWizardStep(6);
+                      } else {
+                        setWizardStep(wizardStep - 1);
+                      }
+                    }} data-testid="wizard-back-btn">
                       <ArrowLeft /> Back
                     </button>
                   )}
@@ -1348,7 +1443,10 @@ export default function App() {
                 {searchMode === 'wizard' && wizardStep > 1 && (
                   <div className="wizard-breadcrumb" data-testid="wizard-breadcrumb">
                     <div className="breadcrumb-steps">
-                      {['League', 'Player', 'Opponent', 'Venue', 'Prop', 'Line'].map((label, i) => {
+                      {(comboMode
+                        ? ['League', 'Player 1', 'Opponent', 'Venue', 'Prop', 'Line', 'Player 2', 'Combo']
+                        : ['League', 'Player', 'Opponent', 'Venue', 'Prop', 'Line']
+                      ).map((label, i) => {
                         const step = i + 1;
                         const isActive = wizardStep === step;
                         const isDone = wizardStep > step;
@@ -1540,6 +1638,96 @@ export default function App() {
                     <button className="btn-primary" onClick={() => runProjection(wizardData)} data-testid="generate-projection-btn">
                       <Zap style={{ fill: 'currentColor' }} /> Generate Projection
                     </button>
+                    <div style={{ position: 'relative', textAlign: 'center', margin: '8px 0' }}>
+                      <div style={{ position: 'absolute', top: '50%', left: 0, right: 0, height: 1, background: 'rgba(255,255,255,0.08)' }} />
+                      <span style={{ position: 'relative', background: 'var(--bg-primary)', padding: '0 12px', fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1 }}>or</span>
+                    </div>
+                    <button className="btn-secondary" data-testid="stack-player-btn" style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
+                      onClick={() => { setComboMode(true); setWizardPlayers([]); setWizardStep(7); }}>
+                      <Users style={{ width: 16, height: 16 }} /> Stack 2nd Player (Combo)
+                    </button>
+                  </div>
+                )}
+
+                {searchMode === 'wizard' && wizardStep === 7 && comboMode && (
+                  <div className="space-y-4" data-testid="combo-player2-step">
+                    <div className="stat-label" style={{ marginBottom: 4 }}>Select 2nd Player</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8 }}>
+                      Stacking with <span style={{ color: 'var(--accent)', fontWeight: 700 }}>{wizardData.playerName}</span> &middot; {PROP_TYPES.find(p => p.key === wizardData.propType)?.label || wizardData.propType}
+                    </div>
+                    <div className="search-input-wrap">
+                      <Search className="search-icon" />
+                      <input className="search-input" type="text" placeholder="Search 2nd player..."
+                        onChange={e => handlePlayerSearch(e.target.value)} data-testid="combo-player2-search" />
+                      {isPlayersLoading && <RefreshCw className="animate-spin" style={{ position: 'absolute', right: 14, top: '50%', transform: 'translateY(-50%)', width: 16, height: 16, color: 'var(--accent)' }} />}
+                    </div>
+                    <div className="space-y-2" style={{ maxHeight: 400, overflowY: 'auto' }}>
+                      {wizardPlayers.filter(p => p.id !== wizardData.playerId).map(player => (
+                        <div key={player.id} className="card card-clickable" onClick={() => handlePlayer2Select(player)}
+                          data-testid={`combo-player-${player.id}`}>
+                          <div className="player-item">
+                            <div className="player-avatar"><User /></div>
+                            <div style={{ flex: 1 }}>
+                              <div className="player-name">{player.name}</div>
+                              <div className="player-team">
+                                {player.teamName || 'Free Agent'}
+                                {player.teamId === wizardData.teamId && <span style={{ color: 'var(--accent)', marginLeft: 6, fontSize: 10 }}>SAME TEAM</span>}
+                                {player.teamId === wizardData.opponentId && <span style={{ color: '#f59e0b', marginLeft: 6, fontSize: 10 }}>OPPONENT</span>}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                      {!wizardPlayers.length && !isPlayersLoading && (
+                        <div className="text-center" style={{ padding: '32px 0', color: 'var(--text-secondary)', fontSize: 13 }}>
+                          Search for the 2nd player to stack.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {searchMode === 'wizard' && wizardStep === 8 && comboMode && comboPlayer2 && (
+                  <div className="space-y-6" data-testid="combo-line-step">
+                    <div className="combo-summary-card" style={{ background: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.2)', borderRadius: 12, padding: 16 }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 }}>Combo Stack</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6 }}>
+                        <div className="player-avatar" style={{ width: 28, height: 28 }}><User /></div>
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{wizardData.playerName}</div>
+                          <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{wizardData.teamName} &middot; {wizardData.venue?.toUpperCase()}</div>
+                        </div>
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)', padding: '4px 0 4px 20px' }}>+</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <div className="player-avatar" style={{ width: 28, height: 28 }}><User /></div>
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{comboPlayer2.playerName}</div>
+                          <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                            {comboPlayer2.teamName}
+                            {comboPlayer2.teamId === wizardData.opponentId ? ` · ${wizardData.venue === 'home' ? 'AWAY' : 'HOME'}` : ` · ${wizardData.venue?.toUpperCase()}`}
+                          </div>
+                        </div>
+                      </div>
+                      <div style={{ marginTop: 10, fontSize: 11, color: 'var(--accent)', fontWeight: 700 }}>
+                        {PROP_TYPES.find(p => p.key === wizardData.propType)?.label || wizardData.propType} — Combined
+                      </div>
+                    </div>
+                    <div className="line-setter">
+                      <div className="line-setter-label">Set Combined Line</div>
+                      <div className="line-setter-row">
+                        <button className="line-btn" onClick={() => setComboLine(Math.max(0, comboLine - 0.5))} data-testid="combo-line-decrease">-</button>
+                        <input className="line-input" type="number" step="0.5" placeholder="0.0"
+                          value={comboLine === 0 ? '' : comboLine}
+                          onChange={e => setComboLine(parseFloat(e.target.value) || 0)}
+                          data-testid="combo-line-input" />
+                        <button className="line-btn" onClick={() => setComboLine(comboLine + 0.5)} data-testid="combo-line-increase">+</button>
+                      </div>
+                    </div>
+                    {wizardError && <div className="error-box"><ShieldAlert /><p>{wizardError}</p></div>}
+                    <button className="btn-primary" onClick={runComboProjection} data-testid="generate-combo-btn">
+                      <Zap style={{ fill: 'currentColor' }} /> Generate Combo Projection
+                    </button>
                   </div>
                 )}
               </>
@@ -1552,6 +1740,16 @@ export default function App() {
                 </div>
                 <div className="loading-title">Analyzing Matchup...</div>
                 <div className="loading-sub">Running analysis simulation</div>
+              </div>
+            )}
+
+            {isComboProjecting && (
+              <div className="loading-wrap">
+                <div className="spinner-ring">
+                  <Users className="inner-icon" style={{ width: 28, height: 28 }} />
+                </div>
+                <div className="loading-title">Running Combo Analysis...</div>
+                <div className="loading-sub">Analyzing both players in parallel</div>
               </div>
             )}
 
@@ -1569,6 +1767,118 @@ export default function App() {
                     prev.includes(idx) ? prev.filter(i => i !== idx) : [...prev, idx]
                   )}
                 />
+              </div>
+            )}
+
+            {comboProjection && !isComboProjecting && (
+              <div className="space-y-6">
+                <button className="back-btn" onClick={resetCombo} data-testid="combo-back-btn">
+                  <ArrowLeft /> New Analysis
+                </button>
+                <div className="combo-result-card" data-testid="combo-result-card">
+                  {/* COMBO HEADER */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+                    <Users style={{ width: 18, height: 18, color: 'var(--accent)' }} />
+                    <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: 1.5 }}>Combo Projection</div>
+                  </div>
+
+                  {/* COMBINED RESULT */}
+                  <div style={{ background: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.15)', borderRadius: 12, padding: 20, marginBottom: 20, textAlign: 'center' }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>
+                      Combined {PROP_TYPES.find(p => p.key === wizardData.propType)?.label || wizardData.propType}
+                    </div>
+                    <div style={{ fontSize: 40, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)', lineHeight: 1 }}>
+                      {comboProjection.combined.projectedValue}
+                    </div>
+                    <div style={{ fontSize: 13, color: 'var(--text-muted)', margin: '8px 0 12px' }}>
+                      vs Line: <span style={{ fontWeight: 800, color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace" }}>{comboProjection.combined.line}</span>
+                    </div>
+                    <div style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 20px', borderRadius: 8,
+                      background: comboProjection.combined.recommendation === 'over' ? 'rgba(16,185,129,0.15)' : 'rgba(244,63,94,0.15)',
+                      border: `1px solid ${comboProjection.combined.recommendation === 'over' ? 'rgba(16,185,129,0.3)' : 'rgba(244,63,94,0.3)'}`,
+                    }}>
+                      {comboProjection.combined.recommendation === 'over'
+                        ? <TrendingUp style={{ width: 16, height: 16, color: '#10b981' }} />
+                        : <TrendingDown style={{ width: 16, height: 16, color: '#f43f5e' }} />}
+                      <span style={{ fontSize: 16, fontWeight: 900, color: comboProjection.combined.recommendation === 'over' ? '#10b981' : '#f43f5e', textTransform: 'uppercase' }}>
+                        {comboProjection.combined.recommendation}
+                      </span>
+                      <span className={`badge ${comboProjection.combined.confidenceLevel === 'High' ? 'neon' : comboProjection.combined.confidenceLevel === 'Medium' ? '' : 'caution'}`} style={{ fontSize: 10, marginLeft: 4 }}>
+                        {comboProjection.combined.confidenceLevel}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* INDIVIDUAL BREAKDOWNS */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
+                    {[comboProjection.player1, comboProjection.player2].map((pred, idx) => (
+                      <div key={idx} style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10, padding: 14 }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: idx === 0 ? 'var(--accent)' : '#f59e0b', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>
+                          Player {idx + 1}
+                        </div>
+                        <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-primary)', marginBottom: 4 }}>
+                          {pred.player?.name || 'Unknown'}
+                        </div>
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 10 }}>
+                          {pred.player?.team || ''} &middot; {pred.player?.position || ''}
+                        </div>
+                        <div style={{ fontSize: 28, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)' }}>
+                          {pred.projectedValue}
+                        </div>
+                        <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>projected</div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 8 }}>
+                          {pred.recommendation === 'over'
+                            ? <TrendingUp style={{ width: 12, height: 12, color: '#10b981' }} />
+                            : <TrendingDown style={{ width: 12, height: 12, color: '#f43f5e' }} />}
+                          <span style={{ fontSize: 11, fontWeight: 700, color: pred.recommendation === 'over' ? '#10b981' : '#f43f5e', textTransform: 'uppercase' }}>
+                            {pred.recommendation}
+                          </span>
+                          <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 4 }}>{pred.confidenceScore}%</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* SHARED MATCHUP OVERVIEW */}
+                  {comboProjection.player1?.matchupOverview && (
+                    <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10, padding: 14, marginBottom: 16 }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 }}>Matchup Overview</div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{comboProjection.player1.matchupOverview.homeTeam}</div>
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>vs</div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{comboProjection.player1.matchupOverview.awayTeam}</div>
+                      </div>
+                      {comboProjection.player1.matchupOverview.expectedPossession && (
+                        <div style={{ marginBottom: 8 }}>
+                          <div style={{ display: 'flex', height: 6, borderRadius: 3, overflow: 'hidden' }}>
+                            <div style={{ width: `${comboProjection.player1.matchupOverview.expectedPossession.home || 50}%`, background: 'var(--accent)' }} />
+                            <div style={{ width: `${comboProjection.player1.matchupOverview.expectedPossession.away || 50}%`, background: '#f43f5e' }} />
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
+                            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent)' }}>{comboProjection.player1.matchupOverview.expectedPossession.home}%</span>
+                            <span style={{ fontSize: 11, fontWeight: 700, color: '#f43f5e' }}>{comboProjection.player1.matchupOverview.expectedPossession.away}%</span>
+                          </div>
+                        </div>
+                      )}
+                      {comboProjection.player1.matchupOverview.expectedGameType && (
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Game Type: <span style={{ color: 'var(--text-primary)', fontWeight: 700, textTransform: 'capitalize' }}>{comboProjection.player1.matchupOverview.expectedGameType}</span></div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* SHARP TAKES */}
+                  <div style={{ display: 'grid', gap: 10 }}>
+                    {[comboProjection.player1, comboProjection.player2].map((pred, idx) => pred.sharpSummary && (
+                      <div key={idx} style={{ background: 'rgba(99,102,241,0.04)', border: '1px solid rgba(99,102,241,0.15)', borderRadius: 10, padding: 12 }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: '#6366f1', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>
+                          {pred.player?.name} — Sharp Take
+                        </div>
+                        <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>{pred.sharpSummary}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
             )}
           </div>
