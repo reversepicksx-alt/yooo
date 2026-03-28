@@ -1229,9 +1229,12 @@ Field requirements:
         if opponent_fixture_stats:
             wave2_supplement["opponentMatchStats"] = opponent_fixture_stats
 
-        # SAVES-SPECIFIC: Compute opponent shots-per-game for saves ceiling
+        # SAVES-SPECIFIC: Elite GK Formula
+        # Projected Saves = Opponent Avg SoT × GK Save% × Match Context Multiplier
         saves_context = ""
+        gk_formula_data = None
         if req.propType == "saves":
+            # 1. Opponent SoT per game (venue-filtered from fixture stats)
             opp_shots_list = []
             if opponent_fixture_stats:
                 for mf in opponent_fixture_stats:
@@ -1241,21 +1244,100 @@ Field requirements:
                         opp_shots_list.append({"total": shots, "on_target": shots_on or 0, "date": mf.get("date", ""), "venue": mf.get("venue", "")})
             opp_avg_shots = round(sum(s["total"] for s in opp_shots_list) / len(opp_shots_list), 1) if opp_shots_list else 0
             opp_avg_sot = round(sum(s["on_target"] for s in opp_shots_list) / len(opp_shots_list), 1) if opp_shots_list else 0
-            saves_context = f"""
-[SAVES CEILING ANALYSIS]
-Opponent ({req.opponentName}) {opponent_venue.upper()} shooting stats (last {len(opp_shots_list)} games):
-- Avg total shots/game: {opp_avg_shots}
-- Avg shots on target/game: {opp_avg_sot}
-- Max realistic saves = shots on target - goals scored = ~{max(0, round(opp_avg_sot - 1, 1))}
-- If GK's team is FAVORED: opponent takes even fewer shots → saves likely BELOW average
-- If GK's team is UNDERDOG: opponent attacks more → saves likely ABOVE average
-HARD RULE: Do NOT project saves above {round(opp_avg_sot * 0.85, 1)} unless extraordinary evidence exists.
-"""
-            wave2_supplement["savesAnalysis"] = {
+
+            # 2. GK save rate from recent game logs (saves / shots on target faced)
+            gk_saves_list = []
+            gk_sot_faced_list = []
+            for g in player_game_logs:
+                sv = g.get("goals_saves")
+                if sv is not None and g.get("minutes", 0) > 0:
+                    gk_saves_list.append(sv)
+            gk_avg_saves = round(sum(gk_saves_list) / len(gk_saves_list), 2) if gk_saves_list else 0
+            gk_saves_per90 = round(sum(gk_saves_list) / max(1, sum(g.get("minutes", 0) for g in player_game_logs if g.get("goals_saves") is not None)) * 90, 2) if gk_saves_list else 0
+
+            # Calculate save % = saves / (saves + goals conceded). Approximate from game logs.
+            # Since we don't have SoT faced directly, use saves + goals conceded as proxy for SoT faced
+            total_saves = sum(gk_saves_list) if gk_saves_list else 0
+            games_with_saves = len(gk_saves_list)
+            # Estimate goals conceded per game from team stats
+            goals_against = None
+            if team_stats:
+                ga = team_stats.get("goals", {}).get("against", {})
+                if ga:
+                    total_ga = ga.get("total", {}).get(player_venue) or ga.get("total", {}).get("total") or 0
+                    played = team_stats.get("fixtures", {}).get("played", {}).get(player_venue) or team_stats.get("fixtures", {}).get("played", {}).get("total") or 1
+                    goals_against = round(total_ga / max(played, 1), 2) if total_ga else None
+
+            # Save % calculation
+            if total_saves > 0 and goals_against is not None and games_with_saves > 0:
+                est_sot_faced = total_saves + (goals_against * games_with_saves)
+                gk_save_pct = round((total_saves / max(est_sot_faced, 1)) * 100, 1)
+            elif total_saves > 0:
+                gk_save_pct = round(min(85, (total_saves / max(total_saves + games_with_saves * 0.8, 1)) * 100), 1)
+            else:
+                gk_save_pct = 70.0  # League average fallback
+
+            # 3. Match context multiplier
+            # Base = 1.0, adjust: underdog at home +0.10, favorite at home -0.10, etc.
+            context_multiplier = 1.0
+            context_factors = []
+            if match_odds and match_odds.get("favorite"):
+                fav = match_odds["favorite"]
+                if fav == player_venue:
+                    # GK's team is favored → fewer shots faced → fewer saves
+                    context_multiplier -= 0.10
+                    context_factors.append(f"Team favored ({fav}) → -10% (fewer opponent shots)")
+                else:
+                    # GK's team is underdog → more shots faced → more saves
+                    context_multiplier += 0.10
+                    context_factors.append(f"Team underdog → +10% (more opponent shots)")
+            if player_venue == "away":
+                context_multiplier += 0.05
+                context_factors.append("Away GK → +5% (typically face more pressure)")
+            context_multiplier = round(context_multiplier, 2)
+
+            # 4. THE FORMULA: Projected Saves = Opp Avg SoT × GK Save% × Context Multiplier
+            projected_saves = round(opp_avg_sot * (gk_save_pct / 100) * context_multiplier, 1) if opp_avg_sot > 0 else gk_avg_saves
+
+            gk_formula_data = {
                 "opponentAvgShots": opp_avg_shots,
                 "opponentAvgSOT": opp_avg_sot,
-                "maxRealisticSaves": max(0, round(opp_avg_sot - 1, 1)),
+                "opponentVenue": opponent_venue.upper(),
+                "opponentShotsSample": len(opp_shots_list),
+                "gkSaveRate": gk_save_pct,
+                "gkAvgSaves": gk_avg_saves,
+                "gkSavesPer90": gk_saves_per90,
+                "gkSampleSize": games_with_saves,
+                "goalsAgainstPerGame": goals_against,
+                "contextMultiplier": context_multiplier,
+                "contextFactors": context_factors,
+                "formulaProjection": projected_saves,
+                "formula": f"{opp_avg_sot} SoT × {gk_save_pct}% save rate × {context_multiplier} context = {projected_saves}",
             }
+            wave2_supplement["savesAnalysis"] = gk_formula_data
+
+            saves_context = f"""
+[ELITE GK SAVES FORMULA]
+FORMULA: Projected Saves = Opponent Avg SoT × GK Save% × Match Context Multiplier
+
+1. OPPONENT SHOTS ON TARGET ({opponent_venue.upper()} venue, last {len(opp_shots_list)} games):
+   - Avg total shots/game: {opp_avg_shots}
+   - Avg shots on TARGET/game: {opp_avg_sot}
+
+2. GK SAVE RATE (last {games_with_saves} games):
+   - Avg saves/game: {gk_avg_saves}
+   - Saves per 90: {gk_saves_per90}
+   - Estimated save %: {gk_save_pct}%
+   - Team goals against/game ({player_venue}): {goals_against or 'N/A'}
+
+3. MATCH CONTEXT MULTIPLIER: {context_multiplier}
+   {chr(10).join('   - ' + f for f in context_factors) if context_factors else '   - Neutral'}
+
+4. FORMULA RESULT: {opp_avg_sot} × {gk_save_pct}% × {context_multiplier} = {projected_saves} projected saves
+
+COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
+{'LEAN OVER' if projected_saves > req.line else 'LEAN UNDER' if projected_saves < req.line else 'PUSH ZONE'} — but weight scenarios (blowout, cagey game, etc.)
+"""
 
         # POSITION CONTEXT: Compute position-specific baseline from game logs
         position_context = ""
@@ -1360,6 +1442,8 @@ Return ONLY valid JSON. Synthesize all inputs. 15+ recentSamples with venue. 10p
             prediction["h2hPlayerStats"] = historical_data["h2hPlayerStats"]
         if historical_data.get("playerGameLogs"):
             prediction["playerGameLogs"] = historical_data["playerGameLogs"]
+        if gk_formula_data:
+            prediction["gkFormula"] = gk_formula_data
 
         await db.predictions.insert_one(prediction)
         prediction.pop("_id", None)

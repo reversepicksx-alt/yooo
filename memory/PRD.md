@@ -117,6 +117,7 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 - [x] Switched to grok-4-1-fast-non-reasoning with tools=[web_search] for real web intel (DONE - Mar 2026)
 - [x] Restored bookmaker odds (critical for determining favorite/game flow) (DONE - Mar 2026)
 - [x] Fixed duplicate player ID issue — name-based fallback for game log matching (DONE - Mar 2026)
+- [x] Elite GK Saves Formula: Opp SoT × Save% × Context Multiplier with full UI breakdown (DONE - Mar 2026)
 - [x] Added matchup overview to analysis page: possession bar, game type, moneyline, tactical alerts (DONE - Mar 2026)
 - [x] Push notifications: in-app toast + notification bell with history (DONE - Mar 2026)
 - [x] Re-analyze button on saved picks (DONE - Mar 2026)

@@ -430,6 +430,61 @@ function ProjectionCard({ projection, onSave, excludedIndices, onToggleSample })
             </div>
           )}
 
+          {/* GK SAVES FORMULA — only for saves prop */}
+          {projection.gkFormula && (
+            <div className="stat-box" style={{ borderColor: 'rgba(59,130,246,0.25)', background: 'rgba(59,130,246,0.04)' }} data-testid="gk-formula">
+              <div className="stat-label flex items-center gap-2 mb-3">
+                <Shield style={{ width: 12, height: 12, color: '#3b82f6' }} /> GK Saves Formula
+              </div>
+
+              {/* Formula equation */}
+              <div style={{ background: 'rgba(0,0,0,0.3)', borderRadius: 8, padding: '10px 14px', marginBottom: 12, fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: 'var(--accent)', fontWeight: 700, textAlign: 'center', letterSpacing: '0.02em' }}>
+                {projection.gkFormula.opponentAvgSOT} SoT &times; {projection.gkFormula.gkSaveRate}% save rate &times; {projection.gkFormula.contextMultiplier} context = <span style={{ fontSize: 16, color: '#3b82f6' }}>{projection.gkFormula.formulaProjection}</span> saves
+              </div>
+
+              {/* Opponent shooting */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 }}>
+                <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 8, padding: '8px 10px' }}>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Opp Shots/Game ({projection.gkFormula.opponentVenue})</div>
+                  <div style={{ fontSize: 18, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)', marginTop: 2 }}>{projection.gkFormula.opponentAvgShots}</div>
+                  <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>{projection.gkFormula.opponentShotsSample} games</div>
+                </div>
+                <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 8, padding: '8px 10px' }}>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: '#f43f5e', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Opp SOT/Game ({projection.gkFormula.opponentVenue})</div>
+                  <div style={{ fontSize: 18, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: '#f43f5e', marginTop: 2 }}>{projection.gkFormula.opponentAvgSOT}</div>
+                  <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>shots on target allowed</div>
+                </div>
+              </div>
+
+              {/* GK stats */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 10 }}>
+                <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 8, padding: '8px 10px', textAlign: 'center' }}>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Save Rate</div>
+                  <div style={{ fontSize: 18, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: 'var(--accent)', marginTop: 2 }}>{projection.gkFormula.gkSaveRate}%</div>
+                </div>
+                <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 8, padding: '8px 10px', textAlign: 'center' }}>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Avg Saves</div>
+                  <div style={{ fontSize: 18, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)', marginTop: 2 }}>{projection.gkFormula.gkAvgSaves}</div>
+                </div>
+                <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 8, padding: '8px 10px', textAlign: 'center' }}>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>GA/Game</div>
+                  <div style={{ fontSize: 18, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)', marginTop: 2 }}>{projection.gkFormula.goalsAgainstPerGame ?? '-'}</div>
+                </div>
+              </div>
+
+              {/* Context multiplier */}
+              <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 8, padding: '8px 10px' }}>
+                <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 4 }}>Match Context ({projection.gkFormula.contextMultiplier}x)</div>
+                {projection.gkFormula.contextFactors?.map((f, i) => (
+                  <div key={i} style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.6 }}>{f}</div>
+                ))}
+                {(!projection.gkFormula.contextFactors || projection.gkFormula.contextFactors.length === 0) && (
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Neutral — no significant adjustments</div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Scenario Analysis */}
           {projection.scenarioAnalysis && (
             <div className="stat-box" style={{ borderColor: 'rgba(245,158,11,0.2)', background: 'rgba(245,158,11,0.04)' }}>
