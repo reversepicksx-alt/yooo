@@ -63,6 +63,22 @@ export async function predict(request) {
   });
 }
 
+export async function predictCombo(request) {
+  // Start the job
+  const job = await apiCall('/api/predict-combo', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+  // Poll until done
+  const jobId = job.jobId;
+  for (let i = 0; i < 40; i++) { // poll up to ~2 minutes
+    await new Promise(r => setTimeout(r, 3000));
+    const status = await apiCall(`/api/predict-combo/${jobId}`);
+    if (status.status === 'done') return status.result;
+  }
+  throw new Error('Combo prediction timed out after 2 minutes.');
+}
+
 export async function startChat(sessionId = null) {
   return apiCall('/api/chat/start', {
     method: 'POST',

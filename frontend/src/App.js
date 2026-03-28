@@ -8,7 +8,7 @@ import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts';
 import {
-  getTeamsByLeague, searchPlayers, predict, startChat, sendChatMessage,
+  getTeamsByLeague, searchPlayers, predict, predictCombo, startChat, sendChatMessage,
   checkApiStatus, SUPPORTED_LEAGUES,
   verifyWhop, authLogin, setPassword as apiSetPassword, resetPassword, verifySession, authLogout,
   getPickOfTheDay, savePick, listPicks, deletePick, liveUpdatePicks
@@ -937,6 +937,7 @@ export default function App() {
   const [comboLine, setComboLine] = useState(0);
   const [comboProjection, setComboProjection] = useState(null);
   const [isComboProjecting, setIsComboProjecting] = useState(false);
+  const [comboProgress, setComboProgress] = useState('');
 
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState('');
@@ -1149,60 +1150,28 @@ export default function App() {
     if (!comboPlayer2) return;
     setIsComboProjecting(true);
     setWizardError(null);
+    setComboProgress('Running combo analysis...');
     try {
-      // Determine Player 2's matchup context
-      let p2OpponentId = wizardData.opponentId;
-      let p2OpponentName = wizardData.opponentName;
-      let p2Venue = wizardData.venue;
+      const result = await predictCombo({
+        leagueId: wizardData.leagueId,
+        player1Id: wizardData.playerId,
+        player1Name: wizardData.playerName,
+        player1TeamId: wizardData.teamId,
+        player2Id: comboPlayer2.playerId,
+        player2Name: comboPlayer2.playerName,
+        player2TeamId: comboPlayer2.teamId,
+        opponentId: wizardData.opponentId,
+        opponentName: wizardData.opponentName,
+        venue: wizardData.venue,
+        propType: wizardData.propType,
+        combinedLine: comboLine,
+      });
 
-      if (comboPlayer2.teamId === wizardData.opponentId) {
-        // Player 2 is on the opponent's team — flip perspective
-        p2OpponentId = wizardData.teamId;
-        p2OpponentName = wizardData.teamName || wizardData.playerName?.split(' ')[0] || 'Team';
-        p2Venue = wizardData.venue === 'home' ? 'away' : 'home';
+      if (!result?.player1?.player || !result?.player2?.player) {
+        throw new Error('One or both predictions failed.');
       }
 
-      const [result1, result2] = await Promise.all([
-        predict({
-          leagueId: wizardData.leagueId,
-          playerId: wizardData.playerId,
-          playerName: wizardData.playerName,
-          teamId: wizardData.teamId,
-          opponentId: wizardData.opponentId,
-          opponentName: wizardData.opponentName,
-          venue: wizardData.venue,
-          propType: wizardData.propType,
-          line: wizardData.line || 0,
-        }),
-        predict({
-          leagueId: wizardData.leagueId,
-          playerId: comboPlayer2.playerId,
-          playerName: comboPlayer2.playerName,
-          teamId: comboPlayer2.teamId,
-          opponentId: p2OpponentId,
-          opponentName: p2OpponentName,
-          venue: p2Venue,
-          propType: wizardData.propType,
-          line: 0,
-        }),
-      ]);
-
-      if (!result1?.player || !result2?.player) throw new Error('One or both predictions failed.');
-
-      const combinedValue = Math.round(((result1.projectedValue || 0) + (result2.projectedValue || 0)) * 10) / 10;
-      const avgConfidence = Math.round(((result1.confidenceScore || 50) + (result2.confidenceScore || 50)) / 2);
-
-      setComboProjection({
-        player1: result1,
-        player2: result2,
-        combined: {
-          projectedValue: combinedValue,
-          line: comboLine,
-          recommendation: combinedValue > comboLine ? 'over' : combinedValue < comboLine ? 'under' : 'push',
-          confidenceScore: avgConfidence,
-          confidenceLevel: avgConfidence >= 75 ? 'High' : avgConfidence >= 55 ? 'Medium' : 'Low',
-        }
-      });
+      setComboProjection(result);
     } catch (err) {
       setWizardError(err.message || 'Combo projection failed.');
     } finally {
@@ -1768,8 +1737,8 @@ export default function App() {
                 <div className="spinner-ring">
                   <Users className="inner-icon" style={{ width: 28, height: 28 }} />
                 </div>
-                <div className="loading-title">Running Combo Analysis...</div>
-                <div className="loading-sub">Analyzing both players in parallel</div>
+                <div className="loading-title">{comboProgress || 'Running Combo Analysis...'}</div>
+                <div className="loading-sub">This takes about 2 minutes — analyzing each player separately</div>
               </div>
             )}
 

@@ -76,7 +76,7 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 - [x] **Grok stat verification**: Grok now web-searches for player's actual recent game stats (FotMob/SofaScore) to cross-verify API-Sports data
 - [x] **Data quality indicator**: Yellow/red warning banner shows when API data has gaps, explaining that web-verified stats were used instead
 - [x] **Removed GPT-4o-mini** — simplified to Dual AI (Grok + Gemini). Data digest built in code, not AI-summarized.
-- [x] **Combo/Stack Prediction feature** — Stack 2 players from same game/league, same prop type, get combined projected total vs combined line with individual breakdowns
+- [x] **Combo prediction async pipeline** — Backend runs both predictions in parallel via background job + polling to bypass proxy timeout. Frontend shows live progress.
 
 ## Auth System Details
 - Owner email (josselj001@gmail.com): Bypasses password entirely, instant login
