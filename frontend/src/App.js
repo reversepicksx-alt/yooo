@@ -681,6 +681,16 @@ function LoginPage({ onAuth }) {
             <ShieldAlert /><p>{error}</p>
           </div>
         )}
+
+        <div style={{ marginTop: 24, textAlign: 'center' }} data-testid="whop-signup-link">
+          <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>Not yet a premium member?</p>
+          <a href="https://whop.com/checkout/plan_XZqvPZlrENzGt" target="_blank" rel="noopener noreferrer"
+            style={{ fontSize: 13, fontWeight: 600, color: 'var(--neon)', textDecoration: 'none', transition: 'opacity 0.2s' }}
+            onMouseEnter={e => e.currentTarget.style.opacity = '0.7'}
+            onMouseLeave={e => e.currentTarget.style.opacity = '1'}>
+            Join on Whop &rarr;
+          </a>
+        </div>
       </div>
     </div>
   );
