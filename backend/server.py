@@ -1360,18 +1360,16 @@ Field requirements:
             opp_avg_shots = round(sum(s["total"] for s in opp_shots_list) / len(opp_shots_list), 1) if opp_shots_list else 0
             opp_avg_sot = round(sum(s["on_target"] for s in opp_shots_list) / len(opp_shots_list), 1) if opp_shots_list else 0
 
-            # 2. GK save rate from recent game logs (saves / shots on target faced)
+            # 2. GK save rate from LAST 5-7 game logs only (recent form)
             gk_saves_list = []
             gk_sot_faced_list = []
-            for g in player_game_logs:
-                sv = g.get("goals_saves")
-                if sv is not None and g.get("minutes", 0) > 0:
-                    gk_saves_list.append(sv)
+            recent_gk_logs = [g for g in player_game_logs if g.get("goals_saves") is not None and g.get("minutes", 0) > 0][:7]
+            for g in recent_gk_logs:
+                gk_saves_list.append(g.get("goals_saves"))
             gk_avg_saves = round(sum(gk_saves_list) / len(gk_saves_list), 2) if gk_saves_list else 0
-            gk_saves_per90 = round(sum(gk_saves_list) / max(1, sum(g.get("minutes", 0) for g in player_game_logs if g.get("goals_saves") is not None)) * 90, 2) if gk_saves_list else 0
+            gk_saves_per90 = round(sum(gk_saves_list) / max(1, sum(g.get("minutes", 0) for g in recent_gk_logs)) * 90, 2) if gk_saves_list else 0
 
-            # Calculate save % = saves / (saves + goals conceded). Approximate from game logs.
-            # Since we don't have SoT faced directly, use saves + goals conceded as proxy for SoT faced
+            # Calculate save % from LAST 5-7 games only
             total_saves = sum(gk_saves_list) if gk_saves_list else 0
             games_with_saves = len(gk_saves_list)
             # Estimate goals conceded per game from team stats
@@ -1427,7 +1425,7 @@ Field requirements:
                 "contextMultiplier": context_multiplier,
                 "contextFactors": context_factors,
                 "formulaProjection": projected_saves,
-                "formula": f"{opp_avg_sot} SoT × {gk_save_pct}% save rate × {context_multiplier} context = {projected_saves}",
+                "formula": f"{opp_avg_sot} SoT × {gk_save_pct}% save rate (last {games_with_saves} games) × {context_multiplier} context = {projected_saves}",
             }
             wave2_supplement["savesAnalysis"] = gk_formula_data
 
