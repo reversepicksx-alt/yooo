@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Zap, ChevronRight, RefreshCw, ArrowLeft, Clock, Activity,
   Shield, Send, Loader2, Trash2, User, Search,
-  TrendingUp, TrendingDown, BarChart3, ShieldAlert, Target, LogOut, Lock, Mail
+  TrendingUp, TrendingDown, BarChart3, ShieldAlert, Target, LogOut, Lock, Mail, Bell, RotateCcw
 } from 'lucide-react';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
@@ -13,6 +13,7 @@ import {
   verifyWhop, authLogin, setPassword as apiSetPassword, resetPassword, verifySession, authLogout,
   getPickOfTheDay, savePick, listPicks, deletePick, liveUpdatePicks
 } from './api';
+import { toast, Toaster } from 'sonner';
 import './App.css';
 
 const PROP_TYPES = [
@@ -763,7 +764,10 @@ export default function App() {
 
   const [savedPicks, setSavedPicks] = useState([]);
   const [selectedPick, setSelectedPick] = useState(null);
-  const [liveData, setLiveData] = useState({}); // pickId -> {currentValue, pace, hitPct, elapsed, matchStatus, matchScore}
+  const [liveData, setLiveData] = useState({});
+  const [notifications, setNotifications] = useState([]);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [reanalyzingPick, setReanalyzingPick] = useState(null);
 
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState('');
@@ -832,10 +836,38 @@ export default function App() {
             newLiveData[u.pickId] = u;
             if (u.matchStatus === 'final' && u.result) {
               settledIds.push(u.pickId);
+              // Find the pick to get player name
+              const pick = savedPicks.find(p => p.pickId === u.pickId);
+              if (pick) {
+                const propLabel = PROP_TYPES.find(pt => pt.key === pick.propType)?.label || pick.propType;
+                const isHit = u.result === 'hit';
+                const isPush = u.result === 'push';
+                const notif = {
+                  id: `${u.pickId}-${Date.now()}`,
+                  pickId: u.pickId,
+                  playerName: pick.playerName,
+                  propType: propLabel,
+                  line: pick.line,
+                  recommendation: pick.recommendation,
+                  result: u.result,
+                  actualValue: u.actualValue,
+                  matchScore: u.matchScore,
+                  timestamp: Date.now(),
+                  read: false,
+                };
+                setNotifications(prev => [notif, ...prev].slice(0, 50));
+                // Toast notification
+                if (isHit) {
+                  toast.success(`${pick.playerName} — ${pick.recommendation.toUpperCase()} ${pick.line} ${propLabel} HIT (Actual: ${u.actualValue})`, { duration: 8000 });
+                } else if (isPush) {
+                  toast(`${pick.playerName} — ${pick.recommendation.toUpperCase()} ${pick.line} ${propLabel} PUSH (Actual: ${u.actualValue})`, { duration: 8000 });
+                } else {
+                  toast.error(`${pick.playerName} — ${pick.recommendation.toUpperCase()} ${pick.line} ${propLabel} MISS (Actual: ${u.actualValue})`, { duration: 8000 });
+                }
+              }
             }
           }
           setLiveData(prev => ({ ...prev, ...newLiveData }));
-          // Refresh picks from DB if any were settled
           if (settledIds.length > 0) {
             const refreshed = await listPicks(auth.email, auth.token);
             setSavedPicks(refreshed.picks || []);
@@ -976,6 +1008,50 @@ export default function App() {
     } catch {}
   };
 
+  const reanalyzePick = async (pick, e) => {
+    e.stopPropagation();
+    if (!auth || reanalyzingPick) return;
+    setReanalyzingPick(pick.pickId);
+    try {
+      const result = await predict({
+        playerId: pick.playerId,
+        playerName: pick.playerName,
+        teamId: pick.teamId,
+        opponentId: pick.opponentId,
+        opponentName: pick.opponentName,
+        leagueId: pick.leagueId,
+        propType: pick.propType,
+        line: pick.line,
+        matchDate: new Date().toISOString().split('T')[0],
+        venue: pick.venue || 'home',
+      }, auth.token);
+      // Save updated pick with new projection data
+      const updatedPick = {
+        ...result,
+        id: pick.pickId,
+        player: result.player || { id: pick.playerId, name: pick.playerName, team: pick.teamName },
+        opponent: pick.opponentName,
+        timestamp: Date.now(),
+        status: 'live',
+        result: 'pending',
+        _request: {
+          leagueId: pick.leagueId,
+          teamId: pick.teamId,
+          opponentId: pick.opponentId,
+          venue: pick.venue || 'home',
+        },
+      };
+      await savePick(auth.email, auth.token, updatedPick);
+      const refreshed = await listPicks(auth.email, auth.token);
+      setSavedPicks(refreshed.picks || []);
+      toast.success(`Re-analyzed ${pick.playerName} — ${result.recommendation?.toUpperCase()} ${pick.line} (Proj: ${result.projectedValue}, Conf: ${result.confidenceScore}%)`);
+    } catch {
+      toast.error('Re-analysis failed. Try again.');
+    } finally {
+      setReanalyzingPick(null);
+    }
+  };
+
   const handleLogout = async () => {
     if (auth) {
       try { await authLogout(auth.email, auth.token); } catch {}
@@ -1018,7 +1094,49 @@ export default function App() {
             <div className={`api-dot ${apiStatus}`} data-testid="api-status-dot" />
             <span>API</span>
           </div>
-          <div className="version-badge">v2.0.0</div>
+          <div className="version-badge">v2.1</div>
+          <div style={{ position: 'relative' }}>
+            <button className="icon-btn" onClick={() => setShowNotifications(!showNotifications)} data-testid="notification-bell">
+              <Bell />
+              {notifications.filter(n => !n.read).length > 0 && (
+                <div className="notif-badge" data-testid="notif-count">{notifications.filter(n => !n.read).length}</div>
+              )}
+            </button>
+            {showNotifications && (
+              <div className="notif-dropdown" data-testid="notif-dropdown">
+                <div className="notif-dropdown-header">
+                  <span style={{ fontWeight: 800, fontSize: 13 }}>Notifications</span>
+                  {notifications.length > 0 && (
+                    <button style={{ fontSize: 11, color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 700 }}
+                      onClick={() => { setNotifications(prev => prev.map(n => ({ ...n, read: true }))); }}>
+                      Mark all read
+                    </button>
+                  )}
+                </div>
+                <div className="notif-list">
+                  {notifications.length === 0 ? (
+                    <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>No notifications yet</div>
+                  ) : notifications.slice(0, 20).map(n => (
+                    <div key={n.id} className={`notif-item ${n.read ? 'read' : 'unread'}`} onClick={() => {
+                      setNotifications(prev => prev.map(x => x.id === n.id ? { ...x, read: true } : x));
+                      setActiveTab('tracking');
+                      setTrackingView(n.result ? 'history' : 'live');
+                      setShowNotifications(false);
+                    }}>
+                      <div className={`notif-result ${n.result}`}>{n.result === 'hit' ? 'HIT' : n.result === 'push' ? 'PUSH' : 'MISS'}</div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 700, fontSize: 12 }}>{n.playerName}</div>
+                        <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                          {n.recommendation?.toUpperCase()} {n.line} {n.propType} — Actual: {n.actualValue}
+                        </div>
+                      </div>
+                      <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>{new Date(n.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
           <button className="icon-btn" onClick={() => window.location.reload()} data-testid="refresh-btn">
             <RefreshCw />
           </button>
@@ -1383,6 +1501,16 @@ export default function App() {
                           {!isMatchLive && !isMatchFinal && (
                             <div className="scheduled-badge">SCHEDULED</div>
                           )}
+                          {pick.status === 'live' && (
+                            <button className="reanalyze-btn" onClick={e => reanalyzePick(pick, e)}
+                              disabled={reanalyzingPick === pick.pickId}
+                              data-testid={`reanalyze-pick-${pick.pickId}`}
+                              title="Re-analyze with fresh data">
+                              {reanalyzingPick === pick.pickId
+                                ? <Loader2 style={{ width: 14, height: 14, animation: 'spin 1s linear infinite' }} />
+                                : <RotateCcw style={{ width: 14, height: 14 }} />}
+                            </button>
+                          )}
                           <button className="remove-btn" onClick={e => removePickFn(pick.pickId, e)} data-testid={`remove-pick-${pick.pickId}`}>
                             <Trash2 style={{ width: 14, height: 14 }} />
                           </button>
@@ -1511,6 +1639,7 @@ export default function App() {
           </button>
         </div>
       </nav>
+      <Toaster position="top-center" theme="dark" richColors />
     </div>
   );
 }

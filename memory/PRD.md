@@ -118,7 +118,8 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 - [x] Optimized API calls: removed formations/injuries endpoints (-6 calls), increased fixture pool 20→30, game logs up to 15 (DONE - Mar 2026)
 
 ### P1 (High)
-- Push notifications for pick results
+- [x] Push notifications for pick results — in-app toast + notification bell with history (DONE - Mar 2026)
+- [x] Re-analyze button on saved picks — re-runs prediction with fresh data (DONE - Mar 2026)
 
 ### P2 (Medium)
 - Slip correlation analysis
