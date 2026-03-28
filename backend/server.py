@@ -807,6 +807,7 @@ async def predict(req: PredictionRequest):
                                     "fouls_committed": stats.get("fouls", {}).get("committed"),
                                     "duels_total": stats.get("duels", {}).get("total"),
                                     "duels_won": stats.get("duels", {}).get("won"),
+                                    "goals_saves": stats.get("goals", {}).get("saves"),
                                 }
                                 # Calculate per-90 for the target stat
                                 stat_field_map = {
@@ -815,6 +816,7 @@ async def predict(req: PredictionRequest):
                                     "shots_on_target": "shots_on",
                                     "tackles": "tackles_total",
                                     "key_passes": "passes_key",
+                                    "saves": "goals_saves",
                                     "interceptions": "tackles_interceptions",
                                     "blocks": "tackles_blocks",
                                     "dribbles": "dribbles_attempts",
@@ -1032,6 +1034,7 @@ DATA:
                 "shots_on_target": "shots_on",
                 "tackles": "tackles_total",
                 "key_passes": "passes_key",
+                "saves": "goals_saves",
                 "interceptions": "tackles_interceptions",
                 "blocks": "tackles_blocks",
                 "dribbles": "dribbles_attempts",
@@ -1294,8 +1297,9 @@ Field requirements:
         if player_game_logs:
             target_field_map = {
                 "pass_attempts": "passes_total", "shots": "shots_total", "shots_on_target": "shots_on",
-                "tackles": "tackles_total", "key_passes": "passes_key", "interceptions": "tackles_interceptions",
-                "blocks": "tackles_blocks", "dribbles": "dribbles_attempts", "fouls_drawn": "fouls_drawn",
+                "tackles": "tackles_total", "key_passes": "passes_key", "saves": "goals_saves",
+                "interceptions": "tackles_interceptions", "blocks": "tackles_blocks",
+                "dribbles": "dribbles_attempts", "fouls_drawn": "fouls_drawn",
             }
             target_field = target_field_map.get(req.propType, "passes_total")
             values = [g.get(target_field) for g in player_game_logs if g.get(target_field) is not None]

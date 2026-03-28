@@ -1,0 +1,70 @@
+{
+  "summary": "Verified saves prop mapping bug fix. Backend tests confirm saves prop now returns correct goalkeeper save values (avg 2-5) instead of pass_attempts (avg 20-40). All 6 backend tests passed. Frontend UI verified: Whop link correct, Saves prop available in wizard, login flow works.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "passed_tests": [
+    "Backend: Health check passed",
+    "Backend: Saves prop returns reasonable values (avg 2-5, not 20-40 like pass_attempts)",
+    "Backend: pass_attempts regression test passed - still uses passes_total field",
+    "Backend: shots regression test passed - still uses shots_total field",
+    "Backend: tackles regression test passed - still uses tackles_total field",
+    "Backend: Code verification - found 3 'saves' -> 'goals_saves' mappings in server.py",
+    "Backend: Code verification - goals_saves extraction from stats.goals.saves found",
+    "Frontend: Whop link shows 'Not yet a premium member?' text",
+    "Frontend: Whop link URL correct: https://whop.com/checkout/plan_XZqvPZlrENzGt",
+    "Frontend: Owner auto-login works (josselj001@gmail.com)",
+    "Frontend: AI Wizard flow works - League -> Player -> Opponent -> Venue -> Prop -> Line",
+    "Frontend: Saves prop available in prop selection with description 'Goalkeeper saves'"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_saves_mapping.py",
+    "/app/test_reports/pytest/saves_mapping_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Bug fix verified: 'saves' -> 'goals_saves' mapping added in 3 locations (lines 819, 1037, 1300)",
+    "goals_saves extraction added: stats.get('goals', {}).get('saves') at line 810",
+    "Regression tests confirm other prop types (pass_attempts, shots, tackles) still work correctly"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_saves_mapping.py (new test file for saves mapping verification)"
+  ],
+  "success_rate": {
+    "backend": "100% (6/6 tests passed)",
+    "frontend": "100% (All UI features verified)"
+  },
+  "test_credentials": {
+    "owner_email": "josselj001@gmail.com (auto-login, no password needed)"
+  },
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Saves prop mapping bug fix verified. The bug was that 'saves' prop showed pass_attempts values (28, 17, 31, 35) instead of actual saves. Fix added 'goals_saves' extraction and 'saves' -> 'goals_saves' mapping in 3 locations in server.py. Backend tests confirm saves prop now returns values in range 0-10 (typical for goalkeeper saves) instead of 20-40 (typical for pass_attempts). Whop link on login page verified correct.",
+  "feature_verification": {
+    "saves_prop_mapping_fix": {
+      "status": "VERIFIED",
+      "description": "saves prop now correctly maps to goals_saves field, returning actual save values (0-10 range) instead of pass_attempts (20-40 range)",
+      "code_locations": [
+        "server.py line 810: goals_saves extraction from stats.goals.saves",
+        "server.py line 819: stat_field_map 'saves' -> 'goals_saves'",
+        "server.py line 1037: target_field_map 'saves' -> 'goals_saves'",
+        "server.py line 1300: target_field_map 'saves' -> 'goals_saves'"
+      ]
+    },
+    "regression_tests": {
+      "status": "VERIFIED",
+      "description": "pass_attempts, shots, tackles props still work correctly with their respective fields"
+    },
+    "whop_link": {
+      "status": "VERIFIED",
+      "description": "Login page shows 'Not yet a premium member?' with link to https://whop.com/checkout/plan_XZqvPZlrENzGt"
+    }
+  }
+}
