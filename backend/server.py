@@ -99,6 +99,9 @@ SUPPORTED_LEAGUES = [
 
 CURRENT_SEASON = 2025
 
+# Women's league IDs — for correct pronoun usage in AI analysis
+WOMENS_LEAGUE_IDS = {254}  # NWSL. Add more women's leagues as needed.
+
 # Rate limit: max 5 concurrent API-Sports requests
 _api_semaphore = aio.Semaphore(5)
 
@@ -829,6 +832,8 @@ async def predict(req: PredictionRequest):
         # If player is AWAY → team's AWAY games + opponent's HOME games
         player_venue = req.venue.lower()  # "home" or "away"
         opponent_venue = "away" if player_venue == "home" else "home"
+        is_womens = req.leagueId in WOMENS_LEAGUE_IDS
+        pronoun_note = "IMPORTANT: This is a WOMEN'S league. Use she/her/her pronouns for all players. Never use he/him/his." if is_womens else ""
 
         # Filter team's recent fixtures by venue
         venue_filtered_team_fixtures = [f for f in recent_fixtures if f.get("venue") == player_venue]
@@ -968,6 +973,7 @@ async def predict(req: PredictionRequest):
                         input=[
                             {"role": "system", "content": "Elite soccer analyst with deep web research. You MUST use web search to find ACTUAL per-game player statistics. Search SofaScore, FotMob, and WhoScored specifically. Do NOT guess or estimate — search and report exact numbers you find. Be concise."},
                             {"role": "user", "content": f"""Analyze {req.propType} prop on {req.playerName} ({player_position or 'Unknown'}) — {player_team} vs {req.opponentName} ({player_venue.upper()}). Line: {req.line}. {odds_context}
+{pronoun_note}
 
 TASK 1 — FIND REAL STATS (MOST IMPORTANT):
 Search specifically for:
@@ -1475,6 +1481,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             final_data = json.dumps(historical_data, default=str)[:18000]
 
         prompt = f"""DUAL AI PREDICTION — FINAL STAGE
+{pronoun_note}
 
 Player: {req.playerName} (ID: {req.playerId}) | Position: {player_position or 'Unknown'} | Opponent: {req.opponentName} | Venue: {req.venue.upper()} | Prop: {req.propType} | Line: {req.line}
 
