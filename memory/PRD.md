@@ -7,7 +7,7 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 - **Backend**: Python FastAPI (port 8001) with Gemini AI via emergentintegrations library
 - **Frontend**: React (port 3000) with custom dark CSS, PWA-enabled
 - **Database**: MongoDB (local)
-- **AI Pipeline**: Triple AI — GPT-4o-mini (data compression) -> Grok-4 (tactical analysis + web search) -> Gemini 2.5 Flash (final JSON calibration)
+- **AI Pipeline**: Dual AI — Grok-4 (tactical analysis + live web search) → Gemini 2.5 Flash (final JSON calibration). Code-built data digest replaces GPT-4o-mini summarization.
 - **Data Source**: API-Sports v3 (api-sports.io)
 - **Auth**: Whop API (subscription verification) + bcrypt password hashing + session tokens
 
@@ -73,6 +73,7 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 - [x] Re-analyze button on saved picks
 - [x] Optimized API calls: removed formations/injuries endpoints, increased fixture pool
 - [x] **Matchup Overview locked to real data** — possession, moneyline, game type, team names computed from actual API-Sports fixture stats instead of AI-generated (prevents inconsistency between predictions)
+- [x] **Removed GPT-4o-mini** — simplified to Dual AI (Grok + Gemini). Data digest built in code, not AI-summarized.
 - [x] **Combo/Stack Prediction feature** — Stack 2 players from same game/league, same prop type, get combined projected total vs combined line with individual breakdowns
 
 ## Auth System Details
@@ -85,7 +86,7 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 
 ## API Keys (in .env)
 - API-Sports key in backend/.env
-- Emergent LLM Key in backend/.env
+- Emergent LLM Key in backend/.env (for Gemini)
 - Whop API key + Company ID in backend/.env
 - xAI (Grok) API key in backend/.env
 
