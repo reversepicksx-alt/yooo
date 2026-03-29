@@ -1985,8 +1985,13 @@ If there's only one entry, still return it as an array with one element."""
             return ai_league_id or 71  # Default to Brasileirao if nothing found
 
         def strip_accents(text):
-            """Remove diacritics for API search compatibility."""
+            """Remove diacritics and normalize Nordic/special chars for API search."""
             import unicodedata
+            # Handle specific Nordic characters that NFKD doesn't decompose
+            CHAR_MAP = {'ø': 'o', 'Ø': 'O', 'æ': 'ae', 'Æ': 'AE', 'å': 'a', 'Å': 'A',
+                        'ð': 'd', 'Ð': 'D', 'þ': 'th', 'Þ': 'Th', 'ß': 'ss',
+                        'ł': 'l', 'Ł': 'L', 'đ': 'd', 'Đ': 'D'}
+            text = ''.join(CHAR_MAP.get(c, c) for c in text)
             nfkd = unicodedata.normalize('NFKD', text)
             return ''.join(c for c in nfkd if not unicodedata.category(c).startswith('M'))
 
@@ -2193,57 +2198,112 @@ If there's only one entry, still return it as an array with one element."""
                             except Exception:
                                 continue
 
-                # Squad-based fallback: if team hint exists but player not found via search,
-                # resolve the team and look through its squad directly
+                # Squad-based fallback: if player not found via search
                 if not resolved_player and player_team_hint:
                     try:
-                        # Resolve team ID from team hint
-                        team_search_variants = [player_team_hint]
-                        th_variant = player_team_hint.replace("th", "t")
-                        if th_variant != player_team_hint:
-                            team_search_variants.append(th_variant)
-                        ABBREV_MAP = {"pr": "paranaense", "mg": "mineiro", "go": "goianiense", "rj": "rio"}
-                        for abbr, full in ABBREV_MAP.items():
-                            if player_team_hint.endswith(f" {abbr}"):
-                                expanded = player_team_hint[:-(len(abbr))].strip() + " " + full
-                                team_search_variants.append(expanded)
-                                ev = expanded.replace("th", "t")
-                                if ev != expanded:
-                                    team_search_variants.append(ev)
+                        if not is_international:
+                            # Club match: resolve team and search its squad
+                            team_search_variants = [player_team_hint]
+                            th_variant = player_team_hint.replace("th", "t")
+                            if th_variant != player_team_hint:
+                                team_search_variants.append(th_variant)
+                            ABBREV_MAP = {"pr": "paranaense", "mg": "mineiro", "go": "goianiense", "rj": "rio"}
+                            for abbr, full in ABBREV_MAP.items():
+                                if player_team_hint.endswith(f" {abbr}"):
+                                    expanded = player_team_hint[:-(len(abbr))].strip() + " " + full
+                                    team_search_variants.append(expanded)
+                                    ev = expanded.replace("th", "t")
+                                    if ev != expanded:
+                                        team_search_variants.append(ev)
 
-                        resolved_team_id = None
-                        for tsv in team_search_variants:
+                            resolved_team_id = None
+                            for tsv in team_search_variants:
+                                if resolved_team_id:
+                                    break
+                                try:
+                                    teams_data = await api_football_request("teams", {"search": tsv})
+                                    if teams_data:
+                                        for t in teams_data[:10]:
+                                            tname_lower = t.get("team", {}).get("name", "").lower()
+                                            is_youth = any(s in tname_lower for s in ["u20", "u23", "u21", "u19", "u18", "u17"])
+                                            if not is_youth:
+                                                resolved_team_id = t["team"]["id"]
+                                                break
+                                except Exception:
+                                    continue
+
                             if resolved_team_id:
-                                break
+                                squad_data = await api_football_request("players/squads", {"team": resolved_team_id})
+                                if squad_data:
+                                    squad_players = squad_data[0].get("players", []) if squad_data else []
+                                    search_lower = strip_accents(search_query.lower())
+                                    last_name_lower = search_lower.split()[-1] if search_lower.split() else search_lower
+                                    for sp in squad_players:
+                                        sp_name = strip_accents(sp.get("name", "").lower())
+                                        if search_lower == sp_name or last_name_lower == sp_name or search_lower in sp_name or sp_name in search_lower:
+                                            resolved_player = {
+                                                "playerId": sp["id"],
+                                                "playerName": sp["name"],
+                                                "photo": "",
+                                                "teamId": resolved_team_id,
+                                                "teamName": player_team_hint.title(),
+                                            }
+                                            break
+                        else:
+                            # International match: search the NATIONAL TEAM squad first
+                            team_lower = player_team_hint or ""
+                            search_lower = strip_accents(search_query.lower())
+                            last_name_lower = search_lower.split()[-1] if search_lower.split() else search_lower
+
+                            # Resolve the national team ID
+                            nat_team_id = None
                             try:
-                                teams_data = await api_football_request("teams", {"search": tsv})
+                                teams_data = await api_football_request("teams", {"search": team_lower.title()})
                                 if teams_data:
-                                    for t in teams_data[:10]:
-                                        tname_lower = t.get("team", {}).get("name", "").lower()
-                                        is_youth = any(s in tname_lower for s in ["u20", "u23", "u21", "u19", "u18", "u17"])
-                                        if not is_youth:
-                                            resolved_team_id = t["team"]["id"]
+                                    for t in teams_data[:5]:
+                                        # National teams have the country name as team name
+                                        tname = t.get("team", {}).get("name", "").lower()
+                                        if team_lower in tname or tname in team_lower:
+                                            nat_team_id = t["team"]["id"]
                                             break
                             except Exception:
-                                continue
+                                pass
 
-                        if resolved_team_id:
-                            squad_data = await api_football_request("players/squads", {"team": resolved_team_id})
-                            if squad_data:
-                                squad_players = squad_data[0].get("players", []) if squad_data else []
-                                search_lower = strip_accents(search_query.lower())
-                                last_name_lower = search_lower.split()[-1] if search_lower.split() else search_lower
-                                for sp in squad_players:
-                                    sp_name = strip_accents(sp.get("name", "").lower())
-                                    if search_lower == sp_name or last_name_lower == sp_name or search_lower in sp_name or sp_name in search_lower:
-                                        resolved_player = {
-                                            "playerId": sp["id"],
-                                            "playerName": sp["name"],
-                                            "photo": "",
-                                            "teamId": resolved_team_id,
-                                            "teamName": player_team_hint.title(),
-                                        }
-                                        break
+                            if nat_team_id:
+                                try:
+                                    squad_data = await api_football_request("players/squads", {"team": nat_team_id})
+                                    if squad_data:
+                                        for sp in squad_data[0].get("players", []):
+                                            sp_name = strip_accents(sp.get("name", "").lower())
+                                            if last_name_lower in sp_name or search_lower in sp_name or sp_name in search_lower:
+                                                found_player_id = sp["id"]
+                                                # Now find their club team by searching player by ID
+                                                club_leagues = NATION_TO_LEAGUES.get(team_lower, TOP_5_LEAGUES)
+                                                club_team_id = None
+                                                club_team_name = ""
+                                                for cl in club_leagues[:5]:
+                                                    try:
+                                                        pdata = await api_football_request("players", {"id": found_player_id, "league": cl, "season": CURRENT_SEASON})
+                                                        if pdata:
+                                                            club_team_id = pdata[0].get("statistics", [{}])[0].get("team", {}).get("id")
+                                                            club_team_name = pdata[0].get("statistics", [{}])[0].get("team", {}).get("name", "")
+                                                            actual_league = pdata[0].get("statistics", [{}])[0].get("league", {})
+                                                            if actual_league.get("id"):
+                                                                league_id = actual_league["id"]
+                                                                league_name = actual_league.get("name", league_name)
+                                                            break
+                                                    except Exception:
+                                                        continue
+                                                resolved_player = {
+                                                    "playerId": found_player_id,
+                                                    "playerName": sp["name"],
+                                                    "photo": "",
+                                                    "teamId": club_team_id or nat_team_id,
+                                                    "teamName": club_team_name or team_lower.title(),
+                                                }
+                                                break
+                                except Exception:
+                                    pass
                     except Exception:
                         pass
 
