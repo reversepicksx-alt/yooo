@@ -589,6 +589,7 @@ class PredictionRequest(BaseModel):
     playerId: int
     playerName: str
     teamId: int
+    teamName: str = ""
     opponentId: int
     opponentName: str
     venue: str = "home"
@@ -635,15 +636,41 @@ async def predict(req: PredictionRequest):
             return None
 
         async def get_match_odds():
-            """Get bookmaker odds for the upcoming fixture — critical for determining favorite"""
+            """Get bookmaker odds for the specific upcoming fixture between team and opponent"""
             try:
+                fixtures = []
+                # First try: h2h next fixture between the two specific teams
                 for s in [CURRENT_SEASON + 1, CURRENT_SEASON]:
                     try:
-                        fixtures = await api_football_request("fixtures", {"team": actual_team_id or 40, "next": 1, "season": s})
-                        if fixtures:
+                        h2h_fixtures = await api_football_request("fixtures/headtohead", {
+                            "h2h": f"{actual_team_id or 40}-{req.opponentId}",
+                            "next": 5,
+                            "season": s
+                        })
+                        if h2h_fixtures:
+                            fixtures = h2h_fixtures
                             break
                     except Exception:
                         continue
+
+                # Fallback: get team's next match if h2h didn't find upcoming fixture
+                if not fixtures:
+                    for s in [CURRENT_SEASON + 1, CURRENT_SEASON]:
+                        try:
+                            next_fixtures = await api_football_request("fixtures", {"team": actual_team_id or 40, "next": 5, "season": s})
+                            if next_fixtures:
+                                # Try to find the specific opponent match
+                                for nf in next_fixtures:
+                                    home_id = nf.get("teams", {}).get("home", {}).get("id")
+                                    away_id = nf.get("teams", {}).get("away", {}).get("id")
+                                    if req.opponentId in (home_id, away_id):
+                                        fixtures = [nf]
+                                        break
+                                if not fixtures:
+                                    fixtures = next_fixtures[:1]
+                                break
+                        except Exception:
+                            continue
                 if not fixtures:
                     return None
                 fid = fixtures[0].get("fixture", {}).get("id")
@@ -1608,7 +1635,7 @@ Return ONLY valid JSON. recentSamples MUST be []. 10pt probabilityCurve."""
             else:
                 real_matchup["expectedGameType"] = "high-tempo" if combined_shots >= 23 else "cagey"
         # 4. Always set team names from request data (deterministic)
-        player_team = player_stats.get("statistics", [{}])[0].get("team", {}).get("name", "") if player_stats else ""
+        player_team = req.teamName or (player_stats.get("statistics", [{}])[0].get("team", {}).get("name", "") if player_stats else "")
         real_matchup["homeTeam"] = player_team if player_venue == "home" else req.opponentName
         real_matchup["awayTeam"] = req.opponentName if player_venue == "home" else player_team
         prediction["matchupOverview"] = real_matchup

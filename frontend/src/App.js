@@ -1357,6 +1357,7 @@ export default function App() {
         playerId: pickData.resolved.playerId,
         playerName: pickData.resolved.playerName,
         teamId: pickData.resolved.teamId,
+        teamName: pickData.resolved.teamName || pickData.extracted.playerTeam || '',
         opponentId: opponentId,
         opponentName: opponentName,
         leagueId: pickData.extracted.leagueId || 39,
