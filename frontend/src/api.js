@@ -143,6 +143,13 @@ export async function liveUpdatePicks(email, token) {
   return apiCall('/api/picks/live-update', { method: 'POST', body: JSON.stringify({ email, token }) });
 }
 
+export async function scanProp(imageBase64) {
+  return apiCall('/api/scan-prop', {
+    method: 'POST',
+    body: JSON.stringify({ image_base64: imageBase64 }),
+  });
+}
+
 export const SUPPORTED_LEAGUES = [
   { id: 39, name: "Premier League", type: "Domestic" },
   { id: 140, name: "La Liga", type: "Domestic" },

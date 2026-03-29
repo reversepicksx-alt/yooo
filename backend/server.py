@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
 from dotenv import load_dotenv
-from emergentintegrations.llm.chat import LlmChat, UserMessage
+from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
 from motor.motor_asyncio import AsyncIOMotorClient
 from openai import OpenAI
 
@@ -1783,6 +1783,223 @@ async def get_combo_result(job_id: str):
     elif job["status"] == "error":
         raise HTTPException(status_code=500, detail=job.get("error", "Combo prediction failed"))
     return {"status": "running"}
+
+
+# =============================================
+# SCAN PROP — Image-to-Prediction
+# =============================================
+class ScanPropRequest(BaseModel):
+    image_base64: str  # base64-encoded image data
+
+PROP_TYPE_ALIASES = {
+    "pass attempts": "pass_attempts",
+    "passes attempted": "pass_attempts",
+    "passes": "pass_attempts",
+    "pass att": "pass_attempts",
+    "shots": "shots",
+    "shots on target": "shots_on_target",
+    "sot": "shots_on_target",
+    "tackles": "tackles",
+    "key passes": "key_passes",
+    "saves": "saves",
+    "goalkeeper saves": "saves",
+    "gk saves": "saves",
+    "interceptions": "interceptions",
+    "blocks": "blocks",
+    "dribble attempts": "dribbles",
+    "dribbles": "dribbles",
+    "fouls drawn": "fouls_drawn",
+    "assists": "key_passes",
+}
+
+@app.post("/api/scan-prop")
+async def scan_prop(req: ScanPropRequest):
+    """Use AI vision to extract player prop data from a sportsbook screenshot."""
+    try:
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"scan-{uuid.uuid4().hex[:8]}",
+            system_message="You are an expert at reading sportsbook screenshots. Extract structured data precisely."
+        ).with_model("openai", "gpt-4o")
+
+        image_content = ImageContent(image_base64=req.image_base64)
+
+        leagues_list = ", ".join([f"{l['name']} (ID:{l['id']})" for l in SUPPORTED_LEAGUES])
+
+        prompt = f"""Analyze this sportsbook screenshot (likely PrizePicks, DraftKings, FanDuel, or similar).
+
+Extract ALL player prop entries visible in the image. For EACH entry, extract:
+1. playerName — Full name as shown
+2. propType — One of: pass_attempts, shots, shots_on_target, tackles, key_passes, saves, interceptions, blocks, dribbles, fouls_drawn
+3. line — The numerical over/under line (e.g., 24.5)
+4. overUnder — "over" or "under" if indicated, otherwise "over"
+5. opponentName — The opposing team if shown
+6. league — Best guess league name
+7. leagueId — Match to one of these supported leagues: {leagues_list}
+
+PROP TYPE MAPPING (sportsbook label → our key):
+- "Pass Attempts" / "Passes Attempted" / "Passes" → pass_attempts
+- "Shots" / "Shots Taken" → shots
+- "Shots on Target" / "SOT" → shots_on_target
+- "Tackles" → tackles
+- "Key Passes" / "Assists" → key_passes
+- "Saves" / "Goalkeeper Saves" / "GK Saves" → saves
+- "Interceptions" → interceptions
+- "Blocks" → blocks
+- "Dribble Attempts" / "Dribbles" → dribbles
+- "Fouls Drawn" → fouls_drawn
+
+Return ONLY valid JSON array. Each element: {{"playerName":"...","propType":"...","line":0.0,"overUnder":"over","opponentName":"...","league":"...","leagueId":0}}
+If you cannot determine a field, use null. Always try to extract the line number.
+If there's only one entry, still return it as an array with one element."""
+
+        msg = UserMessage(text=prompt, file_contents=[image_content])
+        response = await chat.send_message(msg)
+        response_text = response.strip()
+
+        # Clean markdown fences
+        if response_text.startswith("```"):
+            lines = response_text.split("\n")
+            lines = [l for l in lines if not l.strip().startswith("```")]
+            response_text = "\n".join(lines)
+
+        extracted = json.loads(response_text)
+        if not isinstance(extracted, list):
+            extracted = [extracted]
+
+        # Resolve each player via API-Sports search
+        results = []
+        for entry in extracted:
+            player_name = entry.get("playerName")
+            if not player_name:
+                continue
+
+            # Normalize prop type
+            raw_prop = (entry.get("propType") or "").lower().strip()
+            prop_type = PROP_TYPE_ALIASES.get(raw_prop, raw_prop)
+            if prop_type not in ["pass_attempts", "shots", "shots_on_target", "tackles", "key_passes", "saves", "interceptions", "blocks", "dribbles", "fouls_drawn"]:
+                prop_type = "pass_attempts"  # safe default
+
+            league_id = entry.get("leagueId") or 39
+            line = entry.get("line") or 0
+
+            # Search for player in API-Sports
+            resolved_player = None
+            try:
+                search_query = player_name.strip()
+                # Try multiple search strategies: full name, last name
+                search_variants = [search_query]
+                name_parts = search_query.split()
+                if len(name_parts) > 1:
+                    search_variants.append(name_parts[-1])  # Last name
+
+                for variant in search_variants:
+                    if resolved_player:
+                        break
+                    if len(variant) < 3:
+                        continue
+                    for season in [CURRENT_SEASON + 1, CURRENT_SEASON]:
+                        try:
+                            data = await api_football_request("players", {"search": variant, "league": league_id, "season": season})
+                            if data:
+                                # Find best match by name similarity
+                                best = None
+                                query_lower = search_query.lower()
+                                for d in data[:10]:
+                                    pname = d["player"]["name"].lower()
+                                    if query_lower in pname or pname in query_lower or name_parts[-1].lower() in pname:
+                                        best = d
+                                        break
+                                if not best:
+                                    best = data[0]
+                                resolved_player = {
+                                    "playerId": best["player"]["id"],
+                                    "playerName": best["player"]["name"],
+                                    "photo": best["player"].get("photo", ""),
+                                    "teamId": best.get("statistics", [{}])[0].get("team", {}).get("id"),
+                                    "teamName": best.get("statistics", [{}])[0].get("team", {}).get("name", ""),
+                                }
+                                break
+                        except Exception:
+                            continue
+
+                # Fallback: broader search without league filter
+                if not resolved_player:
+                    for variant in search_variants:
+                        if resolved_player:
+                            break
+                        if len(variant) < 3:
+                            continue
+                        for season in [CURRENT_SEASON + 1, CURRENT_SEASON]:
+                            try:
+                                data = await api_football_request("players", {"search": variant, "season": season})
+                                if data:
+                                    best = None
+                                    query_lower = search_query.lower()
+                                    for d in data[:10]:
+                                        pname = d["player"]["name"].lower()
+                                        if query_lower in pname or pname in query_lower or name_parts[-1].lower() in pname:
+                                            best = d
+                                            break
+                                    if not best:
+                                        best = data[0]
+                                    resolved_player = {
+                                        "playerId": best["player"]["id"],
+                                        "playerName": best["player"]["name"],
+                                        "photo": best["player"].get("photo", ""),
+                                        "teamId": best.get("statistics", [{}])[0].get("team", {}).get("id"),
+                                        "teamName": best.get("statistics", [{}])[0].get("team", {}).get("name", ""),
+                                    }
+                                    break
+                            except Exception:
+                                continue
+            except Exception:
+                pass
+
+            # Resolve opponent team
+            resolved_opponent = None
+            opponent_name = entry.get("opponentName")
+            if opponent_name and resolved_player:
+                try:
+                    # Search teams in the league
+                    teams_data = await api_football_request("teams", {"search": opponent_name})
+                    if teams_data:
+                        for t in teams_data[:5]:
+                            if opponent_name.lower() in t.get("team", {}).get("name", "").lower():
+                                resolved_opponent = {
+                                    "teamId": t["team"]["id"],
+                                    "teamName": t["team"]["name"],
+                                }
+                                break
+                        if not resolved_opponent:
+                            resolved_opponent = {
+                                "teamId": teams_data[0]["team"]["id"],
+                                "teamName": teams_data[0]["team"]["name"],
+                            }
+                except Exception:
+                    pass
+
+            results.append({
+                "extracted": {
+                    "playerName": player_name,
+                    "propType": prop_type,
+                    "line": line,
+                    "overUnder": entry.get("overUnder", "over"),
+                    "opponentName": entry.get("opponentName"),
+                    "league": entry.get("league"),
+                    "leagueId": league_id,
+                },
+                "resolved": resolved_player,
+                "resolvedOpponent": resolved_opponent,
+            })
+
+        return {"picks": results}
+
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=422, detail="AI could not parse the image. Try a clearer screenshot.")
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Scan failed: {str(e)}")
 
 
 

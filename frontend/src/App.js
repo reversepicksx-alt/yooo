@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Zap, ChevronRight, RefreshCw, ArrowLeft, Clock, Activity,
   Shield, Send, Loader2, Trash2, User, Search, Users, Edit3, HelpCircle, ChevronDown,
-  TrendingUp, TrendingDown, BarChart3, ShieldAlert, Target, LogOut, Lock, Mail, Bell, RotateCcw
+  TrendingUp, TrendingDown, BarChart3, ShieldAlert, Target, LogOut, Lock, Mail, Bell, RotateCcw,
+  Camera, Upload, Check, X, ImageIcon
 } from 'lucide-react';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
@@ -11,7 +12,8 @@ import {
   getTeamsByLeague, searchPlayers, predict, predictCombo, startChat, sendChatMessage,
   checkApiStatus, SUPPORTED_LEAGUES,
   verifyWhop, authLogin, setPassword as apiSetPassword, resetPassword, verifySession, authLogout,
-  getPickOfTheDay, savePick, listPicks, deletePick, correctPick, liveUpdatePicks
+  getPickOfTheDay, savePick, listPicks, deletePick, correctPick, liveUpdatePicks,
+  scanProp
 } from './api';
 import { toast, Toaster } from 'sonner';
 import './App.css';
@@ -949,6 +951,16 @@ export default function App() {
   const [potd, setPotd] = useState(null);
   const [potdLoading, setPotdLoading] = useState(true);
 
+  // Scan tab state
+  const [scanImage, setScanImage] = useState(null); // base64 preview
+  const [scanResults, setScanResults] = useState(null); // extracted picks array
+  const [isScanning, setIsScanning] = useState(false);
+  const [scanError, setScanError] = useState(null);
+  const [scanPrediction, setScanPrediction] = useState(null);
+  const [isScanPredicting, setIsScanPredicting] = useState(false);
+  const [scanPredictingIdx, setScanPredictingIdx] = useState(null);
+  const scanFileRef = useRef(null);
+
   const searchTimeout = useRef(null);
   const chatEndRef = useRef(null);
 
@@ -1285,6 +1297,85 @@ export default function App() {
     } finally {
       setReanalyzingPick(null);
     }
+  };
+
+  // =============================================
+  // SCAN TAB — Image Upload & Processing
+  // =============================================
+  const handleScanUpload = async (file) => {
+    if (!file) return;
+    setScanError(null);
+    setScanResults(null);
+    setScanPrediction(null);
+    setScanPredictingIdx(null);
+
+    // Convert to base64
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      const base64Full = e.target.result;
+      setScanImage(base64Full);
+
+      // Extract just the base64 data (remove data:image/...;base64, prefix)
+      const base64Data = base64Full.split(',')[1];
+
+      setIsScanning(true);
+      try {
+        const result = await scanProp(base64Data);
+        if (result.picks && result.picks.length > 0) {
+          setScanResults(result.picks);
+          toast.success(`Found ${result.picks.length} prop${result.picks.length > 1 ? 's' : ''} in image`);
+        } else {
+          setScanError('No player props detected in this image. Try a clearer screenshot.');
+        }
+      } catch (err) {
+        setScanError(err.message || 'Failed to scan image');
+        toast.error('Scan failed — try a different screenshot');
+      } finally {
+        setIsScanning(false);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleScanPredict = async (pickData, idx) => {
+    if (!pickData.resolved) {
+      toast.error('Player not found — cannot run prediction');
+      return;
+    }
+    setIsScanPredicting(true);
+    setScanPredictingIdx(idx);
+    setScanPrediction(null);
+    try {
+      const opponentId = pickData.resolvedOpponent?.teamId || pickData.resolved.teamId;
+      const opponentName = pickData.resolvedOpponent?.teamName || pickData.extracted.opponentName || 'Unknown';
+      const result = await predict({
+        playerId: pickData.resolved.playerId,
+        playerName: pickData.resolved.playerName,
+        teamId: pickData.resolved.teamId,
+        opponentId: opponentId,
+        opponentName: opponentName,
+        leagueId: pickData.extracted.leagueId || 39,
+        venue: 'home',
+        propType: pickData.extracted.propType,
+        line: pickData.extracted.line,
+      });
+      setScanPrediction({ ...result, _scanIdx: idx });
+      toast.success('Prediction complete!');
+    } catch (err) {
+      toast.error(err.message || 'Prediction failed');
+    } finally {
+      setIsScanPredicting(false);
+      setScanPredictingIdx(null);
+    }
+  };
+
+  const resetScan = () => {
+    setScanImage(null);
+    setScanResults(null);
+    setScanError(null);
+    setScanPrediction(null);
+    setScanPredictingIdx(null);
+    if (scanFileRef.current) scanFileRef.current.value = '';
   };
 
   const handleLogout = async () => {
@@ -2265,6 +2356,324 @@ export default function App() {
           </div>
         )}
 
+        {/* SCAN TAB */}
+        {activeTab === 'scan' && (
+          <div className="animate-fade-in" data-testid="scan-tab" style={{ padding: '0 0 100px' }}>
+            {/* Header */}
+            <div style={{ textAlign: 'center', marginBottom: 20 }}>
+              <div style={{ fontSize: 22, fontWeight: 900, color: '#fff', letterSpacing: '-0.5px' }}>Scan a Prop</div>
+              <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', marginTop: 4 }}>Upload a PrizePicks screenshot for instant analysis</div>
+            </div>
+
+            {/* Upload Zone */}
+            {!scanImage && (
+              <div
+                data-testid="scan-upload-zone"
+                onClick={() => scanFileRef.current?.click()}
+                onDragOver={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = 'var(--accent)'; }}
+                onDragLeave={(e) => { e.currentTarget.style.borderColor = 'rgba(100,100,120,0.3)'; }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  e.currentTarget.style.borderColor = 'rgba(100,100,120,0.3)';
+                  const file = e.dataTransfer.files[0];
+                  if (file && file.type.startsWith('image/')) handleScanUpload(file);
+                }}
+                style={{
+                  border: '2px dashed rgba(100,100,120,0.3)', borderRadius: 16, padding: '48px 24px',
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16,
+                  cursor: 'pointer', transition: 'border-color 0.2s',
+                  background: 'rgba(255,255,255,0.02)',
+                }}
+              >
+                <div style={{
+                  width: 64, height: 64, borderRadius: 16, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)',
+                }}>
+                  <Camera style={{ width: 28, height: 28, color: 'var(--accent)' }} />
+                </div>
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: '#fff' }}>Tap to upload screenshot</div>
+                  <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', marginTop: 4 }}>or drag & drop an image here</div>
+                </div>
+                <div style={{
+                  padding: '8px 20px', borderRadius: 8, fontSize: 12, fontWeight: 800,
+                  background: 'var(--accent)', color: '#000', letterSpacing: '0.04em',
+                }}>
+                  <Upload style={{ width: 14, height: 14, display: 'inline', verticalAlign: 'middle', marginRight: 6 }} />
+                  CHOOSE IMAGE
+                </div>
+                <input
+                  ref={scanFileRef}
+                  type="file"
+                  accept="image/*"
+                  style={{ display: 'none' }}
+                  data-testid="scan-file-input"
+                  onChange={(e) => {
+                    const file = e.target.files[0];
+                    if (file) handleScanUpload(file);
+                  }}
+                />
+              </div>
+            )}
+
+            {/* Scanning Spinner */}
+            {isScanning && (
+              <div style={{ textAlign: 'center', padding: '40px 0' }} data-testid="scan-loading">
+                <div className="spinner-ring"><Camera className="inner-icon" style={{ width: 24, height: 24 }} /></div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', marginTop: 16 }}>Analyzing screenshot...</div>
+                <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', marginTop: 4 }}>AI is reading your PrizePicks props</div>
+              </div>
+            )}
+
+            {/* Error State */}
+            {scanError && (
+              <div className="error-box" style={{ marginTop: 16 }} data-testid="scan-error">
+                <ShieldAlert style={{ width: 16, height: 16 }} />
+                <span>{scanError}</span>
+              </div>
+            )}
+
+            {/* Image Preview + Results */}
+            {scanImage && !isScanning && (
+              <div style={{ marginTop: 8 }}>
+                {/* Preview */}
+                <div style={{ position: 'relative', marginBottom: 16 }}>
+                  <img
+                    src={scanImage}
+                    alt="Uploaded prop"
+                    data-testid="scan-preview-image"
+                    style={{
+                      width: '100%', maxHeight: 300, objectFit: 'contain',
+                      borderRadius: 12, border: '1px solid rgba(100,100,120,0.2)',
+                    }}
+                  />
+                  <button
+                    onClick={resetScan}
+                    data-testid="scan-reset-btn"
+                    style={{
+                      position: 'absolute', top: 8, right: 8, width: 32, height: 32,
+                      borderRadius: 8, background: 'rgba(0,0,0,0.7)', border: '1px solid rgba(255,255,255,0.15)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
+                    }}
+                  >
+                    <X style={{ width: 16, height: 16, color: '#fff' }} />
+                  </button>
+                </div>
+
+                {/* Extracted Props */}
+                {scanResults && scanResults.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: '0.15em', color: 'var(--accent)', textTransform: 'uppercase' }}>
+                      {scanResults.length} Prop{scanResults.length > 1 ? 's' : ''} Detected
+                    </div>
+                    {scanResults.map((pick, idx) => {
+                      const ext = pick.extracted;
+                      const res = pick.resolved;
+                      const isPredicting = isScanPredicting && scanPredictingIdx === idx;
+                      const hasPrediction = scanPrediction && scanPrediction._scanIdx === idx;
+                      const propLabel = PROP_TYPES.find(p => p.key === ext.propType)?.label || ext.propType;
+
+                      return (
+                        <div key={idx} data-testid={`scan-result-${idx}`} style={{
+                          background: '#0a0a0f', border: '1.5px solid rgba(100,100,120,0.2)', borderRadius: 14,
+                          overflow: 'hidden',
+                        }}>
+                          {/* Player Info */}
+                          <div style={{ padding: '14px 16px', display: 'flex', gap: 12, alignItems: 'center' }}>
+                            {res?.photo ? (
+                              <img src={res.photo} alt="" style={{ width: 44, height: 44, borderRadius: 10, objectFit: 'cover', background: '#111' }} />
+                            ) : (
+                              <div style={{
+                                width: 44, height: 44, borderRadius: 10, background: 'rgba(16,185,129,0.1)',
+                                border: '1px solid rgba(16,185,129,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              }}>
+                                <User style={{ width: 20, height: 20, color: 'var(--accent)' }} />
+                              </div>
+                            )}
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontSize: 15, fontWeight: 800, color: '#fff' }}>
+                                {res?.playerName || ext.playerName}
+                              </div>
+                              <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 2 }}>
+                                {res?.teamName || ext.league || 'Unknown team'}
+                                {ext.opponentName && ` vs ${ext.opponentName}`}
+                              </div>
+                            </div>
+                            {res ? (
+                              <div style={{
+                                padding: '4px 10px', borderRadius: 6, fontSize: 9, fontWeight: 900,
+                                background: 'rgba(16,185,129,0.12)', color: '#10b981', border: '1px solid rgba(16,185,129,0.25)',
+                                letterSpacing: '0.1em',
+                              }}>
+                                MATCHED
+                              </div>
+                            ) : (
+                              <div style={{
+                                padding: '4px 10px', borderRadius: 6, fontSize: 9, fontWeight: 900,
+                                background: 'rgba(245,158,11,0.12)', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.25)',
+                                letterSpacing: '0.1em',
+                              }}>
+                                NO MATCH
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Prop Details */}
+                          <div style={{
+                            padding: '0 16px 14px', display: 'flex', gap: 8, alignItems: 'center',
+                          }}>
+                            <div style={{
+                              flex: 1, padding: '10px 12px', borderRadius: 8, background: 'rgba(255,255,255,0.03)',
+                              border: '1px solid rgba(100,100,120,0.15)', textAlign: 'center',
+                            }}>
+                              <div style={{ fontSize: 9, fontWeight: 800, color: 'rgba(255,255,255,0.35)', letterSpacing: '0.1em', marginBottom: 4 }}>PROP</div>
+                              <div style={{ fontSize: 13, fontWeight: 800, color: '#fff' }}>{propLabel}</div>
+                            </div>
+                            <div style={{
+                              flex: 1, padding: '10px 12px', borderRadius: 8, background: 'rgba(255,255,255,0.03)',
+                              border: '1px solid rgba(100,100,120,0.15)', textAlign: 'center',
+                            }}>
+                              <div style={{ fontSize: 9, fontWeight: 800, color: 'rgba(255,255,255,0.35)', letterSpacing: '0.1em', marginBottom: 4 }}>LINE</div>
+                              <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--accent)', fontFamily: "'JetBrains Mono', monospace" }}>{ext.line}</div>
+                            </div>
+                            <div style={{
+                              flex: 1, padding: '10px 12px', borderRadius: 8, background: 'rgba(255,255,255,0.03)',
+                              border: '1px solid rgba(100,100,120,0.15)', textAlign: 'center',
+                            }}>
+                              <div style={{ fontSize: 9, fontWeight: 800, color: 'rgba(255,255,255,0.35)', letterSpacing: '0.1em', marginBottom: 4 }}>PICK</div>
+                              <div style={{ fontSize: 13, fontWeight: 800, color: ext.overUnder === 'over' ? '#10b981' : '#f43f5e' }}>
+                                {(ext.overUnder || 'over').toUpperCase()}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Action Button */}
+                          {!hasPrediction && (
+                            <div style={{ padding: '0 16px 14px' }}>
+                              <button
+                                onClick={() => handleScanPredict(pick, idx)}
+                                disabled={!res || isPredicting}
+                                data-testid={`scan-predict-btn-${idx}`}
+                                style={{
+                                  width: '100%', padding: '12px', borderRadius: 10, border: 'none',
+                                  background: res ? 'var(--accent)' : 'rgba(255,255,255,0.06)',
+                                  color: res ? '#000' : 'rgba(255,255,255,0.3)',
+                                  fontSize: 13, fontWeight: 900, letterSpacing: '0.06em',
+                                  cursor: res ? 'pointer' : 'not-allowed',
+                                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                                }}
+                              >
+                                {isPredicting ? (
+                                  <><Loader2 style={{ width: 16, height: 16, animation: 'spin 1s linear infinite' }} /> ANALYZING...</>
+                                ) : (
+                                  <><Zap style={{ width: 16, height: 16 }} /> RUN PREDICTION</>
+                                )}
+                              </button>
+                            </div>
+                          )}
+
+                          {/* Inline Prediction Result */}
+                          {hasPrediction && (
+                            <div style={{ padding: '0 16px 14px' }} data-testid={`scan-prediction-${idx}`}>
+                              <div style={{
+                                borderRadius: 10, overflow: 'hidden',
+                                border: '1px solid rgba(16,185,129,0.2)', background: 'rgba(16,185,129,0.04)',
+                              }}>
+                                {/* Projected Value */}
+                                <div style={{ padding: '14px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                  <div>
+                                    <div style={{ fontSize: 9, fontWeight: 800, color: 'rgba(255,255,255,0.35)', letterSpacing: '0.1em', marginBottom: 4 }}>PROJECTED</div>
+                                    <div style={{ fontSize: 28, fontWeight: 900, color: 'var(--accent)', fontFamily: "'JetBrains Mono', monospace" }}>
+                                      {scanPrediction.projectedValue}
+                                    </div>
+                                  </div>
+                                  <div style={{ textAlign: 'right' }}>
+                                    <div style={{ fontSize: 9, fontWeight: 800, color: 'rgba(255,255,255,0.35)', letterSpacing: '0.1em', marginBottom: 4 }}>CONFIDENCE</div>
+                                    <div style={{ fontSize: 22, fontWeight: 900, color: '#fff', fontFamily: "'JetBrains Mono', monospace" }}>
+                                      {scanPrediction.confidenceScore}%
+                                    </div>
+                                  </div>
+                                </div>
+                                {/* Recommendation Banner */}
+                                <div style={{
+                                  padding: '10px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                                  background: scanPrediction.recommendation === 'over' ? 'rgba(16,185,129,0.1)' : 'rgba(244,63,94,0.1)',
+                                  borderTop: '1px solid rgba(100,100,120,0.1)',
+                                }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    {scanPrediction.recommendation === 'over' ? (
+                                      <TrendingUp style={{ width: 18, height: 18, color: '#10b981' }} />
+                                    ) : (
+                                      <TrendingDown style={{ width: 18, height: 18, color: '#f43f5e' }} />
+                                    )}
+                                    <span style={{
+                                      fontSize: 14, fontWeight: 900, letterSpacing: '0.1em',
+                                      color: scanPrediction.recommendation === 'over' ? '#10b981' : '#f43f5e',
+                                    }}>
+                                      {scanPrediction.recommendation?.toUpperCase()}
+                                    </span>
+                                  </div>
+                                  <span style={{
+                                    padding: '4px 12px', borderRadius: 6, fontSize: 10, fontWeight: 900,
+                                    background: scanPrediction.recommendation === 'over' ? 'rgba(16,185,129,0.15)' : 'rgba(244,63,94,0.15)',
+                                    color: scanPrediction.recommendation === 'over' ? '#10b981' : '#f43f5e',
+                                    border: `1px solid ${scanPrediction.recommendation === 'over' ? 'rgba(16,185,129,0.3)' : 'rgba(244,63,94,0.3)'}`,
+                                  }}>
+                                    {scanPrediction.confidenceLevel?.toUpperCase()}
+                                  </span>
+                                </div>
+                                {/* Sharp Summary */}
+                                {scanPrediction.sharpSummary && (
+                                  <div style={{ padding: '12px 16px', fontSize: 12, color: 'rgba(255,255,255,0.55)', lineHeight: 1.5, borderTop: '1px solid rgba(100,100,120,0.1)' }}>
+                                    {scanPrediction.sharpSummary}
+                                  </div>
+                                )}
+                                {/* Run Full Analysis button */}
+                                <div style={{ padding: '0 16px 14px' }}>
+                                  <button
+                                    onClick={() => {
+                                      // Switch to Predict tab with this player's data pre-filled
+                                      setActiveTab('predict');
+                                      setProjection(scanPrediction);
+                                    }}
+                                    data-testid={`scan-full-analysis-btn-${idx}`}
+                                    style={{
+                                      width: '100%', padding: '10px', borderRadius: 8, border: '1px solid rgba(16,185,129,0.25)',
+                                      background: 'rgba(16,185,129,0.08)', color: 'var(--accent)',
+                                      fontSize: 12, fontWeight: 800, letterSpacing: '0.06em', cursor: 'pointer',
+                                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                                    }}
+                                  >
+                                    <BarChart3 style={{ width: 14, height: 14 }} /> VIEW FULL ANALYSIS
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+
+                    {/* Scan Again */}
+                    <button
+                      onClick={resetScan}
+                      data-testid="scan-again-btn"
+                      style={{
+                        width: '100%', padding: '14px', borderRadius: 12, border: '1px solid rgba(100,100,120,0.2)',
+                        background: 'rgba(255,255,255,0.03)', color: 'rgba(255,255,255,0.5)',
+                        fontSize: 13, fontWeight: 700, cursor: 'pointer', marginTop: 8,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                      }}
+                    >
+                      <Camera style={{ width: 16, height: 16 }} /> Scan Another Image
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
       </main>
 
       {/* Bottom Nav */}
@@ -2279,6 +2688,11 @@ export default function App() {
             onClick={() => setActiveTab('tracking')} data-testid="nav-tracking">
             <Activity />
             <span>Tracking</span>
+          </button>
+          <button className={`nav-item ${activeTab === 'scan' ? 'active' : ''}`}
+            onClick={() => setActiveTab('scan')} data-testid="nav-scan">
+            <Camera />
+            <span>Scan</span>
           </button>
           <button className={`nav-item ${activeTab === 'guide' ? 'active' : ''}`}
             onClick={() => setActiveTab('guide')} data-testid="nav-guide">
