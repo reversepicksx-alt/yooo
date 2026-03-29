@@ -2698,20 +2698,10 @@ export default function App() {
             <Camera />
             <span>Scan Prop</span>
           </button>
-          <button className={`nav-item ${activeTab === 'predict' ? 'active' : ''}`}
-            onClick={() => setActiveTab('predict')} data-testid="nav-predict">
-            <Zap />
-            <span>Predict</span>
-          </button>
           <button className={`nav-item ${activeTab === 'tracking' ? 'active' : ''}`}
             onClick={() => setActiveTab('tracking')} data-testid="nav-tracking">
             <Activity />
             <span>Tracking</span>
-          </button>
-          <button className={`nav-item ${activeTab === 'guide' ? 'active' : ''}`}
-            onClick={() => setActiveTab('guide')} data-testid="nav-guide">
-            <HelpCircle />
-            <span>Guide</span>
           </button>
         </div>
       </nav>
