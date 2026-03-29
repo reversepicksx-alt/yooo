@@ -909,7 +909,7 @@ function PickOfTheDayCard({ potd, onUse }) {
 export default function App() {
   const [auth, setAuth] = useState(null);
   const [authChecking, setAuthChecking] = useState(true);
-  const [activeTab, setActiveTab] = useState('predict');
+  const [activeTab, setActiveTab] = useState('scan');
   const [trackingView, setTrackingView] = useState('live');
 
   const [wizardStep, setWizardStep] = useState(1);
@@ -2495,14 +2495,22 @@ export default function App() {
                               <div style={{ fontSize: 15, fontWeight: 800, color: '#fff' }}>
                                 {res?.playerName || ext.playerName}
                               </div>
-                              <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 2 }}>
-                                {res?.teamName || ext.playerTeam || 'Unknown team'}
+                              <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 2, display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <span>{res?.teamName || ext.playerTeam || 'Unknown team'}</span>
                                 {ext.opponentName && (
                                   <span>
                                     {ext.venue === 'away' ? ' @ ' : ' vs '}
                                     {ext.opponentName}
                                   </span>
                                 )}
+                                <span style={{
+                                  padding: '1px 6px', borderRadius: 4, fontSize: 8, fontWeight: 900, letterSpacing: '0.1em',
+                                  background: ext.venue === 'away' ? 'rgba(244,63,94,0.12)' : 'rgba(59,130,246,0.12)',
+                                  color: ext.venue === 'away' ? '#f43f5e' : '#3b82f6',
+                                  border: `1px solid ${ext.venue === 'away' ? 'rgba(244,63,94,0.25)' : 'rgba(59,130,246,0.25)'}`,
+                                }}>
+                                  {ext.venue === 'away' ? 'AWAY' : 'HOME'}
+                                </span>
                               </div>
                             </div>
                             {res ? (
@@ -2685,6 +2693,11 @@ export default function App() {
       {/* Bottom Nav */}
       <nav className="bottom-nav" data-testid="bottom-nav">
         <div className="nav-items">
+          <button className={`nav-item ${activeTab === 'scan' ? 'active' : ''}`}
+            onClick={() => setActiveTab('scan')} data-testid="nav-scan">
+            <Camera />
+            <span>Scan Prop</span>
+          </button>
           <button className={`nav-item ${activeTab === 'predict' ? 'active' : ''}`}
             onClick={() => setActiveTab('predict')} data-testid="nav-predict">
             <Zap />
@@ -2694,11 +2707,6 @@ export default function App() {
             onClick={() => setActiveTab('tracking')} data-testid="nav-tracking">
             <Activity />
             <span>Tracking</span>
-          </button>
-          <button className={`nav-item ${activeTab === 'scan' ? 'active' : ''}`}
-            onClick={() => setActiveTab('scan')} data-testid="nav-scan">
-            <Camera />
-            <span>Scan</span>
           </button>
           <button className={`nav-item ${activeTab === 'guide' ? 'active' : ''}`}
             onClick={() => setActiveTab('guide')} data-testid="nav-guide">
