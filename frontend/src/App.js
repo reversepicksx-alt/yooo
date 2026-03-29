@@ -2541,16 +2541,12 @@ export default function App() {
                             }}>
                               {/* Player Info */}
                               <div style={{ padding: '14px 16px', display: 'flex', gap: 12, alignItems: 'center' }}>
-                                {res?.photo ? (
-                                  <img src={res.photo} alt="" style={{ width: 44, height: 44, borderRadius: 10, objectFit: 'cover', background: '#111' }} />
-                                ) : (
-                                  <div style={{
+                                <div style={{
                                     width: 44, height: 44, borderRadius: 10, background: 'rgba(16,185,129,0.1)',
                                     border: '1px solid rgba(16,185,129,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center',
                                   }}>
                                     <User style={{ width: 20, height: 20, color: 'var(--accent)' }} />
                                   </div>
-                                )}
                                 <div style={{ flex: 1 }}>
                                   <div style={{ fontSize: 15, fontWeight: 800, color: '#fff' }}>
                                     {res?.playerName || ext.playerName}

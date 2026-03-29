@@ -399,7 +399,7 @@ async def search_players(req: PlayerSearchRequest):
             "lastname": lastname,
             "age": p.get("age", 0),
             "nationality": p.get("nationality", ""),
-            "photo": p.get("photo", ""),
+            "photo": "",
             "teamId": team_id,
             "teamName": team_name,
         }
@@ -2034,7 +2034,7 @@ If there's only one entry, still return it as an array with one element."""
                                 resolved_player = {
                                     "playerId": best["player"]["id"],
                                     "playerName": best["player"]["name"],
-                                    "photo": best["player"].get("photo", ""),
+                                    "photo": "",
                                     "teamId": best.get("statistics", [{}])[0].get("team", {}).get("id"),
                                     "teamName": best.get("statistics", [{}])[0].get("team", {}).get("name", ""),
                                 }
@@ -2064,7 +2064,7 @@ If there's only one entry, still return it as an array with one element."""
                                     resolved_player = {
                                         "playerId": best["player"]["id"],
                                         "playerName": best["player"]["name"],
-                                        "photo": best["player"].get("photo", ""),
+                                        "photo": "",
                                         "teamId": best.get("statistics", [{}])[0].get("team", {}).get("id"),
                                         "teamName": best.get("statistics", [{}])[0].get("team", {}).get("name", ""),
                                     }
