@@ -1887,6 +1887,69 @@ If there's only one entry, still return it as an array with one element."""
         if not isinstance(extracted, list):
             extracted = [extracted]
 
+        # ── Team → League mapping for when AI can't determine league ──
+        TEAM_LEAGUE_MAP = {
+            # Brazil Serie A (71)
+            "botafogo": 71, "flamengo": 71, "palmeiras": 71, "sao paulo": 71, "corinthians": 71,
+            "atletico mineiro": 71, "atletico paranaense": 71, "athletico": 71, "athletico pr": 71,
+            "gremio": 71, "internacional": 71, "cruzeiro": 71, "fluminense": 71, "santos": 71,
+            "vasco": 71, "bahia": 71, "fortaleza": 71, "bragantino": 71, "juventude": 71,
+            "cuiaba": 71, "goias": 71, "vitoria": 71, "sport": 71, "ceara": 71,
+            # Premier League (39)
+            "arsenal": 39, "chelsea": 39, "liverpool": 39, "manchester city": 39, "man city": 39,
+            "manchester united": 39, "man united": 39, "tottenham": 39, "spurs": 39,
+            "newcastle": 39, "aston villa": 39, "west ham": 39, "brighton": 39, "wolves": 39,
+            "crystal palace": 39, "everton": 39, "fulham": 39, "brentford": 39, "bournemouth": 39,
+            "nottingham forest": 39, "leicester": 39, "ipswich": 39, "southampton": 39,
+            # La Liga (140)
+            "real madrid": 140, "barcelona": 140, "atletico madrid": 140, "athletic bilbao": 140,
+            "real sociedad": 140, "betis": 140, "villarreal": 140, "sevilla": 140, "girona": 140,
+            "valencia": 140, "getafe": 140, "osasuna": 140, "celta vigo": 140, "mallorca": 140,
+            "rayo vallecano": 140, "alaves": 140, "las palmas": 140, "cadiz": 140,
+            # Bundesliga (78)
+            "bayern munich": 78, "bayern": 78, "dortmund": 78, "borussia dortmund": 78,
+            "leverkusen": 78, "bayer leverkusen": 78, "rb leipzig": 78, "leipzig": 78,
+            "stuttgart": 78, "frankfurt": 78, "wolfsburg": 78, "freiburg": 78,
+            # Serie A Italy (135)
+            "inter milan": 135, "inter": 135, "ac milan": 135, "milan": 135, "juventus": 135,
+            "napoli": 135, "roma": 135, "lazio": 135, "atalanta": 135, "fiorentina": 135,
+            "bologna": 135, "torino": 135, "monza": 135, "genoa": 135, "cagliari": 135,
+            # Ligue 1 (61)
+            "psg": 61, "paris saint-germain": 61, "marseille": 61, "lyon": 61, "monaco": 61,
+            "lille": 61, "lens": 61, "nice": 61, "rennes": 61, "strasbourg": 61,
+            # MLS (253)
+            "la galaxy": 253, "lafc": 253, "inter miami": 253, "atlanta united": 253,
+            "new york city fc": 253, "nycfc": 253, "new york red bulls": 253, "seattle sounders": 253,
+            "portland timbers": 253, "columbus crew": 253, "fc cincinnati": 253, "nashville sc": 253,
+            # NWSL (254)
+            "portland thorns": 254, "washington spirit": 254, "north carolina courage": 254,
+            "orlando pride": 254, "gotham fc": 254, "angel city": 254, "kansas city current": 254,
+        }
+
+        def infer_league_id(team_name, opponent_name, ai_league_id):
+            """Infer league ID from team names when AI can't determine it."""
+            if ai_league_id and ai_league_id != 39:
+                # AI returned a specific non-default league, trust it
+                return ai_league_id
+            # Try team name
+            for name in [team_name, opponent_name]:
+                if not name:
+                    continue
+                name_lower = name.lower().strip()
+                if name_lower in TEAM_LEAGUE_MAP:
+                    return TEAM_LEAGUE_MAP[name_lower]
+                # Partial match
+                for key, lid in TEAM_LEAGUE_MAP.items():
+                    if key in name_lower or name_lower in key:
+                        return lid
+            return ai_league_id or 71  # Default to Brasileirao if nothing found (most PrizePicks soccer)
+
+        def strip_accents(text):
+            """Remove diacritics for API search compatibility."""
+            import unicodedata
+            nfkd = unicodedata.normalize('NFKD', text)
+            return ''.join(c for c in nfkd if not unicodedata.category(c).startswith('M'))
+
         # Resolve each player via API-Sports search
         results = []
         for entry in extracted:
@@ -1900,9 +1963,19 @@ If there's only one entry, still return it as an array with one element."""
             if prop_type not in ["pass_attempts", "shots", "shots_on_target", "tackles", "key_passes", "saves", "interceptions", "blocks", "dribbles", "fouls_drawn"]:
                 prop_type = "pass_attempts"  # safe default
 
-            league_id = entry.get("leagueId") or 39
-            line = entry.get("line") or 0
             player_team_hint = (entry.get("playerTeam") or "").lower().strip()
+            opponent_hint = (entry.get("opponentName") or "").strip()
+            ai_league_id = entry.get("leagueId")
+            league_id = infer_league_id(entry.get("playerTeam"), opponent_hint, ai_league_id)
+            league_name = entry.get("league")
+            # Derive league name from ID if AI returned null
+            if not league_name:
+                for sl in SUPPORTED_LEAGUES:
+                    if sl["id"] == league_id:
+                        league_name = sl["name"]
+                        break
+
+            line = entry.get("line") or 0
             venue = (entry.get("venue") or "home").lower().strip()
             if venue not in ("home", "away"):
                 venue = "home"
@@ -1911,19 +1984,28 @@ If there's only one entry, still return it as an array with one element."""
             resolved_player = None
             try:
                 search_query = player_name.strip()
-                # Try multiple search strategies: full name, last name
-                search_variants = [search_query]
-                name_parts = search_query.split()
+                search_clean = strip_accents(search_query)
+                # Build search variants: original, accent-stripped, last name, accent-stripped last name
+                search_variants = []
+                seen = set()
+                for v in [search_query, search_clean]:
+                    if v not in seen:
+                        search_variants.append(v)
+                        seen.add(v)
+                name_parts = search_clean.split()
                 if len(name_parts) > 1:
-                    search_variants.append(name_parts[-1])  # Last name
+                    last = name_parts[-1]
+                    if last not in seen:
+                        search_variants.append(last)
+                        seen.add(last)
 
                 def pick_best_match(data_list, query, team_hint):
                     """Pick the best player match, preferring team name match."""
-                    query_lower = query.lower()
-                    last_name = query.split()[-1].lower() if query.split() else query.lower()
+                    query_lower = strip_accents(query.lower())
+                    last_name = query_lower.split()[-1] if query_lower.split() else query_lower
                     candidates = []
                     for d in data_list[:20]:
-                        pname = d["player"]["name"].lower()
+                        pname = strip_accents(d["player"]["name"].lower())
                         team_name = (d.get("statistics", [{}])[0].get("team", {}).get("name") or "").lower()
                         name_match = query_lower in pname or pname in query_lower or last_name in pname
                         team_match = team_hint and team_hint in team_name
@@ -1956,6 +2038,11 @@ If there's only one entry, still return it as an array with one element."""
                                     "teamId": best.get("statistics", [{}])[0].get("team", {}).get("id"),
                                     "teamName": best.get("statistics", [{}])[0].get("team", {}).get("name", ""),
                                 }
+                                # Update league info from actual player data
+                                actual_league = best.get("statistics", [{}])[0].get("league", {})
+                                if actual_league.get("id"):
+                                    league_id = actual_league["id"]
+                                    league_name = actual_league.get("name", league_name)
                                 break
                         except Exception:
                             continue
@@ -1981,6 +2068,11 @@ If there's only one entry, still return it as an array with one element."""
                                         "teamId": best.get("statistics", [{}])[0].get("team", {}).get("id"),
                                         "teamName": best.get("statistics", [{}])[0].get("team", {}).get("name", ""),
                                     }
+                                    # Update league info from actual player data
+                                    actual_league = best.get("statistics", [{}])[0].get("league", {})
+                                    if actual_league.get("id"):
+                                        league_id = actual_league["id"]
+                                        league_name = actual_league.get("name", league_name)
                                     break
                             except Exception:
                                 continue
@@ -2056,7 +2148,7 @@ If there's only one entry, still return it as an array with one element."""
                     "venue": venue,
                     "opponentName": entry.get("opponentName"),
                     "playerTeam": entry.get("playerTeam"),
-                    "league": entry.get("league"),
+                    "league": league_name or entry.get("league"),
                     "leagueId": league_id,
                 },
                 "resolved": resolved_player,
