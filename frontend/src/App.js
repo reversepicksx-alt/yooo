@@ -1373,13 +1373,24 @@ export default function App() {
   };
 
   const scanSavePickFn = async () => {
-    if (!scanPrediction || !currentUser) return;
+    if (!scanPrediction || !auth) return;
+    const newPick = {
+      ...scanPrediction,
+      id: Math.random().toString(36).substring(2, 9),
+      timestamp: Date.now(),
+      status: 'live',
+      result: 'pending',
+      excludedSampleIndices: scanExcludedIndices,
+      _request: scanPrediction._request || {},
+    };
     try {
-      await savePick({
-        email: currentUser,
-        pick: scanPrediction,
-      });
+      await savePick(auth.email, auth.token, newPick);
+      const refreshed = await listPicks(auth.email, auth.token);
+      setSavedPicks(refreshed.picks || []);
       toast.success('Saved to Tracking!');
+      setScanPrediction(null);
+      setScanExcludedIndices([]);
+      setActiveTab('tracking');
     } catch (err) {
       toast.error('Failed to save pick');
     }
