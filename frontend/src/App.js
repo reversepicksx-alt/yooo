@@ -1909,108 +1909,157 @@ export default function App() {
                   const paceVal = isMatchLive ? (live?.pace ?? '-') : nowVal;
                   const hitPct = live?.hitPct ?? null;
                   const elapsed = live?.elapsed ?? 0;
+                  const minutesPlayed = live?.minutesPlayed || 0;
                   const matchScore = live?.matchScore || pick.matchScore || '';
                   const propLabel = PROP_TYPES.find(pt => pt.key === pick.propType)?.label || pick.propType;
                   const isOver = pick.recommendation === 'over';
-                  const paceNum = typeof paceVal === 'number' ? paceVal : 0;
                   const lineNum = pick.line || 1;
-                  const progressPct = Math.min(100, Math.max(0, (paceNum / (lineNum * 1.5)) * 100));
+                  const nowNum = typeof nowVal === 'number' ? nowVal : 0;
+                  const paceNum = typeof paceVal === 'number' ? paceVal : 0;
+                  const progressPct = Math.min(100, Math.max(0, (nowNum / (lineNum * 1.3)) * 100));
+                  const lineMarkerPct = Math.min(95, (lineNum / (lineNum * 1.3)) * 100);
                   const onTrack = isOver ? paceNum > lineNum : paceNum < lineNum;
                   const resultLabel = pick.result === 'hit' ? 'HIT' : pick.result === 'push' ? 'PUSH' : pick.result === 'miss' ? 'MISS' : '';
+                  const isHit = pick.result === 'hit';
+                  const isMiss = pick.result === 'miss';
 
                   return (
                     <div key={pick.pickId} className="live-pick-card" data-testid={`pick-${pick.pickId}`}
-                      style={{ background: 'var(--bg-card)', borderRadius: 12, padding: 16, border: `1px solid ${isMatchLive ? 'rgba(16,185,129,0.4)' : isMatchFinal ? 'rgba(100,100,120,0.3)' : 'rgba(100,100,120,0.2)'}` }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
-                        <div>
-                          <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.3px' }} data-testid="pick-player-name">{pick.playerName}</div>
-                          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: 2 }}>{pick.teamName} &middot; {(pick.venue || 'home').toUpperCase()}</div>
+                      style={{
+                        background: '#0a0a0f',
+                        borderRadius: 14,
+                        padding: 0,
+                        border: `1.5px solid ${isMatchLive ? 'var(--accent)' : isHit ? 'rgba(16,185,129,0.5)' : isMiss ? 'rgba(244,63,94,0.4)' : 'rgba(100,100,120,0.25)'}`,
+                        overflow: 'hidden',
+                      }}>
+
+                      {/* HEADER */}
+                      <div style={{ padding: '14px 16px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: 17, fontWeight: 800, color: '#fff', letterSpacing: '-0.3px' }} data-testid="pick-player-name">
+                            {pick.playerName}
+                          </div>
+                          <div style={{ fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,0.45)', textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 3 }}>
+                            {pick.teamName || 'Team'} &middot; {(pick.venue || 'home').toUpperCase()}
+                          </div>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                           {isMatchLive && (
-                            <div className="live-badge" data-testid="live-indicator">
-                              <div className="live-dot" />
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 800, color: '#f43f5e' }}>
+                              <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#f43f5e', animation: 'pulse 1.5s infinite' }} />
                               LIVE
                             </div>
                           )}
-                          {isMatchFinal && (
-                            <div className="final-badge" data-testid="final-indicator">
-                              <div className="final-dot" />
-                              FINAL
-                            </div>
+                          {isMatchFinal && !isMatchLive && (
+                            <div style={{ fontSize: 11, fontWeight: 800, color: 'rgba(255,255,255,0.4)' }}>FINAL</div>
                           )}
                           {!isMatchLive && !isMatchFinal && (
-                            <div className="scheduled-badge">SCHEDULED</div>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.3)' }}>SCHEDULED</div>
                           )}
                           {pick.status === 'live' && (
                             <button className="reanalyze-btn" onClick={e => reanalyzePick(pick, e)}
                               disabled={reanalyzingPick === pick.pickId}
                               data-testid={`reanalyze-pick-${pick.pickId}`}
-                              title="Re-analyze with fresh data">
+                              title="Re-analyze" style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}>
                               {reanalyzingPick === pick.pickId
-                                ? <Loader2 style={{ width: 14, height: 14, animation: 'spin 1s linear infinite' }} />
-                                : <RotateCcw style={{ width: 14, height: 14 }} />}
+                                ? <Loader2 style={{ width: 14, height: 14, color: 'var(--accent)', animation: 'spin 1s linear infinite' }} />
+                                : <RotateCcw style={{ width: 14, height: 14, color: 'rgba(255,255,255,0.4)' }} />}
                             </button>
                           )}
-                          <button className="remove-btn" onClick={e => removePickFn(pick.pickId, e)} data-testid={`remove-pick-${pick.pickId}`}>
-                            <Trash2 style={{ width: 14, height: 14 }} />
+                          <button style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}
+                            onClick={e => removePickFn(pick.pickId, e)} data-testid={`remove-pick-${pick.pickId}`}>
+                            <Trash2 style={{ width: 14, height: 14, color: 'rgba(255,255,255,0.3)' }} />
                           </button>
                         </div>
                       </div>
 
-                      <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: '0.05em', marginBottom: 12, color: isOver ? 'var(--accent)' : '#f43f5e' }} data-testid="pick-type-label">
-                        PICK: {isOver ? 'OVER' : 'UNDER'} {pick.line}
+                      {/* PICK LINE */}
+                      <div style={{ padding: '0 16px 12px', fontSize: 13, fontWeight: 800, letterSpacing: '0.06em' }}>
+                        <span style={{ color: 'rgba(255,255,255,0.5)' }}>PICK: </span>
+                        <span style={{ color: isOver ? 'var(--accent)' : '#f43f5e' }}>
+                          {isOver ? 'OVER' : 'UNDER'} {pick.line}
+                        </span>
                       </div>
 
+                      {/* STATS ROW — NOW / LINE / PACE / HIT% */}
                       {(isMatchLive || isMatchFinal) && (
-                        <>
-                          <div className="live-stats-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 10 }}>
-                            <div className="live-stat" style={{ textAlign: 'center' }}>
-                              <div className="live-stat-label">NOW</div>
-                              <div className={`live-stat-value ${onTrack ? 'accent' : 'danger'}`}>{nowVal}</div>
-                            </div>
-                            <div className="live-stat" style={{ textAlign: 'center' }}>
-                              <div className="live-stat-label">LINE</div>
-                              <div className="live-stat-value">{pick.line}</div>
-                            </div>
-                            <div className="live-stat" style={{ textAlign: 'center' }}>
-                              <div className="live-stat-label">PACE</div>
-                              <div className={`live-stat-value ${onTrack ? 'accent' : 'danger'}`}>{paceVal}</div>
-                            </div>
-                            <div className="live-stat" style={{ textAlign: 'center' }}>
-                              <div className="live-stat-label">HIT%</div>
-                              <div className={`live-stat-value ${hitPct > 50 ? 'accent' : 'danger'}`}>{hitPct != null ? `${hitPct}%` : '-'}</div>
-                            </div>
+                        <div style={{ padding: '0 16px 12px' }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', borderTop: '1px solid rgba(255,255,255,0.06)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                            {[
+                              { label: 'NOW', value: nowVal, color: onTrack ? 'var(--accent)' : '#f43f5e' },
+                              { label: 'LINE', value: pick.line, color: 'rgba(255,255,255,0.7)' },
+                              { label: 'PACE', value: paceVal, color: onTrack ? 'var(--accent)' : '#f43f5e' },
+                              { label: 'HIT%', value: hitPct != null ? `${hitPct}%` : '-', color: hitPct > 50 ? 'var(--accent)' : '#f43f5e' },
+                            ].map((stat, i) => (
+                              <div key={stat.label} style={{
+                                textAlign: 'center', padding: '10px 0',
+                                borderRight: i < 3 ? '1px solid rgba(255,255,255,0.06)' : 'none',
+                              }}>
+                                <div style={{ fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>{stat.label}</div>
+                                <div style={{ fontSize: 20, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: stat.color }}>{stat.value}</div>
+                              </div>
+                            ))}
                           </div>
 
-                          <div className="live-progress-bar-container">
-                            <div className={`live-progress-bar ${onTrack ? 'on-track' : 'off-track'}`}
-                              style={{ width: `${progressPct}%` }} />
-                            <div className="live-progress-line-marker" style={{ left: `${Math.min(95, (lineNum / (lineNum * 1.5)) * 100)}%` }} />
-                          </div>
-                        </>
-                      )}
-
-                      {!isMatchLive && !isMatchFinal && (
-                        <div className="live-stats-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 10 }}>
-                          <div className="live-stat" style={{ textAlign: 'center' }}>
-                            <div className="live-stat-label">PROJ</div>
-                            <div className="live-stat-value accent">{pick.projectedValue}</div>
-                          </div>
-                          <div className="live-stat" style={{ textAlign: 'center' }}>
-                            <div className="live-stat-label">LINE</div>
-                            <div className="live-stat-value">{pick.line}</div>
-                          </div>
-                          <div className="live-stat" style={{ textAlign: 'center' }}>
-                            <div className="live-stat-label">CONF</div>
-                            <div className="live-stat-value">{pick.confidenceScore}%</div>
+                          {/* PROGRESS BAR */}
+                          <div style={{ position: 'relative', height: 6, background: 'rgba(255,255,255,0.06)', borderRadius: 3, marginTop: 10, overflow: 'visible' }}>
+                            <div style={{
+                              height: '100%', borderRadius: 3, transition: 'width 0.5s ease',
+                              width: `${progressPct}%`,
+                              background: onTrack ? 'var(--accent)' : '#f43f5e',
+                            }} />
+                            <div style={{
+                              position: 'absolute', top: -2, width: 2, height: 10, borderRadius: 1,
+                              background: 'rgba(255,255,255,0.6)',
+                              left: `${lineMarkerPct}%`,
+                            }} />
                           </div>
                         </div>
                       )}
 
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-muted)' }}>
-                        <span>{isMatchLive ? `${elapsed}'` : ''} {matchScore ? `(${matchScore})` : ''} {resultLabel && <span className={`result-tag ${pick.result}`}>{resultLabel}</span>}</span>
-                        <span style={{ fontWeight: 800, color: 'var(--accent)', fontSize: 12 }}>{propLabel.toUpperCase()}</span>
+                      {/* SCHEDULED STATE — PROJ / LINE / CONF */}
+                      {!isMatchLive && !isMatchFinal && (
+                        <div style={{ padding: '0 16px 12px' }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', borderTop: '1px solid rgba(255,255,255,0.06)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                            {[
+                              { label: 'PROJ', value: pick.projectedValue, color: 'var(--accent)' },
+                              { label: 'LINE', value: pick.line, color: 'rgba(255,255,255,0.7)' },
+                              { label: 'CONF', value: `${pick.confidenceScore}%`, color: 'rgba(255,255,255,0.7)' },
+                            ].map((stat, i) => (
+                              <div key={stat.label} style={{
+                                textAlign: 'center', padding: '10px 0',
+                                borderRight: i < 2 ? '1px solid rgba(255,255,255,0.06)' : 'none',
+                              }}>
+                                <div style={{ fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>{stat.label}</div>
+                                <div style={{ fontSize: 20, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: stat.color }}>{stat.value}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* FOOTER — Score, Result, Prop Label */}
+                      <div style={{ padding: '8px 16px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, fontFamily: "'JetBrains Mono', monospace", color: 'rgba(255,255,255,0.35)' }}>
+                          {isMatchLive && <span>{elapsed}&apos;</span>}
+                          {matchScore && <span>{matchScore}</span>}
+                          {minutesPlayed > 0 && minutesPlayed < 90 && isMatchFinal && (
+                            <span style={{ color: '#f59e0b', fontSize: 10 }}>{minutesPlayed}&apos; played</span>
+                          )}
+                          {resultLabel && (
+                            <span data-testid="pick-result" style={{
+                              padding: '3px 10px', borderRadius: 6, fontSize: 11, fontWeight: 900, letterSpacing: '0.08em',
+                              background: isHit ? 'rgba(16,185,129,0.15)' : isMiss ? 'rgba(244,63,94,0.15)' : 'rgba(245,158,11,0.15)',
+                              color: isHit ? '#10b981' : isMiss ? '#f43f5e' : '#f59e0b',
+                              border: `1px solid ${isHit ? 'rgba(16,185,129,0.3)' : isMiss ? 'rgba(244,63,94,0.3)' : 'rgba(245,158,11,0.3)'}`,
+                            }}>
+                              {resultLabel}
+                            </span>
+                          )}
+                        </div>
+                        <span style={{ fontSize: 12, fontWeight: 800, color: 'var(--accent)', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.06em' }}>
+                          {propLabel.toUpperCase()}
+                        </span>
                       </div>
                     </div>
                   );

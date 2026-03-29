@@ -2273,7 +2273,7 @@ async def live_update_picks(req: LiveUpdateRequest):
                     update["actualValue"] = current_value
                     await db.picks.update_one(
                         {"pickId": pick["pickId"], "email": req.email.lower()},
-                        {"$set": {"status": "settled", "result": result_str, "actualValue": current_value, "matchScore": match_score, "settledAt": datetime.now(timezone.utc).isoformat()}}
+                        {"$set": {"status": "settled", "result": result_str, "actualValue": current_value, "matchScore": match_score, "minutesPlayed": minutes_played, "settledAt": datetime.now(timezone.utc).isoformat()}}
                     )
 
                 results.append(update)
