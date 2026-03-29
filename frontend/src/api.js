@@ -134,6 +134,11 @@ export async function deletePick(email, token, pickId) {
   return apiCall('/api/picks/delete', { method: 'POST', body: JSON.stringify({ email, token, pickId }) });
 }
 
+export async function correctPick(email, token, pickId, actualValue) {
+  return apiCall('/api/picks/correct', { method: 'POST', body: JSON.stringify({ email, token, pickId, actualValue }) });
+}
+
+
 export async function liveUpdatePicks(email, token) {
   return apiCall('/api/picks/live-update', { method: 'POST', body: JSON.stringify({ email, token }) });
 }

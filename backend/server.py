@@ -2085,6 +2085,37 @@ async def delete_pick(req: DeletePickRequest):
     return {"success": True}
 
 
+class CorrectPickRequest(BaseModel):
+    email: str
+    token: str
+    pickId: str
+    actualValue: float
+
+@app.post("/api/picks/correct")
+async def correct_pick(req: CorrectPickRequest):
+    """Manual correction for settled picks when API data was wrong."""
+    session = await db.sessions.find_one({"email": req.email.lower(), "session_token": req.token}, {"_id": 0})
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid session")
+    pick = await db.picks.find_one({"pickId": req.pickId, "email": req.email.lower()}, {"_id": 0})
+    if not pick:
+        raise HTTPException(status_code=404, detail="Pick not found")
+    line = pick.get("line", 0)
+    rec = pick.get("recommendation", "over")
+    if req.actualValue == line:
+        result_str = "push"
+    elif (rec == "over" and req.actualValue > line) or (rec == "under" and req.actualValue < line):
+        result_str = "hit"
+    else:
+        result_str = "miss"
+    await db.picks.update_one(
+        {"pickId": req.pickId, "email": req.email.lower()},
+        {"$set": {"actualValue": req.actualValue, "result": result_str, "correctedManually": True}}
+    )
+    return {"success": True, "result": result_str, "actualValue": req.actualValue}
+
+
+
 # =============================================
 # LIVE TRACKING — Real-time in-game stats
 # =============================================

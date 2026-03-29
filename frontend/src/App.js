@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Zap, ChevronRight, RefreshCw, ArrowLeft, Clock, Activity,
-  Shield, Send, Loader2, Trash2, User, Search, Users,
+  Shield, Send, Loader2, Trash2, User, Search, Users, Edit3,
   TrendingUp, TrendingDown, BarChart3, ShieldAlert, Target, LogOut, Lock, Mail, Bell, RotateCcw
 } from 'lucide-react';
 import {
@@ -11,7 +11,7 @@ import {
   getTeamsByLeague, searchPlayers, predict, predictCombo, startChat, sendChatMessage,
   checkApiStatus, SUPPORTED_LEAGUES,
   verifyWhop, authLogin, setPassword as apiSetPassword, resetPassword, verifySession, authLogout,
-  getPickOfTheDay, savePick, listPicks, deletePick, liveUpdatePicks
+  getPickOfTheDay, savePick, listPicks, deletePick, correctPick, liveUpdatePicks
 } from './api';
 import { toast, Toaster } from 'sonner';
 import './App.css';
@@ -930,6 +930,8 @@ export default function App() {
   const [notifications, setNotifications] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [reanalyzingPick, setReanalyzingPick] = useState(null);
+  const [correctingPick, setCorrectingPick] = useState(null); // pickId being corrected
+  const [correctValue, setCorrectValue] = useState('');
 
   // Combo mode state
   const [comboMode, setComboMode] = useState(false);
@@ -1188,6 +1190,20 @@ export default function App() {
     setWizardStep(1);
     setWizardData({});
     setWizardError(null);
+  };
+
+  const submitCorrection = async (pickId) => {
+    const val = parseFloat(correctValue);
+    if (isNaN(val) || val < 0) { toast.error('Enter a valid number'); return; }
+    try {
+      const result = await correctPick(user.email, user.token, pickId, val);
+      toast.success(`Corrected → ${result.result.toUpperCase()}`);
+      setSavedPicks(prev => prev.map(p => p.pickId === pickId ? { ...p, actualValue: val, result: result.result, correctedManually: true } : p));
+      setCorrectingPick(null);
+      setCorrectValue('');
+    } catch (err) {
+      toast.error(err.message || 'Correction failed');
+    }
   };
 
   const savePickFn = async () => {
@@ -2056,11 +2072,42 @@ export default function App() {
                               {resultLabel}
                             </span>
                           )}
+                          {pick.correctedManually && (
+                            <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.25)', fontStyle: 'italic' }}>corrected</span>
+                          )}
+                          {pick.status === 'settled' && correctingPick !== pick.pickId && (
+                            <button onClick={() => { setCorrectingPick(pick.pickId); setCorrectValue(String(pick.actualValue || '')); }}
+                              data-testid={`correct-pick-${pick.pickId}`}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, display: 'flex' }}>
+                              <Edit3 style={{ width: 12, height: 12, color: 'rgba(255,255,255,0.3)' }} />
+                            </button>
+                          )}
                         </div>
                         <span style={{ fontSize: 12, fontWeight: 800, color: 'var(--accent)', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.06em' }}>
                           {propLabel.toUpperCase()}
                         </span>
                       </div>
+
+                      {/* CORRECTION INPUT */}
+                      {correctingPick === pick.pickId && (
+                        <div style={{ padding: '0 16px 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', whiteSpace: 'nowrap' }}>Actual:</span>
+                          <input type="number" step="1" value={correctValue}
+                            onChange={e => setCorrectValue(e.target.value)}
+                            data-testid="correct-value-input"
+                            style={{ flex: 1, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 6, padding: '6px 10px', color: '#fff', fontSize: 14, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}
+                            autoFocus />
+                          <button onClick={() => submitCorrection(pick.pickId)}
+                            data-testid="correct-submit-btn"
+                            style={{ background: 'var(--accent)', color: '#000', border: 'none', borderRadius: 6, padding: '6px 12px', fontSize: 11, fontWeight: 800, cursor: 'pointer' }}>
+                            Save
+                          </button>
+                          <button onClick={() => { setCorrectingPick(null); setCorrectValue(''); }}
+                            style={{ background: 'none', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 6, padding: '6px 10px', fontSize: 11, color: 'rgba(255,255,255,0.5)', cursor: 'pointer' }}>
+                            Cancel
+                          </button>
+                        </div>
+                      )}
                     </div>
                   );
                 })
