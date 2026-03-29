@@ -2016,12 +2016,33 @@ If there's only one entry, still return it as an array with one element."""
                     """Pick the best player match, preferring team name match."""
                     query_lower = strip_accents(query.lower())
                     last_name = query_lower.split()[-1] if query_lower.split() else query_lower
+                    # Build team hint variants for fuzzy matching
+                    team_hints = []
+                    if team_hint:
+                        team_hints.append(team_hint)
+                        th_var = team_hint.replace("th", "t")
+                        if th_var != team_hint:
+                            team_hints.append(th_var)
+                        # Expand abbreviations
+                        for abbr, full in [("pr", "paranaense"), ("mg", "mineiro"), ("go", "goianiense")]:
+                            if team_hint.endswith(f" {abbr}"):
+                                expanded = team_hint[:-(len(abbr))].strip() + " " + full
+                                team_hints.append(expanded)
+                                team_hints.append(expanded.replace("th", "t"))
+                        # Also add first word
+                        team_hints.append(team_hint.split()[0])
+
                     candidates = []
                     for d in data_list[:20]:
                         pname = strip_accents(d["player"]["name"].lower())
                         team_name = (d.get("statistics", [{}])[0].get("team", {}).get("name") or "").lower()
                         name_match = query_lower in pname or pname in query_lower or last_name in pname
-                        team_match = team_hint and team_hint in team_name
+                        team_match = False
+                        if team_hints:
+                            for th in team_hints:
+                                if th in team_name or team_name in th:
+                                    team_match = True
+                                    break
                         if name_match:
                             candidates.append((d, team_match))
                     # Prefer candidates where team also matches
@@ -2029,7 +2050,9 @@ If there's only one entry, still return it as an array with one element."""
                         team_matched = [c for c in candidates if c[1]]
                         if team_matched:
                             return team_matched[0][0]
-                        return candidates[0][0]
+                        # Only return non-team-matched if no team hint was provided
+                        if not team_hint:
+                            return candidates[0][0]
                     return None
 
                 # International leagues where players are indexed under their CLUB, not national team
@@ -2112,23 +2135,90 @@ If there's only one entry, still return it as an array with one element."""
                                 data = await api_football_request("players", {"search": variant, "league": try_league, "season": season})
                                 if data:
                                     best = pick_best_match(data, search_query, player_team_hint)
-                                    if not best:
+                                    if best:
+                                        resolved_player = {
+                                            "playerId": best["player"]["id"],
+                                            "playerName": best["player"]["name"],
+                                            "photo": "",
+                                            "teamId": best.get("statistics", [{}])[0].get("team", {}).get("id"),
+                                            "teamName": best.get("statistics", [{}])[0].get("team", {}).get("name", ""),
+                                        }
+                                        actual_league = best.get("statistics", [{}])[0].get("league", {})
+                                        if actual_league.get("id"):
+                                            league_id = actual_league["id"]
+                                            league_name = actual_league.get("name", league_name)
+                                        break
+                                    elif not player_team_hint or is_international:
+                                        # No team hint or international (club won't match national team name) — accept first
                                         best = data[0]
-                                    resolved_player = {
-                                        "playerId": best["player"]["id"],
-                                        "playerName": best["player"]["name"],
-                                        "photo": "",
-                                        "teamId": best.get("statistics", [{}])[0].get("team", {}).get("id"),
-                                        "teamName": best.get("statistics", [{}])[0].get("team", {}).get("name", ""),
-                                    }
-                                    # Update league info from actual player data
-                                    actual_league = best.get("statistics", [{}])[0].get("league", {})
-                                    if actual_league.get("id"):
-                                        league_id = actual_league["id"]
-                                        league_name = actual_league.get("name", league_name)
-                                    break
+                                        resolved_player = {
+                                            "playerId": best["player"]["id"],
+                                            "playerName": best["player"]["name"],
+                                            "photo": "",
+                                            "teamId": best.get("statistics", [{}])[0].get("team", {}).get("id"),
+                                            "teamName": best.get("statistics", [{}])[0].get("team", {}).get("name", ""),
+                                        }
+                                        actual_league = best.get("statistics", [{}])[0].get("league", {})
+                                        if actual_league.get("id"):
+                                            league_id = actual_league["id"]
+                                            league_name = actual_league.get("name", league_name)
+                                        break
                             except Exception:
                                 continue
+
+                # Squad-based fallback: if team hint exists but player not found via search,
+                # resolve the team and look through its squad directly
+                if not resolved_player and player_team_hint:
+                    try:
+                        # Resolve team ID from team hint
+                        team_search_variants = [player_team_hint]
+                        th_variant = player_team_hint.replace("th", "t")
+                        if th_variant != player_team_hint:
+                            team_search_variants.append(th_variant)
+                        ABBREV_MAP = {"pr": "paranaense", "mg": "mineiro", "go": "goianiense", "rj": "rio"}
+                        for abbr, full in ABBREV_MAP.items():
+                            if player_team_hint.endswith(f" {abbr}"):
+                                expanded = player_team_hint[:-(len(abbr))].strip() + " " + full
+                                team_search_variants.append(expanded)
+                                ev = expanded.replace("th", "t")
+                                if ev != expanded:
+                                    team_search_variants.append(ev)
+
+                        resolved_team_id = None
+                        for tsv in team_search_variants:
+                            if resolved_team_id:
+                                break
+                            try:
+                                teams_data = await api_football_request("teams", {"search": tsv})
+                                if teams_data:
+                                    for t in teams_data[:10]:
+                                        tname_lower = t.get("team", {}).get("name", "").lower()
+                                        is_youth = any(s in tname_lower for s in ["u20", "u23", "u21", "u19", "u18", "u17"])
+                                        if not is_youth:
+                                            resolved_team_id = t["team"]["id"]
+                                            break
+                            except Exception:
+                                continue
+
+                        if resolved_team_id:
+                            squad_data = await api_football_request("players/squads", {"team": resolved_team_id})
+                            if squad_data:
+                                squad_players = squad_data[0].get("players", []) if squad_data else []
+                                search_lower = strip_accents(search_query.lower())
+                                last_name_lower = search_lower.split()[-1] if search_lower.split() else search_lower
+                                for sp in squad_players:
+                                    sp_name = strip_accents(sp.get("name", "").lower())
+                                    if search_lower == sp_name or last_name_lower == sp_name or search_lower in sp_name or sp_name in search_lower:
+                                        resolved_player = {
+                                            "playerId": sp["id"],
+                                            "playerName": sp["name"],
+                                            "photo": "",
+                                            "teamId": resolved_team_id,
+                                            "teamName": player_team_hint.title(),
+                                        }
+                                        break
+                    except Exception:
+                        pass
 
                 # Fallback: broader search without league filter
                 if not resolved_player:
@@ -2142,21 +2232,33 @@ If there's only one entry, still return it as an array with one element."""
                                 data = await api_football_request("players", {"search": variant, "season": season})
                                 if data:
                                     best = pick_best_match(data, search_query, player_team_hint)
-                                    if not best:
+                                    if best:
+                                        resolved_player = {
+                                            "playerId": best["player"]["id"],
+                                            "playerName": best["player"]["name"],
+                                            "photo": "",
+                                            "teamId": best.get("statistics", [{}])[0].get("team", {}).get("id"),
+                                            "teamName": best.get("statistics", [{}])[0].get("team", {}).get("name", ""),
+                                        }
+                                        actual_league = best.get("statistics", [{}])[0].get("league", {})
+                                        if actual_league.get("id"):
+                                            league_id = actual_league["id"]
+                                            league_name = actual_league.get("name", league_name)
+                                        break
+                                    elif not player_team_hint or is_international:
                                         best = data[0]
-                                    resolved_player = {
-                                        "playerId": best["player"]["id"],
-                                        "playerName": best["player"]["name"],
-                                        "photo": "",
-                                        "teamId": best.get("statistics", [{}])[0].get("team", {}).get("id"),
-                                        "teamName": best.get("statistics", [{}])[0].get("team", {}).get("name", ""),
-                                    }
-                                    # Update league info from actual player data
-                                    actual_league = best.get("statistics", [{}])[0].get("league", {})
-                                    if actual_league.get("id"):
-                                        league_id = actual_league["id"]
-                                        league_name = actual_league.get("name", league_name)
-                                    break
+                                        resolved_player = {
+                                            "playerId": best["player"]["id"],
+                                            "playerName": best["player"]["name"],
+                                            "photo": "",
+                                            "teamId": best.get("statistics", [{}])[0].get("team", {}).get("id"),
+                                            "teamName": best.get("statistics", [{}])[0].get("team", {}).get("name", ""),
+                                        }
+                                        actual_league = best.get("statistics", [{}])[0].get("league", {})
+                                        if actual_league.get("id"):
+                                            league_id = actual_league["id"]
+                                            league_name = actual_league.get("name", league_name)
+                                        break
                             except Exception:
                                 continue
             except Exception:
