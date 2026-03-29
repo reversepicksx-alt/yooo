@@ -8,6 +8,7 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 - **Frontend**: React (port 3000) with custom dark CSS
 - **Database**: MongoDB (local)
 - **AI Pipeline**: Dual AI — Grok-4.20-reasoning (tactical analysis + deep web search) → Gemini 2.5 Flash (final JSON calibration). Code-built data digest replaces GPT-4o-mini.
+- **Vision AI**: GPT-4o via Emergent LLM Key (Scan tab image extraction)
 - **Data Source**: API-Sports v3 (api-sports.io)
 - **Auth**: Whop API (subscription verification) + bcrypt password hashing + session tokens
 
@@ -30,15 +31,23 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 - [x] Grok deep web search for stat verification
 - [x] Fixed Guide tab layout bug (was rendered outside <main> container) — 2026-03-29
 - [x] Fixed NoneType division error in prediction pipeline (API returns null for minutes) — 2026-03-29
+- [x] **NEW: Scan Tab** — Image-to-Prediction via GPT-4o vision — 2026-03-29
+  - Upload PrizePicks screenshots
+  - AI extracts player name, prop type, line, opponent, league
+  - Auto-resolves players via API-Sports (with last-name fallback search)
+  - Resolves opponent teams
+  - Inline prediction results with confidence, recommendation, sharp summary
+  - "View Full Analysis" bridges to Predict tab
 
 ## Lifetime VIP Emails
 - josselj001@gmail.com (Owner)
 - faron2allen@gmail.com, jossel0701@gmail.com, brayanfgaleas@icloud.com
 - odr310@gmail.com, joseharo197@gmail.com, rijulgauchan1@gmail.com
 - gordo0210@icloud.com, brianavina23@gmail.com, andrewfitz97@yahoo.com
+- jose108798@gmail.com
 
 ## API Keys (in .env)
-- API-Sports key, Emergent LLM Key (Gemini), Whop API key + Company ID, xAI (Grok) API key
+- API-Sports key, Emergent LLM Key (Gemini + GPT-4o Vision), Whop API key + Company ID, xAI (Grok) API key
 
 ## Prioritized Backlog
 ### P2 (Medium)
@@ -47,7 +56,8 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 - Prediction self-correction feedback loop
 
 ### Future
-- Codebase refactor (server.py 2500+ lines, App.js 2200+ lines)
+- Codebase refactor (server.py 2700+ lines, App.js 2500+ lines)
 - SofaScore RapidAPI integration (if user subscribes to SofaSport API)
 - Combo pick saving to tracking tab
 - Video tutorial embed option for Guide tab
+- Scan tab: camera capture (mobile), batch predictions, save scanned picks to tracking
