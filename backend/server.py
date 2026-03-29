@@ -6,6 +6,7 @@ import asyncio as aio
 import time
 import bcrypt
 import statistics as stats_mod
+import traceback
 from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -895,7 +896,7 @@ async def predict(req: PredictionRequest):
                 fouls = pstats.get("fouls", {})
                 parts.append(f"""[PLAYER PROFILE]
 - Position: {games_data.get('position', 'Unknown')} | Apps: {games_data.get('appearences', 'N/A')} | Avg Rating: {games_data.get('rating', 'N/A')}
-- Avg Minutes: {games_data.get('minutes', 0) / max(games_data.get('appearences', 1) or 1, 1):.0f} per game
+- Avg Minutes: {(games_data.get('minutes') or 0) / max((games_data.get('appearences') or 1), 1):.0f} per game
 - Passes: total={passes.get('total','N/A')}, key={passes.get('key','N/A')}, accuracy={passes.get('accuracy','N/A')}%
 - Shots: total={shots.get('total','N/A')}, on_target={shots.get('on','N/A')}
 - Tackles: total={tackles.get('total','N/A')}, interceptions={tackles.get('interceptions','N/A')}, blocks={tackles.get('blocks','N/A')}
@@ -1098,7 +1099,7 @@ DATA: {tactical_json}"""}
             gl_target = gl_target_field_map.get(req.propType, "passes_total")
             for g in player_game_logs:
                 stat_val = g.get(gl_target)
-                if stat_val is not None and g.get("minutes", 0) > 0:
+                if stat_val is not None and (g.get("minutes") or 0) > 0:
                     real_recent_samples.append({
                         "date": g.get("date", ""),
                         "opponent": g.get("opponent", ""),
@@ -1369,7 +1370,7 @@ Field requirements:
             for g in recent_gk_logs:
                 gk_saves_list.append(g.get("goals_saves"))
             gk_avg_saves = round(sum(gk_saves_list) / len(gk_saves_list), 2) if gk_saves_list else 0
-            gk_saves_per90 = round(sum(gk_saves_list) / max(1, sum(g.get("minutes", 0) for g in recent_gk_logs)) * 90, 2) if gk_saves_list else 0
+            gk_saves_per90 = round(sum(gk_saves_list) / max(1, sum((g.get("minutes") or 0) for g in recent_gk_logs)) * 90, 2) if gk_saves_list else 0
 
             # Calculate save % from LAST 5-7 games only
             total_saves = sum(gk_saves_list) if gk_saves_list else 0
@@ -1684,6 +1685,7 @@ Return ONLY valid JSON. recentSamples MUST be []. 10pt probabilityCurve."""
             "explanation": "Fallback prediction due to AI parsing error."
         }
     except Exception as e:
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
 
 

@@ -29,6 +29,7 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 - [x] Whop auth with owner bypass, lifetime subs, premium subs
 - [x] Grok deep web search for stat verification
 - [x] Fixed Guide tab layout bug (was rendered outside <main> container) — 2026-03-29
+- [x] Fixed NoneType division error in prediction pipeline (API returns null for minutes) — 2026-03-29
 
 ## Lifetime VIP Emails
 - josselj001@gmail.com (Owner)
