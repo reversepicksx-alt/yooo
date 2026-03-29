@@ -960,6 +960,7 @@ export default function App() {
   const [isScanPredicting, setIsScanPredicting] = useState(false);
   const [scanPredictingIdx, setScanPredictingIdx] = useState(null);
   const [scanExcludedIndices, setScanExcludedIndices] = useState([]);
+  const [scanVenueOverrides, setScanVenueOverrides] = useState({});
   const scanFileRef = useRef(null);
 
   const searchTimeout = useRef(null);
@@ -1309,6 +1310,7 @@ export default function App() {
     setScanResults(null);
     setScanPrediction(null);
     setScanPredictingIdx(null);
+    setScanVenueOverrides({});
 
     // Convert to base64
     const reader = new FileReader();
@@ -1350,7 +1352,7 @@ export default function App() {
     try {
       const opponentId = pickData.resolvedOpponent?.teamId || pickData.resolved.teamId;
       const opponentName = pickData.resolvedOpponent?.teamName || pickData.extracted.opponentName || 'Unknown';
-      const venue = pickData.extracted.venue || 'home';
+      const venue = scanVenueOverrides[idx] || pickData.extracted.venue || 'home';
       const result = await predict({
         playerId: pickData.resolved.playerId,
         playerName: pickData.resolved.playerName,
@@ -1407,6 +1409,7 @@ export default function App() {
     setScanError(null);
     setScanPrediction(null);
     setScanPredictingIdx(null);
+    setScanVenueOverrides({});
     if (scanFileRef.current) scanFileRef.current.value = '';
   };
 
@@ -2559,13 +2562,24 @@ export default function App() {
                                         {ext.opponentName}
                                       </span>
                                     )}
-                                    <span style={{
-                                      padding: '1px 6px', borderRadius: 4, fontSize: 8, fontWeight: 900, letterSpacing: '0.1em',
-                                      background: ext.venue === 'away' ? 'rgba(244,63,94,0.12)' : 'rgba(59,130,246,0.12)',
-                                      color: ext.venue === 'away' ? '#f43f5e' : '#3b82f6',
-                                      border: `1px solid ${ext.venue === 'away' ? 'rgba(244,63,94,0.25)' : 'rgba(59,130,246,0.25)'}`,
-                                    }}>
-                                      {ext.venue === 'away' ? 'AWAY' : 'HOME'}
+                                    <span
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setScanVenueOverrides(prev => ({
+                                          ...prev,
+                                          [idx]: (prev[idx] || ext.venue || 'home') === 'home' ? 'away' : 'home'
+                                        }));
+                                      }}
+                                      data-testid={`scan-venue-toggle-${idx}`}
+                                      style={{
+                                        padding: '2px 8px', borderRadius: 4, fontSize: 8, fontWeight: 900, letterSpacing: '0.1em',
+                                        cursor: 'pointer', userSelect: 'none', transition: 'all 0.15s',
+                                        background: (scanVenueOverrides[idx] || ext.venue || 'home') === 'away' ? 'rgba(244,63,94,0.15)' : 'rgba(59,130,246,0.15)',
+                                        color: (scanVenueOverrides[idx] || ext.venue || 'home') === 'away' ? '#f43f5e' : '#3b82f6',
+                                        border: `1px solid ${(scanVenueOverrides[idx] || ext.venue || 'home') === 'away' ? 'rgba(244,63,94,0.3)' : 'rgba(59,130,246,0.3)'}`,
+                                      }}
+                                    >
+                                      {(scanVenueOverrides[idx] || ext.venue || 'home') === 'away' ? 'AWAY' : 'HOME'} &#x21C5;
                                     </span>
                                   </div>
                                 </div>
