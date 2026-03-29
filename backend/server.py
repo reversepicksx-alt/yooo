@@ -1826,30 +1826,44 @@ async def scan_prop(req: ScanPropRequest):
 
         leagues_list = ", ".join([f"{l['name']} (ID:{l['id']})" for l in SUPPORTED_LEAGUES])
 
-        prompt = f"""Analyze this sportsbook screenshot (likely PrizePicks, DraftKings, FanDuel, or similar).
+        prompt = f"""Analyze this sportsbook screenshot. It is most likely from PrizePicks.
 
-Extract ALL player prop entries visible in the image. For EACH entry, extract:
-1. playerName — Full name as shown
-2. propType — One of: pass_attempts, shots, shots_on_target, tackles, key_passes, saves, interceptions, blocks, dribbles, fouls_drawn
-3. line — The numerical over/under line (e.g., 24.5)
-4. overUnder — "over" or "under" if indicated, otherwise "over"
-5. opponentName — The opposing team if shown
-6. league — Best guess league name
-7. leagueId — Match to one of these supported leagues: {leagues_list}
+PRIZEPICKS LAYOUT GUIDE:
+- The player's FIRST NAME is on the top line, LAST NAME is on the second line (larger/bolder text)
+- Below the name: "SOCCER • [Team Name] • [Position]"
+- Below that: "vs [Opponent]" with date/time
+- The prop line number (e.g., 48.5) is shown prominently with the stat type below it (e.g., "Passes Attempted")
+- "Less" and "More" buttons are just user selection options — IGNORE them. Do NOT extract over/under from these.
+- A bar chart may show the player's recent game history
 
-PROP TYPE MAPPING (sportsbook label → our key):
-- "Pass Attempts" / "Passes Attempted" / "Passes" → pass_attempts
+CRITICAL RULES:
+- Read the player name EXACTLY as shown on the card. The name displayed prominently at the top IS the player.
+- Do NOT confuse player names with opponent names, team names, or any other text.
+- If you see only ONE player card, return exactly ONE entry.
+- IGNORE any "Less"/"More" buttons — they are irrelevant selection UI, not a prediction.
+
+Extract for EACH player prop entry:
+1. playerName — The player's full name as displayed (first + last)
+2. propType — Map to one of: pass_attempts, shots, shots_on_target, tackles, key_passes, saves, interceptions, blocks, dribbles, fouls_drawn
+3. line — The numerical line (e.g., 48.5)
+4. opponentName — The opposing team from "vs [Team]"
+5. league — Best guess league name
+6. leagueId — Match to one of: {leagues_list}
+7. playerTeam — The player's own team name
+
+PROP TYPE MAPPING:
+- "Passes Attempted" / "Pass Attempts" / "Passes" → pass_attempts
 - "Shots" / "Shots Taken" → shots
 - "Shots on Target" / "SOT" → shots_on_target
 - "Tackles" → tackles
 - "Key Passes" / "Assists" → key_passes
-- "Saves" / "Goalkeeper Saves" / "GK Saves" → saves
+- "Saves" / "Goalkeeper Saves" → saves
 - "Interceptions" → interceptions
 - "Blocks" → blocks
 - "Dribble Attempts" / "Dribbles" → dribbles
 - "Fouls Drawn" → fouls_drawn
 
-Return ONLY valid JSON array. Each element: {{"playerName":"...","propType":"...","line":0.0,"overUnder":"over","opponentName":"...","league":"...","leagueId":0}}
+Return ONLY valid JSON array. Each element: {{"playerName":"...","propType":"...","line":0.0,"opponentName":"...","playerTeam":"...","league":"...","leagueId":0}}
 If you cannot determine a field, use null. Always try to extract the line number.
 If there's only one entry, still return it as an array with one element."""
 

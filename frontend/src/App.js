@@ -2540,9 +2540,9 @@ export default function App() {
                               flex: 1, padding: '10px 12px', borderRadius: 8, background: 'rgba(255,255,255,0.03)',
                               border: '1px solid rgba(100,100,120,0.15)', textAlign: 'center',
                             }}>
-                              <div style={{ fontSize: 9, fontWeight: 800, color: 'rgba(255,255,255,0.35)', letterSpacing: '0.1em', marginBottom: 4 }}>PICK</div>
-                              <div style={{ fontSize: 13, fontWeight: 800, color: ext.overUnder === 'over' ? '#10b981' : '#f43f5e' }}>
-                                {(ext.overUnder || 'over').toUpperCase()}
+                              <div style={{ fontSize: 9, fontWeight: 800, color: 'rgba(255,255,255,0.35)', letterSpacing: '0.1em', marginBottom: 4 }}>LEAGUE</div>
+                              <div style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.6)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {ext.league || 'Unknown'}
                               </div>
                             </div>
                           </div>
