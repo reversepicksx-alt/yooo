@@ -28,7 +28,7 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 - [x] Pick of the Day
 - [x] Whop auth with owner bypass, lifetime subs, premium subs
 - [x] Grok deep web search for stat verification
-- [x] All previous features from prior sessions
+- [x] Fixed Guide tab layout bug (was rendered outside <main> container) — 2026-03-29
 
 ## Lifetime VIP Emails
 - josselj001@gmail.com (Owner)
@@ -42,6 +42,7 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 ## Prioritized Backlog
 ### P2 (Medium)
 - Slip correlation analysis
+- User Record Tracker (HIT/MISS ratio, ROI, streak)
 - Prediction self-correction feedback loop
 
 ### Future

@@ -2116,8 +2116,6 @@ export default function App() {
           </div>
         )}
 
-      </main>
-
       {/* Selected Pick Modal */}
       {selectedPick && (
         <div className="modal-overlay" data-testid="pick-detail-modal">
@@ -2266,6 +2264,8 @@ export default function App() {
             </div>
           </div>
         )}
+
+      </main>
 
       {/* Bottom Nav */}
       <nav className="bottom-nav" data-testid="bottom-nav">
