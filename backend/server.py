@@ -1814,26 +1814,26 @@ PROP_TYPE_ALIASES = {
 
 @app.post("/api/scan-prop")
 async def scan_prop(req: ScanPropRequest):
-    """Use AI vision to extract player prop data from a sportsbook screenshot."""
+    """Use AI vision to extract player prop data from a screenshot."""
     try:
         chat = LlmChat(
             api_key=EMERGENT_LLM_KEY,
             session_id=f"scan-{uuid.uuid4().hex[:8]}",
-            system_message="You are an expert at reading sportsbook screenshots. Extract structured data precisely."
+            system_message="You are an expert at reading player prop screenshots. Extract structured data precisely."
         ).with_model("openai", "gpt-4o")
 
         image_content = ImageContent(image_base64=req.image_base64)
 
         leagues_list = ", ".join([f"{l['name']} (ID:{l['id']})" for l in SUPPORTED_LEAGUES])
 
-        prompt = f"""Analyze this sportsbook screenshot. It is most likely from PrizePicks.
+        prompt = f"""Analyze this screenshot of a player prop card.
 
-PRIZEPICKS LAYOUT GUIDE:
+LAYOUT GUIDE:
 - The player's FIRST NAME is on the top line, LAST NAME is on the second line (larger/bolder text)
 - Below the name: "SOCCER • [Team Name] • [Position]"
-- Below that: "vs [Opponent]" with date/time
+- Below that: "vs [Opponent]" or "@ [Opponent]" with date/time
 - The prop line number (e.g., 48.5) is shown prominently with the stat type below it (e.g., "Passes Attempted")
-- "Less" and "More" buttons are just user selection options — IGNORE them. Do NOT extract over/under from these.
+- "Less" and "More" buttons are just selection options — IGNORE them. Do NOT extract over/under from these.
 - A bar chart may show the player's recent game history
 
 CRITICAL RULES:
@@ -1942,7 +1942,7 @@ If there's only one entry, still return it as an array with one element."""
                 for key, lid in TEAM_LEAGUE_MAP.items():
                     if key in name_lower or name_lower in key:
                         return lid
-            return ai_league_id or 71  # Default to Brasileirao if nothing found (most PrizePicks soccer)
+            return ai_league_id or 71  # Default to Brasileirao if nothing found
 
         def strip_accents(text):
             """Remove diacritics for API search compatibility."""

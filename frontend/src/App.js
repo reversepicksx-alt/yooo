@@ -2318,7 +2318,7 @@ export default function App() {
               },
               {
                 step: 6, title: 'Set the Line & Generate', icon: <Zap style={{ width: 20, height: 20 }} />,
-                desc: 'Enter the sportsbook line (e.g. 25.5). Hit "Generate Projection" and wait ~30 seconds. The AI analyzes real stats, live news, and tactical data.',
+                desc: 'Enter the prop line (e.g. 25.5). Hit "Generate Projection" and wait ~30 seconds. The AI analyzes real stats, live news, and tactical data.',
                 tip: 'Want to stack 2 players? Hit "Stack 2nd Player" to get a combined projection.',
               },
               {
@@ -2415,7 +2415,7 @@ export default function App() {
                 {/* Header */}
                 <div style={{ textAlign: 'center', marginBottom: 20 }}>
                   <div style={{ fontSize: 22, fontWeight: 900, color: '#fff', letterSpacing: '-0.5px' }}>Scan a Prop</div>
-                  <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', marginTop: 4 }}>Upload a PrizePicks screenshot for instant analysis</div>
+                  <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', marginTop: 4 }}>Upload a screenshot of any player prop for instant analysis</div>
                 </div>
 
                 {/* Upload Zone */}
@@ -2474,7 +2474,7 @@ export default function App() {
                   <div style={{ textAlign: 'center', padding: '40px 0' }} data-testid="scan-loading">
                     <div className="spinner-ring"><Camera className="inner-icon" style={{ width: 24, height: 24 }} /></div>
                     <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', marginTop: 16 }}>Analyzing screenshot...</div>
-                    <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', marginTop: 4 }}>AI is reading your PrizePicks props</div>
+                    <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', marginTop: 4 }}>AI is reading your player props</div>
                   </div>
                 )}
 
