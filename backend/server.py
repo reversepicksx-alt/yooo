@@ -44,7 +44,8 @@ LIFETIME_SUB_EMAILS = [
     "brayanfgaleas@icloud.com", "odr310@gmail.com",
     "joseharo197@gmail.com", "rijulgauchan1@gmail.com", "gordo0210@icloud.com",
     "brianavina23@gmail.com", "andrewfitz97@yahoo.com",
-    "jose108798@gmail.com", "letwins04@gmail.com"
+    "jose108798@gmail.com", "letwins04@gmail.com",
+    "quon.qg@gmail.com", "jesselopezj@hotmail.com"
 ]
 LIFETIME_SUB_EMAILS = [e.lower() for e in LIFETIME_SUB_EMAILS]
 
