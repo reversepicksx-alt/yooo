@@ -1924,6 +1924,17 @@ If there's only one entry, still return it as an array with one element."""
             # NWSL (254)
             "portland thorns": 254, "washington spirit": 254, "north carolina courage": 254,
             "orlando pride": 254, "gotham fc": 254, "angel city": 254, "kansas city current": 254,
+            # International teams → Nations League / International (5)
+            "italy": 5, "france": 5, "germany": 5, "spain": 5, "england": 5,
+            "portugal": 5, "brazil": 5, "argentina": 5, "netherlands": 5, "belgium": 5,
+            "croatia": 5, "usa": 5, "united states": 5, "mexico": 5, "japan": 5,
+            "south korea": 5, "turkey": 5, "serbia": 5, "poland": 5, "denmark": 5,
+            "sweden": 5, "norway": 5, "colombia": 5, "uruguay": 5, "chile": 5,
+            "nigeria": 5, "senegal": 5, "morocco": 5, "egypt": 5, "australia": 5,
+            "bosnia": 5, "bosnia & herzegovina": 5, "scotland": 5, "wales": 5,
+            "switzerland": 5, "austria": 5, "czech republic": 5, "ukraine": 5,
+            "romania": 5, "greece": 5, "costa rica": 5, "canada": 5, "iran": 5,
+            "algeria": 5, "cameroon": 5, "ghana": 5, "ivory coast": 5, "tunisia": 5,
         }
 
         def infer_league_id(team_name, opponent_name, ai_league_id):
@@ -2019,33 +2030,103 @@ If there's only one entry, still return it as an array with one element."""
                         return candidates[0][0]
                     return None
 
+                # International leagues where players are indexed under their CLUB, not national team
+                INTERNATIONAL_LEAGUES = {5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 29, 30, 31, 32, 33, 34}
+
+                # Map national teams to their most likely club leagues (players play domestically or in top-5)
+                NATION_TO_LEAGUES = {
+                    "italy": [135, 39, 140, 78, 61],
+                    "france": [61, 39, 140, 135, 78],
+                    "germany": [78, 39, 140, 135, 61],
+                    "spain": [140, 39, 135, 78, 61],
+                    "england": [39, 140, 135, 78, 61],
+                    "portugal": [94, 39, 140, 135, 61],
+                    "brazil": [71, 39, 140, 135, 61],
+                    "argentina": [128, 39, 140, 135, 61],
+                    "netherlands": [88, 39, 135, 78, 140],
+                    "belgium": [144, 39, 135, 78, 61],
+                    "usa": [253, 39, 140],
+                    "united states": [253, 39, 140],
+                    "mexico": [262, 253],
+                    "japan": [39, 78, 135, 140, 61],
+                    "south korea": [39, 78, 135, 140],
+                    "turkey": [203, 39, 135],
+                    "croatia": [39, 135, 78, 140, 61],
+                    "serbia": [39, 135, 78, 61],
+                    "poland": [39, 135, 140, 78],
+                    "denmark": [39, 135, 140, 78],
+                    "sweden": [39, 135, 78],
+                    "norway": [39, 135, 78],
+                    "colombia": [71, 39, 140, 135, 61],
+                    "uruguay": [140, 39, 71, 135],
+                    "chile": [71, 39, 140],
+                    "nigeria": [39, 135, 61],
+                    "senegal": [39, 61, 135],
+                    "morocco": [39, 61, 140, 135],
+                    "egypt": [39, 135, 140],
+                    "australia": [39, 253],
+                    "saudi arabia": [307],
+                    "bosnia": [135, 78, 39, 61],
+                    "bosnia & herzegovina": [135, 78, 39, 61],
+                    "scotland": [39, 135],
+                    "wales": [39, 135],
+                    "switzerland": [78, 135, 39, 61],
+                    "austria": [78, 135, 39],
+                    "czech republic": [78, 39, 135],
+                    "ukraine": [39, 78, 135, 61],
+                    "romania": [39, 135, 78],
+                    "greece": [39, 135, 78],
+                    "costa rica": [253, 39],
+                    "canada": [253, 39, 61],
+                    "iran": [39, 78],
+                    "algeria": [61, 39],
+                    "cameroon": [61, 39, 135],
+                    "ghana": [39, 61, 135],
+                    "ivory coast": [39, 61],
+                    "tunisia": [61, 39],
+                }
+                TOP_5_LEAGUES = [39, 140, 135, 78, 61]  # Fallback: EPL, La Liga, Serie A, Bundesliga, Ligue 1
+
+                is_international = league_id in INTERNATIONAL_LEAGUES
+
+                # Build league search order
+                if is_international:
+                    # Use national team name to narrow down which club leagues to search
+                    team_lower = player_team_hint or ""
+                    leagues_to_try = NATION_TO_LEAGUES.get(team_lower, TOP_5_LEAGUES)
+                else:
+                    leagues_to_try = [league_id]
+
                 for variant in search_variants:
                     if resolved_player:
                         break
                     if len(variant) < 3:
                         continue
-                    for season in [CURRENT_SEASON + 1, CURRENT_SEASON]:
-                        try:
-                            data = await api_football_request("players", {"search": variant, "league": league_id, "season": season})
-                            if data:
-                                best = pick_best_match(data, search_query, player_team_hint)
-                                if not best:
-                                    best = data[0]
-                                resolved_player = {
-                                    "playerId": best["player"]["id"],
-                                    "playerName": best["player"]["name"],
-                                    "photo": "",
-                                    "teamId": best.get("statistics", [{}])[0].get("team", {}).get("id"),
-                                    "teamName": best.get("statistics", [{}])[0].get("team", {}).get("name", ""),
-                                }
-                                # Update league info from actual player data
-                                actual_league = best.get("statistics", [{}])[0].get("league", {})
-                                if actual_league.get("id"):
-                                    league_id = actual_league["id"]
-                                    league_name = actual_league.get("name", league_name)
-                                break
-                        except Exception:
-                            continue
+                    for try_league in leagues_to_try:
+                        if resolved_player:
+                            break
+                        for season in [CURRENT_SEASON + 1, CURRENT_SEASON]:
+                            try:
+                                data = await api_football_request("players", {"search": variant, "league": try_league, "season": season})
+                                if data:
+                                    best = pick_best_match(data, search_query, player_team_hint)
+                                    if not best:
+                                        best = data[0]
+                                    resolved_player = {
+                                        "playerId": best["player"]["id"],
+                                        "playerName": best["player"]["name"],
+                                        "photo": "",
+                                        "teamId": best.get("statistics", [{}])[0].get("team", {}).get("id"),
+                                        "teamName": best.get("statistics", [{}])[0].get("team", {}).get("name", ""),
+                                    }
+                                    # Update league info from actual player data
+                                    actual_league = best.get("statistics", [{}])[0].get("league", {})
+                                    if actual_league.get("id"):
+                                        league_id = actual_league["id"]
+                                        league_name = actual_league.get("name", league_name)
+                                    break
+                            except Exception:
+                                continue
 
                 # Fallback: broader search without league filter
                 if not resolved_player:
