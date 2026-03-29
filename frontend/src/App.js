@@ -1348,6 +1348,7 @@ export default function App() {
     try {
       const opponentId = pickData.resolvedOpponent?.teamId || pickData.resolved.teamId;
       const opponentName = pickData.resolvedOpponent?.teamName || pickData.extracted.opponentName || 'Unknown';
+      const venue = pickData.extracted.venue || 'home';
       const result = await predict({
         playerId: pickData.resolved.playerId,
         playerName: pickData.resolved.playerName,
@@ -1355,7 +1356,7 @@ export default function App() {
         opponentId: opponentId,
         opponentName: opponentName,
         leagueId: pickData.extracted.leagueId || 39,
-        venue: 'home',
+        venue: venue,
         propType: pickData.extracted.propType,
         line: pickData.extracted.line,
       });
@@ -2495,8 +2496,13 @@ export default function App() {
                                 {res?.playerName || ext.playerName}
                               </div>
                               <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 2 }}>
-                                {res?.teamName || ext.league || 'Unknown team'}
-                                {ext.opponentName && ` vs ${ext.opponentName}`}
+                                {res?.teamName || ext.playerTeam || 'Unknown team'}
+                                {ext.opponentName && (
+                                  <span>
+                                    {ext.venue === 'away' ? ' @ ' : ' vs '}
+                                    {ext.opponentName}
+                                  </span>
+                                )}
                               </div>
                             </div>
                             {res ? (

@@ -1863,7 +1863,13 @@ PROP TYPE MAPPING:
 - "Dribble Attempts" / "Dribbles" → dribbles
 - "Fouls Drawn" → fouls_drawn
 
-Return ONLY valid JSON array. Each element: {{"playerName":"...","propType":"...","line":0.0,"opponentName":"...","playerTeam":"...","league":"...","leagueId":0}}
+Return ONLY valid JSON array. Each element: {{"playerName":"...","propType":"...","line":0.0,"opponentName":"...","playerTeam":"...","venue":"home or away","league":"...","leagueId":0}}
+
+VENUE RULES:
+- If the matchup line says "@ [Team]" — the "@" means AWAY. The player's team is traveling to the opponent. venue = "away"
+- If the matchup line says "vs [Team]" (no @) — the player's team is at HOME. venue = "home"
+- Example: Player team is Botafogo, matchup says "@ Athletico PR" → venue = "away", opponentName = "Athletico PR"
+
 If you cannot determine a field, use null. Always try to extract the line number.
 If there's only one entry, still return it as an array with one element."""
 
@@ -1896,6 +1902,10 @@ If there's only one entry, still return it as an array with one element."""
 
             league_id = entry.get("leagueId") or 39
             line = entry.get("line") or 0
+            player_team_hint = (entry.get("playerTeam") or "").lower().strip()
+            venue = (entry.get("venue") or "home").lower().strip()
+            if venue not in ("home", "away"):
+                venue = "home"
 
             # Search for player in API-Sports
             resolved_player = None
@@ -1907,6 +1917,26 @@ If there's only one entry, still return it as an array with one element."""
                 if len(name_parts) > 1:
                     search_variants.append(name_parts[-1])  # Last name
 
+                def pick_best_match(data_list, query, team_hint):
+                    """Pick the best player match, preferring team name match."""
+                    query_lower = query.lower()
+                    last_name = query.split()[-1].lower() if query.split() else query.lower()
+                    candidates = []
+                    for d in data_list[:20]:
+                        pname = d["player"]["name"].lower()
+                        team_name = (d.get("statistics", [{}])[0].get("team", {}).get("name") or "").lower()
+                        name_match = query_lower in pname or pname in query_lower or last_name in pname
+                        team_match = team_hint and team_hint in team_name
+                        if name_match:
+                            candidates.append((d, team_match))
+                    # Prefer candidates where team also matches
+                    if candidates:
+                        team_matched = [c for c in candidates if c[1]]
+                        if team_matched:
+                            return team_matched[0][0]
+                        return candidates[0][0]
+                    return None
+
                 for variant in search_variants:
                     if resolved_player:
                         break
@@ -1916,14 +1946,7 @@ If there's only one entry, still return it as an array with one element."""
                         try:
                             data = await api_football_request("players", {"search": variant, "league": league_id, "season": season})
                             if data:
-                                # Find best match by name similarity
-                                best = None
-                                query_lower = search_query.lower()
-                                for d in data[:10]:
-                                    pname = d["player"]["name"].lower()
-                                    if query_lower in pname or pname in query_lower or name_parts[-1].lower() in pname:
-                                        best = d
-                                        break
+                                best = pick_best_match(data, search_query, player_team_hint)
                                 if not best:
                                     best = data[0]
                                 resolved_player = {
@@ -1948,13 +1971,7 @@ If there's only one entry, still return it as an array with one element."""
                             try:
                                 data = await api_football_request("players", {"search": variant, "season": season})
                                 if data:
-                                    best = None
-                                    query_lower = search_query.lower()
-                                    for d in data[:10]:
-                                        pname = d["player"]["name"].lower()
-                                        if query_lower in pname or pname in query_lower or name_parts[-1].lower() in pname:
-                                            best = d
-                                            break
+                                    best = pick_best_match(data, search_query, player_team_hint)
                                     if not best:
                                         best = data[0]
                                     resolved_player = {
@@ -1975,21 +1992,59 @@ If there's only one entry, still return it as an array with one element."""
             opponent_name = entry.get("opponentName")
             if opponent_name and resolved_player:
                 try:
-                    # Search teams in the league
-                    teams_data = await api_football_request("teams", {"search": opponent_name})
-                    if teams_data:
-                        for t in teams_data[:5]:
-                            if opponent_name.lower() in t.get("team", {}).get("name", "").lower():
-                                resolved_opponent = {
-                                    "teamId": t["team"]["id"],
-                                    "teamName": t["team"]["name"],
-                                }
-                                break
-                        if not resolved_opponent:
-                            resolved_opponent = {
-                                "teamId": teams_data[0]["team"]["id"],
-                                "teamName": teams_data[0]["team"]["name"],
-                            }
+                    opp_lower = opponent_name.lower().strip()
+                    # Try multiple search variants for the opponent
+                    opp_searches = [opponent_name]
+                    clean_opp = opponent_name.strip()
+                    # Expand common team name abbreviations
+                    TEAM_ABBREVS = {"PR": "Paranaense", "MG": "Mineiro", "GO": "Goianiense", "RJ": "Rio"}
+                    for abbr, full in TEAM_ABBREVS.items():
+                        if clean_opp.upper().endswith(f" {abbr}"):
+                            expanded = clean_opp[:-(len(abbr))].strip() + " " + full
+                            opp_searches.insert(1, expanded)
+                            # Also add th→t variant of the expanded name
+                            expanded_v = expanded.replace("th", "t").replace("Th", "T")
+                            if expanded_v != expanded:
+                                opp_searches.insert(2, expanded_v)
+                    # Common spelling variants (Athletico → Atletico)
+                    variant_th = clean_opp.replace("th", "t").replace("Th", "T")
+                    if variant_th != clean_opp and variant_th not in opp_searches:
+                        opp_searches.append(variant_th)
+                    # Strip common abbreviations as last resort
+                    for suffix in [" PR", " FC", " SC", " CF", " AC", " MG", " GO", " RJ"]:
+                        if clean_opp.upper().endswith(suffix):
+                            stripped = clean_opp[:-len(suffix)].strip()
+                            stripped_variant = stripped.replace("th", "t").replace("Th", "T")
+                            if stripped_variant != stripped and stripped_variant not in opp_searches:
+                                opp_searches.append(stripped_variant)
+                            if stripped not in opp_searches:
+                                opp_searches.append(stripped)
+
+                    best_team = None
+                    teams_data = []
+                    first_word = opp_lower.split()[0]
+                    first_word_variant = first_word.replace("th", "t")
+                    for opp_query in opp_searches:
+                        if best_team:
+                            break
+                        teams_data = await api_football_request("teams", {"search": opp_query})
+                        if teams_data:
+                            for t in teams_data[:15]:
+                                tname = t.get("team", {}).get("name", "")
+                                tname_lower = tname.lower()
+                                is_youth = any(s in tname_lower for s in ["u20", "u23", "u21", "u19", "u18", "u17", " ii", " b "])
+                                is_women = tname_lower.endswith(" w")
+                                name_match = first_word in tname_lower or first_word_variant in tname_lower
+                                if name_match and not is_youth and not is_women:
+                                    best_team = t
+                                    break
+                    if not best_team and teams_data:
+                        best_team = teams_data[0]
+                    if best_team:
+                        resolved_opponent = {
+                            "teamId": best_team["team"]["id"],
+                            "teamName": best_team["team"]["name"],
+                        }
                 except Exception:
                     pass
 
@@ -1998,8 +2053,9 @@ If there's only one entry, still return it as an array with one element."""
                     "playerName": player_name,
                     "propType": prop_type,
                     "line": line,
-                    "overUnder": entry.get("overUnder", "over"),
+                    "venue": venue,
                     "opponentName": entry.get("opponentName"),
+                    "playerTeam": entry.get("playerTeam"),
                     "league": entry.get("league"),
                     "leagueId": league_id,
                 },
