@@ -1324,6 +1324,58 @@ export default function App() {
               </div>
             </div>
 
+            {/* ── USER RECORD TRACKER ── */}
+            {(() => {
+              const settled = savedPicks.filter(p => p.status === 'settled' && p.result);
+              const hits = settled.filter(p => p.result === 'hit').length;
+              const misses = settled.filter(p => p.result === 'miss').length;
+              const pushes = settled.filter(p => p.result === 'push').length;
+              const total = hits + misses;
+              const winRate = total > 0 ? Math.round((hits / total) * 100) : 0;
+              // Streak calc (most recent first)
+              const sorted = [...settled].sort((a, b) => (b.settledAt || b.timestamp || 0) - (a.settledAt || a.timestamp || 0));
+              let streak = 0, streakType = '';
+              for (const p of sorted) {
+                if (p.result === 'push') continue;
+                if (!streakType) { streakType = p.result; streak = 1; }
+                else if (p.result === streakType) streak++;
+                else break;
+              }
+              const streakLabel = streak > 0 ? `${streak}${streakType === 'hit' ? 'W' : 'L'}` : '-';
+              if (settled.length === 0) return null;
+              return (
+                <div data-testid="record-tracker" style={{
+                  background: '#0a0a0f', border: '1px solid rgba(100,100,120,0.2)',
+                  borderRadius: 14, padding: '14px 16px', marginBottom: 4,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12 }}>
+                    <BarChart3 style={{ width: 13, height: 13, color: 'var(--accent)' }} />
+                    <span style={{ fontSize: 10, fontWeight: 900, letterSpacing: '0.12em', color: 'var(--accent)', textTransform: 'uppercase' }}>Your Record</span>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr', gap: 8 }}>
+                    {[
+                      { label: 'HITS', value: hits, color: '#10b981' },
+                      { label: 'MISSES', value: misses, color: '#f43f5e' },
+                      { label: 'PUSHES', value: pushes, color: '#f59e0b' },
+                      { label: 'WIN %', value: `${winRate}%`, color: winRate >= 55 ? '#10b981' : winRate >= 45 ? '#f59e0b' : '#f43f5e' },
+                      { label: 'STREAK', value: streakLabel, color: streakType === 'hit' ? '#10b981' : streakType === 'miss' ? '#f43f5e' : 'var(--text-muted)' },
+                    ].map(s => (
+                      <div key={s.label} style={{ textAlign: 'center' }}>
+                        <div style={{ fontSize: 20, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: s.color, lineHeight: 1 }}>{s.value}</div>
+                        <div style={{ fontSize: 8, fontWeight: 800, color: 'rgba(255,255,255,0.35)', letterSpacing: '0.12em', marginTop: 4 }}>{s.label}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {/* Win rate bar */}
+                  <div style={{ marginTop: 12, height: 6, borderRadius: 3, overflow: 'hidden', background: 'rgba(255,255,255,0.06)', display: 'flex' }}>
+                    {hits > 0 && <div style={{ width: `${(hits / (total + pushes)) * 100}%`, background: '#10b981', transition: 'width 0.4s' }} />}
+                    {pushes > 0 && <div style={{ width: `${(pushes / (total + pushes)) * 100}%`, background: '#f59e0b', transition: 'width 0.4s' }} />}
+                    {misses > 0 && <div style={{ width: `${(misses / (total + pushes)) * 100}%`, background: '#f43f5e', transition: 'width 0.4s' }} />}
+                  </div>
+                </div>
+              );
+            })()}
+
             <div className="space-y-4">
               {savedPicks.filter(p => trackingView === 'live' ? p.status === 'live' : p.status === 'settled').length === 0 ? (
                 <div className="empty-state" data-testid="tracking-empty">
