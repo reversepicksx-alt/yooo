@@ -602,7 +602,7 @@ export default function App() {
     try {
       const res = await startTactical();
       setTacticalSessionId(res.session_id);
-      setTacticalMessages([{ role: 'assistant', content: res.message, sources: { grok: true, gemini: true, liveData: false } }]);
+      setTacticalMessages([{ role: 'assistant', content: res.message }]);
     } catch (e) {
       setTacticalMessages([{ role: 'assistant', content: 'Failed to initialize tactical session. Please try again.' }]);
     }

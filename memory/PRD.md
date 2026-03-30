@@ -63,11 +63,13 @@ Mobile-first webapp for analyzing soccer player props (pass attempts, shots, sav
 - [x] **Bug Fix: Missing `import asyncio as aio` in predict.py** — Prediction pipeline was broken since refactor
 - [x] **PUSH card styling** — Push results get amber/yellow border (distinct from hit/miss/scheduled)
 - [x] **Reverse Tactical Tab (NEW MAJOR FEATURE)**
-  - Dual AI engine: Grok-4.20 (tactical reasoning) + Gemini 2.5 Flash (data synthesis)
+  - Dual AI engine for deep tactical reasoning + data synthesis
   - Connected to full system: player cache, API-Sports, entity extraction
+  - **Image scan in chat** — upload a prop screenshot directly in tactical, auto-extracts players + runs full analysis
   - Multi-turn conversations with session memory (20 exchanges)
-  - Quick suggestion buttons, GROK/GEMINI/LIVE source badges
-  - Beautiful dark UI with indigo/purple accent theme
+  - Quick suggestion buttons, clean "Live Intelligence" branding
+  - No AI model names visible anywhere (Grok/Gemini completely hidden)
+  - Camera button in input area for image attachment
 - [x] **3-tab navigation**: Scan | Tactical | Tracking
 - [x] **All tests passed (100%)** — Backend: 9/9, Frontend: all UI verified
 
