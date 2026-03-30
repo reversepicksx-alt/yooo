@@ -105,6 +105,7 @@ export default function App() {
   const [tacticalSessionId, setTacticalSessionId] = useState(null);
   const tacticalEndRef = useRef(null);
   const tacticalInputRef = useRef(null);
+  const tacticalFileRef = useRef(null);
 
   // Auth check on mount
   useEffect(() => {
@@ -619,18 +620,23 @@ export default function App() {
     }
   }, [tacticalMessages]);
 
-  const sendTactical = async () => {
+  const sendTactical = async (imageBase64 = null) => {
     const msg = tacticalInput.trim();
-    if (!msg || isTacticalSending) return;
+    if (!msg && !imageBase64) return;
+    if (isTacticalSending) return;
     setTacticalInput('');
-    setTacticalMessages(prev => [...prev, { role: 'user', content: msg }]);
+    setTacticalMessages(prev => [...prev, {
+      role: 'user',
+      content: msg || (imageBase64 ? 'Analyze this prop screenshot' : ''),
+      hasImage: !!imageBase64,
+    }]);
     setIsTacticalSending(true);
     try {
-      const res = await sendTacticalMessage(tacticalSessionId, msg);
+      const res = await sendTacticalMessage(tacticalSessionId, msg, imageBase64);
       setTacticalMessages(prev => [...prev, {
         role: 'assistant',
         content: res.response,
-        sources: res.sources,
+        scanEntries: res.scanEntries,
       }]);
     } catch (e) {
       setTacticalMessages(prev => [...prev, { role: 'assistant', content: `Error: ${e.message}` }]);
@@ -638,6 +644,16 @@ export default function App() {
       setIsTacticalSending(false);
       setTimeout(() => tacticalInputRef.current?.focus(), 100);
     }
+  };
+
+  const handleTacticalImage = (file) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = reader.result.split(',')[1];
+      sendTactical(base64);
+    };
+    reader.readAsDataURL(file);
   };
 
   const resetTactical = () => {
@@ -1774,7 +1790,7 @@ export default function App() {
                   <div style={{ textAlign: 'center', padding: '40px 0' }} data-testid="scan-predicting">
                     <div className="spinner-ring"><Zap className="inner-icon" style={{ width: 24, height: 24 }} /></div>
                     <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', marginTop: 16 }}>Running Deep Analysis...</div>
-                    <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', marginTop: 4 }}>Grok tactical research + Gemini calibration</div>
+                    <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', marginTop: 4 }}>Tactical research + AI calibration</div>
                   </div>
                 )}
 
@@ -2033,7 +2049,7 @@ export default function App() {
                     <div style={{ fontSize: 16, fontWeight: 900, color: '#fff', letterSpacing: '-0.3px' }}>Reverse Tactical</div>
                     <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
                       <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#818cf8', display: 'inline-block' }} />
-                      Grok + Gemini Dual Engine
+                      Live Intelligence
                     </div>
                   </div>
                 </div>
@@ -2060,13 +2076,13 @@ export default function App() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
                       <Crosshair style={{ width: 12, height: 12, color: '#818cf8' }} />
                       <span style={{ fontSize: 9, fontWeight: 900, letterSpacing: '0.12em', color: '#818cf8', textTransform: 'uppercase' }}>Tactical</span>
-                      {msg.sources && (
-                        <div style={{ display: 'flex', gap: 3 }}>
-                          {msg.sources.grok && <span style={{ fontSize: 8, padding: '1px 5px', borderRadius: 3, background: 'rgba(99,102,241,0.12)', color: '#818cf8', fontWeight: 800 }}>GROK</span>}
-                          {msg.sources.gemini && <span style={{ fontSize: 8, padding: '1px 5px', borderRadius: 3, background: 'rgba(16,185,129,0.12)', color: '#10b981', fontWeight: 800 }}>GEMINI</span>}
-                          {msg.sources.liveData && <span style={{ fontSize: 8, padding: '1px 5px', borderRadius: 3, background: 'rgba(245,158,11,0.12)', color: '#f59e0b', fontWeight: 800 }}>LIVE</span>}
-                        </div>
-                      )}
+                    </div>
+                  )}
+                  {/* User image indicator */}
+                  {msg.role === 'user' && msg.hasImage && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4, opacity: 0.5 }}>
+                      <ImageIcon style={{ width: 10, height: 10 }} />
+                      <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.4)' }}>Screenshot attached</span>
                     </div>
                   )}
                   <div style={{
@@ -2079,7 +2095,6 @@ export default function App() {
                     whiteSpace: 'pre-wrap', wordBreak: 'break-word',
                   }}>
                     {msg.content.split('\n').map((line, li) => {
-                      // Simple markdown: **bold**
                       const parts = line.split(/(\*\*.*?\*\*)/g);
                       return (
                         <div key={li} style={{ marginBottom: line === '' ? 8 : 2 }}>
@@ -2087,7 +2102,6 @@ export default function App() {
                             if (part.startsWith('**') && part.endsWith('**')) {
                               return <strong key={pi} style={{ color: '#fff', fontWeight: 800 }}>{part.slice(2, -2)}</strong>;
                             }
-                            // Bullet points
                             if (part.startsWith('- ')) {
                               return <span key={pi} style={{ paddingLeft: 8 }}><span style={{ color: '#818cf8' }}>-</span> {part.slice(2)}</span>;
                             }
@@ -2097,18 +2111,33 @@ export default function App() {
                       );
                     })}
                   </div>
+                  {/* Scan entries summary */}
+                  {msg.scanEntries && msg.scanEntries.length > 0 && (
+                    <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                      {msg.scanEntries.map((e, i) => (
+                        <div key={i} style={{
+                          padding: '4px 8px', borderRadius: 6, fontSize: 10, fontWeight: 700,
+                          background: e.resolved ? 'rgba(16,185,129,0.08)' : 'rgba(245,158,11,0.08)',
+                          border: `1px solid ${e.resolved ? 'rgba(16,185,129,0.2)' : 'rgba(245,158,11,0.2)'}`,
+                          color: e.resolved ? '#10b981' : '#f59e0b',
+                        }}>
+                          {e.playerName} &middot; {e.propType} {e.line}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               ))}
               {isTacticalSending && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 16px', background: '#0a0a0f', border: '1px solid rgba(100,100,120,0.15)', borderRadius: 14, alignSelf: 'flex-start' }}>
                   <Loader2 style={{ width: 14, height: 14, color: '#818cf8', animation: 'spin 1s linear infinite' }} />
-                  <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', fontWeight: 600 }}>Analyzing with Grok + Gemini...</span>
+                  <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', fontWeight: 600 }}>Analyzing...</span>
                 </div>
               )}
               <div ref={tacticalEndRef} />
             </div>
 
-            {/* Quick Suggestions (only when no messages beyond the initial) */}
+            {/* Quick Suggestions */}
             {tacticalMessages.length <= 1 && !isTacticalSending && (
               <div style={{ padding: '0 16px 8px', display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                 {[
@@ -2131,15 +2160,34 @@ export default function App() {
               </div>
             )}
 
+            {/* Hidden file input */}
+            <input
+              type="file" ref={tacticalFileRef} accept="image/*"
+              style={{ display: 'none' }}
+              onChange={e => { if (e.target.files[0]) handleTacticalImage(e.target.files[0]); e.target.value = ''; }}
+            />
+
             {/* Input */}
             <div style={{ padding: '8px 16px 12px', borderTop: '1px solid rgba(100,100,120,0.12)', flexShrink: 0 }}>
               <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+                <button onClick={() => tacticalFileRef.current?.click()} disabled={isTacticalSending}
+                  data-testid="tactical-image-btn"
+                  style={{
+                    width: 42, height: 42, borderRadius: 10, border: '1px solid rgba(100,100,120,0.2)',
+                    background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.4)', flexShrink: 0,
+                    cursor: isTacticalSending ? 'not-allowed' : 'pointer',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    transition: 'all 0.15s',
+                  }}
+                >
+                  <Camera style={{ width: 18, height: 18 }} />
+                </button>
                 <textarea
                   ref={tacticalInputRef}
                   value={tacticalInput}
                   onChange={e => setTacticalInput(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendTactical(); } }}
-                  placeholder="Ask anything — matchups, what-ifs, prop analysis..."
+                  placeholder="Ask anything, or upload a prop screenshot..."
                   data-testid="tactical-input"
                   rows={1}
                   style={{
@@ -2150,7 +2198,7 @@ export default function App() {
                     fontFamily: 'inherit',
                   }}
                 />
-                <button onClick={sendTactical} disabled={!tacticalInput.trim() || isTacticalSending}
+                <button onClick={() => sendTactical()} disabled={!tacticalInput.trim() || isTacticalSending}
                   data-testid="tactical-send-btn"
                   style={{
                     width: 42, height: 42, borderRadius: 10, border: 'none', flexShrink: 0,

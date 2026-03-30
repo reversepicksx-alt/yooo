@@ -106,10 +106,12 @@ export async function startTactical(sessionId = null) {
   });
 }
 
-export async function sendTacticalMessage(sessionId, message) {
+export async function sendTacticalMessage(sessionId, message, imageBase64 = null) {
+  const body = { session_id: sessionId, message };
+  if (imageBase64) body.image_base64 = imageBase64;
   return apiCall('/api/tactical/message', {
     method: 'POST',
-    body: JSON.stringify({ session_id: sessionId, message }),
+    body: JSON.stringify(body),
   });
 }
 

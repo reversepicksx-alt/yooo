@@ -73,6 +73,12 @@ class ChatMessageRequest(BaseModel):
     message: str
 
 
+class TacticalMessageRequest(BaseModel):
+    session_id: str
+    message: str = ""
+    image_base64: Optional[str] = None
+
+
 class NaturalQueryRequest(BaseModel):
     query: str
 
