@@ -1,56 +1,232 @@
 """
-Persistent lookup cache for API-Football data.
-Fetches national teams, league teams on startup, stores in MongoDB.
-Refreshes every 7 days.
+Complete API-Football data cache.
+Stores ALL leagues, teams, players, and national teams in MongoDB.
+Auto-refreshes on a schedule to catch transfers, promotions/relegations, etc.
 """
 import asyncio as aio
-import time
 import re
+import time
 from datetime import datetime, timezone
 from config import db, SUPPORTED_LEAGUES, CURRENT_SEASON
 from utils import api_football_request
 
-CACHE_COLLECTION = "api_cache"
-CACHE_TTL_SECONDS = 7 * 24 * 3600  # 7 days
+CACHE_TTL_SECONDS = 7 * 24 * 3600  # 7 days for general data
+SQUAD_TTL_SECONDS = 3 * 24 * 3600  # 3 days for squads (catches transfers faster)
+
+# ── Collections ──
+COL_LEAGUES = "cache_leagues"       # All leagues from API
+COL_TEAMS = "cache_teams"           # All teams, indexed by league
+COL_PLAYERS = "cache_players"       # All players, indexed by team
+COL_NATIONAL = "cache_national"     # National team lookup
+COL_TRANSFERS = "cache_transfers"   # Detected transfers
+COL_META = "cache_meta"             # Timestamps, status
 
 
-async def _get_cache(key: str):
-    doc = await db[CACHE_COLLECTION].find_one({"_key": key}, {"_id": 0})
-    if doc and (time.time() - doc.get("_ts", 0)) < CACHE_TTL_SECONDS:
-        return doc.get("data")
-    return None
+# ══════════════════════════════════════════════
+#  LOW-LEVEL HELPERS
+# ══════════════════════════════════════════════
+
+async def _get_meta(key: str):
+    doc = await db[COL_META].find_one({"_key": key}, {"_id": 0})
+    return doc
 
 
-async def _set_cache(key: str, data):
-    await db[CACHE_COLLECTION].update_one(
+async def _set_meta(key: str, data: dict):
+    await db[COL_META].update_one(
         {"_key": key},
-        {"$set": {"_key": key, "data": data, "_ts": time.time(),
+        {"$set": {**data, "_key": key, "_ts": time.time(),
                   "_updated": datetime.now(timezone.utc).isoformat()}},
         upsert=True
     )
 
 
 def _is_senior_national(name: str) -> bool:
-    """Filter out youth, women's, and B teams."""
     lower = name.lower()
-    skip_patterns = [
-        r'\bu\d{2}\b', r'\bu-\d{2}\b',  # U17, U-19, U20, U21, U23
-        r'\bw$', r'\bwomen\b',  # Women's teams
-        r'\b[b-c]$',  # B/C teams
-        r'\bolympic\b', r'\bfutsal\b', r'\bbeach\b',
-    ]
-    for pat in skip_patterns:
-        if re.search(pat, lower):
-            return False
-    return True
+    skip = [r'\bu\d{2}\b', r'\bu-\d{2}\b', r'\bw$', r'\bwomen\b',
+            r'\b[b-c]$', r'\bolympic\b', r'\bfutsal\b', r'\bbeach\b']
+    return not any(re.search(p, lower) for p in skip)
 
 
-async def fetch_national_teams() -> dict:
-    """Fetch all senior national team IDs from international leagues. Returns {lowercase_name: {id, name}}"""
-    cached = await _get_cache("national_teams")
-    if cached:
-        return cached
+# ══════════════════════════════════════════════
+#  1. LEAGUES
+# ══════════════════════════════════════════════
 
+async def sync_leagues():
+    """Fetch ALL leagues from API-Football and store in MongoDB."""
+    try:
+        data = await api_football_request("leagues")
+        if not data:
+            return 0
+
+        ops = []
+        for item in data:
+            league = item.get("league", {})
+            country = item.get("country", {})
+            seasons = item.get("seasons", [])
+            current_season = None
+            for s in seasons:
+                if s.get("current"):
+                    current_season = s.get("year")
+                    break
+
+            doc = {
+                "leagueId": league.get("id"),
+                "name": league.get("name", ""),
+                "type": league.get("type", ""),
+                "logo": league.get("logo", ""),
+                "country": country.get("name", ""),
+                "countryCode": country.get("code", ""),
+                "currentSeason": current_season,
+                "nameLower": league.get("name", "").lower(),
+            }
+            ops.append(doc)
+
+        if ops:
+            await db[COL_LEAGUES].delete_many({})
+            await db[COL_LEAGUES].insert_many(ops)
+            await db[COL_LEAGUES].create_index("leagueId", unique=True)
+            await db[COL_LEAGUES].create_index("nameLower")
+
+        await _set_meta("leagues_sync", {"count": len(ops)})
+        return len(ops)
+    except Exception as e:
+        print(f"[CACHE] Leagues sync error: {e}")
+        return 0
+
+
+# ══════════════════════════════════════════════
+#  2. TEAMS (per league)
+# ══════════════════════════════════════════════
+
+async def sync_teams_for_league(league_id: int, season: int = None):
+    """Fetch all teams for a specific league and store."""
+    season = season or CURRENT_SEASON
+    for s in [season, season - 1]:
+        try:
+            data = await api_football_request("teams", {"league": league_id, "season": s})
+            if data:
+                ops = []
+                for item in data:
+                    team = item.get("team", {})
+                    venue = item.get("venue", {})
+                    doc = {
+                        "teamId": team.get("id"),
+                        "name": team.get("name", ""),
+                        "nameLower": team.get("name", "").lower(),
+                        "code": team.get("code", ""),
+                        "country": team.get("country", ""),
+                        "national": team.get("national", False),
+                        "logo": team.get("logo", ""),
+                        "leagueId": league_id,
+                        "season": s,
+                        "venue": venue.get("name", ""),
+                        "city": venue.get("city", ""),
+                    }
+                    ops.append(doc)
+
+                if ops:
+                    # Remove old entries for this league, insert fresh
+                    await db[COL_TEAMS].delete_many({"leagueId": league_id})
+                    await db[COL_TEAMS].insert_many(ops)
+                return len(ops)
+        except Exception:
+            continue
+    return 0
+
+
+async def sync_all_teams():
+    """Sync teams for all supported leagues."""
+    await db[COL_TEAMS].create_index("teamId")
+    await db[COL_TEAMS].create_index("leagueId")
+    await db[COL_TEAMS].create_index("nameLower")
+
+    total = 0
+    for league in SUPPORTED_LEAGUES:
+        lid = league["id"]
+        count = await sync_teams_for_league(lid)
+        if count:
+            total += count
+            print(f"[CACHE] Teams: {league['name']} -> {count} teams")
+        await aio.sleep(0.4)
+
+    await _set_meta("teams_sync", {"count": total})
+    return total
+
+
+# ══════════════════════════════════════════════
+#  3. PLAYERS (squad per team)
+# ══════════════════════════════════════════════
+
+async def sync_squad(team_id: int, team_name: str = "", league_id: int = 0):
+    """Fetch full squad for a team and store. Returns list of player docs."""
+    from utils import strip_accents
+    try:
+        data = await api_football_request("players/squads", {"team": team_id})
+        if not data or not data[0].get("players"):
+            return []
+
+        players = data[0]["players"]
+        ops = []
+        for p in players:
+            name = p.get("name", "")
+            doc = {
+                "playerId": p.get("id"),
+                "name": name,
+                "nameLower": name.lower(),
+                "nameClean": strip_accents(name.lower()),
+                "age": p.get("age"),
+                "number": p.get("number"),
+                "position": p.get("position", ""),
+                "photo": "",
+                "teamId": team_id,
+                "teamName": team_name,
+                "leagueId": league_id,
+            }
+            ops.append(doc)
+
+        if ops:
+            # Remove old squad for this team, insert fresh
+            await db[COL_PLAYERS].delete_many({"teamId": team_id})
+            await db[COL_PLAYERS].insert_many(ops)
+
+        return ops
+    except Exception as e:
+        print(f"[CACHE] Squad sync error for team {team_id}: {e}")
+        return []
+
+
+async def sync_all_squads():
+    """Sync squads for all teams in the DB."""
+    await db[COL_PLAYERS].create_index("playerId")
+    await db[COL_PLAYERS].create_index("teamId")
+    await db[COL_PLAYERS].create_index("nameLower")
+    await db[COL_PLAYERS].create_index("nameClean")
+    await db[COL_PLAYERS].create_index("leagueId")
+
+    # Get all teams from cache
+    teams = []
+    async for team in db[COL_TEAMS].find({}, {"_id": 0, "teamId": 1, "name": 1, "leagueId": 1}):
+        teams.append(team)
+
+    total = 0
+    for i, team in enumerate(teams):
+        squad = await sync_squad(team["teamId"], team.get("name", ""), team.get("leagueId", 0))
+        total += len(squad)
+        if (i + 1) % 50 == 0:
+            print(f"[CACHE] Squads: {i+1}/{len(teams)} teams processed ({total} players)")
+        await aio.sleep(0.4)  # Rate limit
+
+    await _set_meta("squads_sync", {"count": total, "teams": len(teams)})
+    print(f"[CACHE] Squads: {total} players from {len(teams)} teams")
+    return total
+
+
+# ══════════════════════════════════════════════
+#  4. NATIONAL TEAMS
+# ══════════════════════════════════════════════
+
+async def sync_national_teams():
+    """Fetch national teams from international leagues and store with aliases."""
     international_leagues = [5, 32, 34, 31, 29, 30, 33, 4, 960, 9, 6, 115, 7, 10, 1, 13, 11, 12, 15, 8]
     raw_teams = {}
 
@@ -67,9 +243,9 @@ async def fetch_national_teams() -> dict:
                     break
             except Exception:
                 continue
+        await aio.sleep(0.3)
 
-    # Build lookup: multiple name variants -> team info
-    lookup = {}
+    # Build lookup with aliases
     ALIASES = {
         "czech republic": ["czechia"],
         "usa": ["united states", "united states of america"],
@@ -84,90 +260,274 @@ async def fetch_national_teams() -> dict:
         "holland": ["netherlands"],
     }
 
+    docs = []
+    seen_keys = set()
     for tid, info in raw_teams.items():
         name = info["name"]
         name_lower = name.lower()
-        lookup[name_lower] = info
-        # Add aliases
+
+        # Primary entry
+        if name_lower not in seen_keys:
+            docs.append({"key": name_lower, "teamId": tid, "name": name})
+            seen_keys.add(name_lower)
+
+        # Aliases
         for canonical, aliases in ALIASES.items():
-            if name_lower == canonical:
-                for alias in aliases:
-                    lookup[alias] = info
-            for alias in aliases:
-                if name_lower == alias:
-                    lookup[canonical] = info
+            if name_lower == canonical or name_lower in aliases:
+                all_names = [canonical] + aliases
+                for alias in all_names:
+                    if alias not in seen_keys:
+                        docs.append({"key": alias, "teamId": tid, "name": name})
+                        seen_keys.add(alias)
 
-    await _set_cache("national_teams", lookup)
-    return lookup
+    if docs:
+        await db[COL_NATIONAL].delete_many({})
+        await db[COL_NATIONAL].insert_many(docs)
+        await db[COL_NATIONAL].create_index("key", unique=True)
+        await db[COL_NATIONAL].create_index("teamId")
+
+    await _set_meta("national_sync", {"count": len(docs), "unique_teams": len(raw_teams)})
+    print(f"[CACHE] National teams: {len(docs)} entries ({len(raw_teams)} unique teams)")
+    return len(docs)
 
 
-async def fetch_league_teams(league_id: int) -> dict:
-    """Fetch all teams for a league. Returns {lowercase_name: {id, name}}"""
-    cache_key = f"league_teams_{league_id}"
-    cached = await _get_cache(cache_key)
-    if cached:
-        return cached
+# ══════════════════════════════════════════════
+#  5. TRANSFER DETECTION
+# ══════════════════════════════════════════════
 
-    lookup = {}
-    for season in [CURRENT_SEASON, CURRENT_SEASON - 1]:
-        try:
-            data = await api_football_request("teams", {"league": league_id, "season": season})
-            if data:
-                for t in data:
-                    tid = t["team"]["id"]
-                    name = t["team"]["name"]
-                    lookup[name.lower()] = {"id": tid, "name": name}
-                break
-        except Exception:
+async def detect_transfers():
+    """Compare current squads with cached data to detect transfers."""
+    transfers_found = []
+
+    # Get all teams
+    teams = []
+    async for team in db[COL_TEAMS].find({}, {"_id": 0, "teamId": 1, "name": 1, "leagueId": 1}):
+        teams.append(team)
+
+    for team in teams:
+        tid = team["teamId"]
+        team_name = team.get("name", "")
+
+        # Get old squad from cache
+        old_players = {}
+        async for p in db[COL_PLAYERS].find({"teamId": tid}, {"_id": 0}):
+            old_players[p["playerId"]] = p
+
+        if not old_players:
             continue
 
-    if lookup:
-        await _set_cache(cache_key, lookup)
-    return lookup
+        # Fetch fresh squad
+        try:
+            data = await api_football_request("players/squads", {"team": tid})
+            if not data or not data[0].get("players"):
+                continue
 
+            new_squad = {p["id"]: p for p in data[0]["players"]}
+
+            # Players who LEFT this team
+            for pid, old_info in old_players.items():
+                if pid not in new_squad:
+                    transfers_found.append({
+                        "playerId": pid,
+                        "playerName": old_info.get("name", ""),
+                        "fromTeamId": tid,
+                        "fromTeam": team_name,
+                        "type": "departure",
+                        "detectedAt": datetime.now(timezone.utc).isoformat(),
+                    })
+
+            # Players who JOINED this team
+            for pid, new_info in new_squad.items():
+                if pid not in old_players:
+                    transfers_found.append({
+                        "playerId": pid,
+                        "playerName": new_info.get("name", ""),
+                        "toTeamId": tid,
+                        "toTeam": team_name,
+                        "type": "arrival",
+                        "detectedAt": datetime.now(timezone.utc).isoformat(),
+                    })
+
+        except Exception:
+            pass
+        await aio.sleep(0.4)
+
+    if transfers_found:
+        await db[COL_TRANSFERS].insert_many(transfers_found)
+        print(f"[CACHE] Transfers detected: {len(transfers_found)}")
+
+    await _set_meta("transfer_scan", {"count": len(transfers_found)})
+    return transfers_found
+
+
+# ══════════════════════════════════════════════
+#  LOOKUP FUNCTIONS (used by scan.py, predict.py, etc.)
+# ══════════════════════════════════════════════
 
 async def get_national_team_id(country_name: str) -> tuple:
-    """Look up a national team by name. Returns (team_id, canonical_name) or (None, None)."""
-    lookup = await fetch_national_teams()
-    info = lookup.get(country_name.lower().strip())
-    if info:
-        return info["id"], info["name"]
+    """Look up national team by name. Returns (team_id, canonical_name) or (None, None)."""
+    doc = await db[COL_NATIONAL].find_one({"key": country_name.lower().strip()}, {"_id": 0})
+    if doc:
+        return doc["teamId"], doc["name"]
     return None, None
 
 
-async def get_team_id_in_league(team_name: str, league_id: int) -> tuple:
-    """Look up a team in a specific league. Returns (team_id, canonical_name) or (None, None)."""
-    lookup = await fetch_league_teams(league_id)
-    info = lookup.get(team_name.lower().strip())
-    if info:
-        return info["id"], info["name"]
-    # Fuzzy: check if team_name is a substring of any cached name
-    team_lower = team_name.lower().strip()
-    for cached_name, info in lookup.items():
-        if team_lower in cached_name or cached_name in team_lower:
-            return info["id"], info["name"]
+async def get_team_by_name(team_name: str, league_id: int = None) -> tuple:
+    """Look up a club team by name. Returns (team_id, canonical_name) or (None, None)."""
+    query = {"nameLower": team_name.lower().strip()}
+    if league_id:
+        query["leagueId"] = league_id
+    doc = await db[COL_TEAMS].find_one(query, {"_id": 0})
+    if doc:
+        return doc["teamId"], doc["name"]
+
+    # Fuzzy: substring match
+    name_lower = team_name.lower().strip()
+    async for doc in db[COL_TEAMS].find({"nameLower": {"$regex": name_lower}}, {"_id": 0}).limit(1):
+        return doc["teamId"], doc["name"]
+
     return None, None
+
+
+async def get_player_by_name(player_name: str, team_id: int = None) -> dict:
+    """Look up a player by name, optionally filtered by team. Returns player doc or None."""
+    from utils import strip_accents
+    name_clean = strip_accents(player_name.lower().strip())
+
+    # Try exact match on cleaned name
+    query = {"nameClean": name_clean}
+    if team_id:
+        query["teamId"] = team_id
+    doc = await db[COL_PLAYERS].find_one(query, {"_id": 0})
+    if doc:
+        return doc
+
+    # Try last name match
+    parts = name_clean.split()
+    if len(parts) > 1:
+        last_name = parts[-1]
+        query = {"nameClean": {"$regex": last_name}}
+        if team_id:
+            query["teamId"] = team_id
+        async for doc in db[COL_PLAYERS].find(query, {"_id": 0}).limit(5):
+            if last_name in doc.get("nameClean", ""):
+                return doc
+
+    # Fallback: regex on last word
+    last_word = name_clean.split()[-1] if name_clean.split() else name_clean
+    query = {"nameClean": {"$regex": last_word}}
+    if team_id:
+        query["teamId"] = team_id
+    doc = await db[COL_PLAYERS].find_one(query, {"_id": 0})
+    return doc
+
+
+async def get_league_by_name(league_name: str) -> dict:
+    """Look up a league by name. Returns {leagueId, name} or None."""
+    doc = await db[COL_LEAGUES].find_one(
+        {"nameLower": league_name.lower().strip()}, {"_id": 0}
+    )
+    if doc:
+        return {"leagueId": doc["leagueId"], "name": doc["name"]}
+
+    # Fuzzy
+    async for doc in db[COL_LEAGUES].find(
+        {"nameLower": {"$regex": league_name.lower().strip()}}, {"_id": 0}
+    ).limit(1):
+        return {"leagueId": doc["leagueId"], "name": doc["name"]}
+    return None
+
+
+# ══════════════════════════════════════════════
+#  CACHE STATUS
+# ══════════════════════════════════════════════
+
+async def get_cache_status() -> dict:
+    """Get overview of what's cached."""
+    leagues_count = await db[COL_LEAGUES].count_documents({})
+    teams_count = await db[COL_TEAMS].count_documents({})
+    players_count = await db[COL_PLAYERS].count_documents({})
+    national_count = await db[COL_NATIONAL].count_documents({})
+    transfers_count = await db[COL_TRANSFERS].count_documents({})
+
+    meta = {}
+    async for doc in db[COL_META].find({}, {"_id": 0}):
+        meta[doc["_key"]] = doc.get("_updated", "never")
+
+    return {
+        "leagues": leagues_count,
+        "teams": teams_count,
+        "players": players_count,
+        "nationalTeams": national_count,
+        "transfersDetected": transfers_count,
+        "lastSync": meta,
+    }
+
+
+# ══════════════════════════════════════════════
+#  FULL SYNC (startup + scheduled)
+# ══════════════════════════════════════════════
+
+async def full_sync(force: bool = False):
+    """Run full data sync. Skips if recently synced unless force=True."""
+    meta = await _get_meta("full_sync")
+    if not force and meta and (time.time() - meta.get("_ts", 0)) < SQUAD_TTL_SECONDS:
+        print(f"[CACHE] Data is fresh (synced {meta.get('_updated', '?')}). Skipping.")
+        return
+
+    print("[CACHE] Starting full data sync...")
+    start = time.time()
+
+    # 1. Leagues
+    league_count = await sync_leagues()
+    print(f"[CACHE] Leagues: {league_count}")
+
+    # 2. Teams for all supported leagues
+    team_count = await sync_all_teams()
+    print(f"[CACHE] Teams: {team_count}")
+
+    # 3. National teams
+    national_count = await sync_national_teams()
+
+    # 4. Squads (all players)
+    player_count = await sync_all_squads()
+
+    elapsed = round(time.time() - start, 1)
+    await _set_meta("full_sync", {
+        "leagues": league_count, "teams": team_count,
+        "national": national_count, "players": player_count,
+        "elapsed_seconds": elapsed,
+    })
+    print(f"[CACHE] Full sync complete in {elapsed}s: {league_count} leagues, {team_count} teams, {player_count} players, {national_count} national entries")
 
 
 async def seed_cache():
-    """Seed the lookup cache on startup. Non-blocking, runs in background."""
+    """Non-blocking startup seed — checks if data exists, syncs if needed."""
     try:
-        existing = await _get_cache("national_teams")
-        if existing:
-            print(f"[CACHE] National teams cache loaded ({len(existing)} entries)")
+        players_count = await db[COL_PLAYERS].count_documents({})
+        if players_count > 100:
+            status = await get_cache_status()
+            print(f"[CACHE] Data loaded: {status['leagues']} leagues, {status['teams']} teams, {status['players']} players, {status['nationalTeams']} national")
             return
 
-        print("[CACHE] Seeding national teams cache from API-Football...")
-        lookup = await fetch_national_teams()
-        print(f"[CACHE] Cached {len(lookup)} national team entries")
-
-        # Also cache teams for top leagues
-        for league in SUPPORTED_LEAGUES[:12]:
-            lid = league["id"]
-            teams = await fetch_league_teams(lid)
-            if teams:
-                print(f"[CACHE] Cached {len(teams)} teams for {league['name']}")
-            await aio.sleep(0.3)  # rate limit respect
-
+        await full_sync(force=True)
     except Exception as e:
-        print(f"[CACHE] Seed error (non-fatal): {e}")
+        print(f"[CACHE] Seed error: {e}")
+
+
+# ══════════════════════════════════════════════
+#  BACKGROUND SCHEDULER
+# ══════════════════════════════════════════════
+
+async def background_refresh_loop():
+    """Runs every 24 hours: refreshes squads and detects transfers."""
+    while True:
+        await aio.sleep(24 * 3600)  # Wait 24 hours
+        try:
+            print("[CACHE] Running scheduled refresh...")
+            transfers = await detect_transfers()
+            if transfers:
+                print(f"[CACHE] {len(transfers)} transfers detected!")
+            await full_sync(force=True)
+        except Exception as e:
+            print(f"[CACHE] Scheduled refresh error: {e}")

@@ -24,7 +24,7 @@ from routes.scan import router as scan_router
 from routes.picks import router as picks_router
 from routes.chat import router as chat_router
 from routes.misc import router as misc_router
-from cache import seed_cache
+from cache import seed_cache, background_refresh_loop
 
 app.include_router(auth_router)
 app.include_router(leagues_router)
@@ -54,6 +54,8 @@ async def seed_grants():
     # Seed the API-Football lookup cache (non-blocking)
     import asyncio
     asyncio.create_task(seed_cache())
+    # Start 24h auto-refresh loop for transfers + data freshness
+    asyncio.create_task(background_refresh_loop())
 
 
 # ── Legacy alias: /api/search-player ──
