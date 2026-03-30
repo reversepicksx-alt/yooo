@@ -1,0 +1,80 @@
+{
+  "summary": "Verified Højbjerg bug fix - all backend data structures and frontend UI working correctly. INTERNATIONAL_LEAGUES includes {1, 4, 960, 115}, NATION_TO_LEAGUES has 'czechia' alias and Denmark includes Ligue 1 (61), strip_accents correctly maps Nordic characters (ø→o, æ→ae, å→a), and Scan tab is the default active tab.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "passed_tests": [
+    "Backend: /api/health returns ok status",
+    "Backend: /api/leagues returns all supported leagues including Euro Qualifiers (960), World Cup (1), Euro Championship (4), AFCON Qualifiers (115)",
+    "Backend: strip_accents function correctly maps ø→o (Højbjerg→Hojbjerg)",
+    "Backend: strip_accents function correctly maps æ→ae (Præst→Praest)",
+    "Backend: strip_accents function correctly maps å→a (Ålborg→Alborg)",
+    "Backend: INTERNATIONAL_LEAGUES set includes {1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 29, 30, 31, 32, 33, 34, 115, 960}",
+    "Backend: NATION_TO_LEAGUES has 'czechia' alias alongside 'czech republic'",
+    "Backend: NATION_TO_LEAGUES 'denmark' includes Ligue 1 (61) as first league",
+    "Backend: TEAM_LEAGUE_MAP has 'czechia' mapped for international team inference",
+    "Backend: /api/players/search with 'Hojbjerg' query returns results or gracefully returns empty",
+    "Backend: /api/scan-prop endpoint exists and accepts POST requests",
+    "Backend: /api/scan-prop handles invalid base64 gracefully",
+    "Backend: Owner email josselj001@gmail.com bypasses Whop auth",
+    "Frontend: Login with josselj001@gmail.com works (owner bypass)",
+    "Frontend: Scan tab is the default/active tab after login",
+    "Frontend: SCAN PROP and TRACKING tabs visible in bottom navigation",
+    "Frontend: App loads properly with scan upload zone visible",
+    "Frontend: Navigation between tabs works correctly"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_hojbjerg_fix.py",
+    "/app/test_reports/pytest/hojbjerg_fix_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "INTERNATIONAL_LEAGUES set correctly includes all required international tournament IDs (1, 4, 115, 960)",
+    "NATION_TO_LEAGUES properly maps 'czechia' and 'czech republic' to same leagues",
+    "Denmark's NATION_TO_LEAGUES correctly has Ligue 1 (61) as first league for Marseille players like Højbjerg",
+    "strip_accents function has comprehensive CHAR_MAP for Nordic characters",
+    "TEAM_LEAGUE_MAP includes 'czechia' mapped to UEFA Nations League (5)"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_hojbjerg_fix.py"
+  ],
+  "success_rate": {
+    "backend": "100% (12/12 tests passed)",
+    "frontend": "100% (5/5 tests passed)"
+  },
+  "test_credentials": {
+    "owner_email": "josselj001@gmail.com (auto-login via verify-whop, no password needed)"
+  },
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Højbjerg bug fix verified. The fix added missing league IDs (1, 4, 115, 960) to INTERNATIONAL_LEAGUES, added 'czechia' aliases to NATION_TO_LEAGUES and TEAM_LEAGUE_MAP, added Ligue 1 (61) to Denmark's NATION_TO_LEAGUES mapping, and the strip_accents function correctly handles Nordic characters. Full E2E testing of image scanning with actual Højbjerg prop is not feasible without a real PrizePicks screenshot, but all data structures are correctly configured.",
+  "bug_fix_verification": {
+    "INTERNATIONAL_LEAGUES": {
+      "status": "VERIFIED",
+      "description": "Set includes {1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 29, 30, 31, 32, 33, 34, 115, 960} - all required international tournament IDs present"
+    },
+    "NATION_TO_LEAGUES_czechia": {
+      "status": "VERIFIED",
+      "description": "'czechia' alias exists alongside 'czech republic' mapping to [78, 39, 135]"
+    },
+    "NATION_TO_LEAGUES_denmark": {
+      "status": "VERIFIED",
+      "description": "Denmark maps to [61, 39, 135, 140, 78] with Ligue 1 (61) as first league"
+    },
+    "TEAM_LEAGUE_MAP_czechia": {
+      "status": "VERIFIED",
+      "description": "'czechia' mapped to UEFA Nations League (5) for international team inference"
+    },
+    "strip_accents_function": {
+      "status": "VERIFIED",
+      "description": "Correctly maps ø→o, æ→ae, å→a for Nordic characters"
+    }
+  }
+}

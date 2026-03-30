@@ -1961,7 +1961,7 @@ If there's only one entry, still return it as an array with one element."""
             "sweden": 5, "norway": 5, "colombia": 5, "uruguay": 5, "chile": 5,
             "nigeria": 5, "senegal": 5, "morocco": 5, "egypt": 5, "australia": 5,
             "bosnia": 5, "bosnia & herzegovina": 5, "scotland": 5, "wales": 5,
-            "switzerland": 5, "austria": 5, "czech republic": 5, "ukraine": 5,
+            "switzerland": 5, "austria": 5, "czech republic": 5, "czechia": 5, "ukraine": 5,
             "romania": 5, "greece": 5, "costa rica": 5, "canada": 5, "iran": 5,
             "algeria": 5, "cameroon": 5, "ghana": 5, "ivory coast": 5, "tunisia": 5,
         }
@@ -2088,7 +2088,7 @@ If there's only one entry, still return it as an array with one element."""
                     return None
 
                 # International leagues where players are indexed under their CLUB, not national team
-                INTERNATIONAL_LEAGUES = {5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 29, 30, 31, 32, 33, 34}
+                INTERNATIONAL_LEAGUES = {1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 29, 30, 31, 32, 33, 34, 115, 960}
 
                 # Map national teams to their most likely club leagues (players play domestically or in top-5)
                 NATION_TO_LEAGUES = {
@@ -2111,7 +2111,7 @@ If there's only one entry, still return it as an array with one element."""
                     "croatia": [39, 135, 78, 140, 61],
                     "serbia": [39, 135, 78, 61],
                     "poland": [39, 135, 140, 78],
-                    "denmark": [39, 135, 140, 78],
+                    "denmark": [61, 39, 135, 140, 78],
                     "sweden": [39, 135, 78],
                     "norway": [39, 135, 78],
                     "colombia": [71, 39, 140, 135, 61],
@@ -2130,6 +2130,7 @@ If there's only one entry, still return it as an array with one element."""
                     "switzerland": [78, 135, 39, 61],
                     "austria": [78, 135, 39],
                     "czech republic": [78, 39, 135],
+                    "czechia": [78, 39, 135],
                     "ukraine": [39, 78, 135, 61],
                     "romania": [39, 135, 78],
                     "greece": [39, 135, 78],
@@ -2282,18 +2283,21 @@ If there's only one entry, still return it as an array with one element."""
                                                 club_team_id = None
                                                 club_team_name = ""
                                                 for cl in club_leagues[:5]:
-                                                    try:
-                                                        pdata = await api_football_request("players", {"id": found_player_id, "league": cl, "season": CURRENT_SEASON})
-                                                        if pdata:
-                                                            club_team_id = pdata[0].get("statistics", [{}])[0].get("team", {}).get("id")
-                                                            club_team_name = pdata[0].get("statistics", [{}])[0].get("team", {}).get("name", "")
-                                                            actual_league = pdata[0].get("statistics", [{}])[0].get("league", {})
-                                                            if actual_league.get("id"):
-                                                                league_id = actual_league["id"]
-                                                                league_name = actual_league.get("name", league_name)
-                                                            break
-                                                    except Exception:
-                                                        continue
+                                                    if club_team_id:
+                                                        break
+                                                    for try_szn in [CURRENT_SEASON, CURRENT_SEASON - 1]:
+                                                        try:
+                                                            pdata = await api_football_request("players", {"id": found_player_id, "league": cl, "season": try_szn})
+                                                            if pdata:
+                                                                club_team_id = pdata[0].get("statistics", [{}])[0].get("team", {}).get("id")
+                                                                club_team_name = pdata[0].get("statistics", [{}])[0].get("team", {}).get("name", "")
+                                                                actual_league = pdata[0].get("statistics", [{}])[0].get("league", {})
+                                                                if actual_league.get("id"):
+                                                                    league_id = actual_league["id"]
+                                                                    league_name = actual_league.get("name", league_name)
+                                                                break
+                                                        except Exception:
+                                                            continue
                                                 resolved_player = {
                                                     "playerId": found_player_id,
                                                     "playerName": sp["name"],
