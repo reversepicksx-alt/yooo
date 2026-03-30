@@ -1,129 +1,73 @@
-# ReversePicks - Soccer Player Props Analytics
+# ReversePicks - Sports Player Props AI Analytics
 
-## Product Overview
-Mobile-first webapp for analyzing soccer player props (pass attempts, shots, saves). Users upload a screenshot of a player prop via the Scan tab, GPT-4o Vision extracts details, and a Dual AI pipeline (Grok-4.20 + Gemini 2.5 Flash) generates predictions with API-Sports data.
+## Problem Statement
+A web app for soccer player prop analysis. Users upload screenshots of player props (pass attempts, shots, saves), AI Vision extracts details, resolves the player via cache-first MongoDB lookup, and runs a dual-AI prediction pipeline (Grok-4.20-reasoning + Gemini 2.5 Flash) to deliver statistical predictions and deep tactical analysis.
 
-## Tech Stack
-- **Frontend**: React.js, Shadcn/UI, CSS Variables, recharts
-- **Backend**: FastAPI, Python asyncio, Motor (MongoDB)
-- **AI**: GPT-4o (Vision scan), Grok-4.20-reasoning (tactics), Gemini 2.5 Flash (JSON formatting)
-- **Data**: API-Sports (v3.football.api-sports.io) + MongoDB player/team cache
-- **Auth**: Whop memberships + password auth
-- **DB**: MongoDB (picks, sessions, users, manual_access_grants, cache_*)
+## Architecture
+- **Frontend**: React.js, Shadcn/UI, Lucide Icons, Manrope + JetBrains Mono fonts
+- **Backend**: FastAPI, Python asyncio, MongoDB
+- **AI Pipeline**: Grok-4.20 (web search + tactical) → Gemini 2.5 Flash (calibration + JSON synthesis)
+- **Auth**: Whop membership verification + email/password login
+- **Data**: API-Sports (cached in MongoDB)
 
-## Architecture (Post-Refactor 2026-03-30)
+## 3-Tab Navigation
+1. **Scan** — Upload prop screenshot → AI Vision extraction → Player resolution → Unified prediction + tactical breakdown + follow-up chat
+2. **Tracking** — Live/History pick tracking with Record Tracker (HIT/MISS/PUSH/WIN%/STREAK)
+3. **Profile** — Account info (email, access level, total picks), password reset, app version, logout
 
-### Backend Structure
-```
-/app/backend/
-├── server.py              # FastAPI app, CORS, router includes, startup
-├── config.py              # Constants, env vars, DB, shared state
-├── models.py              # All Pydantic request models
-├── utils.py               # api_football_request, strip_accents, get_recent_fixtures_fast
-├── cache.py               # MongoDB-backed API-Football cache (players, teams, leagues, national teams)
-├── routes/
-│   ├── auth.py            # /api/auth/* (verify-whop, login, set-password, etc.)
-│   ├── leagues.py         # /api/health, /api/leagues, /api/cache/* endpoints
-│   ├── players.py         # /api/players/search, /api/player/{id}/stats
-│   ├── predict.py         # /api/predict (Dual AI pipeline)
-│   ├── scan.py            # /api/scan-prop (Vision AI + cache-first player resolution)
-│   ├── combo.py           # /api/predict-combo
-│   ├── picks.py           # /api/picks/* (save, list, delete, correct, live-update, settle)
-│   ├── chat.py            # /api/chat/*, /api/parse-query
-│   └── misc.py            # /api/pick-of-the-day
-```
+## Key Features Implemented
+- [x] Cache-first player resolution (MongoDB)
+- [x] Combo prop support (multi-stat detection)
+- [x] International context awareness (National Team vs Club stats)
+- [x] Unified Scan + Tactical pipeline (single API response)
+- [x] Push status tracking (amber borders for ties)
+- [x] User Record Tracker (HIT/MISS/PUSH ratio, WIN%, streak)
+- [x] Profile tab with password reset
+- [x] 3-tab iOS-like navigation
+- [x] Follow-up chat under predictions
+- [x] VIP/Lifetime hardcoded emails
 
-### Frontend Structure
-```
-/app/frontend/src/
-├── App.js                 # Auth state, tab switching, scan/tracking tab JSX
-├── App.css                # All styles
-├── api.js                 # API fetch wrappers
-├── constants.js           # PROP_TYPES, getPropLabel
-├── components/
-│   └── app/
-│       ├── ProjectionCard.jsx   # Full prediction display card
-│       ├── LoginPage.jsx        # Auth flow
-│       ├── PickOfTheDayCard.jsx # Daily featured pick card
-│       ├── ProbabilityChart.jsx # Recharts probability distribution
-│       ├── MatchStatZones.jsx   # Team vs opponent stat bars
-│       └── H2HSection.jsx      # Head-to-head player stats
-```
-
-## Completed Work
-
-### 2026-03-30 (Session 2 - Cache-First Resolution + Combo Props + Reverse Tactical)
-- [x] **Wired scan.py to use MongoDB cache as PRIMARY player resolution**
-  - Cache-first lookups with word-boundary regex (prevents "Saka" → "Wan-Bissaka")
-  - API-Sports fallback only on cache miss
-- [x] **Combo Prop Detection & Resolution**
-  - GPT-4o Vision detects "Player A + Player B" combo format
-  - Resolves both players, returns `isCombo: true` + `resolvedPlayers[]`
-  - Frontend: purple COMBO PROP badge, dual player display, routes to predictCombo()
-- [x] **Bug Fix: Missing `import asyncio as aio` in predict.py** — Prediction pipeline was broken since refactor
-- [x] **PUSH card styling** — Push results get amber/yellow border (distinct from hit/miss/scheduled)
-- [x] **Unified Analysis System** — Prediction and tactical analysis merged into ONE response. `predict.py` now runs the full statistical prediction + Tactical engine synthesis in a single call, returning `tacticalBreakdown` alongside the numbers. No more conflicting analyses.
-- [x] **Follow-up Chat on Predictions** — After analysis loads, a chat input appears below so users can ask follow-up questions ("what if he gets subbed?", "compare with his club form") with full context.
-- [x] **Tactical Tab Removed** — 2-tab nav: SCAN | TRACKING. All intelligence is in the Scan flow.
-- [x] **International stats awareness** — When match context is international, prioritizes national team stats over club data in tactical breakdown.
-- [x] **3-tab → 2-tab navigation**: Scan | Tracking
-- [x] **All tests passed (100%)** — Backend: 9/9, Frontend: all UI verified
-
-### 2026-03-30 (Session 1 - Refactor + Cache Build)
-- [x] Fixed "NO MATCH" bug for international players with Nordic characters (Højbjerg, Euro Qualifiers)
-- [x] Major Codebase Refactor (backend 3219→61 lines, frontend 2704→1834 lines)
-- [x] Fixed international match pipeline — uses national team IDs and data, not club data
-- [x] Built MongoDB-backed API-Football cache (`cache.py`)
-  - 1,225 leagues, 1,158 teams, ~24,000 players, 485 national team entries
-  - `nameClean` field for accent-stripped lookups
-  - 7-day auto-refresh TTL, 24h background refresh loop
-  - Transfer detection system
-
-### Previous Sessions
-- Scan tab with GPT-4o Vision for screenshot prop extraction
-- Dual AI prediction pipeline (Grok-4.20 + Gemini 2.5 Flash)
-- Live match tracking with auto-refresh
-- Clickable HOME/AWAY venue toggle
-- Removed all 3rd-party player photos/team logos (copyright)
-- Removed all competitor app names (legal)
-- Hidden Predict and Guide tabs (user request)
-- Hardcoded lifetime VIP emails
-
-## Legal Compliance
-- NO 3rd-party app names (PrizePicks, DraftKings, etc.) anywhere
-- NO player photos or team logos
-- Prompts say "sportsbook" or "player prop image"
-
-## Lifetime VIP Emails
+## VIP Emails (Lifetime Access)
 - josselj001@gmail.com (Owner)
-- faron2allen@gmail.com, jossel0701@gmail.com, brayanfgaleas@icloud.com
-- odr310@gmail.com, joseharo197@gmail.com, rijulgauchan1@gmail.com
-- gordo0210@icloud.com, brianavina23@gmail.com, andrewfitz97@yahoo.com
-- jose108798@gmail.com, letwins04@gmail.com, Quon.qg@gmail.com
-- Jesselopezj@hotmail.com, jaredlee0414@gmail.com
+- letwins04@gmail.com
+- Quon.qg@gmail.com
+- Jesselopezj@hotmail.com
+- jaredlee0414@gmail.com
+- michael1069_6910@yahoo.com
 
-### 2026-03-30 (Session 3 - ProjectionCard Verification + Record Tracker)
-- [x] **Verified ProjectionCard.jsx** — Clean overwrite confirmed, no compilation errors, all sections render correctly. Redundant sections (Sharp Take, Key Evidence, Scenario Analysis, Risk Factor) successfully removed.
-- [x] **User Record Tracker** — Added to Tracking tab. Displays HITS/MISSES/PUSHES counts, WIN %, current streak (e.g. "3W" or "1L"), and a colored progress bar. Shows on both Live and History views.
-- [x] **All tests passed (100%)** — Backend: 6/6, Frontend: all UI verified (Iteration 24)
+## AI Pipeline (v2.2 - Peak Calibration)
+### Grok-4.20-reasoning
+- 5-phase analysis: Verified Stats → Live Intelligence → Matchup Dynamics → Scenario Modeling → Edge Assessment
+- Web search for real per-game stats from SofaScore/FotMob/WhoScored
+- 4 weighted scenarios (Base/Blowout/Trailing/Cagey)
+- Sensitivity classification (ROBUST/MODERATE/FRAGILE)
+- 3000 max output tokens
+
+### Gemini 2.5 Flash (Final Calibration Engine)
+- 5-step protocol: Anchor on Evidence → Position-Calibrated Ceilings → Bayesian Calibration → Edge Detection → Probability Curve
+- Bayesian metrics: priorMean (recency-weighted), momentumEffect, covariateAdjustment, reversalFlag
+- Confidence bands: coin flip (<0.3 diff) max 52%, low edge (<0.8) max 62%, strong edge (>=1.5) 70-85%
+- 10-point probability distribution with normal distribution
+
+### Tactical Breakdown Synthesis
+- 6-section format: Verdict → Player Role Analysis → The Numbers → Game Script Scenarios → Risk Radar → TL;DR
+- Position-specific ceilings enforced
+- No AI branding exposed to user
+
+## Key API Endpoints
+- POST /api/scan-prop — OCR extraction + player resolution
+- POST /api/predict — Unified stats + tactical generation
+- POST /api/tactical/message — Follow-up chat
+- POST /api/auth/verify-whop — Membership verification
+- POST /api/auth/reset-password — Password reset
+- POST /api/picks/save — Save to tracking
+- POST /api/picks/list — Get user picks
 
 ## Prioritized Backlog
 ### P2 (Medium)
 - Slip correlation analysis - Analyze multiple picks for conflicting/boosting patterns
 - Prediction self-correction feedback loop - Store outcomes, feed calibration back
 
-### P3 (Future)
+### P3 (Low)
 - Batch scan predictions - Multiple props from one image
-- RapidAPI SofaScore integration (if user subscribes)
-- Scan tab: camera capture (mobile)
-- Save scanned picks directly to tracking
-
-## Cache System Details
-- **Collections**: cache_leagues, cache_teams, cache_players, cache_national, cache_transfers, cache_meta
-- **Indexes**: teamId, leagueId, nameLower, nameClean, playerId on appropriate collections
-- **Refresh**: Background loop every 24h, manual via POST /api/cache/refresh
-- **Key endpoints**:
-  - GET /api/cache/status - Overview of cached data
-  - GET /api/cache/lookup/player?name=X&team_id=Y - Player lookup
-  - GET /api/cache/lookup/team?name=X - Team lookup (club or national)
-  - GET /api/cache/national-teams - All national teams
+- RapidAPI SofaScore integration (NWSL data)
