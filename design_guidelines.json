@@ -1,0 +1,94 @@
+{
+  "theme": "dark",
+  "archetype": "Archetype 2: The Performance Pro (Elite iOS Variant)",
+  "colors": {
+    "background": "#0a0a0f",
+    "surface": "#161622",
+    "surface_glass": "rgba(22, 22, 34, 0.7)",
+    "primary": "#10b981",
+    "primary_glow": "rgba(16, 185, 129, 0.2)",
+    "secondary_miss": "#f43f5e",
+    "secondary_push": "#f59e0b",
+    "text_primary": "#ffffff",
+    "text_secondary": "#a1a1aa",
+    "border": "rgba(255, 255, 255, 0.08)"
+  },
+  "typography": {
+    "heading_font": "Chivo",
+    "body_font": "Manrope",
+    "scales": {
+      "h1": "text-4xl sm:text-5xl tracking-tighter font-black",
+      "h2": "text-2xl sm:text-3xl tracking-tight font-bold",
+      "h3": "text-xl font-bold tracking-tight",
+      "body": "text-base font-medium",
+      "label": "text-xs font-bold tracking-[0.1em] uppercase",
+      "numbers": "font-mono font-medium tracking-tight"
+    }
+  },
+  "layout_spacing": {
+    "global_padding": "p-4 sm:p-6",
+    "card_padding": "p-5",
+    "bento_gap": "gap-4 sm:gap-6",
+    "border_radius": {
+      "card": "rounded-3xl",
+      "button": "rounded-full",
+      "badge": "rounded-md",
+      "inner": "rounded-2xl"
+    }
+  },
+  "surfaces_and_micro_themes": {
+    "cards": "bg-[#161622] border border-white/5 shadow-2xl shadow-black/40",
+    "glass_header_nav": "bg-[#0a0a0f]/80 backdrop-blur-2xl border-b border-white/10",
+    "bottom_nav": "bg-[#161622]/90 backdrop-blur-2xl border-t border-white/10",
+    "glow_effects": "Use blurred colored blobs behind key metrics (e.g., green blur behind winning projection)"
+  },
+  "components": {
+    "projection_card": {
+      "description": "The centerpiece. Use a Bento grid inside the card. Player portrait on left, large probability number on right with sparkline chart.",
+      "visuals": "Gradient overlay on the player photo. Thin inner stroke border-white/10. High contrast numbers."
+    },
+    "bottom_navigation": {
+      "description": "iOS style docked bottom nav. Large tap targets. Active state has a subtle glowing dot or vibrant color tint. Unselected items faded to text_secondary."
+    },
+    "stat_progress_bars": {
+      "description": "Used in Tracking Tab. 4px or 6px height, full rounded. Vibrant primary color with a glowing drop-shadow effect to represent live momentum."
+    },
+    "scan_results_cards": {
+      "description": "Display uploaded image details side-by-side with tactical breakdown in an asymmetrical bento view."
+    }
+  },
+  "animations": {
+    "page_transition": "Fade in and slight upward translation (framer-motion).",
+    "card_hover_press": "hover:-translate-y-1 active:scale-[0.98] transition-transform duration-300",
+    "list_stagger": "Delay each card by 0.05s on initial load for a cascading reveal effect."
+  },
+  "icons": {
+    "library": "lucide-react",
+    "stroke_width": 2,
+    "size": "w-6 h-6"
+  },
+  "media": {
+    "stadium_background": {
+      "url": "https://images.pexels.com/photos/4135333/pexels-photo-4135333.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "description": "Use as a very low opacity (10%) background texture for the main dashboard header or login screen."
+    },
+    "basketball_action": {
+      "url": "https://images.pexels.com/photos/30050101/pexels-photo-30050101.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "description": "Example player image for ProjectionCards or Matchup overviews."
+    },
+    "user_avatar": {
+      "url": "https://images.pexels.com/photos/5349053/pexels-photo-5349053.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "description": "User profile avatar image for the Profile Tab or Header."
+    }
+  },
+  "instructions_to_main_agent": [
+    "Strictly adhere to the dark theme colors provided. DO NOT use generic Tailwind grays (slate/gray). Stick to the #0a0a0f and #161622 palette.",
+    "Ensure all interactive elements have hover and active states (scale down slightly on active).",
+    "Use Manrope for all numbers and statistics to ensure crisp, geometric legibility.",
+    "Implement the ProjectionCard as a premium glassmorphic bento box. Do not make it a simple flat card. Add inner 1px borders.",
+    "Ensure the Bottom Navigation spans the full width at the bottom, mimicking an elite iOS native app.",
+    "All components must have data-testid attributes for testing.",
+    "Leverage F-Pattern for analytics: Key metrics (North Star) go top-left.",
+    "Do not use generic 'card' wrappers if they compromise the bento grid or asymmetrical layouts."
+  ]
+}
