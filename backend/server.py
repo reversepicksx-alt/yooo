@@ -24,6 +24,7 @@ from routes.scan import router as scan_router
 from routes.picks import router as picks_router
 from routes.chat import router as chat_router
 from routes.misc import router as misc_router
+from cache import seed_cache
 
 app.include_router(auth_router)
 app.include_router(leagues_router)
@@ -50,6 +51,9 @@ async def seed_grants():
         {"$set": {"email": OWNER_EMAIL, "access_type": "Owner"}},
         upsert=True
     )
+    # Seed the API-Football lookup cache (non-blocking)
+    import asyncio
+    asyncio.create_task(seed_cache())
 
 
 # ── Legacy alias: /api/search-player ──

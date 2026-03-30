@@ -16,17 +16,18 @@ Mobile-first webapp for analyzing soccer player props (pass attempts, shots, sav
 ### Backend Structure
 ```
 /app/backend/
-├── server.py              # 61 lines - FastAPI app, CORS, router includes, startup
-├── config.py              # Constants, env vars, DB, shared state (SUPPORTED_LEAGUES, etc.)
+├── server.py              # FastAPI app, CORS, router includes, startup
+├── config.py              # Constants, env vars, DB, shared state
 ├── models.py              # All Pydantic request models
 ├── utils.py               # api_football_request, strip_accents, get_recent_fixtures_fast
+├── cache.py               # MongoDB-backed API-Football lookup cache (national teams, league teams)
 ├── routes/
 │   ├── auth.py            # /api/auth/* (verify-whop, login, set-password, etc.)
-│   ├── leagues.py         # /api/health, /api/leagues, /api/leagues/{id}/teams, /api/football/status
+│   ├── leagues.py         # /api/health, /api/leagues, /api/cache/* endpoints
 │   ├── players.py         # /api/players/search, /api/player/{id}/stats
-│   ├── predict.py         # /api/predict (Dual AI pipeline, ~1136 lines)
-│   ├── scan.py            # /api/scan-prop (Vision AI + player resolution, ~617 lines)
-│   ├── combo.py           # /api/predict-combo, /api/predict-combo/{id}
+│   ├── predict.py         # /api/predict (Dual AI pipeline)
+│   ├── scan.py            # /api/scan-prop (Vision AI + cached player resolution)
+│   ├── combo.py           # /api/predict-combo
 │   ├── picks.py           # /api/picks/* (save, list, delete, correct, live-update, settle)
 │   ├── chat.py            # /api/chat/*, /api/parse-query
 │   └── misc.py            # /api/pick-of-the-day
@@ -53,14 +54,14 @@ Mobile-first webapp for analyzing soccer player props (pass attempts, shots, sav
 
 ### 2026-03-30 (Current Session)
 - [x] Fixed "NO MATCH" bug for international players with Nordic characters (Højbjerg, Euro Qualifiers)
-  - Added Euro Qualifiers (960), Euro Championship (4), World Cup (1), AFCON Qualifiers (115) to INTERNATIONAL_LEAGUES
-  - Added "czechia" alias to NATION_TO_LEAGUES and TEAM_LEAGUE_MAP
-  - Added Ligue 1 (61) to Denmark's NATION_TO_LEAGUES (Højbjerg → Marseille)
-  - International squad fallback now tries CURRENT_SEASON and CURRENT_SEASON-1
-- [x] Major Codebase Refactor
-  - Backend: server.py 3219 → 61 lines, split into 12 modules (config, models, utils, 9 route files)
-  - Frontend: App.js 2704 → 1834 lines, 6 components extracted to components/app/
-  - All 21 tests passed post-refactor (16 backend + 5 frontend)
+- [x] Major Codebase Refactor (backend 3219→61 lines, frontend 2704→1834 lines)
+- [x] Fixed international match pipeline — uses national team IDs and data, not club data
+- [x] Built MongoDB-backed API-Football lookup cache (`cache.py`)
+  - 467+ national teams with aliases (czechia→770, holland→1118, turkey→777, etc.)
+  - 12 domestic league team caches (EPL, La Liga, Serie A, etc.)
+  - 7-day auto-refresh TTL, manual refresh via `POST /api/cache/refresh`
+  - Lookup endpoints: `GET /api/cache/national-teams`
+  - Eliminates fragile API search for team ID resolution
 
 ### Previous Sessions
 - Scan tab with GPT-4o Vision for screenshot prop extraction
