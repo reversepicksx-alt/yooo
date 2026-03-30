@@ -45,9 +45,17 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 - odr310@gmail.com, joseharo197@gmail.com, rijulgauchan1@gmail.com
 - gordo0210@icloud.com, brianavina23@gmail.com, andrewfitz97@yahoo.com
 - jose108798@gmail.com
+- letwins04@gmail.com, Quon.qg@gmail.com, Jesselopezj@hotmail.com, jaredlee0414@gmail.com
 
 ## API Keys (in .env)
 - API-Sports key, Emergent LLM Key (Gemini + GPT-4o Vision), Whop API key + Company ID, xAI (Grok) API key
+
+## Recent Fixes (2026-03-30)
+- [x] Fixed "NO MATCH" bug for international players with Nordic characters (Højbjerg, Euro Qualifiers)
+  - Added Euro Qualifiers (960), Euro Championship (4), World Cup (1), AFCON Qualifiers (115) to INTERNATIONAL_LEAGUES set
+  - Added "czechia" alias to NATION_TO_LEAGUES and TEAM_LEAGUE_MAP
+  - Added Ligue 1 (61) to Denmark's NATION_TO_LEAGUES (Højbjerg plays for Marseille)
+  - International squad fallback now tries CURRENT_SEASON and CURRENT_SEASON-1 for club team resolution
 
 ## Prioritized Backlog
 ### P2 (Medium)
@@ -56,7 +64,7 @@ Remake of ReversePicks (originally Gemini version) - a soccer player prop predic
 - Prediction self-correction feedback loop
 
 ### Future
-- Codebase refactor (server.py 2700+ lines, App.js 2500+ lines)
+- Codebase refactor (server.py 3200+ lines, App.js 2700+ lines)
 - SofaScore RapidAPI integration (if user subscribes to SofaSport API)
 - Combo pick saving to tracking tab
 - Video tutorial embed option for Guide tab
