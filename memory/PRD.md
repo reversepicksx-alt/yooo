@@ -62,16 +62,11 @@ Mobile-first webapp for analyzing soccer player props (pass attempts, shots, sav
   - Frontend: purple COMBO PROP badge, dual player display, routes to predictCombo()
 - [x] **Bug Fix: Missing `import asyncio as aio` in predict.py** — Prediction pipeline was broken since refactor
 - [x] **PUSH card styling** — Push results get amber/yellow border (distinct from hit/miss/scheduled)
-- [x] **Reverse Tactical Tab (NEW MAJOR FEATURE)**
-  - Dual AI engine for deep tactical reasoning + data synthesis
-  - Connected to full system: player cache, API-Sports, entity extraction
-  - **Image scan in chat** — upload a prop screenshot directly in tactical, auto-extracts players + runs full analysis
-  - **International stats awareness** — When match context is international (Denmark vs Czechia), prioritizes national team stats (UEFA Nations League, Euro Qualifiers, World Cup, Friendlies) over club data. Club stats shown as secondary reference.
-  - Multi-turn conversations with session memory (20 exchanges)
-  - Quick suggestion buttons, clean "Live Intelligence" branding
-  - No AI model names visible anywhere (Grok/Gemini completely hidden)
-  - Camera button in input area for image attachment
-- [x] **Scan + Tactical Connected** — After scan prediction completes, automatically fires the Tactical engine to provide a deep tactical breakdown alongside the statistical prediction. Users see: prediction card (numbers/stats) + tactical deep dive (reasoning, matchups, scenarios) in one seamless flow. No tab-switching needed.
+- [x] **Unified Analysis System** — Prediction and tactical analysis merged into ONE response. `predict.py` now runs the full statistical prediction + Tactical engine synthesis in a single call, returning `tacticalBreakdown` alongside the numbers. No more conflicting analyses.
+- [x] **Follow-up Chat on Predictions** — After analysis loads, a chat input appears below so users can ask follow-up questions ("what if he gets subbed?", "compare with his club form") with full context.
+- [x] **Tactical Tab Removed** — 2-tab nav: SCAN | TRACKING. All intelligence is in the Scan flow.
+- [x] **International stats awareness** — When match context is international, prioritizes national team stats over club data in tactical breakdown.
+- [x] **3-tab → 2-tab navigation**: Scan | Tracking
 - [x] **All tests passed (100%)** — Backend: 9/9, Frontend: all UI verified
 
 ### 2026-03-30 (Session 1 - Refactor + Cache Build)
