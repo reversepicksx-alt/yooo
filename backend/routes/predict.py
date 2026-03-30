@@ -338,7 +338,7 @@ async def predict(req: PredictionRequest):
         )
         # Player game logs: use ALL recent fixtures for maximum sample size
         # AI will weight venue-matching games higher in analysis
-        player_game_logs_task = fetch_player_game_logs(all_team_fixtures[:15], req.playerId, 12)
+        player_game_logs_task = fetch_player_game_logs(all_team_fixtures[:12], req.playerId, 10)
 
         # =============================================
         # BUILD STRUCTURED DATA DIGEST (no AI needed — pure code extraction)
@@ -414,7 +414,7 @@ async def predict(req: PredictionRequest):
             return_exceptions=True
         )
         try:
-            results = await aio.wait_for(all_wave2, timeout=12)
+            results = await aio.wait_for(all_wave2, timeout=8)
         except aio.TimeoutError:
             results = [None, None, None]
 
@@ -569,7 +569,7 @@ async def predict(req: PredictionRequest):
         h2h_player_stats = []
         if h2h_data:
             h2h_fixture_ids = []
-            for h in h2h_data[:10]:
+            for h in h2h_data[:5]:
                 fid = h.get("fixture", {}).get("id")
                 if fid:
                     h2h_fixture_ids.append((fid, h))
@@ -627,8 +627,15 @@ async def predict(req: PredictionRequest):
                     return None
 
             if h2h_fixture_ids:
-                h2h_results = await aio.gather(*[fetch_h2h_player_stat(fid, fi) for fid, fi in h2h_fixture_ids])
-                h2h_player_stats = [r for r in h2h_results if r]
+                try:
+                    h2h_results = await aio.wait_for(
+                        aio.gather(*[fetch_h2h_player_stat(fid, fi) for fid, fi in h2h_fixture_ids[:5]]),
+                        timeout=6
+                    )
+                    h2h_player_stats = [r for r in h2h_results if r]
+                except aio.TimeoutError:
+                    h2h_player_stats = []
+        print(f"[TIMING] H2H+prep: {_t.time()-_t0:.1f}s total")
 
         if h2h_player_stats:
             # Calculate H2H averages for the target stat
@@ -667,34 +674,23 @@ async def predict(req: PredictionRequest):
                         break
 
         # =============================================
-        # MULTI-AI CONSENSUS ENGINE
-        # Grok + Gemini + GPT-4o + Claude run IN PARALLEL
-        # Results merged for calibrated final prediction
+        # MULTI-AI CONSENSUS ENGINE (5 AIs — first 3 valid responses win)
+        # Grok + Gemini Flash + Gemini 2.5 + GPT-4o + Claude
         # =============================================
-        PREDICTION_SYSTEM = """You are an elite soccer prop prediction engine. Analyze ALL provided data deeply and return a calibrated JSON prediction.
+        PREDICTION_SYSTEM = """Elite soccer prop prediction engine. Analyze data thoroughly, return calibrated JSON.
 
-ANALYSIS REQUIREMENTS — every field must be SUBSTANTIVE (not one-liners):
-- "reasoning" (3-5 sentences): Deep statistical analysis referencing specific numbers from game logs, per-90 rates, venue splits, and opponent defensive/offensive tendencies. Cite actual values.
-- "tacticalBreakdown" (multi-paragraph markdown): Rich tactical analysis with **Verdict**, **Analysis** (cite per-game averages, venue splits, sample sizes), **Game Script Scenarios** (best/worst/likely case with projected stat ranges), **Risk Radar** (sub risk, rotation, injury, tactical changes), **TL;DR**. Reference the specific round/stage if it's a knockout or tournament match — knockout dynamics change player behavior significantly.
-- "scenarioAnalysis" (3-4 sentences): Best case, worst case, and most likely scenarios with specific stat projections for each.
-- "keyEvidence" (2-3 bullet points as string): The strongest data points supporting the recommendation.
-- "sharpSummary" (2 sentences): Concise sharp-money style summary explaining WHY the projection differs from the line.
-- "gameFlowDynamics" (2-3 sentences): How game flow (chasing, protecting lead, extra time in knockouts) impacts this specific stat.
-- "sensitivityTests" (1-2 sentences): What would flip the recommendation? E.g., "If X starts instead of Y..." or "If game goes to extra time..."
-- "subRisk" (1 sentence): Substitution risk assessment based on minutes history.
-- "uncertaintyNote" (1 sentence): Biggest source of uncertainty.
+REQUIREMENTS:
+- "reasoning": 3-5 sentences citing specific per-game averages, venue splits, opponent tendencies from data
+- "tacticalBreakdown": ~1500 char markdown. Sections: **Verdict** (1 sentence), **Analysis** (cite real numbers, venue/sample context), **Scenarios** (best/worst/likely with stat ranges), **Risk** (sub risk, rotation, tactical shifts), **TL;DR**. Mention knockout/tournament stage if applicable
+- "scenarioAnalysis": 2-3 sentences with specific projections per scenario
+- "sharpSummary": 2 sentences explaining why projection differs from line
+- "keyEvidence": 2-3 strongest data points as string
+- "gameFlowDynamics": How game state impacts this stat (1-2 sentences)
+- "sensitivityTests", "subRisk", "uncertaintyNote": 1 sentence each
 
-CALIBRATION RULES:
-- GK saves are capped by opponent shots on target (SoT). Never project saves > opponent avg SoT.
-- If |projectedValue - line| < 0.3, max confidence is 52%.
-- Use venue-filtered averages as primary anchor, overall averages as secondary.
-- For knockout/elimination matches: account for tactical conservatism, potential extra time, higher defensive intensity.
-- recentSamples must be empty array [] (populated server-side from real data).
+RULES: GK saves capped by opp SoT. |proj-line|<0.3 → max 52% conf. Knockout = tactical conservatism + possible ET. recentSamples=[]. No AI model names.
 
-Return ONLY valid JSON with this structure:
-{"projectedValue":0,"recommendation":"over|under","confidenceScore":0,"confidenceLevel":"","sharpSummary":"","reasoning":"","scenarioAnalysis":"","keyEvidence":"","sensitivityTests":"","subRisk":"","gameFlowDynamics":"","uncertaintyNote":"","tacticalBreakdown":"","matchupOverview":{"homeTeam":"","awayTeam":"","favorite":"","moneyline":{"home":"","draw":"","away":""},"expectedPossession":{"home":0,"away":0},"expectedGameType":"","keyMatchupFactor":""},"bayesianMetrics":{"priorMean":0,"momentumEffect":0,"covariateAdjustment":0,"reversalFlag":"stable"},"probabilityCurve":[],"recentSamples":[],"player":{"id":0,"name":"","team":"","position":""},"opponent":"","propType":"","line":0,"confidenceInterval":[0,0],"tacticalAlerts":[]}
-
-NEVER mention AI model names. No AI branding."""
+JSON: {"projectedValue":0,"recommendation":"over|under","confidenceScore":0,"confidenceLevel":"","sharpSummary":"","reasoning":"","scenarioAnalysis":"","keyEvidence":"","sensitivityTests":"","subRisk":"","gameFlowDynamics":"","uncertaintyNote":"","tacticalBreakdown":"","matchupOverview":{"homeTeam":"","awayTeam":"","favorite":"","moneyline":{"home":"","draw":"","away":""},"expectedPossession":{"home":0,"away":0},"expectedGameType":"","keyMatchupFactor":""},"bayesianMetrics":{"priorMean":0,"momentumEffect":0,"covariateAdjustment":0,"reversalFlag":"stable"},"probabilityCurve":[],"recentSamples":[],"player":{"id":0,"name":"","team":"","position":""},"opponent":"","propType":"","line":0,"confidenceInterval":[0,0],"tacticalAlerts":[]}"""
 
         # Build the data payload — use GPT summary as primary + Wave 2 deep data as supplement
         wave2_supplement = {}
@@ -878,18 +874,45 @@ recentSamples=[]
 
 Analyze ALL data thoroughly. Return JSON only."""
 
-        # Run 4 AIs in parallel (Gemini + GPT-4o + Claude + Grok)
-        async def call_ai(model_provider, model_name, label):
+        # Run 5 AIs in TRULY PARALLEL (using litellm.acompletion, not blocking LlmChat)
+        # LlmChat uses litellm.completion (sync) which blocks the event loop.
+        # litellm.acompletion is truly async — all 5 AIs execute concurrently.
+        import litellm
+        EMERGENT_PROXY = "https://integrations.emergentagent.com/llm"
+
+        async def call_ai(model_name, label, provider="openai"):
             try:
-                c = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=f"p-{label}-{uuid.uuid4().hex[:6]}", system_message=PREDICTION_SYSTEM)
-                c.with_model(model_provider, model_name)
-                resp = await aio.wait_for(c.send_message(UserMessage(text=prompt)), timeout=35)
-                text = resp.strip()
+                model_id = f"gemini/{model_name}" if provider == "gemini" else model_name
+                resp = await aio.wait_for(
+                    litellm.acompletion(
+                        model=model_id,
+                        messages=[
+                            {"role": "system", "content": PREDICTION_SYSTEM},
+                            {"role": "user", "content": prompt},
+                        ],
+                        api_key=EMERGENT_LLM_KEY,
+                        api_base=EMERGENT_PROXY,
+                        custom_llm_provider="openai",
+                        max_tokens=2500,
+                        temperature=0.3,
+                    ),
+                    timeout=40
+                )
+                text = resp.choices[0].message.content.strip()
                 if text.startswith("```"):
-                    text = "\n".join(l for l in text.split("\n") if not l.strip().startswith("```"))
-                result = json.loads(text)
-                result["_source"] = label
-                return result
+                    text = "\n".join(ln for ln in text.split("\n") if not ln.strip().startswith("```"))
+                # Robust JSON extraction
+                start = text.find("{")
+                if start >= 0:
+                    for end_pos in range(len(text), start, -1):
+                        if text[end_pos - 1] == "}":
+                            try:
+                                result = json.loads(text[start:end_pos])
+                                result["_source"] = label
+                                return result
+                            except json.JSONDecodeError:
+                                continue
+                raise ValueError("No valid JSON in response")
             except Exception as e:
                 print(f"[MULTI-AI] {label} failed: {e}")
                 return None
@@ -906,54 +929,59 @@ Analyze ALL data thoroughly. Return JSON only."""
                     return grok_client.chat.completions.create(
                         model="grok-4-fast-reasoning",
                         messages=grok_messages,
-                        max_tokens=3000,
+                        max_tokens=2500,
                         temperature=0.3,
                     )
-                grok_result = await aio.wait_for(loop.run_in_executor(None, _run), timeout=35)
+                grok_result = await aio.wait_for(loop.run_in_executor(None, _run), timeout=40)
                 text = grok_result.choices[0].message.content.strip()
                 if text.startswith("```"):
-                    text = "\n".join(l for l in text.split("\n") if not l.strip().startswith("```"))
-                # Grok sometimes appends text after JSON — extract just the JSON object
+                    text = "\n".join(ln for ln in text.split("\n") if not ln.strip().startswith("```"))
+                # Robust JSON extraction
                 start = text.find("{")
                 if start >= 0:
-                    depth = 0
-                    end = start
-                    for i in range(start, len(text)):
-                        if text[i] == "{":
-                            depth += 1
-                        elif text[i] == "}":
-                            depth -= 1
-                            if depth == 0:
-                                end = i + 1
-                                break
-                    text = text[start:end]
-                result = json.loads(text)
-                result["_source"] = label
-                return result
+                    for end_pos in range(len(text), start, -1):
+                        if text[end_pos - 1] == "}":
+                            try:
+                                result = json.loads(text[start:end_pos])
+                                result["_source"] = label
+                                return result
+                            except json.JSONDecodeError:
+                                continue
+                raise ValueError("No valid JSON found in Grok response")
             except Exception as e:
                 print(f"[MULTI-AI] {label} failed: {e}")
                 return None
 
         ai_tasks = [
-            aio.ensure_future(call_ai("gemini", "gemini-2.0-flash", "gemini")),
-            aio.ensure_future(call_ai("openai", "gpt-4o", "gpt4o")),
-            aio.ensure_future(call_ai("anthropic", "claude-sonnet-4-20250514", "claude")),
+            aio.ensure_future(call_ai("gemini-2.0-flash", "gemini", "gemini")),
+            aio.ensure_future(call_ai("gemini-2.5-flash", "gemini25", "gemini")),
+            aio.ensure_future(call_ai("gpt-4o", "gpt4o")),
+            aio.ensure_future(call_ai("claude-sonnet-4-20250514", "claude")),
             aio.ensure_future(call_grok("grok")),
         ]
 
-        # Wait up to 40s — take whatever finishes
-        done, pending = await aio.wait(ai_tasks, timeout=40)
+        # FIRST-3-WINS: Take the first 3 valid results, don't wait for stragglers
+        MIN_RESULTS = 3
+        ai_results = []
+        pending = set(ai_tasks)
+        deadline = _t0 + 48  # absolute cap: 48s from route start guarantees < 55s total
+
+        while pending and len(ai_results) < MIN_RESULTS and _t.time() < deadline:
+            remaining_time = max(0.1, deadline - _t.time())
+            done, pending = await aio.wait(pending, timeout=remaining_time, return_when=aio.FIRST_COMPLETED)
+            for t in done:
+                try:
+                    r = t.result()
+                    if r and isinstance(r, dict) and r.get("projectedValue") is not None:
+                        pv = r.get("projectedValue", 0)
+                        if isinstance(pv, (int, float)) and pv > 0:
+                            ai_results.append(r)
+                except Exception:
+                    pass
+
+        # Cancel stragglers
         for t in pending:
             t.cancel()
-
-        ai_results = []
-        for t in done:
-            try:
-                r = t.result()
-                if r:
-                    ai_results.append(r)
-            except Exception:
-                pass
         print(f"[TIMING] AIs done: {_t.time()-_t0:.1f}s total, {len(ai_results)} succeeded ({', '.join(r.get('_source','?') for r in ai_results)})")
 
         # Collect valid predictions
