@@ -7,8 +7,10 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 
+from openai import OpenAI
+
 from config import (
-    db, EMERGENT_LLM_KEY, CURRENT_SEASON,
+    db, EMERGENT_LLM_KEY, XAI_API_KEY, CURRENT_SEASON,
     WOMENS_LEAGUE_IDS, STAT_FIELD_MAP, STAT_LAMBDA_MAP,
 )
 from models import PredictionRequest
@@ -748,7 +750,7 @@ tacticalBreakdown: markdown with **Verdict** **Analysis** **Scenarios** **Risk**
                 else:
                     # GK's team is underdog → more shots faced → more saves
                     context_multiplier += 0.10
-                    context_factors.append(f"Team underdog → +10% (more opponent shots)")
+                    context_factors.append("Team underdog → +10% (more opponent shots)")
             if player_venue == "away":
                 context_multiplier += 0.05
                 context_factors.append("Away GK → +5% (typically face more pressure)")
@@ -828,16 +830,58 @@ recentSamples=[]
 
 Return JSON only."""
 
-        # Run 3 AIs in parallel
+        # Run 4 AIs in parallel (Gemini + GPT-4o + Claude + Grok)
         async def call_ai(model_provider, model_name, label):
             try:
                 c = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=f"p-{label}-{uuid.uuid4().hex[:6]}", system_message=PREDICTION_SYSTEM)
                 c.with_model(model_provider, model_name)
-                resp = await aio.wait_for(c.send_message(UserMessage(text=prompt)), timeout=30)
+                resp = await aio.wait_for(c.send_message(UserMessage(text=prompt)), timeout=35)
                 text = resp.strip()
                 if text.startswith("```"):
                     text = "\n".join(l for l in text.split("\n") if not l.strip().startswith("```"))
-                return json.loads(text)
+                result = json.loads(text)
+                result["_source"] = label
+                return result
+            except Exception as e:
+                print(f"[MULTI-AI] {label} failed: {e}")
+                return None
+
+        async def call_grok(label="grok"):
+            try:
+                grok_client = OpenAI(api_key=XAI_API_KEY, base_url="https://api.x.ai/v1")
+                grok_messages = [
+                    {"role": "system", "content": PREDICTION_SYSTEM},
+                    {"role": "user", "content": prompt},
+                ]
+                loop = aio.get_event_loop()
+                def _run():
+                    return grok_client.chat.completions.create(
+                        model="grok-4-fast-reasoning",
+                        messages=grok_messages,
+                        max_tokens=3000,
+                        temperature=0.3,
+                    )
+                grok_result = await aio.wait_for(loop.run_in_executor(None, _run), timeout=35)
+                text = grok_result.choices[0].message.content.strip()
+                if text.startswith("```"):
+                    text = "\n".join(l for l in text.split("\n") if not l.strip().startswith("```"))
+                # Grok sometimes appends text after JSON — extract just the JSON object
+                start = text.find("{")
+                if start >= 0:
+                    depth = 0
+                    end = start
+                    for i in range(start, len(text)):
+                        if text[i] == "{":
+                            depth += 1
+                        elif text[i] == "}":
+                            depth -= 1
+                            if depth == 0:
+                                end = i + 1
+                                break
+                    text = text[start:end]
+                result = json.loads(text)
+                result["_source"] = label
+                return result
             except Exception as e:
                 print(f"[MULTI-AI] {label} failed: {e}")
                 return None
@@ -846,10 +890,11 @@ Return JSON only."""
             aio.ensure_future(call_ai("gemini", "gemini-2.0-flash", "gemini")),
             aio.ensure_future(call_ai("openai", "gpt-4o", "gpt4o")),
             aio.ensure_future(call_ai("anthropic", "claude-sonnet-4-20250514", "claude")),
+            aio.ensure_future(call_grok("grok")),
         ]
 
-        # Wait up to 45s — take whatever finishes
-        done, pending = await aio.wait(ai_tasks, timeout=45)
+        # Wait up to 40s — take whatever finishes
+        done, pending = await aio.wait(ai_tasks, timeout=40)
         for t in pending:
             t.cancel()
 
@@ -859,9 +904,9 @@ Return JSON only."""
                 r = t.result()
                 if r:
                     ai_results.append(r)
-            except:
+            except Exception:
                 pass
-        print(f"[TIMING] AIs done: {_t.time()-_t0:.1f}s total, {len(ai_results)} succeeded")
+        print(f"[TIMING] AIs done: {_t.time()-_t0:.1f}s total, {len(ai_results)} succeeded ({', '.join(r.get('_source','?') for r in ai_results)})")
 
         # Collect valid predictions
         valid_preds = []
@@ -871,9 +916,9 @@ Return JSON only."""
                 # Filter out obviously bad predictions (0 or negative)
                 if isinstance(pv, (int, float)) and pv > 0:
                     valid_preds.append(r)
-                    print(f"[MULTI-AI] AI {i}: proj={pv} rec={r.get('recommendation')} conf={r.get('confidenceScore')}")
+                    print(f"[MULTI-AI] {r.get('_source','AI'+str(i))}: proj={pv} rec={r.get('recommendation')} conf={r.get('confidenceScore')}")
                 else:
-                    print(f"[MULTI-AI] AI {i}: REJECTED proj={pv}")
+                    print(f"[MULTI-AI] {r.get('_source','AI'+str(i))}: REJECTED proj={pv}")
 
         if not valid_preds:
             raise ValueError("All AI models failed to produce predictions")
@@ -885,12 +930,11 @@ Return JSON only."""
         if len(valid_preds) > 1:
             # Average projectedValue across all models
             proj_values = [p.get("projectedValue", 0) for p in valid_preds if p.get("projectedValue")]
-            prediction["projectedValue"] = round(sum(proj_values) / len(proj_values), 1)
+            avg_proj = round(sum(proj_values) / len(proj_values), 1)
+            prediction["projectedValue"] = avg_proj
 
-            # Majority vote on recommendation
-            recs = [p.get("recommendation", "over") for p in valid_preds]
-            over_count = sum(1 for r in recs if r == "over")
-            prediction["recommendation"] = "over" if over_count > len(recs) / 2 else "under"
+            # ENFORCE: recommendation must match projectedValue vs line (eliminates contradiction)
+            prediction["recommendation"] = "over" if avg_proj > req.line else "under"
 
             # Average confidence (normalize 0-1 to 0-100)
             conf_values = []
@@ -900,33 +944,38 @@ Return JSON only."""
                     conf_values.append(c * 100 if c <= 1 else c)
             prediction["confidenceScore"] = round(sum(conf_values) / len(conf_values)) if conf_values else 50
 
-            # Use longest tacticalBreakdown
-            best_tb = max(valid_preds, key=lambda p: len(str(p.get("tacticalBreakdown", ""))))
-            prediction["tacticalBreakdown"] = best_tb.get("tacticalBreakdown", "")
+            # TEXT FIELDS: Prioritize Grok, fall back to longest
+            grok_pred = next((p for p in valid_preds if p.get("_source") == "grok"), None)
 
-            # Use longest reasoning
-            best_r = max(valid_preds, key=lambda p: len(str(p.get("reasoning", ""))))
-            prediction["reasoning"] = best_r.get("reasoning", "")
-
-            # Use longest sharpSummary
-            best_ss = max(valid_preds, key=lambda p: len(str(p.get("sharpSummary", ""))))
-            prediction["sharpSummary"] = best_ss.get("sharpSummary", "")
-
-            # Use longest scenarioAnalysis
-            best_sa = max(valid_preds, key=lambda p: len(str(p.get("scenarioAnalysis", ""))))
-            prediction["scenarioAnalysis"] = best_sa.get("scenarioAnalysis", "")
-
-            # Use longest keyEvidence
-            best_ke = max(valid_preds, key=lambda p: len(str(p.get("keyEvidence", ""))))
-            prediction["keyEvidence"] = best_ke.get("keyEvidence", "")
+            for field in ["tacticalBreakdown", "reasoning", "sharpSummary", "scenarioAnalysis", "keyEvidence"]:
+                # Try Grok first
+                if grok_pred and len(str(grok_pred.get(field, ""))) > 50:
+                    prediction[field] = grok_pred[field]
+                else:
+                    # Fall back to longest text from any AI
+                    best = max(valid_preds, key=lambda p: len(str(p.get(field, ""))))
+                    prediction[field] = best.get(field, "")
 
             # Consensus note
-            consensus = f"{len(valid_preds)} AI models analyzed. "
+            recs = [p.get("recommendation", "over") for p in valid_preds]
+            sources = [p.get("_source", "?") for p in valid_preds]
+            over_count = sum(1 for r in recs if r == "over")
+            consensus = f"{len(valid_preds)} AI models analyzed ({', '.join(sources)}). "
             if all(r == prediction["recommendation"] for r in recs):
                 consensus += f"Unanimous {prediction['recommendation'].upper()}."
             else:
-                consensus += f"Split decision: {over_count} OVER, {len(recs)-over_count} UNDER."
+                consensus += f"Split: {over_count} OVER, {len(recs)-over_count} UNDER. Consensus projection {avg_proj} vs line {req.line} → {prediction['recommendation'].upper()}."
             prediction["consensusNote"] = consensus
+
+        else:
+            # Single AI result — still enforce recommendation consistency
+            pv = prediction.get("projectedValue", req.line)
+            prediction["recommendation"] = "over" if pv > req.line else "under"
+
+        # Clean up internal source tags
+        for p in valid_preds:
+            p.pop("_source", None)
+        prediction.pop("_source", None)
 
         # Set confidence level
         cs = prediction.get("confidenceScore", 50)
@@ -1051,54 +1100,73 @@ Return JSON only."""
                 "totalGames": total_game_logs,
             }
 
-        # tacticalBreakdown: Flatten if dict, build from fields if empty
-        tb = prediction.get("tacticalBreakdown", "")
-        if isinstance(tb, dict):
+        # ALWAYS rebuild tacticalBreakdown from merged fields to ensure
+        # verdict matches the consensus recommendation (not individual AI's opinion)
+        rec = prediction.get('recommendation', 'over').upper()
+        line = prediction.get('line', req.line)
+        prop_map = {"pass_attempts":"Pass Attempts","shots":"Shots","shots_on_target":"Shots on Target","tackles":"Tackles","key_passes":"Key Passes","saves":"Saves","interceptions":"Interceptions","blocks":"Blocks","dribbles":"Dribbles","fouls_drawn":"Fouls Drawn"}
+        pl = prop_map.get(req.propType, req.propType)
+
+        # Extract raw AI tactical text (may come from Grok) for the analysis body
+        raw_tb = prediction.get("tacticalBreakdown", "")
+        if isinstance(raw_tb, dict):
             parts = []
-            for key, value in tb.items():
+            for key, value in raw_tb.items():
                 if isinstance(value, str) and value.strip():
                     parts.append(f"**{key.replace('_', ' ').title()}**\n{value}")
                 elif isinstance(value, list):
                     parts.append(f"**{key.replace('_', ' ').title()}**")
                     for item in value:
                         parts.append(f"- {item}")
-            tb = "\n\n".join(parts) if parts else ""
-        elif not isinstance(tb, str):
-            tb = str(tb) if tb else ""
+            raw_tb = "\n\n".join(parts) if parts else ""
+        elif not isinstance(raw_tb, str):
+            raw_tb = str(raw_tb) if raw_tb else ""
 
-        # If tacticalBreakdown is empty, build it from the rich prediction fields
-        if not tb or len(tb) < 50:
-            fallback_parts = []
-            rec = prediction.get('recommendation', 'over').upper()
-            line = prediction.get('line', req.line)
-            prop_map = {"pass_attempts":"Pass Attempts","shots":"Shots","shots_on_target":"Shots on Target","tackles":"Tackles","key_passes":"Key Passes","saves":"Saves","interceptions":"Interceptions","blocks":"Blocks","dribbles":"Dribbles","fouls_drawn":"Fouls Drawn"}
-            pl = prop_map.get(req.propType, req.propType)
+        tb_parts = []
+        proj = prediction.get('projectedValue', '?')
+        conf = prediction.get('confidenceScore', '?')
 
-            if prediction.get('sharpSummary'):
-                fallback_parts.append(f"**Verdict: {rec} {line} {pl}**\n{prediction['sharpSummary']}")
-            if prediction.get('reasoning'):
-                fallback_parts.append(f"**Analysis**\n{prediction['reasoning']}")
-            if prediction.get('scenarioAnalysis'):
-                fallback_parts.append(f"**Game Script Scenarios**\n{prediction['scenarioAnalysis']}")
-            if prediction.get('keyEvidence'):
-                fallback_parts.append(f"**Key Evidence**\n{prediction['keyEvidence']}")
-            risk = []
-            if prediction.get('sensitivityTests'):
-                risk.append(f"- Sensitivity: {prediction['sensitivityTests']}")
-            if prediction.get('subRisk'):
-                risk.append(f"- Sub Risk: {prediction['subRisk']}")
-            if prediction.get('uncertaintyNote'):
-                risk.append(f"- Key Risk: {prediction['uncertaintyNote']}")
-            if risk:
-                fallback_parts.append(f"**Risk Radar**\n" + "\n".join(risk))
-            if prediction.get('gameFlowDynamics'):
-                fallback_parts.append(f"**Game Flow**\n{prediction['gameFlowDynamics']}")
-            proj = prediction.get('projectedValue', '?')
-            conf = prediction.get('confidenceScore', '?')
-            fallback_parts.append(f"**TL;DR** — {rec} {line} at {conf}% confidence. Projected: {proj} {pl.lower()}.")
-            tb = "\n\n".join(fallback_parts)
+        # Verdict always matches consensus
+        if prediction.get('sharpSummary'):
+            tb_parts.append(f"**Verdict: {rec} {line} {pl}**\n{prediction['sharpSummary']}")
+        else:
+            tb_parts.append(f"**Verdict: {rec} {line} {pl}**\nProjected {proj} {pl.lower()} — consensus favors {rec.lower()}.")
 
-        prediction["tacticalBreakdown"] = tb
+        # Analysis body: prefer Grok-sourced reasoning, then raw TB analysis
+        if prediction.get('reasoning') and len(str(prediction['reasoning'])) > 30:
+            tb_parts.append(f"**Analysis**\n{prediction['reasoning']}")
+        elif raw_tb and len(raw_tb) > 50:
+            # Strip any existing verdict/header from raw TB to avoid duplication
+            clean_tb = raw_tb
+            for prefix in ["**Verdict", "**verdict", "## Verdict"]:
+                if clean_tb.startswith(prefix):
+                    # Remove first paragraph
+                    idx = clean_tb.find("\n\n")
+                    clean_tb = clean_tb[idx+2:] if idx > 0 else clean_tb
+            if clean_tb.strip():
+                tb_parts.append(f"**Analysis**\n{clean_tb.strip()}")
+
+        if prediction.get('scenarioAnalysis'):
+            tb_parts.append(f"**Game Script Scenarios**\n{prediction['scenarioAnalysis']}")
+        if prediction.get('keyEvidence'):
+            tb_parts.append(f"**Key Evidence**\n{prediction['keyEvidence']}")
+
+        risk = []
+        if prediction.get('sensitivityTests'):
+            risk.append(f"- Sensitivity: {prediction['sensitivityTests']}")
+        if prediction.get('subRisk'):
+            risk.append(f"- Sub Risk: {prediction['subRisk']}")
+        if prediction.get('uncertaintyNote'):
+            risk.append(f"- Key Risk: {prediction['uncertaintyNote']}")
+        if risk:
+            tb_parts.append("**Risk Radar**\n" + "\n".join(risk))
+        if prediction.get('gameFlowDynamics'):
+            tb_parts.append(f"**Game Flow**\n{prediction['gameFlowDynamics']}")
+
+        consensus_note = prediction.get('consensusNote', '')
+        tb_parts.append(f"**TL;DR** — {rec} {line} at {conf}% confidence. Projected: {proj} {pl.lower()}. {consensus_note}")
+
+        prediction["tacticalBreakdown"] = "\n\n".join(tb_parts)
 
         # Save to MongoDB
         prediction["_created"] = datetime.now(timezone.utc).isoformat()
@@ -1121,7 +1189,7 @@ Return JSON only."""
 
         return prediction
 
-    except (json.JSONDecodeError, aio.TimeoutError) as e:
+    except (json.JSONDecodeError, aio.TimeoutError):
         # Return a safe fallback prediction
         return {
             "player": {"id": req.playerId, "name": req.playerName, "team": str(req.teamId), "role": "Unknown", "position": "Unknown"},
