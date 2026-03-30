@@ -329,6 +329,11 @@ If there's only one entry, still return it as an array with one element."""
                 else:
                     leagues_to_try = [league_id]
 
+                # Save original international context before resolution overwrites it
+                original_league_id = league_id
+                original_league_name = league_name
+                original_team_name = (entry.get("playerTeam") or "").strip()
+
                 for variant in search_variants:
                     if resolved_player:
                         break
@@ -348,12 +353,13 @@ If there's only one entry, still return it as an array with one element."""
                                             "playerName": best["player"]["name"],
                                             "photo": "",
                                             "teamId": best.get("statistics", [{}])[0].get("team", {}).get("id"),
-                                            "teamName": best.get("statistics", [{}])[0].get("team", {}).get("name", ""),
+                                            "teamName": (original_team_name or best.get("statistics", [{}])[0].get("team", {}).get("name", "")) if is_international else best.get("statistics", [{}])[0].get("team", {}).get("name", ""),
                                         }
-                                        actual_league = best.get("statistics", [{}])[0].get("league", {})
-                                        if actual_league.get("id"):
-                                            league_id = actual_league["id"]
-                                            league_name = actual_league.get("name", league_name)
+                                        if not is_international:
+                                            actual_league = best.get("statistics", [{}])[0].get("league", {})
+                                            if actual_league.get("id"):
+                                                league_id = actual_league["id"]
+                                                league_name = actual_league.get("name", league_name)
                                         break
                                     elif not player_team_hint or is_international:
                                         # No team hint or international (club won't match national team name) — accept first
@@ -363,12 +369,13 @@ If there's only one entry, still return it as an array with one element."""
                                             "playerName": best["player"]["name"],
                                             "photo": "",
                                             "teamId": best.get("statistics", [{}])[0].get("team", {}).get("id"),
-                                            "teamName": best.get("statistics", [{}])[0].get("team", {}).get("name", ""),
+                                            "teamName": (original_team_name or best.get("statistics", [{}])[0].get("team", {}).get("name", "")) if is_international else best.get("statistics", [{}])[0].get("team", {}).get("name", ""),
                                         }
-                                        actual_league = best.get("statistics", [{}])[0].get("league", {})
-                                        if actual_league.get("id"):
-                                            league_id = actual_league["id"]
-                                            league_name = actual_league.get("name", league_name)
+                                        if not is_international:
+                                            actual_league = best.get("statistics", [{}])[0].get("league", {})
+                                            if actual_league.get("id"):
+                                                league_id = actual_league["id"]
+                                                league_name = actual_league.get("name", league_name)
                                         break
                             except Exception:
                                 continue
@@ -465,10 +472,6 @@ If there's only one entry, still return it as an array with one element."""
                                                             if pdata:
                                                                 club_team_id = pdata[0].get("statistics", [{}])[0].get("team", {}).get("id")
                                                                 club_team_name = pdata[0].get("statistics", [{}])[0].get("team", {}).get("name", "")
-                                                                actual_league = pdata[0].get("statistics", [{}])[0].get("league", {})
-                                                                if actual_league.get("id"):
-                                                                    league_id = actual_league["id"]
-                                                                    league_name = actual_league.get("name", league_name)
                                                                 break
                                                         except Exception:
                                                             continue
@@ -477,7 +480,7 @@ If there's only one entry, still return it as an array with one element."""
                                                     "playerName": sp["name"],
                                                     "photo": "",
                                                     "teamId": club_team_id or nat_team_id,
-                                                    "teamName": club_team_name or team_lower.title(),
+                                                    "teamName": original_team_name or team_lower.title(),
                                                 }
                                                 break
                                 except Exception:
@@ -503,12 +506,13 @@ If there's only one entry, still return it as an array with one element."""
                                             "playerName": best["player"]["name"],
                                             "photo": "",
                                             "teamId": best.get("statistics", [{}])[0].get("team", {}).get("id"),
-                                            "teamName": best.get("statistics", [{}])[0].get("team", {}).get("name", ""),
+                                            "teamName": (original_team_name or best.get("statistics", [{}])[0].get("team", {}).get("name", "")) if is_international else best.get("statistics", [{}])[0].get("team", {}).get("name", ""),
                                         }
-                                        actual_league = best.get("statistics", [{}])[0].get("league", {})
-                                        if actual_league.get("id"):
-                                            league_id = actual_league["id"]
-                                            league_name = actual_league.get("name", league_name)
+                                        if not is_international:
+                                            actual_league = best.get("statistics", [{}])[0].get("league", {})
+                                            if actual_league.get("id"):
+                                                league_id = actual_league["id"]
+                                                league_name = actual_league.get("name", league_name)
                                         break
                                     elif not player_team_hint or is_international:
                                         best = data[0]
@@ -517,17 +521,23 @@ If there's only one entry, still return it as an array with one element."""
                                             "playerName": best["player"]["name"],
                                             "photo": "",
                                             "teamId": best.get("statistics", [{}])[0].get("team", {}).get("id"),
-                                            "teamName": best.get("statistics", [{}])[0].get("team", {}).get("name", ""),
+                                            "teamName": (original_team_name or best.get("statistics", [{}])[0].get("team", {}).get("name", "")) if is_international else best.get("statistics", [{}])[0].get("team", {}).get("name", ""),
                                         }
-                                        actual_league = best.get("statistics", [{}])[0].get("league", {})
-                                        if actual_league.get("id"):
-                                            league_id = actual_league["id"]
-                                            league_name = actual_league.get("name", league_name)
+                                        if not is_international:
+                                            actual_league = best.get("statistics", [{}])[0].get("league", {})
+                                            if actual_league.get("id"):
+                                                league_id = actual_league["id"]
+                                                league_name = actual_league.get("name", league_name)
                                         break
                             except Exception:
                                 continue
             except Exception:
                 pass
+
+            # For international matches, always restore the original league context
+            if is_international and original_league_id:
+                league_id = original_league_id
+                league_name = original_league_name
 
             # Resolve opponent team
             resolved_opponent = None
