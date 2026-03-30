@@ -1,0 +1,73 @@
+{
+  "summary": "Tested Scan + Tactical integration (iteration 22). All 10 backend tests passed (100%). All frontend UI elements verified successfully. Scan and Tactical tabs are connected - after scan prediction completes, it auto-fires tactical analysis. International context detection working correctly (Denmark query returns national team stats).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "passed_tests": [
+    "GET /api/health returns {status: ok}",
+    "GET /api/cache/status returns valid counts (leagues=1225, teams=1158, players=23992, nationalTeams=485)",
+    "GET /api/cache/lookup/player?name=Hojbjerg returns P. Højbjerg (id=2735)",
+    "POST /api/tactical/start returns session_id and welcome message",
+    "POST /api/tactical/start welcome message has no Grok/Gemini branding",
+    "POST /api/tactical/message returns proper structure {response, session_id, scanEntries}",
+    "POST /api/tactical/message response has no Grok/Gemini branding",
+    "POST /api/tactical/message with empty message returns 400",
+    "POST /api/tactical/message detects international context when Denmark is mentioned",
+    "POST /api/tactical/message returns substantial international analysis for national team queries",
+    "Frontend: 3-tab navigation (Scan, Tactical, Tracking) renders correctly",
+    "Frontend: Scan tab shows 'Scan a Prop' header with upload zone",
+    "Frontend: Tactical tab shows 'Reverse Tactical' header with 'Live Intelligence' label",
+    "Frontend: Tactical tab has camera button for image upload",
+    "Frontend: No 'Grok' or 'Gemini' text visible in any tab"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_scan_tactical_integration.py",
+    "/app/test_reports/pytest/scan_tactical_integration_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "tactical.py _is_international_context() correctly detects national teams via get_national_team_id()",
+    "tactical.py _fetch_player_stats_structured() separates INTERNATIONAL from CLUB stats and prioritizes based on context",
+    "tactical.py _fetch_data_for_props() is international-aware and fetches national team fixtures",
+    "App.js handleScanPredict() fires fireTactical() after prediction completes (lines 489-509)",
+    "App.js scanTactical state stores tactical analysis for display below ProjectionCard",
+    "Frontend correctly shows 'Live Intelligence' label instead of 'Grok + Gemini Dual Engine'"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_scan_tactical_integration.py"
+  ],
+  "success_rate": {
+    "backend": "100% (10/10 tests passed)",
+    "frontend": "100% (all UI elements verified)"
+  },
+  "test_credentials": {
+    "owner_email": "josselj001@gmail.com (auto-login via Whop verification)"
+  },
+  "seed_data_creation": "None - using existing MongoDB cache data",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Scan + Tactical integration verified. After scan prediction completes, it auto-fires tactical analysis and displays below the prediction card. International context detection working - queries mentioning national teams (e.g., Denmark) prioritize international stats over club stats. Backend tactical endpoints work with real Grok + Gemini APIs (15-30 second response time). No Grok/Gemini branding visible anywhere.",
+  "scan_tactical_integration_verification": {
+    "backend_changes": {
+      "_is_international_context": "Checks if teams are national teams via get_national_team_id()",
+      "_fetch_player_stats_structured": "Separates INTL/CLUB stats, prioritizes based on is_intl flag",
+      "_fetch_data_for_props": "International-aware, fetches national team fixtures when is_intl=True",
+      "_fetch_national_team_fixtures": "Fetches last 5 fixtures for national teams"
+    },
+    "frontend_changes": {
+      "fireTactical": "Called after prediction completes in handleScanPredict() (lines 489-509)",
+      "scanTactical_state": "Stores tactical analysis response for display",
+      "tactical_breakdown_section": "Displays below ProjectionCard when scanTactical is set"
+    },
+    "international_context_test": {
+      "query": "What are Hojbjerg stats for Denmark?",
+      "result": "Returns Denmark international stats (Friendlies 2025: 2 apps, 150 min, 85.5 passes/game)"
+    }
+  }
+}

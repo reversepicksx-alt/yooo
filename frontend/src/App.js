@@ -93,6 +93,8 @@ export default function App() {
   const [scanPredictingIdx, setScanPredictingIdx] = useState(null);
   const [scanExcludedIndices, setScanExcludedIndices] = useState([]);
   const [scanVenueOverrides, setScanVenueOverrides] = useState({});
+  const [scanTactical, setScanTactical] = useState(null); // tactical analysis for scan prediction
+  const [isScanTacticalLoading, setIsScanTacticalLoading] = useState(false);
   const scanFileRef = useRef(null);
 
   const searchTimeout = useRef(null);
@@ -484,8 +486,29 @@ export default function App() {
   const handleScanPredict = async (pickData, idx) => {
     const isCombo = pickData.extracted?.isCombo;
 
+    // Helper: fire tactical analysis in background after prediction
+    const fireTactical = async (propContext) => {
+      setIsScanTacticalLoading(true);
+      setScanTactical(null);
+      try {
+        // Ensure we have a tactical session
+        let sid = tacticalSessionId;
+        if (!sid) {
+          const startRes = await startTactical();
+          sid = startRes.session_id;
+          setTacticalSessionId(sid);
+        }
+        const tactMsg = propContext;
+        const res = await sendTacticalMessage(sid, tactMsg);
+        setScanTactical(res.response);
+      } catch (e) {
+        setScanTactical(null);
+      } finally {
+        setIsScanTacticalLoading(false);
+      }
+    };
+
     if (isCombo) {
-      // COMBO: need both resolved players
       const rp = pickData.resolvedPlayers || [];
       if (!rp[0] || !rp[1]) {
         toast.error('Could not match both players — cannot run combo prediction');
@@ -495,6 +518,7 @@ export default function App() {
       setScanPredictingIdx(idx);
       setScanPrediction(null);
       setScanExcludedIndices([]);
+      setScanTactical(null);
       try {
         const result = await predictCombo({
           leagueId: pickData.extracted.leagueId || 39,
@@ -514,7 +538,13 @@ export default function App() {
           throw new Error('One or both predictions failed.');
         }
         setScanPrediction({ ...result, _isCombo: true, _comboLine: pickData.extracted.line });
-        toast.success('Combo prediction complete!');
+        toast.success('Prediction complete — tactical analysis loading...');
+
+        // Fire tactical for combo
+        const propLabel = PROP_TYPES.find(p => p.key === pickData.extracted.propType)?.label || pickData.extracted.propType;
+        const p1Proj = result.player1?.projectedValue || '?';
+        const p2Proj = result.player2?.projectedValue || '?';
+        fireTactical(`Combo prop: ${rp[0].playerName} (${rp[0].teamName}) + ${rp[1].playerName} (${rp[1].teamName}) — ${propLabel} combined line ${pickData.extracted.line}. Projection: ${p1Proj} + ${p2Proj} = ${result.combined?.projectedValue || '?'}. Recommendation: ${result.combined?.recommendation || '?'}. Give me a full tactical breakdown of this combo — should I take it?`);
       } catch (err) {
         toast.error(err.message || 'Combo prediction failed');
       } finally {
@@ -522,7 +552,6 @@ export default function App() {
         setScanPredictingIdx(null);
       }
     } else {
-      // SINGLE player
       if (!pickData.resolved) {
         toast.error('Player not found — cannot run prediction');
         return;
@@ -531,6 +560,7 @@ export default function App() {
       setScanPredictingIdx(idx);
       setScanPrediction(null);
       setScanExcludedIndices([]);
+      setScanTactical(null);
       try {
         const opponentId = pickData.resolvedOpponent?.teamId || pickData.resolved.teamId;
         const opponentName = pickData.resolvedOpponent?.teamName || pickData.extracted.opponentName || 'Unknown';
@@ -548,7 +578,13 @@ export default function App() {
           line: pickData.extracted.line,
         });
         setScanPrediction(result);
-        toast.success('Prediction complete!');
+        toast.success('Prediction complete — tactical analysis loading...');
+
+        // Fire tactical analysis with the prediction context
+        const propLabel = PROP_TYPES.find(p => p.key === pickData.extracted.propType)?.label || pickData.extracted.propType;
+        const playerName = pickData.resolved.playerName;
+        const teamName = pickData.resolved.teamName || pickData.extracted.playerTeam || '';
+        fireTactical(`${playerName} (${teamName}) vs ${opponentName} [${venue.toUpperCase()}] — ${propLabel} line ${pickData.extracted.line}. Statistical projection: ${result.projectedValue || '?'}, recommendation: ${result.recommendation || '?'}, confidence: ${result.confidenceLevel || '?'}. Give me your full tactical breakdown — matchup dynamics, role analysis, game flow scenarios, risk factors. Should I take this prop?`);
       } catch (err) {
         toast.error(err.message || 'Prediction failed');
       } finally {
@@ -585,6 +621,8 @@ export default function App() {
   const backToScanResults = () => {
     setScanPrediction(null);
     setScanExcludedIndices([]);
+    setScanTactical(null);
+    setIsScanTacticalLoading(false);
   };
 
   const resetScan = () => {
@@ -594,6 +632,8 @@ export default function App() {
     setScanPrediction(null);
     setScanPredictingIdx(null);
     setScanVenueOverrides({});
+    setScanTactical(null);
+    setIsScanTacticalLoading(false);
     if (scanFileRef.current) scanFileRef.current.value = '';
   };
 
@@ -1712,6 +1752,55 @@ export default function App() {
                       prev.includes(idx) ? prev.filter(i => i !== idx) : [...prev, idx]
                     )}
                   />
+                )}
+
+                {/* ── TACTICAL DEEP DIVE ── */}
+                {(isScanTacticalLoading || scanTactical) && (
+                  <div data-testid="scan-tactical-section" style={{
+                    background: '#0a0a0f', border: '1px solid rgba(99,102,241,0.2)',
+                    borderRadius: 14, overflow: 'hidden', marginTop: 8,
+                  }}>
+                    <div style={{
+                      padding: '10px 16px', borderBottom: '1px solid rgba(99,102,241,0.1)',
+                      display: 'flex', alignItems: 'center', gap: 8,
+                    }}>
+                      <Crosshair style={{ width: 14, height: 14, color: '#818cf8' }} />
+                      <span style={{ fontSize: 11, fontWeight: 900, letterSpacing: '0.1em', color: '#818cf8', textTransform: 'uppercase' }}>
+                        Tactical Breakdown
+                      </span>
+                      {isScanTacticalLoading && (
+                        <Loader2 style={{ width: 12, height: 12, color: '#818cf8', animation: 'spin 1s linear infinite', marginLeft: 'auto' }} />
+                      )}
+                    </div>
+                    <div style={{ padding: '14px 16px' }}>
+                      {isScanTacticalLoading && !scanTactical && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'rgba(255,255,255,0.35)', fontSize: 12 }}>
+                          <Loader2 style={{ width: 14, height: 14, animation: 'spin 1s linear infinite' }} />
+                          Running deep tactical analysis...
+                        </div>
+                      )}
+                      {scanTactical && (
+                        <div style={{ fontSize: 13, lineHeight: 1.7, color: 'rgba(255,255,255,0.8)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                          {scanTactical.split('\n').map((line, li) => {
+                            const parts = line.split(/(\*\*.*?\*\*)/g);
+                            return (
+                              <div key={li} style={{ marginBottom: line === '' ? 8 : 2 }}>
+                                {parts.map((part, pi) => {
+                                  if (part.startsWith('**') && part.endsWith('**')) {
+                                    return <strong key={pi} style={{ color: '#fff', fontWeight: 800 }}>{part.slice(2, -2)}</strong>;
+                                  }
+                                  if (part.startsWith('- ')) {
+                                    return <span key={pi} style={{ paddingLeft: 8 }}><span style={{ color: '#818cf8' }}>-</span> {part.slice(2)}</span>;
+                                  }
+                                  return <span key={pi}>{part}</span>;
+                                })}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 )}
               </div>
             )}
