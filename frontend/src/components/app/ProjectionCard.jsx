@@ -30,20 +30,6 @@ export function ProjectionCard({ projection, onSave, excludedIndices, onToggleSa
           </div>
         </div>
 
-        {projection.tacticalAlerts?.length > 0 && (
-          <div className="space-y-2 mb-6">
-            {projection.tacticalAlerts.map((alert, i) => (
-              <div key={i} className={`alert-item ${alert.severity}`}>
-                <ShieldAlert />
-                <div>
-                  <span className="alert-type">{alert.type} Alert</span>
-                  <span className="alert-message">{alert.message}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
         {projection.dataQuality && projection.dataQuality.level !== 'good' && (
           <div data-testid="data-quality-warning" style={{
             background: projection.dataQuality.level === 'low' ? 'rgba(244,63,94,0.08)' : 'rgba(245,158,11,0.08)',
@@ -165,24 +151,6 @@ export function ProjectionCard({ projection, onSave, excludedIndices, onToggleSa
           </div>
         )}
 
-        {projection.tacticalAlerts?.length > 0 && (
-          <div className="mt-4 space-y-2" data-testid="tactical-alerts">
-            {projection.tacticalAlerts.map((alert, i) => (
-              <div key={i} style={{
-                display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8,
-                background: alert.severity === 'high' ? 'rgba(244,63,94,0.08)' : alert.severity === 'medium' ? 'rgba(245,158,11,0.08)' : 'rgba(255,255,255,0.03)',
-                border: `1px solid ${alert.severity === 'high' ? 'rgba(244,63,94,0.2)' : alert.severity === 'medium' ? 'rgba(245,158,11,0.2)' : 'rgba(255,255,255,0.06)'}`,
-              }}>
-                <div style={{ fontSize: 9, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em',
-                  color: alert.severity === 'high' ? '#f43f5e' : alert.severity === 'medium' ? '#f59e0b' : 'var(--text-muted)',
-                  flexShrink: 0, width: 60
-                }}>{alert.type}</div>
-                <div style={{ fontSize: 12, color: 'var(--text-primary)' }}>{alert.message}</div>
-              </div>
-            ))}
-          </div>
-        )}
-
         {projection.recentSamples?.length > 0 && (
           <div className="mt-6">
             <div className="flex justify-between items-center mb-4">
@@ -217,169 +185,42 @@ export function ProjectionCard({ projection, onSave, excludedIndices, onToggleSa
           </div>
         )}
 
-        <div className="space-y-4 mt-6">
-          {projection.sharpSummary && (
-            <div className="stat-box" style={{ borderColor: 'rgba(16,185,129,0.2)', background: 'rgba(16,185,129,0.04)' }}>
-              <div className="stat-label flex items-center gap-2">
-                <Target style={{ width: 12, height: 12, color: 'var(--accent)' }} /> Sharp Take
-              </div>
-              <p style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.6, marginTop: 6 }}>
-                {projection.sharpSummary}
-              </p>
+        {projection.gkFormula && (
+          <div className="stat-box mt-6" style={{ borderColor: 'rgba(59,130,246,0.25)', background: 'rgba(59,130,246,0.04)' }} data-testid="gk-formula">
+            <div className="stat-label flex items-center gap-2 mb-3">
+              <Shield style={{ width: 12, height: 12, color: '#3b82f6' }} /> GK Saves Formula
             </div>
-          )}
-
-          {projection.keyEvidence && (
-            <div className="stat-box" style={{ borderColor: 'rgba(99,102,241,0.2)', background: 'rgba(99,102,241,0.04)' }}>
-              <div className="stat-label flex items-center gap-2">
-                <BarChart3 style={{ width: 12, height: 12, color: '#6366f1' }} /> Key Evidence
-              </div>
-              <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.7, marginTop: 6, fontFamily: 'monospace' }}>
-                {projection.keyEvidence}
-              </p>
+            <div style={{ background: 'rgba(0,0,0,0.3)', borderRadius: 8, padding: '10px 14px', marginBottom: 12, fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: 'var(--accent)', fontWeight: 700, textAlign: 'center', letterSpacing: '0.02em' }}>
+              {projection.gkFormula.opponentAvgSOT} SoT &times; {projection.gkFormula.gkSaveRate}% save rate &times; {projection.gkFormula.contextMultiplier} context = <span style={{ fontSize: 16, color: '#3b82f6' }}>{projection.gkFormula.formulaProjection}</span> saves
             </div>
-          )}
-
-          {projection.gkFormula && (
-            <div className="stat-box" style={{ borderColor: 'rgba(59,130,246,0.25)', background: 'rgba(59,130,246,0.04)' }} data-testid="gk-formula">
-              <div className="stat-label flex items-center gap-2 mb-3">
-                <Shield style={{ width: 12, height: 12, color: '#3b82f6' }} /> GK Saves Formula
-              </div>
-              <div style={{ background: 'rgba(0,0,0,0.3)', borderRadius: 8, padding: '10px 14px', marginBottom: 12, fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: 'var(--accent)', fontWeight: 700, textAlign: 'center', letterSpacing: '0.02em' }}>
-                {projection.gkFormula.opponentAvgSOT} SoT &times; {projection.gkFormula.gkSaveRate}% save rate &times; {projection.gkFormula.contextMultiplier} context = <span style={{ fontSize: 16, color: '#3b82f6' }}>{projection.gkFormula.formulaProjection}</span> saves
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 }}>
-                <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 8, padding: '8px 10px' }}>
-                  <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Opp Shots/Game ({projection.gkFormula.opponentVenue})</div>
-                  <div style={{ fontSize: 18, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)', marginTop: 2 }}>{projection.gkFormula.opponentAvgShots}</div>
-                  <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>{projection.gkFormula.opponentShotsSample} games</div>
-                </div>
-                <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 8, padding: '8px 10px' }}>
-                  <div style={{ fontSize: 9, fontWeight: 700, color: '#f43f5e', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Opp SOT/Game ({projection.gkFormula.opponentVenue})</div>
-                  <div style={{ fontSize: 18, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: '#f43f5e', marginTop: 2 }}>{projection.gkFormula.opponentAvgSOT}</div>
-                  <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>shots on target allowed</div>
-                </div>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 10 }}>
-                <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 8, padding: '8px 10px', textAlign: 'center' }}>
-                  <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Save Rate</div>
-                  <div style={{ fontSize: 18, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: 'var(--accent)', marginTop: 2 }}>{projection.gkFormula.gkSaveRate}%</div>
-                </div>
-                <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 8, padding: '8px 10px', textAlign: 'center' }}>
-                  <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Avg Saves</div>
-                  <div style={{ fontSize: 18, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)', marginTop: 2 }}>{projection.gkFormula.gkAvgSaves}</div>
-                </div>
-                <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 8, padding: '8px 10px', textAlign: 'center' }}>
-                  <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>GA/Game</div>
-                  <div style={{ fontSize: 18, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)', marginTop: 2 }}>{projection.gkFormula.goalsAgainstPerGame ?? '-'}</div>
-                </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 }}>
+              <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 8, padding: '8px 10px' }}>
+                <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Opp Shots/Game ({projection.gkFormula.opponentVenue})</div>
+                <div style={{ fontSize: 18, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)', marginTop: 2 }}>{projection.gkFormula.opponentAvgShots}</div>
+                <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>{projection.gkFormula.opponentShotsSample} games</div>
               </div>
               <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 8, padding: '8px 10px' }}>
-                <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 4 }}>Match Context ({projection.gkFormula.contextMultiplier}x)</div>
-                {projection.gkFormula.contextFactors?.map((f, i) => (
-                  <div key={i} style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.6 }}>{f}</div>
-                ))}
-                {(!projection.gkFormula.contextFactors || projection.gkFormula.contextFactors.length === 0) && (
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Neutral &#8212; no significant adjustments</div>
-                )}
+                <div style={{ fontSize: 9, fontWeight: 700, color: '#f43f5e', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Opp SOT/Game ({projection.gkFormula.opponentVenue})</div>
+                <div style={{ fontSize: 18, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: '#f43f5e', marginTop: 2 }}>{projection.gkFormula.opponentAvgSOT}</div>
+                <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>shots on target allowed</div>
               </div>
             </div>
-          )}
-
-          {projection.scenarioAnalysis && (
-            <div className="stat-box" style={{ borderColor: 'rgba(245,158,11,0.2)', background: 'rgba(245,158,11,0.04)' }}>
-              <div className="stat-label flex items-center gap-2">
-                <Activity style={{ width: 12, height: 12, color: '#f59e0b' }} /> Scenario Analysis
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+              <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 8, padding: '8px 10px', textAlign: 'center' }}>
+                <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Save Rate</div>
+                <div style={{ fontSize: 18, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: 'var(--accent)', marginTop: 2 }}>{projection.gkFormula.gkSaveRate}%</div>
               </div>
-              <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.7, marginTop: 6 }}>
-                {projection.scenarioAnalysis}
-              </p>
-            </div>
-          )}
-
-          {projection.uncertaintyNote && (
-            <div className="stat-box" style={{ borderColor: 'rgba(244,63,94,0.15)', background: 'rgba(244,63,94,0.03)' }}>
-              <div className="stat-label flex items-center gap-2">
-                <ShieldAlert style={{ width: 12, height: 12, color: '#f43f5e' }} /> Risk Factor
+              <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 8, padding: '8px 10px', textAlign: 'center' }}>
+                <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Avg Saves</div>
+                <div style={{ fontSize: 18, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)', marginTop: 2 }}>{projection.gkFormula.gkAvgSaves}</div>
               </div>
-              <p style={{ fontSize: 12, color: '#f43f5e', lineHeight: 1.6, marginTop: 6, fontWeight: 600 }}>
-                {projection.uncertaintyNote}
-              </p>
-            </div>
-          )}
-
-          {projection.sensitivityTests && (
-            <div className="stat-box" style={{ borderColor: 'rgba(168,85,247,0.2)', background: 'rgba(168,85,247,0.04)' }}>
-              <div className="stat-label flex items-center gap-2">
-                <Shield style={{ width: 12, height: 12, color: '#a855f7' }} /> Sensitivity Tests
+              <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 8, padding: '8px 10px', textAlign: 'center' }}>
+                <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>GA/Game</div>
+                <div style={{ fontSize: 18, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)', marginTop: 2 }}>{projection.gkFormula.goalsAgainstPerGame ?? '-'}</div>
               </div>
-              <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.7, marginTop: 6 }}>
-                {projection.sensitivityTests}
-              </p>
-            </div>
-          )}
-
-          {(projection.subRisk || projection.gameFlowDynamics) && (
-            <div className="grid-2">
-              {projection.subRisk && (
-                <div className="stat-box" style={{ borderColor: 'rgba(245,158,11,0.15)' }}>
-                  <div className="stat-label flex items-center gap-2">
-                    <Clock style={{ width: 12, height: 12, color: '#f59e0b' }} /> Sub Risk
-                  </div>
-                  <p style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.6, marginTop: 4 }}>
-                    {projection.subRisk}
-                  </p>
-                </div>
-              )}
-              {projection.gameFlowDynamics && (
-                <div className="stat-box" style={{ borderColor: 'rgba(16,185,129,0.15)' }}>
-                  <div className="stat-label flex items-center gap-2">
-                    <TrendingUp style={{ width: 12, height: 12, color: 'var(--accent)' }} /> Game Flow
-                  </div>
-                  <p style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.6, marginTop: 4 }}>
-                    {projection.gameFlowDynamics}
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
-
-          <div className="grid-2">
-            <div className="stat-box">
-              <div className="stat-label">Position</div>
-              <div style={{ fontSize: 13, fontWeight: 700 }}>{projection.player?.position}</div>
-            </div>
-            <div className="stat-box">
-              <div className="stat-label">Tactical Role</div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--accent)' }}>{projection.player?.role}</div>
             </div>
           </div>
-
-          {projection.bayesianMetrics && (
-            <div className="stat-box">
-              <div className="stat-label flex items-center gap-2">
-                <Zap style={{ width: 12, height: 12, color: 'var(--accent)' }} /> Bayesian Model Metrics
-              </div>
-              <div className="grid-2 mt-2">
-                <div>
-                  <div style={{ fontSize: 8, fontWeight: 800, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Prior Mean</div>
-                  <div style={{ fontSize: 14, fontWeight: 900 }}>{projection.bayesianMetrics.priorMean}</div>
-                </div>
-                <div>
-                  <div style={{ fontSize: 8, fontWeight: 800, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Momentum</div>
-                  <div style={{ fontSize: 14, fontWeight: 900, color: 'var(--accent)' }}>
-                    {projection.bayesianMetrics.momentumEffect > 0 ? '+' : ''}{projection.bayesianMetrics.momentumEffect}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          <div className="space-y-2">
-            <div className="stat-label flex items-center gap-2"><BarChart3 style={{ width: 12, height: 12 }} /> Analysis</div>
-            <p className="reasoning-text">{projection.reasoning}</p>
-          </div>
-        </div>
+        )}
       </div>
 
       <button className="btn-primary" onClick={onSave} data-testid="save-to-tracking-btn">
