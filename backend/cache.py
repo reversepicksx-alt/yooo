@@ -389,36 +389,72 @@ async def get_team_by_name(team_name: str, league_id: int = None) -> tuple:
     return None, None
 
 
+async def get_team_info(team_name: str) -> dict:
+    """Look up a club team and return full info: {teamId, name, leagueId} or None."""
+    name_lower = team_name.lower().strip()
+    doc = await db[COL_TEAMS].find_one({"nameLower": name_lower}, {"_id": 0})
+    if doc:
+        return {"teamId": doc["teamId"], "name": doc["name"], "leagueId": doc.get("leagueId")}
+
+    # Fuzzy: substring
+    async for doc in db[COL_TEAMS].find({"nameLower": {"$regex": name_lower}}, {"_id": 0}).limit(1):
+        return {"teamId": doc["teamId"], "name": doc["name"], "leagueId": doc.get("leagueId")}
+
+    return None
+
+
 async def get_player_by_name(player_name: str, team_id: int = None) -> dict:
-    """Look up a player by name, optionally filtered by team. Returns player doc or None."""
+    """Look up a player by name, optionally filtered by team. Returns player doc or None.
+    
+    Search strategy (most precise → least):
+    1. Exact nameClean match
+    2. Last name as end-of-string word boundary (e.g. "salah" matches "mohamed salah")
+    3. Full name as word-boundary substring (e.g. "saka" matches "b. saka")
+    4. Last name word-boundary anywhere
+    """
     from utils import strip_accents
     name_clean = strip_accents(player_name.lower().strip())
 
-    # Try exact match on cleaned name
-    query = {"nameClean": name_clean}
-    if team_id:
-        query["teamId"] = team_id
-    doc = await db[COL_PLAYERS].find_one(query, {"_id": 0})
+    def _q(extra: dict) -> dict:
+        q = dict(extra)
+        if team_id:
+            q["teamId"] = team_id
+        return q
+
+    # 1. Exact match on full cleaned name
+    doc = await db[COL_PLAYERS].find_one(_q({"nameClean": name_clean}), {"_id": 0})
     if doc:
         return doc
 
-    # Try last name match
     parts = name_clean.split()
-    if len(parts) > 1:
-        last_name = parts[-1]
-        query = {"nameClean": {"$regex": last_name}}
-        if team_id:
-            query["teamId"] = team_id
-        async for doc in db[COL_PLAYERS].find(query, {"_id": 0}).limit(5):
-            if last_name in doc.get("nameClean", ""):
-                return doc
+    last_name = parts[-1] if parts else name_clean
 
-    # Fallback: regex on last word
-    last_word = name_clean.split()[-1] if name_clean.split() else name_clean
-    query = {"nameClean": {"$regex": last_word}}
-    if team_id:
-        query["teamId"] = team_id
-    doc = await db[COL_PLAYERS].find_one(query, {"_id": 0})
+    # 2. Last name at end of string with word boundary (catches "Mohamed Salah" for "salah")
+    doc = await db[COL_PLAYERS].find_one(
+        _q({"nameClean": {"$regex": rf"\b{re.escape(last_name)}$"}}), {"_id": 0}
+    )
+    if doc:
+        return doc
+
+    # 3. Full input as word boundary match (catches "B. Saka" for "saka")
+    if name_clean != last_name:
+        doc = await db[COL_PLAYERS].find_one(
+            _q({"nameClean": {"$regex": rf"\b{re.escape(name_clean)}\b"}}), {"_id": 0}
+        )
+        if doc:
+            return doc
+
+    # 4. Last name as word boundary anywhere (broader)
+    doc = await db[COL_PLAYERS].find_one(
+        _q({"nameClean": {"$regex": rf"\b{re.escape(last_name)}\b"}}), {"_id": 0}
+    )
+    if doc:
+        return doc
+
+    # 5. Name contains (last resort — only if all word-boundary matches fail)
+    doc = await db[COL_PLAYERS].find_one(
+        _q({"nameClean": {"$regex": re.escape(last_name)}}), {"_id": 0}
+    )
     return doc
 
 
