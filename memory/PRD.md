@@ -66,6 +66,7 @@ Mobile-first webapp for analyzing soccer player props (pass attempts, shots, sav
   - Dual AI engine for deep tactical reasoning + data synthesis
   - Connected to full system: player cache, API-Sports, entity extraction
   - **Image scan in chat** — upload a prop screenshot directly in tactical, auto-extracts players + runs full analysis
+  - **International stats awareness** — When match context is international (Denmark vs Czechia), prioritizes national team stats (UEFA Nations League, Euro Qualifiers, World Cup, Friendlies) over club data. Club stats shown as secondary reference.
   - Multi-turn conversations with session memory (20 exchanges)
   - Quick suggestion buttons, clean "Live Intelligence" branding
   - No AI model names visible anywhere (Grok/Gemini completely hidden)

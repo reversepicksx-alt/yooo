@@ -57,6 +57,118 @@ SYNTH_SYSTEM = """You are the synthesis layer of REVERSE TACTICAL. Your job:
 9. NEVER mention any AI model names, engines, or technical architecture. You ARE the system."""
 
 
+INTL_LEAGUE_IDS = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 29, 30, 31, 32, 33, 34, 115, 960}
+
+
+def _classify_stat(league_id: int) -> str:
+    """Return 'INTERNATIONAL' or 'CLUB' based on league ID."""
+    return "INTERNATIONAL" if league_id and league_id in INTL_LEAGUE_IDS else "CLUB"
+
+
+async def _is_international_context(team_name: str, opponent_name: str) -> bool:
+    """Check if teams are national teams (indicates international match)."""
+    for name in [team_name, opponent_name]:
+        if not name:
+            continue
+        nat_id, _ = await get_national_team_id(name.lower().strip())
+        if nat_id:
+            return True
+    return False
+
+
+async def _fetch_player_stats_structured(player_id: int, player_name: str, team_name: str, is_intl: bool) -> str:
+    """Fetch a player's stats, separating INTERNATIONAL from CLUB and prioritizing based on context."""
+    intl_stats = []
+    club_stats = []
+
+    for season in [CURRENT_SEASON + 1, CURRENT_SEASON]:
+        try:
+            pdata = await api_football_request("players", {"id": player_id, "season": season})
+            if not pdata or not pdata[0].get("statistics"):
+                continue
+            for stat_entry in pdata[0]["statistics"]:
+                league = stat_entry.get("league", {})
+                lg_name = league.get("name", "")
+                lg_id = league.get("id")
+                lg_country = league.get("country", "")
+                apps = stat_entry.get("games", {}).get("appearences") or 0
+                mins = stat_entry.get("games", {}).get("minutes") or 0
+                pos = stat_entry.get("games", {}).get("position", "")
+                if apps < 1:
+                    continue
+                raw = {
+                    "passes": stat_entry.get("passes", {}).get("total"),
+                    "key_passes": stat_entry.get("passes", {}).get("key"),
+                    "shots": stat_entry.get("shots", {}).get("total"),
+                    "shots_on": stat_entry.get("shots", {}).get("on"),
+                    "tackles": stat_entry.get("tackles", {}).get("total"),
+                    "interceptions": stat_entry.get("tackles", {}).get("interceptions"),
+                    "dribbles": stat_entry.get("dribbles", {}).get("attempts"),
+                    "fouls_drawn": stat_entry.get("fouls", {}).get("drawn"),
+                    "goals": stat_entry.get("goals", {}).get("total"),
+                    "assists": stat_entry.get("goals", {}).get("assists"),
+                    "saves": stat_entry.get("goals", {}).get("saves"),
+                }
+                per_game = {k: round(v / apps, 2) for k, v in raw.items() if v}
+                totals = {k: v for k, v in raw.items() if v}
+                kind = _classify_stat(lg_id)
+                line = f"  [{kind}] {lg_name} ({lg_country}) {season}: {apps} apps, {mins} min, pos={pos}\n    Per game: {per_game}\n    Totals: {totals}"
+                if kind == "INTERNATIONAL":
+                    intl_stats.append(line)
+                else:
+                    club_stats.append(line)
+            if intl_stats or club_stats:
+                break
+        except Exception:
+            continue
+
+    parts = [f"[PLAYER DATA] {player_name} ({team_name}), id={player_id}"]
+
+    if is_intl:
+        # International context — lead with intl stats
+        if intl_stats:
+            parts.append("  === INTERNATIONAL STATS (PRIMARY — this is an international match) ===")
+            parts.extend(intl_stats)
+        else:
+            parts.append("  === INTERNATIONAL STATS: None found for recent seasons ===")
+        if club_stats:
+            parts.append("  === CLUB STATS (secondary reference) ===")
+            parts.extend(club_stats[:3])  # Limit club context
+    else:
+        # Club context — lead with club stats
+        if club_stats:
+            parts.append("  === CLUB STATS (PRIMARY) ===")
+            parts.extend(club_stats)
+        if intl_stats:
+            parts.append("  === INTERNATIONAL STATS (additional context) ===")
+            parts.extend(intl_stats)
+
+    return "\n".join(parts)
+
+
+async def _fetch_national_team_fixtures(team_name: str) -> str:
+    """Fetch recent fixtures for a national team."""
+    nat_id, nat_name = await get_national_team_id(team_name.lower().strip())
+    if not nat_id:
+        return ""
+    try:
+        fixtures = await api_football_request("fixtures", {"team": nat_id, "last": 5})
+        if not fixtures:
+            return ""
+        lines = [f"[DATA] {nat_name} — Last 5 international fixtures:"]
+        for f in fixtures:
+            home = f.get("teams", {}).get("home", {}).get("name", "")
+            away = f.get("teams", {}).get("away", {}).get("name", "")
+            hg = f.get("goals", {}).get("home", 0)
+            ag = f.get("goals", {}).get("away", 0)
+            dt = f.get("fixture", {}).get("date", "")[:10]
+            lg = f.get("league", {}).get("name", "")
+            lines.append(f"  {dt} ({lg}): {home} {hg}-{ag} {away}")
+        return "\n".join(lines)
+    except Exception:
+        return ""
+
+
 async def _extract_image_props(image_base64: str) -> dict:
     """Use Vision AI to extract player prop data from a screenshot, then resolve players."""
     chat = LlmChat(
@@ -167,45 +279,55 @@ Message: "{message}" """
             text = "\n".join(ln for ln in text.split("\n") if not ln.strip().startswith("```"))
         entities = json.loads(text)
 
+        # Detect international context from teams mentioned
+        is_intl = False
+        for team_name in (entities.get("teams") or []):
+            if team_name and await _is_international_context(team_name, ""):
+                is_intl = True
+                break
+        # Also check if player team hints suggest international
+        if not is_intl:
+            for player_name in (entities.get("players") or []):
+                if not player_name:
+                    continue
+                msg_lower = message.lower()
+                # Heuristic: if message mentions country names near player name
+                for kw in ["national", "international", "vs ", "qualifier", "nations league", "euro", "world cup"]:
+                    if kw in msg_lower:
+                        is_intl = True
+                        break
+                if is_intl:
+                    break
+
+        if is_intl:
+            context_parts.append("[MATCH CONTEXT: INTERNATIONAL — Prioritize national team stats over club stats.]")
+
         for player_name in (entities.get("players") or [])[:3]:
             if not player_name:
                 continue
             cached = await get_player_by_name(player_name)
             if cached:
-                context_parts.append(f"[DATA] {cached['name']}: team={cached.get('teamName')}, id={cached['playerId']}, league={cached.get('leagueId')}")
                 if entities.get("needsStats"):
-                    for season in [CURRENT_SEASON + 1, CURRENT_SEASON]:
-                        try:
-                            pdata = await api_football_request("players", {"id": cached["playerId"], "season": season})
-                            if pdata and pdata[0].get("statistics"):
-                                for stat_entry in pdata[0]["statistics"]:
-                                    lg = stat_entry.get("league", {}).get("name", "")
-                                    apps = stat_entry.get("games", {}).get("appearences") or 0
-                                    mins = stat_entry.get("games", {}).get("minutes") or 0
-                                    pos = stat_entry.get("games", {}).get("position", "")
-                                    if apps < 1:
-                                        continue
-                                    raw = {
-                                        "passes": stat_entry.get("passes", {}).get("total"),
-                                        "key_passes": stat_entry.get("passes", {}).get("key"),
-                                        "shots": stat_entry.get("shots", {}).get("total"),
-                                        "shots_on": stat_entry.get("shots", {}).get("on"),
-                                        "tackles": stat_entry.get("tackles", {}).get("total"),
-                                        "interceptions": stat_entry.get("tackles", {}).get("interceptions"),
-                                        "dribbles": stat_entry.get("dribbles", {}).get("attempts"),
-                                        "fouls_drawn": stat_entry.get("fouls", {}).get("drawn"),
-                                        "goals": stat_entry.get("goals", {}).get("total"),
-                                        "assists": stat_entry.get("goals", {}).get("assists"),
-                                    }
-                                    per_game = {k: round(v / apps, 2) for k, v in raw.items() if v}
-                                    context_parts.append(f"  {lg} {season}: {apps} apps, {mins} min, pos={pos}\n    Per game: {per_game}")
-                                break
-                        except Exception:
-                            continue
+                    stats_text = await _fetch_player_stats_structured(
+                        cached["playerId"], cached["name"], cached.get("teamName", ""), is_intl
+                    )
+                    if stats_text:
+                        context_parts.append(stats_text)
+                else:
+                    context_parts.append(f"[DATA] {cached['name']}: team={cached.get('teamName')}, id={cached['playerId']}, league={cached.get('leagueId')}")
 
         for team_name in (entities.get("teams") or [])[:2]:
             if not team_name:
                 continue
+            # Check national team first
+            nat_id, nat_name = await get_national_team_id(team_name.lower().strip())
+            if nat_id:
+                context_parts.append(f"[DATA] National team: {nat_name} (id={nat_id})")
+                fixtures_text = await _fetch_national_team_fixtures(team_name)
+                if fixtures_text:
+                    context_parts.append(fixtures_text)
+                continue
+
             team_id, canonical = await get_team_by_name(team_name)
             if team_id:
                 context_parts.append(f"[DATA] Team: {canonical} (id={team_id})")
@@ -220,13 +342,9 @@ Message: "{message}" """
                             ag = f.get("goals", {}).get("away", 0)
                             dt = f.get("fixture", {}).get("date", "")[:10]
                             results.append(f"    {dt}: {home} {hg}-{ag} {away}")
-                        context_parts.append(f"  Last 5 fixtures:\n" + "\n".join(results))
+                        context_parts.append("  Last 5 fixtures:\n" + "\n".join(results))
                 except Exception:
                     pass
-            else:
-                nat_id, nat_name = await get_national_team_id(team_name.lower())
-                if nat_id:
-                    context_parts.append(f"[DATA] National team: {nat_name} (id={nat_id})")
 
     except Exception:
         pass
@@ -237,40 +355,41 @@ Message: "{message}" """
 
 
 async def _fetch_data_for_props(entries: list) -> str:
-    """Fetch live stats for extracted prop entries."""
+    """Fetch live stats for extracted prop entries, with international awareness."""
     context_parts = []
+
+    # Detect if this is an international match context
+    is_intl = False
+    all_teams = set()
+    all_opponents = set()
+    for e in entries:
+        if e.get("team"):
+            all_teams.add(e["team"])
+        if e.get("opponent"):
+            all_opponents.add(e["opponent"])
+    for name in list(all_teams) + list(all_opponents):
+        if await _is_international_context(name, ""):
+            is_intl = True
+            break
+
+    if is_intl:
+        context_parts.append("[MATCH CONTEXT: INTERNATIONAL — Prioritize national team stats. Club stats are secondary reference only.]")
+
     for e in entries:
         pid = e.get("playerId")
         if not pid:
             continue
-        for season in [CURRENT_SEASON + 1, CURRENT_SEASON]:
-            try:
-                pdata = await api_football_request("players", {"id": pid, "season": season})
-                if pdata and pdata[0].get("statistics"):
-                    for stat_entry in pdata[0]["statistics"]:
-                        lg = stat_entry.get("league", {}).get("name", "")
-                        apps = stat_entry.get("games", {}).get("appearences") or 0
-                        mins = stat_entry.get("games", {}).get("minutes") or 0
-                        pos = stat_entry.get("games", {}).get("position", "")
-                        if apps < 1:
-                            continue
-                        raw = {
-                            "passes": stat_entry.get("passes", {}).get("total"),
-                            "key_passes": stat_entry.get("passes", {}).get("key"),
-                            "shots": stat_entry.get("shots", {}).get("total"),
-                            "shots_on": stat_entry.get("shots", {}).get("on"),
-                            "tackles": stat_entry.get("tackles", {}).get("total"),
-                            "interceptions": stat_entry.get("tackles", {}).get("interceptions"),
-                            "dribbles": stat_entry.get("dribbles", {}).get("attempts"),
-                            "fouls_drawn": stat_entry.get("fouls", {}).get("drawn"),
-                            "goals": stat_entry.get("goals", {}).get("total"),
-                            "assists": stat_entry.get("goals", {}).get("assists"),
-                        }
-                        per_game = {k: round(v / apps, 2) for k, v in raw.items() if v}
-                        context_parts.append(f"[DATA] {e['playerName']} ({e['team']}) — {lg} {season}: {apps} apps, {mins} min, pos={pos}\n  Per game: {per_game}")
-                    break
-            except Exception:
-                continue
+        stats_text = await _fetch_player_stats_structured(pid, e["playerName"], e["team"], is_intl)
+        if stats_text:
+            context_parts.append(stats_text)
+
+    # Fetch national team fixtures if international
+    if is_intl:
+        for name in list(all_teams) + list(all_opponents):
+            fixtures_text = await _fetch_national_team_fixtures(name)
+            if fixtures_text:
+                context_parts.append(fixtures_text)
+
     if context_parts:
         return "\n\n[LIVE SYSTEM DATA]\n" + "\n".join(context_parts) + "\n[END SYSTEM DATA]"
     return ""
