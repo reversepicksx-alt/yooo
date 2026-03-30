@@ -409,7 +409,7 @@ async def predict(req: PredictionRequest):
                     "standings": standings[:6] if standings else [],
                     "odds": match_odds,
                 }
-                tactical_json = json.dumps(tactical_brief, default=str)[:5000]
+                tactical_json = json.dumps(tactical_brief, default=str)[:3000]
 
                 odds_context = ""
                 if match_odds and match_odds.get("bookmakerOdds"):
@@ -423,68 +423,36 @@ async def predict(req: PredictionRequest):
                         model="grok-4.20-reasoning",
                         tools=[{"type": "web_search"}],
                         input=[
-                            {"role": "system", "content": """You are an elite soccer intelligence engine with access to live web data. Your analysis directly drives prediction models that must beat the market. Be PRECISE, QUANTITATIVE, and EVIDENCE-BASED.
+                            {"role": "system", "content": """You are an elite soccer intelligence engine with access to live web data. Be PRECISE, QUANTITATIVE, and EVIDENCE-BASED. Keep responses focused and concise.
 
-CRITICAL RULES:
-1. ALWAYS use web search to find REAL per-game statistics — never estimate or guess
-2. Search SofaScore, FotMob, WhoScored, Transfermarkt for VERIFIED numbers
-3. Cite your source for every stat you report
-4. Distinguish between CLUB and NATIONAL TEAM stats when relevant
-5. Flag any stat that could be stale or from a different competition"""},
-                            {"role": "user", "content": f"""DEEP ANALYSIS REQUEST: {req.propType} prop on {req.playerName} ({player_position or 'Unknown'}) — {player_team} vs {req.opponentName} ({player_venue.upper()}). Line: {req.line}. {odds_context}
+RULES:
+1. Use web search to find real per-game statistics — never estimate
+2. Search SofaScore, FotMob, WhoScored for verified numbers
+3. Cite your source for every stat
+4. Distinguish between CLUB and NATIONAL TEAM stats when relevant"""},
+                            {"role": "user", "content": f"""ANALYSIS: {req.propType} prop on {req.playerName} ({player_position or 'Unknown'}) — {player_team} vs {req.opponentName} ({player_venue.upper()}). Line: {req.line}. {odds_context}
 {pronoun_note}
 
-═══ PHASE 1: VERIFIED STAT EXTRACTION (HIGHEST PRIORITY) ═══
-Search for ACTUAL per-game {req.propType} numbers:
-1. Search "site:sofascore.com {req.playerName} statistics" 
-2. Search "{req.playerName} {player_team} per game stats 2024-25"
-3. Search "{req.playerName} recent matches {req.propType}"
+1. VERIFIED STATS: Search "{req.playerName} {player_team} statistics" on SofaScore/FotMob. Report last 5 games: Date|Opp|{req.propType}|Mins. Calculate season avg, last 5 avg, home/away avg.
 
-Report EXACTLY what you find per game (last 5-8 matches):
-Format: "Date | Opponent | {req.propType}: X | Minutes: Y | Source"
-Calculate: Season avg, Last 5 avg, Home avg, Away avg for {req.propType}
+2. LIVE INTEL: Search "{player_team} {req.opponentName} lineup injuries today". Report confirmed starters, key absences.
 
-═══ PHASE 2: LIVE INTELLIGENCE ═══
-Search for:
-- "{player_team} {req.opponentName} lineup" — confirmed starting XI
-- "{player_team} injuries today" — who's out/doubtful
-- "{req.opponentName} injuries today" — opponent absences
-- Any tactical news (formation changes, manager comments)
+3. MATCHUP: Favorite from odds, possession implications, opponent defensive style impact on {req.propType}.
 
-═══ PHASE 3: MATCHUP DYNAMICS ═══
-- Favorite from odds → possession share implications
-- Position baseline: {player_position} expected range for {req.propType}
-- If saves: Opponent SOT avg is the CEILING. Favored GK = fewer saves.
-- Opponent defensive style → impact on {req.propType} generation
+4. SCENARIOS (4 weighted):
+BASE (50-60%): projected {req.propType}
+BLOWOUT (15-20%): projected
+TRAILING (15-20%): projected  
+CAGEY (10-15%): projected
+Weighted projection = sum(prob * value)
 
-═══ PHASE 4: SCENARIO MODELING ═══
-Build 4 weighted scenarios:
-| Scenario | Prob % | Projected {req.propType} | Logic |
-| BASE CASE (most likely game state) | X% | Y | ... |
-| BLOWOUT (player's team dominates) | X% | Y | ... |
-| TRAILING (player's team behind) | X% | Y | ... |
-| CAGEY/LOW-EVENT | X% | Y | ... |
-Weighted projection = sum(prob × value)
+5. EDGE: Sensitivity (ROBUST/MODERATE/FRAGILE), sub risk, key variables.
 
-═══ PHASE 5: EDGE ASSESSMENT ═══
-- Sensitivity: How fragile is the projection? (ROBUST/MODERATE/FRAGILE)
-- Sub risk: Expected minutes, hook zone for this player
-- Red card / game flow disruption probability
-- Historical performance in similar stakes (H2H, rivalry, high-press games)
+6. VERDICT: OVER or UNDER {req.line}? Confidence 0-100? One sharp sentence.
 
-═══ VERDICT ═══
-Clear OVER or UNDER {req.line}? Confidence 0-100? One-sentence sharp take.
-
-FORMAT YOUR RESPONSE:
-[VERIFIED STATS] — per-game numbers with sources
-[LIVE NEWS] — injuries, lineups, key absences
-[SCENARIO TABLE] — 4 scenarios with probabilities
-[EDGE FACTORS] — sensitivity, sub risk, key variables
-[VERDICT] — clear call with reasoning
-
-DATA CONTEXT: {tactical_json}"""}
+DATA: {tactical_json}"""}
                         ],
-                        max_output_tokens=3000,
+                        max_output_tokens=1500,
                     )
                 result = await loop.run_in_executor(None, _call_grok)
                 return result.output_text if result else None
@@ -493,13 +461,21 @@ DATA CONTEXT: {tactical_json}"""}
 
         grok_tactical_task = grok_tactical_analysis()
 
+        # Fire all wave-2 tasks in parallel with a hard timeout
+        all_wave2 = aio.gather(
+            team_fixture_stats_task, opponent_fixture_stats_task, 
+            player_game_logs_task, grok_tactical_task,
+            return_exceptions=True
+        )
         try:
-            team_fixture_stats, opponent_fixture_stats, player_game_logs, grok_analysis = await aio.wait_for(
-                aio.gather(team_fixture_stats_task, opponent_fixture_stats_task, player_game_logs_task, grok_tactical_task),
-                timeout=90
-            )
+            results = await aio.wait_for(all_wave2, timeout=35)
         except aio.TimeoutError:
-            team_fixture_stats, opponent_fixture_stats, player_game_logs, grok_analysis = [], [], [], None
+            results = [None, None, None, None]
+
+        team_fixture_stats = results[0] if not isinstance(results[0], (Exception, type(None))) else []
+        opponent_fixture_stats = results[1] if not isinstance(results[1], (Exception, type(None))) else []
+        player_game_logs = results[2] if not isinstance(results[2], (Exception, type(None))) else []
+        grok_analysis = results[3] if not isinstance(results[3], (Exception, type(None))) else None
 
         historical_data = {
             "playerStats": player_stats,
@@ -1004,7 +980,7 @@ ALL DATA:
 
 Return ONLY valid JSON. recentSamples MUST be []. 10pt probabilityCurve."""
 
-        response = await chat.send_message(UserMessage(text=prompt))
+        response = await aio.wait_for(chat.send_message(UserMessage(text=prompt)), timeout=18)
         response_text = response.strip()
 
         # Clean up response - remove markdown code fences if present
@@ -1239,7 +1215,7 @@ Write a comprehensive tactical breakdown that makes the user feel like they have
 STYLE: Be authoritative, specific, and opinionated. Every claim backed by a number. NEVER mention any AI model names, engines, or technical architecture. NEVER say "Grok" or "Gemini". You ARE the intelligence system.
 Format with **bold** headers and bullet points."""
 
-            tactical_breakdown = await synth_chat.send_message(UserMessage(text=synth_prompt))
+            tactical_breakdown = await aio.wait_for(synth_chat.send_message(UserMessage(text=synth_prompt)), timeout=15)
         except Exception as e:
             print(f"[PREDICT] Tactical breakdown failed: {e}")
             tactical_breakdown = ""
@@ -1267,7 +1243,7 @@ Format with **bold** headers and bullet points."""
 
         return prediction
 
-    except json.JSONDecodeError as e:
+    except (json.JSONDecodeError, aio.TimeoutError) as e:
         # Return a safe fallback prediction
         return {
             "player": {"id": req.playerId, "name": req.playerName, "team": str(req.teamId), "role": "Unknown", "position": "Unknown"},
