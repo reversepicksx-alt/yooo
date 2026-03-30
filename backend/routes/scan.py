@@ -335,19 +335,61 @@ If there's only one entry, still return it as an array with one element."""
                 original_league_name = league_name
                 original_team_name = (entry.get("playerTeam") or "").strip()
 
-                # For international matches, resolve the national team ID upfront
+                # Hardcoded national team IDs from API-Football
+                NATIONAL_TEAM_IDS = {
+                    "albania": 778, "algeria": 1532, "andorra": 1110, "angola": 1529,
+                    "argentina": 26, "armenia": 1094, "australia": 20, "austria": 775,
+                    "azerbaijan": 1096, "belarus": 1100, "belgium": 1, "benin": 1516,
+                    "bolivia": 2381, "bosnia": 1113, "bosnia & herzegovina": 1113,
+                    "bosnia and herzegovina": 1113, "botswana": 1520, "brazil": 6,
+                    "bulgaria": 1103, "burkina faso": 1502, "cameroon": 1530,
+                    "canada": 5529, "chile": 2383, "colombia": 8, "comoros": 1524,
+                    "congo dr": 1508, "costa rica": 29, "croatia": 3, "cyprus": 1106,
+                    "czech republic": 770, "czechia": 770, "denmark": 21,
+                    "ecuador": 2382, "egypt": 32, "england": 10,
+                    "equatorial guinea": 1521, "estonia": 1101, "faroe islands": 1098,
+                    "finland": 1099, "france": 2, "fyr macedonia": 1105,
+                    "north macedonia": 1105, "gabon": 1503, "georgia": 1104,
+                    "germany": 25, "gibraltar": 1093, "greece": 1117,
+                    "hungary": 769, "iceland": 18, "iran": 22, "israel": 1116,
+                    "italy": 768, "ivory coast": 1501, "cote d'ivoire": 1501,
+                    "jamaica": 2385, "japan": 12, "kazakhstan": 1095,
+                    "kosovo": 1111, "latvia": 1092, "liechtenstein": 1107,
+                    "lithuania": 1097, "luxembourg": 1102, "mali": 1500,
+                    "malta": 1112, "mexico": 16, "moldova": 1114,
+                    "montenegro": 1109, "morocco": 31, "mozambique": 1512,
+                    "netherlands": 1118, "holland": 1118, "nigeria": 19,
+                    "northern ireland": 771, "norway": 1090, "panama": 11,
+                    "paraguay": 2380, "peru": 30, "poland": 24, "portugal": 27,
+                    "republic of ireland": 776, "ireland": 776,
+                    "romania": 774, "san marino": 1115, "saudi arabia": 23,
+                    "scotland": 1108, "senegal": 13, "serbia": 14,
+                    "slovakia": 773, "slovenia": 1091, "south africa": 1531,
+                    "south korea": 17, "korea republic": 17, "spain": 9,
+                    "sudan": 1510, "sweden": 5, "switzerland": 15,
+                    "tanzania": 1489, "tunisia": 28, "turkey": 777, "turkiye": 777,
+                    "usa": 2384, "united states": 2384, "uganda": 1519,
+                    "ukraine": 772, "uruguay": 7, "venezuela": 2379,
+                    "wales": 767, "zambia": 1507, "zimbabwe": 1522,
+                    "ghana": 1534, "kenya": 1535,
+                }
+
+                # For international matches, resolve the national team ID
                 nat_team_id = None
                 if is_international and player_team_hint:
-                    try:
-                        teams_data = await api_football_request("teams", {"search": player_team_hint.title()})
-                        if teams_data:
-                            for t in teams_data[:5]:
-                                tname = t.get("team", {}).get("name", "").lower()
-                                if player_team_hint in tname or tname in player_team_hint:
-                                    nat_team_id = t["team"]["id"]
-                                    break
-                    except Exception:
-                        pass
+                    nat_team_id = NATIONAL_TEAM_IDS.get(player_team_hint)
+                    if not nat_team_id:
+                        # Fallback: API search
+                        try:
+                            teams_data = await api_football_request("teams", {"search": player_team_hint.title()})
+                            if teams_data:
+                                for t in teams_data[:5]:
+                                    tname = t.get("team", {}).get("name", "").lower()
+                                    if t.get("team", {}).get("national") and (player_team_hint in tname or tname in player_team_hint):
+                                        nat_team_id = t["team"]["id"]
+                                        break
+                        except Exception:
+                            pass
 
                 for variant in search_variants:
                     if resolved_player:
@@ -531,18 +573,29 @@ If there's only one entry, still return it as an array with one element."""
             if opponent_name and resolved_player:
                 try:
                     opp_lower = opponent_name.lower().strip()
-                    # Try multiple search variants for the opponent
-                    opp_searches = [opponent_name]
-                    clean_opp = opponent_name.strip()
-                    # Common international team name aliases
-                    COUNTRY_ALIASES = {
-                        "czechia": "Czech Republic", "usa": "United States",
-                        "korea republic": "South Korea", "ir iran": "Iran",
-                        "bosnia": "Bosnia & Herzegovina", "cote d'ivoire": "Ivory Coast",
-                    }
-                    alias = COUNTRY_ALIASES.get(opp_lower)
-                    if alias and alias not in opp_searches:
-                        opp_searches.insert(0, alias)
+
+                    # For international matches, try the hardcoded national team map first
+                    if is_international:
+                        opp_nat_id = NATIONAL_TEAM_IDS.get(opp_lower)
+                        if opp_nat_id:
+                            resolved_opponent = {
+                                "teamId": opp_nat_id,
+                                "teamName": opponent_name.strip(),
+                            }
+
+                    if not resolved_opponent:
+                        # Try multiple search variants for the opponent
+                        opp_searches = [opponent_name]
+                        clean_opp = opponent_name.strip()
+                        # Common international team name aliases
+                        COUNTRY_ALIASES = {
+                            "czechia": "Czech Republic", "usa": "United States",
+                            "korea republic": "South Korea", "ir iran": "Iran",
+                            "bosnia": "Bosnia & Herzegovina", "cote d'ivoire": "Ivory Coast",
+                        }
+                        alias = COUNTRY_ALIASES.get(opp_lower)
+                        if alias and alias not in opp_searches:
+                            opp_searches.insert(0, alias)
                     # Expand common team name abbreviations
                     TEAM_ABBREVS = {"PR": "Paranaense", "MG": "Mineiro", "GO": "Goianiense", "RJ": "Rio"}
                     for abbr, full in TEAM_ABBREVS.items():
