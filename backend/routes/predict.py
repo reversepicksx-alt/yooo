@@ -423,39 +423,68 @@ async def predict(req: PredictionRequest):
                         model="grok-4.20-reasoning",
                         tools=[{"type": "web_search"}],
                         input=[
-                            {"role": "system", "content": "Elite soccer analyst with deep web research. You MUST use web search to find ACTUAL per-game player statistics. Search SofaScore, FotMob, and WhoScored specifically. Do NOT guess or estimate — search and report exact numbers you find. Be concise."},
-                            {"role": "user", "content": f"""Analyze {req.propType} prop on {req.playerName} ({player_position or 'Unknown'}) — {player_team} vs {req.opponentName} ({player_venue.upper()}). Line: {req.line}. {odds_context}
+                            {"role": "system", "content": """You are an elite soccer intelligence engine with access to live web data. Your analysis directly drives prediction models that must beat the market. Be PRECISE, QUANTITATIVE, and EVIDENCE-BASED.
+
+CRITICAL RULES:
+1. ALWAYS use web search to find REAL per-game statistics — never estimate or guess
+2. Search SofaScore, FotMob, WhoScored, Transfermarkt for VERIFIED numbers
+3. Cite your source for every stat you report
+4. Distinguish between CLUB and NATIONAL TEAM stats when relevant
+5. Flag any stat that could be stale or from a different competition"""},
+                            {"role": "user", "content": f"""DEEP ANALYSIS REQUEST: {req.propType} prop on {req.playerName} ({player_position or 'Unknown'}) — {player_team} vs {req.opponentName} ({player_venue.upper()}). Line: {req.line}. {odds_context}
 {pronoun_note}
 
-TASK 1 — FIND REAL STATS (MOST IMPORTANT):
-Search specifically for:
-- "site:sofascore.com {req.playerName}" to find the player's SofaScore profile
-- "{req.playerName} {player_team} player statistics {req.propType}"
-- "{req.playerName} recent matches stats"
-Go to SofaScore.com or FotMob and find this player's ACTUAL per-game {req.propType} from their last 5 matches.
-Report per game: date, opponent, exact {req.propType} count, minutes played.
-Example format: "Mar 14 vs Kansas City: 2 shots (90 min) — source: SofaScore"
-DO NOT use any numbers I gave you in the DATA section below — those may be wrong. Only report what you find from your web search.
+═══ PHASE 1: VERIFIED STAT EXTRACTION (HIGHEST PRIORITY) ═══
+Search for ACTUAL per-game {req.propType} numbers:
+1. Search "site:sofascore.com {req.playerName} statistics" 
+2. Search "{req.playerName} {player_team} per game stats 2024-25"
+3. Search "{req.playerName} recent matches {req.propType}"
 
-TASK 2 — LIVE NEWS:
-Search for injuries, confirmed lineups, key absences for {player_team} and {req.opponentName}.
+Report EXACTLY what you find per game (last 5-8 matches):
+Format: "Date | Opponent | {req.propType}: X | Minutes: Y | Source"
+Calculate: Season avg, Last 5 avg, Home avg, Away avg for {req.propType}
 
-TASK 3 — TACTICAL ANALYSIS:
-- Matchup: favorite (from odds), expected possession %, game type (open/cagey/one-sided)
+═══ PHASE 2: LIVE INTELLIGENCE ═══
+Search for:
+- "{player_team} {req.opponentName} lineup" — confirmed starting XI
+- "{player_team} injuries today" — who's out/doubtful
+- "{req.opponentName} injuries today" — opponent absences
+- Any tactical news (formation changes, manager comments)
+
+═══ PHASE 3: MATCHUP DYNAMICS ═══
+- Favorite from odds → possession share implications
 - Position baseline: {player_position} expected range for {req.propType}
-- If saves prop: Opponent SOT avg → saves ceiling. Favored GK = fewer saves.
-- Scenarios: Base/Blowout/Trailing/Cagey — probability % and expected {req.propType} value
-- Sensitivity: Sub risk, red card impact — ROBUST/MODERATE/FRAGILE
-- Verdict: Over or under {req.line}? Confidence 0-100?
+- If saves: Opponent SOT avg is the CEILING. Favored GK = fewer saves.
+- Opponent defensive style → impact on {req.propType} generation
 
-Format your response:
-[VERIFIED STATS] — exact per-game {req.propType} numbers from web sources (cite the source)
-[LIVE NEWS] — injuries, lineups
-[ANALYSIS] — scenarios, verdict
+═══ PHASE 4: SCENARIO MODELING ═══
+Build 4 weighted scenarios:
+| Scenario | Prob % | Projected {req.propType} | Logic |
+| BASE CASE (most likely game state) | X% | Y | ... |
+| BLOWOUT (player's team dominates) | X% | Y | ... |
+| TRAILING (player's team behind) | X% | Y | ... |
+| CAGEY/LOW-EVENT | X% | Y | ... |
+Weighted projection = sum(prob × value)
 
-DATA: {tactical_json}"""}
+═══ PHASE 5: EDGE ASSESSMENT ═══
+- Sensitivity: How fragile is the projection? (ROBUST/MODERATE/FRAGILE)
+- Sub risk: Expected minutes, hook zone for this player
+- Red card / game flow disruption probability
+- Historical performance in similar stakes (H2H, rivalry, high-press games)
+
+═══ VERDICT ═══
+Clear OVER or UNDER {req.line}? Confidence 0-100? One-sentence sharp take.
+
+FORMAT YOUR RESPONSE:
+[VERIFIED STATS] — per-game numbers with sources
+[LIVE NEWS] — injuries, lineups, key absences
+[SCENARIO TABLE] — 4 scenarios with probabilities
+[EDGE FACTORS] — sensitivity, sub risk, key variables
+[VERDICT] — clear call with reasoning
+
+DATA CONTEXT: {tactical_json}"""}
                         ],
-                        max_output_tokens=2000,
+                        max_output_tokens=3000,
                     )
                 result = await loop.run_in_executor(None, _call_grok)
                 return result.output_text if result else None
@@ -718,54 +747,64 @@ DATA: {tactical_json}"""}
         chat = LlmChat(
             api_key=EMERGENT_LLM_KEY,
             session_id=f"predict-{uuid.uuid4().hex[:8]}",
-            system_message="""You are the final-stage predictor in a DUAL AI pipeline. You receive:
-1. A STRUCTURED DATA DIGEST (real API stats, compiled by code — 100% accurate numbers)
-2. A TACTICAL ANALYSIS from Grok (matchup analysis, live web search intel, scenarios, sensitivity tests, sub risk)
-3. DEEP MATCH DATA (per-fixture stats and player game logs from the real API)
+            system_message="""You are the FINAL CALIBRATION ENGINE in a dual-AI prediction pipeline. You receive verified data from multiple sources and must produce the most accurate, market-beating prediction possible.
 
-Your job: SYNTHESIZE all inputs into a single, calibrated prediction JSON. Do NOT re-derive what Grok already analyzed — USE their analysis directly. Focus on:
+INPUTS YOU RECEIVE:
+1. STRUCTURED DATA DIGEST — real API stats compiled by code (100% accurate numbers)
+2. TACTICAL ANALYSIS from Grok — live web-searched stats, injury intel, scenario modeling
+3. DEEP MATCH DATA — per-fixture stats and player game logs from the real API
 
-STEP 1: VALIDATE the player's role and POSITION from the data digest. Apply position baselines:
-  - GK saves: Capped by opponent shots on target. If opponent avg 10 shots/game with 35% on target = 3.5 SOT. GK saves ~70% = ~2.5 saves. NEVER project above opponent SOT avg.
-  - GK saves INVERSE: Favored team's GK = FEWER saves. Underdog GK = MORE saves.
-  - Defender: tackles 2-4, interceptions 1-3, blocks 0-2, shots 0-1
-  - Midfielder: shots 1-2 (AM 2-3), passes 30-50, key passes 1-3
-  - Forward: shots 2-4 (elite 3-5), key passes 0-2
+YOUR CALIBRATION PROTOCOL:
 
-STEP 2: CROSS-REFERENCE Grok's scenario analysis with the game log data — does the evidence support Grok's assessment?
-  - For SAVES: Check if Grok's saves projection exceeds opponent's shots-on-target average. If yes, CAP IT.
-  - For SHOTS: Check if projection exceeds what's normal for this position. Midfielders rarely exceed 3 shots/game.
+STEP 1: ANCHOR ON EVIDENCE
+- Grok's web-verified per-game stats are your PRIMARY anchor (web-searched from SofaScore/FotMob)
+- Data digest provides team-level context (possession, shots, tactical setup)
+- Game logs provide historical distribution — use for variance estimation
+- If sources disagree, rank: Grok web-verified > Game logs > Data digest estimates
 
-STEP 3: CALIBRATE the final projected value using:
-- Grok's VERIFIED STATS section as ground truth (web-searched actual game numbers)
-- Grok's weighted scenario projection as the starting point
-- Game log data as secondary reference (API data may be incomplete — Grok's web-verified stats take priority)
-- Data digest numbers for team/opponent context
-- If Grok's verified stats and API game logs disagree, USE GROK'S NUMBERS and note the discrepancy
-STEP 4: SET CONFIDENCE based on:
-- Data quality (sample size, recency)
-- Grok's sensitivity test results (ROBUST = 75+, MODERATE = 55-74, FRAGILE = 40-54)
-- How close the projection is to the line (within 0.5 = coin flip = max 55 confidence)
+STEP 2: POSITION-CALIBRATED CEILINGS
+Apply hard ceilings based on position and prop type:
+- GK saves: CAPPED by opponent avg SoT. If opp avg 3.5 SoT and GK saves 70% → max ~2.5 saves. NEVER exceed opp SoT.
+- GK saves INVERSE: Favored GK = FEWER saves (less shots faced). Underdog GK = MORE.
+- Defender: tackles 2-5, interceptions 1-3, blocks 0-3, shots 0-1
+- Midfielder: shots 1-3 (AM 2-4), passes 25-55, key passes 1-3, tackles 1-4
+- Forward: shots 2-5 (elite 3-6), key passes 0-2, dribbles 1-4
 
-DRIBBLE-SPECIFIC: Most volatile stat. AWAY + low-block = default UNDER when line is close to average.
+STEP 3: BAYESIAN CALIBRATION
+- priorMean: Weighted avg of last 5 games (recency-weighted: most recent = 2x weight)
+- momentumEffect: Trend direction — positive if ascending 3-game trend, negative if descending
+- covariateAdjustment: Venue split differential (home vs away avg difference for this stat)
+- reversalFlag: If player hit >80th percentile last game, flag "downward_reversal_likely" (regression to mean)
 
-Return ONLY valid JSON (no markdown).
+STEP 4: EDGE DETECTION & CONFIDENCE
+- If |projectedValue - line| < 0.3 → this is a COIN FLIP → max confidence 52%
+- If |projectedValue - line| < 0.8 → low edge → max confidence 62%
+- If |projectedValue - line| >= 1.5 → strong edge → confidence 70-85%
+- Grok's sensitivity test: ROBUST = +10 conf, MODERATE = 0, FRAGILE = -10 conf
+- Low sample size (<5 games) → cap confidence at 60%
+
+STEP 5: PROBABILITY CURVE
+Generate 10-point probability distribution centered on projectedValue:
+- Use normal distribution with std dev from game log variance
+- Each point: {"value": X, "probability": Y} where probabilities sum to ~1.0
+
+DRIBBLE-SPECIFIC RULE: Most volatile stat. AWAY + low-block opponent = default UNDER when line is close to average.
+
+Return ONLY valid JSON (no markdown code fences).
 
 JSON structure:
 {"player":{"id":int,"name":"","team":"","role":"","position":""},"opponent":"","league":"","propType":"","line":0,"projectedValue":0,"recommendation":"over|under","confidenceScore":0-100,"confidenceLevel":"Low|Medium|High|Very High","confidenceInterval":[lo,hi],"matchupOverview":{"homeTeam":"","awayTeam":"","favorite":"home|away|even","moneyline":{"home":"","draw":"","away":""},"expectedPossession":{"home":0,"away":0},"expectedGameType":"open|cagey|one-sided|high-tempo","keyMatchupFactor":""},"recentSamples":[],"bayesianMetrics":{"priorMean":0,"momentumEffect":0,"covariateAdjustment":0,"reversalFlag":"stable|upward_reversal_likely|downward_reversal_likely"},"probabilityCurve":[{"value":0,"probability":0}],"tacticalAlerts":[{"type":"injury|lineup|tactical|sub_risk","message":"","severity":"low|medium|high"}],"sharpSummary":"","reasoning":"","scenarioAnalysis":"","keyEvidence":"","uncertaintyNote":"","sensitivityTests":"","subRisk":"","gameFlowDynamics":""}
 
-Field requirements:
-- matchupOverview: Home/away teams, moneyline odds, expected possession split, expected game type, key matchup factor. Use Grok's web intel + odds data.
-- sharpSummary: 2-3 sentences. Core edge. Be direct.
-- reasoning: 2-3 paragraphs synthesizing Grok's analysis + data digest numbers. Quote specific stats.
-- scenarioAnalysis: Take Grok's scenario breakdown directly — refine if game log data contradicts it.
-- keyEvidence: Quote 5-8 specific values from the data. Format: "Last 5: X (vs Team, venue), Y (vs Team, venue)..."
-- sensitivityTests: Take Grok's sensitivity results directly.
-- subRisk: Take Grok's sub risk quantification directly.
-- gameFlowDynamics: Take Grok's game flow analysis directly.
-- uncertaintyNote: Key risk factor + data limitations.
-- recentSamples: MUST BE EMPTY ARRAY []. DO NOT generate any. Backend injects real data.
-- probabilityCurve: 10 data points centered on projection."""
+FIELD REQUIREMENTS:
+- matchupOverview: Real team names, moneyline odds, expected possession split, game type, key factor
+- sharpSummary: 2-3 sentences. Core edge. Opinionated. Quote ONE decisive number.
+- reasoning: 2-3 paragraphs. Synthesize Grok + data digest. Quote specific stats per game.
+- scenarioAnalysis: Use Grok's 4-scenario table with weighted projection
+- keyEvidence: 5-8 specific data points with context
+- bayesianMetrics: Calculate using protocol above
+- probabilityCurve: 10 data points, normal distribution around projection
+- recentSamples: MUST BE EMPTY ARRAY []. Backend injects real data.
+- sensitivityTests, subRisk, gameFlowDynamics: Take from Grok's analysis, refine if game logs contradict"""
         )
         chat.with_model("gemini", "gemini-2.5-flash")
 
@@ -1164,23 +1203,41 @@ Return ONLY valid JSON. recentSamples MUST be []. 10pt probabilityCurve."""
                 system_message=SYNTH_SYSTEM,
             ).with_model("gemini", "gemini-2.5-flash")
 
-            synth_prompt = f"""The prediction system just analyzed {req.playerName} — {prop_label} line {req.line} vs {req.opponentName} [{req.venue.upper()}].
+            synth_prompt = f"""The prediction engine just analyzed {req.playerName} — {prop_label} line {req.line} vs {req.opponentName} [{req.venue.upper()}].
 
 Result: Projected {prediction.get('projectedValue', '?')}, recommends {prediction.get('recommendation', '?').upper()} with {prediction.get('confidenceScore', '?')}% confidence.
 
 {full_context}
 
-Write a polished tactical breakdown for the user. Cover:
-1. **Verdict** — Clear over/under call with reasoning
-2. **Role & Matchup** — How the player's role in this system affects the prop
-3. **Key Numbers** — Quote specific stats (per game averages, venue splits, H2H data)
-4. **Game Flow Scenarios** — How different match states affect the prop
-5. **Risk Factors** — Sub risk, injury concerns, lineup unknowns
-6. **TL;DR** — 2-sentence bottom line
+Write a comprehensive tactical breakdown that makes the user feel like they have insider intelligence. Structure it as:
 
-{"IMPORTANT: This is an INTERNATIONAL match. Lead with national team stats, recent international form, and how the player performs in international duty vs club duty." if is_intl else ""}
+1. **Verdict** — Bold call. "{prediction.get('recommendation', '?').upper()} {req.line} {prop_label}" with ONE decisive stat that seals it.
 
-Format with **bold** headers. Be direct and opinionated. NEVER mention any AI model names."""
+2. **Player Role Analysis** — How {req.playerName}'s specific role in the tactical system affects {prop_label} generation. Reference formation, positional responsibilities, and how the matchup exploits or limits this.
+
+3. **The Numbers** — Key statistical evidence:
+   - Season average vs last 5 avg (trend detection)
+   - Home vs away split for this stat
+   - Head-to-head history if available
+   - Per-game numbers from recent matches with opponents named
+
+4. **Game Script Scenarios** — How different match states change the equation:
+   - Base case (50-60%): expected flow → projected output
+   - Blowout (15-20%): impact on minutes/role/stat generation
+   - Trailing (15-20%): tactical shift effects
+   - Cagey/defensive (10-15%): floor scenario
+
+5. **Risk Radar** — What could go wrong:
+   - Sub risk (expected minutes, manager rotation patterns)
+   - Injury/fitness concerns
+   - Tactical wildcards (opponent formation surprise, weather, stakes)
+
+6. **TL;DR** — 2 sentences. The sharpest take possible. Quote one number.
+
+{"IMPORTANT: This is an INTERNATIONAL match. Lead with national team form, recent international stats, and how the player's international role differs from club duty. Flag if sample size is small." if is_intl else ""}
+
+STYLE: Be authoritative, specific, and opinionated. Every claim backed by a number. NEVER mention any AI model names, engines, or technical architecture. NEVER say "Grok" or "Gemini". You ARE the intelligence system.
+Format with **bold** headers and bullet points."""
 
             tactical_breakdown = await synth_chat.send_message(UserMessage(text=synth_prompt))
         except Exception as e:

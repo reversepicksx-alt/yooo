@@ -66,6 +66,9 @@ export default function App() {
   const [reanalyzingPick, setReanalyzingPick] = useState(null);
   const [correctingPick, setCorrectingPick] = useState(null); // pickId being corrected
   const [correctValue, setCorrectValue] = useState('');
+  const [profileNewPw, setProfileNewPw] = useState('');
+  const [profileConfirmPw, setProfileConfirmPw] = useState('');
+  const [profilePwLoading, setProfilePwLoading] = useState(false);
 
   // Combo mode state
   const [comboMode, setComboMode] = useState(false);
@@ -701,6 +704,26 @@ export default function App() {
     }
   };
 
+  const handleProfilePasswordReset = async () => {
+    if (profileNewPw.length < 6) { toast.error('Password must be at least 6 characters'); return; }
+    if (profileNewPw !== profileConfirmPw) { toast.error('Passwords do not match'); return; }
+    setProfilePwLoading(true);
+    try {
+      const res = await resetPassword(auth.email, profileNewPw);
+      if (res.verified) {
+        localStorage.setItem('rp_token', res.session_token);
+        setAuth(prev => ({ ...prev, token: res.session_token }));
+        toast.success('Password updated successfully');
+        setProfileNewPw('');
+        setProfileConfirmPw('');
+      }
+    } catch (err) {
+      toast.error(err.message || 'Failed to reset password');
+    } finally {
+      setProfilePwLoading(false);
+    }
+  };
+
   const handleLogout = async () => {
     if (auth) {
       try { await authLogout(auth.email, auth.token); } catch {}
@@ -743,7 +766,7 @@ export default function App() {
             <div className={`api-dot ${apiStatus}`} data-testid="api-status-dot" />
             <span>API</span>
           </div>
-          <div className="version-badge">v2.1</div>
+          <div className="version-badge">v2.2</div>
           <div style={{ position: 'relative' }}>
             <button className="icon-btn" onClick={() => setShowNotifications(!showNotifications)} data-testid="notification-bell">
               <Bell />
@@ -1930,9 +1953,9 @@ export default function App() {
             {!scanPrediction && (
               <>
                 {/* Header */}
-                <div style={{ textAlign: 'center', marginBottom: 20 }}>
-                  <div style={{ fontSize: 22, fontWeight: 900, color: '#fff', letterSpacing: '-0.5px' }}>Scan a Prop</div>
-                  <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', marginTop: 4 }}>Upload a screenshot of any player prop for instant analysis</div>
+                <div style={{ textAlign: 'center', marginBottom: 24 }}>
+                  <div style={{ fontSize: 24, fontWeight: 800, color: '#fff', letterSpacing: '-0.5px' }}>Scan a Prop</div>
+                  <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)', marginTop: 6, fontWeight: 500 }}>Upload a screenshot for instant AI analysis</div>
                 </div>
 
                 {/* Upload Zone */}
@@ -1940,36 +1963,44 @@ export default function App() {
                   <div
                     data-testid="scan-upload-zone"
                     onClick={() => scanFileRef.current?.click()}
-                    onDragOver={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = 'var(--accent)'; }}
-                    onDragLeave={(e) => { e.currentTarget.style.borderColor = 'rgba(100,100,120,0.3)'; }}
+                    onDragOver={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.background = 'rgba(16,185,129,0.04)'; }}
+                    onDragLeave={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)'; e.currentTarget.style.background = 'rgba(255,255,255,0.015)'; }}
                     onDrop={(e) => {
                       e.preventDefault();
-                      e.currentTarget.style.borderColor = 'rgba(100,100,120,0.3)';
+                      e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)';
+                      e.currentTarget.style.background = 'rgba(255,255,255,0.015)';
                       const file = e.dataTransfer.files[0];
                       if (file && file.type.startsWith('image/')) handleScanUpload(file);
                     }}
                     style={{
-                      border: '2px dashed rgba(100,100,120,0.3)', borderRadius: 16, padding: '48px 24px',
-                      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16,
-                      cursor: 'pointer', transition: 'border-color 0.2s',
-                      background: 'rgba(255,255,255,0.02)',
+                      border: '1.5px dashed rgba(255,255,255,0.06)', borderRadius: 'var(--radius-xl)', padding: '56px 24px',
+                      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 20,
+                      cursor: 'pointer', transition: 'all 0.25s cubic-bezier(0.25, 0.1, 0.25, 1)',
+                      background: 'rgba(255,255,255,0.015)',
+                      position: 'relative', overflow: 'hidden',
                     }}
                   >
                     <div style={{
-                      width: 64, height: 64, borderRadius: 16, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)',
+                      position: 'absolute', top: 0, left: '50%', transform: 'translateX(-50%)',
+                      width: '60%', height: '1px', background: 'linear-gradient(90deg, transparent, rgba(16,185,129,0.2), transparent)',
+                    }} />
+                    <div style={{
+                      width: 72, height: 72, borderRadius: 20, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      background: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.12)',
+                      boxShadow: '0 0 32px rgba(16,185,129,0.06)',
                     }}>
-                      <Camera style={{ width: 28, height: 28, color: 'var(--accent)' }} />
+                      <Camera style={{ width: 30, height: 30, color: 'var(--accent)' }} />
                     </div>
                     <div style={{ textAlign: 'center' }}>
-                      <div style={{ fontSize: 15, fontWeight: 700, color: '#fff' }}>Tap to upload screenshot</div>
-                      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', marginTop: 4 }}>or drag & drop an image here</div>
+                      <div style={{ fontSize: 15, fontWeight: 700, color: 'rgba(255,255,255,0.9)', letterSpacing: '-0.2px' }}>Tap to upload screenshot</div>
+                      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.28)', marginTop: 6, fontWeight: 500 }}>or drag & drop an image</div>
                     </div>
                     <div style={{
-                      padding: '8px 20px', borderRadius: 8, fontSize: 12, fontWeight: 800,
-                      background: 'var(--accent)', color: '#000', letterSpacing: '0.04em',
+                      padding: '10px 24px', borderRadius: 'var(--radius-sm)', fontSize: 11, fontWeight: 800,
+                      background: 'var(--accent)', color: '#000', letterSpacing: '0.06em',
+                      boxShadow: '0 4px 20px rgba(16,185,129,0.2)', display: 'flex', alignItems: 'center', gap: 6,
                     }}>
-                      <Upload style={{ width: 14, height: 14, display: 'inline', verticalAlign: 'middle', marginRight: 6 }} />
+                      <Upload style={{ width: 14, height: 14 }} />
                       CHOOSE IMAGE
                     </div>
                     <input
@@ -1988,10 +2019,10 @@ export default function App() {
 
                 {/* Scanning Spinner */}
                 {isScanning && (
-                  <div style={{ textAlign: 'center', padding: '40px 0' }} data-testid="scan-loading">
+                  <div style={{ textAlign: 'center', padding: '48px 0' }} data-testid="scan-loading">
                     <div className="spinner-ring"><Camera className="inner-icon" style={{ width: 24, height: 24 }} /></div>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', marginTop: 16 }}>Analyzing screenshot...</div>
-                    <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', marginTop: 4 }}>AI is reading your player props</div>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: '#fff', marginTop: 20, letterSpacing: '-0.2px' }}>Analyzing screenshot...</div>
+                    <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)', marginTop: 6, fontWeight: 500 }}>Reading player props with AI vision</div>
                   </div>
                 )}
 
@@ -2240,6 +2271,98 @@ export default function App() {
           </div>
         )}
 
+        {/* PROFILE TAB */}
+        {activeTab === 'profile' && (
+          <div className="animate-fade-in space-y-6" data-testid="profile-tab">
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, paddingTop: 8, paddingBottom: 8 }}>
+              <div className="profile-avatar">
+                <User />
+              </div>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.3px' }}>{auth.email?.split('@')[0]}</div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--accent)', letterSpacing: '0.08em', textTransform: 'uppercase', marginTop: 2 }}>{auth.accessType || 'Member'}</div>
+              </div>
+            </div>
+
+            <div className="profile-section" data-testid="profile-account-section">
+              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 12 }}>Account</div>
+              <div className="space-y-3">
+                <div className="profile-field">
+                  <div className="profile-field-icon"><Mail style={{ width: 16, height: 16 }} /></div>
+                  <div className="profile-field-content">
+                    <div className="profile-field-label">Email</div>
+                    <div className="profile-field-value" data-testid="profile-email">{auth.email}</div>
+                  </div>
+                </div>
+                <div className="profile-field">
+                  <div className="profile-field-icon"><Shield style={{ width: 16, height: 16 }} /></div>
+                  <div className="profile-field-content">
+                    <div className="profile-field-label">Access Level</div>
+                    <div className="profile-field-value" data-testid="profile-access">{auth.accessType || 'Member'}</div>
+                  </div>
+                </div>
+                <div className="profile-field">
+                  <div className="profile-field-icon"><BarChart3 style={{ width: 16, height: 16 }} /></div>
+                  <div className="profile-field-content">
+                    <div className="profile-field-label">Total Picks</div>
+                    <div className="profile-field-value" data-testid="profile-total-picks">{savedPicks.length}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="profile-section" data-testid="profile-password-section">
+              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 12 }}>Reset Password</div>
+              <div className="space-y-3">
+                <div className="profile-field" style={{ padding: '8px 12px' }}>
+                  <div className="profile-field-icon"><Lock style={{ width: 16, height: 16 }} /></div>
+                  <input type="password" value={profileNewPw} onChange={e => setProfileNewPw(e.target.value)}
+                    placeholder="New password (min 6 chars)" data-testid="profile-new-pw"
+                    style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: 'var(--text-primary)', fontSize: 13, fontFamily: 'inherit' }} />
+                </div>
+                <div className="profile-field" style={{ padding: '8px 12px' }}>
+                  <div className="profile-field-icon"><Lock style={{ width: 16, height: 16 }} /></div>
+                  <input type="password" value={profileConfirmPw} onChange={e => setProfileConfirmPw(e.target.value)}
+                    placeholder="Confirm new password" data-testid="profile-confirm-pw"
+                    style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: 'var(--text-primary)', fontSize: 13, fontFamily: 'inherit' }} />
+                </div>
+                <button className="btn-primary" onClick={handleProfilePasswordReset}
+                  disabled={profilePwLoading || profileNewPw.length < 6} data-testid="profile-reset-pw-btn">
+                  {profilePwLoading ? <Loader2 className="animate-spin" style={{ width: 16, height: 16 }} /> : <Lock style={{ width: 16, height: 16 }} />}
+                  {profilePwLoading ? 'Updating...' : 'Update Password'}
+                </button>
+              </div>
+            </div>
+
+            <div className="profile-section">
+              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 12 }}>App</div>
+              <div className="space-y-3">
+                <div className="profile-field">
+                  <div className="profile-field-icon"><Zap style={{ width: 16, height: 16 }} /></div>
+                  <div className="profile-field-content">
+                    <div className="profile-field-label">Version</div>
+                    <div className="profile-field-value">v2.2</div>
+                  </div>
+                </div>
+                <div className="profile-field">
+                  <div className="profile-field-icon"><Activity style={{ width: 16, height: 16 }} /></div>
+                  <div className="profile-field-content">
+                    <div className="profile-field-label">API Status</div>
+                    <div className="profile-field-value" style={{ color: apiStatus === 'online' ? 'var(--accent)' : 'var(--danger)' }}>
+                      {apiStatus === 'online' ? 'Connected' : 'Offline'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <button className="btn-secondary" onClick={handleLogout} data-testid="profile-logout-btn"
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, color: 'var(--danger)' }}>
+              <LogOut style={{ width: 16, height: 16 }} /> Log Out
+            </button>
+          </div>
+        )}
+
       </main>
 
       {/* Bottom Nav */}
@@ -2254,6 +2377,11 @@ export default function App() {
             onClick={() => setActiveTab('tracking')} data-testid="nav-tracking">
             <Activity />
             <span>Tracking</span>
+          </button>
+          <button className={`nav-item ${activeTab === 'profile' ? 'active' : ''}`}
+            onClick={() => setActiveTab('profile')} data-testid="nav-profile">
+            <User />
+            <span>Profile</span>
           </button>
         </div>
       </nav>
