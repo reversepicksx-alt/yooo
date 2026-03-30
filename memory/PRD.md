@@ -71,7 +71,7 @@ Mobile-first webapp for analyzing soccer player props (pass attempts, shots, sav
   - Quick suggestion buttons, clean "Live Intelligence" branding
   - No AI model names visible anywhere (Grok/Gemini completely hidden)
   - Camera button in input area for image attachment
-- [x] **3-tab navigation**: Scan | Tactical | Tracking
+- [x] **Scan + Tactical Connected** — After scan prediction completes, automatically fires the Tactical engine to provide a deep tactical breakdown alongside the statistical prediction. Users see: prediction card (numbers/stats) + tactical deep dive (reasoning, matchups, scenarios) in one seamless flow. No tab-switching needed.
 - [x] **All tests passed (100%)** — Backend: 9/9, Frontend: all UI verified
 
 ### 2026-03-30 (Session 1 - Refactor + Cache Build)
