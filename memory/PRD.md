@@ -52,23 +52,24 @@ Mobile-first webapp for analyzing soccer player props (pass attempts, shots, sav
 
 ## Completed Work
 
-### 2026-03-30 (Session 2 - Cache-First Resolution + Combo Props)
+### 2026-03-30 (Session 2 - Cache-First Resolution + Combo Props + Reverse Tactical)
 - [x] **Wired scan.py to use MongoDB cache as PRIMARY player resolution**
-  - Replaced ~400 lines of complex API-Sports search with cache-first lookups
-  - `get_player_by_name()` uses 4-tier search: exact nameClean → last name end-of-string → word-boundary full → word-boundary last
-  - Word-boundary regex prevents false positives (e.g., "Saka" no longer matches "Wan-Bissaka")
-  - API-Sports fallback only used if cache misses
-  - Opponent resolution also uses cache first (`get_team_by_name`, `get_national_team_id`)
-  - League inference uses cache `get_team_info()` before hardcoded map
-- [x] **Added `get_team_info()` to cache.py** - Returns full team doc including leagueId
-- [x] **Fixed player name matching** - Word boundary regex for accent-stripped names
-- [x] **Combo Prop Detection & Resolution** (NEW FEATURE)
-  - Updated GPT-4o Vision prompt to detect combo props ("Player A + Player B", "(Combo)" label, "Team1/Team2")
-  - Backend resolves BOTH players independently via cache, returns `isCombo: true` + `resolvedPlayers[]` array
-  - Frontend shows purple "COMBO PROP" badge with Users icon, both player names/teams
-  - "RUN COMBO PREDICTION" button routes to existing `predictCombo()` pipeline
-  - Combo result card shows individual projections + combined projection vs combined line
-- [x] **All tests passed (100%)** - Backend: 11/11, Frontend: all UI elements verified
+  - Cache-first lookups with word-boundary regex (prevents "Saka" → "Wan-Bissaka")
+  - API-Sports fallback only on cache miss
+- [x] **Combo Prop Detection & Resolution**
+  - GPT-4o Vision detects "Player A + Player B" combo format
+  - Resolves both players, returns `isCombo: true` + `resolvedPlayers[]`
+  - Frontend: purple COMBO PROP badge, dual player display, routes to predictCombo()
+- [x] **Bug Fix: Missing `import asyncio as aio` in predict.py** — Prediction pipeline was broken since refactor
+- [x] **PUSH card styling** — Push results get amber/yellow border (distinct from hit/miss/scheduled)
+- [x] **Reverse Tactical Tab (NEW MAJOR FEATURE)**
+  - Dual AI engine: Grok-4.20 (tactical reasoning) + Gemini 2.5 Flash (data synthesis)
+  - Connected to full system: player cache, API-Sports, entity extraction
+  - Multi-turn conversations with session memory (20 exchanges)
+  - Quick suggestion buttons, GROK/GEMINI/LIVE source badges
+  - Beautiful dark UI with indigo/purple accent theme
+- [x] **3-tab navigation**: Scan | Tactical | Tracking
+- [x] **All tests passed (100%)** — Backend: 9/9, Frontend: all UI verified
 
 ### 2026-03-30 (Session 1 - Refactor + Cache Build)
 - [x] Fixed "NO MATCH" bug for international players with Nordic characters (Højbjerg, Euro Qualifiers)
