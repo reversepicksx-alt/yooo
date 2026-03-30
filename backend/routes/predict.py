@@ -143,7 +143,7 @@ async def predict(req: PredictionRequest):
             return None
 
         standings_task = get_standings_multi_season()
-        fixtures_task = get_recent_fixtures_fast(actual_team_id or 40, 30)
+        fixtures_task = get_recent_fixtures_fast(actual_team_id or 40, 50)
         odds_task = get_match_odds()
 
         import time as _t
@@ -336,9 +336,11 @@ async def predict(req: PredictionRequest):
             venue_filtered_opp_fixtures[:5] if len(venue_filtered_opp_fixtures) >= 3 else opponent_fixture_list[:5],
             req.opponentId, 5
         )
-        # Player game logs: search ALL fixtures for maximum game log coverage
-        # International teams especially need deep lookback for away game samples
-        player_game_logs_task = fetch_player_game_logs(all_team_fixtures, req.playerId, 25)
+        # Player game logs: VENUE-PRIORITIZED ordering
+        # Search venue-matching fixtures first (away if away prop, home if home prop)
+        # so we maximize relevant venue samples (target: 15-20 venue-matched games)
+        venue_first_fixtures = venue_filtered_team_fixtures + [f for f in all_team_fixtures if f.get("venue") != player_venue]
+        player_game_logs_task = fetch_player_game_logs(venue_first_fixtures, req.playerId, 30)
 
         # =============================================
         # BUILD STRUCTURED DATA DIGEST (no AI needed — pure code extraction)
