@@ -273,54 +273,64 @@ async def scan_prop(req: ScanPropRequest):
         ).with_model("openai", "gpt-4o")
 
         image_content = ImageContent(image_base64=req.image_base64)
-        leagues_list = ", ".join([f"{l['name']} (ID:{l['id']})" for l in SUPPORTED_LEAGUES])
+        leagues_list = ", ".join([f"{lg['name']} (ID:{lg['id']})" for lg in SUPPORTED_LEAGUES])
 
         prompt = f"""Analyze this screenshot of a player prop card.
 
-LAYOUT GUIDE:
+LAYOUT GUIDE — SINGLE PLAYER:
 - The player's FIRST NAME is on the top line, LAST NAME is on the second line (larger/bolder text)
 - Below the name: "SOCCER • [Team Name] • [Position]"
 - Below that: "vs [Opponent]" or "@ [Opponent]" with date/time
 - The prop line number (e.g., 48.5) is shown prominently with the stat type below it (e.g., "Passes Attempted")
-- "Less" and "More" buttons are just selection options — IGNORE them. Do NOT extract over/under from these.
-- A bar chart may show the player's recent game history
+- "Less" and "More" buttons are just selection options — IGNORE them.
+
+LAYOUT GUIDE — COMBO PROPS (TWO players combined):
+- The card shows TWO player names joined by " + " (e.g., "U. Cakir + A. Muric" or "A. Sentnor + O. Moultrie")
+- Teams shown as "Team1/Team2" (e.g., "Turkiye/Kosovo", "KC Current/Thorns")
+- The stat label includes "(Combo)" — e.g., "Goalie Saves (Combo)" or "Passes Attempted (Combo)"
+- The line number is the COMBINED total for both players
+- The two players are from OPPOSING teams in the same match
+- The matchup may show "vs Team1/Team2..." or "vs Kosovo/Tu..."
 
 CRITICAL RULES:
-- Read the player name EXACTLY as shown on the card. The name displayed prominently at the top IS the player.
-- Do NOT confuse player names with opponent names, team names, or any other text.
-- If you see only ONE player card, return exactly ONE entry.
-- IGNORE any "Less"/"More" buttons — they are irrelevant selection UI, not a prediction.
+- Read player names EXACTLY as shown. Do NOT confuse with opponent/team names.
+- If you see " + " between two names, this is a COMBO prop — set isCombo to true.
+- If "(Combo)" appears in the stat type, this is a COMBO prop.
+- IGNORE any "Less"/"More" buttons.
 
-Extract for EACH player prop entry:
-1. playerName — The player's full name as displayed (first + last)
-2. propType — Map to one of: pass_attempts, shots, shots_on_target, tackles, key_passes, saves, interceptions, blocks, dribbles, fouls_drawn
-3. line — The numerical line (e.g., 48.5)
-4. opponentName — The opposing team from "vs [Team]"
+Extract for EACH prop entry:
+1. playerName — Full name(s) as displayed. For combos: "Player A + Player B"
+2. propType — Map to: pass_attempts, shots, shots_on_target, tackles, key_passes, saves, interceptions, blocks, dribbles, fouls_drawn
+3. line — The numerical line (e.g., 48.5, 6, 5.5)
+4. opponentName — The opposing team (for single props). For combos: null (each player's opponent is the other's team)
 5. league — Best guess league name
 6. leagueId — Match to one of: {leagues_list}
-7. playerTeam — The player's own team name
+7. playerTeam — The player's team (single). For combos: "Team1/Team2"
+8. isCombo — true if this is a combo (two-player) prop, false otherwise
+9. players — ONLY for combos: array of exactly 2 objects with "name" and "team" for each player
 
 PROP TYPE MAPPING:
-- "Passes Attempted" / "Pass Attempts" / "Passes" → pass_attempts
-- "Shots" / "Shots Taken" → shots
+- "Passes Attempted" / "Pass Attempts" / "Passes" / "Passes Attempted (Combo)" → pass_attempts
+- "Shots" / "Shots Taken" / "Shots (Combo)" → shots
 - "Shots on Target" / "SOT" → shots_on_target
-- "Tackles" → tackles
+- "Tackles" / "Tackles (Combo)" → tackles
 - "Key Passes" / "Assists" → key_passes
-- "Saves" / "Goalkeeper Saves" → saves
+- "Saves" / "Goalkeeper Saves" / "Goalie Saves" / "Goalie Saves (Combo)" → saves
 - "Interceptions" → interceptions
 - "Blocks" → blocks
 - "Dribble Attempts" / "Dribbles" → dribbles
 - "Fouls Drawn" → fouls_drawn
 
-Return ONLY valid JSON array. Each element: {{"playerName":"...","propType":"...","line":0.0,"opponentName":"...","playerTeam":"...","venue":"home or away","league":"...","leagueId":0}}
+RETURN FORMAT (JSON array):
+For SINGLE player: {{"playerName":"...","propType":"...","line":0.0,"opponentName":"...","playerTeam":"...","venue":"home or away","league":"...","leagueId":0,"isCombo":false}}
+For COMBO: {{"playerName":"Player A + Player B","propType":"...","line":0.0,"opponentName":null,"playerTeam":"Team1/Team2","venue":null,"league":"...","leagueId":0,"isCombo":true,"players":[{{"name":"Player A","team":"Team1"}},{{"name":"Player B","team":"Team2"}}]}}
 
-VENUE RULES:
-- If the matchup line says "@ [Team]" — the "@" means AWAY. The player's team is traveling to the opponent. venue = "away"
-- If the matchup line says "vs [Team]" (no @) — the player's team is at HOME. venue = "home"
-- Example: Player team is Botafogo, matchup says "@ Athletico PR" → venue = "away", opponentName = "Athletico PR"
+VENUE RULES (single props only):
+- "@ [Team]" → venue = "away"
+- "vs [Team]" (no @) → venue = "home"
 
 If you cannot determine a field, use null. Always try to extract the line number.
-If there's only one entry, still return it as an array with one element."""
+Return as a JSON array even for one entry."""
 
         msg = UserMessage(text=prompt, file_contents=[image_content])
         response = await chat.send_message(msg)
@@ -329,14 +339,14 @@ If there's only one entry, still return it as an array with one element."""
         # Clean markdown fences
         if response_text.startswith("```"):
             lines = response_text.split("\n")
-            lines = [l for l in lines if not l.strip().startswith("```")]
+            lines = [ln for ln in lines if not ln.strip().startswith("```")]
             response_text = "\n".join(lines)
 
         extracted = json.loads(response_text)
         if not isinstance(extracted, list):
             extracted = [extracted]
 
-        # ── Step 2: Resolve each extracted player ──
+        # ── Step 2: Resolve each extracted entry ──
         results = []
         for entry in extracted:
             player_name = entry.get("playerName")
@@ -349,9 +359,99 @@ If there's only one entry, still return it as an array with one element."""
             if prop_type not in VALID_PROPS:
                 prop_type = "pass_attempts"
 
+            line_val = entry.get("line") or 0
+            is_combo = entry.get("isCombo", False)
+            ai_league_id = entry.get("leagueId")
+
+            # ════════════════════════════════════
+            #  COMBO PROP: two players combined
+            # ════════════════════════════════════
+            if is_combo and entry.get("players") and len(entry["players"]) >= 2:
+                combo_players = entry["players"][:2]
+                team1_name = (combo_players[0].get("team") or "").strip()
+                team2_name = (combo_players[1].get("team") or "").strip()
+                league_id = await _infer_league_id(team1_name, team2_name, ai_league_id)
+                league_name = entry.get("league")
+                if not league_name:
+                    for sl in SUPPORTED_LEAGUES:
+                        if sl["id"] == league_id:
+                            league_name = sl["name"]
+                            break
+
+                is_international = league_id in INTERNATIONAL_LEAGUES
+
+                resolved_players = []
+                for cp in combo_players:
+                    cp_name = (cp.get("name") or "").strip()
+                    cp_team = (cp.get("team") or "").strip()
+                    cp_team_lower = cp_team.lower().strip()
+
+                    if not cp_name:
+                        resolved_players.append(None)
+                        continue
+
+                    # Resolve the player's team
+                    team_id = None
+                    team_canonical = cp_team
+                    if is_international:
+                        nat_id, nat_can = await get_national_team_id(cp_team_lower)
+                        if nat_id:
+                            team_id = nat_id
+                            team_canonical = nat_can or cp_team
+                    else:
+                        club_id, club_name = await get_team_by_name(cp_team)
+                        if club_id:
+                            team_id = club_id
+                            team_canonical = club_name
+
+                    # Resolve the player from cache
+                    cached = await _resolve_player_via_cache(cp_name, team_id)
+                    if cached:
+                        resolved_players.append({
+                            "playerId": cached["playerId"],
+                            "playerName": cached["name"],
+                            "photo": "",
+                            "teamId": team_id or cached.get("teamId"),
+                            "teamName": team_canonical or cached.get("teamName", cp_team),
+                        })
+                        print(f"[SCAN] Combo cache HIT: {cp_name} -> {cached['name']} (ID {cached['playerId']})")
+                    else:
+                        # API-Sports fallback for this combo player
+                        print(f"[SCAN] Combo cache MISS: {cp_name}, falling back to API-Sports...")
+                        leagues_to_try = NATION_TO_LEAGUES.get(cp_team_lower, TOP_5_LEAGUES) if is_international else [league_id]
+                        api_p, _, _ = await _resolve_player_via_api(
+                            cp_name, cp_team_lower, leagues_to_try,
+                            is_international, team_id if is_international else None, cp_team
+                        )
+                        resolved_players.append(api_p)
+
+                results.append({
+                    "extracted": {
+                        "playerName": player_name,
+                        "propType": prop_type,
+                        "line": line_val,
+                        "venue": None,
+                        "opponentName": None,
+                        "playerTeam": entry.get("playerTeam"),
+                        "league": league_name or entry.get("league"),
+                        "leagueId": league_id,
+                        "isCombo": True,
+                        "players": [
+                            {"name": combo_players[0].get("name", ""), "team": team1_name},
+                            {"name": combo_players[1].get("name", ""), "team": team2_name},
+                        ],
+                    },
+                    "resolved": None,
+                    "resolvedPlayers": resolved_players,
+                    "resolvedOpponent": None,
+                })
+                continue
+
+            # ════════════════════════════════════
+            #  SINGLE PLAYER PROP (existing logic)
+            # ════════════════════════════════════
             player_team_hint = (entry.get("playerTeam") or "").lower().strip()
             opponent_hint = (entry.get("opponentName") or "").strip()
-            ai_league_id = entry.get("leagueId")
             league_id = await _infer_league_id(entry.get("playerTeam"), opponent_hint, ai_league_id)
             league_name = entry.get("league")
             if not league_name:
@@ -360,7 +460,6 @@ If there's only one entry, still return it as an array with one element."""
                         league_name = sl["name"]
                         break
 
-            line_val = entry.get("line") or 0
             venue = (entry.get("venue") or "home").lower().strip()
             if venue not in ("home", "away"):
                 venue = "home"
@@ -370,13 +469,12 @@ If there's only one entry, still return it as an array with one element."""
             original_league_name = league_name
             original_team_name = (entry.get("playerTeam") or "").strip()
 
-            # ── Resolve national team ID for international matches ──
+            # Resolve national team ID for international matches
             nat_team_id = None
             nat_team_canonical = None
             if is_international and player_team_hint:
                 nat_team_id, nat_team_canonical = await get_national_team_id(player_team_hint)
                 if not nat_team_id:
-                    # Last resort: direct API search
                     try:
                         teams_data = await api_football_request("teams", {"search": player_team_hint.title()})
                         if teams_data:
@@ -389,10 +487,8 @@ If there's only one entry, still return it as an array with one element."""
                     except Exception:
                         pass
 
-            # ── PRIMARY: Resolve player via MongoDB cache ──
+            # PRIMARY: Resolve player via MongoDB cache
             resolved_player = None
-
-            # For club matches, try to resolve team from cache to narrow player search
             cache_team_id = None
             if not is_international and player_team_hint:
                 club_id, _ = await get_team_by_name(player_team_hint)
@@ -402,7 +498,6 @@ If there's only one entry, still return it as an array with one element."""
             cached_player = await _resolve_player_via_cache(player_name, cache_team_id)
             if cached_player:
                 if is_international and nat_team_id:
-                    # For international: use player's playerId from cache but national team context
                     resolved_player = {
                         "playerId": cached_player["playerId"],
                         "playerName": cached_player["name"],
@@ -411,7 +506,6 @@ If there's only one entry, still return it as an array with one element."""
                         "teamName": original_team_name or nat_team_canonical or player_team_hint.title(),
                     }
                 else:
-                    # Club match: use cache data directly
                     resolved_player = {
                         "playerId": cached_player["playerId"],
                         "playerName": cached_player["name"],
@@ -419,7 +513,6 @@ If there's only one entry, still return it as an array with one element."""
                         "teamId": cached_player.get("teamId"),
                         "teamName": cached_player.get("teamName", player_team_hint.title()),
                     }
-                    # Update league from cache if available
                     if cached_player.get("leagueId") and not is_international:
                         league_id = cached_player["leagueId"]
                         for sl in SUPPORTED_LEAGUES:
@@ -428,7 +521,7 @@ If there's only one entry, still return it as an array with one element."""
                                 break
                 print(f"[SCAN] Cache HIT: {player_name} -> {resolved_player['playerName']} (ID {resolved_player['playerId']})")
 
-            # ── FALLBACK: API-Sports search ──
+            # FALLBACK: API-Sports search
             if not resolved_player:
                 print(f"[SCAN] Cache MISS for '{player_name}', falling back to API-Sports...")
                 leagues_to_try = NATION_TO_LEAGUES.get(player_team_hint, TOP_5_LEAGUES) if is_international else [league_id]
@@ -443,12 +536,12 @@ If there's only one entry, still return it as an array with one element."""
                     if api_league_name and not is_international:
                         league_name = api_league_name
 
-            # For international matches, always restore original context
+            # For international matches, restore original context
             if is_international and original_league_id:
                 league_id = original_league_id
                 league_name = original_league_name
 
-            # ── Resolve opponent ──
+            # Resolve opponent
             resolved_opponent = None
             if opponent_hint and resolved_player:
                 resolved_opponent = await _resolve_opponent(opponent_hint, is_international, league_id)
@@ -463,6 +556,7 @@ If there's only one entry, still return it as an array with one element."""
                     "playerTeam": entry.get("playerTeam"),
                     "league": league_name or entry.get("league"),
                     "leagueId": league_id,
+                    "isCombo": False,
                 },
                 "resolved": resolved_player,
                 "resolvedOpponent": resolved_opponent,

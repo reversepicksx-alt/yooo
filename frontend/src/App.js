@@ -472,37 +472,79 @@ export default function App() {
   };
 
   const handleScanPredict = async (pickData, idx) => {
-    if (!pickData.resolved) {
-      toast.error('Player not found — cannot run prediction');
-      return;
-    }
-    setIsScanPredicting(true);
-    setScanPredictingIdx(idx);
-    setScanPrediction(null);
-    setScanExcludedIndices([]);
-    try {
-      const opponentId = pickData.resolvedOpponent?.teamId || pickData.resolved.teamId;
-      const opponentName = pickData.resolvedOpponent?.teamName || pickData.extracted.opponentName || 'Unknown';
-      const venue = scanVenueOverrides[idx] || pickData.extracted.venue || 'home';
-      const result = await predict({
-        playerId: pickData.resolved.playerId,
-        playerName: pickData.resolved.playerName,
-        teamId: pickData.resolved.teamId,
-        teamName: pickData.resolved.teamName || pickData.extracted.playerTeam || '',
-        opponentId: opponentId,
-        opponentName: opponentName,
-        leagueId: pickData.extracted.leagueId || 39,
-        venue: venue,
-        propType: pickData.extracted.propType,
-        line: pickData.extracted.line,
-      });
-      setScanPrediction(result);
-      toast.success('Prediction complete!');
-    } catch (err) {
-      toast.error(err.message || 'Prediction failed');
-    } finally {
-      setIsScanPredicting(false);
-      setScanPredictingIdx(null);
+    const isCombo = pickData.extracted?.isCombo;
+
+    if (isCombo) {
+      // COMBO: need both resolved players
+      const rp = pickData.resolvedPlayers || [];
+      if (!rp[0] || !rp[1]) {
+        toast.error('Could not match both players — cannot run combo prediction');
+        return;
+      }
+      setIsScanPredicting(true);
+      setScanPredictingIdx(idx);
+      setScanPrediction(null);
+      setScanExcludedIndices([]);
+      try {
+        const result = await predictCombo({
+          leagueId: pickData.extracted.leagueId || 39,
+          player1Id: rp[0].playerId,
+          player1Name: rp[0].playerName,
+          player1TeamId: rp[0].teamId,
+          player2Id: rp[1].playerId,
+          player2Name: rp[1].playerName,
+          player2TeamId: rp[1].teamId,
+          opponentId: rp[1].teamId,
+          opponentName: rp[1].teamName || 'Opponent',
+          venue: 'home',
+          propType: pickData.extracted.propType,
+          combinedLine: pickData.extracted.line,
+        });
+        if (!result?.player1?.player || !result?.player2?.player) {
+          throw new Error('One or both predictions failed.');
+        }
+        setScanPrediction({ ...result, _isCombo: true, _comboLine: pickData.extracted.line });
+        toast.success('Combo prediction complete!');
+      } catch (err) {
+        toast.error(err.message || 'Combo prediction failed');
+      } finally {
+        setIsScanPredicting(false);
+        setScanPredictingIdx(null);
+      }
+    } else {
+      // SINGLE player
+      if (!pickData.resolved) {
+        toast.error('Player not found — cannot run prediction');
+        return;
+      }
+      setIsScanPredicting(true);
+      setScanPredictingIdx(idx);
+      setScanPrediction(null);
+      setScanExcludedIndices([]);
+      try {
+        const opponentId = pickData.resolvedOpponent?.teamId || pickData.resolved.teamId;
+        const opponentName = pickData.resolvedOpponent?.teamName || pickData.extracted.opponentName || 'Unknown';
+        const venue = scanVenueOverrides[idx] || pickData.extracted.venue || 'home';
+        const result = await predict({
+          playerId: pickData.resolved.playerId,
+          playerName: pickData.resolved.playerName,
+          teamId: pickData.resolved.teamId,
+          teamName: pickData.resolved.teamName || pickData.extracted.playerTeam || '',
+          opponentId: opponentId,
+          opponentName: opponentName,
+          leagueId: pickData.extracted.leagueId || 39,
+          venue: venue,
+          propType: pickData.extracted.propType,
+          line: pickData.extracted.line,
+        });
+        setScanPrediction(result);
+        toast.success('Prediction complete!');
+      } catch (err) {
+        toast.error(err.message || 'Prediction failed');
+      } finally {
+        setIsScanPredicting(false);
+        setScanPredictingIdx(null);
+      }
     }
   };
 
@@ -1533,14 +1575,67 @@ export default function App() {
                 <button className="back-btn" onClick={backToScanResults} data-testid="scan-back-to-results">
                   <ArrowLeft /> Back to Scan
                 </button>
-                <ProjectionCard
-                  projection={scanPrediction}
-                  onSave={scanSavePickFn}
-                  excludedIndices={scanExcludedIndices}
-                  onToggleSample={idx => setScanExcludedIndices(prev =>
-                    prev.includes(idx) ? prev.filter(i => i !== idx) : [...prev, idx]
-                  )}
-                />
+                {scanPrediction._isCombo ? (
+                  <div className="combo-result-card" data-testid="scan-combo-result">
+                    <div style={{ textAlign: 'center', marginBottom: 16 }}>
+                      <div style={{ fontSize: 9, fontWeight: 900, letterSpacing: '0.15em', color: '#a855f7', textTransform: 'uppercase', marginBottom: 8 }}>COMBO PREDICTION</div>
+                      <div style={{ fontSize: 28, fontWeight: 900, color: 'var(--accent)', fontFamily: "'JetBrains Mono', monospace" }}>
+                        {scanPrediction.combined?.projectedValue}
+                      </div>
+                      <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', marginTop: 4 }}>
+                        vs Line: <span style={{ fontWeight: 800, color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace" }}>{scanPrediction._comboLine}</span>
+                      </div>
+                      <div style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 12, padding: '8px 16px', borderRadius: 8,
+                        background: scanPrediction.combined?.recommendation === 'over' ? 'rgba(16,185,129,0.15)' : 'rgba(244,63,94,0.15)',
+                        border: `1px solid ${scanPrediction.combined?.recommendation === 'over' ? 'rgba(16,185,129,0.3)' : 'rgba(244,63,94,0.3)'}`,
+                      }}>
+                        {scanPrediction.combined?.recommendation === 'over'
+                          ? <TrendingUp style={{ width: 16, height: 16, color: '#10b981' }} />
+                          : <TrendingDown style={{ width: 16, height: 16, color: '#f43f5e' }} />
+                        }
+                        <span style={{ fontSize: 16, fontWeight: 900, color: scanPrediction.combined?.recommendation === 'over' ? '#10b981' : '#f43f5e', textTransform: 'uppercase' }}>
+                          {scanPrediction.combined?.recommendation}
+                        </span>
+                        <span className={`badge ${scanPrediction.combined?.confidenceLevel === 'High' ? 'neon' : scanPrediction.combined?.confidenceLevel === 'Medium' ? '' : 'caution'}`} style={{ fontSize: 10, marginLeft: 4 }}>
+                          {scanPrediction.combined?.confidenceLevel}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Individual player projections */}
+                    {[scanPrediction.player1, scanPrediction.player2].map((pred, pIdx) => (
+                      pred?.player && (
+                        <div key={pIdx} style={{
+                          padding: 14, borderRadius: 10, background: 'rgba(255,255,255,0.03)',
+                          border: '1px solid rgba(100,100,120,0.15)', marginTop: 10,
+                        }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div>
+                              <div style={{ fontSize: 14, fontWeight: 800, color: '#fff' }}>{pred.player}</div>
+                              <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>{pred.team || ''}</div>
+                            </div>
+                            <div style={{ textAlign: 'right' }}>
+                              <div style={{ fontSize: 18, fontWeight: 900, color: 'var(--accent)', fontFamily: "'JetBrains Mono', monospace" }}>
+                                {pred.projectedValue}
+                              </div>
+                              <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)' }}>projected</div>
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    ))}
+                  </div>
+                ) : (
+                  <ProjectionCard
+                    projection={scanPrediction}
+                    onSave={scanSavePickFn}
+                    excludedIndices={scanExcludedIndices}
+                    onToggleSample={idx => setScanExcludedIndices(prev =>
+                      prev.includes(idx) ? prev.filter(i => i !== idx) : [...prev, idx]
+                    )}
+                  />
+                )}
               </div>
             )}
 
@@ -1666,62 +1761,109 @@ export default function App() {
                         {scanResults.map((pick, idx) => {
                           const ext = pick.extracted;
                           const res = pick.resolved;
+                          const isCombo = ext?.isCombo;
+                          const resolvedPlayers = pick.resolvedPlayers || [];
+                          const comboMatched = isCombo ? (resolvedPlayers[0] && resolvedPlayers[1]) : !!res;
                           const isPredicting = isScanPredicting && scanPredictingIdx === idx;
                           const propLabel = PROP_TYPES.find(p => p.key === ext.propType)?.label || ext.propType;
 
                           return (
                             <div key={idx} data-testid={`scan-result-${idx}`} style={{
-                              background: '#0a0a0f', border: '1.5px solid rgba(100,100,120,0.2)', borderRadius: 14,
+                              background: '#0a0a0f', border: `1.5px solid ${isCombo ? 'rgba(168,85,247,0.3)' : 'rgba(100,100,120,0.2)'}`, borderRadius: 14,
                               overflow: 'hidden',
                             }}>
+                              {/* Combo Badge */}
+                              {isCombo && (
+                                <div style={{
+                                  padding: '6px 16px', background: 'rgba(168,85,247,0.08)',
+                                  borderBottom: '1px solid rgba(168,85,247,0.15)',
+                                  display: 'flex', alignItems: 'center', gap: 6,
+                                }}>
+                                  <Users style={{ width: 12, height: 12, color: '#a855f7' }} />
+                                  <span style={{ fontSize: 9, fontWeight: 900, letterSpacing: '0.15em', color: '#a855f7', textTransform: 'uppercase' }}>
+                                    COMBO PROP
+                                  </span>
+                                </div>
+                              )}
+
                               {/* Player Info */}
                               <div style={{ padding: '14px 16px', display: 'flex', gap: 12, alignItems: 'center' }}>
                                 <div style={{
-                                    width: 44, height: 44, borderRadius: 10, background: 'rgba(16,185,129,0.1)',
-                                    border: '1px solid rgba(16,185,129,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    width: 44, height: 44, borderRadius: 10,
+                                    background: isCombo ? 'rgba(168,85,247,0.1)' : 'rgba(16,185,129,0.1)',
+                                    border: `1px solid ${isCombo ? 'rgba(168,85,247,0.2)' : 'rgba(16,185,129,0.2)'}`,
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
                                   }}>
-                                    <User style={{ width: 20, height: 20, color: 'var(--accent)' }} />
+                                    {isCombo
+                                      ? <Users style={{ width: 20, height: 20, color: '#a855f7' }} />
+                                      : <User style={{ width: 20, height: 20, color: 'var(--accent)' }} />
+                                    }
                                   </div>
                                 <div style={{ flex: 1 }}>
-                                  <div style={{ fontSize: 15, fontWeight: 800, color: '#fff' }}>
-                                    {res?.playerName || ext.playerName}
-                                  </div>
-                                  <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 2, display: 'flex', alignItems: 'center', gap: 6 }}>
-                                    <span>{res?.teamName || ext.playerTeam || 'Unknown team'}</span>
-                                    {ext.opponentName && (
-                                      <span>
-                                        {ext.venue === 'away' ? ' @ ' : ' vs '}
-                                        {ext.opponentName}
-                                      </span>
-                                    )}
-                                    <span
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setScanVenueOverrides(prev => ({
-                                          ...prev,
-                                          [idx]: (prev[idx] || ext.venue || 'home') === 'home' ? 'away' : 'home'
-                                        }));
-                                      }}
-                                      data-testid={`scan-venue-toggle-${idx}`}
-                                      style={{
-                                        padding: '2px 8px', borderRadius: 4, fontSize: 8, fontWeight: 900, letterSpacing: '0.1em',
-                                        cursor: 'pointer', userSelect: 'none', transition: 'all 0.15s',
-                                        background: (scanVenueOverrides[idx] || ext.venue || 'home') === 'away' ? 'rgba(244,63,94,0.15)' : 'rgba(59,130,246,0.15)',
-                                        color: (scanVenueOverrides[idx] || ext.venue || 'home') === 'away' ? '#f43f5e' : '#3b82f6',
-                                        border: `1px solid ${(scanVenueOverrides[idx] || ext.venue || 'home') === 'away' ? 'rgba(244,63,94,0.3)' : 'rgba(59,130,246,0.3)'}`,
-                                      }}
-                                    >
-                                      {(scanVenueOverrides[idx] || ext.venue || 'home') === 'away' ? 'AWAY' : 'HOME'} &#x21C5;
-                                    </span>
-                                  </div>
+                                  {isCombo ? (
+                                    <>
+                                      <div style={{ fontSize: 14, fontWeight: 800, color: '#fff' }}>
+                                        {resolvedPlayers[0]?.playerName || ext.players?.[0]?.name || '?'}
+                                        <span style={{ color: '#a855f7', margin: '0 4px' }}>+</span>
+                                        {resolvedPlayers[1]?.playerName || ext.players?.[1]?.name || '?'}
+                                      </div>
+                                      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 2, display: 'flex', alignItems: 'center', gap: 6 }}>
+                                        <span>{resolvedPlayers[0]?.teamName || ext.players?.[0]?.team || '?'}</span>
+                                        <span style={{ color: 'rgba(255,255,255,0.2)' }}>vs</span>
+                                        <span>{resolvedPlayers[1]?.teamName || ext.players?.[1]?.team || '?'}</span>
+                                      </div>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <div style={{ fontSize: 15, fontWeight: 800, color: '#fff' }}>
+                                        {res?.playerName || ext.playerName}
+                                      </div>
+                                      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 2, display: 'flex', alignItems: 'center', gap: 6 }}>
+                                        <span>{res?.teamName || ext.playerTeam || 'Unknown team'}</span>
+                                        {ext.opponentName && (
+                                          <span>
+                                            {ext.venue === 'away' ? ' @ ' : ' vs '}
+                                            {ext.opponentName}
+                                          </span>
+                                        )}
+                                        <span
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setScanVenueOverrides(prev => ({
+                                              ...prev,
+                                              [idx]: (prev[idx] || ext.venue || 'home') === 'home' ? 'away' : 'home'
+                                            }));
+                                          }}
+                                          data-testid={`scan-venue-toggle-${idx}`}
+                                          style={{
+                                            padding: '2px 8px', borderRadius: 4, fontSize: 8, fontWeight: 900, letterSpacing: '0.1em',
+                                            cursor: 'pointer', userSelect: 'none', transition: 'all 0.15s',
+                                            background: (scanVenueOverrides[idx] || ext.venue || 'home') === 'away' ? 'rgba(244,63,94,0.15)' : 'rgba(59,130,246,0.15)',
+                                            color: (scanVenueOverrides[idx] || ext.venue || 'home') === 'away' ? '#f43f5e' : '#3b82f6',
+                                            border: `1px solid ${(scanVenueOverrides[idx] || ext.venue || 'home') === 'away' ? 'rgba(244,63,94,0.3)' : 'rgba(59,130,246,0.3)'}`,
+                                          }}
+                                        >
+                                          {(scanVenueOverrides[idx] || ext.venue || 'home') === 'away' ? 'AWAY' : 'HOME'} &#x21C5;
+                                        </span>
+                                      </div>
+                                    </>
+                                  )}
                                 </div>
-                                {res ? (
+                                {comboMatched ? (
                                   <div style={{
                                     padding: '4px 10px', borderRadius: 6, fontSize: 9, fontWeight: 900,
                                     background: 'rgba(16,185,129,0.12)', color: '#10b981', border: '1px solid rgba(16,185,129,0.25)',
                                     letterSpacing: '0.1em',
                                   }}>
-                                    MATCHED
+                                    {isCombo ? '2/2 MATCHED' : 'MATCHED'}
+                                  </div>
+                                ) : isCombo && (resolvedPlayers[0] || resolvedPlayers[1]) ? (
+                                  <div style={{
+                                    padding: '4px 10px', borderRadius: 6, fontSize: 9, fontWeight: 900,
+                                    background: 'rgba(245,158,11,0.12)', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.25)',
+                                    letterSpacing: '0.1em',
+                                  }}>
+                                    1/2 MATCHED
                                   </div>
                                 ) : (
                                   <div style={{
@@ -1743,7 +1885,7 @@ export default function App() {
                                   border: '1px solid rgba(100,100,120,0.15)', textAlign: 'center',
                                 }}>
                                   <div style={{ fontSize: 9, fontWeight: 800, color: 'rgba(255,255,255,0.35)', letterSpacing: '0.1em', marginBottom: 4 }}>PROP</div>
-                                  <div style={{ fontSize: 13, fontWeight: 800, color: '#fff' }}>{propLabel}</div>
+                                  <div style={{ fontSize: 13, fontWeight: 800, color: '#fff' }}>{propLabel}{isCombo ? ' (Combo)' : ''}</div>
                                 </div>
                                 <div style={{
                                   flex: 1, padding: '10px 12px', borderRadius: 8, background: 'rgba(255,255,255,0.03)',
@@ -1767,21 +1909,21 @@ export default function App() {
                               <div style={{ padding: '0 16px 14px' }}>
                                 <button
                                   onClick={() => handleScanPredict(pick, idx)}
-                                  disabled={!res || isPredicting}
+                                  disabled={!comboMatched || isPredicting}
                                   data-testid={`scan-predict-btn-${idx}`}
                                   style={{
                                     width: '100%', padding: '12px', borderRadius: 10, border: 'none',
-                                    background: res ? 'var(--accent)' : 'rgba(255,255,255,0.06)',
-                                    color: res ? '#000' : 'rgba(255,255,255,0.3)',
+                                    background: comboMatched ? (isCombo ? '#a855f7' : 'var(--accent)') : 'rgba(255,255,255,0.06)',
+                                    color: comboMatched ? '#000' : 'rgba(255,255,255,0.3)',
                                     fontSize: 13, fontWeight: 900, letterSpacing: '0.06em',
-                                    cursor: res ? 'pointer' : 'not-allowed',
+                                    cursor: comboMatched ? 'pointer' : 'not-allowed',
                                     display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
                                   }}
                                 >
                                   {isPredicting ? (
-                                    <><Loader2 style={{ width: 16, height: 16, animation: 'spin 1s linear infinite' }} /> ANALYZING...</>
+                                    <><Loader2 style={{ width: 16, height: 16, animation: 'spin 1s linear infinite' }} /> {isCombo ? 'COMBO ANALYSIS...' : 'ANALYZING...'}</>
                                   ) : (
-                                    <><Zap style={{ width: 16, height: 16 }} /> RUN PREDICTION</>
+                                    <><Zap style={{ width: 16, height: 16 }} /> {isCombo ? 'RUN COMBO PREDICTION' : 'RUN PREDICTION'}</>
                                   )}
                                 </button>
                               </div>
