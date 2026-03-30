@@ -7,9 +7,9 @@ Mobile-first webapp for analyzing soccer player props (pass attempts, shots, sav
 - **Frontend**: React.js, Shadcn/UI, CSS Variables, recharts
 - **Backend**: FastAPI, Python asyncio, Motor (MongoDB)
 - **AI**: GPT-4o (Vision scan), Grok-4.20-reasoning (tactics), Gemini 2.5 Flash (JSON formatting)
-- **Data**: API-Sports (v3.football.api-sports.io)
+- **Data**: API-Sports (v3.football.api-sports.io) + MongoDB player/team cache
 - **Auth**: Whop memberships + password auth
-- **DB**: MongoDB (picks, sessions, users, manual_access_grants)
+- **DB**: MongoDB (picks, sessions, users, manual_access_grants, cache_*)
 
 ## Architecture (Post-Refactor 2026-03-30)
 
@@ -20,13 +20,13 @@ Mobile-first webapp for analyzing soccer player props (pass attempts, shots, sav
 ├── config.py              # Constants, env vars, DB, shared state
 ├── models.py              # All Pydantic request models
 ├── utils.py               # api_football_request, strip_accents, get_recent_fixtures_fast
-├── cache.py               # MongoDB-backed API-Football lookup cache (national teams, league teams)
+├── cache.py               # MongoDB-backed API-Football cache (players, teams, leagues, national teams)
 ├── routes/
 │   ├── auth.py            # /api/auth/* (verify-whop, login, set-password, etc.)
 │   ├── leagues.py         # /api/health, /api/leagues, /api/cache/* endpoints
 │   ├── players.py         # /api/players/search, /api/player/{id}/stats
 │   ├── predict.py         # /api/predict (Dual AI pipeline)
-│   ├── scan.py            # /api/scan-prop (Vision AI + cached player resolution)
+│   ├── scan.py            # /api/scan-prop (Vision AI + cache-first player resolution)
 │   ├── combo.py           # /api/predict-combo
 │   ├── picks.py           # /api/picks/* (save, list, delete, correct, live-update, settle)
 │   ├── chat.py            # /api/chat/*, /api/parse-query
@@ -36,14 +36,14 @@ Mobile-first webapp for analyzing soccer player props (pass attempts, shots, sav
 ### Frontend Structure
 ```
 /app/frontend/src/
-├── App.js                 # 1834 lines - Auth state, tab switching, scan/tracking tab JSX
+├── App.js                 # Auth state, tab switching, scan/tracking tab JSX
 ├── App.css                # All styles
 ├── api.js                 # API fetch wrappers
 ├── constants.js           # PROP_TYPES, getPropLabel
 ├── components/
 │   └── app/
 │       ├── ProjectionCard.jsx   # Full prediction display card
-│       ├── LoginPage.jsx        # Auth flow (email, password, setup, reset)
+│       ├── LoginPage.jsx        # Auth flow
 │       ├── PickOfTheDayCard.jsx # Daily featured pick card
 │       ├── ProbabilityChart.jsx # Recharts probability distribution
 │       ├── MatchStatZones.jsx   # Team vs opponent stat bars
@@ -52,23 +52,33 @@ Mobile-first webapp for analyzing soccer player props (pass attempts, shots, sav
 
 ## Completed Work
 
-### 2026-03-30 (Current Session)
+### 2026-03-30 (Session 2 - Cache-First Resolution)
+- [x] **Wired scan.py to use MongoDB cache as PRIMARY player resolution**
+  - Replaced ~400 lines of complex API-Sports search with cache-first lookups
+  - `get_player_by_name()` uses 4-tier search: exact nameClean → last name end-of-string → word-boundary full → word-boundary last
+  - Word-boundary regex prevents false positives (e.g., "Saka" no longer matches "Wan-Bissaka")
+  - API-Sports fallback only used if cache misses
+  - Opponent resolution also uses cache first (`get_team_by_name`, `get_national_team_id`)
+  - League inference uses cache `get_team_info()` before hardcoded map
+- [x] **Added `get_team_info()` to cache.py** - Returns full team doc including leagueId
+- [x] **Fixed player name matching** - Word boundary regex for accent-stripped names
+- [x] **All 14 backend tests passed (100%)** - Verified cache lookups for Højbjerg, Salah, Saka, Ødegaard, Mbappé, national teams
+
+### 2026-03-30 (Session 1 - Refactor + Cache Build)
 - [x] Fixed "NO MATCH" bug for international players with Nordic characters (Højbjerg, Euro Qualifiers)
 - [x] Major Codebase Refactor (backend 3219→61 lines, frontend 2704→1834 lines)
 - [x] Fixed international match pipeline — uses national team IDs and data, not club data
-- [x] Built MongoDB-backed API-Football lookup cache (`cache.py`)
-  - 467+ national teams with aliases (czechia→770, holland→1118, turkey→777, etc.)
-  - 12 domestic league team caches (EPL, La Liga, Serie A, etc.)
-  - 7-day auto-refresh TTL, manual refresh via `POST /api/cache/refresh`
-  - Lookup endpoints: `GET /api/cache/national-teams`
-  - Eliminates fragile API search for team ID resolution
+- [x] Built MongoDB-backed API-Football cache (`cache.py`)
+  - 1,225 leagues, 1,158 teams, ~24,000 players, 485 national team entries
+  - `nameClean` field for accent-stripped lookups
+  - 7-day auto-refresh TTL, 24h background refresh loop
+  - Transfer detection system
 
 ### Previous Sessions
 - Scan tab with GPT-4o Vision for screenshot prop extraction
 - Dual AI prediction pipeline (Grok-4.20 + Gemini 2.5 Flash)
-- Complex player matching (squad fallback, accent stripping, national team resolution)
 - Live match tracking with auto-refresh
-- Clickable HOME/AWAY venue toggle on Scan results
+- Clickable HOME/AWAY venue toggle
 - Removed all 3rd-party player photos/team logos (copyright)
 - Removed all competitor app names (legal)
 - Hidden Predict and Guide tabs (user request)
@@ -98,3 +108,13 @@ Mobile-first webapp for analyzing soccer player props (pass attempts, shots, sav
 - RapidAPI SofaScore integration (if user subscribes)
 - Scan tab: camera capture (mobile)
 - Save scanned picks directly to tracking
+
+## Cache System Details
+- **Collections**: cache_leagues, cache_teams, cache_players, cache_national, cache_transfers, cache_meta
+- **Indexes**: teamId, leagueId, nameLower, nameClean, playerId on appropriate collections
+- **Refresh**: Background loop every 24h, manual via POST /api/cache/refresh
+- **Key endpoints**:
+  - GET /api/cache/status - Overview of cached data
+  - GET /api/cache/lookup/player?name=X&team_id=Y - Player lookup
+  - GET /api/cache/lookup/team?name=X - Team lookup (club or national)
+  - GET /api/cache/national-teams - All national teams
