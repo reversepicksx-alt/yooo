@@ -14,7 +14,7 @@ from config import (
     WOMENS_LEAGUE_IDS, STAT_FIELD_MAP, STAT_LAMBDA_MAP,
 )
 from models import PredictionRequest
-from utils import api_football_request, get_recent_fixtures_fast
+from utils import api_football_request, get_recent_fixtures_fast, strip_accents
 
 router = APIRouter(prefix="/api", tags=["predict"])
 
@@ -96,6 +96,16 @@ async def predict(req: PredictionRequest):
                     return None
                 fid = fixtures[0].get("fixture", {}).get("id")
                 result = {}
+                # Extract round/stage info (e.g., "Quarter-finals", "Group A - 3")
+                match_round = fixtures[0].get("league", {}).get("round", "")
+                match_league = fixtures[0].get("league", {}).get("name", "")
+                match_date = fixtures[0].get("fixture", {}).get("date", "")
+                if match_round:
+                    result["matchRound"] = match_round
+                if match_league:
+                    result["matchLeague"] = match_league
+                if match_date:
+                    result["matchDate"] = match_date
                 try:
                     odds = await api_football_request("odds", {"fixture": fid})
                     if odds:
@@ -209,7 +219,7 @@ async def predict(req: PredictionRequest):
         # 2. Player game-by-game box scores from recent fixtures
         async def fetch_player_game_logs(fixture_list, player_id, limit=8):
             """Fetch player's individual stats — ALL fixtures fetched in parallel"""
-            player_name_lower = req.playerName.lower().split()[-1] if req.playerName else ""
+            player_name_lower = strip_accents(req.playerName.lower().split()[-1]) if req.playerName else ""
 
             async def fetch_one_log(fix):
                 fid = fix.get("fixtureId")
@@ -223,7 +233,7 @@ async def predict(req: PredictionRequest):
                     for team_data in data:
                         for p in team_data.get("players", []):
                             pid = p.get("player", {}).get("id")
-                            pname = (p.get("player", {}).get("name") or "").lower()
+                            pname = strip_accents((p.get("player", {}).get("name") or "").lower())
                             if pid == player_id or (player_name_lower and player_name_lower in pname):
                                 stats = p.get("statistics", [{}])[0] if p.get("statistics") else {}
                                 minutes = stats.get("games", {}).get("minutes") or 0
@@ -244,6 +254,8 @@ async def predict(req: PredictionRequest):
                         "score": f"{fix.get('homeGoals',0)}-{fix.get('awayGoals',0)}",
                         "minutes": minutes,
                         "rating": float(rating) if rating else None,
+                        "league": fix.get("league", ""),
+                        "round": fix.get("round", ""),
                         "passes_total": stats.get("passes", {}).get("total"),
                         "passes_key": stats.get("passes", {}).get("key"),
                         "passes_accuracy": stats.get("passes", {}).get("accuracy"),
@@ -326,7 +338,7 @@ async def predict(req: PredictionRequest):
         )
         # Player game logs: use ALL recent fixtures for maximum sample size
         # AI will weight venue-matching games higher in analysis
-        player_game_logs_task = fetch_player_game_logs(all_team_fixtures[:10], req.playerId, 8)
+        player_game_logs_task = fetch_player_game_logs(all_team_fixtures[:15], req.playerId, 12)
 
         # =============================================
         # BUILD STRUCTURED DATA DIGEST (no AI needed — pure code extraction)
@@ -656,13 +668,33 @@ async def predict(req: PredictionRequest):
 
         # =============================================
         # MULTI-AI CONSENSUS ENGINE
-        # Gemini + GPT-4o + Claude run IN PARALLEL
+        # Grok + Gemini + GPT-4o + Claude run IN PARALLEL
         # Results merged for calibrated final prediction
         # =============================================
-        PREDICTION_SYSTEM = """Soccer prop prediction engine. Return calibrated JSON from real data.
-GK saves capped by opp SoT. |proj-line|<0.3→max 52% conf. recentSamples=[].
-JSON: {"projectedValue":0,"recommendation":"over|under","confidenceScore":0,"confidenceLevel":"","sharpSummary":"","reasoning":"","scenarioAnalysis":"","keyEvidence":"","sensitivityTests":"","subRisk":"","gameFlowDynamics":"","uncertaintyNote":"","tacticalBreakdown":"","matchupOverview":{"homeTeam":"","awayTeam":"","favorite":"","moneyline":{"home":"","draw":"","away":""},"expectedPossession":{"home":0,"away":0},"expectedGameType":"","keyMatchupFactor":""},"bayesianMetrics":{"priorMean":0,"momentumEffect":0,"covariateAdjustment":0,"reversalFlag":"stable"},"probabilityCurve":[],"recentSamples":[],"player":{"id":0,"name":"","team":"","position":""},"opponent":"","propType":"","line":0,"confidenceInterval":[0,0],"tacticalAlerts":[]}
-tacticalBreakdown: markdown with **Verdict** **Analysis** **Scenarios** **Risk** **TL;DR**. No AI names."""
+        PREDICTION_SYSTEM = """You are an elite soccer prop prediction engine. Analyze ALL provided data deeply and return a calibrated JSON prediction.
+
+ANALYSIS REQUIREMENTS — every field must be SUBSTANTIVE (not one-liners):
+- "reasoning" (3-5 sentences): Deep statistical analysis referencing specific numbers from game logs, per-90 rates, venue splits, and opponent defensive/offensive tendencies. Cite actual values.
+- "tacticalBreakdown" (multi-paragraph markdown): Rich tactical analysis with **Verdict**, **Analysis** (cite per-game averages, venue splits, sample sizes), **Game Script Scenarios** (best/worst/likely case with projected stat ranges), **Risk Radar** (sub risk, rotation, injury, tactical changes), **TL;DR**. Reference the specific round/stage if it's a knockout or tournament match — knockout dynamics change player behavior significantly.
+- "scenarioAnalysis" (3-4 sentences): Best case, worst case, and most likely scenarios with specific stat projections for each.
+- "keyEvidence" (2-3 bullet points as string): The strongest data points supporting the recommendation.
+- "sharpSummary" (2 sentences): Concise sharp-money style summary explaining WHY the projection differs from the line.
+- "gameFlowDynamics" (2-3 sentences): How game flow (chasing, protecting lead, extra time in knockouts) impacts this specific stat.
+- "sensitivityTests" (1-2 sentences): What would flip the recommendation? E.g., "If X starts instead of Y..." or "If game goes to extra time..."
+- "subRisk" (1 sentence): Substitution risk assessment based on minutes history.
+- "uncertaintyNote" (1 sentence): Biggest source of uncertainty.
+
+CALIBRATION RULES:
+- GK saves are capped by opponent shots on target (SoT). Never project saves > opponent avg SoT.
+- If |projectedValue - line| < 0.3, max confidence is 52%.
+- Use venue-filtered averages as primary anchor, overall averages as secondary.
+- For knockout/elimination matches: account for tactical conservatism, potential extra time, higher defensive intensity.
+- recentSamples must be empty array [] (populated server-side from real data).
+
+Return ONLY valid JSON with this structure:
+{"projectedValue":0,"recommendation":"over|under","confidenceScore":0,"confidenceLevel":"","sharpSummary":"","reasoning":"","scenarioAnalysis":"","keyEvidence":"","sensitivityTests":"","subRisk":"","gameFlowDynamics":"","uncertaintyNote":"","tacticalBreakdown":"","matchupOverview":{"homeTeam":"","awayTeam":"","favorite":"","moneyline":{"home":"","draw":"","away":""},"expectedPossession":{"home":0,"away":0},"expectedGameType":"","keyMatchupFactor":""},"bayesianMetrics":{"priorMean":0,"momentumEffect":0,"covariateAdjustment":0,"reversalFlag":"stable"},"probabilityCurve":[],"recentSamples":[],"player":{"id":0,"name":"","team":"","position":""},"opponent":"","propType":"","line":0,"confidenceInterval":[0,0],"tacticalAlerts":[]}
+
+NEVER mention AI model names. No AI branding."""
 
         # Build the data payload — use GPT summary as primary + Wave 2 deep data as supplement
         wave2_supplement = {}
@@ -811,10 +843,10 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
         if data_digest:
             final_data_parts.append(f"[DATA DIGEST]\n{data_digest}")
         if wave2_supplement:
-            final_data_parts.append(f"[GAME LOGS]\n{json.dumps(wave2_supplement, default=str)[:3000]}")
+            final_data_parts.append(f"[GAME LOGS]\n{json.dumps(wave2_supplement, default=str)[:5000]}")
 
         if final_data_parts:
-            final_data = "\n\n".join(final_data_parts)[:8000]
+            final_data = "\n\n".join(final_data_parts)[:10000]
             if saves_context:
                 final_data += f"\n\n{saves_context}"
             if position_context:
@@ -822,13 +854,29 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
         else:
             final_data = json.dumps(historical_data, default=str)[:8000]
 
+        # Build match context (round/stage, knockout detection)
+        match_context = ""
+        if match_odds:
+            match_round = match_odds.get("matchRound", "")
+            match_league_name = match_odds.get("matchLeague", "")
+            match_date = match_odds.get("matchDate", "")
+            if match_round or match_league_name:
+                knockout_keywords = ["final", "quarter", "semi", "round of", "knockout", "elimination", "playoff"]
+                is_knockout = any(kw in match_round.lower() for kw in knockout_keywords) if match_round else False
+                match_context = f"\n[MATCH CONTEXT] {match_league_name} — {match_round}"
+                if match_date:
+                    match_context += f" | Date: {match_date[:10]}"
+                if is_knockout:
+                    match_context += "\n** KNOCKOUT/ELIMINATION MATCH — Higher stakes, tactical conservatism likely, possible extra time. Account for this in projections.**"
+
         prompt = f"""{req.playerName} ({player_position}) | {req.opponentName} | {player_venue.upper()} | {req.propType} line {req.line}
-Odds: {json.dumps(match_odds.get('bookmakerOdds',{}), default=str) if match_odds else 'N/A'}
+Odds: {json.dumps(match_odds.get('bookmakerOdds',{}), default=str) if match_odds else 'N/A'}{match_context}
+{pronoun_note}
 recentSamples=[]
 
-{final_data[:4000]}
+{final_data[:6000]}
 
-Return JSON only."""
+Analyze ALL data thoroughly. Return JSON only."""
 
         # Run 4 AIs in parallel (Gemini + GPT-4o + Claude + Grok)
         async def call_ai(model_provider, model_name, label):
