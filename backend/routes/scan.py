@@ -204,13 +204,14 @@ If there's only one entry, still return it as an array with one element."""
             try:
                 search_query = player_name.strip()
                 search_clean = strip_accents(search_query)
-                # Build search variants: original, accent-stripped, last name, accent-stripped last name
+                # Build search variants: accent-stripped first (API only accepts alphanumeric), then last name
                 search_variants = []
                 seen = set()
-                for v in [search_query, search_clean]:
-                    if v not in seen:
-                        search_variants.append(v)
-                        seen.add(v)
+                for v in [search_clean, search_query]:
+                    stripped = strip_accents(v)
+                    if stripped not in seen:
+                        search_variants.append(stripped)
+                        seen.add(stripped)
                 name_parts = search_clean.split()
                 if len(name_parts) > 1:
                     last = name_parts[-1]
@@ -334,6 +335,20 @@ If there's only one entry, still return it as an array with one element."""
                 original_league_name = league_name
                 original_team_name = (entry.get("playerTeam") or "").strip()
 
+                # For international matches, resolve the national team ID upfront
+                nat_team_id = None
+                if is_international and player_team_hint:
+                    try:
+                        teams_data = await api_football_request("teams", {"search": player_team_hint.title()})
+                        if teams_data:
+                            for t in teams_data[:5]:
+                                tname = t.get("team", {}).get("name", "").lower()
+                                if player_team_hint in tname or tname in player_team_hint:
+                                    nat_team_id = t["team"]["id"]
+                                    break
+                    except Exception:
+                        pass
+
                 for variant in search_variants:
                     if resolved_player:
                         break
@@ -352,8 +367,8 @@ If there's only one entry, still return it as an array with one element."""
                                             "playerId": best["player"]["id"],
                                             "playerName": best["player"]["name"],
                                             "photo": "",
-                                            "teamId": best.get("statistics", [{}])[0].get("team", {}).get("id"),
-                                            "teamName": (original_team_name or best.get("statistics", [{}])[0].get("team", {}).get("name", "")) if is_international else best.get("statistics", [{}])[0].get("team", {}).get("name", ""),
+                                            "teamId": nat_team_id if is_international and nat_team_id else best.get("statistics", [{}])[0].get("team", {}).get("id"),
+                                            "teamName": (original_team_name or player_team_hint.title()) if is_international else best.get("statistics", [{}])[0].get("team", {}).get("name", ""),
                                         }
                                         if not is_international:
                                             actual_league = best.get("statistics", [{}])[0].get("league", {})
@@ -362,14 +377,13 @@ If there's only one entry, still return it as an array with one element."""
                                                 league_name = actual_league.get("name", league_name)
                                         break
                                     elif not player_team_hint or is_international:
-                                        # No team hint or international (club won't match national team name) — accept first
                                         best = data[0]
                                         resolved_player = {
                                             "playerId": best["player"]["id"],
                                             "playerName": best["player"]["name"],
                                             "photo": "",
-                                            "teamId": best.get("statistics", [{}])[0].get("team", {}).get("id"),
-                                            "teamName": (original_team_name or best.get("statistics", [{}])[0].get("team", {}).get("name", "")) if is_international else best.get("statistics", [{}])[0].get("team", {}).get("name", ""),
+                                            "teamId": nat_team_id if is_international and nat_team_id else best.get("statistics", [{}])[0].get("team", {}).get("id"),
+                                            "teamName": (original_team_name or player_team_hint.title()) if is_international else best.get("statistics", [{}])[0].get("team", {}).get("name", ""),
                                         }
                                         if not is_international:
                                             actual_league = best.get("statistics", [{}])[0].get("league", {})
@@ -432,25 +446,12 @@ If there's only one entry, still return it as an array with one element."""
                                             }
                                             break
                         else:
-                            # International match: search the NATIONAL TEAM squad first
+                            # International match: search the NATIONAL TEAM squad
                             team_lower = player_team_hint or ""
                             search_lower = strip_accents(search_query.lower())
                             last_name_lower = search_lower.split()[-1] if search_lower.split() else search_lower
 
-                            # Resolve the national team ID
-                            nat_team_id = None
-                            try:
-                                teams_data = await api_football_request("teams", {"search": team_lower.title()})
-                                if teams_data:
-                                    for t in teams_data[:5]:
-                                        # National teams have the country name as team name
-                                        tname = t.get("team", {}).get("name", "").lower()
-                                        if team_lower in tname or tname in team_lower:
-                                            nat_team_id = t["team"]["id"]
-                                            break
-                            except Exception:
-                                pass
-
+                            # nat_team_id already resolved above
                             if nat_team_id:
                                 try:
                                     squad_data = await api_football_request("players/squads", {"team": nat_team_id})
@@ -459,27 +460,12 @@ If there's only one entry, still return it as an array with one element."""
                                             sp_name = strip_accents(sp.get("name", "").lower())
                                             if last_name_lower in sp_name or search_lower in sp_name or sp_name in search_lower:
                                                 found_player_id = sp["id"]
-                                                # Now find their club team by searching player by ID
-                                                club_leagues = NATION_TO_LEAGUES.get(team_lower, TOP_5_LEAGUES)
-                                                club_team_id = None
-                                                club_team_name = ""
-                                                for cl in club_leagues[:5]:
-                                                    if club_team_id:
-                                                        break
-                                                    for try_szn in [CURRENT_SEASON, CURRENT_SEASON - 1]:
-                                                        try:
-                                                            pdata = await api_football_request("players", {"id": found_player_id, "league": cl, "season": try_szn})
-                                                            if pdata:
-                                                                club_team_id = pdata[0].get("statistics", [{}])[0].get("team", {}).get("id")
-                                                                club_team_name = pdata[0].get("statistics", [{}])[0].get("team", {}).get("name", "")
-                                                                break
-                                                        except Exception:
-                                                            continue
+                                                # International match: use national team ID, not club
                                                 resolved_player = {
                                                     "playerId": found_player_id,
                                                     "playerName": sp["name"],
                                                     "photo": "",
-                                                    "teamId": club_team_id or nat_team_id,
+                                                    "teamId": nat_team_id,
                                                     "teamName": original_team_name or team_lower.title(),
                                                 }
                                                 break
@@ -505,8 +491,8 @@ If there's only one entry, still return it as an array with one element."""
                                             "playerId": best["player"]["id"],
                                             "playerName": best["player"]["name"],
                                             "photo": "",
-                                            "teamId": best.get("statistics", [{}])[0].get("team", {}).get("id"),
-                                            "teamName": (original_team_name or best.get("statistics", [{}])[0].get("team", {}).get("name", "")) if is_international else best.get("statistics", [{}])[0].get("team", {}).get("name", ""),
+                                            "teamId": nat_team_id if is_international and nat_team_id else best.get("statistics", [{}])[0].get("team", {}).get("id"),
+                                            "teamName": (original_team_name or player_team_hint.title()) if is_international else best.get("statistics", [{}])[0].get("team", {}).get("name", ""),
                                         }
                                         if not is_international:
                                             actual_league = best.get("statistics", [{}])[0].get("league", {})
@@ -520,8 +506,8 @@ If there's only one entry, still return it as an array with one element."""
                                             "playerId": best["player"]["id"],
                                             "playerName": best["player"]["name"],
                                             "photo": "",
-                                            "teamId": best.get("statistics", [{}])[0].get("team", {}).get("id"),
-                                            "teamName": (original_team_name or best.get("statistics", [{}])[0].get("team", {}).get("name", "")) if is_international else best.get("statistics", [{}])[0].get("team", {}).get("name", ""),
+                                            "teamId": nat_team_id if is_international and nat_team_id else best.get("statistics", [{}])[0].get("team", {}).get("id"),
+                                            "teamName": (original_team_name or player_team_hint.title()) if is_international else best.get("statistics", [{}])[0].get("team", {}).get("name", ""),
                                         }
                                         if not is_international:
                                             actual_league = best.get("statistics", [{}])[0].get("league", {})
@@ -548,6 +534,15 @@ If there's only one entry, still return it as an array with one element."""
                     # Try multiple search variants for the opponent
                     opp_searches = [opponent_name]
                     clean_opp = opponent_name.strip()
+                    # Common international team name aliases
+                    COUNTRY_ALIASES = {
+                        "czechia": "Czech Republic", "usa": "United States",
+                        "korea republic": "South Korea", "ir iran": "Iran",
+                        "bosnia": "Bosnia & Herzegovina", "cote d'ivoire": "Ivory Coast",
+                    }
+                    alias = COUNTRY_ALIASES.get(opp_lower)
+                    if alias and alias not in opp_searches:
+                        opp_searches.insert(0, alias)
                     # Expand common team name abbreviations
                     TEAM_ABBREVS = {"PR": "Paranaense", "MG": "Mineiro", "GO": "Goianiense", "RJ": "Rio"}
                     for abbr, full in TEAM_ABBREVS.items():
