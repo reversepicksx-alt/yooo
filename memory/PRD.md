@@ -52,7 +52,7 @@ Mobile-first webapp for analyzing soccer player props (pass attempts, shots, sav
 
 ## Completed Work
 
-### 2026-03-30 (Session 2 - Cache-First Resolution)
+### 2026-03-30 (Session 2 - Cache-First Resolution + Combo Props)
 - [x] **Wired scan.py to use MongoDB cache as PRIMARY player resolution**
   - Replaced ~400 lines of complex API-Sports search with cache-first lookups
   - `get_player_by_name()` uses 4-tier search: exact nameClean → last name end-of-string → word-boundary full → word-boundary last
@@ -62,7 +62,13 @@ Mobile-first webapp for analyzing soccer player props (pass attempts, shots, sav
   - League inference uses cache `get_team_info()` before hardcoded map
 - [x] **Added `get_team_info()` to cache.py** - Returns full team doc including leagueId
 - [x] **Fixed player name matching** - Word boundary regex for accent-stripped names
-- [x] **All 14 backend tests passed (100%)** - Verified cache lookups for Højbjerg, Salah, Saka, Ødegaard, Mbappé, national teams
+- [x] **Combo Prop Detection & Resolution** (NEW FEATURE)
+  - Updated GPT-4o Vision prompt to detect combo props ("Player A + Player B", "(Combo)" label, "Team1/Team2")
+  - Backend resolves BOTH players independently via cache, returns `isCombo: true` + `resolvedPlayers[]` array
+  - Frontend shows purple "COMBO PROP" badge with Users icon, both player names/teams
+  - "RUN COMBO PREDICTION" button routes to existing `predictCombo()` pipeline
+  - Combo result card shows individual projections + combined projection vs combined line
+- [x] **All tests passed (100%)** - Backend: 11/11, Frontend: all UI elements verified
 
 ### 2026-03-30 (Session 1 - Refactor + Cache Build)
 - [x] Fixed "NO MATCH" bug for international players with Nordic characters (Højbjerg, Euro Qualifiers)
