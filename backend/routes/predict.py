@@ -336,9 +336,9 @@ async def predict(req: PredictionRequest):
             venue_filtered_opp_fixtures[:5] if len(venue_filtered_opp_fixtures) >= 3 else opponent_fixture_list[:5],
             req.opponentId, 5
         )
-        # Player game logs: use ALL recent fixtures for maximum sample size
-        # AI will weight venue-matching games higher in analysis
-        player_game_logs_task = fetch_player_game_logs(all_team_fixtures[:12], req.playerId, 10)
+        # Player game logs: search ALL fixtures for maximum game log coverage
+        # International teams especially need deep lookback for away game samples
+        player_game_logs_task = fetch_player_game_logs(all_team_fixtures, req.playerId, 25)
 
         # =============================================
         # BUILD STRUCTURED DATA DIGEST (no AI needed — pure code extraction)
@@ -414,7 +414,7 @@ async def predict(req: PredictionRequest):
             return_exceptions=True
         )
         try:
-            results = await aio.wait_for(all_wave2, timeout=8)
+            results = await aio.wait_for(all_wave2, timeout=12)
         except aio.TimeoutError:
             results = [None, None, None]
 
@@ -1048,7 +1048,7 @@ Analyze ALL data thoroughly. Return JSON only."""
             pv = prediction.get("projectedValue", req.line)
             prediction["recommendation"] = "over" if pv > req.line else "under"
 
-        # Clean up internal source tags
+        # Clean up internal source tags (after synthesis used them)
         for p in valid_preds:
             p.pop("_source", None)
         prediction.pop("_source", None)
@@ -1176,73 +1176,112 @@ Analyze ALL data thoroughly. Return JSON only."""
                 "totalGames": total_game_logs,
             }
 
-        # ALWAYS rebuild tacticalBreakdown from merged fields to ensure
-        # verdict matches the consensus recommendation (not individual AI's opinion)
+        # SYNTHESIS STEP: Combine all AI analyses into one rich tactical breakdown
+        # This recreates the original Grok+Gemini depth — one AI synthesizes all others' insights
         rec = prediction.get('recommendation', 'over').upper()
         line = prediction.get('line', req.line)
-        prop_map = {"pass_attempts":"Pass Attempts","shots":"Shots","shots_on_target":"Shots on Target","tackles":"Tackles","key_passes":"Key Passes","saves":"Saves","interceptions":"Interceptions","blocks":"Blocks","dribbles":"Dribbles","fouls_drawn":"Fouls Drawn"}
-        pl = prop_map.get(req.propType, req.propType)
-
-        # Extract raw AI tactical text (may come from Grok) for the analysis body
-        raw_tb = prediction.get("tacticalBreakdown", "")
-        if isinstance(raw_tb, dict):
-            parts = []
-            for key, value in raw_tb.items():
-                if isinstance(value, str) and value.strip():
-                    parts.append(f"**{key.replace('_', ' ').title()}**\n{value}")
-                elif isinstance(value, list):
-                    parts.append(f"**{key.replace('_', ' ').title()}**")
-                    for item in value:
-                        parts.append(f"- {item}")
-            raw_tb = "\n\n".join(parts) if parts else ""
-        elif not isinstance(raw_tb, str):
-            raw_tb = str(raw_tb) if raw_tb else ""
-
-        tb_parts = []
         proj = prediction.get('projectedValue', '?')
         conf = prediction.get('confidenceScore', '?')
-
-        # Verdict always matches consensus
-        if prediction.get('sharpSummary'):
-            tb_parts.append(f"**Verdict: {rec} {line} {pl}**\n{prediction['sharpSummary']}")
-        else:
-            tb_parts.append(f"**Verdict: {rec} {line} {pl}**\nProjected {proj} {pl.lower()} — consensus favors {rec.lower()}.")
-
-        # Analysis body: prefer Grok-sourced reasoning, then raw TB analysis
-        if prediction.get('reasoning') and len(str(prediction['reasoning'])) > 30:
-            tb_parts.append(f"**Analysis**\n{prediction['reasoning']}")
-        elif raw_tb and len(raw_tb) > 50:
-            # Strip any existing verdict/header from raw TB to avoid duplication
-            clean_tb = raw_tb
-            for prefix in ["**Verdict", "**verdict", "## Verdict"]:
-                if clean_tb.startswith(prefix):
-                    # Remove first paragraph
-                    idx = clean_tb.find("\n\n")
-                    clean_tb = clean_tb[idx+2:] if idx > 0 else clean_tb
-            if clean_tb.strip():
-                tb_parts.append(f"**Analysis**\n{clean_tb.strip()}")
-
-        if prediction.get('scenarioAnalysis'):
-            tb_parts.append(f"**Game Script Scenarios**\n{prediction['scenarioAnalysis']}")
-        if prediction.get('keyEvidence'):
-            tb_parts.append(f"**Key Evidence**\n{prediction['keyEvidence']}")
-
-        risk = []
-        if prediction.get('sensitivityTests'):
-            risk.append(f"- Sensitivity: {prediction['sensitivityTests']}")
-        if prediction.get('subRisk'):
-            risk.append(f"- Sub Risk: {prediction['subRisk']}")
-        if prediction.get('uncertaintyNote'):
-            risk.append(f"- Key Risk: {prediction['uncertaintyNote']}")
-        if risk:
-            tb_parts.append("**Risk Radar**\n" + "\n".join(risk))
-        if prediction.get('gameFlowDynamics'):
-            tb_parts.append(f"**Game Flow**\n{prediction['gameFlowDynamics']}")
-
+        prop_map = {"pass_attempts":"Pass Attempts","shots":"Shots","shots_on_target":"Shots on Target","tackles":"Tackles","key_passes":"Key Passes","saves":"Saves","interceptions":"Interceptions","blocks":"Blocks","dribbles":"Dribbles","fouls_drawn":"Fouls Drawn"}
+        pl = prop_map.get(req.propType, req.propType)
         consensus_note = prediction.get('consensusNote', '')
-        tb_parts.append(f"**TL;DR** — {rec} {line} at {conf}% confidence. Projected: {proj} {pl.lower()}. {consensus_note}")
 
-        prediction["tacticalBreakdown"] = "\n\n".join(tb_parts)
+        # Gather ALL text from every AI that responded (not just 3 — use everything available)
+        all_texts = []
+        for p in valid_preds:
+            src = p.get("_source", "AI")
+            bits = []
+            for field in ["tacticalBreakdown", "reasoning", "scenarioAnalysis", "keyEvidence", "sharpSummary", "gameFlowDynamics", "sensitivityTests", "subRisk", "uncertaintyNote"]:
+                val = p.get(field, "")
+                if isinstance(val, dict):
+                    val = json.dumps(val)
+                if val and len(str(val)) > 10:
+                    bits.append(f"{field}: {val}")
+            if bits:
+                all_texts.append(f"[{src}]\n" + "\n".join(bits))
+
+        synthesis_input = "\n\n".join(all_texts)
+
+        # Fast Gemini synthesis — combine insights into one cohesive breakdown
+        try:
+            synth_prompt = f"""You are synthesizing multiple AI analyses into ONE elite tactical breakdown for a {pl} prop prediction.
+
+FINAL VERDICT: {rec} {line} {pl} (Projected: {proj}, Confidence: {conf}%, {consensus_note})
+Player: {req.playerName} vs {req.opponentName} ({player_venue.upper()})
+
+Here are the individual AI analyses to synthesize:
+
+{synthesis_input[:4000]}
+
+Write a single cohesive ~1500 char markdown tactical breakdown. Format:
+**Verdict: {rec} {line} {pl}**
+[1-2 sentence sharp summary with projection vs line]
+
+**Analysis**
+[3-4 sentences combining the BEST insights from ALL analyses. Cite specific numbers: per-game averages, venue splits, sample sizes, opponent tendencies. Merge complementary insights, resolve contradictions]
+
+**Game Script Scenarios**
+[Best case / Worst case / Most likely — with stat projections for each]
+
+**Key Evidence**
+[3-4 bullet points — strongest data points from across all analyses]
+
+**Risk Radar**
+[Sub risk, sensitivity factors, what would flip the pick]
+
+**TL;DR** — {rec} {line} at {conf}% confidence. Projected: {proj} {pl.lower()}. {consensus_note}
+
+Rules: No AI model names. Be specific with numbers. Be decisive."""
+
+            synth_resp = await aio.wait_for(
+                litellm.acompletion(
+                    model="gemini/gemini-2.0-flash",
+                    messages=[{"role": "user", "content": synth_prompt}],
+                    api_key=EMERGENT_LLM_KEY,
+                    api_base=EMERGENT_PROXY,
+                    custom_llm_provider="openai",
+                    max_tokens=1500,
+                    temperature=0.2,
+                ),
+                timeout=10
+            )
+            synth_text = synth_resp.choices[0].message.content.strip()
+            if synth_text and len(synth_text) > 200:
+                prediction["tacticalBreakdown"] = synth_text
+                print(f"[TIMING] Synthesis done: {_t.time()-_t0:.1f}s total, {len(synth_text)} chars")
+            else:
+                raise ValueError("Synthesis too short")
+        except Exception as synth_err:
+            print(f"[SYNTHESIS] Fallback — {synth_err}")
+            # Fallback: Build from fields manually
+            tb_parts = []
+            if prediction.get('sharpSummary'):
+                tb_parts.append(f"**Verdict: {rec} {line} {pl}**\n{prediction['sharpSummary']}")
+            else:
+                tb_parts.append(f"**Verdict: {rec} {line} {pl}**\nProjected {proj} {pl.lower()} — consensus favors {rec.lower()}.")
+
+            if prediction.get('reasoning') and len(str(prediction['reasoning'])) > 30:
+                tb_parts.append(f"**Analysis**\n{prediction['reasoning']}")
+
+            if prediction.get('scenarioAnalysis'):
+                tb_parts.append(f"**Game Script Scenarios**\n{prediction['scenarioAnalysis']}")
+            if prediction.get('keyEvidence'):
+                tb_parts.append(f"**Key Evidence**\n{prediction['keyEvidence']}")
+
+            risk = []
+            if prediction.get('sensitivityTests'):
+                risk.append(f"- Sensitivity: {prediction['sensitivityTests']}")
+            if prediction.get('subRisk'):
+                risk.append(f"- Sub Risk: {prediction['subRisk']}")
+            if prediction.get('uncertaintyNote'):
+                risk.append(f"- Key Risk: {prediction['uncertaintyNote']}")
+            if risk:
+                tb_parts.append("**Risk Radar**\n" + "\n".join(risk))
+            if prediction.get('gameFlowDynamics'):
+                tb_parts.append(f"**Game Flow**\n{prediction['gameFlowDynamics']}")
+
+            tb_parts.append(f"**TL;DR** — {rec} {line} at {conf}% confidence. Projected: {proj} {pl.lower()}. {consensus_note}")
+            prediction["tacticalBreakdown"] = "\n\n".join(tb_parts)
 
         # Save to MongoDB
         prediction["_created"] = datetime.now(timezone.utc).isoformat()

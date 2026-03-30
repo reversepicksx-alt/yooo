@@ -71,7 +71,7 @@ WOMENS_LEAGUE_IDS = {254}
 TOP_5_LEAGUES = [39, 140, 135, 78, 61]
 
 # ── Rate limiter ──
-api_semaphore = aio.Semaphore(5)
+api_semaphore = aio.Semaphore(10)
 
 # ── Chat sessions (in-memory) ──
 chat_sessions: dict = {}
