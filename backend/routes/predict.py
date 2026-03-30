@@ -134,9 +134,12 @@ async def predict(req: PredictionRequest):
         fixtures_task = get_recent_fixtures_fast(actual_team_id or 40, 30)
         odds_task = get_match_odds()
 
+        import time as _t
+        _t0 = _t.time()
         player_stats, team_stats, opponent_stats, h2h_data, standings_raw, recent_fixtures, match_odds = await aio.gather(
             player_data_task, team_stats_task, opponent_stats_task, h2h_task, standings_task, fixtures_task, odds_task
         )
+        print(f"[TIMING] Wave 1: {_t.time()-_t0:.1f}s")
 
         if actual_team_id == 0 and player_stats:
             stats_list = player_stats.get("statistics", [])
@@ -390,26 +393,22 @@ async def predict(req: PredictionRequest):
 
         data_digest = build_data_digest()
 
-        # =============================================
-        # Wave 2: Fetch deep per-fixture data (NO separate AI call)
-        # All tactical analysis merged into the single Gemini call below
-        # =============================================
-
-        # Fire wave-2 data tasks in parallel
+        # Wave 2: Fetch deep fixture data in parallel (NO Grok — too slow for proxy timeout)
+        # Grok stays in follow-up chat (tactical.py) where it's user-initiated
         all_wave2 = aio.gather(
-            team_fixture_stats_task, opponent_fixture_stats_task,
-            player_game_logs_task,
+            team_fixture_stats_task, opponent_fixture_stats_task, player_game_logs_task,
             return_exceptions=True
         )
         try:
-            results = await aio.wait_for(all_wave2, timeout=15)
+            results = await aio.wait_for(all_wave2, timeout=12)
         except aio.TimeoutError:
             results = [None, None, None]
 
         team_fixture_stats = results[0] if not isinstance(results[0], (Exception, type(None))) else []
         opponent_fixture_stats = results[1] if not isinstance(results[1], (Exception, type(None))) else []
         player_game_logs = results[2] if not isinstance(results[2], (Exception, type(None))) else []
-        grok_analysis = None  # No separate tactical call — merged into Gemini below
+        grok_analysis = None
+        print(f"[TIMING] Wave 2: {_t.time()-_t0:.1f}s total")
 
         historical_data = {
             "playerStats": player_stats,
@@ -653,71 +652,15 @@ async def predict(req: PredictionRequest):
                         player_position = pos
                         break
 
-        # 2. Send to Gemini — UNIFIED PREDICTOR + TACTICAL ENGINE
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=f"predict-{uuid.uuid4().hex[:8]}",
-            system_message="""You are the PREDICTION CALIBRATION ENGINE. You receive comprehensive real API data and must produce the most accurate, market-beating prediction possible.
-
-INPUTS YOU RECEIVE:
-1. STRUCTURED DATA DIGEST — real API stats compiled by code (100% accurate numbers)
-2. DEEP MATCH DATA — per-fixture stats and player game logs from the real API
-3. TACTICAL CONTEXT — odds, standings, H2H data
-
-YOUR CALIBRATION PROTOCOL:
-
-STEP 1: ANCHOR ON EVIDENCE
-- Game logs are your PRIMARY anchor (real per-game numbers from the API)
-- Data digest provides team-level context (possession, shots, tactical setup)
-- If sources disagree, rank: Game logs > Data digest estimates
-
-STEP 2: POSITION-CALIBRATED CEILINGS
-Apply hard ceilings based on position and prop type:
-- GK saves: CAPPED by opponent avg SoT. If opp avg 3.5 SoT and GK saves 70% → max ~2.5 saves. NEVER exceed opp SoT.
-- GK saves INVERSE: Favored GK = FEWER saves (less shots faced). Underdog GK = MORE.
-- Defender: tackles 2-5, interceptions 1-3, blocks 0-3, shots 0-1
-- Midfielder: shots 1-3 (AM 2-4), passes 25-55, key passes 1-3, tackles 1-4
-- Forward: shots 2-5 (elite 3-6), key passes 0-2, dribbles 1-4
-
-STEP 3: BAYESIAN CALIBRATION
-- priorMean: Weighted avg of last 5 games (recency-weighted: most recent = 2x weight)
-- momentumEffect: Trend direction — positive if ascending 3-game trend, negative if descending
-- covariateAdjustment: Venue split differential (home vs away avg difference for this stat)
-- reversalFlag: If player hit >80th percentile last game, flag "downward_reversal_likely" (regression to mean)
-
-STEP 4: EDGE DETECTION & CONFIDENCE
-- If |projectedValue - line| < 0.3 → this is a COIN FLIP → max confidence 52%
-- If |projectedValue - line| < 0.8 → low edge → max confidence 62%
-- If |projectedValue - line| >= 1.5 → strong edge → confidence 70-85%
-- Sensitivity assessment: ROBUST = +10 conf, MODERATE = 0, FRAGILE = -10 conf
-- Low sample size (<5 games) → cap confidence at 60%
-
-STEP 5: PROBABILITY CURVE
-Generate 10-point probability distribution centered on projectedValue:
-- Use normal distribution with std dev from game log variance
-- Each point: {"value": X, "probability": Y} where probabilities sum to ~1.0
-
-DRIBBLE-SPECIFIC RULE: Most volatile stat. AWAY + low-block opponent = default UNDER when line is close to average.
-
-Return ONLY valid JSON (no markdown code fences).
-
-JSON structure:
-{"player":{"id":int,"name":"","team":"","role":"","position":""},"opponent":"","league":"","propType":"","line":0,"projectedValue":0,"recommendation":"over|under","confidenceScore":0-100,"confidenceLevel":"Low|Medium|High|Very High","confidenceInterval":[lo,hi],"matchupOverview":{"homeTeam":"","awayTeam":"","favorite":"home|away|even","moneyline":{"home":"","draw":"","away":""},"expectedPossession":{"home":0,"away":0},"expectedGameType":"open|cagey|one-sided|high-tempo","keyMatchupFactor":""},"recentSamples":[],"bayesianMetrics":{"priorMean":0,"momentumEffect":0,"covariateAdjustment":0,"reversalFlag":"stable|upward_reversal_likely|downward_reversal_likely"},"probabilityCurve":[{"value":0,"probability":0}],"tacticalAlerts":[{"type":"injury|lineup|tactical|sub_risk","message":"","severity":"low|medium|high"}],"sharpSummary":"","reasoning":"","scenarioAnalysis":"","keyEvidence":"","uncertaintyNote":"","sensitivityTests":"","subRisk":"","gameFlowDynamics":""}
-
-FIELD REQUIREMENTS:
-- matchupOverview: Real team names, moneyline odds, expected possession split, game type, key factor
-- sharpSummary: 2-3 sentences. Core edge. Opinionated. Quote ONE decisive number.
-- reasoning: 2-3 paragraphs. Analyze the data digest + game logs. Quote specific stats per game. Be authoritative and opinionated.
-- scenarioAnalysis: Build 4 weighted scenarios (Base 50-60%, Blowout 15-20%, Trailing 15-20%, Cagey 10-15%) with projected values
-- keyEvidence: 5-8 specific data points with context
-- bayesianMetrics: Calculate using protocol above
-- probabilityCurve: 10 data points, normal distribution around projection
-- recentSamples: MUST BE EMPTY ARRAY []. Backend injects real data.
-- sensitivityTests: Assess ROBUST/MODERATE/FRAGILE based on data variance and sample size
-- subRisk: Estimate expected minutes and sub likelihood based on recent game logs
-- gameFlowDynamics: How the expected game state (favorite, underdog, blowout risk) affects stat generation"""
-        )
-        chat.with_model("gemini", "gemini-2.5-flash")
+        # =============================================
+        # MULTI-AI CONSENSUS ENGINE
+        # Gemini + GPT-4o + Claude run IN PARALLEL
+        # Results merged for calibrated final prediction
+        # =============================================
+        PREDICTION_SYSTEM = """Soccer prop prediction engine. Return calibrated JSON from real data.
+GK saves capped by opp SoT. |proj-line|<0.3→max 52% conf. recentSamples=[].
+JSON: {"projectedValue":0,"recommendation":"over|under","confidenceScore":0,"confidenceLevel":"","sharpSummary":"","reasoning":"","scenarioAnalysis":"","keyEvidence":"","sensitivityTests":"","subRisk":"","gameFlowDynamics":"","uncertaintyNote":"","tacticalBreakdown":"","matchupOverview":{"homeTeam":"","awayTeam":"","favorite":"","moneyline":{"home":"","draw":"","away":""},"expectedPossession":{"home":0,"away":0},"expectedGameType":"","keyMatchupFactor":""},"bayesianMetrics":{"priorMean":0,"momentumEffect":0,"covariateAdjustment":0,"reversalFlag":"stable"},"probabilityCurve":[],"recentSamples":[],"player":{"id":0,"name":"","team":"","position":""},"opponent":"","propType":"","line":0,"confidenceInterval":[0,0],"tacticalAlerts":[]}
+tacticalBreakdown: markdown with **Verdict** **Analysis** **Scenarios** **Risk** **TL;DR**. No AI names."""
 
         # Build the data payload — use GPT summary as primary + Wave 2 deep data as supplement
         wave2_supplement = {}
@@ -861,65 +804,135 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             pos_short = pos_map.get(player_position, player_position)
             position_context = f"\n[POSITION BASELINE] Player position: {player_position} ({pos_short}). Calibrate expectations for this position — {pos_short}s have different stat ceilings than other positions."
 
-        # Compose final data: Structured data digest + Wave 2 deep data
+        # Compose data for Gemini
         final_data_parts = []
         if data_digest:
-            final_data_parts.append(f"[DATA DIGEST — REAL API STATS]\n{data_digest}")
+            final_data_parts.append(f"[DATA DIGEST]\n{data_digest}")
         if wave2_supplement:
-            final_data_parts.append(f"[DEEP MATCH DATA — GAME LOGS & FIXTURE STATS]\n{json.dumps(wave2_supplement, default=str)[:5000]}")
+            final_data_parts.append(f"[GAME LOGS]\n{json.dumps(wave2_supplement, default=str)[:3000]}")
 
         if final_data_parts:
-            final_data = "\n\n".join(final_data_parts)
+            final_data = "\n\n".join(final_data_parts)[:8000]
             if saves_context:
                 final_data += f"\n\n{saves_context}"
             if position_context:
                 final_data += f"\n{position_context}"
         else:
-            final_data = json.dumps(historical_data, default=str)[:18000]
+            final_data = json.dumps(historical_data, default=str)[:8000]
 
-        prompt = f"""PREDICTION ENGINE — CALIBRATE AND PREDICT
-{pronoun_note}
+        prompt = f"""{req.playerName} ({player_position}) | {req.opponentName} | {player_venue.upper()} | {req.propType} line {req.line}
+Odds: {json.dumps(match_odds.get('bookmakerOdds',{}), default=str) if match_odds else 'N/A'}
+recentSamples=[]
 
-Player: {req.playerName} (ID: {req.playerId}) | Position: {player_position or 'Unknown'} | Opponent: {req.opponentName} | Venue: {req.venue.upper()} | Prop: {req.propType} | Line: {req.line}
+{final_data[:4000]}
 
-CRITICAL VENUE CONTEXT: Player is {player_venue.upper()}. ALL data below is venue-filtered:
-- Team stats = their {player_venue.upper()} performance
-- Opponent stats = their {opponent_venue.upper()} performance
-- Player game logs = prioritized {player_venue.upper()} games
-- The {player_venue.upper()} average is MORE predictive than the overall average. Weight it 60-70%.
+Return JSON only."""
 
-Stat mapping: pass_attempts=passes.total, shots=shots.total, shots_on_target=shots.on, tackles=tackles.total, key_passes=passes.key, saves=goals.saves, interceptions=tackles.interceptions, blocks=tackles.blocks, dribbles=dribbles.attempts, fouls_drawn=fouls.drawn
+        # Run 3 AIs in parallel
+        async def call_ai(model_provider, model_name, label):
+            try:
+                c = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=f"p-{label}-{uuid.uuid4().hex[:6]}", system_message=PREDICTION_SYSTEM)
+                c.with_model(model_provider, model_name)
+                resp = await aio.wait_for(c.send_message(UserMessage(text=prompt)), timeout=30)
+                text = resp.strip()
+                if text.startswith("```"):
+                    text = "\n".join(l for l in text.split("\n") if not l.strip().startswith("```"))
+                return json.loads(text)
+            except Exception as e:
+                print(f"[MULTI-AI] {label} failed: {e}")
+                return None
 
-YOU HAVE:
-1. DATA DIGEST — 100% real API numbers compiled by code (no AI distortion)
-2. DEEP MATCH DATA — per-game player logs with exact stats, venue splits, opponent data
+        ai_tasks = [
+            aio.ensure_future(call_ai("gemini", "gemini-2.0-flash", "gemini")),
+            aio.ensure_future(call_ai("openai", "gpt-4o", "gpt4o")),
+            aio.ensure_future(call_ai("anthropic", "claude-sonnet-4-20250514", "claude")),
+        ]
 
-YOUR JOB: Analyze all data and produce the calibrated prediction JSON.
-- Build 4 weighted scenarios (Base/Blowout/Trailing/Cagey) from the data
-- Cross-check venue splits against overall averages
-- DO NOT generate recentSamples — return empty array []. Backend injects real API data.
-- Assess sensitivity (ROBUST/MODERATE/FRAGILE) based on data variance
-- Evaluate sub risk from recent game logs (minutes played trends)
+        # Wait up to 45s — take whatever finishes
+        done, pending = await aio.wait(ai_tasks, timeout=45)
+        for t in pending:
+            t.cancel()
 
-TACTICAL CONTEXT:
-- Bookmaker odds: {json.dumps(match_odds, default=str) if match_odds else 'Not available — use standings to estimate favorite'}
-- CRITICAL: If bookmaker odds present, lower odds = favored team. Trust odds over all other signals.
+        ai_results = []
+        for t in done:
+            try:
+                r = t.result()
+                if r:
+                    ai_results.append(r)
+            except:
+                pass
+        print(f"[TIMING] AIs done: {_t.time()-_t0:.1f}s total, {len(ai_results)} succeeded")
 
-ALL DATA:
-{final_data}
+        # Collect valid predictions
+        valid_preds = []
+        for i, r in enumerate(ai_results):
+            if isinstance(r, dict) and r.get("projectedValue") is not None:
+                pv = r.get("projectedValue", 0)
+                # Filter out obviously bad predictions (0 or negative)
+                if isinstance(pv, (int, float)) and pv > 0:
+                    valid_preds.append(r)
+                    print(f"[MULTI-AI] AI {i}: proj={pv} rec={r.get('recommendation')} conf={r.get('confidenceScore')}")
+                else:
+                    print(f"[MULTI-AI] AI {i}: REJECTED proj={pv}")
 
-Return ONLY valid JSON. recentSamples MUST be []. 10pt probabilityCurve."""
+        if not valid_preds:
+            raise ValueError("All AI models failed to produce predictions")
 
-        response = await aio.wait_for(chat.send_message(UserMessage(text=prompt)), timeout=25)
-        response_text = response.strip()
+        # MERGE: Weighted consensus
+        # Use first valid as base, merge numbers from all
+        prediction = valid_preds[0].copy()
 
-        # Clean up response - remove markdown code fences if present
-        if response_text.startswith("```"):
-            lines = response_text.split("\n")
-            lines = [l for l in lines if not l.strip().startswith("```")]
-            response_text = "\n".join(lines)
+        if len(valid_preds) > 1:
+            # Average projectedValue across all models
+            proj_values = [p.get("projectedValue", 0) for p in valid_preds if p.get("projectedValue")]
+            prediction["projectedValue"] = round(sum(proj_values) / len(proj_values), 1)
 
-        prediction = json.loads(response_text)
+            # Majority vote on recommendation
+            recs = [p.get("recommendation", "over") for p in valid_preds]
+            over_count = sum(1 for r in recs if r == "over")
+            prediction["recommendation"] = "over" if over_count > len(recs) / 2 else "under"
+
+            # Average confidence (normalize 0-1 to 0-100)
+            conf_values = []
+            for p in valid_preds:
+                c = p.get("confidenceScore", 50)
+                if isinstance(c, (int, float)):
+                    conf_values.append(c * 100 if c <= 1 else c)
+            prediction["confidenceScore"] = round(sum(conf_values) / len(conf_values)) if conf_values else 50
+
+            # Use longest tacticalBreakdown
+            best_tb = max(valid_preds, key=lambda p: len(str(p.get("tacticalBreakdown", ""))))
+            prediction["tacticalBreakdown"] = best_tb.get("tacticalBreakdown", "")
+
+            # Use longest reasoning
+            best_r = max(valid_preds, key=lambda p: len(str(p.get("reasoning", ""))))
+            prediction["reasoning"] = best_r.get("reasoning", "")
+
+            # Use longest sharpSummary
+            best_ss = max(valid_preds, key=lambda p: len(str(p.get("sharpSummary", ""))))
+            prediction["sharpSummary"] = best_ss.get("sharpSummary", "")
+
+            # Use longest scenarioAnalysis
+            best_sa = max(valid_preds, key=lambda p: len(str(p.get("scenarioAnalysis", ""))))
+            prediction["scenarioAnalysis"] = best_sa.get("scenarioAnalysis", "")
+
+            # Use longest keyEvidence
+            best_ke = max(valid_preds, key=lambda p: len(str(p.get("keyEvidence", ""))))
+            prediction["keyEvidence"] = best_ke.get("keyEvidence", "")
+
+            # Consensus note
+            consensus = f"{len(valid_preds)} AI models analyzed. "
+            if all(r == prediction["recommendation"] for r in recs):
+                consensus += f"Unanimous {prediction['recommendation'].upper()}."
+            else:
+                consensus += f"Split decision: {over_count} OVER, {len(recs)-over_count} UNDER."
+            prediction["consensusNote"] = consensus
+
+        # Set confidence level
+        cs = prediction.get("confidenceScore", 50)
+        prediction["confidenceLevel"] = "Very High" if cs >= 75 else "High" if cs >= 65 else "Medium" if cs >= 50 else "Low"
+
+        response_text = json.dumps(prediction)
 
         # Ensure all required fields have fallback values
         prediction.setdefault("player", {"id": req.playerId, "name": req.playerName, "team": str(req.teamId), "role": "Unknown", "position": "Unknown"})
@@ -1038,67 +1051,54 @@ Return ONLY valid JSON. recentSamples MUST be []. 10pt probabilityCurve."""
                 "totalGames": total_game_logs,
             }
 
-        # =============================================
-        # UNIFIED TACTICAL BREAKDOWN — generated INLINE with prediction
-        # No separate AI call — built from prediction fields
-        # =============================================
-        tactical_breakdown = ""
-        try:
-            prop_label_map = {
-                "pass_attempts": "Pass Attempts", "shots": "Shots", "shots_on_target": "Shots on Target",
-                "tackles": "Tackles", "key_passes": "Key Passes", "saves": "Saves",
-                "interceptions": "Interceptions", "blocks": "Blocks", "dribbles": "Dribbles",
-                "fouls_drawn": "Fouls Drawn",
-            }
-            prop_label = prop_label_map.get(req.propType, req.propType)
+        # tacticalBreakdown: Flatten if dict, build from fields if empty
+        tb = prediction.get("tacticalBreakdown", "")
+        if isinstance(tb, dict):
+            parts = []
+            for key, value in tb.items():
+                if isinstance(value, str) and value.strip():
+                    parts.append(f"**{key.replace('_', ' ').title()}**\n{value}")
+                elif isinstance(value, list):
+                    parts.append(f"**{key.replace('_', ' ').title()}**")
+                    for item in value:
+                        parts.append(f"- {item}")
+            tb = "\n\n".join(parts) if parts else ""
+        elif not isinstance(tb, str):
+            tb = str(tb) if tb else ""
 
-            # Build tactical breakdown from the prediction fields directly
-            tb_parts = []
+        # If tacticalBreakdown is empty, build it from the rich prediction fields
+        if not tb or len(tb) < 50:
+            fallback_parts = []
             rec = prediction.get('recommendation', 'over').upper()
-            conf = prediction.get('confidenceScore', 50)
-            proj = prediction.get('projectedValue', req.line)
+            line = prediction.get('line', req.line)
+            prop_map = {"pass_attempts":"Pass Attempts","shots":"Shots","shots_on_target":"Shots on Target","tackles":"Tackles","key_passes":"Key Passes","saves":"Saves","interceptions":"Interceptions","blocks":"Blocks","dribbles":"Dribbles","fouls_drawn":"Fouls Drawn"}
+            pl = prop_map.get(req.propType, req.propType)
 
-            # Verdict
-            tb_parts.append(f"**Verdict: {rec} {req.line} {prop_label}**")
             if prediction.get('sharpSummary'):
-                tb_parts.append(prediction['sharpSummary'])
-
-            # Reasoning
+                fallback_parts.append(f"**Verdict: {rec} {line} {pl}**\n{prediction['sharpSummary']}")
             if prediction.get('reasoning'):
-                tb_parts.append(f"\n**Analysis**\n{prediction['reasoning']}")
-
-            # Scenario Analysis
+                fallback_parts.append(f"**Analysis**\n{prediction['reasoning']}")
             if prediction.get('scenarioAnalysis'):
-                tb_parts.append(f"\n**Game Script Scenarios**\n{prediction['scenarioAnalysis']}")
-
-            # Key Evidence
+                fallback_parts.append(f"**Game Script Scenarios**\n{prediction['scenarioAnalysis']}")
             if prediction.get('keyEvidence'):
-                tb_parts.append(f"\n**Key Evidence**\n{prediction['keyEvidence']}")
-
-            # Risk
-            risk_parts = []
+                fallback_parts.append(f"**Key Evidence**\n{prediction['keyEvidence']}")
+            risk = []
             if prediction.get('sensitivityTests'):
-                risk_parts.append(f"- Sensitivity: {prediction['sensitivityTests']}")
+                risk.append(f"- Sensitivity: {prediction['sensitivityTests']}")
             if prediction.get('subRisk'):
-                risk_parts.append(f"- Sub Risk: {prediction['subRisk']}")
+                risk.append(f"- Sub Risk: {prediction['subRisk']}")
             if prediction.get('uncertaintyNote'):
-                risk_parts.append(f"- Key Risk: {prediction['uncertaintyNote']}")
-            if risk_parts:
-                tb_parts.append(f"\n**Risk Radar**\n" + "\n".join(risk_parts))
-
-            # Game Flow
+                risk.append(f"- Key Risk: {prediction['uncertaintyNote']}")
+            if risk:
+                fallback_parts.append(f"**Risk Radar**\n" + "\n".join(risk))
             if prediction.get('gameFlowDynamics'):
-                tb_parts.append(f"\n**Game Flow**\n{prediction['gameFlowDynamics']}")
+                fallback_parts.append(f"**Game Flow**\n{prediction['gameFlowDynamics']}")
+            proj = prediction.get('projectedValue', '?')
+            conf = prediction.get('confidenceScore', '?')
+            fallback_parts.append(f"**TL;DR** — {rec} {line} at {conf}% confidence. Projected: {proj} {pl.lower()}.")
+            tb = "\n\n".join(fallback_parts)
 
-            # TL;DR
-            tb_parts.append(f"\n**TL;DR** — {rec} {req.line} at {conf}% confidence. Projected: {proj} {prop_label.lower()}.")
-
-            tactical_breakdown = "\n".join(tb_parts)
-        except Exception as e:
-            print(f"[PREDICT] Tactical breakdown assembly failed: {e}")
-            tactical_breakdown = ""
-
-        prediction["tacticalBreakdown"] = tactical_breakdown
+        prediction["tacticalBreakdown"] = tb
 
         # Save to MongoDB
         prediction["_created"] = datetime.now(timezone.utc).isoformat()
