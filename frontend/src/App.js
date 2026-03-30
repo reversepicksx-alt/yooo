@@ -3,10 +3,11 @@ import {
   Zap, ChevronRight, RefreshCw, ArrowLeft, Clock, Activity,
   Shield, Send, Loader2, Trash2, User, Search, Users, Edit3, HelpCircle, ChevronDown,
   TrendingUp, TrendingDown, BarChart3, ShieldAlert, Target, LogOut, Lock, Mail, Bell, RotateCcw,
-  Camera, Upload, Check, X, ImageIcon
+  Camera, Upload, Check, X, ImageIcon, Brain, Crosshair, MessageSquare
 } from 'lucide-react';
 import {
   getTeamsByLeague, searchPlayers, predict, predictCombo, startChat, sendChatMessage,
+  startTactical, sendTacticalMessage,
   checkApiStatus, SUPPORTED_LEAGUES,
   verifyWhop, authLogin, setPassword as apiSetPassword, resetPassword, verifySession, authLogout,
   getPickOfTheDay, savePick, listPicks, deletePick, correctPick, liveUpdatePicks,
@@ -96,6 +97,14 @@ export default function App() {
 
   const searchTimeout = useRef(null);
   const chatEndRef = useRef(null);
+
+  // Reverse Tactical state
+  const [tacticalMessages, setTacticalMessages] = useState([]);
+  const [tacticalInput, setTacticalInput] = useState('');
+  const [isTacticalSending, setIsTacticalSending] = useState(false);
+  const [tacticalSessionId, setTacticalSessionId] = useState(null);
+  const tacticalEndRef = useRef(null);
+  const tacticalInputRef = useRef(null);
 
   // Auth check on mount
   useEffect(() => {
@@ -585,6 +594,57 @@ export default function App() {
     setScanPredictingIdx(null);
     setScanVenueOverrides({});
     if (scanFileRef.current) scanFileRef.current.value = '';
+  };
+
+  // ── Reverse Tactical ──
+  const initTactical = useCallback(async () => {
+    try {
+      const res = await startTactical();
+      setTacticalSessionId(res.session_id);
+      setTacticalMessages([{ role: 'assistant', content: res.message, sources: { grok: true, gemini: true, liveData: false } }]);
+    } catch (e) {
+      setTacticalMessages([{ role: 'assistant', content: 'Failed to initialize tactical session. Please try again.' }]);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'tactical' && !tacticalSessionId) {
+      initTactical();
+    }
+  }, [activeTab, tacticalSessionId, initTactical]);
+
+  useEffect(() => {
+    if (tacticalEndRef.current) {
+      tacticalEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [tacticalMessages]);
+
+  const sendTactical = async () => {
+    const msg = tacticalInput.trim();
+    if (!msg || isTacticalSending) return;
+    setTacticalInput('');
+    setTacticalMessages(prev => [...prev, { role: 'user', content: msg }]);
+    setIsTacticalSending(true);
+    try {
+      const res = await sendTacticalMessage(tacticalSessionId, msg);
+      setTacticalMessages(prev => [...prev, {
+        role: 'assistant',
+        content: res.response,
+        sources: res.sources,
+      }]);
+    } catch (e) {
+      setTacticalMessages(prev => [...prev, { role: 'assistant', content: `Error: ${e.message}` }]);
+    } finally {
+      setIsTacticalSending(false);
+      setTimeout(() => tacticalInputRef.current?.focus(), 100);
+    }
+  };
+
+  const resetTactical = () => {
+    setTacticalSessionId(null);
+    setTacticalMessages([]);
+    setTacticalInput('');
+    initTactical();
   };
 
   const handleLogout = async () => {
@@ -1238,6 +1298,7 @@ export default function App() {
                   const resultLabel = pick.result === 'hit' ? 'HIT' : pick.result === 'push' ? 'PUSH' : pick.result === 'miss' ? 'MISS' : '';
                   const isHit = pick.result === 'hit';
                   const isMiss = pick.result === 'miss';
+                  const isPush = pick.result === 'push';
 
                   return (
                     <div key={pick.pickId} className="live-pick-card" data-testid={`pick-${pick.pickId}`}
@@ -1245,7 +1306,7 @@ export default function App() {
                         background: '#0a0a0f',
                         borderRadius: 14,
                         padding: 0,
-                        border: `1.5px solid ${isMatchLive ? 'var(--accent)' : isHit ? 'rgba(16,185,129,0.5)' : isMiss ? 'rgba(244,63,94,0.4)' : 'rgba(100,100,120,0.25)'}`,
+                        border: `1.5px solid ${isMatchLive ? 'var(--accent)' : isHit ? 'rgba(16,185,129,0.5)' : isMiss ? 'rgba(244,63,94,0.4)' : isPush ? 'rgba(245,158,11,0.5)' : 'rgba(100,100,120,0.25)'}`,
                         overflow: 'hidden',
                       }}>
 
@@ -1953,6 +2014,160 @@ export default function App() {
           </div>
         )}
 
+        {/* TACTICAL TAB */}
+        {activeTab === 'tactical' && (
+          <div className="animate-fade-in" data-testid="tactical-tab" style={{ padding: '0 0 0', display: 'flex', flexDirection: 'column', height: 'calc(100vh - 130px)' }}>
+            {/* Header */}
+            <div style={{ padding: '12px 16px', borderBottom: '1px solid rgba(100,100,120,0.15)', flexShrink: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{
+                    width: 36, height: 36, borderRadius: 10,
+                    background: 'linear-gradient(135deg, rgba(99,102,241,0.15), rgba(168,85,247,0.15))',
+                    border: '1px solid rgba(99,102,241,0.3)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    <Crosshair style={{ width: 18, height: 18, color: '#818cf8' }} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 16, fontWeight: 900, color: '#fff', letterSpacing: '-0.3px' }}>Reverse Tactical</div>
+                    <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#818cf8', display: 'inline-block' }} />
+                      Grok + Gemini Dual Engine
+                    </div>
+                  </div>
+                </div>
+                <button onClick={resetTactical} data-testid="tactical-reset-btn" style={{
+                  background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(100,100,120,0.2)',
+                  borderRadius: 8, padding: '6px 10px', cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, fontWeight: 700,
+                  color: 'rgba(255,255,255,0.4)', letterSpacing: '0.05em',
+                }}>
+                  <RotateCcw style={{ width: 12, height: 12 }} /> NEW
+                </button>
+              </div>
+            </div>
+
+            {/* Messages */}
+            <div style={{ flex: 1, overflowY: 'auto', padding: '16px 16px 8px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {tacticalMessages.map((msg, idx) => (
+                <div key={idx} data-testid={`tactical-msg-${idx}`} style={{
+                  display: 'flex', flexDirection: 'column',
+                  alignItems: msg.role === 'user' ? 'flex-end' : 'flex-start',
+                  maxWidth: '92%', alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start',
+                }}>
+                  {msg.role === 'assistant' && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                      <Crosshair style={{ width: 12, height: 12, color: '#818cf8' }} />
+                      <span style={{ fontSize: 9, fontWeight: 900, letterSpacing: '0.12em', color: '#818cf8', textTransform: 'uppercase' }}>Tactical</span>
+                      {msg.sources && (
+                        <div style={{ display: 'flex', gap: 3 }}>
+                          {msg.sources.grok && <span style={{ fontSize: 8, padding: '1px 5px', borderRadius: 3, background: 'rgba(99,102,241,0.12)', color: '#818cf8', fontWeight: 800 }}>GROK</span>}
+                          {msg.sources.gemini && <span style={{ fontSize: 8, padding: '1px 5px', borderRadius: 3, background: 'rgba(16,185,129,0.12)', color: '#10b981', fontWeight: 800 }}>GEMINI</span>}
+                          {msg.sources.liveData && <span style={{ fontSize: 8, padding: '1px 5px', borderRadius: 3, background: 'rgba(245,158,11,0.12)', color: '#f59e0b', fontWeight: 800 }}>LIVE</span>}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  <div style={{
+                    padding: msg.role === 'user' ? '10px 14px' : '14px 16px',
+                    borderRadius: msg.role === 'user' ? '14px 14px 4px 14px' : '14px 14px 14px 4px',
+                    background: msg.role === 'user' ? 'rgba(99,102,241,0.15)' : '#0a0a0f',
+                    border: `1px solid ${msg.role === 'user' ? 'rgba(99,102,241,0.25)' : 'rgba(100,100,120,0.15)'}`,
+                    fontSize: 13, lineHeight: 1.65, color: msg.role === 'user' ? '#c7d2fe' : 'rgba(255,255,255,0.8)',
+                    fontWeight: msg.role === 'user' ? 600 : 400,
+                    whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                  }}>
+                    {msg.content.split('\n').map((line, li) => {
+                      // Simple markdown: **bold**
+                      const parts = line.split(/(\*\*.*?\*\*)/g);
+                      return (
+                        <div key={li} style={{ marginBottom: line === '' ? 8 : 2 }}>
+                          {parts.map((part, pi) => {
+                            if (part.startsWith('**') && part.endsWith('**')) {
+                              return <strong key={pi} style={{ color: '#fff', fontWeight: 800 }}>{part.slice(2, -2)}</strong>;
+                            }
+                            // Bullet points
+                            if (part.startsWith('- ')) {
+                              return <span key={pi} style={{ paddingLeft: 8 }}><span style={{ color: '#818cf8' }}>-</span> {part.slice(2)}</span>;
+                            }
+                            return <span key={pi}>{part}</span>;
+                          })}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+              {isTacticalSending && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 16px', background: '#0a0a0f', border: '1px solid rgba(100,100,120,0.15)', borderRadius: 14, alignSelf: 'flex-start' }}>
+                  <Loader2 style={{ width: 14, height: 14, color: '#818cf8', animation: 'spin 1s linear infinite' }} />
+                  <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', fontWeight: 600 }}>Analyzing with Grok + Gemini...</span>
+                </div>
+              )}
+              <div ref={tacticalEndRef} />
+            </div>
+
+            {/* Quick Suggestions (only when no messages beyond the initial) */}
+            {tacticalMessages.length <= 1 && !isTacticalSending && (
+              <div style={{ padding: '0 16px 8px', display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {[
+                  'How does PPDA affect pass attempts for midfielders?',
+                  'Compare Saka vs Salah for shots this week',
+                  'What if Denmark plays a low block vs Czechia?',
+                  'Best saves prop targets in upcoming matches',
+                ].map((q, i) => (
+                  <button key={i} data-testid={`tactical-suggestion-${i}`}
+                    onClick={() => { setTacticalInput(q); }}
+                    style={{
+                      padding: '6px 12px', borderRadius: 20, fontSize: 11, fontWeight: 600,
+                      background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.15)',
+                      color: 'rgba(255,255,255,0.5)', cursor: 'pointer', transition: 'all 0.15s',
+                    }}
+                  >
+                    {q}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Input */}
+            <div style={{ padding: '8px 16px 12px', borderTop: '1px solid rgba(100,100,120,0.12)', flexShrink: 0 }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+                <textarea
+                  ref={tacticalInputRef}
+                  value={tacticalInput}
+                  onChange={e => setTacticalInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendTactical(); } }}
+                  placeholder="Ask anything — matchups, what-ifs, prop analysis..."
+                  data-testid="tactical-input"
+                  rows={1}
+                  style={{
+                    flex: 1, resize: 'none', background: 'rgba(255,255,255,0.04)',
+                    border: '1px solid rgba(99,102,241,0.2)', borderRadius: 12,
+                    padding: '10px 14px', color: '#fff', fontSize: 13, fontWeight: 500,
+                    lineHeight: 1.4, outline: 'none', maxHeight: 100,
+                    fontFamily: 'inherit',
+                  }}
+                />
+                <button onClick={sendTactical} disabled={!tacticalInput.trim() || isTacticalSending}
+                  data-testid="tactical-send-btn"
+                  style={{
+                    width: 42, height: 42, borderRadius: 10, border: 'none', flexShrink: 0,
+                    background: tacticalInput.trim() ? 'linear-gradient(135deg, #6366f1, #a855f7)' : 'rgba(255,255,255,0.04)',
+                    color: tacticalInput.trim() ? '#fff' : 'rgba(255,255,255,0.2)',
+                    cursor: tacticalInput.trim() ? 'pointer' : 'not-allowed',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    transition: 'all 0.15s',
+                  }}
+                >
+                  <Send style={{ width: 18, height: 18 }} />
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
       </main>
 
       {/* Bottom Nav */}
@@ -1961,7 +2176,12 @@ export default function App() {
           <button className={`nav-item ${activeTab === 'scan' ? 'active' : ''}`}
             onClick={() => setActiveTab('scan')} data-testid="nav-scan">
             <Camera />
-            <span>Scan Prop</span>
+            <span>Scan</span>
+          </button>
+          <button className={`nav-item ${activeTab === 'tactical' ? 'active' : ''}`}
+            onClick={() => setActiveTab('tactical')} data-testid="nav-tactical">
+            <Crosshair />
+            <span>Tactical</span>
           </button>
           <button className={`nav-item ${activeTab === 'tracking' ? 'active' : ''}`}
             onClick={() => setActiveTab('tracking')} data-testid="nav-tracking">

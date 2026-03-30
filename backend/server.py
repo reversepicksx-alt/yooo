@@ -24,6 +24,7 @@ from routes.scan import router as scan_router
 from routes.picks import router as picks_router
 from routes.chat import router as chat_router
 from routes.misc import router as misc_router
+from routes.tactical import router as tactical_router
 from cache import seed_cache, background_refresh_loop
 
 app.include_router(auth_router)
@@ -35,6 +36,7 @@ app.include_router(scan_router)
 app.include_router(picks_router)
 app.include_router(chat_router)
 app.include_router(misc_router)
+app.include_router(tactical_router)
 
 
 # ── Startup: seed grants for lifetime VIPs ──

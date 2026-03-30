@@ -98,6 +98,21 @@ export async function sendChatMessage(sessionId, message) {
   });
 }
 
+// Reverse Tactical APIs
+export async function startTactical(sessionId = null) {
+  return apiCall('/api/tactical/start', {
+    method: 'POST',
+    body: JSON.stringify({ session_id: sessionId }),
+  });
+}
+
+export async function sendTacticalMessage(sessionId, message) {
+  return apiCall('/api/tactical/message', {
+    method: 'POST',
+    body: JSON.stringify({ session_id: sessionId, message }),
+  });
+}
+
 export async function parseNaturalQuery(query) {
   return apiCall('/api/parse-query', {
     method: 'POST',
