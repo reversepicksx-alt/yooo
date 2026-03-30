@@ -1093,6 +1093,102 @@ Return ONLY valid JSON. recentSamples MUST be []. 10pt probabilityCurve."""
                 "totalGames": total_game_logs,
             }
 
+        # =============================================
+        # UNIFIED TACTICAL BREAKDOWN — deep analysis text
+        # Uses Grok's raw analysis + all structured data
+        # =============================================
+        tactical_breakdown = ""
+        try:
+            from routes.tactical import _fetch_player_stats_structured, _is_international_context, _fetch_national_team_fixtures, SYNTH_SYSTEM
+
+            # Detect international context
+            is_intl = await _is_international_context(req.teamName, req.opponentName)
+
+            # Build comprehensive context for the synthesis
+            tac_parts = []
+            prop_label_map = {
+                "pass_attempts": "Pass Attempts", "shots": "Shots", "shots_on_target": "Shots on Target",
+                "tackles": "Tackles", "key_passes": "Key Passes", "saves": "Saves",
+                "interceptions": "Interceptions", "blocks": "Blocks", "dribbles": "Dribbles",
+                "fouls_drawn": "Fouls Drawn",
+            }
+            prop_label = prop_label_map.get(req.propType, req.propType)
+
+            # Add prediction context
+            tac_parts.append(f"[PREDICTION RESULT] {req.playerName} ({req.teamName}) vs {req.opponentName} [{req.venue.upper()}]")
+            tac_parts.append(f"Prop: {prop_label} | Line: {req.line} | Projected: {prediction.get('projectedValue', '?')} | Recommendation: {prediction.get('recommendation', '?').upper()} | Confidence: {prediction.get('confidenceScore', '?')}%")
+            if is_intl:
+                tac_parts.append("[MATCH CONTEXT: INTERNATIONAL — Prioritize national team stats and form]")
+
+            # Add structured data
+            if data_digest:
+                tac_parts.append(data_digest)
+
+            # Add international stats if applicable
+            intl_stats = await _fetch_player_stats_structured(req.playerId, req.playerName, req.teamName or "", is_intl)
+            if intl_stats:
+                tac_parts.append(intl_stats)
+
+            if is_intl:
+                for tn in [req.teamName, req.opponentName]:
+                    if tn:
+                        fix_text = await _fetch_national_team_fixtures(tn)
+                        if fix_text:
+                            tac_parts.append(fix_text)
+
+            # Add Grok's raw analysis
+            if grok_analysis:
+                tac_parts.append(f"[TACTICAL RESEARCH]\n{grok_analysis}")
+
+            # Add game log summary
+            if player_game_logs:
+                logs_text = []
+                gl_tf = {
+                    "pass_attempts": "passes_total", "shots": "shots_total", "shots_on_target": "shots_on",
+                    "tackles": "tackles_total", "key_passes": "passes_key", "saves": "goals_saves",
+                    "interceptions": "tackles_interceptions", "blocks": "tackles_blocks",
+                    "dribbles": "dribbles_attempts", "fouls_drawn": "fouls_drawn",
+                }
+                tf = gl_tf.get(req.propType, "passes_total")
+                for g in player_game_logs[:8]:
+                    val = g.get(tf, "?")
+                    logs_text.append(f"  {g.get('date','')[:10]} vs {g.get('opponent','')} ({g.get('venue','')}, {g.get('minutes',0)}min): {val} {prop_label.lower()}")
+                tac_parts.append(f"[RECENT GAME LOGS]\n" + "\n".join(logs_text))
+
+            full_context = "\n\n".join(tac_parts)
+
+            # Synthesize with Gemini
+            synth_chat = LlmChat(
+                api_key=EMERGENT_LLM_KEY,
+                session_id=f"tac-synth-{uuid.uuid4().hex[:8]}",
+                system_message=SYNTH_SYSTEM,
+            ).with_model("gemini", "gemini-2.5-flash")
+
+            synth_prompt = f"""The prediction system just analyzed {req.playerName} — {prop_label} line {req.line} vs {req.opponentName} [{req.venue.upper()}].
+
+Result: Projected {prediction.get('projectedValue', '?')}, recommends {prediction.get('recommendation', '?').upper()} with {prediction.get('confidenceScore', '?')}% confidence.
+
+{full_context}
+
+Write a polished tactical breakdown for the user. Cover:
+1. **Verdict** — Clear over/under call with reasoning
+2. **Role & Matchup** — How the player's role in this system affects the prop
+3. **Key Numbers** — Quote specific stats (per game averages, venue splits, H2H data)
+4. **Game Flow Scenarios** — How different match states affect the prop
+5. **Risk Factors** — Sub risk, injury concerns, lineup unknowns
+6. **TL;DR** — 2-sentence bottom line
+
+{"IMPORTANT: This is an INTERNATIONAL match. Lead with national team stats, recent international form, and how the player performs in international duty vs club duty." if is_intl else ""}
+
+Format with **bold** headers. Be direct and opinionated. NEVER mention any AI model names."""
+
+            tactical_breakdown = await synth_chat.send_message(UserMessage(text=synth_prompt))
+        except Exception as e:
+            print(f"[PREDICT] Tactical breakdown failed: {e}")
+            tactical_breakdown = ""
+
+        prediction["tacticalBreakdown"] = tactical_breakdown
+
         # Save to MongoDB
         prediction["_created"] = datetime.now(timezone.utc).isoformat()
         prediction["_request"] = req.model_dump()

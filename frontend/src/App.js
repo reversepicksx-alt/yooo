@@ -93,9 +93,11 @@ export default function App() {
   const [scanPredictingIdx, setScanPredictingIdx] = useState(null);
   const [scanExcludedIndices, setScanExcludedIndices] = useState([]);
   const [scanVenueOverrides, setScanVenueOverrides] = useState({});
-  const [scanTactical, setScanTactical] = useState(null); // tactical analysis for scan prediction
-  const [isScanTacticalLoading, setIsScanTacticalLoading] = useState(false);
+  const [scanFollowUp, setScanFollowUp] = useState('');
+  const [scanFollowUpMessages, setScanFollowUpMessages] = useState([]);
+  const [isScanFollowUpSending, setIsScanFollowUpSending] = useState(false);
   const scanFileRef = useRef(null);
+  const scanFollowUpRef = useRef(null);
 
   const searchTimeout = useRef(null);
   const chatEndRef = useRef(null);
@@ -486,28 +488,6 @@ export default function App() {
   const handleScanPredict = async (pickData, idx) => {
     const isCombo = pickData.extracted?.isCombo;
 
-    // Helper: fire tactical analysis in background after prediction
-    const fireTactical = async (propContext) => {
-      setIsScanTacticalLoading(true);
-      setScanTactical(null);
-      try {
-        // Ensure we have a tactical session
-        let sid = tacticalSessionId;
-        if (!sid) {
-          const startRes = await startTactical();
-          sid = startRes.session_id;
-          setTacticalSessionId(sid);
-        }
-        const tactMsg = propContext;
-        const res = await sendTacticalMessage(sid, tactMsg);
-        setScanTactical(res.response);
-      } catch (e) {
-        setScanTactical(null);
-      } finally {
-        setIsScanTacticalLoading(false);
-      }
-    };
-
     if (isCombo) {
       const rp = pickData.resolvedPlayers || [];
       if (!rp[0] || !rp[1]) {
@@ -518,7 +498,7 @@ export default function App() {
       setScanPredictingIdx(idx);
       setScanPrediction(null);
       setScanExcludedIndices([]);
-      setScanTactical(null);
+      setScanFollowUpMessages([]);
       try {
         const result = await predictCombo({
           leagueId: pickData.extracted.leagueId || 39,
@@ -538,13 +518,7 @@ export default function App() {
           throw new Error('One or both predictions failed.');
         }
         setScanPrediction({ ...result, _isCombo: true, _comboLine: pickData.extracted.line });
-        toast.success('Prediction complete — tactical analysis loading...');
-
-        // Fire tactical for combo
-        const propLabel = PROP_TYPES.find(p => p.key === pickData.extracted.propType)?.label || pickData.extracted.propType;
-        const p1Proj = result.player1?.projectedValue || '?';
-        const p2Proj = result.player2?.projectedValue || '?';
-        fireTactical(`Combo prop: ${rp[0].playerName} (${rp[0].teamName}) + ${rp[1].playerName} (${rp[1].teamName}) — ${propLabel} combined line ${pickData.extracted.line}. Projection: ${p1Proj} + ${p2Proj} = ${result.combined?.projectedValue || '?'}. Recommendation: ${result.combined?.recommendation || '?'}. Give me a full tactical breakdown of this combo — should I take it?`);
+        toast.success('Analysis complete!');
       } catch (err) {
         toast.error(err.message || 'Combo prediction failed');
       } finally {
@@ -560,7 +534,7 @@ export default function App() {
       setScanPredictingIdx(idx);
       setScanPrediction(null);
       setScanExcludedIndices([]);
-      setScanTactical(null);
+      setScanFollowUpMessages([]);
       try {
         const opponentId = pickData.resolvedOpponent?.teamId || pickData.resolved.teamId;
         const opponentName = pickData.resolvedOpponent?.teamName || pickData.extracted.opponentName || 'Unknown';
@@ -578,13 +552,7 @@ export default function App() {
           line: pickData.extracted.line,
         });
         setScanPrediction(result);
-        toast.success('Prediction complete — tactical analysis loading...');
-
-        // Fire tactical analysis with the prediction context
-        const propLabel = PROP_TYPES.find(p => p.key === pickData.extracted.propType)?.label || pickData.extracted.propType;
-        const playerName = pickData.resolved.playerName;
-        const teamName = pickData.resolved.teamName || pickData.extracted.playerTeam || '';
-        fireTactical(`${playerName} (${teamName}) vs ${opponentName} [${venue.toUpperCase()}] — ${propLabel} line ${pickData.extracted.line}. Statistical projection: ${result.projectedValue || '?'}, recommendation: ${result.recommendation || '?'}, confidence: ${result.confidenceLevel || '?'}. Give me your full tactical breakdown — matchup dynamics, role analysis, game flow scenarios, risk factors. Should I take this prop?`);
+        toast.success('Analysis complete!');
       } catch (err) {
         toast.error(err.message || 'Prediction failed');
       } finally {
@@ -621,8 +589,8 @@ export default function App() {
   const backToScanResults = () => {
     setScanPrediction(null);
     setScanExcludedIndices([]);
-    setScanTactical(null);
-    setIsScanTacticalLoading(false);
+    setScanFollowUpMessages([]);
+    setScanFollowUp('');
   };
 
   const resetScan = () => {
@@ -632,8 +600,8 @@ export default function App() {
     setScanPrediction(null);
     setScanPredictingIdx(null);
     setScanVenueOverrides({});
-    setScanTactical(null);
-    setIsScanTacticalLoading(false);
+    setScanFollowUpMessages([]);
+    setScanFollowUp('');
     if (scanFileRef.current) scanFileRef.current.value = '';
   };
 
@@ -701,6 +669,36 @@ export default function App() {
     setTacticalMessages([]);
     setTacticalInput('');
     initTactical();
+  };
+
+  // Follow-up chat on scan prediction
+  const sendScanFollowUp = async () => {
+    const msg = scanFollowUp.trim();
+    if (!msg || isScanFollowUpSending) return;
+    setScanFollowUp('');
+    setScanFollowUpMessages(prev => [...prev, { role: 'user', content: msg }]);
+    setIsScanFollowUpSending(true);
+    try {
+      let sid = tacticalSessionId;
+      if (!sid) {
+        const startRes = await startTactical();
+        sid = startRes.session_id;
+        setTacticalSessionId(sid);
+      }
+      // Include prediction context in first follow-up
+      let contextMsg = msg;
+      if (scanFollowUpMessages.length === 0 && scanPrediction) {
+        const p = scanPrediction;
+        contextMsg = `Context: I just got a prediction for ${p.player?.name || '?'} — ${p.propType || '?'} line ${p.line || '?'}, projected ${p.projectedValue || '?'}, recommendation ${p.recommendation || '?'}. The tactical breakdown was provided.\n\nMy follow-up question: ${msg}`;
+      }
+      const res = await sendTacticalMessage(sid, contextMsg);
+      setScanFollowUpMessages(prev => [...prev, { role: 'assistant', content: res.response }]);
+    } catch (e) {
+      setScanFollowUpMessages(prev => [...prev, { role: 'assistant', content: `Error: ${e.message}` }]);
+    } finally {
+      setIsScanFollowUpSending(false);
+      setTimeout(() => scanFollowUpRef.current?.focus(), 100);
+    }
   };
 
   const handleLogout = async () => {
@@ -1754,8 +1752,8 @@ export default function App() {
                   />
                 )}
 
-                {/* ── TACTICAL DEEP DIVE ── */}
-                {(isScanTacticalLoading || scanTactical) && (
+                {/* ── UNIFIED TACTICAL BREAKDOWN (from prediction) ── */}
+                {scanPrediction && !scanPrediction._isCombo && scanPrediction.tacticalBreakdown && (
                   <div data-testid="scan-tactical-section" style={{
                     background: '#0a0a0f', border: '1px solid rgba(99,102,241,0.2)',
                     borderRadius: 14, overflow: 'hidden', marginTop: 8,
@@ -1768,37 +1766,108 @@ export default function App() {
                       <span style={{ fontSize: 11, fontWeight: 900, letterSpacing: '0.1em', color: '#818cf8', textTransform: 'uppercase' }}>
                         Tactical Breakdown
                       </span>
-                      {isScanTacticalLoading && (
-                        <Loader2 style={{ width: 12, height: 12, color: '#818cf8', animation: 'spin 1s linear infinite', marginLeft: 'auto' }} />
-                      )}
                     </div>
-                    <div style={{ padding: '14px 16px' }}>
-                      {isScanTacticalLoading && !scanTactical && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'rgba(255,255,255,0.35)', fontSize: 12 }}>
-                          <Loader2 style={{ width: 14, height: 14, animation: 'spin 1s linear infinite' }} />
-                          Running deep tactical analysis...
-                        </div>
-                      )}
-                      {scanTactical && (
-                        <div style={{ fontSize: 13, lineHeight: 1.7, color: 'rgba(255,255,255,0.8)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                          {scanTactical.split('\n').map((line, li) => {
-                            const parts = line.split(/(\*\*.*?\*\*)/g);
-                            return (
-                              <div key={li} style={{ marginBottom: line === '' ? 8 : 2 }}>
-                                {parts.map((part, pi) => {
-                                  if (part.startsWith('**') && part.endsWith('**')) {
-                                    return <strong key={pi} style={{ color: '#fff', fontWeight: 800 }}>{part.slice(2, -2)}</strong>;
-                                  }
-                                  if (part.startsWith('- ')) {
-                                    return <span key={pi} style={{ paddingLeft: 8 }}><span style={{ color: '#818cf8' }}>-</span> {part.slice(2)}</span>;
-                                  }
-                                  return <span key={pi}>{part}</span>;
-                                })}
+                    <div style={{ padding: '14px 16px', fontSize: 13, lineHeight: 1.7, color: 'rgba(255,255,255,0.8)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                      {scanPrediction.tacticalBreakdown.split('\n').map((line, li) => {
+                        const parts = line.split(/(\*\*.*?\*\*)/g);
+                        return (
+                          <div key={li} style={{ marginBottom: line === '' ? 8 : 2 }}>
+                            {parts.map((part, pi) => {
+                              if (part.startsWith('**') && part.endsWith('**')) {
+                                return <strong key={pi} style={{ color: '#fff', fontWeight: 800 }}>{part.slice(2, -2)}</strong>;
+                              }
+                              if (part.startsWith('- ')) {
+                                return <span key={pi} style={{ paddingLeft: 8 }}><span style={{ color: '#818cf8' }}>-</span> {part.slice(2)}</span>;
+                              }
+                              return <span key={pi}>{part}</span>;
+                            })}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* ── FOLLOW-UP CHAT ── */}
+                {scanPrediction && (
+                  <div data-testid="scan-followup-section" style={{
+                    background: '#0a0a0f', border: '1px solid rgba(100,100,120,0.15)',
+                    borderRadius: 14, overflow: 'hidden', marginTop: 8,
+                  }}>
+                    {/* Follow-up messages */}
+                    {scanFollowUpMessages.length > 0 && (
+                      <div style={{ padding: '12px 16px 8px', display: 'flex', flexDirection: 'column', gap: 12, maxHeight: 400, overflowY: 'auto' }}>
+                        {scanFollowUpMessages.map((msg, mi) => (
+                          <div key={mi} style={{
+                            alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start',
+                            maxWidth: '90%',
+                          }}>
+                            {msg.role === 'assistant' && (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+                                <Crosshair style={{ width: 10, height: 10, color: '#818cf8' }} />
+                                <span style={{ fontSize: 8, fontWeight: 900, letterSpacing: '0.1em', color: '#818cf8' }}>TACTICAL</span>
                               </div>
-                            );
-                          })}
-                        </div>
-                      )}
+                            )}
+                            <div style={{
+                              padding: '8px 12px',
+                              borderRadius: msg.role === 'user' ? '12px 12px 4px 12px' : '12px 12px 12px 4px',
+                              background: msg.role === 'user' ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.03)',
+                              border: `1px solid ${msg.role === 'user' ? 'rgba(99,102,241,0.25)' : 'rgba(100,100,120,0.15)'}`,
+                              fontSize: 12, lineHeight: 1.6, color: msg.role === 'user' ? '#c7d2fe' : 'rgba(255,255,255,0.8)',
+                              whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                            }}>
+                              {msg.content.split('\n').map((line, li) => {
+                                const parts = line.split(/(\*\*.*?\*\*)/g);
+                                return (
+                                  <div key={li} style={{ marginBottom: line === '' ? 6 : 1 }}>
+                                    {parts.map((part, pi) => {
+                                      if (part.startsWith('**') && part.endsWith('**')) {
+                                        return <strong key={pi} style={{ color: '#fff', fontWeight: 800 }}>{part.slice(2, -2)}</strong>;
+                                      }
+                                      return <span key={pi}>{part}</span>;
+                                    })}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ))}
+                        {isScanFollowUpSending && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(100,100,120,0.15)', borderRadius: 12, alignSelf: 'flex-start' }}>
+                            <Loader2 style={{ width: 12, height: 12, color: '#818cf8', animation: 'spin 1s linear infinite' }} />
+                            <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)' }}>Analyzing...</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Input */}
+                    <div style={{ padding: '8px 12px', display: 'flex', gap: 8, alignItems: 'center', borderTop: scanFollowUpMessages.length > 0 ? '1px solid rgba(100,100,120,0.1)' : 'none' }}>
+                      <MessageSquare style={{ width: 14, height: 14, color: 'rgba(255,255,255,0.2)', flexShrink: 0 }} />
+                      <input
+                        ref={scanFollowUpRef}
+                        value={scanFollowUp}
+                        onChange={e => setScanFollowUp(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); sendScanFollowUp(); } }}
+                        placeholder="Ask a follow-up..."
+                        data-testid="scan-followup-input"
+                        style={{
+                          flex: 1, background: 'transparent', border: 'none', outline: 'none',
+                          color: '#fff', fontSize: 12, fontWeight: 500, fontFamily: 'inherit',
+                        }}
+                      />
+                      <button onClick={sendScanFollowUp} disabled={!scanFollowUp.trim() || isScanFollowUpSending}
+                        data-testid="scan-followup-send"
+                        style={{
+                          width: 32, height: 32, borderRadius: 8, border: 'none', flexShrink: 0,
+                          background: scanFollowUp.trim() ? 'rgba(99,102,241,0.2)' : 'transparent',
+                          color: scanFollowUp.trim() ? '#818cf8' : 'rgba(255,255,255,0.15)',
+                          cursor: scanFollowUp.trim() ? 'pointer' : 'default',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        }}
+                      >
+                        <Send style={{ width: 14, height: 14 }} />
+                      </button>
                     </div>
                   </div>
                 )}
@@ -2119,192 +2188,6 @@ export default function App() {
           </div>
         )}
 
-        {/* TACTICAL TAB */}
-        {activeTab === 'tactical' && (
-          <div className="animate-fade-in" data-testid="tactical-tab" style={{ padding: '0 0 0', display: 'flex', flexDirection: 'column', height: 'calc(100vh - 130px)' }}>
-            {/* Header */}
-            <div style={{ padding: '12px 16px', borderBottom: '1px solid rgba(100,100,120,0.15)', flexShrink: 0 }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <div style={{
-                    width: 36, height: 36, borderRadius: 10,
-                    background: 'linear-gradient(135deg, rgba(99,102,241,0.15), rgba(168,85,247,0.15))',
-                    border: '1px solid rgba(99,102,241,0.3)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  }}>
-                    <Crosshair style={{ width: 18, height: 18, color: '#818cf8' }} />
-                  </div>
-                  <div>
-                    <div style={{ fontSize: 16, fontWeight: 900, color: '#fff', letterSpacing: '-0.3px' }}>Reverse Tactical</div>
-                    <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#818cf8', display: 'inline-block' }} />
-                      Live Intelligence
-                    </div>
-                  </div>
-                </div>
-                <button onClick={resetTactical} data-testid="tactical-reset-btn" style={{
-                  background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(100,100,120,0.2)',
-                  borderRadius: 8, padding: '6px 10px', cursor: 'pointer',
-                  display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, fontWeight: 700,
-                  color: 'rgba(255,255,255,0.4)', letterSpacing: '0.05em',
-                }}>
-                  <RotateCcw style={{ width: 12, height: 12 }} /> NEW
-                </button>
-              </div>
-            </div>
-
-            {/* Messages */}
-            <div style={{ flex: 1, overflowY: 'auto', padding: '16px 16px 8px', display: 'flex', flexDirection: 'column', gap: 16 }}>
-              {tacticalMessages.map((msg, idx) => (
-                <div key={idx} data-testid={`tactical-msg-${idx}`} style={{
-                  display: 'flex', flexDirection: 'column',
-                  alignItems: msg.role === 'user' ? 'flex-end' : 'flex-start',
-                  maxWidth: '92%', alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start',
-                }}>
-                  {msg.role === 'assistant' && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-                      <Crosshair style={{ width: 12, height: 12, color: '#818cf8' }} />
-                      <span style={{ fontSize: 9, fontWeight: 900, letterSpacing: '0.12em', color: '#818cf8', textTransform: 'uppercase' }}>Tactical</span>
-                    </div>
-                  )}
-                  {/* User image indicator */}
-                  {msg.role === 'user' && msg.hasImage && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4, opacity: 0.5 }}>
-                      <ImageIcon style={{ width: 10, height: 10 }} />
-                      <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.4)' }}>Screenshot attached</span>
-                    </div>
-                  )}
-                  <div style={{
-                    padding: msg.role === 'user' ? '10px 14px' : '14px 16px',
-                    borderRadius: msg.role === 'user' ? '14px 14px 4px 14px' : '14px 14px 14px 4px',
-                    background: msg.role === 'user' ? 'rgba(99,102,241,0.15)' : '#0a0a0f',
-                    border: `1px solid ${msg.role === 'user' ? 'rgba(99,102,241,0.25)' : 'rgba(100,100,120,0.15)'}`,
-                    fontSize: 13, lineHeight: 1.65, color: msg.role === 'user' ? '#c7d2fe' : 'rgba(255,255,255,0.8)',
-                    fontWeight: msg.role === 'user' ? 600 : 400,
-                    whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                  }}>
-                    {msg.content.split('\n').map((line, li) => {
-                      const parts = line.split(/(\*\*.*?\*\*)/g);
-                      return (
-                        <div key={li} style={{ marginBottom: line === '' ? 8 : 2 }}>
-                          {parts.map((part, pi) => {
-                            if (part.startsWith('**') && part.endsWith('**')) {
-                              return <strong key={pi} style={{ color: '#fff', fontWeight: 800 }}>{part.slice(2, -2)}</strong>;
-                            }
-                            if (part.startsWith('- ')) {
-                              return <span key={pi} style={{ paddingLeft: 8 }}><span style={{ color: '#818cf8' }}>-</span> {part.slice(2)}</span>;
-                            }
-                            return <span key={pi}>{part}</span>;
-                          })}
-                        </div>
-                      );
-                    })}
-                  </div>
-                  {/* Scan entries summary */}
-                  {msg.scanEntries && msg.scanEntries.length > 0 && (
-                    <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                      {msg.scanEntries.map((e, i) => (
-                        <div key={i} style={{
-                          padding: '4px 8px', borderRadius: 6, fontSize: 10, fontWeight: 700,
-                          background: e.resolved ? 'rgba(16,185,129,0.08)' : 'rgba(245,158,11,0.08)',
-                          border: `1px solid ${e.resolved ? 'rgba(16,185,129,0.2)' : 'rgba(245,158,11,0.2)'}`,
-                          color: e.resolved ? '#10b981' : '#f59e0b',
-                        }}>
-                          {e.playerName} &middot; {e.propType} {e.line}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))}
-              {isTacticalSending && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 16px', background: '#0a0a0f', border: '1px solid rgba(100,100,120,0.15)', borderRadius: 14, alignSelf: 'flex-start' }}>
-                  <Loader2 style={{ width: 14, height: 14, color: '#818cf8', animation: 'spin 1s linear infinite' }} />
-                  <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', fontWeight: 600 }}>Analyzing...</span>
-                </div>
-              )}
-              <div ref={tacticalEndRef} />
-            </div>
-
-            {/* Quick Suggestions */}
-            {tacticalMessages.length <= 1 && !isTacticalSending && (
-              <div style={{ padding: '0 16px 8px', display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {[
-                  'How does PPDA affect pass attempts for midfielders?',
-                  'Compare Saka vs Salah for shots this week',
-                  'What if Denmark plays a low block vs Czechia?',
-                  'Best saves prop targets in upcoming matches',
-                ].map((q, i) => (
-                  <button key={i} data-testid={`tactical-suggestion-${i}`}
-                    onClick={() => { setTacticalInput(q); }}
-                    style={{
-                      padding: '6px 12px', borderRadius: 20, fontSize: 11, fontWeight: 600,
-                      background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.15)',
-                      color: 'rgba(255,255,255,0.5)', cursor: 'pointer', transition: 'all 0.15s',
-                    }}
-                  >
-                    {q}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {/* Hidden file input */}
-            <input
-              type="file" ref={tacticalFileRef} accept="image/*"
-              style={{ display: 'none' }}
-              onChange={e => { if (e.target.files[0]) handleTacticalImage(e.target.files[0]); e.target.value = ''; }}
-            />
-
-            {/* Input */}
-            <div style={{ padding: '8px 16px 12px', borderTop: '1px solid rgba(100,100,120,0.12)', flexShrink: 0 }}>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-                <button onClick={() => tacticalFileRef.current?.click()} disabled={isTacticalSending}
-                  data-testid="tactical-image-btn"
-                  style={{
-                    width: 42, height: 42, borderRadius: 10, border: '1px solid rgba(100,100,120,0.2)',
-                    background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.4)', flexShrink: 0,
-                    cursor: isTacticalSending ? 'not-allowed' : 'pointer',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    transition: 'all 0.15s',
-                  }}
-                >
-                  <Camera style={{ width: 18, height: 18 }} />
-                </button>
-                <textarea
-                  ref={tacticalInputRef}
-                  value={tacticalInput}
-                  onChange={e => setTacticalInput(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendTactical(); } }}
-                  placeholder="Ask anything, or upload a prop screenshot..."
-                  data-testid="tactical-input"
-                  rows={1}
-                  style={{
-                    flex: 1, resize: 'none', background: 'rgba(255,255,255,0.04)',
-                    border: '1px solid rgba(99,102,241,0.2)', borderRadius: 12,
-                    padding: '10px 14px', color: '#fff', fontSize: 13, fontWeight: 500,
-                    lineHeight: 1.4, outline: 'none', maxHeight: 100,
-                    fontFamily: 'inherit',
-                  }}
-                />
-                <button onClick={() => sendTactical()} disabled={!tacticalInput.trim() || isTacticalSending}
-                  data-testid="tactical-send-btn"
-                  style={{
-                    width: 42, height: 42, borderRadius: 10, border: 'none', flexShrink: 0,
-                    background: tacticalInput.trim() ? 'linear-gradient(135deg, #6366f1, #a855f7)' : 'rgba(255,255,255,0.04)',
-                    color: tacticalInput.trim() ? '#fff' : 'rgba(255,255,255,0.2)',
-                    cursor: tacticalInput.trim() ? 'pointer' : 'not-allowed',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    transition: 'all 0.15s',
-                  }}
-                >
-                  <Send style={{ width: 18, height: 18 }} />
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
       </main>
 
       {/* Bottom Nav */}
@@ -2314,11 +2197,6 @@ export default function App() {
             onClick={() => setActiveTab('scan')} data-testid="nav-scan">
             <Camera />
             <span>Scan</span>
-          </button>
-          <button className={`nav-item ${activeTab === 'tactical' ? 'active' : ''}`}
-            onClick={() => setActiveTab('tactical')} data-testid="nav-tactical">
-            <Crosshair />
-            <span>Tactical</span>
           </button>
           <button className={`nav-item ${activeTab === 'tracking' ? 'active' : ''}`}
             onClick={() => setActiveTab('tracking')} data-testid="nav-tracking">
