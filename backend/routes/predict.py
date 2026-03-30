@@ -6,10 +6,9 @@ import traceback
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 from emergentintegrations.llm.chat import LlmChat, UserMessage
-from openai import OpenAI
 
 from config import (
-    db, EMERGENT_LLM_KEY, XAI_API_KEY, CURRENT_SEASON,
+    db, EMERGENT_LLM_KEY, CURRENT_SEASON,
     WOMENS_LEAGUE_IDS, STAT_FIELD_MAP, STAT_LAMBDA_MAP,
 )
 from models import PredictionRequest
@@ -162,23 +161,21 @@ async def predict(req: PredictionRequest):
 
         # 1. Per-fixture team stats (possession, shots, passes per match)
         async def fetch_fixture_team_stats(fixture_list, team_id, limit=5):
-            """Fetch per-match team stats (possession, shots, passes) from fixtures/statistics"""
-            results = []
-            for fix in fixture_list[:limit]:
+            """Fetch per-match team stats — ALL fixtures fetched in parallel"""
+            async def fetch_one(fix):
                 fid = fix.get("fixtureId")
                 if not fid:
-                    continue
+                    return None
                 try:
                     data = await api_football_request("fixtures/statistics", {"fixture": fid})
                     if not data:
-                        continue
-                    # Find the stats for our team
+                        return None
                     for team_data in data:
                         if team_data.get("team", {}).get("id") == team_id:
                             raw_stats = {}
                             for s in team_data.get("statistics", []):
                                 raw_stats[s.get("type", "")] = s.get("value")
-                            results.append({
+                            return {
                                 "date": fix.get("date", "")[:10],
                                 "opponent": fix.get("opponent", ""),
                                 "venue": fix.get("venue", ""),
@@ -196,26 +193,27 @@ async def predict(req: PredictionRequest):
                                 "fouls": raw_stats.get("Fouls"),
                                 "corners": raw_stats.get("Corner Kicks"),
                                 "expectedGoals": raw_stats.get("expected_goals"),
-                            })
-                            break
+                            }
                 except Exception:
-                    continue
-            return results
+                    return None
+
+            tasks = [fetch_one(fix) for fix in fixture_list[:limit]]
+            results_raw = await aio.gather(*tasks, return_exceptions=True)
+            return [r for r in results_raw if r and not isinstance(r, Exception)]
 
         # 2. Player game-by-game box scores from recent fixtures
         async def fetch_player_game_logs(fixture_list, player_id, limit=8):
-            """Fetch player's individual stats from each recent fixture. Falls back to name match for duplicate IDs."""
-            results = []
+            """Fetch player's individual stats — ALL fixtures fetched in parallel"""
             player_name_lower = req.playerName.lower().split()[-1] if req.playerName else ""
-            for fix in fixture_list[:limit]:
+
+            async def fetch_one_log(fix):
                 fid = fix.get("fixtureId")
                 if not fid:
-                    continue
+                    return None
                 try:
                     data = await api_football_request("fixtures/players", {"fixture": fid})
                     if not data:
-                        continue
-                    # Find our player — try ID first, then name fallback for duplicate ID cases
+                        return None
                     matched_stats = None
                     for team_data in data:
                         for p in team_data.get("players", []):
@@ -230,7 +228,7 @@ async def predict(req: PredictionRequest):
                         if matched_stats:
                             break
                     if not matched_stats:
-                        continue
+                        return None
                     stats = matched_stats
                     minutes = stats.get("games", {}).get("minutes") or 0
                     rating = stats.get("games", {}).get("rating")
@@ -258,23 +256,22 @@ async def predict(req: PredictionRequest):
                         "goals_saves": stats.get("goals", {}).get("saves"),
                     }
                     stat_field_map = {
-                        "pass_attempts": "passes_total",
-                        "shots": "shots_total",
-                        "shots_on_target": "shots_on",
-                        "tackles": "tackles_total",
-                        "key_passes": "passes_key",
-                        "saves": "goals_saves",
-                        "interceptions": "tackles_interceptions",
-                        "blocks": "tackles_blocks",
-                        "dribbles": "dribbles_attempts",
-                        "fouls_drawn": "fouls_drawn",
+                        "pass_attempts": "passes_total", "shots": "shots_total",
+                        "shots_on_target": "shots_on", "tackles": "tackles_total",
+                        "key_passes": "passes_key", "saves": "goals_saves",
+                        "interceptions": "tackles_interceptions", "blocks": "tackles_blocks",
+                        "dribbles": "dribbles_attempts", "fouls_drawn": "fouls_drawn",
                     }
                     raw_val = game_log.get(stat_field_map.get(req.propType, ""), None)
                     if raw_val is not None and minutes > 0:
                         game_log["targetStatPer90"] = round((raw_val / minutes) * 90, 2)
-                    results.append(game_log)
+                    return game_log
                 except Exception:
-                    continue
+                    return None
+
+            tasks = [fetch_one_log(fix) for fix in fixture_list[:limit]]
+            results_raw = await aio.gather(*tasks, return_exceptions=True)
+            return [r for r in results_raw if r and not isinstance(r, Exception)]
             return results
 
         # =============================================
@@ -324,7 +321,7 @@ async def predict(req: PredictionRequest):
         )
         # Player game logs: use ALL recent fixtures for maximum sample size
         # AI will weight venue-matching games higher in analysis
-        player_game_logs_task = fetch_player_game_logs(all_team_fixtures[:20], req.playerId, 15)
+        player_game_logs_task = fetch_player_game_logs(all_team_fixtures[:10], req.playerId, 8)
 
         # =============================================
         # BUILD STRUCTURED DATA DIGEST (no AI needed — pure code extraction)
@@ -394,88 +391,25 @@ async def predict(req: PredictionRequest):
         data_digest = build_data_digest()
 
         # =============================================
-        # DUAL AI: Grok runs tactical analysis with LIVE WEB SEARCH
+        # Wave 2: Fetch deep per-fixture data (NO separate AI call)
+        # All tactical analysis merged into the single Gemini call below
         # =============================================
-        async def grok_tactical_analysis():
-            """Grok-4 with web search for real-time injury/lineup intel + stat verification + tactical analysis"""
-            try:
-                grok_client = OpenAI(api_key=XAI_API_KEY, base_url="https://api.x.ai/v1")
-                player_team = player_stats.get("statistics", [{}])[0].get("team", {}).get("name", "") if player_stats else ""
 
-                tactical_brief = {
-                    "opponent_stats": opponent_stats,
-                    "team_stats": team_stats,
-                    "h2h": h2h_data[:3] if h2h_data else [],
-                    "standings": standings[:6] if standings else [],
-                    "odds": match_odds,
-                }
-                tactical_json = json.dumps(tactical_brief, default=str)[:3000]
-
-                odds_context = ""
-                if match_odds and match_odds.get("bookmakerOdds"):
-                    bo = match_odds["bookmakerOdds"]
-                    fav = match_odds.get("favorite", "unknown")
-                    odds_context = f"ODDS: Home={bo.get('homeWin','')} Draw={bo.get('draw','')} Away={bo.get('awayWin','')} FAV={fav.upper()}"
-
-                loop = aio.get_event_loop()
-                def _call_grok():
-                    return grok_client.responses.create(
-                        model="grok-4.20-reasoning",
-                        tools=[{"type": "web_search"}],
-                        input=[
-                            {"role": "system", "content": """You are an elite soccer intelligence engine with access to live web data. Be PRECISE, QUANTITATIVE, and EVIDENCE-BASED. Keep responses focused and concise.
-
-RULES:
-1. Use web search to find real per-game statistics — never estimate
-2. Search SofaScore, FotMob, WhoScored for verified numbers
-3. Cite your source for every stat
-4. Distinguish between CLUB and NATIONAL TEAM stats when relevant"""},
-                            {"role": "user", "content": f"""ANALYSIS: {req.propType} prop on {req.playerName} ({player_position or 'Unknown'}) — {player_team} vs {req.opponentName} ({player_venue.upper()}). Line: {req.line}. {odds_context}
-{pronoun_note}
-
-1. VERIFIED STATS: Search "{req.playerName} {player_team} statistics" on SofaScore/FotMob. Report last 5 games: Date|Opp|{req.propType}|Mins. Calculate season avg, last 5 avg, home/away avg.
-
-2. LIVE INTEL: Search "{player_team} {req.opponentName} lineup injuries today". Report confirmed starters, key absences.
-
-3. MATCHUP: Favorite from odds, possession implications, opponent defensive style impact on {req.propType}.
-
-4. SCENARIOS (4 weighted):
-BASE (50-60%): projected {req.propType}
-BLOWOUT (15-20%): projected
-TRAILING (15-20%): projected  
-CAGEY (10-15%): projected
-Weighted projection = sum(prob * value)
-
-5. EDGE: Sensitivity (ROBUST/MODERATE/FRAGILE), sub risk, key variables.
-
-6. VERDICT: OVER or UNDER {req.line}? Confidence 0-100? One sharp sentence.
-
-DATA: {tactical_json}"""}
-                        ],
-                        max_output_tokens=1500,
-                    )
-                result = await loop.run_in_executor(None, _call_grok)
-                return result.output_text if result else None
-            except Exception:
-                return None
-
-        grok_tactical_task = grok_tactical_analysis()
-
-        # Fire all wave-2 tasks in parallel with a hard timeout
+        # Fire wave-2 data tasks in parallel
         all_wave2 = aio.gather(
-            team_fixture_stats_task, opponent_fixture_stats_task, 
-            player_game_logs_task, grok_tactical_task,
+            team_fixture_stats_task, opponent_fixture_stats_task,
+            player_game_logs_task,
             return_exceptions=True
         )
         try:
-            results = await aio.wait_for(all_wave2, timeout=35)
+            results = await aio.wait_for(all_wave2, timeout=15)
         except aio.TimeoutError:
-            results = [None, None, None, None]
+            results = [None, None, None]
 
         team_fixture_stats = results[0] if not isinstance(results[0], (Exception, type(None))) else []
         opponent_fixture_stats = results[1] if not isinstance(results[1], (Exception, type(None))) else []
         player_game_logs = results[2] if not isinstance(results[2], (Exception, type(None))) else []
-        grok_analysis = results[3] if not isinstance(results[3], (Exception, type(None))) else None
+        grok_analysis = None  # No separate tactical call — merged into Gemini below
 
         historical_data = {
             "playerStats": player_stats,
@@ -719,24 +653,23 @@ DATA: {tactical_json}"""}
                         player_position = pos
                         break
 
-        # 2. Send to Gemini — FINAL PREDICTOR (receives Grok analysis + structured data)
+        # 2. Send to Gemini — UNIFIED PREDICTOR + TACTICAL ENGINE
         chat = LlmChat(
             api_key=EMERGENT_LLM_KEY,
             session_id=f"predict-{uuid.uuid4().hex[:8]}",
-            system_message="""You are the FINAL CALIBRATION ENGINE in a dual-AI prediction pipeline. You receive verified data from multiple sources and must produce the most accurate, market-beating prediction possible.
+            system_message="""You are the PREDICTION CALIBRATION ENGINE. You receive comprehensive real API data and must produce the most accurate, market-beating prediction possible.
 
 INPUTS YOU RECEIVE:
 1. STRUCTURED DATA DIGEST — real API stats compiled by code (100% accurate numbers)
-2. TACTICAL ANALYSIS from Grok — live web-searched stats, injury intel, scenario modeling
-3. DEEP MATCH DATA — per-fixture stats and player game logs from the real API
+2. DEEP MATCH DATA — per-fixture stats and player game logs from the real API
+3. TACTICAL CONTEXT — odds, standings, H2H data
 
 YOUR CALIBRATION PROTOCOL:
 
 STEP 1: ANCHOR ON EVIDENCE
-- Grok's web-verified per-game stats are your PRIMARY anchor (web-searched from SofaScore/FotMob)
+- Game logs are your PRIMARY anchor (real per-game numbers from the API)
 - Data digest provides team-level context (possession, shots, tactical setup)
-- Game logs provide historical distribution — use for variance estimation
-- If sources disagree, rank: Grok web-verified > Game logs > Data digest estimates
+- If sources disagree, rank: Game logs > Data digest estimates
 
 STEP 2: POSITION-CALIBRATED CEILINGS
 Apply hard ceilings based on position and prop type:
@@ -756,7 +689,7 @@ STEP 4: EDGE DETECTION & CONFIDENCE
 - If |projectedValue - line| < 0.3 → this is a COIN FLIP → max confidence 52%
 - If |projectedValue - line| < 0.8 → low edge → max confidence 62%
 - If |projectedValue - line| >= 1.5 → strong edge → confidence 70-85%
-- Grok's sensitivity test: ROBUST = +10 conf, MODERATE = 0, FRAGILE = -10 conf
+- Sensitivity assessment: ROBUST = +10 conf, MODERATE = 0, FRAGILE = -10 conf
 - Low sample size (<5 games) → cap confidence at 60%
 
 STEP 5: PROBABILITY CURVE
@@ -774,13 +707,15 @@ JSON structure:
 FIELD REQUIREMENTS:
 - matchupOverview: Real team names, moneyline odds, expected possession split, game type, key factor
 - sharpSummary: 2-3 sentences. Core edge. Opinionated. Quote ONE decisive number.
-- reasoning: 2-3 paragraphs. Synthesize Grok + data digest. Quote specific stats per game.
-- scenarioAnalysis: Use Grok's 4-scenario table with weighted projection
+- reasoning: 2-3 paragraphs. Analyze the data digest + game logs. Quote specific stats per game. Be authoritative and opinionated.
+- scenarioAnalysis: Build 4 weighted scenarios (Base 50-60%, Blowout 15-20%, Trailing 15-20%, Cagey 10-15%) with projected values
 - keyEvidence: 5-8 specific data points with context
 - bayesianMetrics: Calculate using protocol above
 - probabilityCurve: 10 data points, normal distribution around projection
 - recentSamples: MUST BE EMPTY ARRAY []. Backend injects real data.
-- sensitivityTests, subRisk, gameFlowDynamics: Take from Grok's analysis, refine if game logs contradict"""
+- sensitivityTests: Assess ROBUST/MODERATE/FRAGILE based on data variance and sample size
+- subRisk: Estimate expected minutes and sub likelihood based on recent game logs
+- gameFlowDynamics: How the expected game state (favorite, underdog, blowout risk) affects stat generation"""
         )
         chat.with_model("gemini", "gemini-2.5-flash")
 
@@ -926,14 +861,12 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             pos_short = pos_map.get(player_position, player_position)
             position_context = f"\n[POSITION BASELINE] Player position: {player_position} ({pos_short}). Calibrate expectations for this position — {pos_short}s have different stat ceilings than other positions."
 
-        # Compose final data: Structured data digest (code-built) + Grok tactical analysis + Wave 2 deep data
+        # Compose final data: Structured data digest + Wave 2 deep data
         final_data_parts = []
         if data_digest:
             final_data_parts.append(f"[DATA DIGEST — REAL API STATS]\n{data_digest}")
-        if grok_analysis:
-            final_data_parts.append(f"[GROK TACTICAL ANALYSIS — LIVE WEB SEARCH]\n{grok_analysis}")
         if wave2_supplement:
-            final_data_parts.append(f"[DEEP MATCH DATA]\n{json.dumps(wave2_supplement, default=str)[:5000]}")
+            final_data_parts.append(f"[DEEP MATCH DATA — GAME LOGS & FIXTURE STATS]\n{json.dumps(wave2_supplement, default=str)[:5000]}")
 
         if final_data_parts:
             final_data = "\n\n".join(final_data_parts)
@@ -942,10 +875,9 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             if position_context:
                 final_data += f"\n{position_context}"
         else:
-            # Fallback: raw data if both AIs failed
             final_data = json.dumps(historical_data, default=str)[:18000]
 
-        prompt = f"""DUAL AI PREDICTION — FINAL STAGE
+        prompt = f"""PREDICTION ENGINE — CALIBRATE AND PREDICT
 {pronoun_note}
 
 Player: {req.playerName} (ID: {req.playerId}) | Position: {player_position or 'Unknown'} | Opponent: {req.opponentName} | Venue: {req.venue.upper()} | Prop: {req.propType} | Line: {req.line}
@@ -958,29 +890,27 @@ CRITICAL VENUE CONTEXT: Player is {player_venue.upper()}. ALL data below is venu
 
 Stat mapping: pass_attempts=passes.total, shots=shots.total, shots_on_target=shots.on, tackles=tackles.total, key_passes=passes.key, saves=goals.saves, interceptions=tackles.interceptions, blocks=tackles.blocks, dribbles=dribbles.attempts, fouls_drawn=fouls.drawn
 
-You have received pre-analyzed intel from Grok (live web search + tactical analysis):
+YOU HAVE:
 1. DATA DIGEST — 100% real API numbers compiled by code (no AI distortion)
-2. Grok's TACTICAL ANALYSIS — live injury/lineup news, scenario analysis, sensitivity tests, sub risk
+2. DEEP MATCH DATA — per-game player logs with exact stats, venue splits, opponent data
 
-YOUR JOB: Synthesize both into the final calibrated prediction JSON.
-- Use Grok's scenario weights as your starting framework
-- Cross-check against the data digest's real numbers
-- If they disagree, explain why in your reasoning and go with the more evidence-based number
+YOUR JOB: Analyze all data and produce the calibrated prediction JSON.
+- Build 4 weighted scenarios (Base/Blowout/Trailing/Cagey) from the data
+- Cross-check venue splits against overall averages
 - DO NOT generate recentSamples — return empty array []. Backend injects real API data.
-- Take Grok's sensitivityTests, subRisk, and gameFlowDynamics assessments — refine only if game log data contradicts them
+- Assess sensitivity (ROBUST/MODERATE/FRAGILE) based on data variance
+- Evaluate sub risk from recent game logs (minutes played trends)
 
-TACTICAL INTEL:
-- See Grok's tactical analysis above for live web intel (injuries, lineups, news) and matchup context
-- Bookmaker odds: {json.dumps(match_odds, default=str) if match_odds else 'Not available — use Grok analysis and standings'}
-
-CRITICAL ODDS RULE: If bookmaker odds present, lower odds = favored team. Trust bookmaker odds over all other signals.
+TACTICAL CONTEXT:
+- Bookmaker odds: {json.dumps(match_odds, default=str) if match_odds else 'Not available — use standings to estimate favorite'}
+- CRITICAL: If bookmaker odds present, lower odds = favored team. Trust odds over all other signals.
 
 ALL DATA:
 {final_data}
 
 Return ONLY valid JSON. recentSamples MUST be []. 10pt probabilityCurve."""
 
-        response = await aio.wait_for(chat.send_message(UserMessage(text=prompt)), timeout=18)
+        response = await aio.wait_for(chat.send_message(UserMessage(text=prompt)), timeout=25)
         response_text = response.strip()
 
         # Clean up response - remove markdown code fences if present
@@ -1109,18 +1039,11 @@ Return ONLY valid JSON. recentSamples MUST be []. 10pt probabilityCurve."""
             }
 
         # =============================================
-        # UNIFIED TACTICAL BREAKDOWN — deep analysis text
-        # Uses Grok's raw analysis + all structured data
+        # UNIFIED TACTICAL BREAKDOWN — generated INLINE with prediction
+        # No separate AI call — built from prediction fields
         # =============================================
         tactical_breakdown = ""
         try:
-            from routes.tactical import _fetch_player_stats_structured, _is_international_context, _fetch_national_team_fixtures, SYNTH_SYSTEM
-
-            # Detect international context
-            is_intl = await _is_international_context(req.teamName, req.opponentName)
-
-            # Build comprehensive context for the synthesis
-            tac_parts = []
             prop_label_map = {
                 "pass_attempts": "Pass Attempts", "shots": "Shots", "shots_on_target": "Shots on Target",
                 "tackles": "Tackles", "key_passes": "Key Passes", "saves": "Saves",
@@ -1129,95 +1052,50 @@ Return ONLY valid JSON. recentSamples MUST be []. 10pt probabilityCurve."""
             }
             prop_label = prop_label_map.get(req.propType, req.propType)
 
-            # Add prediction context
-            tac_parts.append(f"[PREDICTION RESULT] {req.playerName} ({req.teamName}) vs {req.opponentName} [{req.venue.upper()}]")
-            tac_parts.append(f"Prop: {prop_label} | Line: {req.line} | Projected: {prediction.get('projectedValue', '?')} | Recommendation: {prediction.get('recommendation', '?').upper()} | Confidence: {prediction.get('confidenceScore', '?')}%")
-            if is_intl:
-                tac_parts.append("[MATCH CONTEXT: INTERNATIONAL — Prioritize national team stats and form]")
+            # Build tactical breakdown from the prediction fields directly
+            tb_parts = []
+            rec = prediction.get('recommendation', 'over').upper()
+            conf = prediction.get('confidenceScore', 50)
+            proj = prediction.get('projectedValue', req.line)
 
-            # Add structured data
-            if data_digest:
-                tac_parts.append(data_digest)
+            # Verdict
+            tb_parts.append(f"**Verdict: {rec} {req.line} {prop_label}**")
+            if prediction.get('sharpSummary'):
+                tb_parts.append(prediction['sharpSummary'])
 
-            # Add international stats if applicable
-            intl_stats = await _fetch_player_stats_structured(req.playerId, req.playerName, req.teamName or "", is_intl)
-            if intl_stats:
-                tac_parts.append(intl_stats)
+            # Reasoning
+            if prediction.get('reasoning'):
+                tb_parts.append(f"\n**Analysis**\n{prediction['reasoning']}")
 
-            if is_intl:
-                for tn in [req.teamName, req.opponentName]:
-                    if tn:
-                        fix_text = await _fetch_national_team_fixtures(tn)
-                        if fix_text:
-                            tac_parts.append(fix_text)
+            # Scenario Analysis
+            if prediction.get('scenarioAnalysis'):
+                tb_parts.append(f"\n**Game Script Scenarios**\n{prediction['scenarioAnalysis']}")
 
-            # Add Grok's raw analysis
-            if grok_analysis:
-                tac_parts.append(f"[TACTICAL RESEARCH]\n{grok_analysis}")
+            # Key Evidence
+            if prediction.get('keyEvidence'):
+                tb_parts.append(f"\n**Key Evidence**\n{prediction['keyEvidence']}")
 
-            # Add game log summary
-            if player_game_logs:
-                logs_text = []
-                gl_tf = {
-                    "pass_attempts": "passes_total", "shots": "shots_total", "shots_on_target": "shots_on",
-                    "tackles": "tackles_total", "key_passes": "passes_key", "saves": "goals_saves",
-                    "interceptions": "tackles_interceptions", "blocks": "tackles_blocks",
-                    "dribbles": "dribbles_attempts", "fouls_drawn": "fouls_drawn",
-                }
-                tf = gl_tf.get(req.propType, "passes_total")
-                for g in player_game_logs[:8]:
-                    val = g.get(tf, "?")
-                    logs_text.append(f"  {g.get('date','')[:10]} vs {g.get('opponent','')} ({g.get('venue','')}, {g.get('minutes',0)}min): {val} {prop_label.lower()}")
-                tac_parts.append(f"[RECENT GAME LOGS]\n" + "\n".join(logs_text))
+            # Risk
+            risk_parts = []
+            if prediction.get('sensitivityTests'):
+                risk_parts.append(f"- Sensitivity: {prediction['sensitivityTests']}")
+            if prediction.get('subRisk'):
+                risk_parts.append(f"- Sub Risk: {prediction['subRisk']}")
+            if prediction.get('uncertaintyNote'):
+                risk_parts.append(f"- Key Risk: {prediction['uncertaintyNote']}")
+            if risk_parts:
+                tb_parts.append(f"\n**Risk Radar**\n" + "\n".join(risk_parts))
 
-            full_context = "\n\n".join(tac_parts)
+            # Game Flow
+            if prediction.get('gameFlowDynamics'):
+                tb_parts.append(f"\n**Game Flow**\n{prediction['gameFlowDynamics']}")
 
-            # Synthesize with Gemini
-            synth_chat = LlmChat(
-                api_key=EMERGENT_LLM_KEY,
-                session_id=f"tac-synth-{uuid.uuid4().hex[:8]}",
-                system_message=SYNTH_SYSTEM,
-            ).with_model("gemini", "gemini-2.5-flash")
+            # TL;DR
+            tb_parts.append(f"\n**TL;DR** — {rec} {req.line} at {conf}% confidence. Projected: {proj} {prop_label.lower()}.")
 
-            synth_prompt = f"""The prediction engine just analyzed {req.playerName} — {prop_label} line {req.line} vs {req.opponentName} [{req.venue.upper()}].
-
-Result: Projected {prediction.get('projectedValue', '?')}, recommends {prediction.get('recommendation', '?').upper()} with {prediction.get('confidenceScore', '?')}% confidence.
-
-{full_context}
-
-Write a comprehensive tactical breakdown that makes the user feel like they have insider intelligence. Structure it as:
-
-1. **Verdict** — Bold call. "{prediction.get('recommendation', '?').upper()} {req.line} {prop_label}" with ONE decisive stat that seals it.
-
-2. **Player Role Analysis** — How {req.playerName}'s specific role in the tactical system affects {prop_label} generation. Reference formation, positional responsibilities, and how the matchup exploits or limits this.
-
-3. **The Numbers** — Key statistical evidence:
-   - Season average vs last 5 avg (trend detection)
-   - Home vs away split for this stat
-   - Head-to-head history if available
-   - Per-game numbers from recent matches with opponents named
-
-4. **Game Script Scenarios** — How different match states change the equation:
-   - Base case (50-60%): expected flow → projected output
-   - Blowout (15-20%): impact on minutes/role/stat generation
-   - Trailing (15-20%): tactical shift effects
-   - Cagey/defensive (10-15%): floor scenario
-
-5. **Risk Radar** — What could go wrong:
-   - Sub risk (expected minutes, manager rotation patterns)
-   - Injury/fitness concerns
-   - Tactical wildcards (opponent formation surprise, weather, stakes)
-
-6. **TL;DR** — 2 sentences. The sharpest take possible. Quote one number.
-
-{"IMPORTANT: This is an INTERNATIONAL match. Lead with national team form, recent international stats, and how the player's international role differs from club duty. Flag if sample size is small." if is_intl else ""}
-
-STYLE: Be authoritative, specific, and opinionated. Every claim backed by a number. NEVER mention any AI model names, engines, or technical architecture. NEVER say "Grok" or "Gemini". You ARE the intelligence system.
-Format with **bold** headers and bullet points."""
-
-            tactical_breakdown = await aio.wait_for(synth_chat.send_message(UserMessage(text=synth_prompt)), timeout=15)
+            tactical_breakdown = "\n".join(tb_parts)
         except Exception as e:
-            print(f"[PREDICT] Tactical breakdown failed: {e}")
+            print(f"[PREDICT] Tactical breakdown assembly failed: {e}")
             tactical_breakdown = ""
 
         prediction["tacticalBreakdown"] = tactical_breakdown

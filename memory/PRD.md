@@ -1,14 +1,14 @@
 # ReversePicks - Sports Player Props AI Analytics
 
 ## Problem Statement
-A web app for soccer player prop analysis. Users upload screenshots of player props (pass attempts, shots, saves), AI Vision extracts details, resolves the player via cache-first MongoDB lookup, and runs a dual-AI prediction pipeline (Grok-4.20-reasoning + Gemini 2.5 Flash) to deliver statistical predictions and deep tactical analysis.
+A web app for soccer player prop analysis. Users upload screenshots of player props (pass attempts, shots, saves), AI Vision extracts details, resolves the player via cache-first MongoDB lookup, and runs a Gemini 2.5 Flash prediction pipeline to deliver statistical predictions and deep tactical analysis.
 
 ## Architecture
 - **Frontend**: React.js, Shadcn/UI, Lucide Icons, Manrope + JetBrains Mono fonts
 - **Backend**: FastAPI, Python asyncio, MongoDB
-- **AI Pipeline**: Grok-4.20 (web search + tactical) → Gemini 2.5 Flash (calibration + JSON synthesis)
+- **AI Pipeline**: Gemini 2.5 Flash (unified prediction + tactical analysis) — single AI call architecture
 - **Auth**: Whop membership verification + email/password login
-- **Data**: API-Sports (cached in MongoDB)
+- **Data**: API-Sports (cached in MongoDB, parallelized fixture fetching)
 
 ## 3-Tab Navigation
 1. **Scan** — Upload prop screenshot → AI Vision extraction → Player resolution → Unified prediction + tactical breakdown + follow-up chat
@@ -24,8 +24,11 @@ A web app for soccer player prop analysis. Users upload screenshots of player pr
 - [x] User Record Tracker (HIT/MISS/PUSH ratio, WIN%, streak)
 - [x] Profile tab with password reset
 - [x] 3-tab iOS-like navigation
-- [x] Follow-up chat under predictions
+- [x] Follow-up chat under predictions (Grok-powered in tactical.py)
 - [x] VIP/Lifetime hardcoded emails
+- [x] Elite iOS-like UI (Manrope font, glassmorphism, premium dark theme)
+- [x] Parallelized API-Sports fixture fetching (5x faster data loading)
+- [x] Single Gemini call architecture (replaced Grok from predict pipeline)
 
 ## VIP Emails (Lifetime Access)
 - josselj001@gmail.com (Owner)
@@ -35,29 +38,26 @@ A web app for soccer player prop analysis. Users upload screenshots of player pr
 - jaredlee0414@gmail.com
 - michael1069_6910@yahoo.com
 
-## AI Pipeline (v2.2 - Peak Calibration)
-### Grok-4.20-reasoning
-- 5-phase analysis: Verified Stats → Live Intelligence → Matchup Dynamics → Scenario Modeling → Edge Assessment
-- Web search for real per-game stats from SofaScore/FotMob/WhoScored
-- 4 weighted scenarios (Base/Blowout/Trailing/Cagey)
-- Sensitivity classification (ROBUST/MODERATE/FRAGILE)
-- 3000 max output tokens
+## AI Pipeline (v2.2 - Gemini-Only Architecture)
+### Prediction Pipeline (predict.py)
+- **Single AI call**: Gemini 2.5 Flash handles ALL prediction + analysis
+- **Data pipeline**: Wave 1 (player/team/opponent stats, H2H, standings, odds) → Wave 2 (parallelized fixture stats + game logs) → Gemini synthesis
+- **Parallelized fetching**: All fixture stat and game log API calls run concurrently (was sequential → 5x speedup)
+- **Bayesian calibration**: priorMean (recency-weighted), momentumEffect, covariateAdjustment, reversalFlag
+- **Position-calibrated ceilings**: GK saves capped by opponent SoT, position-specific limits
+- **Confidence bands**: coin flip (<0.3 diff) max 52%, low edge (<0.8) max 62%, strong edge (>=1.5) 70-85%
+- **Tactical breakdown**: Assembled from prediction response fields (no additional AI call)
+- **Timeouts**: Wave 2 data: 15s, Gemini prediction: 25s
 
-### Gemini 2.5 Flash (Final Calibration Engine)
-- 5-step protocol: Anchor on Evidence → Position-Calibrated Ceilings → Bayesian Calibration → Edge Detection → Probability Curve
-- Bayesian metrics: priorMean (recency-weighted), momentumEffect, covariateAdjustment, reversalFlag
-- Confidence bands: coin flip (<0.3 diff) max 52%, low edge (<0.8) max 62%, strong edge (>=1.5) 70-85%
-- 10-point probability distribution with normal distribution
-
-### Tactical Breakdown Synthesis
-- 6-section format: Verdict → Player Role Analysis → The Numbers → Game Script Scenarios → Risk Radar → TL;DR
-- Position-specific ceilings enforced
-- No AI branding exposed to user
+### Follow-up Chat (tactical.py)
+- **Grok-4.20-reasoning** with web search for follow-up questions
+- Uses prediction context for continuity
+- Separate user-initiated call (not subject to predict timeout)
 
 ## Key API Endpoints
 - POST /api/scan-prop — OCR extraction + player resolution
-- POST /api/predict — Unified stats + tactical generation
-- POST /api/tactical/message — Follow-up chat
+- POST /api/predict — Unified stats + tactical generation (~40-45s)
+- POST /api/tactical/message — Follow-up chat (Grok)
 - POST /api/auth/verify-whop — Membership verification
 - POST /api/auth/reset-password — Password reset
 - POST /api/picks/save — Save to tracking
