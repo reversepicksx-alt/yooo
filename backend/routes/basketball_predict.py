@@ -390,13 +390,13 @@ Avg: {h2h_avg} | OVER {line} in {h2h_over}/{len(h2h_player_vals)} games | Values
     return "\n\n".join(parts)
 
 
-async def build_player_game_logs(player_id: int, team_id: int, prop_type: str, team_games: list):
+async def build_player_game_logs(player_id: int, team_id: int, prop_type: str, team_games: list, season: str = None):
     """
     Build player game logs by:
     1. Fetching ALL player stats for the season in a SINGLE API call
     2. Cross-referencing with team games for venue/opponent context
     """
-    raw_stats = await get_player_season_stats(player_id)
+    raw_stats = await get_player_season_stats(player_id, season)
     if not raw_stats:
         return []
 
@@ -488,8 +488,22 @@ async def basketball_predict(req: BasketballPredictionRequest):
 
         # Build player game logs (uses single API call for ALL season stats)
         player_game_logs = []
+        prev_season_logs = []
         if player_id:
             player_game_logs = await build_player_game_logs(player_id, req.teamId, req.propType, team_games)
+
+            # Fetch previous season stats for H2H matching (if H2H games exist from prior seasons)
+            if h2h_data:
+                current_season = BBALL_CURRENT_SEASON
+                yr = int(current_season.split("-")[0])
+                prev_season = f"{yr-1}-{yr}"
+                try:
+                    prev_team_games = await safe_fetch(get_team_games(req.teamId, prev_season))
+                    if prev_team_games:
+                        prev_season_logs = await build_player_game_logs(player_id, req.teamId, req.propType, prev_team_games, prev_season)
+                        print(f"[BBALL H2H] Fetched {len(prev_season_logs)} logs from prev season {prev_season}")
+                except Exception:
+                    pass
 
         print(f"[BBALL TIMING] Wave 1: {_t.time()-t0:.1f}s | Player logs: {len(player_game_logs)} | Team games: {len(team_games)}")
 
@@ -846,18 +860,27 @@ Analyze the statistical verdict, per-minute projection, and over-rate FIRST. The
                 "statisticalLean": a["stat_lean"],
             }
 
-        # H2H summary for frontend display
-        if h2h_data:
+        # H2H PLAYER STATS for frontend display (player's performance vs this opponent)
+        h2h_game_ids = set(g.get("id") for g in h2h_data if g.get("id")) if h2h_data else set()
+        all_logs_for_h2h = player_game_logs + prev_season_logs
+        h2h_player_games = [g for g in all_logs_for_h2h if g.get("gameId") in h2h_game_ids] if h2h_game_ids else []
+        # Sort by date descending
+        h2h_player_games.sort(key=lambda g: g.get("date", ""), reverse=True)
+
+        if h2h_player_games:
             h2h_summary = []
-            for g in h2h_data[:6]:
-                gp = parse_game_for_team(g, req.teamId)
+            for g in h2h_player_games:
+                val = g.get("targetStat")
+                if val is None:
+                    continue
                 h2h_summary.append({
-                    "date": gp.get("date", ""),
-                    "result": gp.get("result", ""),
-                    "teamScore": gp.get("teamScore", 0),
-                    "oppScore": gp.get("oppScore", 0),
-                    "opponent": gp.get("opponent", ""),
-                    "venue": gp.get("venue", ""),
+                    "date": g.get("date", ""),
+                    "opponent": g.get("opponent", ""),
+                    "value": val,
+                    "minutesPlayed": g.get("minutes", "0"),
+                    "venue": g.get("venue", ""),
+                    "result": g.get("result", ""),
+                    "hit": "over" if val > req.line else "under" if val < req.line else "push",
                 })
             prediction["h2hGames"] = h2h_summary
         else:
