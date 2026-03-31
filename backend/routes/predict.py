@@ -897,7 +897,7 @@ Analyze ALL data thoroughly. Return JSON only."""
                         api_base=EMERGENT_PROXY,
                         custom_llm_provider="openai",
                         max_tokens=2500,
-                        temperature=0.3,
+                        temperature=0.0,
                     ),
                     timeout=40
                 )
@@ -934,7 +934,7 @@ Analyze ALL data thoroughly. Return JSON only."""
                             {"role": "user", "content": prompt},
                         ],
                         max_tokens=2500,
-                        temperature=0.3,
+                        temperature=0.0,
                     )
                 resp = await aio.wait_for(loop.run_in_executor(None, _run), timeout=40)
                 text = resp.choices[0].message.content.strip()
@@ -968,7 +968,7 @@ Analyze ALL data thoroughly. Return JSON only."""
                         model=model,
                         messages=grok_messages,
                         max_tokens=2500,
-                        temperature=0.3,
+                        temperature=0.0,
                     )
                 grok_result = await aio.wait_for(loop.run_in_executor(None, _run), timeout=40)
                 text = grok_result.choices[0].message.content.strip()
