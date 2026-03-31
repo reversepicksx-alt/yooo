@@ -880,6 +880,7 @@ Analyze ALL data thoroughly. Return JSON only."""
         # LlmChat uses litellm.completion (sync) which blocks the event loop.
         # litellm.acompletion is truly async — all 5 AIs execute concurrently.
         import litellm
+        litellm.drop_params = True
         EMERGENT_PROXY = "https://integrations.emergentagent.com/llm"
 
         async def call_ai(model_name, label, provider="openai"):
@@ -957,7 +958,7 @@ Analyze ALL data thoroughly. Return JSON only."""
         ai_tasks = [
             aio.ensure_future(call_ai("gemini-2.0-flash", "gemini", "gemini")),
             aio.ensure_future(call_ai("gpt-4o-mini", "gpt4omini")),
-            aio.ensure_future(call_ai("gpt-4o", "gpt4o")),
+            aio.ensure_future(call_ai("gpt-4.1-mini", "gpt41mini")),
             aio.ensure_future(call_ai("claude-haiku-4-5", "haiku")),
             aio.ensure_future(call_grok("grok")),
         ]
