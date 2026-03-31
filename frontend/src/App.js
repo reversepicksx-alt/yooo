@@ -11,7 +11,7 @@ import {
   checkApiStatus, SUPPORTED_LEAGUES,
   verifyWhop, authLogin, setPassword as apiSetPassword, resetPassword, verifySession, authLogout,
   getPickOfTheDay, savePick, listPicks, deletePick, correctPick, liveUpdatePicks,
-  scanProp, baseballSearchTeams, baseballPredict
+  scanProp, basketballSearchTeams, basketballPredict
 } from './api';
 import { toast, Toaster } from 'sonner';
 import './App.css';
@@ -29,25 +29,21 @@ const PROP_TYPES = [
   { key: 'fouls_drawn', label: 'Fouls Drawn', stat: 'fouls.drawn', desc: 'Fouls won by player' },
 ];
 
-const BASEBALL_PROP_TYPES = [
-  { key: 'hits', label: 'Hits', desc: 'Base hits' },
-  { key: 'home_runs', label: 'Home Runs', desc: 'Home runs hit' },
-  { key: 'rbis', label: 'RBIs', desc: 'Runs batted in' },
-  { key: 'runs', label: 'Runs', desc: 'Runs scored' },
-  { key: 'strikeouts', label: 'Strikeouts (Batter)', desc: 'Batter strikeouts' },
-  { key: 'stolen_bases', label: 'Stolen Bases', desc: 'Bases stolen' },
-  { key: 'walks', label: 'Walks', desc: 'Base on balls' },
-  { key: 'total_bases', label: 'Total Bases', desc: 'Total bases earned' },
-  { key: 'singles', label: 'Singles', desc: 'Single-base hits' },
-  { key: 'doubles', label: 'Doubles', desc: 'Double-base hits' },
-  { key: 'pitcher_strikeouts', label: 'Pitcher Strikeouts', desc: 'Pitcher strikeouts recorded' },
-  { key: 'earned_runs', label: 'Earned Runs', desc: 'Earned runs allowed' },
-  { key: 'hits_allowed', label: 'Hits Allowed', desc: 'Hits allowed by pitcher' },
-  { key: 'outs_recorded', label: 'Outs Recorded', desc: 'Outs recorded by pitcher' },
+const BASKETBALL_PROP_TYPES = [
+  { key: 'points', label: 'Points', desc: 'Total points scored' },
+  { key: 'rebounds', label: 'Rebounds', desc: 'Total rebounds' },
+  { key: 'assists', label: 'Assists', desc: 'Total assists' },
+  { key: 'pts_reb_ast', label: 'Pts+Reb+Ast', desc: 'Points + Rebounds + Assists combined' },
+  { key: 'three_pointers', label: '3-Pointers Made', desc: '3-point field goals made' },
+  { key: 'steals', label: 'Steals', desc: 'Total steals' },
+  { key: 'blocks', label: 'Blocks', desc: 'Total blocks' },
+  { key: 'turnovers', label: 'Turnovers', desc: 'Total turnovers' },
+  { key: 'fgm', label: 'FG Made', desc: 'Field goals made' },
+  { key: 'ftm', label: 'FT Made', desc: 'Free throws made' },
 ];
 
 function getPropLabel(key) {
-  const all = [...PROP_TYPES, ...BASEBALL_PROP_TYPES];
+  const all = [...PROP_TYPES, ...BASKETBALL_PROP_TYPES];
   const p = all.find(pt => pt.key === key);
   return p ? p.label : key.replace(/_/g, ' ');
 }
@@ -548,11 +544,11 @@ export default function App() {
         setScanPredictingIdx(null);
       }
     } else {
-      // Check if this is a baseball pick
-      const isBaseballPick = pickData.sport === 'baseball' || pickData.extracted?.sport === 'baseball';
+      // Check if this is a basketball pick
+      const isBasketballPick = pickData.sport === 'basketball' || pickData.extracted?.sport === 'basketball';
 
-      if (isBaseballPick) {
-        // BASEBALL prediction flow
+      if (isBasketballPick) {
+        // BASKETBALL prediction flow
         if (!pickData.resolved && !pickData.resolvedOpponent) {
           toast.error('Teams not resolved — cannot run prediction');
           return;
@@ -568,20 +564,20 @@ export default function App() {
           const opponentId = pickData.resolvedOpponent?.teamId || 0;
           const opponentName = pickData.resolvedOpponent?.teamName || pickData.extracted?.opponentName || 'Unknown';
           const venue = scanVenueOverrides[idx] || pickData.extracted?.venue || 'home';
-          const result = await baseballPredict({
+          const result = await basketballPredict({
             teamId,
             teamName,
             opponentId,
             opponentName,
             playerName: pickData.extracted?.playerName || 'Unknown',
             venue,
-            propType: pickData.extracted?.propType || 'hits',
+            propType: pickData.extracted?.propType || 'points',
             line: pickData.extracted?.line || 0,
           });
           setScanPrediction(result);
-          toast.success('Baseball analysis complete!');
+          toast.success('Basketball analysis complete!');
         } catch (err) {
-          toast.error(err.message || 'Baseball prediction failed');
+          toast.error(err.message || 'Basketball prediction failed');
         } finally {
           setIsScanPredicting(false);
           setScanPredictingIdx(null);
@@ -831,11 +827,11 @@ export default function App() {
               Soccer
             </button>
             <button
-              className={`sport-btn ${activeSport === 'baseball' ? 'active' : ''}`}
-              onClick={() => { setActiveSport('baseball'); setScanPrediction(null); setScanResults([]); }}
-              data-testid="sport-baseball-btn"
+              className={`sport-btn ${activeSport === 'basketball' ? 'active' : ''}`}
+              onClick={() => { setActiveSport('basketball'); setScanPrediction(null); setScanResults([]); }}
+              data-testid="sport-basketball-btn"
             >
-              Baseball
+              Basketball
             </button>
           </div>
           <div className="api-badge">
@@ -2034,7 +2030,7 @@ export default function App() {
                     Scan a Prop
                   </div>
                   <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)', marginTop: 6, fontWeight: 500 }}>
-                    Upload a {activeSport === 'baseball' ? 'MLB' : 'soccer'} prop screenshot for instant AI analysis
+                    Upload a {activeSport === 'basketball' ? 'NBA' : 'soccer'} prop screenshot for instant AI analysis
                   </div>
                 </div>
 

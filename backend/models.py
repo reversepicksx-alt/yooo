@@ -112,6 +112,17 @@ class CorrectPickRequest(BaseModel):
     actualValue: float
 
 
+class BasketballPredictionRequest(BaseModel):
+    teamId: int
+    teamName: str = ""
+    opponentId: int
+    opponentName: str
+    playerName: str
+    venue: str = "home"
+    propType: str = "points"
+    line: float = 0
+
+
 class LiveUpdateRequest(BaseModel):
     email: str
     token: str

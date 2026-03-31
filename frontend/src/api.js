@@ -201,16 +201,16 @@ export const SUPPORTED_LEAGUES = [
   { id: 10, name: "International Friendlies", type: "International Team" },
 ];
 
-// Baseball APIs
-export async function baseballSearchTeams(query) {
-  return apiCall('/api/baseball/search-teams', {
+// Basketball APIs
+export async function basketballSearchTeams(query) {
+  return apiCall('/api/basketball/search-teams', {
     method: 'POST',
     body: JSON.stringify({ query }),
   });
 }
 
-export async function baseballPredict(request) {
-  return apiCall('/api/baseball/predict', {
+export async function basketballPredict(request) {
+  return apiCall('/api/basketball/predict', {
     method: 'POST',
     body: JSON.stringify(request),
   });

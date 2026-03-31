@@ -12,7 +12,7 @@ from config import (
 from models import ScanPropRequest
 from utils import api_football_request, strip_accents
 from cache import get_national_team_id, get_player_by_name, get_team_by_name, get_team_info
-from baseball_utils import search_baseball_teams
+from basketball_utils import search_teams as search_basketball_teams
 
 router = APIRouter(prefix="/api", tags=["scan"])
 
@@ -22,33 +22,28 @@ VALID_SOCCER_PROPS = {
     "saves", "interceptions", "blocks", "dribbles", "fouls_drawn",
 }
 
-VALID_BASEBALL_PROPS = {
-    "hits", "home_runs", "rbis", "runs", "strikeouts", "stolen_bases",
-    "walks", "total_bases", "singles", "doubles", "triples",
-    "pitcher_strikeouts", "earned_runs", "hits_allowed", "walks_allowed",
-    "outs_recorded",
+VALID_BASKETBALL_PROPS = {
+    "points", "rebounds", "assists", "pts_reb_ast", "three_pointers",
+    "steals", "blocks", "turnovers", "fgm", "ftm", "fga", "fta", "tpa",
 }
 
-BASEBALL_PROP_ALIASES = {
-    "hit": "hits", "base hits": "hits", "h": "hits",
-    "home run": "home_runs", "hr": "home_runs", "homers": "home_runs",
-    "rbi": "rbis", "runs batted in": "rbis",
-    "run": "runs", "r": "runs", "runs scored": "runs",
-    "strikeout": "strikeouts", "so": "strikeouts", "k": "strikeouts", "ks": "strikeouts",
-    "batter strikeouts": "strikeouts",
-    "stolen base": "stolen_bases", "sb": "stolen_bases", "steals": "stolen_bases",
-    "walk": "walks", "bb": "walks", "base on balls": "walks",
-    "total base": "total_bases", "tb": "total_bases",
-    "single": "singles", "1b": "singles",
-    "double": "doubles", "2b": "doubles",
-    "triple": "triples", "3b": "triples",
-    "pitcher strikeout": "pitcher_strikeouts", "pitcher ks": "pitcher_strikeouts",
-    "pitching strikeouts": "pitcher_strikeouts",
-    "earned run": "earned_runs", "er": "earned_runs", "era": "earned_runs",
-    "hits allowed": "hits_allowed", "ha": "hits_allowed",
-    "walks allowed": "walks_allowed",
-    "outs recorded": "outs_recorded", "outs": "outs_recorded",
-    "innings pitched": "outs_recorded",
+BASKETBALL_PROP_ALIASES = {
+    "point": "points", "pts": "points", "pt": "points",
+    "rebound": "rebounds", "reb": "rebounds", "total rebounds": "rebounds",
+    "assist": "assists", "ast": "assists",
+    "pts+reb+ast": "pts_reb_ast", "pra": "pts_reb_ast", "points+rebounds+assists": "pts_reb_ast",
+    "pts + reb + ast": "pts_reb_ast", "combo": "pts_reb_ast",
+    "three pointer": "three_pointers", "3pt": "three_pointers", "3pm": "three_pointers",
+    "3-point fg": "three_pointers", "threes": "three_pointers", "3-pointers made": "three_pointers",
+    "three pointers made": "three_pointers", "3 pointers": "three_pointers", "threes made": "three_pointers",
+    "steal": "steals", "stl": "steals",
+    "block": "blocks", "blk": "blocks",
+    "turnover": "turnovers", "to": "turnovers", "tov": "turnovers",
+    "field goals made": "fgm", "fg made": "fgm", "field goal": "fgm",
+    "free throws made": "ftm", "ft made": "ftm", "free throw": "ftm",
+    "field goals attempted": "fga", "fg attempted": "fga",
+    "free throws attempted": "fta", "ft attempted": "fta",
+    "three point attempts": "tpa", "3pt attempts": "tpa", "3pa": "tpa",
 }
 
 # Hardcoded team→league fallback (used when cache misses)
@@ -345,12 +340,12 @@ VENUE: "@ [Team]" → away, "vs [Team]" → home
 If unknown, use null. Return JSON array."""
 
 
-def _build_baseball_scan_prompt() -> str:
-    return """Analyze this screenshot of an MLB player prop card.
+def _build_basketball_scan_prompt() -> str:
+    return """Analyze this screenshot of an NBA player prop card.
 
 LAYOUT GUIDE:
 - Player's name (first + last), usually first name smaller above last name
-- Below name: "BASEBALL • [Team Name] • [Position]"
+- Below name: "BASKETBALL • [Team Name] • [Position]"
 - Below that: "vs [Opponent]" or "@ [Opponent]" with date/time
 - The prop line number is shown prominently with the stat type below it
 - "Less" and "More" buttons are selection options — IGNORE them.
@@ -358,41 +353,39 @@ LAYOUT GUIDE:
 CRITICAL RULES:
 - Read player names EXACTLY as shown
 - IGNORE "Less"/"More" buttons
-- This is BASEBALL / MLB only
+- This is BASKETBALL / NBA only
 
 Extract:
 1. playerName — Full name as displayed
-2. propType — Map to one of: hits, home_runs, rbis, runs, strikeouts, stolen_bases, walks, total_bases, singles, doubles, triples, pitcher_strikeouts, earned_runs, hits_allowed, outs_recorded
-3. line — The numerical line (e.g., 1.5, 0.5, 6.5)
+2. propType — Map to one of: points, rebounds, assists, pts_reb_ast, three_pointers, steals, blocks, turnovers, fgm, ftm, fga, fta, tpa
+3. line — The numerical line (e.g., 24.5, 7.5, 5.5)
 4. opponentName — The opposing team
 5. playerTeam — The player's team
 6. venue — "home" or "away" ("@ Team" = away, "vs Team" = home)
 
 PROP TYPE MAPPING:
-- "Hits" / "Base Hits" / "H" → hits
-- "Home Runs" / "HR" / "Homers" → home_runs
-- "RBIs" / "Runs Batted In" / "RBI" → rbis
-- "Runs" / "Runs Scored" / "R" → runs
-- "Strikeouts" / "SO" / "K" / "Batter Strikeouts" → strikeouts
-- "Stolen Bases" / "SB" / "Steals" → stolen_bases
-- "Walks" / "BB" / "Base on Balls" → walks
-- "Total Bases" / "TB" → total_bases
-- "Singles" / "1B" → singles
-- "Doubles" / "2B" → doubles
-- "Triples" / "3B" → triples
-- "Pitcher Strikeouts" / "Pitching Ks" / "Pitcher K" → pitcher_strikeouts
-- "Earned Runs" / "ER" → earned_runs
-- "Hits Allowed" / "HA" → hits_allowed
-- "Outs Recorded" / "Outs" / "Innings Pitched" → outs_recorded
+- "Points" / "Pts" / "PTS" → points
+- "Rebounds" / "Reb" / "Total Rebounds" → rebounds
+- "Assists" / "Ast" / "AST" → assists
+- "Pts+Reb+Ast" / "PRA" / "Points+Rebounds+Assists" → pts_reb_ast
+- "3-Point FG" / "3PM" / "Threes" / "Three Pointers Made" / "3-Pointers Made" → three_pointers
+- "Steals" / "Stl" / "STL" → steals
+- "Blocks" / "Blk" / "BLK" → blocks
+- "Turnovers" / "TO" / "TOV" → turnovers
+- "FG Made" / "FGM" / "Field Goals Made" → fgm
+- "FT Made" / "FTM" / "Free Throws Made" → ftm
+- "FG Attempted" / "FGA" → fga
+- "FT Attempted" / "FTA" → fta
+- "3PT Attempts" / "3PA" → tpa
 
 RETURN FORMAT (JSON array):
-[{"playerName":"...","propType":"...","line":0.0,"opponentName":"...","playerTeam":"...","venue":"home or away","sport":"baseball"}]
+[{"playerName":"...","propType":"...","line":0.0,"opponentName":"...","playerTeam":"...","venue":"home or away","sport":"basketball"}]
 
 If unknown, use null. Return JSON array."""
 
 
-async def _resolve_baseball_picks(extracted: list) -> dict:
-    """Resolve baseball picks: find team IDs via baseball API."""
+async def _resolve_basketball_picks(extracted: list) -> dict:
+    """Resolve basketball picks: find team IDs via basketball API."""
     results = []
     for entry in extracted:
         player_name = entry.get("playerName")
@@ -401,9 +394,9 @@ async def _resolve_baseball_picks(extracted: list) -> dict:
 
         # Normalize prop type
         raw_prop = (entry.get("propType") or "").lower().strip()
-        prop_type = BASEBALL_PROP_ALIASES.get(raw_prop, raw_prop)
-        if prop_type not in VALID_BASEBALL_PROPS:
-            prop_type = "hits"
+        prop_type = BASKETBALL_PROP_ALIASES.get(raw_prop, raw_prop)
+        if prop_type not in VALID_BASKETBALL_PROPS:
+            prop_type = "points"
 
         line_val = entry.get("line") or 0
         venue = (entry.get("venue") or "home").lower().strip()
@@ -413,10 +406,10 @@ async def _resolve_baseball_picks(extracted: list) -> dict:
         team_hint = (entry.get("playerTeam") or "").strip()
         opp_hint = (entry.get("opponentName") or "").strip()
 
-        # Resolve team via baseball API
+        # Resolve team via basketball API
         resolved_team = None
         if team_hint:
-            teams = await search_baseball_teams(team_hint)
+            teams = await search_basketball_teams(team_hint)
             if teams:
                 best = teams[0]
                 resolved_team = {"teamId": best["id"], "teamName": best.get("name", team_hint)}
@@ -424,7 +417,7 @@ async def _resolve_baseball_picks(extracted: list) -> dict:
         # Resolve opponent
         resolved_opp = None
         if opp_hint:
-            opps = await search_baseball_teams(opp_hint)
+            opps = await search_basketball_teams(opp_hint)
             if opps:
                 best = opps[0]
                 resolved_opp = {"teamId": best["id"], "teamName": best.get("name", opp_hint)}
@@ -437,12 +430,12 @@ async def _resolve_baseball_picks(extracted: list) -> dict:
                 "venue": venue,
                 "opponentName": opp_hint,
                 "playerTeam": team_hint,
-                "sport": "baseball",
+                "sport": "basketball",
                 "isCombo": False,
             },
             "resolved": resolved_team,
             "resolvedOpponent": resolved_opp,
-            "sport": "baseball",
+            "sport": "basketball",
         })
 
     return {"picks": results}
@@ -453,7 +446,7 @@ async def _resolve_baseball_picks(extracted: list) -> dict:
 async def scan_prop(req: ScanPropRequest):
     """Use AI vision to extract player prop data from a screenshot."""
     try:
-        is_baseball = req.sport == "baseball"
+        is_basketball = req.sport == "basketball"
 
         # ── Step 1: Vision AI extraction ──
         chat = LlmChat(
@@ -464,8 +457,8 @@ async def scan_prop(req: ScanPropRequest):
 
         image_content = ImageContent(image_base64=req.image_base64)
 
-        if is_baseball:
-            prompt = _build_baseball_scan_prompt()
+        if is_basketball:
+            prompt = _build_basketball_scan_prompt()
         else:
             leagues_list = ", ".join([f"{lg['name']} (ID:{lg['id']})" for lg in SUPPORTED_LEAGUES])
             prompt = _build_soccer_scan_prompt(leagues_list)
@@ -485,8 +478,8 @@ async def scan_prop(req: ScanPropRequest):
             extracted = [extracted]
 
         # ── Step 2: Route based on sport ──
-        if is_baseball:
-            return await _resolve_baseball_picks(extracted)
+        if is_basketball:
+            return await _resolve_basketball_picks(extracted)
 
         # ── Step 2 (Soccer): Resolve each extracted entry ──
         results = []
