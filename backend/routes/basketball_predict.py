@@ -658,6 +658,41 @@ Analyze the statistical verdict, per-minute projection, and over-rate FIRST. The
                 print(f"[BBALL MULTI-AI] {label} failed: {e}")
                 return None
 
+
+        async def call_emergent_direct(model_name, label):
+            """Call Claude/other models directly via OpenAI SDK to bypass litellm provider detection."""
+            try:
+                client = OpenAI(api_key=EMERGENT_LLM_KEY, base_url=EMERGENT_PROXY + "/v1")
+                loop = aio.get_event_loop()
+                def _run():
+                    return client.chat.completions.create(
+                        model=model_name,
+                        messages=[
+                            {"role": "system", "content": PREDICTION_SYSTEM},
+                            {"role": "user", "content": prompt},
+                        ],
+                        max_tokens=2500,
+                        temperature=0.3,
+                    )
+                resp = await aio.wait_for(loop.run_in_executor(None, _run), timeout=40)
+                text = resp.choices[0].message.content.strip()
+                if text.startswith("```"):
+                    text = "\n".join(ln for ln in text.split("\n") if not ln.strip().startswith("```"))
+                start = text.find("{")
+                if start >= 0:
+                    for end_pos in range(len(text), start, -1):
+                        if text[end_pos - 1] == "}":
+                            try:
+                                result = json.loads(text[start:end_pos])
+                                result["_source"] = label
+                                return result
+                            except json.JSONDecodeError:
+                                continue
+                raise ValueError("No valid JSON in response")
+            except Exception as e:
+                print(f"[BBALL MULTI-AI] {label} failed: {e}")
+                return None
+
         async def call_grok(label="grok", model="grok-4-1-fast-non-reasoning"):
             try:
                 grok_client = OpenAI(api_key=XAI_API_KEY, base_url="https://api.x.ai/v1")
@@ -695,8 +730,8 @@ Analyze the statistical verdict, per-minute projection, and over-rate FIRST. The
         ai_tasks = [
             aio.ensure_future(call_ai("gemini-2.0-flash", "gemini", "gemini")),
             aio.ensure_future(call_ai("gpt-4.1-mini", "gpt41mini")),
+            aio.ensure_future(call_emergent_direct("claude-haiku-4-5", "claude")),
             aio.ensure_future(call_grok("grok", "grok-4-1-fast-non-reasoning")),
-            aio.ensure_future(call_grok("grok2", "grok-4-fast-non-reasoning")),
         ]
 
         MIN_RESULTS = 3
