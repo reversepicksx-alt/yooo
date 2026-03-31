@@ -754,7 +754,7 @@ Analyze the statistical verdict, per-minute projection, and over-rate FIRST. The
 
         # Grab any additional results that finished while we were processing (don't wait, just collect)
         if pending:
-            done_extra, still_pending = await aio.wait(pending, timeout=8.0, return_when=aio.ALL_COMPLETED)
+            done_extra, still_pending = await aio.wait(pending, timeout=15.0, return_when=aio.ALL_COMPLETED)
             for t in done_extra:
                 try:
                     r = t.result()

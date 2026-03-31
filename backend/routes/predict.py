@@ -1018,7 +1018,7 @@ Analyze ALL data thoroughly. Return JSON only."""
 
         # Grab any additional results that finished while we were processing
         if pending:
-            done_extra, still_pending = await aio.wait(pending, timeout=8.0, return_when=aio.ALL_COMPLETED)
+            done_extra, still_pending = await aio.wait(pending, timeout=15.0, return_when=aio.ALL_COMPLETED)
             for t in done_extra:
                 try:
                     r = t.result()
