@@ -56,6 +56,16 @@ async def check_access(email_lower: str):
     grant = await db.manual_access_grants.find_one({"email": email_lower}, {"_id": 0})
     if grant:
         return grant.get("access_type", "Manual")
+
+    # Check Square subscription
+    square_sub = await db.square_subscriptions.find_one(
+        {"email": email_lower, "status": {"$in": ["ACTIVE", "PENDING"]}},
+        {"_id": 0}
+    )
+    if square_sub:
+        return "Premium"
+
+    # Check Whop membership
     try:
         all_memberships = await fetch_whop_memberships()
         user_memberships = [m for m in all_memberships if (m.get("email") or "").lower() == email_lower]

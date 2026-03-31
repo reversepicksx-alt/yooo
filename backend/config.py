@@ -17,6 +17,10 @@ WHOP_API_KEY = os.environ.get("WHOP_API_KEY")
 WHOP_COMPANY_ID = os.environ.get("WHOP_COMPANY_ID")
 OWNER_EMAIL = (os.environ.get("OWNER_EMAIL") or "josselj001@gmail.com").lower().strip()
 XAI_API_KEY = os.environ.get("XAI_API_KEY")
+SQUARE_ACCESS_TOKEN = os.environ.get("SQUARE_ACCESS_TOKEN")
+SQUARE_APPLICATION_ID = os.environ.get("SQUARE_APPLICATION_ID")
+SQUARE_LOCATION_ID = os.environ.get("SQUARE_LOCATION_ID")
+SQUARE_ENVIRONMENT = os.environ.get("SQUARE_ENVIRONMENT", "sandbox")
 
 # ── Lifetime VIP Emails ──
 LIFETIME_SUB_EMAILS = [

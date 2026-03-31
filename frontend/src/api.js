@@ -216,3 +216,27 @@ export async function basketballPredict(request) {
   });
 }
 
+
+
+// Square Subscription APIs
+export async function getSquarePlans() {
+  return apiCall('/api/square/plans');
+}
+
+export async function squareSubscribe(data) {
+  return apiCall('/api/square/subscribe', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getSquareSubscriptionStatus(email) {
+  return apiCall(`/api/square/status/${encodeURIComponent(email)}`);
+}
+
+export async function cancelSquareSubscription(email) {
+  return apiCall('/api/square/cancel', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+}
