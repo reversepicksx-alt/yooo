@@ -160,10 +160,10 @@ export async function liveUpdatePicks(email, token) {
   return apiCall('/api/picks/live-update', { method: 'POST', body: JSON.stringify({ email, token }) });
 }
 
-export async function scanProp(imageBase64) {
+export async function scanProp(imageBase64, sport = 'soccer') {
   return apiCall('/api/scan-prop', {
     method: 'POST',
-    body: JSON.stringify({ image_base64: imageBase64 }),
+    body: JSON.stringify({ image_base64: imageBase64, sport }),
   });
 }
 
@@ -200,3 +200,19 @@ export const SUPPORTED_LEAGUES = [
   { id: 7, name: "Asian Cup", type: "International Team" },
   { id: 10, name: "International Friendlies", type: "International Team" },
 ];
+
+// Baseball APIs
+export async function baseballSearchTeams(query) {
+  return apiCall('/api/baseball/search-teams', {
+    method: 'POST',
+    body: JSON.stringify({ query }),
+  });
+}
+
+export async function baseballPredict(request) {
+  return apiCall('/api/baseball/predict', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+}
+

@@ -12,13 +12,43 @@ from config import (
 from models import ScanPropRequest
 from utils import api_football_request, strip_accents
 from cache import get_national_team_id, get_player_by_name, get_team_by_name, get_team_info
+from baseball_utils import search_baseball_teams
 
 router = APIRouter(prefix="/api", tags=["scan"])
 
 # Valid prop types for normalization
-VALID_PROPS = {
+VALID_SOCCER_PROPS = {
     "pass_attempts", "shots", "shots_on_target", "tackles", "key_passes",
     "saves", "interceptions", "blocks", "dribbles", "fouls_drawn",
+}
+
+VALID_BASEBALL_PROPS = {
+    "hits", "home_runs", "rbis", "runs", "strikeouts", "stolen_bases",
+    "walks", "total_bases", "singles", "doubles", "triples",
+    "pitcher_strikeouts", "earned_runs", "hits_allowed", "walks_allowed",
+    "outs_recorded",
+}
+
+BASEBALL_PROP_ALIASES = {
+    "hit": "hits", "base hits": "hits", "h": "hits",
+    "home run": "home_runs", "hr": "home_runs", "homers": "home_runs",
+    "rbi": "rbis", "runs batted in": "rbis",
+    "run": "runs", "r": "runs", "runs scored": "runs",
+    "strikeout": "strikeouts", "so": "strikeouts", "k": "strikeouts", "ks": "strikeouts",
+    "batter strikeouts": "strikeouts",
+    "stolen base": "stolen_bases", "sb": "stolen_bases", "steals": "stolen_bases",
+    "walk": "walks", "bb": "walks", "base on balls": "walks",
+    "total base": "total_bases", "tb": "total_bases",
+    "single": "singles", "1b": "singles",
+    "double": "doubles", "2b": "doubles",
+    "triple": "triples", "3b": "triples",
+    "pitcher strikeout": "pitcher_strikeouts", "pitcher ks": "pitcher_strikeouts",
+    "pitching strikeouts": "pitcher_strikeouts",
+    "earned run": "earned_runs", "er": "earned_runs", "era": "earned_runs",
+    "hits allowed": "hits_allowed", "ha": "hits_allowed",
+    "walks allowed": "walks_allowed",
+    "outs recorded": "outs_recorded", "outs": "outs_recorded",
+    "innings pitched": "outs_recorded",
 }
 
 # Hardcoded team→league fallback (used when cache misses)
@@ -261,21 +291,8 @@ async def _resolve_opponent(opponent_name: str, is_international: bool, league_i
     return None
 
 
-@router.post("/scan-prop")
-async def scan_prop(req: ScanPropRequest):
-    """Use AI vision to extract player prop data from a screenshot."""
-    try:
-        # ── Step 1: Vision AI extraction ──
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=f"scan-{uuid.uuid4().hex[:8]}",
-            system_message="You are an expert at reading player prop screenshots. Extract structured data precisely."
-        ).with_model("openai", "gpt-4o")
-
-        image_content = ImageContent(image_base64=req.image_base64)
-        leagues_list = ", ".join([f"{lg['name']} (ID:{lg['id']})" for lg in SUPPORTED_LEAGUES])
-
-        prompt = f"""Analyze this screenshot of a player prop card.
+def _build_soccer_scan_prompt(leagues_list: str) -> str:
+    return f"""Analyze this screenshot of a player prop card.
 
 LAYOUT GUIDE — SINGLE PLAYER:
 - The player's FIRST NAME is on the top line, LAST NAME is on the second line (larger/bolder text)
@@ -285,12 +302,11 @@ LAYOUT GUIDE — SINGLE PLAYER:
 - "Less" and "More" buttons are just selection options — IGNORE them.
 
 LAYOUT GUIDE — COMBO PROPS (TWO players combined):
-- The card shows TWO player names joined by " + " (e.g., "U. Cakir + A. Muric" or "A. Sentnor + O. Moultrie")
-- Teams shown as "Team1/Team2" (e.g., "Turkiye/Kosovo", "KC Current/Thorns")
-- The stat label includes "(Combo)" — e.g., "Goalie Saves (Combo)" or "Passes Attempted (Combo)"
+- The card shows TWO player names joined by " + "
+- Teams shown as "Team1/Team2"
+- The stat label includes "(Combo)"
 - The line number is the COMBINED total for both players
 - The two players are from OPPOSING teams in the same match
-- The matchup may show "vs Team1/Team2..." or "vs Kosovo/Tu..."
 
 CRITICAL RULES:
 - Read player names EXACTLY as shown. Do NOT confuse with opponent/team names.
@@ -302,35 +318,157 @@ Extract for EACH prop entry:
 1. playerName — Full name(s) as displayed. For combos: "Player A + Player B"
 2. propType — Map to: pass_attempts, shots, shots_on_target, tackles, key_passes, saves, interceptions, blocks, dribbles, fouls_drawn
 3. line — The numerical line (e.g., 48.5, 6, 5.5)
-4. opponentName — The opposing team (for single props). For combos: null (each player's opponent is the other's team)
+4. opponentName — The opposing team (for single props). For combos: null
 5. league — Best guess league name
 6. leagueId — Match to one of: {leagues_list}
-7. playerTeam — The player's team (single). For combos: "Team1/Team2"
-8. isCombo — true if this is a combo (two-player) prop, false otherwise
-9. players — ONLY for combos: array of exactly 2 objects with "name" and "team" for each player
+7. playerTeam — The player's team
+8. isCombo — true if combo, false otherwise
+9. players — ONLY for combos: array of 2 objects with "name" and "team"
 
 PROP TYPE MAPPING:
-- "Passes Attempted" / "Pass Attempts" / "Passes" / "Passes Attempted (Combo)" → pass_attempts
-- "Shots" / "Shots Taken" / "Shots (Combo)" → shots
+- "Passes Attempted" / "Pass Attempts" / "Passes" → pass_attempts
+- "Shots" / "Shots Taken" → shots
 - "Shots on Target" / "SOT" → shots_on_target
-- "Tackles" / "Tackles (Combo)" → tackles
+- "Tackles" → tackles
 - "Key Passes" / "Assists" → key_passes
-- "Saves" / "Goalkeeper Saves" / "Goalie Saves" / "Goalie Saves (Combo)" → saves
+- "Saves" / "Goalkeeper Saves" / "Goalie Saves" → saves
 - "Interceptions" → interceptions
 - "Blocks" → blocks
 - "Dribble Attempts" / "Dribbles" → dribbles
 - "Fouls Drawn" → fouls_drawn
 
 RETURN FORMAT (JSON array):
-For SINGLE player: {{"playerName":"...","propType":"...","line":0.0,"opponentName":"...","playerTeam":"...","venue":"home or away","league":"...","leagueId":0,"isCombo":false}}
+For SINGLE: {{"playerName":"...","propType":"...","line":0.0,"opponentName":"...","playerTeam":"...","venue":"home or away","league":"...","leagueId":0,"isCombo":false}}
 For COMBO: {{"playerName":"Player A + Player B","propType":"...","line":0.0,"opponentName":null,"playerTeam":"Team1/Team2","venue":null,"league":"...","leagueId":0,"isCombo":true,"players":[{{"name":"Player A","team":"Team1"}},{{"name":"Player B","team":"Team2"}}]}}
 
-VENUE RULES (single props only):
-- "@ [Team]" → venue = "away"
-- "vs [Team]" (no @) → venue = "home"
+VENUE: "@ [Team]" → away, "vs [Team]" → home
+If unknown, use null. Return JSON array."""
 
-If you cannot determine a field, use null. Always try to extract the line number.
-Return as a JSON array even for one entry."""
+
+def _build_baseball_scan_prompt() -> str:
+    return """Analyze this screenshot of an MLB player prop card.
+
+LAYOUT GUIDE:
+- Player's name (first + last), usually first name smaller above last name
+- Below name: "BASEBALL • [Team Name] • [Position]"
+- Below that: "vs [Opponent]" or "@ [Opponent]" with date/time
+- The prop line number is shown prominently with the stat type below it
+- "Less" and "More" buttons are selection options — IGNORE them.
+
+CRITICAL RULES:
+- Read player names EXACTLY as shown
+- IGNORE "Less"/"More" buttons
+- This is BASEBALL / MLB only
+
+Extract:
+1. playerName — Full name as displayed
+2. propType — Map to one of: hits, home_runs, rbis, runs, strikeouts, stolen_bases, walks, total_bases, singles, doubles, triples, pitcher_strikeouts, earned_runs, hits_allowed, outs_recorded
+3. line — The numerical line (e.g., 1.5, 0.5, 6.5)
+4. opponentName — The opposing team
+5. playerTeam — The player's team
+6. venue — "home" or "away" ("@ Team" = away, "vs Team" = home)
+
+PROP TYPE MAPPING:
+- "Hits" / "Base Hits" / "H" → hits
+- "Home Runs" / "HR" / "Homers" → home_runs
+- "RBIs" / "Runs Batted In" / "RBI" → rbis
+- "Runs" / "Runs Scored" / "R" → runs
+- "Strikeouts" / "SO" / "K" / "Batter Strikeouts" → strikeouts
+- "Stolen Bases" / "SB" / "Steals" → stolen_bases
+- "Walks" / "BB" / "Base on Balls" → walks
+- "Total Bases" / "TB" → total_bases
+- "Singles" / "1B" → singles
+- "Doubles" / "2B" → doubles
+- "Triples" / "3B" → triples
+- "Pitcher Strikeouts" / "Pitching Ks" / "Pitcher K" → pitcher_strikeouts
+- "Earned Runs" / "ER" → earned_runs
+- "Hits Allowed" / "HA" → hits_allowed
+- "Outs Recorded" / "Outs" / "Innings Pitched" → outs_recorded
+
+RETURN FORMAT (JSON array):
+[{"playerName":"...","propType":"...","line":0.0,"opponentName":"...","playerTeam":"...","venue":"home or away","sport":"baseball"}]
+
+If unknown, use null. Return JSON array."""
+
+
+async def _resolve_baseball_picks(extracted: list) -> dict:
+    """Resolve baseball picks: find team IDs via baseball API."""
+    results = []
+    for entry in extracted:
+        player_name = entry.get("playerName")
+        if not player_name:
+            continue
+
+        # Normalize prop type
+        raw_prop = (entry.get("propType") or "").lower().strip()
+        prop_type = BASEBALL_PROP_ALIASES.get(raw_prop, raw_prop)
+        if prop_type not in VALID_BASEBALL_PROPS:
+            prop_type = "hits"
+
+        line_val = entry.get("line") or 0
+        venue = (entry.get("venue") or "home").lower().strip()
+        if venue not in ("home", "away"):
+            venue = "home"
+
+        team_hint = (entry.get("playerTeam") or "").strip()
+        opp_hint = (entry.get("opponentName") or "").strip()
+
+        # Resolve team via baseball API
+        resolved_team = None
+        if team_hint:
+            teams = await search_baseball_teams(team_hint)
+            if teams:
+                best = teams[0]
+                resolved_team = {"teamId": best["id"], "teamName": best.get("name", team_hint)}
+
+        # Resolve opponent
+        resolved_opp = None
+        if opp_hint:
+            opps = await search_baseball_teams(opp_hint)
+            if opps:
+                best = opps[0]
+                resolved_opp = {"teamId": best["id"], "teamName": best.get("name", opp_hint)}
+
+        results.append({
+            "extracted": {
+                "playerName": player_name,
+                "propType": prop_type,
+                "line": line_val,
+                "venue": venue,
+                "opponentName": opp_hint,
+                "playerTeam": team_hint,
+                "sport": "baseball",
+                "isCombo": False,
+            },
+            "resolved": resolved_team,
+            "resolvedOpponent": resolved_opp,
+            "sport": "baseball",
+        })
+
+    return {"picks": results}
+
+
+
+@router.post("/scan-prop")
+async def scan_prop(req: ScanPropRequest):
+    """Use AI vision to extract player prop data from a screenshot."""
+    try:
+        is_baseball = req.sport == "baseball"
+
+        # ── Step 1: Vision AI extraction ──
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"scan-{uuid.uuid4().hex[:8]}",
+            system_message="You are an expert at reading player prop screenshots. Extract structured data precisely."
+        ).with_model("openai", "gpt-4o")
+
+        image_content = ImageContent(image_base64=req.image_base64)
+
+        if is_baseball:
+            prompt = _build_baseball_scan_prompt()
+        else:
+            leagues_list = ", ".join([f"{lg['name']} (ID:{lg['id']})" for lg in SUPPORTED_LEAGUES])
+            prompt = _build_soccer_scan_prompt(leagues_list)
 
         msg = UserMessage(text=prompt, file_contents=[image_content])
         response = await chat.send_message(msg)
@@ -346,7 +484,11 @@ Return as a JSON array even for one entry."""
         if not isinstance(extracted, list):
             extracted = [extracted]
 
-        # ── Step 2: Resolve each extracted entry ──
+        # ── Step 2: Route based on sport ──
+        if is_baseball:
+            return await _resolve_baseball_picks(extracted)
+
+        # ── Step 2 (Soccer): Resolve each extracted entry ──
         results = []
         for entry in extracted:
             player_name = entry.get("playerName")
@@ -356,7 +498,7 @@ Return as a JSON array even for one entry."""
             # Normalize prop type
             raw_prop = (entry.get("propType") or "").lower().strip()
             prop_type = PROP_TYPE_ALIASES.get(raw_prop, raw_prop)
-            if prop_type not in VALID_PROPS:
+            if prop_type not in VALID_SOCCER_PROPS:
                 prop_type = "pass_attempts"
 
             line_val = entry.get("line") or 0

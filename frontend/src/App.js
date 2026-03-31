@@ -11,7 +11,7 @@ import {
   checkApiStatus, SUPPORTED_LEAGUES,
   verifyWhop, authLogin, setPassword as apiSetPassword, resetPassword, verifySession, authLogout,
   getPickOfTheDay, savePick, listPicks, deletePick, correctPick, liveUpdatePicks,
-  scanProp
+  scanProp, baseballSearchTeams, baseballPredict
 } from './api';
 import { toast, Toaster } from 'sonner';
 import './App.css';
@@ -29,8 +29,26 @@ const PROP_TYPES = [
   { key: 'fouls_drawn', label: 'Fouls Drawn', stat: 'fouls.drawn', desc: 'Fouls won by player' },
 ];
 
+const BASEBALL_PROP_TYPES = [
+  { key: 'hits', label: 'Hits', desc: 'Base hits' },
+  { key: 'home_runs', label: 'Home Runs', desc: 'Home runs hit' },
+  { key: 'rbis', label: 'RBIs', desc: 'Runs batted in' },
+  { key: 'runs', label: 'Runs', desc: 'Runs scored' },
+  { key: 'strikeouts', label: 'Strikeouts (Batter)', desc: 'Batter strikeouts' },
+  { key: 'stolen_bases', label: 'Stolen Bases', desc: 'Bases stolen' },
+  { key: 'walks', label: 'Walks', desc: 'Base on balls' },
+  { key: 'total_bases', label: 'Total Bases', desc: 'Total bases earned' },
+  { key: 'singles', label: 'Singles', desc: 'Single-base hits' },
+  { key: 'doubles', label: 'Doubles', desc: 'Double-base hits' },
+  { key: 'pitcher_strikeouts', label: 'Pitcher Strikeouts', desc: 'Pitcher strikeouts recorded' },
+  { key: 'earned_runs', label: 'Earned Runs', desc: 'Earned runs allowed' },
+  { key: 'hits_allowed', label: 'Hits Allowed', desc: 'Hits allowed by pitcher' },
+  { key: 'outs_recorded', label: 'Outs Recorded', desc: 'Outs recorded by pitcher' },
+];
+
 function getPropLabel(key) {
-  const p = PROP_TYPES.find(pt => pt.key === key);
+  const all = [...PROP_TYPES, ...BASEBALL_PROP_TYPES];
+  const p = all.find(pt => pt.key === key);
   return p ? p.label : key.replace(/_/g, ' ');
 }
 
@@ -42,6 +60,7 @@ export default function App() {
   const [auth, setAuth] = useState(null);
   const [authChecking, setAuthChecking] = useState(true);
   const [activeTab, setActiveTab] = useState('scan');
+  const [activeSport, setActiveSport] = useState('soccer');
   const [trackingView, setTrackingView] = useState('live');
 
   const [wizardStep, setWizardStep] = useState(1);
@@ -471,7 +490,7 @@ export default function App() {
 
       setIsScanning(true);
       try {
-        const result = await scanProp(base64Data);
+        const result = await scanProp(base64Data, activeSport);
         if (result.picks && result.picks.length > 0) {
           setScanResults(result.picks);
           toast.success(`Found ${result.picks.length} prop${result.picks.length > 1 ? 's' : ''} in image`);
@@ -529,6 +548,46 @@ export default function App() {
         setScanPredictingIdx(null);
       }
     } else {
+      // Check if this is a baseball pick
+      const isBaseballPick = pickData.sport === 'baseball' || pickData.extracted?.sport === 'baseball';
+
+      if (isBaseballPick) {
+        // BASEBALL prediction flow
+        if (!pickData.resolved && !pickData.resolvedOpponent) {
+          toast.error('Teams not resolved — cannot run prediction');
+          return;
+        }
+        setIsScanPredicting(true);
+        setScanPredictingIdx(idx);
+        setScanPrediction(null);
+        setScanExcludedIndices([]);
+        setScanFollowUpMessages([]);
+        try {
+          const teamId = pickData.resolved?.teamId || 0;
+          const teamName = pickData.resolved?.teamName || pickData.extracted?.playerTeam || 'Unknown';
+          const opponentId = pickData.resolvedOpponent?.teamId || 0;
+          const opponentName = pickData.resolvedOpponent?.teamName || pickData.extracted?.opponentName || 'Unknown';
+          const venue = scanVenueOverrides[idx] || pickData.extracted?.venue || 'home';
+          const result = await baseballPredict({
+            teamId,
+            teamName,
+            opponentId,
+            opponentName,
+            playerName: pickData.extracted?.playerName || 'Unknown',
+            venue,
+            propType: pickData.extracted?.propType || 'hits',
+            line: pickData.extracted?.line || 0,
+          });
+          setScanPrediction(result);
+          toast.success('Baseball analysis complete!');
+        } catch (err) {
+          toast.error(err.message || 'Baseball prediction failed');
+        } finally {
+          setIsScanPredicting(false);
+          setScanPredictingIdx(null);
+        }
+      } else {
+      // SOCCER prediction flow
       if (!pickData.resolved) {
         toast.error('Player not found — cannot run prediction');
         return;
@@ -561,6 +620,7 @@ export default function App() {
       } finally {
         setIsScanPredicting(false);
         setScanPredictingIdx(null);
+      }
       }
     }
   };
@@ -762,6 +822,22 @@ export default function App() {
           <div className="logo-text" data-testid="app-logo">Reverse<span>Picks</span></div>
         </div>
         <div className="header-right">
+          <div className="sport-selector" data-testid="sport-selector">
+            <button
+              className={`sport-btn ${activeSport === 'soccer' ? 'active' : ''}`}
+              onClick={() => { setActiveSport('soccer'); setScanPrediction(null); setScanResults([]); }}
+              data-testid="sport-soccer-btn"
+            >
+              Soccer
+            </button>
+            <button
+              className={`sport-btn ${activeSport === 'baseball' ? 'active' : ''}`}
+              onClick={() => { setActiveSport('baseball'); setScanPrediction(null); setScanResults([]); }}
+              data-testid="sport-baseball-btn"
+            >
+              Baseball
+            </button>
+          </div>
           <div className="api-badge">
             <div className={`api-dot ${apiStatus}`} data-testid="api-status-dot" />
             <span>API</span>
@@ -1954,8 +2030,12 @@ export default function App() {
               <>
                 {/* Header */}
                 <div style={{ textAlign: 'center', marginBottom: 24 }}>
-                  <div style={{ fontSize: 24, fontWeight: 800, color: '#fff', letterSpacing: '-0.5px' }}>Scan a Prop</div>
-                  <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)', marginTop: 6, fontWeight: 500 }}>Upload a screenshot for instant AI analysis</div>
+                  <div style={{ fontSize: 24, fontWeight: 800, color: '#fff', letterSpacing: '-0.5px' }}>
+                    Scan a Prop
+                  </div>
+                  <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)', marginTop: 6, fontWeight: 500 }}>
+                    Upload a {activeSport === 'baseball' ? 'MLB' : 'soccer'} prop screenshot for instant AI analysis
+                  </div>
                 </div>
 
                 {/* Upload Zone */}

@@ -1,45 +1,50 @@
-# ReversePicks - Sports Player Props AI Analytics
+# ReversePicks - Multi-Sport Player Props AI Analytics
 
 ## Problem Statement
-Soccer player prop analysis app. Users scan prop screenshots, AI extracts details, resolves players via MongoDB cache, and runs a multi-AI consensus prediction pipeline.
+Multi-sport player prop analysis app. Users scan prop screenshots, AI extracts details, resolves players/teams, and runs a multi-AI consensus prediction pipeline. Supports Soccer and Baseball (MLB).
 
 ## Architecture
 - **Frontend**: React.js, Shadcn/UI, Lucide Icons, Manrope + JetBrains Mono fonts
 - **Backend**: FastAPI, Python asyncio, MongoDB
-- **Prediction Pipeline**: 5-AI Consensus + Synthesis Engine
+- **Multi-Sport**: Sport selector in header (Soccer/Baseball). Completely separate logic per sport.
+- **Prediction Pipeline**: 5-AI Consensus + Synthesis Engine (same pattern for both sports)
   - AIs: Grok-4-fast-reasoning, Gemini 2.0 Flash, Gemini 2.5 Flash, GPT-4o, Claude Sonnet 4
-  - Uses `litellm.acompletion` for TRUE async parallelism (not blocking LlmChat)
-  - First-3-wins pattern: takes first 3 valid responses, cancels stragglers
-  - Gemini synthesis step: combines all AI analyses into one rich 1500-char breakdown
-- **Follow-up Chat**: Grok-3-mini with web search via tactical.py
-- **Auth**: Whop membership verification + email/password login
-- **Data**: API-Sports (cached in MongoDB, parallelized fixture fetching)
+  - Uses `litellm.acompletion` for TRUE async parallelism
+  - First-3-wins pattern
+  - Gemini synthesis step
+- **Scan OCR**: Sport-aware — detects baseball/soccer props from screenshots
+- **Auth**: Whop membership + email/password login
 
-## Performance (v4.1 — Feb 2026)
-- Wave 1 (API-Sports): ~1.0s
-- Wave 2 (Fixture stats + 25-game logs): ~4s
-- AI Consensus (first 3 of 5): ~15-19s
-- Synthesis (Gemini): ~3s
-- **Total: 22-30s** (63% under 60s proxy limit)
-- Game samples: 14-21 total (7+ venue-filtered)
+## Sport-Specific Details
+### Soccer
+- Data: API-Sports Football (player + team level)
+- Routes: `/api/predict`, `/api/scan-prop`
+- Props: pass_attempts, shots, shots_on_target, tackles, key_passes, saves, interceptions, blocks, dribbles, fouls_drawn
 
-## Key API Endpoints
-- POST /api/scan-prop — OCR extraction + player resolution
-- POST /api/predict — 5-AI consensus prediction (~25s)
-- POST /api/tactical/message — Follow-up chat (Grok-3-mini)
-- POST /api/auth/verify-whop, /api/auth/reset-password, /api/picks/save, /api/picks/list
+### Baseball (MLB)
+- Data: API-Sports Baseball v1 (team-level only — no individual player stats API)
+- Routes: `/api/baseball/predict`, `/api/baseball/search-teams`
+- Props: hits, home_runs, rbis, runs, strikeouts, stolen_bases, walks, total_bases, singles, doubles, triples, pitcher_strikeouts, earned_runs, hits_allowed, outs_recorded
+- Player analysis: AI knowledge + team context from API
+
+## Key Files
+- `/app/backend/routes/predict.py` — Soccer prediction
+- `/app/backend/routes/baseball_predict.py` — Baseball prediction
+- `/app/backend/baseball_utils.py` — Baseball API helpers
+- `/app/backend/routes/scan.py` — Sport-aware OCR scan
+- `/app/frontend/src/App.js` — UI with sport selector
 
 ## Completed Work
-- iOS-like elite UI overhaul with 3-tab nav (Scan | Tracking | Profile) ✅
+- iOS-like elite UI with 3-tab nav (Scan | Tracking | Profile) ✅
+- Multi-sport support (Soccer + Baseball) with header toggle ✅
+- Sport-aware scan OCR ✅
+- Baseball prediction pipeline (5-AI consensus) ✅
+- Baseball team search + resolution ✅
+- 5-AI consensus + synthesis engine for both sports ✅
+- Venue-prioritized game logs (15-20 venue-matched samples) ✅
 - Profile tab with password reset ✅
-- User record tracker (HITS/MISS/PUSH/STREAK) ✅
+- User record tracker ✅
 - Lifetime VIP for michael1069_6910@yahoo.com ✅
-- 5-AI consensus + synthesis engine ✅
-- TRUE async parallelism via litellm.acompletion ✅
-- Deep game log lookback (25 fixtures, 7+ venue-filtered samples) ✅
-- Grok+Gemini synthesis for rich tactical breakdowns ✅
-- International player accent-stripped name matching ✅
-- Match round/stage detection (knockout awareness) ✅
 
 ## Prioritized Backlog
 ### P2: Slip correlation, Prediction feedback loop

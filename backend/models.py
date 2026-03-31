@@ -62,6 +62,7 @@ class ComboRequest(BaseModel):
 
 class ScanPropRequest(BaseModel):
     image_base64: str
+    sport: str = "soccer"
 
 
 class ChatStartRequest(BaseModel):
