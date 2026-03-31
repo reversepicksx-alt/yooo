@@ -488,22 +488,29 @@ async def basketball_predict(req: BasketballPredictionRequest):
 
         # Build player game logs (uses single API call for ALL season stats)
         player_game_logs = []
-        prev_season_logs = []
+        prior_season_logs = []
         if player_id:
             player_game_logs = await build_player_game_logs(player_id, req.teamId, req.propType, team_games)
 
-            # Fetch previous season stats for H2H matching (if H2H games exist from prior seasons)
+            # Fetch 3 prior seasons of player stats for H2H matching (parallel)
             if h2h_data:
-                current_season = BBALL_CURRENT_SEASON
-                yr = int(current_season.split("-")[0])
-                prev_season = f"{yr-1}-{yr}"
-                try:
-                    prev_team_games = await safe_fetch(get_team_games(req.teamId, prev_season))
-                    if prev_team_games:
-                        prev_season_logs = await build_player_game_logs(player_id, req.teamId, req.propType, prev_team_games, prev_season)
-                        print(f"[BBALL H2H] Fetched {len(prev_season_logs)} logs from prev season {prev_season}")
-                except Exception:
-                    pass
+                yr = int(BBALL_CURRENT_SEASON.split("-")[0])
+                prior_seasons = [f"{yr-i}-{yr-i+1}" for i in range(1, 4)]  # e.g. 2024-2025, 2023-2024, 2022-2023
+
+                async def _fetch_season_logs(season_str):
+                    try:
+                        tg = await get_team_games(req.teamId, season_str)
+                        if tg:
+                            return await build_player_game_logs(player_id, req.teamId, req.propType, tg, season_str)
+                    except Exception:
+                        pass
+                    return []
+
+                prior_results = await aio.gather(*[_fetch_season_logs(s) for s in prior_seasons])
+                for logs in prior_results:
+                    prior_season_logs.extend(logs)
+                if prior_season_logs:
+                    print(f"[BBALL H2H] Fetched {len(prior_season_logs)} logs from {len(prior_seasons)} prior seasons")
 
         print(f"[BBALL TIMING] Wave 1: {_t.time()-t0:.1f}s | Player logs: {len(player_game_logs)} | Team games: {len(team_games)}")
 
@@ -862,7 +869,7 @@ Analyze the statistical verdict, per-minute projection, and over-rate FIRST. The
 
         # H2H PLAYER STATS for frontend display (player's performance vs this opponent)
         h2h_game_ids = set(g.get("id") for g in h2h_data if g.get("id")) if h2h_data else set()
-        all_logs_for_h2h = player_game_logs + prev_season_logs
+        all_logs_for_h2h = player_game_logs + prior_season_logs
         h2h_player_games = [g for g in all_logs_for_h2h if g.get("gameId") in h2h_game_ids] if h2h_game_ids else []
         # Sort by date descending
         h2h_player_games.sort(key=lambda g: g.get("date", ""), reverse=True)
