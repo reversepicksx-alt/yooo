@@ -20,6 +20,8 @@ Multi-sport player prop analysis app. Users scan prop screenshots, AI extracts d
 - **Team resolution**: NBA league=12 filter prevents wrong team matches
 - **Game matching**: Live games always match regardless of pick timestamp
 - **Streak detection**: Fixed double-counting bug in streak logic
+- **League detection**: Basketball scan now returns league/leagueId (NBA=12, WNBA=13) from team cache instead of "Unknown"
+- **H2H data**: Sorted newest-first, filtered to finished games only, returned as `h2hGames` array in prediction response with frontend H2H section
 
 ## Prediction Quality v2 — Advanced Analytics Engine (Feb 2026)
 - **Per-Minute Rate Analysis**: Computes production rate per minute, projects stat total from rate x avg minutes
