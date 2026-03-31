@@ -368,6 +368,38 @@ Blowout frequency: {blowout_pct}% of games decided by 15+
 Record: {wins}W-{losses}L | Avg scored: {avg_score} | Avg allowed: {avg_opp} | Net: {'+' if team_margin > 0 else ''}{team_margin}""")
 
     # ══════════════════════════════════════════
+    # SECTION 6b: MATCHUP & GAME TYPE CONTEXT
+    # ══════════════════════════════════════════
+    if team_games_parsed and opp_games_raw:
+        opp_parsed_form = [parse_game_for_team(g, req.opponentId) for g in opp_games_raw[:10]]
+        team_wins = sum(1 for g in team_games_parsed[:10] if g.get("result") == "W")
+        team_losses = sum(1 for g in team_games_parsed[:10] if g.get("result") == "L")
+        opp_wins_form = sum(1 for g in opp_parsed_form if g.get("result") == "W")
+        opp_losses_form = sum(1 for g in opp_parsed_form if g.get("result") == "L")
+        team_wpct = round(team_wins / max(team_wins + team_losses, 1) * 100)
+        opp_wpct = round(opp_wins_form / max(opp_wins_form + opp_losses_form, 1) * 100)
+
+        if team_wpct > opp_wpct + 20:
+            favorite = req.teamName
+            game_type = "MISMATCH — expect blowout risk, starters may rest in 4Q"
+        elif opp_wpct > team_wpct + 20:
+            favorite = req.opponentName
+            game_type = "MISMATCH — expect blowout risk, starters may rest in 4Q"
+        elif abs(team_wpct - opp_wpct) < 10:
+            favorite = "TOSS-UP"
+            game_type = "COMPETITIVE — expect full minutes, close game"
+        else:
+            favorite = req.teamName if team_wpct > opp_wpct else req.opponentName
+            game_type = "LEAN — slight edge, likely competitive"
+
+        parts.append(f"""=== MATCHUP & GAME TYPE ===
+{req.teamName}: {team_wins}W-{team_losses}L ({team_wpct}% win rate L10)
+{req.opponentName}: {opp_wins_form}W-{opp_losses_form}L ({opp_wpct}% win rate L10)
+Favorite: {favorite}
+Expected game type: {game_type}
+>>> Impact on prop: {'Blowout risk = reduced minutes for starters on winning side. Bench gets run.' if 'MISMATCH' in game_type else 'Full minutes expected for key players.'} <<<""")
+
+    # ══════════════════════════════════════════
     # SECTION 7: H2H
     # ══════════════════════════════════════════
     if h2h_data:
@@ -809,7 +841,15 @@ Analyze the statistical verdict, per-minute projection, and over-rate FIRST. The
             if all(r == prediction["recommendation"] for r in recs):
                 consensus = f"Unanimous {prediction['recommendation'].upper()} — {len(valid_preds)}/4 AI models agree."
             else:
-                consensus = f"Split: {over_count}/4 OVER, {under_count}/4 UNDER. Consensus → {prediction['recommendation'].upper()}."
+                majority_rec = prediction["recommendation"]
+                dissenters = [p for p in valid_preds if p.get("recommendation") != majority_rec]
+                dissent_reasons = []
+                for d in dissenters:
+                    reason = d.get("sharpSummary") or d.get("reasoning") or ""
+                    if reason:
+                        dissent_reasons.append(reason[:200])
+                dissent_text = " Dissent: " + " | ".join(dissent_reasons) if dissent_reasons else ""
+                consensus = f"Split: {over_count}/4 OVER, {under_count}/4 UNDER. Consensus → {prediction['recommendation'].upper()}.{dissent_text}"
             prediction["consensusNote"] = consensus
         else:
             pv = prediction.get("projectedValue", req.line)

@@ -1087,7 +1087,15 @@ Analyze ALL data thoroughly. Return JSON only."""
             if all(r == prediction["recommendation"] for r in recs):
                 consensus = f"Unanimous {prediction['recommendation'].upper()} — {len(valid_preds)}/4 AI models agree."
             else:
-                consensus = f"Split: {over_count}/4 OVER, {under_count}/4 UNDER. Consensus → {prediction['recommendation'].upper()}."
+                majority_rec = prediction["recommendation"]
+                dissenters = [p for p in valid_preds if p.get("recommendation") != majority_rec]
+                dissent_reasons = []
+                for d in dissenters:
+                    reason = d.get("sharpSummary") or d.get("reasoning") or ""
+                    if reason:
+                        dissent_reasons.append(reason[:200])
+                dissent_text = " Dissent: " + " | ".join(dissent_reasons) if dissent_reasons else ""
+                consensus = f"Split: {over_count}/4 OVER, {under_count}/4 UNDER. Consensus → {prediction['recommendation'].upper()}.{dissent_text}"
             prediction["consensusNote"] = consensus
 
         else:
