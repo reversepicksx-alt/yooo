@@ -86,25 +86,70 @@ db = mongo_client[DB_NAME]
 
 # ── Prop type aliases (for scan) ──
 PROP_TYPE_ALIASES = {
+    # Goals
+    "goals": "goals",
+    "goal": "goals",
+    "goals scored": "goals",
+    "anytime goalscorer": "goals",
+    # Assists
+    "assists": "assists",
+    "assist": "assists",
+    "goal assists": "assists",
+    # Shots Assisted
+    "shots assisted": "shots_assisted",
+    "shot assists": "shots_assisted",
+    "shot assist": "shots_assisted",
+    # Pass attempts
     "pass attempts": "pass_attempts",
     "passes attempted": "pass_attempts",
     "passes": "pass_attempts",
     "pass att": "pass_attempts",
+    "total passes": "pass_attempts",
+    # Shots
     "shots": "shots",
+    "total shots": "shots",
+    "shot attempts": "shots",
+    # Shots on target / SOT
     "shots on target": "shots_on_target",
     "sot": "shots_on_target",
     "shots on goal": "shots_on_target",
+    # Tackles
     "tackles": "tackles",
+    "total tackles": "tackles",
+    # Key passes
     "key passes": "key_passes",
-    "assists": "key_passes",
+    "chances created": "key_passes",
+    # Saves
     "saves": "saves",
     "goalkeeper saves": "saves",
+    # Interceptions
     "interceptions": "interceptions",
+    # Blocks
     "blocks": "blocks",
+    # Dribbles
     "dribble attempts": "dribbles",
     "dribbles": "dribbles",
+    "dribbles attempted": "dribbles",
+    # Successful dribbles
+    "successful dribbles": "dribbles_success",
+    "dribbles completed": "dribbles_success",
+    # Fouls drawn
     "fouls drawn": "fouls_drawn",
-    "fouls": "fouls_drawn",
+    # Fouls committed
+    "fouls committed": "fouls_committed",
+    "fouls": "fouls_committed",
+    # Crosses
+    "crosses": "crosses",
+    "crosses attempted": "crosses",
+    "cross attempts": "crosses",
+    # Clearances
+    "clearances": "clearances",
+    # Duels won
+    "duels won": "duels_won",
+    "duels": "duels_won",
+    # Cards
+    "yellow cards": "yellow_cards",
+    "cards": "yellow_cards",
 }
 
 # ── International league IDs (players indexed under club, not national team) ──
@@ -166,6 +211,9 @@ NATION_TO_LEAGUES = {
 
 # ── Stat field maps (used in multiple places) ──
 STAT_FIELD_MAP = {
+    "goals": "goals_total",
+    "assists": "goals_assists",
+    "shots_assisted": "passes_key",
     "pass_attempts": "passes_total",
     "shots": "shots_total",
     "shots_on_target": "shots_on",
@@ -175,10 +223,19 @@ STAT_FIELD_MAP = {
     "interceptions": "tackles_interceptions",
     "blocks": "tackles_blocks",
     "dribbles": "dribbles_attempts",
+    "dribbles_success": "dribbles_success",
     "fouls_drawn": "fouls_drawn",
+    "fouls_committed": "fouls_committed",
+    "crosses": "passes_crosses",
+    "clearances": "tackles_clearances",
+    "duels_won": "duels_won",
+    "yellow_cards": "cards_yellow",
 }
 
 STAT_LAMBDA_MAP = {
+    "goals": lambda s: s.get("goals", {}).get("total"),
+    "assists": lambda s: s.get("goals", {}).get("assists"),
+    "shots_assisted": lambda s: s.get("passes", {}).get("key"),
     "pass_attempts": lambda s: s.get("passes", {}).get("total"),
     "shots": lambda s: s.get("shots", {}).get("total"),
     "shots_on_target": lambda s: s.get("shots", {}).get("on"),
@@ -188,5 +245,11 @@ STAT_LAMBDA_MAP = {
     "interceptions": lambda s: s.get("tackles", {}).get("interceptions"),
     "blocks": lambda s: s.get("tackles", {}).get("blocks"),
     "dribbles": lambda s: s.get("dribbles", {}).get("attempts"),
+    "dribbles_success": lambda s: s.get("dribbles", {}).get("success"),
     "fouls_drawn": lambda s: s.get("fouls", {}).get("drawn"),
+    "fouls_committed": lambda s: s.get("fouls", {}).get("committed"),
+    "crosses": lambda s: (s.get("passes", {}).get("crosses") if s.get("passes", {}).get("crosses") is not None else s.get("passes", {}).get("total")),
+    "clearances": lambda s: s.get("tackles", {}).get("clearances"),
+    "duels_won": lambda s: s.get("duels", {}).get("won"),
+    "yellow_cards": lambda s: s.get("cards", {}).get("yellow"),
 }

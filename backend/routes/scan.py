@@ -19,8 +19,10 @@ router = APIRouter(prefix="/api", tags=["scan"])
 
 # Valid prop types for normalization
 VALID_SOCCER_PROPS = {
-    "pass_attempts", "shots", "shots_on_target", "tackles", "key_passes",
-    "saves", "interceptions", "blocks", "dribbles", "fouls_drawn",
+    "goals", "assists", "pass_attempts", "shots", "shots_on_target", "tackles",
+    "key_passes", "saves", "interceptions", "blocks", "dribbles", "fouls_drawn",
+    "fouls_committed", "shots_assisted", "crosses", "clearances", "duels_won",
+    "yellow_cards", "dribbles_success",
 }
 
 VALID_BASKETBALL_PROPS = {
@@ -331,7 +333,7 @@ CRITICAL RULES:
 
 Extract for EACH prop entry:
 1. playerName — Full name(s) as displayed. For combos: "Player A + Player B"
-2. propType — Map to: pass_attempts, shots, shots_on_target, tackles, key_passes, saves, interceptions, blocks, dribbles, fouls_drawn
+2. propType — Map to: goals, assists, shots_assisted, pass_attempts, shots, shots_on_target, tackles, key_passes, saves, interceptions, blocks, dribbles, dribbles_success, fouls_drawn, fouls_committed, crosses, clearances, duels_won, yellow_cards
 3. line — The numerical line (e.g., 48.5, 6, 5.5)
 4. opponentName — The opposing team (for single props). For combos: null
 5. league — Best guess league name
@@ -341,16 +343,27 @@ Extract for EACH prop entry:
 9. players — ONLY for combos: array of 2 objects with "name" and "team"
 
 PROP TYPE MAPPING:
+- "Goals" / "Anytime Goalscorer" → goals
+- "Assists" / "Goal Assists" → assists
+- "Shots Assisted" / "Shot Assists" → shots_assisted
 - "Passes Attempted" / "Pass Attempts" / "Passes" → pass_attempts
-- "Shots" / "Shots Taken" → shots
+- "Shots" / "Shots Taken" / "Total Shots" → shots
 - "Shots on Target" / "SOT" → shots_on_target
 - "Tackles" → tackles
-- "Key Passes" / "Assists" → key_passes
+- "Key Passes" / "Chances Created" → key_passes
 - "Saves" / "Goalkeeper Saves" / "Goalie Saves" → saves
 - "Interceptions" → interceptions
 - "Blocks" → blocks
 - "Dribble Attempts" / "Dribbles" → dribbles
+- "Successful Dribbles" / "Dribbles Completed" → dribbles_success
 - "Fouls Drawn" → fouls_drawn
+- "Fouls Committed" / "Fouls" → fouls_committed
+- "Crosses" / "Cross Attempts" → crosses
+- "Clearances" → clearances
+- "Duels Won" / "Duels" → duels_won
+- "Yellow Cards" / "Cards" → yellow_cards
+
+CRITICAL: "Shots Assisted" is shots_assisted (NOT shots or assists). "Goals" is goals (NOT shots_on_target).
 
 RETURN FORMAT (JSON array):
 For SINGLE: {{"playerName":"...","propType":"...","line":0.0,"opponentName":"...","playerTeam":"...","venue":"home or away","league":"...","leagueId":0,"isCombo":false}}

@@ -284,11 +284,16 @@ async def predict(req: PredictionRequest):
                         "goals_saves": stats.get("goals", {}).get("saves"),
                     }
                     stat_field_map = {
+                        "goals": "goals_total", "assists": "goals_assists",
+                        "shots_assisted": "passes_key",
                         "pass_attempts": "passes_total", "shots": "shots_total",
                         "shots_on_target": "shots_on", "tackles": "tackles_total",
                         "key_passes": "passes_key", "saves": "goals_saves",
                         "interceptions": "tackles_interceptions", "blocks": "tackles_blocks",
-                        "dribbles": "dribbles_attempts", "fouls_drawn": "fouls_drawn",
+                        "dribbles": "dribbles_attempts", "dribbles_success": "dribbles_success",
+                        "fouls_drawn": "fouls_drawn", "fouls_committed": "fouls_committed",
+                        "crosses": "passes_crosses", "clearances": "tackles_clearances",
+                        "duels_won": "duels_won", "yellow_cards": "cards_yellow",
                     }
                     raw_val = game_log.get(stat_field_map.get(req.propType, ""), None)
                     if raw_val is not None and minutes > 0:

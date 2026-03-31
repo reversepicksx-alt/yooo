@@ -169,6 +169,9 @@ async def correct_pick(req: CorrectPickRequest):
 
 # Soccer stat extraction map
 SOCCER_STAT_MAP = {
+    "goals": lambda s: s.get("goals", {}).get("total"),
+    "assists": lambda s: s.get("goals", {}).get("assists"),
+    "shots_assisted": lambda s: s.get("passes", {}).get("key"),
     "pass_attempts": lambda s: s.get("passes", {}).get("total"),
     "shots": lambda s: s.get("shots", {}).get("total"),
     "shots_on_target": lambda s: s.get("shots", {}).get("on"),
@@ -178,7 +181,13 @@ SOCCER_STAT_MAP = {
     "interceptions": lambda s: s.get("tackles", {}).get("interceptions"),
     "blocks": lambda s: s.get("tackles", {}).get("blocks"),
     "dribbles": lambda s: s.get("dribbles", {}).get("attempts"),
+    "dribbles_success": lambda s: s.get("dribbles", {}).get("success"),
     "fouls_drawn": lambda s: s.get("fouls", {}).get("drawn"),
+    "fouls_committed": lambda s: s.get("fouls", {}).get("committed"),
+    "crosses": lambda s: s.get("passes", {}).get("crosses"),
+    "clearances": lambda s: s.get("tackles", {}).get("clearances"),
+    "duels_won": lambda s: s.get("duels", {}).get("won"),
+    "yellow_cards": lambda s: s.get("cards", {}).get("yellow"),
 }
 
 # Basketball stat extraction (from parsed player stat)
