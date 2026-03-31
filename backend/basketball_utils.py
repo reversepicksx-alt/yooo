@@ -276,3 +276,79 @@ def parse_game_for_team(game: dict, team_id: int) -> dict:
 # Legacy aliases for backward compatibility
 async def search_teams(query: str) -> list:
     return await search_nba_teams(query)
+
+
+
+def decimal_to_american(decimal_odds: float) -> str:
+    """Convert decimal odds to American odds string."""
+    if decimal_odds >= 2.0:
+        american = round((decimal_odds - 1) * 100)
+        return f"+{american}"
+    elif decimal_odds > 1.0:
+        american = round(-100 / (decimal_odds - 1))
+        return str(american)
+    return "+100"
+
+
+async def get_basketball_odds(team_id: int, opponent_id: int) -> dict:
+    """Fetch moneyline odds for the next game between two teams."""
+    try:
+        # Find upcoming/recent games between these teams
+        games = await _api_get("games", {
+            "h2h": f"{team_id}-{opponent_id}",
+            "season": BBALL_CURRENT_SEASON,
+        })
+        if not games:
+            return {}
+
+        # Find the next unplayed or most recent game
+        upcoming = [g for g in games if g.get("status", {}).get("short") in ("NS", "")]
+        if not upcoming:
+            # Use most recent finished game's context
+            return {}
+
+        game_id = upcoming[0].get("id")
+        if not game_id:
+            return {}
+
+        # Fetch odds for this game
+        odds_data = await _api_get("odds", {"game": game_id})
+        if not odds_data:
+            return {}
+
+        # Parse first bookmaker's moneyline
+        bookmakers = odds_data[0].get("bookmakers", []) if odds_data else []
+        if not bookmakers:
+            return {}
+
+        for bet in bookmakers[0].get("bets", []):
+            if bet.get("name") == "Home/Away":
+                values = bet.get("values", [])
+                home_odds = None
+                away_odds = None
+                for v in values:
+                    dec = float(v.get("odd", 0))
+                    if v.get("value") == "Home":
+                        home_odds = dec
+                    elif v.get("value") == "Away":
+                        away_odds = dec
+
+                if home_odds and away_odds:
+                    home_team = upcoming[0].get("teams", {}).get("home", {})
+                    away_team = upcoming[0].get("teams", {}).get("away", {})
+                    home_american = decimal_to_american(home_odds)
+                    away_american = decimal_to_american(away_odds)
+                    favorite = home_team.get("name", "") if home_odds < away_odds else away_team.get("name", "")
+
+                    return {
+                        "homeName": home_team.get("name", ""),
+                        "awayName": away_team.get("name", ""),
+                        "homeOdds": home_american,
+                        "awayOdds": away_american,
+                        "favorite": favorite,
+                        "gameId": game_id,
+                    }
+        return {}
+    except Exception as e:
+        print(f"[BBALL ODDS] Error: {e}")
+        return {}

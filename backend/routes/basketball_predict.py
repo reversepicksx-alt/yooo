@@ -22,7 +22,7 @@ from basketball_utils import (
     search_nba_teams, get_player_season_stats,
     get_team_games, get_h2h, get_team_stats, get_standings,
     parse_player_stat, parse_game_for_team,
-    BBALL_CURRENT_SEASON,
+    BBALL_CURRENT_SEASON, get_basketball_odds,
 )
 from basketball_cache import get_bball_player_by_name, get_bball_team_by_name, search_bball_teams
 
@@ -267,7 +267,7 @@ def compute_advanced_analytics(player_game_logs: list, prop_type: str, line: flo
 
 def build_data_digest(analytics: dict, player_game_logs: list, prop_label: str, prop_type: str,
                        line: float, venue: str, req, team_games_parsed: list,
-                       opp_games_raw: list, h2h_data: list, player_id: int):
+                       opp_games_raw: list, h2h_data: list, player_id: int, odds_data: dict = None):
     """Build the complete data digest string for the AI prompt."""
     a = analytics
     parts = []
@@ -282,6 +282,39 @@ RECENT OVER RATE (L10): {a['over_pct_l10']}%
 STATISTICAL LEAN: {a['stat_lean']} ({a['lean_strength']} signal)
 EDGE SIGNAL: {a['edge_signal']} (z-score={a['z_score']})
 >>> YOU MUST WEIGHT THIS HEAVILY. If over-rate is >60%, default to OVER. If under-rate is >60%, default to UNDER. Only deviate with STRONG matchup/situational evidence. <<<""")
+
+    # ══════════════════════════════════════════
+    # SECTION 1b: MONEYLINE & GAME TYPE
+    # ══════════════════════════════════════════
+    if odds_data and odds_data.get("homeOdds"):
+        fav = odds_data.get("favorite", "Unknown")
+        home_ml = odds_data.get("homeOdds", "")
+        away_ml = odds_data.get("awayOdds", "")
+        home_name = odds_data.get("homeName", "")
+        away_name = odds_data.get("awayName", "")
+
+        # Determine game type from odds spread
+        try:
+            home_val = int(home_ml.replace("+", ""))
+            away_val = int(away_ml.replace("+", ""))
+            spread = abs(home_val - away_val)
+        except (ValueError, AttributeError):
+            spread = 0
+
+        if spread > 400:
+            game_type = "HEAVY MISMATCH — expect blowout, starters pulled early in 4Q"
+        elif spread > 200:
+            game_type = "CLEAR FAVORITE — moderate blowout risk, could affect late-game minutes"
+        elif spread > 80:
+            game_type = "SLIGHT FAVORITE — competitive game expected, full minutes likely"
+        else:
+            game_type = "PICK'EM — very close matchup, expect full minutes and competitive game"
+
+        parts.append(f"""=== MONEYLINE & GAME TYPE ===
+{home_name}: {home_ml} | {away_name}: {away_ml}
+Favorite: {fav}
+Game Type: {game_type}
+>>> Impact: {'Blowout risk = starters on winning team may sit 4Q. REDUCES stat totals for stars on favored team.' if spread > 200 else 'Full minutes expected for key players. Standard stat projections apply.'} <<<""")
 
     # ══════════════════════════════════════════
     # SECTION 2: PLAYER PROFILE & ROLE
@@ -504,13 +537,15 @@ async def basketball_predict(req: BasketballPredictionRequest):
         opp_stats_task = safe_fetch(get_team_stats(req.opponentId))
         standings_task = safe_fetch(get_standings())
         opp_games_task = safe_fetch(get_team_games(req.opponentId))
+        odds_task = safe_fetch(get_basketball_odds(req.teamId, req.opponentId))
 
-        team_games, h2h_data, team_stats, opp_stats, standings_raw, opp_games_raw = await aio.gather(
-            team_games_task, h2h_task, team_stats_task, opp_stats_task, standings_task, opp_games_task
+        team_games, h2h_data, team_stats, opp_stats, standings_raw, opp_games_raw, odds_data = await aio.gather(
+            team_games_task, h2h_task, team_stats_task, opp_stats_task, standings_task, opp_games_task, odds_task
         )
         team_games = team_games or []
         h2h_data = h2h_data or []
         opp_games_raw = opp_games_raw or []
+        odds_data = odds_data or {}
 
         # Sort H2H by date descending and filter to finished games only
         if h2h_data:
@@ -560,7 +595,7 @@ async def basketball_predict(req: BasketballPredictionRequest):
             data_digest = build_data_digest(
                 analytics, player_game_logs, prop_label, req.propType,
                 req.line, player_venue, req, team_games_parsed,
-                opp_games_raw, h2h_data, player_id
+                opp_games_raw, h2h_data, player_id, odds_data
             )
         else:
             data_digest = f"LIMITED DATA: No game logs found for {req.playerName}. Use general knowledge only."
@@ -978,6 +1013,11 @@ Analyze the statistical verdict, per-minute projection, and over-rate FIRST. The
             prediction["h2hGames"] = h2h_summary
         else:
             prediction["h2hGames"] = []
+
+
+        # Add odds data to response
+        if odds_data:
+            prediction["moneyline"] = odds_data
 
         total_logs = len(player_game_logs)
         if total_logs >= 10:

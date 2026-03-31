@@ -14,7 +14,7 @@ from config import (
     WOMENS_LEAGUE_IDS, STAT_FIELD_MAP, STAT_LAMBDA_MAP,
 )
 from models import PredictionRequest
-from utils import api_football_request, get_recent_fixtures_fast, strip_accents
+from utils import api_football_request, get_recent_fixtures_fast, strip_accents, get_soccer_odds, decimal_to_american
 
 router = APIRouter(prefix="/api", tags=["predict"])
 
@@ -60,38 +60,32 @@ async def predict(req: PredictionRequest):
             """Get bookmaker odds for the specific upcoming fixture between team and opponent"""
             try:
                 fixtures = []
-                # First try: h2h next fixture between the two specific teams
-                for s in [CURRENT_SEASON + 1, CURRENT_SEASON]:
-                    try:
-                        h2h_fixtures = await api_football_request("fixtures/headtohead", {
-                            "h2h": f"{actual_team_id or 40}-{req.opponentId}",
-                            "next": 5,
-                            "season": s
-                        })
-                        if h2h_fixtures:
-                            fixtures = h2h_fixtures
-                            break
-                    except Exception:
-                        continue
+                # First try: h2h next fixture (no season filter — next=N handles it)
+                try:
+                    h2h_fixtures = await api_football_request("fixtures/headtohead", {
+                        "h2h": f"{actual_team_id or 40}-{req.opponentId}",
+                        "next": 3,
+                    })
+                    if h2h_fixtures:
+                        fixtures = h2h_fixtures
+                except Exception:
+                    pass
 
-                # Fallback: get team's next match if h2h didn't find upcoming fixture
+                # Fallback: get team's next matches and find opponent
                 if not fixtures:
-                    for s in [CURRENT_SEASON + 1, CURRENT_SEASON]:
-                        try:
-                            next_fixtures = await api_football_request("fixtures", {"team": actual_team_id or 40, "next": 5, "season": s})
-                            if next_fixtures:
-                                # Try to find the specific opponent match
-                                for nf in next_fixtures:
-                                    home_id = nf.get("teams", {}).get("home", {}).get("id")
-                                    away_id = nf.get("teams", {}).get("away", {}).get("id")
-                                    if req.opponentId in (home_id, away_id):
-                                        fixtures = [nf]
-                                        break
-                                if not fixtures:
-                                    fixtures = next_fixtures[:1]
-                                break
-                        except Exception:
-                            continue
+                    try:
+                        next_fixtures = await api_football_request("fixtures", {"team": actual_team_id or 40, "next": 5})
+                        if next_fixtures:
+                            for nf in next_fixtures:
+                                home_id = nf.get("teams", {}).get("home", {}).get("id")
+                                away_id = nf.get("teams", {}).get("away", {}).get("id")
+                                if req.opponentId in (home_id, away_id):
+                                    fixtures = [nf]
+                                    break
+                            if not fixtures:
+                                fixtures = next_fixtures[:1]
+                    except Exception:
+                        pass
                 if not fixtures:
                     return None
                 fid = fixtures[0].get("fixture", {}).get("id")
@@ -119,12 +113,29 @@ async def predict(req: PredictionRequest):
                                         "draw": vals.get("Draw", ""),
                                         "awayWin": vals.get("Away", ""),
                                     }
+                                    # Convert to American odds
                                     try:
-                                        home_odd = float(vals.get("Home", 99))
-                                        away_odd = float(vals.get("Away", 99))
-                                        result["favorite"] = "home" if home_odd < away_odd else "away"
+                                        home_dec = float(vals.get("Home", 0))
+                                        away_dec = float(vals.get("Away", 0))
+                                        draw_dec = float(vals.get("Draw", 0))
+                                        result["americanOdds"] = {
+                                            "home": decimal_to_american(home_dec) if home_dec else "",
+                                            "away": decimal_to_american(away_dec) if away_dec else "",
+                                            "draw": decimal_to_american(draw_dec) if draw_dec else "",
+                                        }
+                                        result["favorite"] = "home" if home_dec < away_dec else "away"
+                                        # Game type from odds spread
+                                        fav_odds = min(home_dec, away_dec)
+                                        if fav_odds < 1.3:
+                                            result["gameType"] = "HEAVY FAVORITE — expect dominant performance, possible early subs"
+                                        elif fav_odds < 1.7:
+                                            result["gameType"] = "CLEAR FAVORITE — should control the game"
+                                        elif fav_odds < 2.2:
+                                            result["gameType"] = "SLIGHT FAVORITE — competitive match expected"
+                                        else:
+                                            result["gameType"] = "PICK'EM — very close, could go either way"
                                     except Exception:
-                                        pass
+                                        result["favorite"] = "home" if float(vals.get("Home", 99)) < float(vals.get("Away", 99)) else "away"
                 except Exception:
                     pass
                 return result if result else None
@@ -398,10 +409,19 @@ async def predict(req: PredictionRequest):
                 standing_lines = [f"  {s.get('rank','')}. {s.get('team','')} — {s.get('points','')}pts (GD: {s.get('goalsDiff','')})" for s in standings[:8]]
                 parts.append("[STANDINGS]\n" + "\n".join(standing_lines))
 
-            # 6. Odds
+            # 6. Odds & Game Type
             if match_odds and match_odds.get("bookmakerOdds"):
                 bo = match_odds["bookmakerOdds"]
-                parts.append(f"""[ODDS]
+                ao = match_odds.get("americanOdds", {})
+                gt = match_odds.get("gameType", "")
+                if ao:
+                    parts.append(f"""[MONEYLINE & GAME TYPE]
+- Home ({ao.get('home', '')}) | Draw ({ao.get('draw', '')}) | Away ({ao.get('away', '')})
+- Favorite: {match_odds.get('favorite', 'Unknown').upper()}
+- Game Type: {gt}
+>>> Moneyline tells you expected game flow. Heavy favorites control possession and tempo. Underdogs may sit deep (deflating pass/shot stats for attacker props). <<<""")
+                else:
+                    parts.append(f"""[ODDS]
 - Home: {bo.get('homeWin', 'N/A')} | Draw: {bo.get('draw', 'N/A')} | Away: {bo.get('awayWin', 'N/A')}
 - Favorite: {match_odds.get('favorite', 'Unknown').upper()}""")
 
