@@ -12,7 +12,8 @@ from config import (
 from models import ScanPropRequest
 from utils import api_football_request, strip_accents
 from cache import get_national_team_id, get_player_by_name, get_team_by_name, get_team_info
-from basketball_utils import search_nba_teams as search_basketball_teams
+from basketball_utils import search_nba_teams as search_basketball_teams_live
+from basketball_cache import get_bball_team_by_name, search_bball_teams
 
 router = APIRouter(prefix="/api", tags=["scan"])
 
@@ -401,21 +402,40 @@ async def _resolve_basketball_picks(extracted: list) -> dict:
         team_hint = (entry.get("playerTeam") or "").strip()
         opp_hint = (entry.get("opponentName") or "").strip()
 
-        # Resolve team via basketball API
+        # Resolve team via CACHE first, then live API fallback
         resolved_team = None
         if team_hint:
-            teams = await search_basketball_teams(team_hint)
-            if teams:
-                best = teams[0]
-                resolved_team = {"teamId": best["id"], "teamName": best.get("name", team_hint)}
+            cached = await get_bball_team_by_name(team_hint)
+            if cached:
+                resolved_team = {"teamId": cached["teamId"], "teamName": cached.get("name", team_hint)}
+            else:
+                teams = await search_bball_teams(team_hint)
+                if teams:
+                    best = teams[0]
+                    resolved_team = {"teamId": best["teamId"], "teamName": best.get("name", team_hint)}
+                else:
+                    # Live API fallback
+                    live_teams = await search_basketball_teams_live(team_hint)
+                    if live_teams:
+                        best = live_teams[0]
+                        resolved_team = {"teamId": best["id"], "teamName": best.get("name", team_hint)}
 
-        # Resolve opponent
+        # Resolve opponent via CACHE first
         resolved_opp = None
         if opp_hint:
-            opps = await search_basketball_teams(opp_hint)
-            if opps:
-                best = opps[0]
-                resolved_opp = {"teamId": best["id"], "teamName": best.get("name", opp_hint)}
+            cached = await get_bball_team_by_name(opp_hint)
+            if cached:
+                resolved_opp = {"teamId": cached["teamId"], "teamName": cached.get("name", opp_hint)}
+            else:
+                opps = await search_bball_teams(opp_hint)
+                if opps:
+                    best = opps[0]
+                    resolved_opp = {"teamId": best["teamId"], "teamName": best.get("name", opp_hint)}
+                else:
+                    live_opps = await search_basketball_teams_live(opp_hint)
+                    if live_opps:
+                        best = live_opps[0]
+                        resolved_opp = {"teamId": best["id"], "teamName": best.get("name", opp_hint)}
 
         results.append({
             "extracted": {

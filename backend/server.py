@@ -27,6 +27,7 @@ from routes.misc import router as misc_router
 from routes.tactical import router as tactical_router
 from routes.basketball_predict import router as basketball_router
 from cache import seed_cache, background_refresh_loop
+from basketball_cache import seed_bball_cache, bball_background_refresh, get_bball_cache_status
 
 app.include_router(auth_router)
 app.include_router(leagues_router)
@@ -60,6 +61,9 @@ async def seed_grants():
     asyncio.create_task(seed_cache())
     # Start 24h auto-refresh loop for transfers + data freshness
     asyncio.create_task(background_refresh_loop())
+    # Seed basketball (NBA + WNBA) cache
+    asyncio.create_task(seed_bball_cache())
+    asyncio.create_task(bball_background_refresh())
 
 
 # ── Legacy alias: /api/search-player ──

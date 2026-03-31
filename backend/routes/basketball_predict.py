@@ -19,11 +19,12 @@ from openai import OpenAI
 from config import db, EMERGENT_LLM_KEY, XAI_API_KEY
 from models import BasketballPredictionRequest
 from basketball_utils import (
-    search_nba_teams, search_player, get_player_season_stats,
+    search_nba_teams, get_player_season_stats,
     get_team_games, get_h2h, get_team_stats, get_standings,
     parse_player_stat, parse_game_for_team,
     BBALL_CURRENT_SEASON,
 )
+from basketball_cache import get_bball_player_by_name, get_bball_team_by_name, search_bball_teams
 
 router = APIRouter(prefix="/api", tags=["basketball"])
 
@@ -125,10 +126,19 @@ async def basketball_predict(req: BasketballPredictionRequest):
             except Exception:
                 return None
 
-        # Find the player ID first (critical for game log fetching)
-        player_info = await search_player(req.playerName, req.teamId)
-        player_id = player_info.get("id") if player_info else None
-        print(f"[BBALL] Player lookup: '{req.playerName}' → ID={player_id} ({player_info.get('name') if player_info else 'NOT FOUND'})")
+        # Find the player ID via CACHE (instant) with live API fallback
+        player_info = await get_bball_player_by_name(req.playerName, team_id=req.teamId)
+        if not player_info:
+            player_info = await get_bball_player_by_name(req.playerName)
+        if not player_info:
+            # Last resort: live API search
+            from basketball_utils import search_player
+            live_player = await search_player(req.playerName, req.teamId)
+            if live_player:
+                player_info = {"playerId": live_player.get("id"), "name": live_player.get("name", ""), "position": live_player.get("position", "")}
+
+        player_id = player_info.get("playerId") if player_info else None
+        print(f"[BBALL] Player lookup: '{req.playerName}' -> ID={player_id} ({player_info.get('name') if player_info else 'NOT FOUND'})")
 
         # Now fetch everything in parallel
         team_games_task = get_team_games(req.teamId)
@@ -575,9 +585,14 @@ Rules: No AI model names. Specific numbers. Decisive."""
 
 @router.post("/basketball/search-teams")
 async def basketball_search_teams(req: dict):
-    """Search for NBA basketball teams."""
+    """Search for NBA/WNBA basketball teams via cache."""
     query = req.get("query", "")
     if not query:
         raise HTTPException(status_code=400, detail="Query required")
-    teams = await search_nba_teams(query)
-    return {"teams": [{"id": t.get("id"), "name": t.get("name"), "logo": t.get("logo", "")} for t in teams]}
+    # Try cache first
+    teams = await search_bball_teams(query)
+    if teams:
+        return {"teams": [{"id": t.get("teamId"), "name": t.get("name"), "logo": t.get("logo", "")} for t in teams]}
+    # Fallback to live API
+    live_teams = await search_nba_teams(query)
+    return {"teams": [{"id": t.get("id"), "name": t.get("name"), "logo": t.get("logo", "")} for t in live_teams]}
