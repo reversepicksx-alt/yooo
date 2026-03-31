@@ -962,7 +962,7 @@ Analyze ALL data thoroughly. Return JSON only."""
             aio.ensure_future(call_grok("grok")),
         ]
 
-        # FIRST-3-WINS: Take the first 3 valid results, don't wait for stragglers
+        # FIRST-3-WINS: Take the first 3 valid results, then grab any extras
         MIN_RESULTS = 3
         ai_results = []
         pending = set(ai_tasks)
@@ -981,9 +981,20 @@ Analyze ALL data thoroughly. Return JSON only."""
                 except Exception:
                     pass
 
-        # Cancel stragglers
-        for t in pending:
-            t.cancel()
+        # Grab any additional results that finished while we were processing
+        if pending:
+            done_extra, still_pending = await aio.wait(pending, timeout=2.0, return_when=aio.ALL_COMPLETED)
+            for t in done_extra:
+                try:
+                    r = t.result()
+                    if r and isinstance(r, dict) and r.get("projectedValue") is not None:
+                        pv = r.get("projectedValue", 0)
+                        if isinstance(pv, (int, float)) and pv > 0:
+                            ai_results.append(r)
+                except Exception:
+                    pass
+            for t in still_pending:
+                t.cancel()
         print(f"[TIMING] AIs done: {_t.time()-_t0:.1f}s total, {len(ai_results)} succeeded ({', '.join(r.get('_source','?') for r in ai_results)})")
 
         # Collect valid predictions
@@ -1036,13 +1047,12 @@ Analyze ALL data thoroughly. Return JSON only."""
 
             # Consensus note
             recs = [p.get("recommendation", "over") for p in valid_preds]
-            sources = [p.get("_source", "?") for p in valid_preds]
             over_count = sum(1 for r in recs if r == "over")
-            consensus = f"{len(valid_preds)} AI models analyzed ({', '.join(sources)}). "
+            under_count = len(recs) - over_count
             if all(r == prediction["recommendation"] for r in recs):
-                consensus += f"Unanimous {prediction['recommendation'].upper()}."
+                consensus = f"Unanimous {prediction['recommendation'].upper()} — {len(valid_preds)}/5 AI models agree."
             else:
-                consensus += f"Split: {over_count} OVER, {len(recs)-over_count} UNDER. Consensus projection {avg_proj} vs line {req.line} → {prediction['recommendation'].upper()}."
+                consensus = f"Split: {over_count}/5 OVER, {under_count}/5 UNDER. Consensus → {prediction['recommendation'].upper()}."
             prediction["consensusNote"] = consensus
 
         else:
