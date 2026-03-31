@@ -1867,16 +1867,25 @@ export default function App() {
                 </button>
                 {scanPrediction._isCombo ? (
                   <div className="combo-result-card" data-testid="scan-combo-result">
-                    <div style={{ textAlign: 'center', marginBottom: 16 }}>
-                      <div style={{ fontSize: 9, fontWeight: 900, letterSpacing: '0.15em', color: '#a855f7', textTransform: 'uppercase', marginBottom: 8 }}>COMBO PREDICTION</div>
-                      <div style={{ fontSize: 28, fontWeight: 900, color: 'var(--accent)', fontFamily: "'JetBrains Mono', monospace" }}>
+                    {/* COMBO HEADER */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+                      <Users style={{ width: 18, height: 18, color: '#a855f7' }} />
+                      <div style={{ fontSize: 12, fontWeight: 800, color: '#a855f7', textTransform: 'uppercase', letterSpacing: 1.5 }}>Combo Prediction</div>
+                    </div>
+
+                    {/* COMBINED RESULT */}
+                    <div style={{ background: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.15)', borderRadius: 12, padding: 20, marginBottom: 20, textAlign: 'center' }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>
+                        Combined {getPropLabel(scanPrediction.player1?.propType || '')}
+                      </div>
+                      <div style={{ fontSize: 40, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)', lineHeight: 1 }}>
                         {scanPrediction.combined?.projectedValue}
                       </div>
-                      <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', marginTop: 4 }}>
+                      <div style={{ fontSize: 13, color: 'var(--text-muted)', margin: '8px 0 12px' }}>
                         vs Line: <span style={{ fontWeight: 800, color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace" }}>{scanPrediction._comboLine}</span>
                       </div>
                       <div style={{
-                        display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 12, padding: '8px 16px', borderRadius: 8,
+                        display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 20px', borderRadius: 8,
                         background: scanPrediction.combined?.recommendation === 'over' ? 'rgba(16,185,129,0.15)' : 'rgba(244,63,94,0.15)',
                         border: `1px solid ${scanPrediction.combined?.recommendation === 'over' ? 'rgba(16,185,129,0.3)' : 'rgba(244,63,94,0.3)'}`,
                       }}>
@@ -1893,27 +1902,87 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* Individual player projections */}
-                    {[scanPrediction.player1, scanPrediction.player2].map((pred, pIdx) => (
-                      pred?.player && (
-                        <div key={pIdx} style={{
-                          padding: 14, borderRadius: 10, background: 'rgba(255,255,255,0.03)',
-                          border: '1px solid rgba(100,100,120,0.15)', marginTop: 10,
-                        }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <div>
-                              <div style={{ fontSize: 14, fontWeight: 800, color: '#fff' }}>{pred.player?.name || pred.player || 'Unknown'}</div>
-                              <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>{pred.team || ''}</div>
+                    {/* INDIVIDUAL BREAKDOWNS */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
+                      {[scanPrediction.player1, scanPrediction.player2].map((pred, idx) => (
+                        pred?.player && (
+                          <div key={idx} style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10, padding: 14 }}>
+                            <div style={{ fontSize: 10, fontWeight: 700, color: idx === 0 ? 'var(--accent)' : '#f59e0b', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>
+                              Player {idx + 1}
                             </div>
-                            <div style={{ textAlign: 'right' }}>
-                              <div style={{ fontSize: 18, fontWeight: 900, color: 'var(--accent)', fontFamily: "'JetBrains Mono', monospace" }}>
-                                {pred.projectedValue}
-                              </div>
-                              <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)' }}>projected</div>
+                            <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-primary)', marginBottom: 4 }}>
+                              {pred.player?.name || 'Unknown'}
+                            </div>
+                            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 10 }}>
+                              {pred.player?.team || ''} &middot; {pred.player?.position || ''}
+                            </div>
+                            <div style={{ fontSize: 28, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)' }}>
+                              {pred.projectedValue}
+                            </div>
+                            <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>projected</div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 8 }}>
+                              {pred.recommendation === 'over'
+                                ? <TrendingUp style={{ width: 12, height: 12, color: '#10b981' }} />
+                                : <TrendingDown style={{ width: 12, height: 12, color: '#f43f5e' }} />}
+                              <span style={{ fontSize: 11, fontWeight: 700, color: pred.recommendation === 'over' ? '#10b981' : '#f43f5e', textTransform: 'uppercase' }}>
+                                {pred.recommendation}
+                              </span>
+                              <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 4 }}>{pred.confidenceScore}%</span>
                             </div>
                           </div>
+                        )
+                      ))}
+                    </div>
+
+                    {/* MATCHUP OVERVIEW */}
+                    {scanPrediction.player1?.matchupOverview && (
+                      <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10, padding: 14, marginBottom: 16 }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 }}>Matchup Overview</div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{scanPrediction.player1.matchupOverview.homeTeam}</div>
+                          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>vs</div>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{scanPrediction.player1.matchupOverview.awayTeam}</div>
                         </div>
-                      )
+                        {scanPrediction.player1.matchupOverview.expectedPossession && (
+                          <div style={{ marginBottom: 8 }}>
+                            <div style={{ display: 'flex', height: 6, borderRadius: 3, overflow: 'hidden' }}>
+                              <div style={{ width: `${scanPrediction.player1.matchupOverview.expectedPossession.home || 50}%`, background: 'var(--accent)' }} />
+                              <div style={{ width: `${scanPrediction.player1.matchupOverview.expectedPossession.away || 50}%`, background: '#f43f5e' }} />
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
+                              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent)' }}>{scanPrediction.player1.matchupOverview.expectedPossession.home}%</span>
+                              <span style={{ fontSize: 11, fontWeight: 700, color: '#f43f5e' }}>{scanPrediction.player1.matchupOverview.expectedPossession.away}%</span>
+                            </div>
+                          </div>
+                        )}
+                        {scanPrediction.player1.matchupOverview.expectedGameType && (
+                          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                            Game Type: <span style={{ color: 'var(--text-primary)', fontWeight: 700, textTransform: 'capitalize' }}>{scanPrediction.player1.matchupOverview.expectedGameType}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* SHARP TAKES */}
+                    <div style={{ display: 'grid', gap: 10 }}>
+                      {[scanPrediction.player1, scanPrediction.player2].map((pred, idx) => pred?.sharpSummary && (
+                        <div key={idx} style={{ background: 'rgba(99,102,241,0.04)', border: '1px solid rgba(99,102,241,0.15)', borderRadius: 10, padding: 12 }}>
+                          <div style={{ fontSize: 10, fontWeight: 700, color: '#6366f1', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>
+                            {pred.player?.name} — Sharp Take
+                          </div>
+                          <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>{pred.sharpSummary}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* TACTICAL BREAKDOWNS */}
+                    {[scanPrediction.player1, scanPrediction.player2].map((pred, idx) => pred?.tacticalBreakdown && (
+                      <div key={`tact-${idx}`} style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10, padding: 14, marginTop: 12 }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: idx === 0 ? 'var(--accent)' : '#f59e0b', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>
+                          {pred.player?.name} — Analysis
+                        </div>
+                        <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6, whiteSpace: 'pre-line' }}>{pred.tacticalBreakdown}</div>
+                      </div>
                     ))}
                   </div>
                 ) : (
