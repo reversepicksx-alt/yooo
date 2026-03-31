@@ -1,7 +1,6 @@
 """
-Basketball (NBA) Prediction Engine
-- Finds player ID via /players endpoint
-- Fetches ALL game stats in ONE call via /games/statistics/players?player=ID&season=SEASON
+Basketball (NBA) Prediction Engine v2
+- Advanced per-minute analytics, role classification, line proximity, blowout risk
 - 5-AI consensus engine with first-3-wins pattern
 - Gemini synthesis step for tactical breakdown
 - Strict <55s execution budget
@@ -12,6 +11,7 @@ import asyncio as aio
 import statistics as stats_mod
 import traceback
 import time as _t
+import math
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 from openai import OpenAI
@@ -28,13 +28,11 @@ from basketball_cache import get_bball_player_by_name, get_bball_team_by_name, s
 
 router = APIRouter(prefix="/api", tags=["basketball"])
 
-# Basketball prop → parsed stat field mapping
-# NOTE: API only provides: points, rebounds, assists, fgm/fga, tpm/tpa, ftm/fta
 BBALL_STAT_FIELD_MAP = {
     "points": "points",
     "rebounds": "rebounds",
     "assists": "assists",
-    "pts_reb_ast": None,  # composite
+    "pts_reb_ast": None,
     "three_pointers": "tpm",
     "fgm": "fgm",
     "ftm": "ftm",
@@ -57,9 +55,25 @@ BBALL_PROP_LABELS = {
 }
 
 
+def parse_minutes_float(min_str) -> float:
+    """Convert '32:15' or '32' to 32.25 float minutes."""
+    if not min_str:
+        return 0.0
+    s = str(min_str).strip()
+    if ":" in s:
+        parts = s.split(":")
+        try:
+            return int(parts[0]) + int(parts[1]) / 60.0
+        except (ValueError, IndexError):
+            return 0.0
+    try:
+        return float(s)
+    except ValueError:
+        return 0.0
+
+
 def get_stat_value(parsed: dict, prop_type: str):
     """Extract the relevant stat value from a parsed player game stat."""
-    # Normalize: "Pts+Reb+Ast" → "pts_reb_ast"
     pt = prop_type.lower().replace("+", "_").replace(" ", "_").replace("-", "_")
     label_map = {
         "pts_reb_ast": "pts_reb_ast",
@@ -75,6 +89,305 @@ def get_stat_value(parsed: dict, prop_type: str):
         return (parsed.get("points", 0) or 0) + (parsed.get("rebounds", 0) or 0) + (parsed.get("assists", 0) or 0)
     field = BBALL_STAT_FIELD_MAP.get(pt, pt)
     return parsed.get(field, 0) or 0 if field else 0
+
+
+def compute_advanced_analytics(player_game_logs: list, prop_type: str, line: float, venue: str):
+    """
+    Compute advanced analytics from player game logs.
+    Returns a dict with all computed metrics for the data digest.
+    """
+    if not player_game_logs:
+        return None
+
+    stat_values = [g["targetStat"] for g in player_game_logs if g.get("targetStat") is not None]
+    if not stat_values:
+        return None
+
+    # === MINUTES ANALYSIS ===
+    minutes_list = [parse_minutes_float(g.get("minutes")) for g in player_game_logs]
+    minutes_played = [m for m in minutes_list if m > 0]
+    avg_minutes = round(sum(minutes_played) / len(minutes_played), 1) if minutes_played else 0
+    last5_minutes = minutes_played[:5]
+    avg_minutes_l5 = round(sum(last5_minutes) / len(last5_minutes), 1) if last5_minutes else avg_minutes
+    minutes_trend = round(avg_minutes_l5 - avg_minutes, 1)
+
+    # === PER-MINUTE RATES ===
+    per_min_values = []
+    for i, g in enumerate(player_game_logs):
+        mins = minutes_list[i]
+        if mins >= 5:  # Only count games with meaningful minutes
+            per_min_values.append(g["targetStat"] / mins)
+    avg_per_min = round(sum(per_min_values) / len(per_min_values), 3) if per_min_values else 0
+    projected_from_rate = round(avg_per_min * avg_minutes, 1) if avg_per_min and avg_minutes else 0
+
+    # === ROLE CLASSIFICATION ===
+    if avg_minutes >= 32:
+        role = "STAR"
+        role_desc = f"Primary option, {avg_minutes} min/game"
+    elif avg_minutes >= 26:
+        role = "STARTER"
+        role_desc = f"Key starter, {avg_minutes} min/game"
+    elif avg_minutes >= 16:
+        role = "ROTATION"
+        role_desc = f"Rotation player, {avg_minutes} min/game"
+    else:
+        role = "BENCH"
+        role_desc = f"Limited role, {avg_minutes} min/game"
+
+    # === BASIC STATS ===
+    all_vals = stat_values
+    n = len(all_vals)
+    avg_all = round(sum(all_vals) / n, 1)
+    recent_10 = stat_values[:10]
+    recent_5 = stat_values[:5]
+    avg_10 = round(sum(recent_10) / len(recent_10), 1) if recent_10 else avg_all
+    avg_5 = round(sum(recent_5) / len(recent_5), 1) if recent_5 else avg_all
+    min_val = min(all_vals)
+    max_val = max(all_vals)
+    std_dev = round(stats_mod.stdev(all_vals), 2) if n >= 3 else 0
+    median_val = round(stats_mod.median(all_vals), 1)
+
+    # === LINE PROXIMITY / Z-SCORE ===
+    if std_dev > 0:
+        z_score = round(abs(avg_all - line) / std_dev, 2)
+    else:
+        z_score = 0
+
+    if z_score < 0.3:
+        edge_signal = "COIN FLIP — NO CLEAR EDGE"
+        edge_strength = "none"
+    elif z_score < 0.6:
+        edge_signal = "SLIGHT LEAN"
+        edge_strength = "slight"
+    elif z_score < 1.0:
+        edge_signal = "MODERATE EDGE"
+        edge_strength = "moderate"
+    elif z_score < 1.5:
+        edge_signal = "STRONG EDGE"
+        edge_strength = "strong"
+    else:
+        edge_signal = "VERY STRONG EDGE"
+        edge_strength = "very_strong"
+
+    # === OVER/UNDER RATE (the most critical metric) ===
+    over_count = sum(1 for v in all_vals if v > line)
+    under_count = sum(1 for v in all_vals if v < line)
+    push_count = n - over_count - under_count
+    over_pct = round(over_count / n * 100) if n else 50
+    under_pct = round(under_count / n * 100) if n else 50
+
+    # Recent over rate (last 10)
+    over_l10 = sum(1 for v in recent_10 if v > line)
+    over_pct_l10 = round(over_l10 / len(recent_10) * 100) if recent_10 else 50
+
+    # Statistical lean
+    if over_pct >= 65:
+        stat_lean = "OVER"
+        lean_strength = "strong"
+    elif over_pct >= 55:
+        stat_lean = "OVER"
+        lean_strength = "slight"
+    elif under_pct >= 65:
+        stat_lean = "UNDER"
+        lean_strength = "strong"
+    elif under_pct >= 55:
+        stat_lean = "UNDER"
+        lean_strength = "slight"
+    else:
+        stat_lean = "TOSS-UP"
+        lean_strength = "none"
+
+    # === CONSISTENCY SCORE ===
+    within_band = sum(1 for v in all_vals if abs(v - avg_all) <= max(avg_all * 0.2, 2))
+    consistency_pct = round(within_band / n * 100) if n else 0
+    if consistency_pct >= 70:
+        consistency_label = "VERY CONSISTENT"
+    elif consistency_pct >= 50:
+        consistency_label = "MODERATE"
+    else:
+        consistency_label = "BOOM-BUST (HIGH VARIANCE)"
+
+    # === STREAK DETECTION ===
+    current_streak = 0
+    if stat_values:
+        first_dir = "over" if stat_values[0] > line else ("under" if stat_values[0] < line else None)
+        if first_dir == "over":
+            for v in stat_values:
+                if v > line:
+                    current_streak += 1
+                else:
+                    break
+        elif first_dir == "under":
+            for v in stat_values:
+                if v < line:
+                    current_streak -= 1
+                else:
+                    break
+
+    streak_label = f"{abs(current_streak)}-game {'OVER' if current_streak > 0 else 'UNDER'} streak" if current_streak != 0 else "No active streak"
+
+    # === VENUE SPLITS ===
+    home_vals = [g["targetStat"] for g in player_game_logs if g.get("venue") == "home" and g.get("targetStat") is not None]
+    away_vals = [g["targetStat"] for g in player_game_logs if g.get("venue") == "away" and g.get("targetStat") is not None]
+    venue_vals = [g["targetStat"] for g in player_game_logs if g.get("venue") == venue and g.get("targetStat") is not None]
+    home_avg = round(sum(home_vals) / len(home_vals), 1) if home_vals else None
+    away_avg = round(sum(away_vals) / len(away_vals), 1) if away_vals else None
+    venue_avg = round(sum(venue_vals) / len(venue_vals), 1) if venue_vals else None
+    venue_over_pct = round(sum(1 for v in venue_vals if v > line) / len(venue_vals) * 100) if venue_vals else None
+
+    # === MOMENTUM ===
+    momentum = round(avg_5 - avg_all, 1) if recent_5 else 0
+    if momentum > 2:
+        momentum_label = "HOT"
+    elif momentum < -2:
+        momentum_label = "COLD"
+    else:
+        momentum_label = "NEUTRAL"
+
+    return {
+        "n": n,
+        "avg_all": avg_all, "avg_10": avg_10, "avg_5": avg_5,
+        "median": median_val, "min_val": min_val, "max_val": max_val, "std_dev": std_dev,
+        "avg_minutes": avg_minutes, "avg_minutes_l5": avg_minutes_l5, "minutes_trend": minutes_trend,
+        "avg_per_min": avg_per_min, "projected_from_rate": projected_from_rate,
+        "role": role, "role_desc": role_desc,
+        "z_score": z_score, "edge_signal": edge_signal, "edge_strength": edge_strength,
+        "over_count": over_count, "under_count": under_count, "push_count": push_count,
+        "over_pct": over_pct, "under_pct": under_pct,
+        "over_pct_l10": over_pct_l10,
+        "stat_lean": stat_lean, "lean_strength": lean_strength,
+        "consistency_pct": consistency_pct, "consistency_label": consistency_label,
+        "streak_label": streak_label, "current_streak": current_streak,
+        "home_avg": home_avg, "away_avg": away_avg,
+        "venue_avg": venue_avg, "venue_over_pct": venue_over_pct,
+        "momentum": momentum, "momentum_label": momentum_label,
+        "home_vals_n": len(home_vals), "away_vals_n": len(away_vals), "venue_vals_n": len(venue_vals),
+    }
+
+
+def build_data_digest(analytics: dict, player_game_logs: list, prop_label: str, prop_type: str,
+                       line: float, venue: str, req, team_games_parsed: list,
+                       opp_games_raw: list, h2h_data: list, player_id: int):
+    """Build the complete data digest string for the AI prompt."""
+    a = analytics
+    parts = []
+
+    # ══════════════════════════════════════════
+    # SECTION 1: STATISTICAL VERDICT (most important — AI reads this first)
+    # ══════════════════════════════════════════
+    parts.append(f"""=== STATISTICAL VERDICT for {req.playerName} {prop_label} LINE {line} ===
+OVER RATE: {a['over_count']}/{a['n']} games ({a['over_pct']}%) went OVER {line}
+UNDER RATE: {a['under_count']}/{a['n']} games ({a['under_pct']}%) went UNDER {line}
+RECENT OVER RATE (L10): {a['over_pct_l10']}%
+STATISTICAL LEAN: {a['stat_lean']} ({a['lean_strength']} signal)
+EDGE SIGNAL: {a['edge_signal']} (z-score={a['z_score']})
+>>> YOU MUST WEIGHT THIS HEAVILY. If over-rate is >60%, default to OVER. If under-rate is >60%, default to UNDER. Only deviate with STRONG matchup/situational evidence. <<<""")
+
+    # ══════════════════════════════════════════
+    # SECTION 2: PLAYER PROFILE & ROLE
+    # ══════════════════════════════════════════
+    parts.append(f"""=== PLAYER PROFILE ===
+Role: {a['role']} — {a['role_desc']}
+Minutes: Season avg {a['avg_minutes']} | Last 5 avg {a['avg_minutes_l5']} | Trend: {'+' if a['minutes_trend'] > 0 else ''}{a['minutes_trend']} min
+Per-Minute Rate ({prop_label}): {a['avg_per_min']}/min
+Rate-Based Projection: {a['avg_per_min']}/min x {a['avg_minutes']} min = {a['projected_from_rate']} {prop_label.lower()}
+>>> Compare this rate-based projection to the line ({line}). If projection is clearly above line, lean OVER. <<<""")
+
+    # ══════════════════════════════════════════
+    # SECTION 3: SEASON AVERAGES & DISTRIBUTION
+    # ══════════════════════════════════════════
+    parts.append(f"""=== {prop_label.upper()} DISTRIBUTION ({a['n']} games) ===
+Season avg: {a['avg_all']} | Median: {a['median']} | Last 10: {a['avg_10']} | Last 5: {a['avg_5']}
+Range: {a['min_val']} to {a['max_val']} | StdDev: {a['std_dev']}
+Momentum: {a['momentum_label']} ({'+' if a['momentum'] > 0 else ''}{a['momentum']} vs season avg)
+Consistency: {a['consistency_label']} ({a['consistency_pct']}% of games within band)
+Streak: {a['streak_label']}""")
+
+    # ══════════════════════════════════════════
+    # SECTION 4: VENUE SPLITS
+    # ══════════════════════════════════════════
+    home_str = f"{a['home_avg']} ({a['home_vals_n']} games)" if a['home_avg'] is not None else "N/A"
+    away_str = f"{a['away_avg']} ({a['away_vals_n']} games)" if a['away_avg'] is not None else "N/A"
+    venue_str = f"{a['venue_avg']} ({a['venue_vals_n']} games)" if a['venue_avg'] is not None else "N/A"
+    venue_over_str = f"{a['venue_over_pct']}%" if a['venue_over_pct'] is not None else "N/A"
+    parts.append(f"""=== VENUE SPLITS ===
+Home avg: {home_str} | Away avg: {away_str}
+This game venue ({venue.upper()}): avg {venue_str}, OVER rate at this venue: {venue_over_str}""")
+
+    # ══════════════════════════════════════════
+    # SECTION 5: GAME-BY-GAME LOG (recent 12)
+    # ══════════════════════════════════════════
+    game_lines = []
+    for g in player_game_logs[:12]:
+        ps = g.get("playerStats", {})
+        mins = parse_minutes_float(g.get("minutes"))
+        stat_val = g.get("targetStat", 0)
+        hit = "OVER" if stat_val > line else "UNDER" if stat_val < line else "PUSH"
+        margin = g.get("teamScore", 0) - g.get("oppScore", 0)
+        margin_str = f"+{margin}" if margin > 0 else str(margin)
+        game_lines.append(
+            f"  {g.get('date','')} vs {g.get('opponent','')} ({g.get('venue','')}) "
+            f"{g.get('result','')}({margin_str}): "
+            f"{prop_label}={stat_val} [{hit}] | "
+            f"PTS={ps.get('points',0)} REB={ps.get('rebounds',0)} AST={ps.get('assists',0)} "
+            f"3PM={ps.get('tpm',0)} MIN={round(mins,0)}"
+        )
+    parts.append("=== GAME LOG (Most Recent 12) ===\n" + "\n".join(game_lines))
+
+    # ══════════════════════════════════════════
+    # SECTION 6: OPPONENT DEFENSIVE CONTEXT
+    # ══════════════════════════════════════════
+    if opp_games_raw:
+        opp_parsed = [parse_game_for_team(g, req.opponentId) for g in opp_games_raw[:15]]
+        opp_wins = sum(1 for g in opp_parsed if g.get("result") == "W")
+        opp_losses = sum(1 for g in opp_parsed if g.get("result") == "L")
+        opp_avg_scored = round(sum(g.get("teamScore", 0) for g in opp_parsed) / max(len(opp_parsed), 1), 1)
+        opp_avg_allowed = round(sum(g.get("oppScore", 0) for g in opp_parsed) / max(len(opp_parsed), 1), 1)
+        total_pace = round(opp_avg_scored + opp_avg_allowed, 1)
+        pace_label = "HIGH-PACE" if total_pace > 230 else "MID-PACE" if total_pace > 215 else "LOW-PACE"
+
+        # Blowout risk: how many games were decided by 15+?
+        blowout_games = sum(1 for g in opp_parsed if abs(g.get("teamScore", 0) - g.get("oppScore", 0)) >= 15)
+        blowout_pct = round(blowout_games / len(opp_parsed) * 100) if opp_parsed else 0
+
+        parts.append(f"""=== OPPONENT {req.opponentName} DEFENSE (Last {len(opp_parsed)} games) ===
+Record: {opp_wins}W-{opp_losses}L | Points scored: {opp_avg_scored} | Points ALLOWED: {opp_avg_allowed}
+Game pace: {pace_label} ({total_pace} combined avg)
+Blowout frequency: {blowout_pct}% of games decided by 15+
+>>> {'High blowout risk = possible reduced minutes for starters on winning side.' if blowout_pct > 30 else 'Normal game flow expected.'} <<<""")
+
+    # TEAM recent form
+    if team_games_parsed:
+        recent = team_games_parsed[:10]
+        wins = sum(1 for g in recent if g.get("result") == "W")
+        losses = sum(1 for g in recent if g.get("result") == "L")
+        avg_score = round(sum(g.get("teamScore", 0) for g in recent) / max(len(recent), 1), 1)
+        avg_opp = round(sum(g.get("oppScore", 0) for g in recent) / max(len(recent), 1), 1)
+        team_margin = round(avg_score - avg_opp, 1)
+        parts.append(f"""=== {req.teamName} RECENT FORM (Last {len(recent)}) ===
+Record: {wins}W-{losses}L | Avg scored: {avg_score} | Avg allowed: {avg_opp} | Net: {'+' if team_margin > 0 else ''}{team_margin}""")
+
+    # ══════════════════════════════════════════
+    # SECTION 7: H2H
+    # ══════════════════════════════════════════
+    if h2h_data:
+        h2h_lines = []
+        for h in h2h_data[:5]:
+            hp = parse_game_for_team(h, req.teamId)
+            h2h_lines.append(f"  {hp.get('date','')} {hp.get('result','')} {hp.get('teamScore',0)}-{hp.get('oppScore',0)}")
+        parts.append(f"=== H2H (Last {min(5, len(h2h_data))}) ===\n" + "\n".join(h2h_lines))
+
+    # H2H player stats
+    if h2h_data and player_id:
+        h2h_game_ids = set(h.get("id") for h in h2h_data[:5] if h.get("id"))
+        h2h_player_vals = [g.get("targetStat", 0) for g in player_game_logs if g.get("gameId") in h2h_game_ids]
+        if h2h_player_vals:
+            h2h_avg = round(sum(h2h_player_vals) / len(h2h_player_vals), 1)
+            h2h_over = sum(1 for v in h2h_player_vals if v > line)
+            parts.append(f"""=== H2H PLAYER {prop_label.upper()} vs {req.opponentName} ===
+Avg: {h2h_avg} | OVER {line} in {h2h_over}/{len(h2h_player_vals)} games | Values: {h2h_player_vals}""")
+
+    return "\n\n".join(parts)
 
 
 async def build_player_game_logs(player_id: int, team_id: int, prop_type: str, team_games: list):
@@ -117,8 +430,8 @@ async def build_player_game_logs(player_id: int, team_id: int, prop_type: str, t
         })
 
     # Sort by date descending (most recent first), filter to games with context
-    logs_with_context = [l for l in logs if l.get("date")]
-    logs_without = [l for l in logs if not l.get("date")]
+    logs_with_context = [lg for lg in logs if lg.get("date")]
+    logs_without = [lg for lg in logs if not lg.get("date")]
     logs_with_context.sort(key=lambda x: x["date"], reverse=True)
 
     return logs_with_context + logs_without
@@ -175,112 +488,27 @@ async def basketball_predict(req: BasketballPredictionRequest):
         print(f"[BBALL TIMING] Wave 1: {_t.time()-t0:.1f}s | Player logs: {len(player_game_logs)} | Team games: {len(team_games)}")
 
         # ═══════════════════════════════════════
-        # VENUE FILTERING & STATS
+        # ADVANCED ANALYTICS & DATA DIGEST
         # ═══════════════════════════════════════
         player_venue = req.venue.lower()
-        stat_values = [g["targetStat"] for g in player_game_logs if g.get("targetStat") is not None]
-        venue_logs = [g for g in player_game_logs if g.get("venue") == player_venue]
-        venue_values = [g["targetStat"] for g in venue_logs if g.get("targetStat") is not None]
-
-        # Team games parsed
         team_games_parsed = [parse_game_for_team(g, req.teamId) for g in team_games[:20]]
-
-        # ═══════════════════════════════════════
-        # BUILD DATA DIGEST
-        # ═══════════════════════════════════════
         prop_label = BBALL_PROP_LABELS.get(req.propType, req.propType)
-        parts = []
 
-        if stat_values:
-            # Use ALL game logs for full-season stats, last 10 for recent form
-            all_vals = stat_values
-            recent_10 = stat_values[:10]
-            recent_5 = stat_values[:5]
-            avg_all = round(sum(all_vals) / len(all_vals), 1)
-            avg_10 = round(sum(recent_10) / len(recent_10), 1) if recent_10 else avg_all
-            avg_5 = round(sum(recent_5) / len(recent_5), 1) if recent_5 else avg_all
-            min_val = min(all_vals)
-            max_val = max(all_vals)
-            std_dev = round(stats_mod.stdev(all_vals), 2) if len(all_vals) >= 3 else 0
+        # Compute advanced analytics
+        analytics = compute_advanced_analytics(player_game_logs, req.propType, req.line, player_venue)
 
-            home_vals = [g["targetStat"] for g in player_game_logs if g.get("venue") == "home" and g.get("targetStat") is not None]
-            away_vals = [g["targetStat"] for g in player_game_logs if g.get("venue") == "away" and g.get("targetStat") is not None]
+        if analytics:
+            data_digest = build_data_digest(
+                analytics, player_game_logs, prop_label, req.propType,
+                req.line, player_venue, req, team_games_parsed,
+                opp_games_raw, h2h_data, player_id
+            )
+        else:
+            data_digest = f"LIMITED DATA: No game logs found for {req.playerName}. Use general knowledge only."
 
-            # Calculate over/under rate vs this line
-            over_count = sum(1 for v in all_vals if v > req.line)
-            over_pct = round(over_count / len(all_vals) * 100) if all_vals else 50
-
-            # Momentum: trend of last 5 vs season average
-            momentum = round(avg_5 - avg_all, 1) if recent_5 else 0
-            trend_label = "HOT" if momentum > 2 else "COLD" if momentum < -2 else "NEUTRAL"
-
-            parts.append(f"""[PLAYER {prop_label.upper()} GAME LOGS — {len(all_vals)} games this season]
-- Season avg: {avg_all} | Last 10: {avg_10} | Last 5: {avg_5} | Momentum: {trend_label} ({'+' if momentum > 0 else ''}{momentum})
-- Min: {min_val} | Max: {max_val} | StdDev: {std_dev}
-- Home avg: {round(sum(home_vals)/len(home_vals),1) if home_vals else 'N/A'} ({len(home_vals)} games)
-- Away avg: {round(sum(away_vals)/len(away_vals),1) if away_vals else 'N/A'} ({len(away_vals)} games)
-- Venue-filtered ({player_venue}): avg {round(sum(venue_values)/len(venue_values),1) if venue_values else 'N/A'} ({len(venue_values)} games)
-- vs LINE {req.line}: OVER in {over_count}/{len(all_vals)} games ({over_pct}%)""")
-
-            game_lines = []
-            for g in player_game_logs[:15]:
-                ps = g.get("playerStats", {})
-                game_lines.append(
-                    f"  {g.get('date','')} vs {g.get('opponent','')} ({g.get('venue','')}) {g.get('result','')}: "
-                    f"{prop_label}={g.get('targetStat',0)} | "
-                    f"PTS={ps.get('points',0)} REB={ps.get('rebounds',0)} AST={ps.get('assists',0)} "
-                    f"3PM={ps.get('tpm',0)} FGM={ps.get('fgm',0)} "
-                    f"MIN={ps.get('minutes','0')}"
-                )
-            parts.append("[GAME-BY-GAME (Most Recent 15)]\n" + "\n".join(game_lines))
-
-        # Team recent form
-        if team_games_parsed:
-            recent = team_games_parsed[:10]
-            wins = sum(1 for g in recent if g.get("result") == "W")
-            losses = sum(1 for g in recent if g.get("result") == "L")
-            avg_score = round(sum(g.get("teamScore", 0) for g in recent) / max(len(recent), 1), 1)
-            avg_opp = round(sum(g.get("oppScore", 0) for g in recent) / max(len(recent), 1), 1)
-            parts.append(f"""[TEAM RECENT FORM — Last {len(recent)} games]
-- Record: {wins}W-{losses}L | Avg Score: {avg_score} | Avg Opp Score: {avg_opp}""")
-
-        # Opponent form + DEFENSIVE CONTEXT
-        if opp_games_raw:
-            opp_parsed = [parse_game_for_team(g, req.opponentId) for g in opp_games_raw[:15]]
-            opp_wins = sum(1 for g in opp_parsed if g.get("result") == "W")
-            opp_losses = sum(1 for g in opp_parsed if g.get("result") == "L")
-            opp_avg = round(sum(g.get("teamScore", 0) for g in opp_parsed) / max(len(opp_parsed), 1), 1)
-            opp_against = round(sum(g.get("oppScore", 0) for g in opp_parsed) / max(len(opp_parsed), 1), 1)
-            # Points ALLOWED = opponent's oppScore (what teams score AGAINST them)
-            parts.append(f"""[OPPONENT {req.opponentName} — Last {len(opp_parsed)} games]
-- Record: {opp_wins}W-{opp_losses}L | Avg Scored: {opp_avg} | Avg ALLOWED: {opp_against}
-- DEFENSIVE RATING: Opponents average {opp_against} points per game against {req.opponentName}
-- Game pace context: {'High-pace' if opp_avg + opp_against > 230 else 'Mid-pace' if opp_avg + opp_against > 210 else 'Low-pace'} games (avg total {round(opp_avg + opp_against, 1)})""")
-
-        # H2H
-        if h2h_data:
-            h2h_lines = []
-            for h in h2h_data[:5]:
-                hp = parse_game_for_team(h, req.teamId)
-                h2h_lines.append(f"  {hp.get('date','')} {hp.get('result','')} {hp.get('teamScore',0)}-{hp.get('oppScore',0)} vs {hp.get('opponent','')}")
-            parts.append(f"[H2H — Last {min(5,len(h2h_data))} meetings]\n" + "\n".join(h2h_lines))
-
-        # H2H player stats (if we have player_id)
-        if h2h_data and player_id:
-            h2h_game_ids = [h.get("id") for h in h2h_data[:5] if h.get("id")]
-            # Check if any of these games are in our player_game_logs
-            h2h_player_vals = []
-            h2h_game_set = set(h2h_game_ids)
-            for g in player_game_logs:
-                if g.get("gameId") in h2h_game_set:
-                    h2h_player_vals.append(g.get("targetStat", 0))
-
-            if h2h_player_vals:
-                parts.append(f"""[H2H PLAYER {prop_label.upper()} vs THIS OPPONENT]
-- Avg: {round(sum(h2h_player_vals)/len(h2h_player_vals),1)} | Games: {len(h2h_player_vals)} | Values: {h2h_player_vals}""")
-
-        data_digest = "\n\n".join(parts)
         print(f"[BBALL TIMING] Data digest: {_t.time()-t0:.1f}s, {len(data_digest)} chars")
+        if analytics:
+            print(f"[BBALL ANALYTICS] Over-rate: {analytics['over_pct']}% | Lean: {analytics['stat_lean']} | Edge: {analytics['edge_signal']} | Role: {analytics['role']} | Min: {analytics['avg_minutes']} | Rate-proj: {analytics['projected_from_rate']}")
 
         # ═══════════════════════════════════════
         # REAL RECENT SAMPLES for frontend
@@ -301,28 +529,67 @@ async def basketball_predict(req: BasketballPredictionRequest):
         # ═══════════════════════════════════════
         # MULTI-AI CONSENSUS ENGINE (5 AIs — first 3 valid responses win)
         # ═══════════════════════════════════════
-        PREDICTION_SYSTEM = f"""Elite NBA player prop prediction engine. Analyze basketball data thoroughly, return calibrated JSON.
 
-REQUIREMENTS:
-- "reasoning": 3-5 sentences citing specific per-game averages, venue splits, opponent tendencies from data
-- "tacticalBreakdown": ~1500 char markdown. Sections: **Verdict** (1 sentence), **Analysis** (cite real numbers, venue/sample context), **Scenarios** (best/worst/likely with stat ranges), **Risk** (injury, rotation, matchup), **TL;DR**
-- "scenarioAnalysis": 2-3 sentences with specific projections per scenario (blowout, close game, etc.)
-- "sharpSummary": 2 sentences explaining why projection differs from line
+        # Pre-compute the statistical lean guidance for the AI
+        stat_lean_guidance = ""
+        if analytics:
+            a = analytics
+            stat_lean_guidance = f"""
+CRITICAL PRE-COMPUTED SIGNALS (override gut feel with data):
+- OVER-RATE: {a['over_pct']}% of {a['n']} games went OVER {req.line}. Recent (L10): {a['over_pct_l10']}%
+- RATE-BASED PROJECTION: {a['projected_from_rate']} (= {a['avg_per_min']}/min × {a['avg_minutes']} avg min)
+- STATISTICAL LEAN: {a['stat_lean']} ({a['lean_strength']})
+- EDGE: {a['edge_signal']} (z={a['z_score']})
+- PLAYER ROLE: {a['role']} ({a['avg_minutes']} min/game)
+
+DECISION RULES (FOLLOW STRICTLY):
+1. If over-rate >= 65%, your recommendation MUST be OVER unless there's a confirmed injury or rest day.
+2. If under-rate >= 65%, your recommendation MUST be UNDER.
+3. If |avg - line| < 0.5*stddev, this is a COIN FLIP. Set confidence to 48-52%. Do NOT give a confident call.
+4. Your projected value MUST be within 15% of the rate-based projection ({a['projected_from_rate']}). Do not hallucinate.
+5. If the line is 2+ standard deviations from the mean, this is a STRONG edge — confidence should be 70%+.
+6. Factor blowout risk: if a team is expected to win big, starters on the winning team play fewer minutes.
+"""
+
+        PREDICTION_SYSTEM = f"""You are an elite NBA/WNBA player prop analyst. You are given pre-computed statistical analysis. Your job is to synthesize this data into a calibrated prediction.
+
+CRITICAL: You MUST respect the pre-computed over/under rates and per-minute projections. These are computed from REAL game logs. Do NOT override them with generic basketball knowledge.
+{stat_lean_guidance}
+
+OUTPUT FORMAT — Return valid JSON only:
+- "projectedValue": number (your projected stat total — MUST be close to the rate-based projection)
+- "recommendation": "over" or "under" (MUST align with over-rate unless strong situational override)
+- "confidenceScore": 0-100 (if edge is "COIN FLIP", max 52. if "SLIGHT", max 60. if "MODERATE", 55-70. if "STRONG", 65-80. if "VERY STRONG", 75-90)
+- "confidenceLevel": "Very High"/"High"/"Medium"/"Low"
+- "reasoning": 3-5 sentences citing specific numbers from the data (per-minute rate, over-rate, venue splits, minutes, opponent defense)
+- "tacticalBreakdown": ~1500 char markdown with: **Verdict**, **Analysis** (cite real numbers), **Scenarios** (best/worst/likely), **Risk Factors**, **TL;DR**
+- "scenarioAnalysis": 2-3 sentences (blowout scenario, close game scenario, how each affects this prop)
+- "sharpSummary": 2 sentences on why your projection differs from the line
 - "keyEvidence": 2-3 strongest data points as string
-- "gameFlowDynamics": How game state/pace impacts this stat (1-2 sentences)
-- "sensitivityTests", "subRisk", "uncertaintyNote": 1 sentence each
+- "gameFlowDynamics": How pace/game flow impacts this stat (1-2 sentences)
+- "sensitivityTests": 1 sentence
+- "subRisk": 1 sentence
+- "uncertaintyNote": 1 sentence
+- "matchupOverview": {{"homeTeam":"","awayTeam":"","favorite":"","expectedGameType":"","keyMatchupFactor":""}}
+- "bayesianMetrics": {{"priorMean":0,"momentumEffect":0,"covariateAdjustment":0,"reversalFlag":"stable"}}
+- "probabilityCurve": []
+- "recentSamples": []
+- "player": {{"id":0,"name":"","team":"","position":""}}
+- "opponent": ""
+- "propType": ""
+- "line": 0
+- "confidenceInterval": [low, high]
+- "tacticalAlerts": []
 
-RULES: |proj-line|<0.3 → max 52% conf. recentSamples=[]. No AI model names. Consider pace of play, blowout risk (reduced minutes), back-to-back fatigue, and matchup quality.
-
-JSON: {{"projectedValue":0,"recommendation":"over|under","confidenceScore":0,"confidenceLevel":"","sharpSummary":"","reasoning":"","scenarioAnalysis":"","keyEvidence":"","sensitivityTests":"","subRisk":"","gameFlowDynamics":"","uncertaintyNote":"","tacticalBreakdown":"","matchupOverview":{{"homeTeam":"","awayTeam":"","favorite":"","expectedGameType":"","keyMatchupFactor":""}},"bayesianMetrics":{{"priorMean":0,"momentumEffect":0,"covariateAdjustment":0,"reversalFlag":"stable"}},"probabilityCurve":[],"recentSamples":[],"player":{{"id":0,"name":"","team":"","position":""}},"opponent":"","propType":"","line":0,"confidenceInterval":[0,0],"tacticalAlerts":[]}}"""
+RULES: recentSamples=[]. No AI model names in output."""
 
         prompt = f"""{req.playerName} | {req.teamName} vs {req.opponentName} | {player_venue.upper()} | {prop_label} line {req.line}
-Sport: NBA Basketball
+Sport: NBA/WNBA Basketball
 recentSamples=[]
 
-{data_digest[:6000]}
+{data_digest[:7000]}
 
-Analyze ALL data thoroughly. Return JSON only."""
+Analyze the statistical verdict, per-minute projection, and over-rate FIRST. Then factor in matchup context. Return JSON only."""
 
         import litellm
         EMERGENT_PROXY = "https://integrations.emergentagent.com/llm"
@@ -482,6 +749,50 @@ Analyze ALL data thoroughly. Return JSON only."""
         cs = prediction.get("confidenceScore", 50)
         prediction["confidenceLevel"] = "Very High" if cs >= 75 else "High" if cs >= 65 else "Medium" if cs >= 50 else "Low"
 
+        # ═══════════════════════════════════════
+        # DATA-DRIVEN SANITY CHECK & OVERRIDE
+        # ═══════════════════════════════════════
+        if analytics:
+            a = analytics
+            ai_rec = prediction.get("recommendation", "over")
+            ai_proj = prediction.get("projectedValue", req.line)
+
+            # Override 1: If over-rate is 70%+ and AI says under, override to over
+            if a["over_pct"] >= 70 and ai_rec == "under":
+                prediction["recommendation"] = "over"
+                prediction["projectedValue"] = max(ai_proj, a["projected_from_rate"])
+                prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [
+                    f"DATA OVERRIDE: AI recommended UNDER but player goes OVER {req.line} in {a['over_pct']}% of games. Overridden to OVER."
+                ]
+                print(f"[BBALL OVERRIDE] Overrode UNDER→OVER (over-rate={a['over_pct']}%)")
+
+            # Override 2: If under-rate is 70%+ and AI says over, override to under
+            elif a["under_pct"] >= 70 and ai_rec == "over":
+                prediction["recommendation"] = "under"
+                prediction["projectedValue"] = min(ai_proj, a["projected_from_rate"])
+                prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [
+                    f"DATA OVERRIDE: AI recommended OVER but player goes UNDER {req.line} in {a['under_pct']}% of games. Overridden to UNDER."
+                ]
+                print(f"[BBALL OVERRIDE] Overrode OVER→UNDER (under-rate={a['under_pct']}%)")
+
+            # Override 3: Clamp projection to be reasonable (within 30% of rate projection)
+            rate_proj = a["projected_from_rate"]
+            if rate_proj > 0:
+                lower_bound = rate_proj * 0.7
+                upper_bound = rate_proj * 1.3
+                clamped_proj = max(lower_bound, min(upper_bound, prediction["projectedValue"]))
+                if clamped_proj != prediction["projectedValue"]:
+                    print(f"[BBALL CLAMP] Clamped projection {prediction['projectedValue']} → {round(clamped_proj, 1)} (rate-based: {rate_proj})")
+                    prediction["projectedValue"] = round(clamped_proj, 1)
+
+            # Override 4: If edge is COIN FLIP, cap confidence
+            if a["edge_strength"] == "none":
+                prediction["confidenceScore"] = min(prediction.get("confidenceScore", 50), 52)
+                prediction["confidenceLevel"] = "Low"
+
+            # Re-determine recommendation after all overrides
+            prediction["recommendation"] = "over" if prediction["projectedValue"] > req.line else "under"
+
         # Ensure required fields
         player_pos = player_info.get("position", "") if player_info else ""
         prediction.setdefault("player", {"id": player_id or 0, "name": req.playerName, "team": req.teamName, "position": player_pos})
@@ -505,25 +816,28 @@ Analyze ALL data thoroughly. Return JSON only."""
         real_matchup["awayTeam"] = req.opponentName if player_venue == "home" else req.teamName
         prediction["matchupOverview"] = real_matchup
 
-        if stat_values:
-            all_vals = stat_values
-            recent_10 = stat_values[:10]
-            recent_5 = stat_values[:5]
-            home_v = [g["targetStat"] for g in player_game_logs if g.get("venue") == "home" and g.get("targetStat") is not None]
-            away_v = [g["targetStat"] for g in player_game_logs if g.get("venue") == "away" and g.get("targetStat") is not None]
-            over_count = sum(1 for v in all_vals if v > req.line)
+        if analytics:
+            a = analytics
             prediction["playerGameLogs"] = {
                 "targetProp": req.propType,
-                "sampleSize": len(all_vals),
-                "rawAvg": round(sum(all_vals) / len(all_vals), 1),
-                "last10Avg": round(sum(recent_10) / len(recent_10), 1) if recent_10 else 0,
-                "last5Avg": round(sum(recent_5) / len(recent_5), 1) if recent_5 else 0,
-                "rawMin": min(all_vals),
-                "rawMax": max(all_vals),
-                "stdDev": round(stats_mod.stdev(all_vals), 2) if len(all_vals) >= 3 else 0,
-                "homeAvg": round(sum(home_v) / len(home_v), 1) if home_v else 0,
-                "awayAvg": round(sum(away_v) / len(away_v), 1) if away_v else 0,
-                "overRate": round(over_count / len(all_vals) * 100) if all_vals else 50,
+                "sampleSize": a["n"],
+                "rawAvg": a["avg_all"],
+                "last10Avg": a["avg_10"],
+                "last5Avg": a["avg_5"],
+                "rawMin": a["min_val"],
+                "rawMax": a["max_val"],
+                "stdDev": a["std_dev"],
+                "homeAvg": a["home_avg"] or 0,
+                "awayAvg": a["away_avg"] or 0,
+                "overRate": a["over_pct"],
+                "avgMinutes": a["avg_minutes"],
+                "perMinRate": a["avg_per_min"],
+                "rateProjection": a["projected_from_rate"],
+                "role": a["role"],
+                "edgeSignal": a["edge_signal"],
+                "consistency": a["consistency_label"],
+                "streak": a["streak_label"],
+                "statisticalLean": a["stat_lean"],
             }
 
         total_logs = len(player_game_logs)
@@ -558,31 +872,40 @@ Analyze ALL data thoroughly. Return JSON only."""
         synthesis_input = "\n\n".join(all_texts)
 
         try:
+            analytics_context = ""
+            if analytics:
+                a = analytics
+                analytics_context = f"""
+Key Stats: Season avg {a['avg_all']} | Per-min rate {a['avg_per_min']}/min | Avg minutes {a['avg_minutes']}
+Over-rate vs {req.line}: {a['over_pct']}% | Rate projection: {a['projected_from_rate']} | Edge: {a['edge_signal']}
+Role: {a['role']} | Consistency: {a['consistency_label']} | Streak: {a['streak_label']}
+"""
+
             synth_prompt = f"""Synthesize multiple AI analyses into ONE elite tactical breakdown for an NBA {prop_label} prop prediction.
 
 FINAL VERDICT: {rec} {req.line} {prop_label} (Projected: {proj}, Confidence: {conf}%, {consensus_note})
 Player: {req.playerName} ({req.teamName}) vs {req.opponentName} ({player_venue.upper()})
-
+{analytics_context}
 AI analyses:
 {synthesis_input[:4000]}
 
 Write ~1500 char markdown. Format:
 **Verdict: {rec} {req.line} {prop_label}**
-[1-2 sentence sharp summary with projection vs line]
+[1-2 sentence sharp summary. Include per-minute rate projection and over-rate %]
 
 **Analysis**
-[3-4 sentences. Cite specific numbers: per-game averages, venue splits, sample sizes]
+[3-4 sentences. MUST cite: season avg, per-minute rate, minutes avg, over-rate %, venue splits]
 
 **Game Script Scenarios**
-[Best case / Worst case / Most likely — with stat projections]
+[Best case / Worst case / Most likely — with specific stat projections and minute estimates]
 
 **Key Evidence**
-[3-4 bullet points — strongest data]
+[3-4 bullet points — cite over-rate, per-min rate, venue avg, opponent defense]
 
 **Risk Radar**
-[Blowout risk, minutes, matchup, back-to-back, injury]
+[Blowout risk (minute reduction), consistency, momentum, matchup]
 
-**TL;DR** — {rec} {req.line} at {conf}% confidence. Projected: {proj} {prop_label.lower()}. {consensus_note}
+**TL;DR** — {rec} {req.line} at {conf}% confidence. Rate projection: {analytics['projected_from_rate'] if analytics else proj}. Over-rate: {analytics['over_pct'] if analytics else '?'}%. {consensus_note}
 
 Rules: No AI model names. Specific numbers. Decisive."""
 

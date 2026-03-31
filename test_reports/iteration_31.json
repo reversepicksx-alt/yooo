@@ -1,0 +1,97 @@
+{
+  "summary": "Iteration 31: Basketball Advanced Analytics Engine - All 22 Tests Passed (100%). The overhauled basketball prediction engine with advanced analytics is working correctly. All new analytics fields are present and valid: overRate, perMinRate, rateProjection, role, edgeSignal, statisticalLean, consistency, streak, avgMinutes. Projection constraints (within 30% of rate-based projection) are enforced. recentSamples populated with game data. Response time under 55s limit.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "passed_tests": [
+    "GET /api/health returns ok status",
+    "POST /api/basketball/search-teams finds Lakers",
+    "POST /api/basketball/search-teams finds Warriors",
+    "POST /api/basketball/search-teams with empty query returns 400",
+    "POST /api/basketball/predict returns valid JSON with required fields",
+    "playerGameLogs field exists in response",
+    "playerGameLogs.overRate is present and valid (21%)",
+    "playerGameLogs.perMinRate is present and valid (0.618/min)",
+    "playerGameLogs.rateProjection is present and valid (20.1)",
+    "playerGameLogs.role is present and valid (STAR)",
+    "playerGameLogs.edgeSignal is present and valid (MODERATE EDGE)",
+    "playerGameLogs.statisticalLean is present and valid (UNDER)",
+    "playerGameLogs.consistency is present and valid (MODERATE)",
+    "playerGameLogs.streak is present and valid (6-game UNDER streak)",
+    "playerGameLogs.avgMinutes is present and valid (32.6)",
+    "projectedValue within 30% of rateProjection (20.1 within [14.1, 26.1])",
+    "Confidence capping logic verified (COIN FLIP caps at 52)",
+    "recentSamples populated with 20 games",
+    "recentSamples fields valid (date, opponent, value, minutesPlayed, venue, result)",
+    "Response completed in ~30s (under 55s limit)",
+    "pts_reb_ast prop type works correctly",
+    "rebounds prop type works correctly"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_basketball_advanced_analytics.py",
+    "/app/test_reports/pytest/basketball_advanced_analytics_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "compute_advanced_analytics() correctly computes per-minute rates, role classification, z-scores, over-rates, consistency, streaks (lines 94-265)",
+    "build_data_digest() creates comprehensive AI prompt with statistical verdict, player profile, distribution, venue splits (lines 268-390)",
+    "Data-driven overrides correctly force OVER when over-rate >= 70% and UNDER when under-rate >= 70% (lines 761-776)",
+    "Projection clamping enforces 30% bounds around rate-based projection (lines 779-786)",
+    "Confidence capping correctly limits to 52 for COIN FLIP edge signals (lines 789-791)",
+    "recentSamples correctly populated from player_game_logs with all required fields (lines 516-527)"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_basketball_advanced_analytics.py"
+  ],
+  "success_rate": {
+    "backend": "100% (22/22 tests passed)",
+    "frontend": "N/A (backend only testing requested)"
+  },
+  "test_credentials": "No special credentials needed - API keys configured in backend/.env",
+  "seed_data_creation": "None - using live API-Sports data",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Basketball prediction engine overhaul is COMPLETE and VERIFIED. All advanced analytics fields working: overRate, perMinRate, rateProjection, role, edgeSignal, statisticalLean, consistency, streak, avgMinutes. Projection constraints enforced. LeBron James test case: 52 game sample, 21% over-rate vs 25.5 line, STAR role, 32.6 avg minutes, 0.618 pts/min rate, 20.1 rate projection, 6-game UNDER streak, MODERATE EDGE signal, UNDER statistical lean. Response time ~30s.",
+  "verified_features": {
+    "advanced_analytics": {
+      "per_minute_rates": "Working - 0.618 pts/min for LeBron",
+      "role_classification": "Working - STAR (32.6 min/game)",
+      "z_score_edge_signal": "Working - MODERATE EDGE (z=0.79)",
+      "over_rate_computation": "Working - 21% over 25.5 line",
+      "streak_detection": "Working - 6-game UNDER streak",
+      "consistency_score": "Working - MODERATE (50-70% within band)"
+    },
+    "data_driven_overrides": {
+      "70_percent_override": "Logic present - forces OVER/UNDER when rate >= 70%",
+      "projection_clamping": "Working - 30% bounds enforced",
+      "confidence_capping": "Working - COIN FLIP caps at 52"
+    },
+    "response_structure": {
+      "playerGameLogs": "All 15 fields present and valid",
+      "recentSamples": "20 games with date, opponent, value, minutesPlayed, venue, result",
+      "response_time": "~30s (under 55s K8s limit)"
+    }
+  },
+  "sample_prediction": {
+    "player": "LeBron James",
+    "team": "Los Angeles Lakers",
+    "opponent": "Golden State Warriors",
+    "propType": "points",
+    "line": 25.5,
+    "projectedValue": 20.1,
+    "recommendation": "under",
+    "confidenceScore": 67,
+    "overRate": "21%",
+    "rateProjection": 20.1,
+    "role": "STAR",
+    "edgeSignal": "MODERATE EDGE",
+    "statisticalLean": "UNDER",
+    "streak": "6-game UNDER streak"
+  }
+}
