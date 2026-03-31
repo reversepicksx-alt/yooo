@@ -3,7 +3,7 @@ import {
   Zap, ChevronRight, RefreshCw, ArrowLeft, Clock, Activity,
   Shield, Send, Loader2, Trash2, User, Search, Users, Edit3, HelpCircle, ChevronDown,
   TrendingUp, TrendingDown, BarChart3, ShieldAlert, Target, LogOut, Lock, Mail, Bell, RotateCcw,
-  Camera, Upload, Check, X, ImageIcon, Brain, Crosshair, MessageSquare
+  Camera, Upload, Check, X, ImageIcon, Brain, Crosshair, MessageSquare, Swords
 } from 'lucide-react';
 import {
   getTeamsByLeague, searchPlayers, predict, predictCombo, startChat, sendChatMessage,
@@ -1909,6 +1909,48 @@ export default function App() {
                       prev.includes(idx) ? prev.filter(i => i !== idx) : [...prev, idx]
                     )}
                   />
+                )}
+
+                {/* ── HEAD TO HEAD ── */}
+                {scanPrediction && !scanPrediction._isCombo && scanPrediction.h2hGames && scanPrediction.h2hGames.length > 0 && (
+                  <div data-testid="scan-h2h-section" style={{
+                    background: '#0a0a0f', border: '1px solid rgba(100,100,120,0.15)',
+                    borderRadius: 14, overflow: 'hidden', marginTop: 8,
+                  }}>
+                    <div style={{
+                      padding: '10px 16px', borderBottom: '1px solid rgba(100,100,120,0.1)',
+                      display: 'flex', alignItems: 'center', gap: 8,
+                    }}>
+                      <Swords style={{ width: 14, height: 14, color: '#f59e0b' }} />
+                      <span style={{ fontSize: 11, fontWeight: 900, letterSpacing: '0.1em', color: '#f59e0b', textTransform: 'uppercase' }}>
+                        Head to Head ({scanPrediction.h2hGames.length})
+                      </span>
+                    </div>
+                    <div style={{ padding: '10px 16px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {scanPrediction.h2hGames.map((g, i) => (
+                        <div key={i} style={{
+                          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                          padding: '8px 12px', borderRadius: 8,
+                          background: g.result === 'W' ? 'rgba(16,185,129,0.06)' : 'rgba(244,63,94,0.06)',
+                          border: `1px solid ${g.result === 'W' ? 'rgba(16,185,129,0.15)' : 'rgba(244,63,94,0.15)'}`,
+                        }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{
+                              fontSize: 11, fontWeight: 900, width: 18, textAlign: 'center',
+                              color: g.result === 'W' ? '#10b981' : '#f43f5e',
+                            }}>{g.result}</span>
+                            <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>{g.date}</span>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span style={{ fontSize: 13, fontWeight: 800, color: '#fff', fontFamily: "'JetBrains Mono', monospace" }}>
+                              {g.teamScore}-{g.oppScore}
+                            </span>
+                            <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase' }}>{g.venue}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 )}
 
                 {/* ── UNIFIED TACTICAL BREAKDOWN (from prediction) ── */}

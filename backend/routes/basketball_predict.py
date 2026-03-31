@@ -480,6 +480,12 @@ async def basketball_predict(req: BasketballPredictionRequest):
         h2h_data = h2h_data or []
         opp_games_raw = opp_games_raw or []
 
+        # Sort H2H by date descending and filter to finished games only
+        if h2h_data:
+            h2h_data = [g for g in h2h_data if g.get("status", {}).get("short") in ("FT", "AOT")]
+            h2h_data.sort(key=lambda g: g.get("date", ""), reverse=True)
+            print(f"[BBALL H2H] {len(h2h_data)} finished H2H games found (most recent: {(h2h_data[0].get('date','')[:10]) if h2h_data else 'none'})")
+
         # Build player game logs (uses single API call for ALL season stats)
         player_game_logs = []
         if player_id:
@@ -839,6 +845,23 @@ Analyze the statistical verdict, per-minute projection, and over-rate FIRST. The
                 "streak": a["streak_label"],
                 "statisticalLean": a["stat_lean"],
             }
+
+        # H2H summary for frontend display
+        if h2h_data:
+            h2h_summary = []
+            for g in h2h_data[:6]:
+                gp = parse_game_for_team(g, req.teamId)
+                h2h_summary.append({
+                    "date": gp.get("date", ""),
+                    "result": gp.get("result", ""),
+                    "teamScore": gp.get("teamScore", 0),
+                    "oppScore": gp.get("oppScore", 0),
+                    "opponent": gp.get("opponent", ""),
+                    "venue": gp.get("venue", ""),
+                })
+            prediction["h2hGames"] = h2h_summary
+        else:
+            prediction["h2hGames"] = []
 
         total_logs = len(player_game_logs)
         if total_logs >= 10:

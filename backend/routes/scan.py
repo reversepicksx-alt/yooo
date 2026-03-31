@@ -402,17 +402,25 @@ async def _resolve_basketball_picks(extracted: list) -> dict:
         team_hint = (entry.get("playerTeam") or "").strip()
         opp_hint = (entry.get("opponentName") or "").strip()
 
+        # Track league info from resolved teams
+        league_id = None
+        league_name = None
+
         # Resolve team via CACHE first, then live API fallback
         resolved_team = None
         if team_hint:
             cached = await get_bball_team_by_name(team_hint)
             if cached:
                 resolved_team = {"teamId": cached["teamId"], "teamName": cached.get("name", team_hint)}
+                league_id = cached.get("leagueId")
+                league_name = cached.get("leagueName")
             else:
                 teams = await search_bball_teams(team_hint)
                 if teams:
                     best = teams[0]
                     resolved_team = {"teamId": best["teamId"], "teamName": best.get("name", team_hint)}
+                    league_id = best.get("leagueId")
+                    league_name = best.get("leagueName")
                 else:
                     # Live API fallback
                     live_teams = await search_basketball_teams_live(team_hint)
@@ -426,11 +434,18 @@ async def _resolve_basketball_picks(extracted: list) -> dict:
             cached = await get_bball_team_by_name(opp_hint)
             if cached:
                 resolved_opp = {"teamId": cached["teamId"], "teamName": cached.get("name", opp_hint)}
+                # Use opponent's league if we didn't get it from the player's team
+                if not league_id:
+                    league_id = cached.get("leagueId")
+                    league_name = cached.get("leagueName")
             else:
                 opps = await search_bball_teams(opp_hint)
                 if opps:
                     best = opps[0]
                     resolved_opp = {"teamId": best["teamId"], "teamName": best.get("name", opp_hint)}
+                    if not league_id:
+                        league_id = best.get("leagueId")
+                        league_name = best.get("leagueName")
                 else:
                     live_opps = await search_basketball_teams_live(opp_hint)
                     if live_opps:
@@ -446,6 +461,8 @@ async def _resolve_basketball_picks(extracted: list) -> dict:
                 "opponentName": opp_hint,
                 "playerTeam": team_hint,
                 "sport": "basketball",
+                "league": league_name or "NBA",
+                "leagueId": league_id or 12,
                 "isCombo": False,
             },
             "resolved": resolved_team,

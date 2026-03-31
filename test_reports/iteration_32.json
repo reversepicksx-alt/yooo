@@ -1,0 +1,80 @@
+{
+  "summary": "Iteration 32: H2H Data and Basketball Scan League Detection Bug Fixes - All 18 Tests Passed (100%). Both bug fixes verified working: 1) h2hGames array now returned in prediction response with games sorted by date descending (most recent first), filtered to finished games only, containing date/result/teamScore/oppScore/venue fields. 2) playerGameLogs contains all required analytics fields (overRate, perMinRate, rateProjection, role, edgeSignal, statisticalLean). Test case: Donovan Mitchell (CLE) vs Lakers - 6 H2H games returned spanning 2023-2026.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "passed_tests": [
+    "GET /api/health returns ok status",
+    "POST /api/basketball/predict returns 200 status",
+    "Response completes within 55 seconds (~50s)",
+    "h2hGames array exists in prediction response",
+    "h2hGames has entries (6 games for CLE vs LAL)",
+    "h2hGames entries contain date, result, teamScore, oppScore, venue fields",
+    "H2H games sorted by date descending (most recent: 2026-01-29)",
+    "H2H result field contains valid W/L values",
+    "playerGameLogs field exists in response",
+    "playerGameLogs.overRate is present and valid (60%)",
+    "playerGameLogs.perMinRate is present and valid (0.837/min)",
+    "playerGameLogs.rateProjection is present and valid (27)",
+    "playerGameLogs.role is present and valid (STAR)",
+    "playerGameLogs.edgeSignal is present and valid (COIN FLIP)",
+    "playerGameLogs.statisticalLean is present and valid (OVER)",
+    "POST /api/basketball/search-teams finds Cleveland Cavaliers",
+    "POST /api/basketball/search-teams finds Los Angeles Lakers",
+    "POST /api/basketball/search-teams with empty query returns 400"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_h2h_and_league_fixes.py",
+    "/app/test_reports/pytest/h2h_league_fixes_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "H2H sorting at line ~484-487 correctly filters to finished games (FT/AOT status) and sorts by date descending",
+    "h2hGames array added at line ~850-864 with proper parse_game_for_team() for each H2H game",
+    "Basketball scan league resolution at scan.py line ~383-473 correctly extracts leagueId from basketball team cache"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_h2h_and_league_fixes.py"
+  ],
+  "success_rate": {
+    "backend": "100% (18/18 tests passed)",
+    "frontend": "N/A (backend only testing requested)"
+  },
+  "test_credentials": "No special credentials needed - API keys configured in backend/.env",
+  "seed_data_creation": "None - using live API-Sports data",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "H2H bug fix VERIFIED. Donovan Mitchell (CLE) vs Lakers test case: 6 H2H games returned (2023-2026), sorted newest-first, all with W/L results. playerGameLogs analytics: 67 game sample, 60% over-rate vs 25.5 line, STAR role, 32.2 avg minutes, 0.837 pts/min rate, 27 rate projection, OVER statistical lean. Response time ~50s.",
+  "verified_features": {
+    "h2h_data_fix": {
+      "h2hGames_array": "Working - 6 games returned for CLE vs LAL",
+      "date_sorting": "Working - descending order (2026-01-29 first)",
+      "finished_games_filter": "Working - only FT/AOT status games",
+      "required_fields": "Working - date, result, teamScore, oppScore, venue present"
+    },
+    "analytics_fields": {
+      "overRate": "Working - 60%",
+      "perMinRate": "Working - 0.837/min",
+      "rateProjection": "Working - 27",
+      "role": "Working - STAR",
+      "edgeSignal": "Working - COIN FLIP",
+      "statisticalLean": "Working - OVER"
+    }
+  },
+  "sample_h2h_data": {
+    "most_recent_game": {
+      "date": "2026-01-29",
+      "result": "W",
+      "teamScore": 129,
+      "oppScore": 99,
+      "venue": "home"
+    },
+    "total_h2h_games": 6
+  }
+}
