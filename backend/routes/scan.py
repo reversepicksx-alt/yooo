@@ -12,7 +12,7 @@ from config import (
 from models import ScanPropRequest
 from utils import api_football_request, strip_accents
 from cache import get_national_team_id, get_player_by_name, get_team_by_name, get_team_info
-from basketball_utils import search_teams as search_basketball_teams
+from basketball_utils import search_nba_teams as search_basketball_teams
 
 router = APIRouter(prefix="/api", tags=["scan"])
 
@@ -24,7 +24,7 @@ VALID_SOCCER_PROPS = {
 
 VALID_BASKETBALL_PROPS = {
     "points", "rebounds", "assists", "pts_reb_ast", "three_pointers",
-    "steals", "blocks", "turnovers", "fgm", "ftm", "fga", "fta", "tpa",
+    "fgm", "ftm", "fga", "fta", "tpa",
 }
 
 BASKETBALL_PROP_ALIASES = {
@@ -36,9 +36,7 @@ BASKETBALL_PROP_ALIASES = {
     "three pointer": "three_pointers", "3pt": "three_pointers", "3pm": "three_pointers",
     "3-point fg": "three_pointers", "threes": "three_pointers", "3-pointers made": "three_pointers",
     "three pointers made": "three_pointers", "3 pointers": "three_pointers", "threes made": "three_pointers",
-    "steal": "steals", "stl": "steals",
-    "block": "blocks", "blk": "blocks",
-    "turnover": "turnovers", "to": "turnovers", "tov": "turnovers",
+    "3ptm": "three_pointers", "three pointers": "three_pointers",
     "field goals made": "fgm", "fg made": "fgm", "field goal": "fgm",
     "free throws made": "ftm", "ft made": "ftm", "free throw": "ftm",
     "field goals attempted": "fga", "fg attempted": "fga",
@@ -357,7 +355,7 @@ CRITICAL RULES:
 
 Extract:
 1. playerName — Full name as displayed
-2. propType — Map to one of: points, rebounds, assists, pts_reb_ast, three_pointers, steals, blocks, turnovers, fgm, ftm, fga, fta, tpa
+2. propType — Map to one of: points, rebounds, assists, pts_reb_ast, three_pointers, fgm, ftm, fga, fta, tpa
 3. line — The numerical line (e.g., 24.5, 7.5, 5.5)
 4. opponentName — The opposing team
 5. playerTeam — The player's team
@@ -368,10 +366,7 @@ PROP TYPE MAPPING:
 - "Rebounds" / "Reb" / "Total Rebounds" → rebounds
 - "Assists" / "Ast" / "AST" → assists
 - "Pts+Reb+Ast" / "PRA" / "Points+Rebounds+Assists" → pts_reb_ast
-- "3-Point FG" / "3PM" / "Threes" / "Three Pointers Made" / "3-Pointers Made" → three_pointers
-- "Steals" / "Stl" / "STL" → steals
-- "Blocks" / "Blk" / "BLK" → blocks
-- "Turnovers" / "TO" / "TOV" → turnovers
+- "3-Point FG" / "3PM" / "Threes" / "Three Pointers Made" / "3-Pointers Made" / "3PTM" → three_pointers
 - "FG Made" / "FGM" / "Field Goals Made" → fgm
 - "FT Made" / "FTM" / "Free Throws Made" → ftm
 - "FG Attempted" / "FGA" → fga

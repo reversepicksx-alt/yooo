@@ -1,0 +1,83 @@
+{
+  "summary": "Iteration 27: Basketball Pipeline Fixes Verified. All 9 backend tests passed (100%). Frontend verified - Soccer/Basketball toggle works correctly, subtitle changes to 'NBA' when Basketball selected. Key fixes verified: NBA-filtered team search (league=12), player game logs with sampleSize > 5, recentSamples with real game data, dataQuality.level, rebounds parsing fixed, steals/blocks/turnovers removed from BASKETBALL_PROP_TYPES.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "passed_tests": [
+    "POST /api/basketball/search-teams for 'Suns' returns Phoenix Suns (NOT youth/foreign teams like 'Helios Suns mladi')",
+    "POST /api/basketball/search-teams for 'Grizzlies' returns Memphis Grizzlies",
+    "POST /api/basketball/search-teams returns valid team IDs",
+    "POST /api/basketball/predict for Jalen Green Points returns playerGameLogs.sampleSize > 5",
+    "POST /api/basketball/predict returns recentSamples array with date/opponent/value",
+    "POST /api/basketball/predict returns matchupOverview with homeTeam/awayTeam",
+    "POST /api/basketball/predict for Devin Booker returns valid game logs",
+    "POST /api/basketball/predict for rebounds prop type works (fixed dict.total parsing)",
+    "POST /api/predict (soccer) still works - regression test passed",
+    "Frontend BASKETBALL_PROP_TYPES does NOT contain steals/blocks/turnovers",
+    "Frontend BASKETBALL_PROP_TYPES contains points/rebounds/assists",
+    "GET /api/health returns ok",
+    "Frontend: Soccer/Basketball toggle visible in header",
+    "Frontend: Basketball button activates correctly when clicked",
+    "Frontend: Subtitle changes to 'Upload a NBA prop screenshot for instant AI analysis' when Basketball selected"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_basketball_fixes.py",
+    "/app/test_reports/pytest/basketball_fixes_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "basketball_utils.py: search_nba_teams() correctly uses league=12 filter to return only NBA teams",
+    "basketball_utils.py: get_player_season_stats() uses single API call for ALL season stats (key optimization)",
+    "basketball_utils.py: parse_player_stat() correctly handles rebounds as dict with 'total' key",
+    "basketball_predict.py: build_player_game_logs() properly fetches player stats via player ID lookup",
+    "basketball_predict.py: Multi-AI consensus engine (5 AIs) with first-3-wins pattern working correctly",
+    "scan.py: VALID_BASKETBALL_PROPS correctly excludes steals/blocks/turnovers",
+    "App.js: BASKETBALL_PROP_TYPES (lines 32-40) correctly excludes steals/blocks/turnovers"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_basketball_fixes.py"
+  ],
+  "success_rate": {
+    "backend": "100% (9/9 tests passed)",
+    "frontend": "100% (all UI elements verified)"
+  },
+  "test_credentials": {
+    "owner_email": "josselj001@gmail.com (auto-login via Whop verification, access_type: Owner)"
+  },
+  "seed_data_creation": "None - using existing MongoDB data",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Basketball pipeline fixes verified. Key changes: 1) Team search now uses league=12 filter for NBA-only results, 2) Player ID lookup via /players endpoint before fetching stats, 3) Single API call for all season stats via games/statistics/players?player=ID&season=SEASON, 4) Rebounds parsing fixed (dict with 'total' key), 5) steals/blocks/turnovers removed from prop types. Test teams: Phoenix Suns (ID: 155), Memphis Grizzlies (ID: 146). Basketball prediction takes ~30-60 seconds due to multi-AI consensus.",
+  "verified_fixes": {
+    "nba_filtered_team_search": {
+      "issue": "Team search returned wrong teams (e.g., 'Helios Suns mladi' instead of 'Phoenix Suns')",
+      "fix": "Added league=12 filter to search_nba_teams() in basketball_utils.py",
+      "verified": true
+    },
+    "player_game_logs": {
+      "issue": "Player stats showed 0 game logs",
+      "fix": "Player ID lookup via /players endpoint, then single-call season stats via games/statistics/players?player=ID&season=SEASON",
+      "verified": true,
+      "sample_sizes": {
+        "jalen_green": "> 5 game logs",
+        "devin_booker": "> 5 game logs"
+      }
+    },
+    "rebounds_parsing": {
+      "issue": "Rebounds returned 0 due to incorrect parsing",
+      "fix": "Fixed parse_player_stat() to handle rebounds as dict with 'total' key",
+      "verified": true
+    },
+    "removed_unavailable_props": {
+      "issue": "steals/blocks/turnovers not available in per-player API",
+      "fix": "Removed from VALID_BASKETBALL_PROPS in scan.py and BASKETBALL_PROP_TYPES in App.js",
+      "verified": true
+    }
+  }
+}

@@ -1,7 +1,7 @@
 """
 Basketball (NBA) Prediction Engine
-Mirrors the soccer predict.py architecture:
-- Parallel data fetching (team games → player game logs)
+- Finds player ID via /players endpoint
+- Fetches ALL game stats in ONE call via /games/statistics/players?player=ID&season=SEASON
 - 5-AI consensus engine with first-3-wins pattern
 - Gemini synthesis step for tactical breakdown
 - Strict <55s execution budget
@@ -19,24 +19,22 @@ from openai import OpenAI
 from config import db, EMERGENT_LLM_KEY, XAI_API_KEY
 from models import BasketballPredictionRequest
 from basketball_utils import (
-    get_team_games, get_player_game_stats, get_h2h,
-    get_team_stats, get_standings, search_teams,
-    parse_game_for_team, parse_player_game_stat,
-    NBA_LEAGUE_ID, BBALL_CURRENT_SEASON,
+    search_nba_teams, search_player, get_player_season_stats,
+    get_team_games, get_h2h, get_team_stats, get_standings,
+    parse_player_stat, parse_game_for_team,
+    BBALL_CURRENT_SEASON,
 )
 
 router = APIRouter(prefix="/api", tags=["basketball"])
 
-# Basketball prop → stat field mapping
+# Basketball prop → parsed stat field mapping
+# NOTE: API only provides: points, rebounds, assists, fgm/fga, tpm/tpa, ftm/fta
 BBALL_STAT_FIELD_MAP = {
     "points": "points",
     "rebounds": "rebounds",
     "assists": "assists",
-    "pts_reb_ast": None,  # computed composite
+    "pts_reb_ast": None,  # composite
     "three_pointers": "tpm",
-    "steals": "steals",
-    "blocks": "blocks",
-    "turnovers": "turnovers",
     "fgm": "fgm",
     "ftm": "ftm",
     "fga": "fga",
@@ -50,9 +48,6 @@ BBALL_PROP_LABELS = {
     "assists": "Assists",
     "pts_reb_ast": "Pts+Reb+Ast",
     "three_pointers": "3-Point FG Made",
-    "steals": "Steals",
-    "blocks": "Blocks",
-    "turnovers": "Turnovers",
     "fgm": "FG Made",
     "ftm": "FT Made",
     "fga": "FG Attempted",
@@ -64,64 +59,56 @@ BBALL_PROP_LABELS = {
 def get_stat_value(parsed: dict, prop_type: str):
     """Extract the relevant stat value from a parsed player game stat."""
     if prop_type == "pts_reb_ast":
-        p = parsed.get("points", 0) or 0
-        r = parsed.get("rebounds", 0) or 0
-        a = parsed.get("assists", 0) or 0
-        return p + r + a
+        return (parsed.get("points", 0) or 0) + (parsed.get("rebounds", 0) or 0) + (parsed.get("assists", 0) or 0)
     field = BBALL_STAT_FIELD_MAP.get(prop_type, prop_type)
-    if field:
-        return parsed.get(field, 0) or 0
-    return 0
+    return parsed.get(field, 0) or 0 if field else 0
 
 
-async def fetch_player_game_logs(team_id: int, player_name: str, prop_type: str, limit: int = 20):
+async def build_player_game_logs(player_id: int, team_id: int, prop_type: str, team_games: list):
     """
-    Fetch player's individual game logs by:
-    1. Getting team's recent finished games
-    2. For each game, fetching player stats via games/statistics/players
+    Build player game logs by:
+    1. Fetching ALL player stats for the season in a SINGLE API call
+    2. Cross-referencing with team games for venue/opponent context
     """
-    games = await get_team_games(team_id)
-    if not games:
-        return [], []
+    raw_stats = await get_player_season_stats(player_id)
+    if not raw_stats:
+        return []
 
-    player_name_lower = player_name.lower().strip()
-    last_name = player_name_lower.split()[-1] if player_name_lower else ""
+    # Build a game_id → game_info lookup from team games
+    game_lookup = {}
+    for g in team_games:
+        gid = g.get("id")
+        if gid:
+            game_lookup[gid] = parse_game_for_team(g, team_id)
 
-    parsed_games = []
-    for g in games[:limit]:
-        parsed_games.append(parse_game_for_team(g, team_id))
+    logs = []
+    for entry in raw_stats:
+        parsed = parse_player_stat(entry)
+        game_id = parsed.get("gameId")
+        stat_val = get_stat_value(parsed, prop_type)
 
-    # Fetch player stats for each game in parallel
-    async def fetch_one(game_info, raw_game):
-        game_id = game_info.get("gameId")
-        if not game_id:
-            return None
-        try:
-            stats = await get_player_game_stats(game_id)
-            if not stats:
-                return None
-            # Find our player in the stats
-            for entry in stats:
-                parsed = parse_player_game_stat(entry)
-                pname = parsed.get("playerName", "").lower()
-                if (last_name and last_name in pname) or player_name_lower in pname or pname in player_name_lower:
-                    # Check this player is on the right team
-                    if parsed.get("teamId") == team_id or not parsed.get("teamId"):
-                        stat_val = get_stat_value(parsed, prop_type)
-                        return {
-                            **game_info,
-                            "playerStats": parsed,
-                            "targetStat": stat_val,
-                            "minutes": parsed.get("minutes", "0"),
-                        }
-            return None
-        except Exception:
-            return None
+        # Get game context from team games lookup
+        game_info = game_lookup.get(game_id, {})
 
-    tasks = [fetch_one(pg, g) for pg, g in zip(parsed_games, games[:limit])]
-    results = await aio.gather(*tasks, return_exceptions=True)
-    logs = [r for r in results if r and not isinstance(r, Exception)]
-    return logs, parsed_games
+        logs.append({
+            "gameId": game_id,
+            "date": game_info.get("date", ""),
+            "venue": game_info.get("venue", ""),
+            "opponent": game_info.get("opponent", ""),
+            "result": game_info.get("result", ""),
+            "teamScore": game_info.get("teamScore", 0),
+            "oppScore": game_info.get("oppScore", 0),
+            "targetStat": stat_val,
+            "minutes": parsed.get("minutes", "0:00"),
+            "playerStats": parsed,
+        })
+
+    # Sort by date descending (most recent first), filter to games with context
+    logs_with_context = [l for l in logs if l.get("date")]
+    logs_without = [l for l in logs if not l.get("date")]
+    logs_with_context.sort(key=lambda x: x["date"], reverse=True)
+
+    return logs_with_context + logs_without
 
 
 @router.post("/basketball/predict")
@@ -130,7 +117,7 @@ async def basketball_predict(req: BasketballPredictionRequest):
         t0 = _t.time()
 
         # ═══════════════════════════════════════
-        # WAVE 1: Parallel data fetching
+        # WAVE 1: Find player + parallel data fetch
         # ═══════════════════════════════════════
         async def safe_fetch(coro):
             try:
@@ -138,36 +125,43 @@ async def basketball_predict(req: BasketballPredictionRequest):
             except Exception:
                 return None
 
-        player_logs_task = fetch_player_game_logs(req.teamId, req.playerName, req.propType, 20)
+        # Find the player ID first (critical for game log fetching)
+        player_info = await search_player(req.playerName, req.teamId)
+        player_id = player_info.get("id") if player_info else None
+        print(f"[BBALL] Player lookup: '{req.playerName}' → ID={player_id} ({player_info.get('name') if player_info else 'NOT FOUND'})")
+
+        # Now fetch everything in parallel
+        team_games_task = get_team_games(req.teamId)
         h2h_task = safe_fetch(get_h2h(req.teamId, req.opponentId))
         team_stats_task = safe_fetch(get_team_stats(req.teamId))
         opp_stats_task = safe_fetch(get_team_stats(req.opponentId))
         standings_task = safe_fetch(get_standings())
         opp_games_task = safe_fetch(get_team_games(req.opponentId))
 
-        (player_logs_result, team_games_parsed), h2h_data, team_stats, opp_stats, standings_raw, opp_games_raw = await aio.gather(
-            player_logs_task, h2h_task, team_stats_task, opp_stats_task, standings_task, opp_games_task
+        team_games, h2h_data, team_stats, opp_stats, standings_raw, opp_games_raw = await aio.gather(
+            team_games_task, h2h_task, team_stats_task, opp_stats_task, standings_task, opp_games_task
         )
-
-        player_game_logs = player_logs_result or []
+        team_games = team_games or []
         h2h_data = h2h_data or []
-        team_games_parsed = team_games_parsed or []
         opp_games_raw = opp_games_raw or []
 
-        print(f"[BBALL TIMING] Wave 1: {_t.time()-t0:.1f}s, {len(player_game_logs)} player logs")
+        # Build player game logs (uses single API call for ALL season stats)
+        player_game_logs = []
+        if player_id:
+            player_game_logs = await build_player_game_logs(player_id, req.teamId, req.propType, team_games)
+
+        print(f"[BBALL TIMING] Wave 1: {_t.time()-t0:.1f}s | Player logs: {len(player_game_logs)} | Team games: {len(team_games)}")
 
         # ═══════════════════════════════════════
-        # VENUE FILTERING
+        # VENUE FILTERING & STATS
         # ═══════════════════════════════════════
         player_venue = req.venue.lower()
-        opponent_venue = "away" if player_venue == "home" else "home"
-
+        stat_values = [g["targetStat"] for g in player_game_logs if g.get("targetStat") is not None]
         venue_logs = [g for g in player_game_logs if g.get("venue") == player_venue]
-        all_logs = player_game_logs
+        venue_values = [g["targetStat"] for g in venue_logs if g.get("targetStat") is not None]
 
-        # Extract target stat values
-        stat_values = [g.get("targetStat", 0) for g in player_game_logs if g.get("targetStat") is not None]
-        venue_values = [g.get("targetStat", 0) for g in venue_logs if g.get("targetStat") is not None]
+        # Team games parsed
+        team_games_parsed = [parse_game_for_team(g, req.teamId) for g in team_games[:20]]
 
         # ═══════════════════════════════════════
         # BUILD DATA DIGEST
@@ -175,23 +169,22 @@ async def basketball_predict(req: BasketballPredictionRequest):
         prop_label = BBALL_PROP_LABELS.get(req.propType, req.propType)
         parts = []
 
-        # Player game log summary
         if stat_values:
-            avg_val = round(sum(stat_values) / len(stat_values), 1)
-            min_val = min(stat_values)
-            max_val = max(stat_values)
-            std_dev = round(stats_mod.stdev(stat_values), 2) if len(stat_values) >= 3 else 0
+            recent_vals = stat_values[:20]
+            avg_val = round(sum(recent_vals) / len(recent_vals), 1)
+            min_val = min(recent_vals)
+            max_val = max(recent_vals)
+            std_dev = round(stats_mod.stdev(recent_vals), 2) if len(recent_vals) >= 3 else 0
 
-            home_vals = [g.get("targetStat", 0) for g in player_game_logs if g.get("venue") == "home" and g.get("targetStat") is not None]
-            away_vals = [g.get("targetStat", 0) for g in player_game_logs if g.get("venue") == "away" and g.get("targetStat") is not None]
+            home_vals = [g["targetStat"] for g in player_game_logs[:20] if g.get("venue") == "home" and g.get("targetStat") is not None]
+            away_vals = [g["targetStat"] for g in player_game_logs[:20] if g.get("venue") == "away" and g.get("targetStat") is not None]
 
-            parts.append(f"""[PLAYER {prop_label.upper()} GAME LOGS — Last {len(stat_values)} games]
+            parts.append(f"""[PLAYER {prop_label.upper()} GAME LOGS — Last {len(recent_vals)} games]
 - Average: {avg_val} | Min: {min_val} | Max: {max_val} | StdDev: {std_dev}
 - Home avg: {round(sum(home_vals)/len(home_vals),1) if home_vals else 'N/A'} ({len(home_vals)} games)
 - Away avg: {round(sum(away_vals)/len(away_vals),1) if away_vals else 'N/A'} ({len(away_vals)} games)
 - Venue-filtered ({player_venue}): avg {round(sum(venue_values)/len(venue_values),1) if venue_values else 'N/A'} ({len(venue_values)} games)""")
 
-            # Individual game lines
             game_lines = []
             for g in player_game_logs[:15]:
                 ps = g.get("playerStats", {})
@@ -199,21 +192,22 @@ async def basketball_predict(req: BasketballPredictionRequest):
                     f"  {g.get('date','')} vs {g.get('opponent','')} ({g.get('venue','')}) {g.get('result','')}: "
                     f"{prop_label}={g.get('targetStat',0)} | "
                     f"PTS={ps.get('points',0)} REB={ps.get('rebounds',0)} AST={ps.get('assists',0)} "
-                    f"3PM={ps.get('tpm',0)} STL={ps.get('steals',0)} BLK={ps.get('blocks',0)} "
+                    f"3PM={ps.get('tpm',0)} FGM={ps.get('fgm',0)} "
                     f"MIN={ps.get('minutes','0')}"
                 )
             parts.append("[GAME-BY-GAME]\n" + "\n".join(game_lines))
 
-        # Team record
+        # Team recent form
         if team_games_parsed:
-            wins = sum(1 for g in team_games_parsed[:10] if g.get("result") == "W")
-            losses = sum(1 for g in team_games_parsed[:10] if g.get("result") == "L")
-            avg_score = round(sum(g.get("teamScore", 0) for g in team_games_parsed[:10]) / max(len(team_games_parsed[:10]), 1), 1)
-            avg_opp = round(sum(g.get("oppScore", 0) for g in team_games_parsed[:10]) / max(len(team_games_parsed[:10]), 1), 1)
-            parts.append(f"""[TEAM RECENT FORM — Last {min(10, len(team_games_parsed))} games]
+            recent = team_games_parsed[:10]
+            wins = sum(1 for g in recent if g.get("result") == "W")
+            losses = sum(1 for g in recent if g.get("result") == "L")
+            avg_score = round(sum(g.get("teamScore", 0) for g in recent) / max(len(recent), 1), 1)
+            avg_opp = round(sum(g.get("oppScore", 0) for g in recent) / max(len(recent), 1), 1)
+            parts.append(f"""[TEAM RECENT FORM — Last {len(recent)} games]
 - Record: {wins}W-{losses}L | Avg Score: {avg_score} | Avg Opp Score: {avg_opp}""")
 
-        # Opponent recent form
+        # Opponent form
         if opp_games_raw:
             opp_parsed = [parse_game_for_team(g, req.opponentId) for g in opp_games_raw[:10]]
             opp_wins = sum(1 for g in opp_parsed if g.get("result") == "W")
@@ -229,58 +223,30 @@ async def basketball_predict(req: BasketballPredictionRequest):
             for h in h2h_data[:5]:
                 hp = parse_game_for_team(h, req.teamId)
                 h2h_lines.append(f"  {hp.get('date','')} {hp.get('result','')} {hp.get('teamScore',0)}-{hp.get('oppScore',0)} vs {hp.get('opponent','')}")
-            parts.append(f"[H2H — Last {len(h2h_data)} meetings]\n" + "\n".join(h2h_lines))
+            parts.append(f"[H2H — Last {min(5,len(h2h_data))} meetings]\n" + "\n".join(h2h_lines))
 
-        # H2H player stats (fetch player stats from H2H games)
-        h2h_player_stats = []
-        if h2h_data:
-            async def fetch_h2h_player(game):
-                gid = game.get("id")
-                if not gid:
-                    return None
-                try:
-                    stats = await get_player_game_stats(gid)
-                    if not stats:
-                        return None
-                    player_name_lower = req.playerName.lower().strip()
-                    last_name = player_name_lower.split()[-1]
-                    for entry in stats:
-                        parsed = parse_player_game_stat(entry)
-                        pname = parsed.get("playerName", "").lower()
-                        if last_name in pname or player_name_lower in pname:
-                            val = get_stat_value(parsed, req.propType)
-                            return {
-                                "date": game.get("date", "")[:10],
-                                "targetStat": val,
-                                "stats": parsed,
-                            }
-                    return None
-                except Exception:
-                    return None
+        # H2H player stats (if we have player_id)
+        if h2h_data and player_id:
+            h2h_game_ids = [h.get("id") for h in h2h_data[:5] if h.get("id")]
+            # Check if any of these games are in our player_game_logs
+            h2h_player_vals = []
+            h2h_game_set = set(h2h_game_ids)
+            for g in player_game_logs:
+                if g.get("gameId") in h2h_game_set:
+                    h2h_player_vals.append(g.get("targetStat", 0))
 
-            try:
-                h2h_results = await aio.wait_for(
-                    aio.gather(*[fetch_h2h_player(g) for g in h2h_data[:5]]),
-                    timeout=8
-                )
-                h2h_player_stats = [r for r in h2h_results if r]
-            except aio.TimeoutError:
-                pass
-
-        if h2h_player_stats:
-            h2h_vals = [s["targetStat"] for s in h2h_player_stats if s.get("targetStat") is not None]
-            if h2h_vals:
+            if h2h_player_vals:
                 parts.append(f"""[H2H PLAYER {prop_label.upper()} vs THIS OPPONENT]
-- Avg: {round(sum(h2h_vals)/len(h2h_vals),1)} | Games: {len(h2h_vals)} | Values: {h2h_vals}""")
+- Avg: {round(sum(h2h_player_vals)/len(h2h_player_vals),1)} | Games: {len(h2h_player_vals)} | Values: {h2h_player_vals}""")
 
         data_digest = "\n\n".join(parts)
-        print(f"[BBALL TIMING] Data digest built: {_t.time()-t0:.1f}s")
+        print(f"[BBALL TIMING] Data digest: {_t.time()-t0:.1f}s, {len(data_digest)} chars")
 
         # ═══════════════════════════════════════
-        # BUILD REAL RECENT SAMPLES
+        # REAL RECENT SAMPLES for frontend
         # ═══════════════════════════════════════
         real_recent_samples = []
-        for g in player_game_logs:
+        for g in player_game_logs[:20]:
             val = g.get("targetStat")
             if val is not None:
                 real_recent_samples.append({
@@ -318,7 +284,6 @@ recentSamples=[]
 
 Analyze ALL data thoroughly. Return JSON only."""
 
-        # Run 5 AIs in TRULY PARALLEL using litellm.acompletion
         import litellm
         EMERGENT_PROXY = "https://integrations.emergentagent.com/llm"
 
@@ -400,11 +365,10 @@ Analyze ALL data thoroughly. Return JSON only."""
             aio.ensure_future(call_grok("grok")),
         ]
 
-        # FIRST-3-WINS: Take the first 3 valid results
         MIN_RESULTS = 3
         ai_results = []
         pending = set(ai_tasks)
-        deadline = t0 + 48  # absolute cap: 48s from route start
+        deadline = t0 + 48
 
         while pending and len(ai_results) < MIN_RESULTS and _t.time() < deadline:
             remaining_time = max(0.1, deadline - _t.time())
@@ -419,12 +383,10 @@ Analyze ALL data thoroughly. Return JSON only."""
                 except Exception:
                     pass
 
-        # Cancel stragglers
         for t in pending:
             t.cancel()
-        print(f"[BBALL TIMING] AIs done: {_t.time()-t0:.1f}s total, {len(ai_results)} succeeded ({', '.join(r.get('_source','?') for r in ai_results)})")
+        print(f"[BBALL TIMING] AIs done: {_t.time()-t0:.1f}s, {len(ai_results)} succeeded ({', '.join(r.get('_source','?') for r in ai_results)})")
 
-        # Collect valid predictions
         valid_preds = []
         for i, r in enumerate(ai_results):
             if isinstance(r, dict) and r.get("projectedValue") is not None:
@@ -452,7 +414,6 @@ Analyze ALL data thoroughly. Return JSON only."""
                     conf_values.append(c * 100 if c <= 1 else c)
             prediction["confidenceScore"] = round(sum(conf_values) / len(conf_values)) if conf_values else 50
 
-            # TEXT FIELDS: Prioritize Grok, fall back to longest
             grok_pred = next((p for p in valid_preds if p.get("_source") == "grok"), None)
             for field in ["tacticalBreakdown", "reasoning", "sharpSummary", "scenarioAnalysis", "keyEvidence"]:
                 if grok_pred and len(str(grok_pred.get(field, ""))) > 50:
@@ -461,7 +422,6 @@ Analyze ALL data thoroughly. Return JSON only."""
                     best = max(valid_preds, key=lambda p: len(str(p.get(field, ""))))
                     prediction[field] = best.get(field, "")
 
-            # Consensus note
             recs = [p.get("recommendation", "over") for p in valid_preds]
             sources = [p.get("_source", "?") for p in valid_preds]
             over_count = sum(1 for r in recs if r == "over")
@@ -469,23 +429,22 @@ Analyze ALL data thoroughly. Return JSON only."""
             if all(r == prediction["recommendation"] for r in recs):
                 consensus += f"Unanimous {prediction['recommendation'].upper()}."
             else:
-                consensus += f"Split: {over_count} OVER, {len(recs)-over_count} UNDER. Consensus projection {avg_proj} vs line {req.line} → {prediction['recommendation'].upper()}."
+                consensus += f"Split: {over_count} OVER, {len(recs)-over_count} UNDER. Consensus → {prediction['recommendation'].upper()}."
             prediction["consensusNote"] = consensus
         else:
             pv = prediction.get("projectedValue", req.line)
             prediction["recommendation"] = "over" if pv > req.line else "under"
 
-        # Clean up source tags
         for p in valid_preds:
             p.pop("_source", None)
         prediction.pop("_source", None)
 
-        # Set confidence level
         cs = prediction.get("confidenceScore", 50)
         prediction["confidenceLevel"] = "Very High" if cs >= 75 else "High" if cs >= 65 else "Medium" if cs >= 50 else "Low"
 
         # Ensure required fields
-        prediction.setdefault("player", {"id": 0, "name": req.playerName, "team": req.teamName, "position": ""})
+        player_pos = player_info.get("position", "") if player_info else ""
+        prediction.setdefault("player", {"id": player_id or 0, "name": req.playerName, "team": req.teamName, "position": player_pos})
         prediction.setdefault("opponent", req.opponentName)
         prediction.setdefault("propType", req.propType)
         prediction.setdefault("line", req.line)
@@ -498,34 +457,33 @@ Analyze ALL data thoroughly. Return JSON only."""
         prediction.setdefault("bayesianMetrics", {"priorMean": req.line, "momentumEffect": 0, "covariateAdjustment": 0, "reversalFlag": "stable"})
         prediction.setdefault("probabilityCurve", [])
 
-        # Override with real game log data
         if real_recent_samples:
             prediction["recentSamples"] = real_recent_samples
 
-        # Set matchup overview from real data
         real_matchup = prediction.get("matchupOverview", {})
         real_matchup["homeTeam"] = req.teamName if player_venue == "home" else req.opponentName
         real_matchup["awayTeam"] = req.opponentName if player_venue == "home" else req.teamName
         prediction["matchupOverview"] = real_matchup
 
-        # Player game log summary for frontend
         if stat_values:
+            recent_vals = stat_values[:20]
+            home_v = [g["targetStat"] for g in player_game_logs[:20] if g.get("venue") == "home" and g.get("targetStat") is not None]
+            away_v = [g["targetStat"] for g in player_game_logs[:20] if g.get("venue") == "away" and g.get("targetStat") is not None]
             prediction["playerGameLogs"] = {
                 "targetProp": req.propType,
-                "sampleSize": len(stat_values),
-                "rawAvg": round(sum(stat_values) / len(stat_values), 1),
-                "rawMin": min(stat_values),
-                "rawMax": max(stat_values),
-                "stdDev": round(stats_mod.stdev(stat_values), 2) if len(stat_values) >= 3 else 0,
-                "homeAvg": round(sum(v for g, v in zip(player_game_logs, stat_values) if g.get("venue") == "home") / max(1, sum(1 for g in player_game_logs if g.get("venue") == "home")), 1) if stat_values else 0,
-                "awayAvg": round(sum(v for g, v in zip(player_game_logs, stat_values) if g.get("venue") == "away") / max(1, sum(1 for g in player_game_logs if g.get("venue") == "away")), 1) if stat_values else 0,
+                "sampleSize": len(recent_vals),
+                "rawAvg": round(sum(recent_vals) / len(recent_vals), 1),
+                "rawMin": min(recent_vals),
+                "rawMax": max(recent_vals),
+                "stdDev": round(stats_mod.stdev(recent_vals), 2) if len(recent_vals) >= 3 else 0,
+                "homeAvg": round(sum(home_v) / len(home_v), 1) if home_v else 0,
+                "awayAvg": round(sum(away_v) / len(away_v), 1) if away_v else 0,
             }
 
-        # Data quality
         total_logs = len(player_game_logs)
-        if total_logs >= 5:
+        if total_logs >= 10:
             prediction["dataQuality"] = {"level": "good", "message": "", "gamesWithData": total_logs, "totalGames": total_logs}
-        elif total_logs >= 2:
+        elif total_logs >= 3:
             prediction["dataQuality"] = {"level": "limited", "message": f"Only {total_logs} game logs available.", "gamesWithData": total_logs, "totalGames": total_logs}
         else:
             prediction["dataQuality"] = {"level": "low", "message": f"Only {total_logs} game logs. Limited sample size.", "gamesWithData": total_logs, "totalGames": total_logs}
@@ -534,7 +492,6 @@ Analyze ALL data thoroughly. Return JSON only."""
         # SYNTHESIS STEP
         # ═══════════════════════════════════════
         rec = prediction.get('recommendation', 'over').upper()
-        line = prediction.get('line', req.line)
         proj = prediction.get('projectedValue', '?')
         conf = prediction.get('confidenceScore', '?')
         consensus_note = prediction.get('consensusNote', '')
@@ -543,7 +500,7 @@ Analyze ALL data thoroughly. Return JSON only."""
         for p in valid_preds:
             src = p.get("_source", "AI")
             bits = []
-            for field in ["tacticalBreakdown", "reasoning", "scenarioAnalysis", "keyEvidence", "sharpSummary", "gameFlowDynamics", "sensitivityTests", "subRisk", "uncertaintyNote"]:
+            for field in ["tacticalBreakdown", "reasoning", "scenarioAnalysis", "keyEvidence", "sharpSummary", "gameFlowDynamics"]:
                 val = p.get(field, "")
                 if isinstance(val, dict):
                     val = json.dumps(val)
@@ -555,34 +512,33 @@ Analyze ALL data thoroughly. Return JSON only."""
         synthesis_input = "\n\n".join(all_texts)
 
         try:
-            synth_prompt = f"""You are synthesizing multiple AI analyses into ONE elite tactical breakdown for an NBA {prop_label} prop prediction.
+            synth_prompt = f"""Synthesize multiple AI analyses into ONE elite tactical breakdown for an NBA {prop_label} prop prediction.
 
-FINAL VERDICT: {rec} {line} {prop_label} (Projected: {proj}, Confidence: {conf}%, {consensus_note})
+FINAL VERDICT: {rec} {req.line} {prop_label} (Projected: {proj}, Confidence: {conf}%, {consensus_note})
 Player: {req.playerName} ({req.teamName}) vs {req.opponentName} ({player_venue.upper()})
 
-Here are the individual AI analyses to synthesize:
-
+AI analyses:
 {synthesis_input[:4000]}
 
-Write a single cohesive ~1500 char markdown tactical breakdown. Format:
-**Verdict: {rec} {line} {prop_label}**
+Write ~1500 char markdown. Format:
+**Verdict: {rec} {req.line} {prop_label}**
 [1-2 sentence sharp summary with projection vs line]
 
 **Analysis**
-[3-4 sentences combining the BEST insights. Cite specific numbers: per-game averages, venue splits, sample sizes, opponent tendencies]
+[3-4 sentences. Cite specific numbers: per-game averages, venue splits, sample sizes]
 
 **Game Script Scenarios**
-[Best case / Worst case / Most likely — with stat projections for each]
+[Best case / Worst case / Most likely — with stat projections]
 
 **Key Evidence**
-[3-4 bullet points — strongest data points]
+[3-4 bullet points — strongest data]
 
 **Risk Radar**
 [Blowout risk, minutes, matchup, back-to-back, injury]
 
-**TL;DR** — {rec} {line} at {conf}% confidence. Projected: {proj} {prop_label.lower()}. {consensus_note}
+**TL;DR** — {rec} {req.line} at {conf}% confidence. Projected: {proj} {prop_label.lower()}. {consensus_note}
 
-Rules: No AI model names. Be specific with numbers. Be decisive."""
+Rules: No AI model names. Specific numbers. Decisive."""
 
             synth_resp = await aio.wait_for(
                 litellm.acompletion(
@@ -599,14 +555,11 @@ Rules: No AI model names. Be specific with numbers. Be decisive."""
             synth_text = synth_resp.choices[0].message.content.strip()
             if synth_text and len(synth_text) > 200:
                 prediction["tacticalBreakdown"] = synth_text
-                print(f"[BBALL TIMING] Synthesis done: {_t.time()-t0:.1f}s total, {len(synth_text)} chars")
+                print(f"[BBALL TIMING] Synthesis done: {_t.time()-t0:.1f}s, {len(synth_text)} chars")
         except Exception as synth_err:
             print(f"[BBALL SYNTHESIS] Fallback — {synth_err}")
 
-        # Mark as basketball
         prediction["sport"] = "basketball"
-
-        # Save to MongoDB
         prediction["_created"] = datetime.now(timezone.utc).isoformat()
         prediction["_request"] = req.model_dump()
         await db.basketball_predictions.insert_one(prediction)
@@ -622,9 +575,9 @@ Rules: No AI model names. Be specific with numbers. Be decisive."""
 
 @router.post("/basketball/search-teams")
 async def basketball_search_teams(req: dict):
-    """Search for basketball teams."""
+    """Search for NBA basketball teams."""
     query = req.get("query", "")
     if not query:
         raise HTTPException(status_code=400, detail="Query required")
-    teams = await search_teams(query)
+    teams = await search_nba_teams(query)
     return {"teams": [{"id": t.get("id"), "name": t.get("name"), "logo": t.get("logo", "")} for t in teams]}

@@ -35,9 +35,6 @@ const BASKETBALL_PROP_TYPES = [
   { key: 'assists', label: 'Assists', desc: 'Total assists' },
   { key: 'pts_reb_ast', label: 'Pts+Reb+Ast', desc: 'Points + Rebounds + Assists combined' },
   { key: 'three_pointers', label: '3-Pointers Made', desc: '3-point field goals made' },
-  { key: 'steals', label: 'Steals', desc: 'Total steals' },
-  { key: 'blocks', label: 'Blocks', desc: 'Total blocks' },
-  { key: 'turnovers', label: 'Turnovers', desc: 'Total turnovers' },
   { key: 'fgm', label: 'FG Made', desc: 'Field goals made' },
   { key: 'ftm', label: 'FT Made', desc: 'Free throws made' },
 ];
