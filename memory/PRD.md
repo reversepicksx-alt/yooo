@@ -3,6 +3,8 @@
 ## Problem Statement
 Multi-sport player prop analysis app. Users scan prop screenshots, AI extracts details, resolves players/teams, and runs a multi-AI consensus prediction pipeline. Supports Soccer, NBA, and WNBA with full live in-game tracking.
 
+LEGAL: ALL 3rd-party app names and player/team images removed. No AI model names (Grok, Gemini, GPT, Claude) in any user-facing UI text.
+
 ## Architecture
 - **Frontend**: React.js, Shadcn/UI, Lucide Icons, Manrope + JetBrains Mono fonts
 - **Backend**: FastAPI, Python asyncio, MongoDB
@@ -10,31 +12,8 @@ Multi-sport player prop analysis app. Users scan prop screenshots, AI extracts d
 - **Data Cache**: All leagues, teams, players in MongoDB
   - Soccer: `cache.py` — leagues, teams, squads, national teams
   - Basketball: `basketball_cache.py` — NBA (31 teams, 744 players) + WNBA (15 teams, 253 players)
-- **Prediction Pipeline**: 5-AI Consensus (Gemini 2.0 Flash, Grok 4.1 Fast, Grok 4 Fast, GPT-4.1-mini, GPT-4o-mini) first-3-wins + 8s grace for extras
+- **Prediction Pipeline**: 4-AI Consensus (Gemini 2.0 Flash, Grok 4.1 Fast, GPT-4.1-mini, Claude Haiku 4.5) temperature=0, 15s grace period
 - **Live Tracking**: Real-time in-game stats (basketball Q1-Q4/OT, soccer 1H/2H)
-
-## Key Bug Fixes Applied
-- **propType normalization**: Picks stored as display labels ("Pts+Reb+Ast") now normalized to internal keys ("pts_reb_ast") on save and in stat extraction
-- **PRA/compound props**: get_bball_stat_value normalizes "+" to "_" before lookup
-- **Timer handling**: "0" at halftime no longer breaks pace calculation
-- **Team resolution**: NBA league=12 filter prevents wrong team matches
-- **Game matching**: Live games always match regardless of pick timestamp
-- **Streak detection**: Fixed double-counting bug in streak logic
-- **League detection**: Basketball scan now returns league/leagueId (NBA=12, WNBA=13) from team cache instead of "Unknown"
-- **H2H data**: Sorted newest-first, filtered to finished games only, returned as `h2hGames` array in prediction response with frontend H2H section
-
-## Prediction Quality v2 — Advanced Analytics Engine (Feb 2026)
-- **Per-Minute Rate Analysis**: Computes production rate per minute, projects stat total from rate x avg minutes
-- **Role Classification**: Categorizes players as STAR (32+ min), STARTER (26-32), ROTATION (16-26), BENCH (<16)
-- **Line Proximity Z-Score**: Measures edge strength — COIN FLIP (<0.3σ), SLIGHT LEAN, MODERATE EDGE, STRONG EDGE, VERY STRONG EDGE
-- **Over/Under Rate**: Computes exact % of games player went OVER vs UNDER the specific line (season + L10)
-- **Statistical Lean**: Data-driven OVER/UNDER recommendation based on hit rates
-- **Consistency Score**: VERY CONSISTENT (70%+), MODERATE, or BOOM-BUST based on variance
-- **Streak Detection**: Tracks current consecutive OVER or UNDER streak
-- **Blowout Risk**: Estimates minute reduction risk from lopsided matchups
-- **Data-Driven Overrides**: If over-rate >= 70% and AI says UNDER, force OVER (and vice versa)
-- **Confidence Capping**: COIN FLIP scenarios capped at 52% confidence
-- **Projection Clamping**: AI projections clamped within 30% of rate-based projection
 
 ## Key Files
 - `/app/backend/routes/picks.py` — Unified live tracking (soccer + basketball), propType normalization
@@ -45,17 +24,38 @@ Multi-sport player prop analysis app. Users scan prop screenshots, AI extracts d
 - `/app/backend/routes/scan.py` — Sport-aware OCR scan
 - `/app/frontend/src/App.js` — UI with sport selector, tracking tab, live cards
 
+## Supported Basketball Props
+points, rebounds, assists, pts_reb_ast, pts_reb, pts_ast, reb_ast, blk_stl, steals, blocks, turnovers, three_pointers, fgm, ftm, fga, fta, tpa
+
+## Critical Rules
+- All identity fields (player.name, player.team, opponent) FORCE-SET from request data, never from AI output
+- Opponent resolution ALWAYS filters by same league (NBA=12, WNBA=13) to prevent cross-league matches
+- prediction["opponent"] = req.opponentName (force override, not setdefault)
+- prediction["player"] = {...} from req data (force override, not setdefault)
+- No AI model names in ANY user-facing text or data quality messages
+- temperature=0 on all AI models for deterministic output
+- Do NOT reintroduce GPT-4o (15x cost drain) or Gemini 2.5 Flash (fails JSON)
+
 ## Completed Work
 - Multi-sport (Soccer + Basketball/NBA/WNBA)
-- 5-AI consensus + synthesis engine (~20-30s)
+- 4-AI consensus + synthesis engine (~20-30s)
 - Basketball data cache (46 teams, 997 players)
 - Live in-game tracking (quarter, stats, pace, hit%)
 - Tracking ID (TRK-XXXXXXXX) on every card
 - Sport label on every card
 - propType normalization (display labels -> internal keys)
-- **Advanced analytics engine v2** (per-minute rates, role classification, z-scores, overrides, consistency, streaks)
+- Advanced analytics engine v2 (per-minute rates, role classification, z-scores, overrides, consistency, streaks)
 - Games tracked regardless of when pick was made
 - Auto-settle on game finish
+- **Compound prop types**: reb_ast, pts_reb, pts_ast, blk_stl (Feb 2026)
+- **Cross-league protection**: NBA/WNBA opponent resolution filtered by league (Feb 2026)
+- **Identity field hardening**: player/opponent/propType/line force-set from request data (Feb 2026)
+- **AI name scrubbing**: All AI model names removed from user-facing text (Feb 2026)
+
+## Pending Issues
+### P0: Soccer Odds / Moneyline
+- Previous agent removed `season` filter from API call but never verified if odds data flows through
+- Need to test soccer prediction and verify odds section populates
 
 ## Prioritized Backlog
 ### P1: Slip correlation analysis (multi-pick same game)
