@@ -694,7 +694,6 @@ Analyze the statistical verdict, per-minute projection, and over-rate FIRST. The
 
         ai_tasks = [
             aio.ensure_future(call_ai("gemini-2.0-flash", "gemini", "gemini")),
-            aio.ensure_future(call_ai("gpt-4o-mini", "gpt4omini")),
             aio.ensure_future(call_ai("gpt-4.1-mini", "gpt41mini")),
             aio.ensure_future(call_grok("grok", "grok-4-1-fast-non-reasoning")),
             aio.ensure_future(call_grok("grok2", "grok-4-fast-non-reasoning")),
@@ -773,9 +772,9 @@ Analyze the statistical verdict, per-minute projection, and over-rate FIRST. The
             over_count = sum(1 for r in recs if r == "over")
             under_count = len(recs) - over_count
             if all(r == prediction["recommendation"] for r in recs):
-                consensus = f"Unanimous {prediction['recommendation'].upper()} — {len(valid_preds)}/5 AI models agree."
+                consensus = f"Unanimous {prediction['recommendation'].upper()} — {len(valid_preds)}/4 AI models agree."
             else:
-                consensus = f"Split: {over_count}/5 OVER, {under_count}/5 UNDER. Consensus → {prediction['recommendation'].upper()}."
+                consensus = f"Split: {over_count}/4 OVER, {under_count}/4 UNDER. Consensus → {prediction['recommendation'].upper()}."
             prediction["consensusNote"] = consensus
         else:
             pv = prediction.get("projectedValue", req.line)
