@@ -458,18 +458,25 @@ async def _resolve_basketball_picks(extracted: list) -> dict:
                         best = live_teams[0]
                         resolved_team = {"teamId": best["id"], "teamName": best.get("name", team_hint)}
 
-        # Resolve opponent via CACHE first
+        # Resolve opponent via CACHE first — MUST filter by same league as player's team
         resolved_opp = None
         if opp_hint:
-            cached = await get_bball_team_by_name(opp_hint)
+            # First try: same league as player's team (prevents NBA vs WNBA cross-match)
+            if league_id:
+                cached = await get_bball_team_by_name(opp_hint, league_id=league_id)
+            else:
+                cached = await get_bball_team_by_name(opp_hint)
             if cached:
                 resolved_opp = {"teamId": cached["teamId"], "teamName": cached.get("name", opp_hint)}
-                # Use opponent's league if we didn't get it from the player's team
                 if not league_id:
                     league_id = cached.get("leagueId")
                     league_name = cached.get("leagueName")
             else:
-                opps = await search_bball_teams(opp_hint)
+                opps = await search_bball_teams(opp_hint, league_id=league_id)
+                if not opps and league_id:
+                    # Fallback: broader search, but REJECT cross-league matches
+                    all_opps = await search_bball_teams(opp_hint)
+                    opps = [t for t in all_opps if t.get("leagueId") == league_id] if league_id else all_opps
                 if opps:
                     best = opps[0]
                     resolved_opp = {"teamId": best["teamId"], "teamName": best.get("name", opp_hint)}
