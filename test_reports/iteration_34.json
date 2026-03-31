@@ -1,0 +1,78 @@
+{
+  "summary": "Iteration 34: Live Tracking Logic Tests - All 20 Tests Passed (100%). Verified all live tracking fixes: 1) Soccer fixture fetching uses 3 parallel API queries (date=today, date=yesterday, last=3) with deduplication by fixture ID, 2) Soccer fixture matching returns ANY live game immediately without opponent name check (opponent_name='Unknown' or empty still matches), 3) Soccer finished games still require opponent name + time proximity matching, 4) Basketball fixture matching returns ANY live game immediately without opponent name check, 5) Basketball finished games still require opponent name + time proximity matching, 6) Both prediction routes force-set player and opponent from request data.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "picks.py line 559-560", "issue": "Duplicate 'return g' statement (dead code) - FIXED by testing agent"}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "passed_tests": [
+    "GET /api/health returns 200 with status=ok",
+    "Soccer: Live game matches with opponent_name='Unknown'",
+    "Soccer: Live game matches with empty opponent name",
+    "Soccer: Live game matches even with wrong opponent name",
+    "Soccer: All live statuses (1H, 2H, ET, BT, P, LIVE, HT) match immediately without opponent check",
+    "Soccer: Finished game matches with correct opponent name",
+    "Soccer: Finished game does NOT match with wrong opponent name",
+    "Soccer: Finished game matches when opponent is 'Unknown' or empty",
+    "Soccer: Finished game time proximity check (within 48 hours)",
+    "Basketball: Live game matches with opponent_name='Unknown'",
+    "Basketball: Live game matches with empty opponent name",
+    "Basketball: All live statuses (Q1, Q2, Q3, Q4, OT, BT, HT) match immediately without opponent check",
+    "Basketball: Finished game matches with correct opponent name",
+    "Basketball: Finished game does NOT match with wrong opponent name",
+    "Basketball: Finished game matches when opponent is 'Unknown' or empty",
+    "Soccer: _process_soccer_live queries fixtures by date=today",
+    "Soccer: _process_soccer_live queries fixtures by date=yesterday",
+    "Soccer: _process_soccer_live queries fixtures with last=3",
+    "Soccer: _process_soccer_live uses asyncio.gather for parallel queries",
+    "Soccer: _process_soccer_live deduplicates fixtures by ID",
+    "Soccer prediction force-sets opponent from request",
+    "Soccer prediction force-sets player from request",
+    "Basketball prediction force-sets opponent from request",
+    "Basketball prediction force-sets player from request",
+    "Soccer live_statuses includes all expected: 1H, 2H, ET, BT, P, LIVE, HT",
+    "Soccer finished_statuses includes all expected: FT, AET, PEN",
+    "Basketball live_statuses includes all expected: Q1, Q2, Q3, Q4, OT, BT, HT",
+    "Basketball finished_statuses includes all expected: FT, AOT"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_live_tracking_iteration34.py",
+    "/app/test_reports/pytest/live_tracking_iteration34_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "picks.py _match_soccer_fixture (line ~341-384): Correctly returns ANY live game immediately without opponent check. For finished games, opponent matching is used only if opponent_name is not 'unknown', 'tbd', or empty.",
+    "picks.py _match_basketball_game (line ~517-561): Same logic as soccer - live games match immediately, finished games use opponent matching.",
+    "picks.py _process_soccer_live (line ~270-338): Correctly fires 3 parallel API queries (date=today, date=yesterday, last=3) and deduplicates by fixture ID using seen_ids set.",
+    "FIXED: Removed duplicate 'return g' statement on line 559-560 (dead code)"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_live_tracking_iteration34.py",
+    "/app/backend/routes/picks.py"
+  ],
+  "success_rate": {
+    "backend": "100% (20/20 tests passed)",
+    "frontend": "N/A (backend only testing)"
+  },
+  "test_credentials": "Email: josselj001@gmail.com",
+  "seed_data_creation": "None - unit tests with mock fixtures",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All live tracking fixes verified. Key changes: 1) Soccer fixture fetching now uses 3 parallel queries (date=today, date=yesterday, last=3) instead of just last=3 - this ensures live games are found since 'last' only returns finished games. 2) Both soccer and basketball fixture matching now return ANY live game immediately without opponent name check - a team can only play one game at a time. 3) For finished games, opponent matching is still used for accuracy but skipped if opponent is 'unknown', 'tbd', or empty.",
+  "verified_bug_fixes": {
+    "soccer_live_tracking_stuck_on_scheduled": {
+      "issue": "Soccer picks stayed stuck on SCHEDULED while basketball worked fine",
+      "root_cause_1": "Soccer fixture lookup used 'last=3' which only returns finished games, missing live ones",
+      "root_cause_2": "Opponent name matching was too strict - if opponentName was 'Unknown' or empty, the live game was never matched",
+      "fix_1": "Added date-based queries (today + yesterday) in parallel with last=3",
+      "fix_2": "Removed opponent name requirement for live games (a team can only play one game at a time)",
+      "verified": true
+    }
+  }
+}

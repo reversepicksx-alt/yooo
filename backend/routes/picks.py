@@ -282,23 +282,43 @@ async def _process_soccer_live(picks: list, email: str) -> list:
     async def process_team(team_id, picks_for_team):
         team_results = []
         try:
-            # Get team's most recent/live fixtures
-            fixtures = await api_football_request("fixtures", {"team": team_id, "last": 3})
-            if not fixtures:
-                fixtures = await api_football_request("fixtures", {"live": "all"})
-                if fixtures:
-                    fixtures = [f for f in fixtures if
-                        f.get("teams", {}).get("home", {}).get("id") == team_id or
-                        f.get("teams", {}).get("away", {}).get("id") == team_id]
+            # Get team's fixtures: LIVE first, then recent finished, then upcoming
+            # "last" only returns FINISHED fixtures — it skips live games!
+            # So we must also check "live" fixtures for this team directly
+            from datetime import timedelta
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
 
-            if not fixtures:
+            # Fire both calls in parallel: today's fixtures + last 3 finished
+            import asyncio as _aio
+            live_task = api_football_request("fixtures", {"team": team_id, "date": today})
+            yesterday_task = api_football_request("fixtures", {"team": team_id, "date": yesterday})
+            last_task = api_football_request("fixtures", {"team": team_id, "last": 3})
+
+            live_fixtures, yesterday_fixtures, last_fixtures = await _aio.gather(
+                live_task, yesterday_task, last_task, return_exceptions=True
+            )
+
+            # Merge all fixtures, dedup by fixture ID
+            all_fixtures = []
+            seen_ids = set()
+            for batch in [live_fixtures, yesterday_fixtures, last_fixtures]:
+                if isinstance(batch, Exception) or not batch:
+                    continue
+                for f in batch:
+                    fid = f.get("fixture", {}).get("id")
+                    if fid and fid not in seen_ids:
+                        seen_ids.add(fid)
+                        all_fixtures.append(f)
+
+            if not all_fixtures:
                 for pick in picks_for_team:
                     team_results.append({"pickId": pick["pickId"], "matchStatus": "scheduled"})
                 return team_results
 
             for pick in picks_for_team:
                 opponent_name = pick.get("opponentName", "")
-                matched_fixture = _match_soccer_fixture(fixtures, opponent_name, pick.get("timestamp", ""))
+                matched_fixture = _match_soccer_fixture(all_fixtures, opponent_name, pick.get("timestamp", ""))
 
                 if not matched_fixture:
                     team_results.append({"pickId": pick["pickId"], "matchStatus": "scheduled"})
@@ -320,39 +340,46 @@ async def _process_soccer_live(picks: list, email: str) -> list:
 
 def _match_soccer_fixture(fixtures: list, opponent_name: str, pick_ts) -> dict:
     """Find the matching fixture for a soccer pick.
-    KEY FIX: Live games match regardless of timestamp. Only finished games check timestamp."""
+    A team can only play ONE game at a time, so:
+    - If there's a LIVE game for this team, ALWAYS match it (no opponent check needed)
+    - For FINISHED games, use opponent name + time proximity for accuracy."""
+    live_statuses = {"1H", "2H", "ET", "BT", "P", "LIVE", "HT"}
+    finished_statuses = {"FT", "AET", "PEN"}
+
+    # First pass: find ANY live game (a team can only be in one live match)
     for f in fixtures:
-        home_name = f.get("teams", {}).get("home", {}).get("name", "")
-        away_name = f.get("teams", {}).get("away", {}).get("name", "")
         status_short = f.get("fixture", {}).get("status", {}).get("short", "")
-
-        if not (opponent_name.lower() in home_name.lower() or opponent_name.lower() in away_name.lower()):
-            continue
-
-        live_statuses = {"1H", "2H", "ET", "BT", "P", "LIVE", "HT"}
-        finished_statuses = {"FT", "AET", "PEN"}
-
-        # If the game is LIVE right now, always match it
         if status_short in live_statuses:
             return f
 
-        # If the game is FINISHED, only match if it started AROUND the pick time
-        # (allow games that started up to 12 hours before the pick — covers pre-game predictions)
-        if status_short in finished_statuses:
-            if pick_ts:
-                try:
-                    if isinstance(pick_ts, str):
-                        pick_dt = datetime.fromisoformat(pick_ts.replace("Z", "+00:00"))
-                    else:
-                        pick_dt = datetime.fromtimestamp(pick_ts / 1000, tz=timezone.utc)
-                    fix_dt = datetime.fromisoformat(f.get("fixture", {}).get("date", "").replace("Z", "+00:00"))
-                    # Allow if fixture started within 12 hours before OR after the pick
-                    diff_hours = abs((fix_dt - pick_dt).total_seconds()) / 3600
-                    if diff_hours > 48:
-                        continue  # Too far apart — probably an old match
-                except Exception:
-                    pass
-            return f
+    # Second pass: finished games — match by opponent name + time proximity
+    opp_lower = (opponent_name or "").lower().strip()
+    for f in fixtures:
+        status_short = f.get("fixture", {}).get("status", {}).get("short", "")
+        if status_short not in finished_statuses:
+            continue
+
+        # Try opponent name match if we have one
+        if opp_lower and opp_lower != "unknown" and opp_lower != "tbd":
+            home_name = f.get("teams", {}).get("home", {}).get("name", "")
+            away_name = f.get("teams", {}).get("away", {}).get("name", "")
+            if not (opp_lower in home_name.lower() or opp_lower in away_name.lower()):
+                continue
+
+        # Check time proximity
+        if pick_ts:
+            try:
+                if isinstance(pick_ts, str):
+                    pick_dt = datetime.fromisoformat(pick_ts.replace("Z", "+00:00"))
+                else:
+                    pick_dt = datetime.fromtimestamp(pick_ts / 1000, tz=timezone.utc)
+                fix_dt = datetime.fromisoformat(f.get("fixture", {}).get("date", "").replace("Z", "+00:00"))
+                diff_hours = abs((fix_dt - pick_dt).total_seconds()) / 3600
+                if diff_hours > 48:
+                    continue
+            except Exception:
+                pass
+        return f
 
     return None
 
@@ -488,34 +515,32 @@ async def _process_basketball_live(picks: list, email: str) -> list:
 
 
 def _match_basketball_game(games: list, opponent_name: str, team_id: int, pick_ts) -> dict:
-    """Find the matching basketball game. LIVE games always match.
-    Finished games match if within 48h of pick time."""
+    """Find the matching basketball game.
+    A team can only play ONE game at a time, so:
+    - LIVE game → ALWAYS match (no opponent check needed)
+    - FINISHED game → match by opponent name + time proximity"""
     live_statuses = {"Q1", "Q2", "Q3", "Q4", "OT", "BT", "HT"}
     finished_statuses = {"FT", "AOT"}
 
-    opp_lower = opponent_name.lower()
-
-    # First pass: find LIVE games (highest priority)
+    # First pass: ANY live game for this team (a team can only be in one live match)
     for g in games:
         status = g.get("status", {}).get("short", "")
-        if status not in live_statuses:
-            continue
-        home = g.get("teams", {}).get("home", {})
-        away = g.get("teams", {}).get("away", {})
-        opp = away if home.get("id") == team_id else home
-        if opp_lower in opp.get("name", "").lower() or opp.get("name", "").lower() in opp_lower:
+        if status in live_statuses:
             return g
 
-    # Second pass: finished games within time window
+    # Second pass: finished games — use opponent name + time proximity
+    opp_lower = (opponent_name or "").lower().strip()
     for g in games:
         status = g.get("status", {}).get("short", "")
         if status not in finished_statuses:
             continue
-        home = g.get("teams", {}).get("home", {})
-        away = g.get("teams", {}).get("away", {})
-        opp = away if home.get("id") == team_id else home
-        if not (opp_lower in opp.get("name", "").lower() or opp.get("name", "").lower() in opp_lower):
-            continue
+        # Try opponent name match if we have one
+        if opp_lower and opp_lower != "unknown" and opp_lower != "tbd":
+            home = g.get("teams", {}).get("home", {})
+            away = g.get("teams", {}).get("away", {})
+            opp = away if home.get("id") == team_id else home
+            if not (opp_lower in opp.get("name", "").lower() or opp.get("name", "").lower() in opp_lower):
+                continue
         # Check time proximity
         if pick_ts:
             try:
