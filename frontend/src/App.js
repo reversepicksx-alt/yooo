@@ -1886,7 +1886,7 @@ export default function App() {
                         }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <div>
-                              <div style={{ fontSize: 14, fontWeight: 800, color: '#fff' }}>{pred.player}</div>
+                              <div style={{ fontSize: 14, fontWeight: 800, color: '#fff' }}>{pred.player?.name || pred.player || 'Unknown'}</div>
                               <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>{pred.team || ''}</div>
                             </div>
                             <div style={{ textAlign: 'right' }}>

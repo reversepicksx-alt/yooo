@@ -693,9 +693,9 @@ Analyze the statistical verdict, per-minute projection, and over-rate FIRST. The
 
         ai_tasks = [
             aio.ensure_future(call_ai("gemini-2.0-flash", "gemini", "gemini")),
-            aio.ensure_future(call_ai("gemini-2.5-flash", "gemini25", "gemini")),
+            aio.ensure_future(call_ai("gpt-4o-mini", "gpt4omini")),
             aio.ensure_future(call_ai("gpt-4o", "gpt4o")),
-            aio.ensure_future(call_ai("claude-sonnet-4-20250514", "claude")),
+            aio.ensure_future(call_ai("claude-haiku-4-5", "haiku")),
             aio.ensure_future(call_grok("grok")),
         ]
 
@@ -719,7 +719,7 @@ Analyze the statistical verdict, per-minute projection, and over-rate FIRST. The
 
         # Grab any additional results that finished while we were processing (don't wait, just collect)
         if pending:
-            done_extra, still_pending = await aio.wait(pending, timeout=2.0, return_when=aio.ALL_COMPLETED)
+            done_extra, still_pending = await aio.wait(pending, timeout=8.0, return_when=aio.ALL_COMPLETED)
             for t in done_extra:
                 try:
                     r = t.result()
