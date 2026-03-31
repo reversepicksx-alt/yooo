@@ -10,7 +10,7 @@ Multi-sport player prop analysis app. Users scan prop screenshots, AI extracts d
 - **Data Cache**: All leagues, teams, players in MongoDB
   - Soccer: `cache.py` — leagues, teams, squads, national teams
   - Basketball: `basketball_cache.py` — NBA (31 teams, 744 players) + WNBA (15 teams, 253 players)
-- **Prediction Pipeline**: 5-AI Consensus (GPT-4o, Gemini 2.0 Flash, GPT-4o-mini, Claude Haiku 4.5, Grok) first-3-wins + 8s grace for extras
+- **Prediction Pipeline**: 5-AI Consensus (Gemini 2.0 Flash, Grok 4.1 Fast, Grok 4 Fast, GPT-4.1-mini, GPT-4o-mini) first-3-wins + 8s grace for extras
 - **Live Tracking**: Real-time in-game stats (basketball Q1-Q4/OT, soccer 1H/2H)
 
 ## Key Bug Fixes Applied

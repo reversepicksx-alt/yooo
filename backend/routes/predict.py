@@ -920,7 +920,7 @@ Analyze ALL data thoroughly. Return JSON only."""
                 print(f"[MULTI-AI] {label} failed: {e}")
                 return None
 
-        async def call_grok(label="grok"):
+        async def call_grok(label="grok", model="grok-4-1-fast-non-reasoning"):
             try:
                 grok_client = OpenAI(api_key=XAI_API_KEY, base_url="https://api.x.ai/v1")
                 grok_messages = [
@@ -930,7 +930,7 @@ Analyze ALL data thoroughly. Return JSON only."""
                 loop = aio.get_event_loop()
                 def _run():
                     return grok_client.chat.completions.create(
-                        model="grok-4-1-fast-non-reasoning",
+                        model=model,
                         messages=grok_messages,
                         max_tokens=2500,
                         temperature=0.3,
@@ -959,8 +959,8 @@ Analyze ALL data thoroughly. Return JSON only."""
             aio.ensure_future(call_ai("gemini-2.0-flash", "gemini", "gemini")),
             aio.ensure_future(call_ai("gpt-4o-mini", "gpt4omini")),
             aio.ensure_future(call_ai("gpt-4.1-mini", "gpt41mini")),
-            aio.ensure_future(call_ai("claude-haiku-4-5", "haiku")),
-            aio.ensure_future(call_grok("grok")),
+            aio.ensure_future(call_grok("grok", "grok-4-1-fast-non-reasoning")),
+            aio.ensure_future(call_grok("grok2", "grok-4-fast-non-reasoning")),
         ]
 
         # FIRST-3-WINS: Take the first 3 valid results, then grab any extras
