@@ -33,6 +33,13 @@ BBALL_STAT_FIELD_MAP = {
     "rebounds": "rebounds",
     "assists": "assists",
     "pts_reb_ast": None,
+    "pts_reb": None,
+    "pts_ast": None,
+    "reb_ast": None,
+    "blk_stl": None,
+    "steals": "steals",
+    "blocks": "blocks",
+    "turnovers": "turnovers",
     "three_pointers": "tpm",
     "fgm": "fgm",
     "ftm": "ftm",
@@ -46,6 +53,13 @@ BBALL_PROP_LABELS = {
     "rebounds": "Rebounds",
     "assists": "Assists",
     "pts_reb_ast": "Pts+Reb+Ast",
+    "pts_reb": "Pts+Reb",
+    "pts_ast": "Pts+Ast",
+    "reb_ast": "Reb+Ast",
+    "blk_stl": "Blk+Stl",
+    "steals": "Steals",
+    "blocks": "Blocks",
+    "turnovers": "Turnovers",
     "three_pointers": "3-Point FG Made",
     "fgm": "FG Made",
     "ftm": "FT Made",
@@ -77,6 +91,10 @@ def get_stat_value(parsed: dict, prop_type: str):
     pt = prop_type.lower().replace("+", "_").replace(" ", "_").replace("-", "_")
     label_map = {
         "pts_reb_ast": "pts_reb_ast",
+        "pts_reb": "pts_reb",
+        "pts_ast": "pts_ast",
+        "reb_ast": "reb_ast",
+        "blk_stl": "blk_stl",
         "3_pointers_made": "three_pointers",
         "3_point_fg_made": "three_pointers",
         "fg_made": "fgm", "ft_made": "ftm",
@@ -87,6 +105,14 @@ def get_stat_value(parsed: dict, prop_type: str):
 
     if pt == "pts_reb_ast":
         return (parsed.get("points", 0) or 0) + (parsed.get("rebounds", 0) or 0) + (parsed.get("assists", 0) or 0)
+    if pt == "reb_ast":
+        return (parsed.get("rebounds", 0) or 0) + (parsed.get("assists", 0) or 0)
+    if pt == "pts_reb":
+        return (parsed.get("points", 0) or 0) + (parsed.get("rebounds", 0) or 0)
+    if pt == "pts_ast":
+        return (parsed.get("points", 0) or 0) + (parsed.get("assists", 0) or 0)
+    if pt == "blk_stl":
+        return (parsed.get("blocks", 0) or 0) + (parsed.get("steals", 0) or 0)
     field = BBALL_STAT_FIELD_MAP.get(pt, pt)
     return parsed.get(field, 0) or 0 if field else 0
 

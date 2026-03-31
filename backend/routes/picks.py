@@ -46,7 +46,7 @@ async def save_pick(req: SavePickRequest):
     # Detect sport from prediction data
     sport = pick.get("sport", "soccer")
     if not sport or sport == "soccer":
-        bball_props = {"points", "rebounds", "assists", "pts_reb_ast", "three_pointers", "fgm", "ftm", "fga", "fta", "tpa"}
+        bball_props = {"points", "rebounds", "assists", "pts_reb_ast", "pts_reb", "pts_ast", "reb_ast", "blk_stl", "steals", "blocks", "turnovers", "three_pointers", "fgm", "ftm", "fga", "fta", "tpa"}
         if normalized_prop in bball_props:
             sport = "basketball"
 
@@ -202,6 +202,10 @@ def get_bball_stat_value(parsed: dict, prop_type: str):
     # Also handle display labels
     label_map = {
         "pts_reb_ast": "pts_reb_ast",
+        "pts_reb": "pts_reb",
+        "pts_ast": "pts_ast",
+        "reb_ast": "reb_ast",
+        "blk_stl": "blk_stl",
         "3_pointers_made": "three_pointers",
         "3_point_fg_made": "three_pointers",
         "fg_made": "fgm",
@@ -214,6 +218,14 @@ def get_bball_stat_value(parsed: dict, prop_type: str):
 
     if pt == "pts_reb_ast":
         return (parsed.get("points", 0) or 0) + (parsed.get("rebounds", 0) or 0) + (parsed.get("assists", 0) or 0)
+    if pt == "reb_ast":
+        return (parsed.get("rebounds", 0) or 0) + (parsed.get("assists", 0) or 0)
+    if pt == "pts_reb":
+        return (parsed.get("points", 0) or 0) + (parsed.get("rebounds", 0) or 0)
+    if pt == "pts_ast":
+        return (parsed.get("points", 0) or 0) + (parsed.get("assists", 0) or 0)
+    if pt == "blk_stl":
+        return (parsed.get("blocks", 0) or 0) + (parsed.get("steals", 0) or 0)
     field = BBALL_STAT_MAP.get(pt, pt)
     return parsed.get(field, 0) or 0
 

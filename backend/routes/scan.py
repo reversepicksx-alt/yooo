@@ -24,16 +24,37 @@ VALID_SOCCER_PROPS = {
 }
 
 VALID_BASKETBALL_PROPS = {
-    "points", "rebounds", "assists", "pts_reb_ast", "three_pointers",
+    "points", "rebounds", "assists", "pts_reb_ast", "pts_reb", "pts_ast",
+    "reb_ast", "blk_stl", "three_pointers",
     "fgm", "ftm", "fga", "fta", "tpa",
+    "steals", "blocks", "turnovers",
 }
 
 BASKETBALL_PROP_ALIASES = {
     "point": "points", "pts": "points", "pt": "points",
     "rebound": "rebounds", "reb": "rebounds", "total rebounds": "rebounds",
     "assist": "assists", "ast": "assists",
+    # Compound: PRA
     "pts+reb+ast": "pts_reb_ast", "pra": "pts_reb_ast", "points+rebounds+assists": "pts_reb_ast",
-    "pts + reb + ast": "pts_reb_ast", "combo": "pts_reb_ast",
+    "pts + reb + ast": "pts_reb_ast", "pts_reb_ast": "pts_reb_ast",
+    # Compound: Reb+Ast
+    "rebs+asts": "reb_ast", "reb+ast": "reb_ast", "rebounds+assists": "reb_ast",
+    "reb + ast": "reb_ast", "rebs + asts": "reb_ast", "ra": "reb_ast",
+    "rebounds + assists": "reb_ast", "reb_ast": "reb_ast",
+    # Compound: Pts+Reb
+    "pts+reb": "pts_reb", "points+rebounds": "pts_reb", "pts + reb": "pts_reb",
+    "pts_reb": "pts_reb", "points + rebounds": "pts_reb", "pr": "pts_reb",
+    # Compound: Pts+Ast
+    "pts+ast": "pts_ast", "points+assists": "pts_ast", "pts + ast": "pts_ast",
+    "pts_ast": "pts_ast", "points + assists": "pts_ast", "pa": "pts_ast",
+    # Compound: Blk+Stl
+    "blks+stls": "blk_stl", "blk+stl": "blk_stl", "blocks+steals": "blk_stl",
+    "blk + stl": "blk_stl", "blks + stls": "blk_stl", "blocks + steals": "blk_stl",
+    "blk_stl": "blk_stl",
+    # Singles
+    "steal": "steals", "stl": "steals",
+    "block": "blocks", "blk": "blocks",
+    "turnover": "turnovers", "to": "turnovers", "tov": "turnovers",
     "three pointer": "three_pointers", "3pt": "three_pointers", "3pm": "three_pointers",
     "3-point fg": "three_pointers", "threes": "three_pointers", "3-pointers made": "three_pointers",
     "three pointers made": "three_pointers", "3 pointers": "three_pointers", "threes made": "three_pointers",
@@ -356,7 +377,7 @@ CRITICAL RULES:
 
 Extract:
 1. playerName — Full name as displayed
-2. propType — Map to one of: points, rebounds, assists, pts_reb_ast, three_pointers, fgm, ftm, fga, fta, tpa
+2. propType — Map to one of: points, rebounds, assists, pts_reb_ast, pts_reb, pts_ast, reb_ast, blk_stl, steals, blocks, turnovers, three_pointers, fgm, ftm, fga, fta, tpa
 3. line — The numerical line (e.g., 24.5, 7.5, 5.5)
 4. opponentName — The opposing team
 5. playerTeam — The player's team
@@ -367,12 +388,21 @@ PROP TYPE MAPPING:
 - "Rebounds" / "Reb" / "Total Rebounds" → rebounds
 - "Assists" / "Ast" / "AST" → assists
 - "Pts+Reb+Ast" / "PRA" / "Points+Rebounds+Assists" → pts_reb_ast
+- "Rebs+Asts" / "Reb+Ast" / "Rebounds+Assists" → reb_ast
+- "Pts+Reb" / "Points+Rebounds" → pts_reb
+- "Pts+Ast" / "Points+Assists" → pts_ast
+- "Blks+Stls" / "Blocks+Steals" → blk_stl
+- "Steals" / "Stl" → steals
+- "Blocks" / "Blk" → blocks
+- "Turnovers" / "TO" / "TOV" → turnovers
 - "3-Point FG" / "3PM" / "Threes" / "Three Pointers Made" / "3-Pointers Made" / "3PTM" → three_pointers
 - "FG Made" / "FGM" / "Field Goals Made" → fgm
 - "FT Made" / "FTM" / "Free Throws Made" → ftm
 - "FG Attempted" / "FGA" → fga
 - "FT Attempted" / "FTA" → fta
 - "3PT Attempts" / "3PA" → tpa
+
+CRITICAL: "Rebs+Asts" is reb_ast (NOT pts_reb_ast). Only include Points in the combo if "Pts" appears in the label.
 
 RETURN FORMAT (JSON array):
 [{"playerName":"...","propType":"...","line":0.0,"opponentName":"...","playerTeam":"...","venue":"home or away","sport":"basketball"}]
