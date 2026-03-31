@@ -11,8 +11,15 @@ from models import (
     CorrectPickRequest, LiveUpdateRequest, SettlePicksRequest,
 )
 from utils import api_football_request
+from basketball_utils import _api_get as bball_api_get, parse_player_stat, get_current_nba_season
 
 router = APIRouter(prefix="/api", tags=["picks"])
+
+
+def generate_tracking_id():
+    """Generate a unique tracking ID for every pick."""
+    return f"TRK-{uuid.uuid4().hex[:8].upper()}"
+
 
 @router.post("/picks/save")
 async def save_pick(req: SavePickRequest):
@@ -21,9 +28,21 @@ async def save_pick(req: SavePickRequest):
         raise HTTPException(status_code=401, detail="Invalid session")
     pick = req.pick
     pick_id = pick.get("id") or str(uuid.uuid4())[:8]
+    tracking_id = generate_tracking_id()
+
+    # Detect sport from prediction data
+    sport = pick.get("sport", "soccer")
+    if not sport or sport == "soccer":
+        # Check if it looks like a basketball pick
+        bball_props = {"points", "rebounds", "assists", "pts_reb_ast", "three_pointers", "fgm", "ftm", "fga", "fta", "tpa"}
+        if pick.get("propType", "") in bball_props:
+            sport = "basketball"
+
     doc = {
         "pickId": pick_id,
+        "trackingId": tracking_id,
         "email": req.email.lower(),
+        "sport": sport,
         "playerId": pick.get("player", {}).get("id"),
         "playerName": pick.get("player", {}).get("name", ""),
         "teamName": pick.get("player", {}).get("team", ""),
@@ -47,7 +66,7 @@ async def save_pick(req: SavePickRequest):
         "settledAt": None,
     }
     await db.picks.update_one({"pickId": pick_id, "email": req.email.lower()}, {"$set": doc}, upsert=True)
-    return {"success": True, "pickId": pick_id}
+    return {"success": True, "pickId": pick_id, "trackingId": tracking_id}
 
 @router.post("/picks/list")
 async def list_picks(req: GetPicksRequest):
@@ -55,6 +74,47 @@ async def list_picks(req: GetPicksRequest):
     if not session:
         raise HTTPException(status_code=401, detail="Invalid session")
     picks = await db.picks.find({"email": req.email.lower()}, {"_id": 0}).sort("timestamp", -1).to_list(100)
+
+    # Backfill trackingId and sport for any old picks that don't have them
+    bball_props = {"points", "rebounds", "assists", "pts_reb_ast", "three_pointers", "fgm", "ftm", "fga", "fta", "tpa"}
+    from basketball_cache import get_bball_player_by_name
+    for p in picks:
+        updates = {}
+        if not p.get("trackingId"):
+            tid = generate_tracking_id()
+            p["trackingId"] = tid
+            updates["trackingId"] = tid
+        if not p.get("sport") or p.get("sport") == "soccer":
+            prop_lower = (p.get("propType", "") or "").lower()
+            # Check if this player is in the basketball cache
+            if prop_lower in bball_props:
+                bball_player = await get_bball_player_by_name(p.get("playerName", ""))
+                if bball_player:
+                    sport = "basketball"
+                    p["sport"] = sport
+                    updates["sport"] = sport
+                    # Fix teamId/opponentId from cache
+                    if bball_player.get("teamId"):
+                        updates["teamId"] = bball_player["teamId"]
+                        updates["teamName"] = bball_player.get("teamName", "")
+                        p["teamId"] = bball_player["teamId"]
+                        p["teamName"] = bball_player.get("teamName", "")
+                    # Normalize propType to lowercase
+                    if prop_lower != p.get("propType", ""):
+                        updates["propType"] = prop_lower
+                        p["propType"] = prop_lower
+                elif not p.get("sport"):
+                    p["sport"] = "soccer"
+                    updates["sport"] = "soccer"
+            elif not p.get("sport"):
+                p["sport"] = "soccer"
+                updates["sport"] = "soccer"
+        if updates:
+            await db.picks.update_one(
+                {"pickId": p["pickId"], "email": req.email.lower()},
+                {"$set": updates}
+            )
+
     return {"picks": picks}
 
 @router.post("/picks/delete")
@@ -95,10 +155,47 @@ async def correct_pick(req: CorrectPickRequest):
 # LIVE TRACKING — Real-time in-game stats
 # =============================================
 
+# Soccer stat extraction map
+SOCCER_STAT_MAP = {
+    "pass_attempts": lambda s: s.get("passes", {}).get("total"),
+    "shots": lambda s: s.get("shots", {}).get("total"),
+    "shots_on_target": lambda s: s.get("shots", {}).get("on"),
+    "tackles": lambda s: s.get("tackles", {}).get("total"),
+    "key_passes": lambda s: s.get("passes", {}).get("key"),
+    "saves": lambda s: s.get("goals", {}).get("saves"),
+    "interceptions": lambda s: s.get("tackles", {}).get("interceptions"),
+    "blocks": lambda s: s.get("tackles", {}).get("blocks"),
+    "dribbles": lambda s: s.get("dribbles", {}).get("attempts"),
+    "fouls_drawn": lambda s: s.get("fouls", {}).get("drawn"),
+}
+
+# Basketball stat extraction (from parsed player stat)
+BBALL_STAT_MAP = {
+    "points": "points",
+    "rebounds": "rebounds",
+    "assists": "assists",
+    "three_pointers": "tpm",
+    "fgm": "fgm",
+    "ftm": "ftm",
+    "fga": "fga",
+    "fta": "fta",
+    "tpa": "tpa",
+}
+
+
+def get_bball_stat_value(parsed: dict, prop_type: str):
+    """Extract basketball stat value from parsed player stat."""
+    pt = prop_type.lower()
+    if pt == "pts_reb_ast":
+        return (parsed.get("points", 0) or 0) + (parsed.get("rebounds", 0) or 0) + (parsed.get("assists", 0) or 0)
+    field = BBALL_STAT_MAP.get(pt, pt)
+    return parsed.get(field, 0) or 0
+
 
 @router.post("/picks/live-update")
 async def live_update_picks(req: LiveUpdateRequest):
-    """For each live pick, check if match is in progress or finished. Return current stats."""
+    """For each live pick, check if match is live or finished. Return current stats.
+    Handles BOTH soccer and basketball picks."""
     session = await db.sessions.find_one({"email": req.email.lower(), "session_token": req.token}, {"_id": 0})
     if not session:
         raise HTTPException(status_code=401, detail="Invalid session")
@@ -107,37 +204,49 @@ async def live_update_picks(req: LiveUpdateRequest):
     if not live_picks:
         return {"updates": []}
 
-    stat_map = {
-        "pass_attempts": lambda s: s.get("passes", {}).get("total"),
-        "shots": lambda s: s.get("shots", {}).get("total"),
-        "shots_on_target": lambda s: s.get("shots", {}).get("on"),
-        "tackles": lambda s: s.get("tackles", {}).get("total"),
-        "key_passes": lambda s: s.get("passes", {}).get("key"),
-        "saves": lambda s: s.get("goals", {}).get("saves"),
-        "interceptions": lambda s: s.get("tackles", {}).get("interceptions"),
-        "blocks": lambda s: s.get("tackles", {}).get("blocks"),
-        "dribbles": lambda s: s.get("dribbles", {}).get("attempts"),
-        "fouls_drawn": lambda s: s.get("fouls", {}).get("drawn"),
-    }
-
-    # Group picks by team to minimize API calls
-    team_picks = {}
+    # Split picks by sport
+    soccer_picks = []
+    basketball_picks = []
     for pick in live_picks:
+        sport = pick.get("sport", "soccer")
+        if sport == "basketball":
+            basketball_picks.append(pick)
+        else:
+            soccer_picks.append(pick)
+
+    updates = []
+
+    # ── SOCCER LIVE TRACKING ──
+    if soccer_picks:
+        soccer_updates = await _process_soccer_live(soccer_picks, req.email.lower())
+        updates.extend(soccer_updates)
+
+    # ── BASKETBALL LIVE TRACKING ──
+    if basketball_picks:
+        bball_updates = await _process_basketball_live(basketball_picks, req.email.lower())
+        updates.extend(bball_updates)
+
+    return {"updates": updates}
+
+
+async def _process_soccer_live(picks: list, email: str) -> list:
+    """Process soccer picks for live updates."""
+    # Group by team
+    team_picks = {}
+    for pick in picks:
         tid = pick.get("teamId", 0)
         if tid not in team_picks:
             team_picks[tid] = []
         team_picks[tid].append(pick)
 
-    updates = []
+    results = []
 
-    async def process_team_picks(team_id, picks_for_team):
-        """Find the fixture for this team and get live/final stats for each pick."""
-        results = []
+    async def process_team(team_id, picks_for_team):
+        team_results = []
         try:
             # Get team's most recent/live fixtures
             fixtures = await api_football_request("fixtures", {"team": team_id, "last": 3})
             if not fixtures:
-                # Also check live fixtures
                 fixtures = await api_football_request("fixtures", {"live": "all"})
                 if fixtures:
                     fixtures = [f for f in fixtures if
@@ -145,152 +254,399 @@ async def live_update_picks(req: LiveUpdateRequest):
                         f.get("teams", {}).get("away", {}).get("id") == team_id]
 
             if not fixtures:
-                return results
+                for pick in picks_for_team:
+                    team_results.append({"pickId": pick["pickId"], "matchStatus": "scheduled"})
+                return team_results
 
             for pick in picks_for_team:
                 opponent_name = pick.get("opponentName", "")
-                pick_ts = pick.get("timestamp", "")
-
-                # Find the matching fixture
-                matched_fixture = None
-                for f in fixtures:
-                    home_name = f.get("teams", {}).get("home", {}).get("name", "")
-                    away_name = f.get("teams", {}).get("away", {}).get("name", "")
-                    status_short = f.get("fixture", {}).get("status", {}).get("short", "")
-                    fixture_date = f.get("fixture", {}).get("date", "")
-
-                    if not (opponent_name.lower() in home_name.lower() or opponent_name.lower() in away_name.lower()):
-                        continue
-
-                    # Must be after pick was created
-                    try:
-                        if pick_ts:
-                            pick_dt = datetime.fromisoformat(pick_ts.replace("Z", "+00:00")) if isinstance(pick_ts, str) else datetime.fromtimestamp(pick_ts / 1000, tz=timezone.utc)
-                            fix_dt = datetime.fromisoformat(fixture_date.replace("Z", "+00:00"))
-                            if fix_dt < pick_dt:
-                                continue
-                    except Exception:
-                        pass
-
-                    matched_fixture = f
-                    break
+                matched_fixture = _match_soccer_fixture(fixtures, opponent_name, pick.get("timestamp", ""))
 
                 if not matched_fixture:
-                    results.append({"pickId": pick["pickId"], "matchStatus": "scheduled"})
+                    team_results.append({"pickId": pick["pickId"], "matchStatus": "scheduled"})
                     continue
 
-                fixture_id = matched_fixture.get("fixture", {}).get("id")
-                status_short = matched_fixture.get("fixture", {}).get("status", {}).get("short", "")
-                elapsed = matched_fixture.get("fixture", {}).get("status", {}).get("elapsed") or 0
-                home_goals = matched_fixture.get("goals", {}).get("home", 0) or 0
-                away_goals = matched_fixture.get("goals", {}).get("away", 0) or 0
-                match_score = f"{home_goals}-{away_goals}"
-
-                # Status categories
-                live_statuses = {"1H", "2H", "ET", "BT", "P", "LIVE", "HT"}
-                finished_statuses = {"FT", "AET", "PEN"}
-                is_live = status_short in live_statuses
-                is_finished = status_short in finished_statuses
-
-                if not is_live and not is_finished:
-                    results.append({"pickId": pick["pickId"], "matchStatus": "scheduled", "fixtureId": fixture_id})
-                    continue
-
-                # Fetch player's current in-game stats
-                player_stats_data = await api_football_request("fixtures/players", {"fixture": fixture_id})
-                current_value = None
-                minutes_played = 0
-
-                if player_stats_data:
-                    player_id = pick.get("playerId")
-                    for team_data in player_stats_data:
-                        for p in team_data.get("players", []):
-                            if p.get("player", {}).get("id") == player_id:
-                                pstats = p.get("statistics", [{}])[0] if p.get("statistics") else {}
-                                minutes_played = pstats.get("games", {}).get("minutes") or 0
-                                getter = stat_map.get(pick.get("propType", ""))
-                                if getter:
-                                    current_value = getter(pstats)
-                                break
-                        if current_value is not None:
-                            break
-
-                current_value = current_value or 0
-                line = pick.get("line", 0)
-                recommendation = pick.get("recommendation", "over")
-
-                # Calculate pace (extrapolate to 90 min)
-                effective_elapsed = max(elapsed, 1)
-                pace = round((current_value / effective_elapsed) * 90, 1) if effective_elapsed > 0 else 0
-
-                # Calculate hit probability
-                if is_finished:
-                    hit_pct = 100 if ((recommendation == "over" and current_value > line) or
-                                     (recommendation == "under" and current_value < line)) else 0
-                    if current_value == line:
-                        hit_pct = 50  # push
-                else:
-                    # Based on pace vs line
-                    if recommendation == "over":
-                        if pace > line * 1.3:
-                            hit_pct = min(95, 60 + (elapsed / 90) * 35)
-                        elif pace > line:
-                            hit_pct = min(85, 50 + (elapsed / 90) * 30)
-                        elif pace > line * 0.7:
-                            hit_pct = max(15, 40 - (line - pace) / line * 30)
-                        else:
-                            hit_pct = max(5, 20 - (elapsed / 90) * 15)
-                    else:  # under
-                        if pace < line * 0.7:
-                            hit_pct = min(95, 60 + (elapsed / 90) * 35)
-                        elif pace < line:
-                            hit_pct = min(85, 50 + (elapsed / 90) * 30)
-                        elif pace < line * 1.3:
-                            hit_pct = max(15, 40 - (pace - line) / max(line, 1) * 30)
-                        else:
-                            hit_pct = max(5, 20 - (elapsed / 90) * 15)
-                    hit_pct = round(hit_pct)
-
-                update = {
-                    "pickId": pick["pickId"],
-                    "matchStatus": "final" if is_finished else "live",
-                    "fixtureId": fixture_id,
-                    "elapsed": elapsed,
-                    "currentValue": current_value,
-                    "minutesPlayed": minutes_played,
-                    "pace": pace,
-                    "hitPct": hit_pct,
-                    "matchScore": match_score,
-                }
-
-                # If finished, settle the pick in DB
-                if is_finished:
-                    if current_value == line:
-                        result_str = "push"
-                    elif (current_value > line and recommendation == "over") or \
-                         (current_value < line and recommendation == "under"):
-                        result_str = "hit"
-                    else:
-                        result_str = "miss"
-                    update["result"] = result_str
-                    update["actualValue"] = current_value
-                    await db.picks.update_one(
-                        {"pickId": pick["pickId"], "email": req.email.lower()},
-                        {"$set": {"status": "settled", "result": result_str, "actualValue": current_value, "matchScore": match_score, "minutesPlayed": minutes_played, "settledAt": datetime.now(timezone.utc).isoformat()}}
-                    )
-
-                results.append(update)
+                update = await _build_soccer_update(pick, matched_fixture, email)
+                team_results.append(update)
         except Exception:
-            pass
-        return results
+            traceback.print_exc()
+        return team_results
 
-    # Process all teams in parallel
-    tasks = [process_team_picks(tid, picks) for tid, picks in team_picks.items()]
+    tasks = [process_team(tid, picks) for tid, picks in team_picks.items()]
     all_results = await aio.gather(*tasks)
     for r in all_results:
-        updates.extend(r)
+        results.extend(r)
 
-    return {"updates": updates}
+    return results
+
+
+def _match_soccer_fixture(fixtures: list, opponent_name: str, pick_ts) -> dict:
+    """Find the matching fixture for a soccer pick.
+    KEY FIX: Live games match regardless of timestamp. Only finished games check timestamp."""
+    for f in fixtures:
+        home_name = f.get("teams", {}).get("home", {}).get("name", "")
+        away_name = f.get("teams", {}).get("away", {}).get("name", "")
+        status_short = f.get("fixture", {}).get("status", {}).get("short", "")
+
+        if not (opponent_name.lower() in home_name.lower() or opponent_name.lower() in away_name.lower()):
+            continue
+
+        live_statuses = {"1H", "2H", "ET", "BT", "P", "LIVE", "HT"}
+        finished_statuses = {"FT", "AET", "PEN"}
+
+        # If the game is LIVE right now, always match it
+        if status_short in live_statuses:
+            return f
+
+        # If the game is FINISHED, only match if it started AROUND the pick time
+        # (allow games that started up to 12 hours before the pick — covers pre-game predictions)
+        if status_short in finished_statuses:
+            if pick_ts:
+                try:
+                    if isinstance(pick_ts, str):
+                        pick_dt = datetime.fromisoformat(pick_ts.replace("Z", "+00:00"))
+                    else:
+                        pick_dt = datetime.fromtimestamp(pick_ts / 1000, tz=timezone.utc)
+                    fix_dt = datetime.fromisoformat(f.get("fixture", {}).get("date", "").replace("Z", "+00:00"))
+                    # Allow if fixture started within 12 hours before OR after the pick
+                    diff_hours = abs((fix_dt - pick_dt).total_seconds()) / 3600
+                    if diff_hours > 48:
+                        continue  # Too far apart — probably an old match
+                except Exception:
+                    pass
+            return f
+
+    return None
+
+
+async def _build_soccer_update(pick: dict, fixture: dict, email: str) -> dict:
+    """Build the live update response for a soccer pick."""
+    fixture_id = fixture.get("fixture", {}).get("id")
+    status_short = fixture.get("fixture", {}).get("status", {}).get("short", "")
+    elapsed = fixture.get("fixture", {}).get("status", {}).get("elapsed") or 0
+    home_goals = fixture.get("goals", {}).get("home", 0) or 0
+    away_goals = fixture.get("goals", {}).get("away", 0) or 0
+    match_score = f"{home_goals}-{away_goals}"
+
+    live_statuses = {"1H", "2H", "ET", "BT", "P", "LIVE", "HT"}
+    finished_statuses = {"FT", "AET", "PEN"}
+    is_live = status_short in live_statuses
+    is_finished = status_short in finished_statuses
+
+    if not is_live and not is_finished:
+        return {"pickId": pick["pickId"], "matchStatus": "scheduled", "fixtureId": fixture_id}
+
+    # Fetch player stats
+    player_stats_data = await api_football_request("fixtures/players", {"fixture": fixture_id})
+    current_value = None
+    minutes_played = 0
+
+    if player_stats_data:
+        player_id = pick.get("playerId")
+        for team_data in player_stats_data:
+            for p in team_data.get("players", []):
+                if p.get("player", {}).get("id") == player_id:
+                    pstats = p.get("statistics", [{}])[0] if p.get("statistics") else {}
+                    minutes_played = pstats.get("games", {}).get("minutes") or 0
+                    getter = SOCCER_STAT_MAP.get(pick.get("propType", ""))
+                    if getter:
+                        current_value = getter(pstats)
+                    break
+            if current_value is not None:
+                break
+
+    current_value = current_value or 0
+    line = pick.get("line", 0)
+    recommendation = pick.get("recommendation", "over")
+
+    # Pace (extrapolate to 90 min)
+    effective_elapsed = max(elapsed, 1)
+    pace = round((current_value / effective_elapsed) * 90, 1) if effective_elapsed > 0 else 0
+
+    hit_pct = _calc_hit_pct(current_value, line, recommendation, elapsed, 90, is_finished, pace)
+
+    update = {
+        "pickId": pick["pickId"],
+        "matchStatus": "final" if is_finished else "live",
+        "fixtureId": fixture_id,
+        "elapsed": elapsed,
+        "period": status_short,
+        "currentValue": current_value,
+        "minutesPlayed": minutes_played,
+        "pace": pace,
+        "hitPct": hit_pct,
+        "matchScore": match_score,
+    }
+
+    if is_finished:
+        result_str = _settle_result(current_value, line, recommendation)
+        update["result"] = result_str
+        update["actualValue"] = current_value
+        await db.picks.update_one(
+            {"pickId": pick["pickId"], "email": email},
+            {"$set": {"status": "settled", "result": result_str, "actualValue": current_value,
+                      "matchScore": match_score, "minutesPlayed": minutes_played,
+                      "settledAt": datetime.now(timezone.utc).isoformat()}}
+        )
+
+    return update
+
+
+async def _process_basketball_live(picks: list, email: str) -> list:
+    """Process basketball picks for live updates."""
+    # Group by team
+    team_picks = {}
+    for pick in picks:
+        tid = pick.get("teamId", 0)
+        if tid not in team_picks:
+            team_picks[tid] = []
+        team_picks[tid].append(pick)
+
+    results = []
+
+    async def process_team(team_id, picks_for_team):
+        team_results = []
+        try:
+            season = get_current_nba_season()
+            # Get team's games for today and recent
+            games = await bball_api_get("games", {
+                "team": team_id,
+                "league": 12,
+                "season": season,
+            })
+            # Also check WNBA
+            wnba_games = await bball_api_get("games", {
+                "team": team_id,
+                "league": 13,
+                "season": str(datetime.utcnow().year),
+            })
+            all_games = (games or []) + (wnba_games or [])
+
+            if not all_games:
+                for pick in picks_for_team:
+                    team_results.append({"pickId": pick["pickId"], "matchStatus": "scheduled"})
+                return team_results
+
+            for pick in picks_for_team:
+                opponent_name = pick.get("opponentName", "")
+                matched_game = _match_basketball_game(all_games, opponent_name, team_id, pick.get("timestamp", ""))
+
+                if not matched_game:
+                    team_results.append({"pickId": pick["pickId"], "matchStatus": "scheduled"})
+                    continue
+
+                update = await _build_basketball_update(pick, matched_game, team_id, email)
+                team_results.append(update)
+        except Exception:
+            traceback.print_exc()
+        return team_results
+
+    tasks = [process_team(tid, picks) for tid, picks in team_picks.items()]
+    all_results = await aio.gather(*tasks)
+    for r in all_results:
+        results.extend(r)
+
+    return results
+
+
+def _match_basketball_game(games: list, opponent_name: str, team_id: int, pick_ts) -> dict:
+    """Find the matching basketball game. LIVE games always match.
+    Finished games match if within 48h of pick time."""
+    live_statuses = {"Q1", "Q2", "Q3", "Q4", "OT", "BT", "HT"}
+    finished_statuses = {"FT", "AOT"}
+
+    opp_lower = opponent_name.lower()
+
+    # First pass: find LIVE games (highest priority)
+    for g in games:
+        status = g.get("status", {}).get("short", "")
+        if status not in live_statuses:
+            continue
+        home = g.get("teams", {}).get("home", {})
+        away = g.get("teams", {}).get("away", {})
+        opp = away if home.get("id") == team_id else home
+        if opp_lower in opp.get("name", "").lower() or opp.get("name", "").lower() in opp_lower:
+            return g
+
+    # Second pass: finished games within time window
+    for g in games:
+        status = g.get("status", {}).get("short", "")
+        if status not in finished_statuses:
+            continue
+        home = g.get("teams", {}).get("home", {})
+        away = g.get("teams", {}).get("away", {})
+        opp = away if home.get("id") == team_id else home
+        if not (opp_lower in opp.get("name", "").lower() or opp.get("name", "").lower() in opp_lower):
+            continue
+        # Check time proximity
+        if pick_ts:
+            try:
+                if isinstance(pick_ts, str):
+                    pick_dt = datetime.fromisoformat(pick_ts.replace("Z", "+00:00"))
+                else:
+                    pick_dt = datetime.fromtimestamp(pick_ts / 1000, tz=timezone.utc)
+                game_date = g.get("date", "")
+                if game_date:
+                    game_dt = datetime.fromisoformat(game_date.replace("Z", "+00:00"))
+                    diff_hours = abs((game_dt - pick_dt).total_seconds()) / 3600
+                    if diff_hours > 48:
+                        continue
+            except Exception:
+                pass
+        return g
+
+    return None
+
+
+async def _build_basketball_update(pick: dict, game: dict, team_id: int, email: str) -> dict:
+    """Build the live update response for a basketball pick."""
+    game_id = game.get("id")
+    status = game.get("status", {})
+    status_short = status.get("short", "")
+    timer = status.get("timer")
+
+    home = game.get("teams", {}).get("home", {})
+    away = game.get("teams", {}).get("away", {})
+    home_score = game.get("scores", {}).get("home", {}).get("total", 0) or 0
+    away_score = game.get("scores", {}).get("away", {}).get("total", 0) or 0
+    match_score = f"{home_score}-{away_score}"
+
+    live_statuses = {"Q1", "Q2", "Q3", "Q4", "OT", "BT", "HT"}
+    finished_statuses = {"FT", "AOT"}
+    is_live = status_short in live_statuses
+    is_finished = status_short in finished_statuses
+
+    # Build period/quarter display
+    period = status_short
+    if status_short == "Q1":
+        period = "Q1"
+    elif status_short == "Q2":
+        period = "Q2"
+    elif status_short == "Q3":
+        period = "Q3"
+    elif status_short == "Q4":
+        period = "Q4"
+    elif status_short == "OT":
+        period = "OT"
+    elif status_short == "HT":
+        period = "HT"
+    elif status_short == "BT":
+        period = "Break"
+
+    # Estimate elapsed minutes (48 min game)
+    quarter_map = {"Q1": 12, "Q2": 24, "HT": 24, "Q3": 36, "BT": 36, "Q4": 48, "OT": 53}
+    elapsed = quarter_map.get(status_short, 0)
+    if timer and str(timer) != "0":
+        # timer is minutes within current quarter (might be string or int)
+        q_base = {"Q1": 0, "Q2": 12, "Q3": 24, "Q4": 36, "OT": 48}
+        try:
+            timer_val = int(timer) if isinstance(timer, str) else (timer or 0)
+            if timer_val > 0:
+                elapsed = q_base.get(status_short, 0) + timer_val
+        except (ValueError, TypeError):
+            pass
+
+    if not is_live and not is_finished:
+        return {"pickId": pick["pickId"], "matchStatus": "scheduled", "gameId": game_id}
+
+    # Fetch player stats from this game
+    player_stats = await bball_api_get("games/statistics/players", {"id": game_id})
+    current_value = 0
+    minutes_played = "0:00"
+
+    if player_stats:
+        # Find our player by name matching
+        player_name_lower = (pick.get("playerName") or "").lower().strip()
+        last_name = player_name_lower.split()[-1] if player_name_lower else ""
+
+        for entry in player_stats:
+            parsed = parse_player_stat(entry)
+            pname = parsed.get("playerName", "").lower()
+            if (last_name and last_name in pname) or player_name_lower in pname or pname in player_name_lower:
+                if parsed.get("teamId") == team_id or not team_id:
+                    current_value = get_bball_stat_value(parsed, pick.get("propType", "points"))
+                    minutes_played = parsed.get("minutes", "0:00")
+                    break
+
+    line = pick.get("line", 0)
+    recommendation = pick.get("recommendation", "over")
+
+    # Pace (extrapolate to 48 min)
+    effective_elapsed = max(elapsed, 1)
+    pace = round((current_value / effective_elapsed) * 48, 1) if effective_elapsed > 0 else 0
+
+    hit_pct = _calc_hit_pct(current_value, line, recommendation, elapsed, 48, is_finished, pace)
+
+    update = {
+        "pickId": pick["pickId"],
+        "matchStatus": "final" if is_finished else "live",
+        "gameId": game_id,
+        "elapsed": elapsed,
+        "period": period,
+        "currentValue": current_value,
+        "minutesPlayed": minutes_played,
+        "pace": pace,
+        "hitPct": hit_pct,
+        "matchScore": match_score,
+        "quarter": period,
+    }
+
+    if is_finished:
+        result_str = _settle_result(current_value, line, recommendation)
+        update["result"] = result_str
+        update["actualValue"] = current_value
+        await db.picks.update_one(
+            {"pickId": pick["pickId"], "email": email},
+            {"$set": {"status": "settled", "result": result_str, "actualValue": current_value,
+                      "matchScore": match_score, "minutesPlayed": minutes_played,
+                      "settledAt": datetime.now(timezone.utc).isoformat()}}
+        )
+
+    return update
+
+
+# =============================================
+# SHARED HELPERS
+# =============================================
+
+def _calc_hit_pct(current_value, line, recommendation, elapsed, total_minutes, is_finished, pace):
+    """Calculate hit probability percentage."""
+    if is_finished:
+        if current_value == line:
+            return 50
+        return 100 if ((recommendation == "over" and current_value > line) or
+                       (recommendation == "under" and current_value < line)) else 0
+
+    progress = elapsed / max(total_minutes, 1)
+    if recommendation == "over":
+        if pace > line * 1.3:
+            return min(95, round(60 + progress * 35))
+        elif pace > line:
+            return min(85, round(50 + progress * 30))
+        elif pace > line * 0.7:
+            return max(15, round(40 - (line - pace) / max(line, 1) * 30))
+        else:
+            return max(5, round(20 - progress * 15))
+    else:
+        if pace < line * 0.7:
+            return min(95, round(60 + progress * 35))
+        elif pace < line:
+            return min(85, round(50 + progress * 30))
+        elif pace < line * 1.3:
+            return max(15, round(40 - (pace - line) / max(line, 1) * 30))
+        else:
+            return max(5, round(20 - progress * 15))
+
+
+def _settle_result(current_value, line, recommendation):
+    """Determine if a pick hit, missed, or pushed."""
+    if current_value == line:
+        return "push"
+    elif (current_value > line and recommendation == "over") or \
+         (current_value < line and recommendation == "under"):
+        return "hit"
+    else:
+        return "miss"
 
 
 @router.post("/settle-picks")
@@ -301,128 +657,160 @@ async def settle_picks(req: SettlePicksRequest):
         if pick.get("status") != "live":
             continue
 
+        sport = pick.get("sport", "soccer")
         player_id = pick.get("player", {}).get("id", 0)
         team_name = pick.get("player", {}).get("team", "")
         prop_type = pick.get("propType", "")
         opponent = pick.get("opponent", "")
         league_id = pick.get("_request", {}).get("leagueId", 39)
 
-        stat_map = {
-            "pass_attempts": lambda s: s.get("passes", {}).get("total"),
-            "shots": lambda s: s.get("shots", {}).get("total"),
-            "shots_on_target": lambda s: s.get("shots", {}).get("on"),
-            "tackles": lambda s: s.get("tackles", {}).get("total"),
-            "key_passes": lambda s: s.get("passes", {}).get("key"),
-            "saves": lambda s: s.get("goals", {}).get("saves"),
-            "interceptions": lambda s: s.get("tackles", {}).get("interceptions"),
-            "blocks": lambda s: s.get("tackles", {}).get("blocks"),
-            "dribbles": lambda s: s.get("dribbles", {}).get("attempts"),
-            "fouls_drawn": lambda s: s.get("fouls", {}).get("drawn"),
-        }
-
         try:
-            # Find the player's team ID from recent data
             team_id = pick.get("_request", {}).get("teamId", 0)
-            if not team_id:
-                # Try to get from player search
-                for s in [CURRENT_SEASON, CURRENT_SEASON + 1]:
-                    try:
-                        pdata = await api_football_request("players", {"id": player_id, "season": s, "league": league_id})
-                        if pdata:
-                            stats_list = pdata[0].get("statistics", [])
-                            if stats_list:
-                                team_id = stats_list[-1]["team"]["id"]
-                                break
-                    except Exception:
-                        continue
 
-            if not team_id:
-                continue
+            if sport == "basketball":
+                settled_result = await _settle_basketball_pick(pick, team_id, opponent, prop_type)
+            else:
+                settled_result = await _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, league_id)
 
-            # Find the relevant finished fixture (try current and next season)
-            # CRITICAL: Only match fixtures that happened AFTER the pick was created
-            # to avoid settling against old meetings between the same teams
-            pick_timestamp = pick.get("timestamp", 0)
-            pick_created = datetime.fromtimestamp(pick_timestamp / 1000, tz=timezone.utc) if pick_timestamp else datetime.min.replace(tzinfo=timezone.utc)
-
-            recent = None
-            for s in [CURRENT_SEASON + 1, CURRENT_SEASON]:
-                try:
-                    data = await api_football_request("fixtures", {"team": team_id, "last": 5, "season": s})
-                    if data:
-                        for f in data:
-                            home = f.get("teams", {}).get("home", {}).get("name", "")
-                            away = f.get("teams", {}).get("away", {}).get("name", "")
-                            status = f.get("fixture", {}).get("status", {}).get("short", "")
-                            fixture_date_str = f.get("fixture", {}).get("date", "")
-
-                            # Only consider finished matches
-                            if status not in ("FT", "AET", "PEN"):
-                                continue
-                            # Must match opponent name
-                            if not (opponent.lower() in home.lower() or opponent.lower() in away.lower()):
-                                continue
-                            # MUST have occurred AFTER the pick was saved
-                            try:
-                                fixture_dt = datetime.fromisoformat(fixture_date_str.replace("Z", "+00:00"))
-                                if fixture_dt < pick_created:
-                                    continue  # This is an OLD match, skip it
-                            except Exception:
-                                continue  # Can't parse date, skip to be safe
-
-                            recent = f
-                            break
-                        if recent:
-                            break
-                except Exception:
-                    continue
-
-            if not recent:
-                continue
-
-            fixture_id = recent.get("fixture", {}).get("id")
-            fixture_date = recent.get("fixture", {}).get("date", "")
-
-            # Get player stats from fixtures/players endpoint
-            fixture_players = await api_football_request("fixtures/players", {"fixture": fixture_id})
-            actual_value = None
-
-            if fixture_players:
-                for team_data in fixture_players:
-                    for p in team_data.get("players", []):
-                        if p.get("player", {}).get("id") == player_id:
-                            pstats = p.get("statistics", [{}])[0]
-                            getter = stat_map.get(prop_type)
-                            if getter:
-                                actual_value = getter(pstats)
-                            break
-                    if actual_value is not None:
-                        break
-
-            if actual_value is not None:
-                line = pick.get("line", 0)
-                recommendation = pick.get("recommendation", "over")
-
-                # Handle push (exact match on whole-number lines)
-                if actual_value == line:
-                    result_str = "push"
-                elif (actual_value > line and recommendation == "over") or \
-                     (actual_value < line and recommendation == "under"):
-                    result_str = "hit"
-                else:
-                    result_str = "miss"
-
-                settled.append({
-                    "pickId": pick.get("id"),
-                    "status": "settled",
-                    "result": result_str,
-                    "actualValue": actual_value,
-                    "fixtureDate": fixture_date,
-                    "matchScore": f"{recent.get('goals',{}).get('home',0)}-{recent.get('goals',{}).get('away',0)}",
-                })
-
+            if settled_result:
+                settled.append(settled_result)
         except Exception:
             continue
 
     return {"settled": settled}
 
+
+async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, league_id):
+    """Settle a soccer pick."""
+    if not team_id:
+        for s in [CURRENT_SEASON, CURRENT_SEASON + 1]:
+            try:
+                pdata = await api_football_request("players", {"id": player_id, "season": s, "league": league_id})
+                if pdata:
+                    stats_list = pdata[0].get("statistics", [])
+                    if stats_list:
+                        team_id = stats_list[-1]["team"]["id"]
+                        break
+            except Exception:
+                continue
+
+    if not team_id:
+        return None
+
+    pick_timestamp = pick.get("timestamp", 0)
+    pick_created = datetime.fromtimestamp(pick_timestamp / 1000, tz=timezone.utc) if isinstance(pick_timestamp, (int, float)) and pick_timestamp else datetime.min.replace(tzinfo=timezone.utc)
+
+    recent = None
+    for s in [CURRENT_SEASON + 1, CURRENT_SEASON]:
+        try:
+            data = await api_football_request("fixtures", {"team": team_id, "last": 5, "season": s})
+            if data:
+                for f in data:
+                    home = f.get("teams", {}).get("home", {}).get("name", "")
+                    away = f.get("teams", {}).get("away", {}).get("name", "")
+                    status = f.get("fixture", {}).get("status", {}).get("short", "")
+                    if status not in ("FT", "AET", "PEN"):
+                        continue
+                    if not (opponent.lower() in home.lower() or opponent.lower() in away.lower()):
+                        continue
+                    recent = f
+                    break
+                if recent:
+                    break
+        except Exception:
+            continue
+
+    if not recent:
+        return None
+
+    fixture_id = recent.get("fixture", {}).get("id")
+    fixture_date = recent.get("fixture", {}).get("date", "")
+    fixture_players = await api_football_request("fixtures/players", {"fixture": fixture_id})
+    actual_value = None
+
+    if fixture_players:
+        for team_data in fixture_players:
+            for p in team_data.get("players", []):
+                if p.get("player", {}).get("id") == player_id:
+                    pstats = p.get("statistics", [{}])[0]
+                    getter = SOCCER_STAT_MAP.get(prop_type)
+                    if getter:
+                        actual_value = getter(pstats)
+                    break
+            if actual_value is not None:
+                break
+
+    if actual_value is not None:
+        line = pick.get("line", 0)
+        recommendation = pick.get("recommendation", "over")
+        result_str = _settle_result(actual_value, line, recommendation)
+        return {
+            "pickId": pick.get("id"),
+            "status": "settled",
+            "result": result_str,
+            "actualValue": actual_value,
+            "fixtureDate": fixture_date,
+            "matchScore": f"{recent.get('goals',{}).get('home',0)}-{recent.get('goals',{}).get('away',0)}",
+        }
+
+    return None
+
+
+async def _settle_basketball_pick(pick, team_id, opponent, prop_type):
+    """Settle a basketball pick."""
+    season = get_current_nba_season()
+    games = await bball_api_get("games", {"team": team_id, "league": 12, "season": season})
+    if not games:
+        games = await bball_api_get("games", {"team": team_id, "league": 13, "season": str(datetime.utcnow().year)})
+
+    if not games:
+        return None
+
+    opp_lower = opponent.lower()
+    matched = None
+    for g in games:
+        status = g.get("status", {}).get("short", "")
+        if status not in ("FT", "AOT"):
+            continue
+        home = g.get("teams", {}).get("home", {})
+        away = g.get("teams", {}).get("away", {})
+        opp = away if home.get("id") == team_id else home
+        if opp_lower in opp.get("name", "").lower():
+            matched = g
+            break
+
+    if not matched:
+        return None
+
+    game_id = matched.get("id")
+    player_stats = await bball_api_get("games/statistics/players", {"id": game_id})
+
+    if not player_stats:
+        return None
+
+    player_name_lower = (pick.get("player", {}).get("name", "") or "").lower()
+    last_name = player_name_lower.split()[-1] if player_name_lower else ""
+    actual_value = None
+
+    for entry in player_stats:
+        parsed = parse_player_stat(entry)
+        pname = parsed.get("playerName", "").lower()
+        if last_name and last_name in pname:
+            actual_value = get_bball_stat_value(parsed, prop_type)
+            break
+
+    if actual_value is not None:
+        line = pick.get("line", 0)
+        recommendation = pick.get("recommendation", "over")
+        result_str = _settle_result(actual_value, line, recommendation)
+        home_score = matched.get("scores", {}).get("home", {}).get("total", 0) or 0
+        away_score = matched.get("scores", {}).get("away", {}).get("total", 0) or 0
+        return {
+            "pickId": pick.get("id"),
+            "status": "settled",
+            "result": result_str,
+            "actualValue": actual_value,
+            "matchScore": f"{home_score}-{away_score}",
+        }
+
+    return None

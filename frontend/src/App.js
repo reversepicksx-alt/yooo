@@ -185,7 +185,7 @@ export default function App() {
               // Find the pick to get player name
               const pick = savedPicks.find(p => p.pickId === u.pickId);
               if (pick) {
-                const propLabel = PROP_TYPES.find(pt => pt.key === pick.propType)?.label || pick.propType;
+                const propLabel = [...PROP_TYPES, ...BASKETBALL_PROP_TYPES].find(pt => pt.key === pick.propType)?.label || pick.propType;
                 const isHit = u.result === 'hit';
                 const isPush = u.result === 'push';
                 const notif = {
@@ -626,6 +626,7 @@ export default function App() {
       timestamp: Date.now(),
       status: 'live',
       result: 'pending',
+      sport: scanPrediction.sport || activeSport || 'soccer',
       excludedSampleIndices: scanExcludedIndices,
       _request: scanPrediction._request || {},
     };
@@ -1485,7 +1486,7 @@ export default function App() {
                   const elapsed = live?.elapsed ?? 0;
                   const minutesPlayed = live?.minutesPlayed || 0;
                   const matchScore = live?.matchScore || pick.matchScore || '';
-                  const propLabel = PROP_TYPES.find(pt => pt.key === pick.propType)?.label || pick.propType;
+                  const propLabel = [...PROP_TYPES, ...BASKETBALL_PROP_TYPES].find(pt => pt.key === pick.propType)?.label || pick.propType;
                   const isOver = pick.recommendation === 'over';
                   const lineNum = pick.line || 1;
                   const nowNum = typeof nowVal === 'number' ? nowVal : 0;
@@ -1515,14 +1516,20 @@ export default function App() {
                             {pick.playerName}
                           </div>
                           <div style={{ fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,0.45)', textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 3 }}>
-                            {pick.teamName || 'Team'} &middot; {(pick.venue || 'home').toUpperCase()}
+                            {pick.teamName || 'Team'} &middot; {(pick.venue || 'home').toUpperCase()} &middot; {pick.sport === 'basketball' ? 'NBA' : 'Soccer'}
                           </div>
+                          {pick.trackingId && (
+                            <div style={{ fontSize: 9, fontWeight: 700, color: 'rgba(255,255,255,0.25)', letterSpacing: '0.1em', marginTop: 2, fontFamily: 'var(--font-mono)' }}
+                              data-testid={`tracking-id-${pick.pickId}`}>
+                              {pick.trackingId}
+                            </div>
+                          )}
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                           {isMatchLive && (
                             <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 800, color: '#f43f5e' }}>
                               <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#f43f5e', animation: 'pulse 1.5s infinite' }} />
-                              LIVE
+                              LIVE {live?.quarter ? `· ${live.quarter}` : (live?.period ? `· ${live.period}` : '')}
                             </div>
                           )}
                           {isMatchFinal && !isMatchLive && (
@@ -1548,13 +1555,21 @@ export default function App() {
                         </div>
                       </div>
 
-                      {/* PICK LINE */}
+                      {/* PICK LINE + PROP */}
                       <div style={{ padding: '0 16px 12px', fontSize: 13, fontWeight: 800, letterSpacing: '0.06em' }}>
                         <span style={{ color: 'rgba(255,255,255,0.5)' }}>PICK: </span>
                         <span style={{ color: isOver ? 'var(--accent)' : '#f43f5e' }}>
                           {isOver ? 'OVER' : 'UNDER'} {pick.line}
                         </span>
+                        <span style={{ color: 'rgba(255,255,255,0.35)', fontSize: 11, marginLeft: 6 }}>{propLabel}</span>
                       </div>
+
+                      {/* MATCH SCORE (when live or final) */}
+                      {matchScore && (isMatchLive || isMatchFinal) && (
+                        <div style={{ padding: '0 16px 8px', fontSize: 12, fontWeight: 700, color: 'rgba(255,255,255,0.5)' }}>
+                          {pick.opponentName ? `vs ${pick.opponentName}` : ''} {matchScore && <span style={{ color: isMatchLive ? '#f43f5e' : 'rgba(255,255,255,0.6)', fontWeight: 800 }}>{matchScore}</span>}
+                        </div>
+                      )}
 
                       {/* STATS ROW — NOW / LINE / PACE / HIT% */}
                       {(isMatchLive || isMatchFinal) && (
