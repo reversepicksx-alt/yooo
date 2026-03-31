@@ -667,7 +667,7 @@ Analyze the statistical verdict, per-minute projection, and over-rate FIRST. The
                 loop = aio.get_event_loop()
                 def _run():
                     return grok_client.chat.completions.create(
-                        model="grok-4-fast-reasoning",
+                        model="grok-4-1-fast-non-reasoning",
                         messages=grok_messages,
                         max_tokens=2500,
                         temperature=0.3,
