@@ -1136,7 +1136,7 @@ Analyze ALL data thoroughly. Return JSON only."""
 
         # Ensure all required fields have fallback values
         prediction.setdefault("player", {"id": req.playerId, "name": req.playerName, "team": str(req.teamId), "role": "Unknown", "position": "Unknown"})
-        prediction.setdefault("opponent", req.opponentName)
+        prediction["opponent"] = req.opponentName
         prediction.setdefault("propType", req.propType)
         prediction.setdefault("line", req.line)
         prediction.setdefault("projectedValue", req.line)
@@ -1232,7 +1232,7 @@ Analyze ALL data thoroughly. Return JSON only."""
         if total_game_logs > 0 and games_with_none / total_game_logs >= 0.3:
             prediction["dataQuality"] = {
                 "level": "limited",
-                "message": f"API data incomplete — {games_with_none} of {total_game_logs} recent games missing {req.propType} stats. Web-verified stats from Grok used for analysis.",
+                "message": f"API data incomplete — {games_with_none} of {total_game_logs} recent games missing {req.propType} stats. Cross-referenced sources used for analysis.",
                 "gamesWithData": games_with_data,
                 "totalGames": total_game_logs,
             }

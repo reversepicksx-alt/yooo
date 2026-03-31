@@ -1,8 +1,7 @@
 """
 Basketball (NBA) Prediction Engine v2
 - Advanced per-minute analytics, role classification, line proximity, blowout risk
-- 5-AI consensus engine with first-3-wins pattern
-- Gemini synthesis step for tactical breakdown
+- 4-AI consensus engine with first-3-wins pattern
 - Strict <55s execution budget
 """
 import json
@@ -970,7 +969,7 @@ Analyze the statistical verdict, per-minute projection, and over-rate FIRST. The
         # Ensure required fields
         player_pos = player_info.get("position", "") if player_info else ""
         prediction.setdefault("player", {"id": player_id or 0, "name": req.playerName, "team": req.teamName, "position": player_pos})
-        prediction.setdefault("opponent", req.opponentName)
+        prediction["opponent"] = req.opponentName
         prediction.setdefault("propType", req.propType)
         prediction.setdefault("line", req.line)
         prediction.setdefault("projectedValue", req.line)

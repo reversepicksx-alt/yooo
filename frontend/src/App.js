@@ -591,7 +591,7 @@ export default function App() {
       setScanExcludedIndices([]);
       setScanFollowUpMessages([]);
       try {
-        const opponentId = pickData.resolvedOpponent?.teamId || pickData.resolved.teamId;
+        const opponentId = pickData.resolvedOpponent?.teamId || 0;
         const opponentName = pickData.resolvedOpponent?.teamName || pickData.extracted.opponentName || 'Unknown';
         const venue = scanVenueOverrides[idx] || pickData.extracted.venue || 'home';
         const result = await predict({
