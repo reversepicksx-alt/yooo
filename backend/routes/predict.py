@@ -1018,12 +1018,11 @@ Analyze ALL data thoroughly. Return JSON only."""
         ai_tasks = [
             aio.ensure_future(call_ai("gemini-2.0-flash", "gemini", "gemini")),
             aio.ensure_future(call_ai("gpt-4.1-mini", "gpt41mini")),
-            aio.ensure_future(call_emergent_direct("claude-haiku-4-5", "claude")),
             aio.ensure_future(call_grok("grok", "grok-4-1-fast-non-reasoning")),
         ]
 
-        # FIRST-3-WINS: Take the first 3 valid results, then grab any extras
-        MIN_RESULTS = 3
+        # FIRST-2-WINS: Take the first 2 valid results, then grab the 3rd
+        MIN_RESULTS = 2
         ai_results = []
         pending = set(ai_tasks)
         deadline = _t0 + 48  # absolute cap: 48s from route start guarantees < 55s total

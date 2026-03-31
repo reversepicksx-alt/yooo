@@ -822,11 +822,10 @@ Analyze the statistical verdict, per-minute projection, and over-rate FIRST. The
         ai_tasks = [
             aio.ensure_future(call_ai("gemini-2.0-flash", "gemini", "gemini")),
             aio.ensure_future(call_ai("gpt-4.1-mini", "gpt41mini")),
-            aio.ensure_future(call_emergent_direct("claude-haiku-4-5", "claude")),
             aio.ensure_future(call_grok("grok", "grok-4-1-fast-non-reasoning")),
         ]
 
-        MIN_RESULTS = 3
+        MIN_RESULTS = 2
         ai_results = []
         pending = set(ai_tasks)
         deadline = t0 + 48
