@@ -966,12 +966,12 @@ Analyze the statistical verdict, per-minute projection, and over-rate FIRST. The
             # Re-determine recommendation after all overrides
             prediction["recommendation"] = "over" if prediction["projectedValue"] > req.line else "under"
 
-        # Ensure required fields
+        # Force-set identity fields from REQUEST data — never trust AI output for these
         player_pos = player_info.get("position", "") if player_info else ""
-        prediction.setdefault("player", {"id": player_id or 0, "name": req.playerName, "team": req.teamName, "position": player_pos})
+        prediction["player"] = {"id": player_id or 0, "name": req.playerName, "team": req.teamName, "position": player_pos}
         prediction["opponent"] = req.opponentName
-        prediction.setdefault("propType", req.propType)
-        prediction.setdefault("line", req.line)
+        prediction["propType"] = req.propType
+        prediction["line"] = req.line
         prediction.setdefault("projectedValue", req.line)
         prediction.setdefault("recommendation", "over")
         prediction.setdefault("confidenceScore", 50)

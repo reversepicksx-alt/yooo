@@ -524,7 +524,7 @@ export default function App() {
           player2Name: rp[1].playerName,
           player2TeamId: rp[1].teamId,
           opponentId: rp[1].teamId,
-          opponentName: rp[1].teamName || 'Opponent',
+          opponentName: rp[1].teamName || pickData.extracted?.players?.[1]?.team || 'TBD',
           venue: 'home',
           propType: pickData.extracted.propType,
           combinedLine: pickData.extracted.line,
@@ -1924,7 +1924,7 @@ export default function App() {
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <Swords style={{ width: 14, height: 14, color: '#f59e0b' }} />
                         <span style={{ fontSize: 11, fontWeight: 900, letterSpacing: '0.1em', color: '#f59e0b', textTransform: 'uppercase' }}>
-                          H2H vs {scanPrediction.opponent || 'Opponent'} ({scanPrediction.h2hGames.length})
+                          H2H vs {scanPrediction.opponent || scanPrediction.matchupOverview?.awayTeam || scanPrediction.matchupOverview?.homeTeam || '—'} ({scanPrediction.h2hGames.length})
                         </span>
                       </div>
                       <span style={{ fontSize: 11, fontWeight: 800, color: 'rgba(255,255,255,0.5)', fontFamily: "'JetBrains Mono', monospace" }}>

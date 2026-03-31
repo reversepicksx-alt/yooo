@@ -1134,11 +1134,17 @@ Analyze ALL data thoroughly. Return JSON only."""
 
         response_text = json.dumps(prediction)
 
-        # Ensure all required fields have fallback values
-        prediction.setdefault("player", {"id": req.playerId, "name": req.playerName, "team": str(req.teamId), "role": "Unknown", "position": "Unknown"})
+        # Force-set identity fields from REQUEST data — never trust AI output for these
+        player_team_display = req.teamName or (player_stats.get("statistics", [{}])[0].get("team", {}).get("name", "") if player_stats else "")
+        prediction["player"] = {
+            "id": req.playerId,
+            "name": req.playerName,
+            "team": player_team_display,
+            "position": player_position or "Unknown",
+        }
         prediction["opponent"] = req.opponentName
-        prediction.setdefault("propType", req.propType)
-        prediction.setdefault("line", req.line)
+        prediction["propType"] = req.propType
+        prediction["line"] = req.line
         prediction.setdefault("projectedValue", req.line)
         prediction.setdefault("recommendation", "over")
         prediction.setdefault("confidenceScore", 50)
@@ -1382,7 +1388,7 @@ Rules: No AI model names. Be specific with numbers. Be decisive."""
     except (json.JSONDecodeError, aio.TimeoutError):
         # Return a safe fallback prediction
         return {
-            "player": {"id": req.playerId, "name": req.playerName, "team": str(req.teamId), "role": "Unknown", "position": "Unknown"},
+            "player": {"id": req.playerId, "name": req.playerName, "team": req.teamName, "position": "Unknown"},
             "opponent": req.opponentName,
             "propType": req.propType,
             "line": req.line,

@@ -1,0 +1,87 @@
+{
+  "summary": "Iteration 33: Bug Fixes Verification - All 23 Tests Passed (100%). Verified all critical bug fixes: 1) Basketball prop type normalization (VALID_BASKETBALL_PROPS includes reb_ast, pts_reb, pts_ast, blk_stl, steals, blocks, turnovers), 2) Basketball prop alias mapping (rebs+asts correctly maps to reb_ast NOT pts_reb_ast), 3) Basketball stat extraction (get_stat_value for reb_ast returns rebounds+assists), 4) Basketball opponent resolution with league_id filter (prevents NBA vs WNBA cross-match), 5) Soccer/Basketball prediction opponent field force-set from request data, 6) No AI model names in user-facing text (uses 'Cross-referenced sources' not 'Grok'), 7) Frontend opponent fallback uses resolvedOpponent?.teamId || 0.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "passed_tests": [
+    "GET /api/health returns 200 with status=ok",
+    "VALID_BASKETBALL_PROPS includes reb_ast, pts_reb, pts_ast, blk_stl, steals, blocks, turnovers",
+    "BASKETBALL_PROP_ALIASES: 'rebs+asts' maps to 'reb_ast' (NOT pts_reb_ast)",
+    "BASKETBALL_PROP_ALIASES: 'blks+stls' maps to 'blk_stl'",
+    "BASKETBALL_PROP_ALIASES: 'pts+reb' maps to 'pts_reb'",
+    "BASKETBALL_PROP_ALIASES: 'pts+ast' maps to 'pts_ast'",
+    "get_stat_value for reb_ast returns rebounds + assists",
+    "get_stat_value for pts_reb returns points + rebounds",
+    "get_stat_value for blk_stl returns blocks + steals",
+    "Opponent resolution passes league_id to get_bball_team_by_name",
+    "Cross-league rejection logic is present (prevents NBA vs WNBA cross-match)",
+    "basketball_cache.py get_bball_team_by_name accepts league_id parameter",
+    "Soccer prediction force-sets opponent from request (prediction['opponent'] = req.opponentName)",
+    "Basketball prediction force-sets opponent from request",
+    "Soccer prediction force-sets player from request data",
+    "No 'Grok' in dataQuality messages",
+    "Data quality message uses 'Cross-referenced sources used for analysis'",
+    "No AI model names in basketball dataQuality messages",
+    "Frontend uses pickData.resolvedOpponent?.teamId || 0 for opponentId",
+    "BBALL_STAT_FIELD_MAP correctly maps compound props to None",
+    "BBALL_PROP_LABELS includes all required prop types",
+    "picks.py get_bball_stat_value handles reb_ast correctly",
+    "picks.py bball_props set includes all required props"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_bug_fixes_iteration33.py",
+    "/app/test_reports/pytest/bug_fixes_iteration33_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "scan.py VALID_BASKETBALL_PROPS (line ~26-31) correctly includes all compound props: reb_ast, pts_reb, pts_ast, blk_stl, steals, blocks, turnovers",
+    "scan.py BASKETBALL_PROP_ALIASES (line ~33-67) correctly maps 'rebs+asts' to 'reb_ast' (NOT pts_reb_ast)",
+    "scan.py _resolve_basketball_picks (line ~461-490) passes league_id to get_bball_team_by_name for opponent resolution, preventing NBA vs WNBA cross-match",
+    "basketball_predict.py get_stat_value (line ~88-116) correctly computes compound stats: reb_ast=rebounds+assists, pts_reb=points+rebounds, blk_stl=blocks+steals",
+    "basketball_predict.py (line ~971-972) force-sets prediction['player'] and prediction['opponent'] from request data",
+    "predict.py (line ~1139-1145) force-sets prediction['player'] and prediction['opponent'] from request data",
+    "predict.py (line ~1241) uses 'Cross-referenced sources used for analysis' instead of AI model names",
+    "basketball_cache.py get_bball_team_by_name (line ~249) accepts league_id parameter and filters by it",
+    "Frontend App.js (line ~594) correctly uses pickData.resolvedOpponent?.teamId || 0 for opponentId"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_bug_fixes_iteration33.py"
+  ],
+  "success_rate": {
+    "backend": "100% (23/23 tests passed)",
+    "frontend": "100% (app loads correctly)"
+  },
+  "test_credentials": "Email: josselj001@gmail.com (from backend/.env OWNER_EMAIL)",
+  "seed_data_creation": "None - code verification tests only",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All bug fixes from this iteration are VERIFIED. Key fixes: 1) Prop type misidentification fixed - 'rebs+asts' now correctly maps to 'reb_ast' (not pts_reb_ast), 2) Cross-league opponent matching fixed - league_id is passed to get_bball_team_by_name preventing NBA vs WNBA cross-match, 3) Opponent name display fixed - prediction['opponent'] is force-set from req.opponentName (not setdefault), 4) AI model names removed from user-facing text - uses 'Cross-referenced sources' instead of 'Grok'.",
+  "verified_bug_fixes": {
+    "prop_type_misidentification": {
+      "issue": "Rebs+Asts was mapped to pts_reb_ast instead of reb_ast",
+      "fix": "BASKETBALL_PROP_ALIASES now correctly maps 'rebs+asts' to 'reb_ast'",
+      "verified": true
+    },
+    "cross_league_opponent_matching": {
+      "issue": "NBA team could match vs WNBA team (e.g., Pistons vs Storm)",
+      "fix": "get_bball_team_by_name now accepts league_id parameter, scan.py passes league_id for opponent resolution",
+      "verified": true
+    },
+    "opponent_name_literal_text": {
+      "issue": "Opponent name showing as literal 'Opponent' text",
+      "fix": "prediction['opponent'] = req.opponentName (force-set, not setdefault)",
+      "verified": true
+    },
+    "ai_model_names_in_ui": {
+      "issue": "AI model names (Grok) leaking into user-facing UI text",
+      "fix": "dataQuality message uses 'Cross-referenced sources used for analysis' instead of 'Grok'",
+      "verified": true
+    }
+  }
+}
