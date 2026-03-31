@@ -59,9 +59,21 @@ BBALL_PROP_LABELS = {
 
 def get_stat_value(parsed: dict, prop_type: str):
     """Extract the relevant stat value from a parsed player game stat."""
-    if prop_type == "pts_reb_ast":
+    # Normalize: "Pts+Reb+Ast" → "pts_reb_ast"
+    pt = prop_type.lower().replace("+", "_").replace(" ", "_").replace("-", "_")
+    label_map = {
+        "pts_reb_ast": "pts_reb_ast",
+        "3_pointers_made": "three_pointers",
+        "3_point_fg_made": "three_pointers",
+        "fg_made": "fgm", "ft_made": "ftm",
+        "fg_attempted": "fga", "ft_attempted": "fta",
+        "3pt_attempted": "tpa",
+    }
+    pt = label_map.get(pt, pt)
+
+    if pt == "pts_reb_ast":
         return (parsed.get("points", 0) or 0) + (parsed.get("rebounds", 0) or 0) + (parsed.get("assists", 0) or 0)
-    field = BBALL_STAT_FIELD_MAP.get(prop_type, prop_type)
+    field = BBALL_STAT_FIELD_MAP.get(pt, pt)
     return parsed.get(field, 0) or 0 if field else 0
 
 
@@ -180,20 +192,35 @@ async def basketball_predict(req: BasketballPredictionRequest):
         parts = []
 
         if stat_values:
-            recent_vals = stat_values[:20]
-            avg_val = round(sum(recent_vals) / len(recent_vals), 1)
-            min_val = min(recent_vals)
-            max_val = max(recent_vals)
-            std_dev = round(stats_mod.stdev(recent_vals), 2) if len(recent_vals) >= 3 else 0
+            # Use ALL game logs for full-season stats, last 10 for recent form
+            all_vals = stat_values
+            recent_10 = stat_values[:10]
+            recent_5 = stat_values[:5]
+            avg_all = round(sum(all_vals) / len(all_vals), 1)
+            avg_10 = round(sum(recent_10) / len(recent_10), 1) if recent_10 else avg_all
+            avg_5 = round(sum(recent_5) / len(recent_5), 1) if recent_5 else avg_all
+            min_val = min(all_vals)
+            max_val = max(all_vals)
+            std_dev = round(stats_mod.stdev(all_vals), 2) if len(all_vals) >= 3 else 0
 
-            home_vals = [g["targetStat"] for g in player_game_logs[:20] if g.get("venue") == "home" and g.get("targetStat") is not None]
-            away_vals = [g["targetStat"] for g in player_game_logs[:20] if g.get("venue") == "away" and g.get("targetStat") is not None]
+            home_vals = [g["targetStat"] for g in player_game_logs if g.get("venue") == "home" and g.get("targetStat") is not None]
+            away_vals = [g["targetStat"] for g in player_game_logs if g.get("venue") == "away" and g.get("targetStat") is not None]
 
-            parts.append(f"""[PLAYER {prop_label.upper()} GAME LOGS — Last {len(recent_vals)} games]
-- Average: {avg_val} | Min: {min_val} | Max: {max_val} | StdDev: {std_dev}
+            # Calculate over/under rate vs this line
+            over_count = sum(1 for v in all_vals if v > req.line)
+            over_pct = round(over_count / len(all_vals) * 100) if all_vals else 50
+
+            # Momentum: trend of last 5 vs season average
+            momentum = round(avg_5 - avg_all, 1) if recent_5 else 0
+            trend_label = "HOT" if momentum > 2 else "COLD" if momentum < -2 else "NEUTRAL"
+
+            parts.append(f"""[PLAYER {prop_label.upper()} GAME LOGS — {len(all_vals)} games this season]
+- Season avg: {avg_all} | Last 10: {avg_10} | Last 5: {avg_5} | Momentum: {trend_label} ({'+' if momentum > 0 else ''}{momentum})
+- Min: {min_val} | Max: {max_val} | StdDev: {std_dev}
 - Home avg: {round(sum(home_vals)/len(home_vals),1) if home_vals else 'N/A'} ({len(home_vals)} games)
 - Away avg: {round(sum(away_vals)/len(away_vals),1) if away_vals else 'N/A'} ({len(away_vals)} games)
-- Venue-filtered ({player_venue}): avg {round(sum(venue_values)/len(venue_values),1) if venue_values else 'N/A'} ({len(venue_values)} games)""")
+- Venue-filtered ({player_venue}): avg {round(sum(venue_values)/len(venue_values),1) if venue_values else 'N/A'} ({len(venue_values)} games)
+- vs LINE {req.line}: OVER in {over_count}/{len(all_vals)} games ({over_pct}%)""")
 
             game_lines = []
             for g in player_game_logs[:15]:
@@ -205,7 +232,7 @@ async def basketball_predict(req: BasketballPredictionRequest):
                     f"3PM={ps.get('tpm',0)} FGM={ps.get('fgm',0)} "
                     f"MIN={ps.get('minutes','0')}"
                 )
-            parts.append("[GAME-BY-GAME]\n" + "\n".join(game_lines))
+            parts.append("[GAME-BY-GAME (Most Recent 15)]\n" + "\n".join(game_lines))
 
         # Team recent form
         if team_games_parsed:
@@ -217,15 +244,18 @@ async def basketball_predict(req: BasketballPredictionRequest):
             parts.append(f"""[TEAM RECENT FORM — Last {len(recent)} games]
 - Record: {wins}W-{losses}L | Avg Score: {avg_score} | Avg Opp Score: {avg_opp}""")
 
-        # Opponent form
+        # Opponent form + DEFENSIVE CONTEXT
         if opp_games_raw:
-            opp_parsed = [parse_game_for_team(g, req.opponentId) for g in opp_games_raw[:10]]
+            opp_parsed = [parse_game_for_team(g, req.opponentId) for g in opp_games_raw[:15]]
             opp_wins = sum(1 for g in opp_parsed if g.get("result") == "W")
             opp_losses = sum(1 for g in opp_parsed if g.get("result") == "L")
             opp_avg = round(sum(g.get("teamScore", 0) for g in opp_parsed) / max(len(opp_parsed), 1), 1)
             opp_against = round(sum(g.get("oppScore", 0) for g in opp_parsed) / max(len(opp_parsed), 1), 1)
-            parts.append(f"""[OPPONENT RECENT FORM — Last {len(opp_parsed)} games]
-- Record: {opp_wins}W-{opp_losses}L | Avg Score: {opp_avg} | Avg Against: {opp_against}""")
+            # Points ALLOWED = opponent's oppScore (what teams score AGAINST them)
+            parts.append(f"""[OPPONENT {req.opponentName} — Last {len(opp_parsed)} games]
+- Record: {opp_wins}W-{opp_losses}L | Avg Scored: {opp_avg} | Avg ALLOWED: {opp_against}
+- DEFENSIVE RATING: Opponents average {opp_against} points per game against {req.opponentName}
+- Game pace context: {'High-pace' if opp_avg + opp_against > 230 else 'Mid-pace' if opp_avg + opp_against > 210 else 'Low-pace'} games (avg total {round(opp_avg + opp_against, 1)})""")
 
         # H2H
         if h2h_data:
@@ -476,18 +506,24 @@ Analyze ALL data thoroughly. Return JSON only."""
         prediction["matchupOverview"] = real_matchup
 
         if stat_values:
-            recent_vals = stat_values[:20]
-            home_v = [g["targetStat"] for g in player_game_logs[:20] if g.get("venue") == "home" and g.get("targetStat") is not None]
-            away_v = [g["targetStat"] for g in player_game_logs[:20] if g.get("venue") == "away" and g.get("targetStat") is not None]
+            all_vals = stat_values
+            recent_10 = stat_values[:10]
+            recent_5 = stat_values[:5]
+            home_v = [g["targetStat"] for g in player_game_logs if g.get("venue") == "home" and g.get("targetStat") is not None]
+            away_v = [g["targetStat"] for g in player_game_logs if g.get("venue") == "away" and g.get("targetStat") is not None]
+            over_count = sum(1 for v in all_vals if v > req.line)
             prediction["playerGameLogs"] = {
                 "targetProp": req.propType,
-                "sampleSize": len(recent_vals),
-                "rawAvg": round(sum(recent_vals) / len(recent_vals), 1),
-                "rawMin": min(recent_vals),
-                "rawMax": max(recent_vals),
-                "stdDev": round(stats_mod.stdev(recent_vals), 2) if len(recent_vals) >= 3 else 0,
+                "sampleSize": len(all_vals),
+                "rawAvg": round(sum(all_vals) / len(all_vals), 1),
+                "last10Avg": round(sum(recent_10) / len(recent_10), 1) if recent_10 else 0,
+                "last5Avg": round(sum(recent_5) / len(recent_5), 1) if recent_5 else 0,
+                "rawMin": min(all_vals),
+                "rawMax": max(all_vals),
+                "stdDev": round(stats_mod.stdev(all_vals), 2) if len(all_vals) >= 3 else 0,
                 "homeAvg": round(sum(home_v) / len(home_v), 1) if home_v else 0,
                 "awayAvg": round(sum(away_v) / len(away_v), 1) if away_v else 0,
+                "overRate": round(over_count / len(all_vals) * 100) if all_vals else 50,
             }
 
         total_logs = len(player_game_logs)

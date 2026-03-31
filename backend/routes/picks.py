@@ -30,12 +30,24 @@ async def save_pick(req: SavePickRequest):
     pick_id = pick.get("id") or str(uuid.uuid4())[:8]
     tracking_id = generate_tracking_id()
 
+    # Normalize propType for consistent storage
+    raw_prop = pick.get("propType", "")
+    normalized_prop = raw_prop.lower().replace("+", "_").replace(" ", "_").replace("-", "_")
+    prop_label_map = {
+        "pts_reb_ast": "pts_reb_ast",
+        "3_pointers_made": "three_pointers",
+        "3_point_fg_made": "three_pointers",
+        "fg_made": "fgm", "ft_made": "ftm",
+        "fg_attempted": "fga", "ft_attempted": "fta",
+        "3pt_attempted": "tpa",
+    }
+    normalized_prop = prop_label_map.get(normalized_prop, normalized_prop)
+
     # Detect sport from prediction data
     sport = pick.get("sport", "soccer")
     if not sport or sport == "soccer":
-        # Check if it looks like a basketball pick
         bball_props = {"points", "rebounds", "assists", "pts_reb_ast", "three_pointers", "fgm", "ftm", "fga", "fta", "tpa"}
-        if pick.get("propType", "") in bball_props:
+        if normalized_prop in bball_props:
             sport = "basketball"
 
     doc = {
@@ -50,7 +62,7 @@ async def save_pick(req: SavePickRequest):
         "opponentId": pick.get("_request", {}).get("opponentId", 0),
         "opponentName": pick.get("opponent", ""),
         "leagueId": pick.get("_request", {}).get("leagueId", 0),
-        "propType": pick.get("propType", ""),
+        "propType": normalized_prop,
         "line": pick.get("line", 0),
         "recommendation": pick.get("recommendation", "over"),
         "projectedValue": pick.get("projectedValue", 0),
@@ -185,7 +197,21 @@ BBALL_STAT_MAP = {
 
 def get_bball_stat_value(parsed: dict, prop_type: str):
     """Extract basketball stat value from parsed player stat."""
-    pt = prop_type.lower()
+    # Normalize: "Pts+Reb+Ast" → "pts_reb_ast", "Points" → "points"
+    pt = prop_type.lower().replace("+", "_").replace(" ", "_").replace("-", "_")
+    # Also handle display labels
+    label_map = {
+        "pts_reb_ast": "pts_reb_ast",
+        "3_pointers_made": "three_pointers",
+        "3_point_fg_made": "three_pointers",
+        "fg_made": "fgm",
+        "ft_made": "ftm",
+        "fg_attempted": "fga",
+        "ft_attempted": "fta",
+        "3pt_attempted": "tpa",
+    }
+    pt = label_map.get(pt, pt)
+
     if pt == "pts_reb_ast":
         return (parsed.get("points", 0) or 0) + (parsed.get("rebounds", 0) or 0) + (parsed.get("assists", 0) or 0)
     field = BBALL_STAT_MAP.get(pt, pt)
@@ -554,6 +580,8 @@ async def _build_basketball_update(pick: dict, game: dict, team_id: int, email: 
     current_value = 0
     minutes_played = "0:00"
 
+    print(f"[BBALL LIVE] Game {game_id} | Status: {status_short} | Stats entries: {len(player_stats) if player_stats else 0}")
+
     if player_stats:
         # Find our player by name matching
         player_name_lower = (pick.get("playerName") or "").lower().strip()
@@ -566,6 +594,7 @@ async def _build_basketball_update(pick: dict, game: dict, team_id: int, email: 
                 if parsed.get("teamId") == team_id or not team_id:
                     current_value = get_bball_stat_value(parsed, pick.get("propType", "points"))
                     minutes_played = parsed.get("minutes", "0:00")
+                    print(f"[BBALL LIVE] Matched player: {pname} | prop: {pick.get('propType')} | value: {current_value} | parsed: pts={parsed.get('points')} reb={parsed.get('rebounds')} ast={parsed.get('assists')}")
                     break
 
     line = pick.get("line", 0)
