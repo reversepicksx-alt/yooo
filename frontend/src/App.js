@@ -2373,7 +2373,16 @@ export default function App() {
                                       <div style={{ fontSize: 15, fontWeight: 800, color: '#fff' }}>
                                         {res?.playerName || ext.playerName}
                                       </div>
-                                      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 2, display: 'flex', alignItems: 'center', gap: 6 }}>
+                                      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 2, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                        {ext.position && (
+                                          <span style={{
+                                            display: 'inline-block', background: 'rgba(59,130,246,0.15)',
+                                            color: '#60a5fa', fontSize: 9, fontWeight: 800,
+                                            padding: '1px 6px', borderRadius: 4, letterSpacing: '0.05em',
+                                          }} data-testid={`scan-position-${idx}`}>
+                                            {ext.position}{ext.role ? ` · ${ext.role}` : ''}
+                                          </span>
+                                        )}
                                         <span>{res?.teamName || ext.playerTeam || 'Unknown team'}</span>
                                         {ext.opponentName && (
                                           <span>

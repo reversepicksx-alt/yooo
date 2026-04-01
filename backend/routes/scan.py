@@ -7,7 +7,7 @@ from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
 from config import (
     EMERGENT_LLM_KEY, SUPPORTED_LEAGUES, CURRENT_SEASON,
     PROP_TYPE_ALIASES, INTERNATIONAL_LEAGUES, NATION_TO_LEAGUES,
-    TOP_5_LEAGUES,
+    TOP_5_LEAGUES, db,
 )
 from models import ScanPropRequest
 from utils import api_football_request, strip_accents
@@ -763,6 +763,19 @@ async def scan_prop(req: ScanPropRequest):
             if opponent_hint and resolved_player:
                 resolved_opponent = await _resolve_opponent(opponent_hint, is_international, league_id)
 
+            # Look up cached position/role for display on scan card
+            player_pos_info = {}
+            if resolved_player and resolved_player.get("playerId"):
+                cached_pos = await db.player_positions.find_one(
+                    {"playerId": resolved_player["playerId"]},
+                    {"_id": 0, "specificPosition": 1, "role": 1}
+                )
+                if cached_pos and cached_pos.get("specificPosition"):
+                    player_pos_info = {
+                        "position": cached_pos["specificPosition"],
+                        "role": cached_pos.get("role", ""),
+                    }
+
             results.append({
                 "extracted": {
                     "playerName": player_name,
@@ -774,6 +787,8 @@ async def scan_prop(req: ScanPropRequest):
                     "league": league_name or entry.get("league"),
                     "leagueId": league_id,
                     "isCombo": False,
+                    "position": player_pos_info.get("position", ""),
+                    "role": player_pos_info.get("role", ""),
                 },
                 "resolved": resolved_player,
                 "resolvedOpponent": resolved_opponent,

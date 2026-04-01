@@ -649,7 +649,8 @@ async def basketball_predict(req: BasketballPredictionRequest):
                 })
 
         # ═══════════════════════════════════════
-        # MULTI-AI CONSENSUS ENGINE (5 AIs — first 3 valid responses win)
+        # MULTI-AI CONSENSUS ENGINE (3 AIs)
+        # Gemini Flash (GE) + Grok (GK) + GPT-4.1-mini (GP)
         # ═══════════════════════════════════════
 
         # Pre-compute the statistical lean guidance for the AI
@@ -901,7 +902,7 @@ Analyze the statistical verdict, per-minute projection, and over-rate FIRST. The
             over_count = sum(1 for r in recs if r == "over")
             under_count = len(recs) - over_count
             if all(r == prediction["recommendation"] for r in recs):
-                consensus = f"Unanimous {prediction['recommendation'].upper()} — {len(valid_preds)}/4 AI models agree."
+                consensus = f"Unanimous {prediction['recommendation'].upper()} — {len(valid_preds)}/{len(valid_preds)} AI models agree."
             else:
                 majority_rec = prediction["recommendation"]
                 dissenters = [p for p in valid_preds if p.get("recommendation") != majority_rec]
@@ -911,7 +912,7 @@ Analyze the statistical verdict, per-minute projection, and over-rate FIRST. The
                     if reason:
                         dissent_reasons.append(reason[:200])
                 dissent_text = " Dissent: " + " | ".join(dissent_reasons) if dissent_reasons else ""
-                consensus = f"Split: {over_count}/4 OVER, {under_count}/4 UNDER. Consensus → {prediction['recommendation'].upper()}.{dissent_text}"
+                consensus = f"Split: {over_count}/{len(valid_preds)} OVER, {under_count}/{len(valid_preds)} UNDER. Consensus → {prediction['recommendation'].upper()}.{dissent_text}"
             prediction["consensusNote"] = consensus
         else:
             pv = prediction.get("projectedValue", req.line)

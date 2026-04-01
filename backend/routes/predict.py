@@ -832,32 +832,78 @@ async def predict(req: PredictionRequest):
 
         # =============================================
         # AI POSITION RESOLVER: Get specific position (RW, CM, CB, etc.)
-        # Uses cache first, then Gemini Flash as fallback
+        # Uses cache first, then Grok as fallback with API-Sports context
         # =============================================
         specific_position = ""
         player_role = ""
         GENERIC_POSITIONS = {"Goalkeeper", "Defender", "Midfielder", "Attacker", ""}
+
+        # Position-to-role compatibility: ensures roles match positions
+        POSITION_ROLE_MAP = {
+            "GK": {"Shot-Stopper", "Sweeper Keeper"},
+            "CB": {"Ball-Playing CB", "Stopper"},
+            "LB": {"Fullback", "Wing-Back", "Inverted Fullback"},
+            "RB": {"Fullback", "Wing-Back", "Inverted Fullback"},
+            "LWB": {"Wing-Back", "Fullback"},
+            "RWB": {"Wing-Back", "Fullback"},
+            "CDM": {"Anchor", "Ball Winner", "Deep-Lying Playmaker"},
+            "CM": {"Box-to-Box", "Mezzala", "Deep-Lying Playmaker", "Ball Winner"},
+            "CAM": {"Advanced Playmaker", "Wide Playmaker", "Shadow Striker"},
+            "LM": {"Wide Playmaker", "Traditional Winger"},
+            "RM": {"Wide Playmaker", "Traditional Winger"},
+            "LW": {"Traditional Winger", "Inverted Winger", "Inside Forward", "Progressive Carrier"},
+            "RW": {"Traditional Winger", "Inverted Winger", "Inside Forward", "Progressive Carrier"},
+            "CF": {"Complete Forward", "False 9", "Target Man", "Pressing Forward"},
+            "ST": {"Poacher", "Target Man", "Complete Forward", "Pressing Forward"},
+            "SS": {"Shadow Striker", "False 9"},
+        }
+
+        # Constrain valid positions by API-Sports generic category
+        GENERIC_TO_SPECIFIC = {
+            "Goalkeeper": {"GK"},
+            "Defender": {"CB", "LB", "RB", "LWB", "RWB"},
+            "Midfielder": {"CDM", "CM", "CAM", "LM", "RM", "LW", "RW"},
+            "Attacker": {"LW", "RW", "CF", "ST", "SS", "CAM"},
+        }
+
         if player_position in GENERIC_POSITIONS or not player_position:
-            # Check cache first
             cached_pos = await db.player_positions.find_one(
                 {"playerId": req.playerId}, {"_id": 0, "specificPosition": 1, "role": 1}
             )
             if cached_pos and cached_pos.get("specificPosition"):
                 specific_position = cached_pos["specificPosition"]
                 player_role = cached_pos.get("role", "")
-                print(f"[POS RESOLVE] Cache hit: {req.playerName} → {specific_position} ({player_role})")
-            else:
-                # Ask Grok for position + tactical role
+                # Validate cached role matches position
+                valid_roles = POSITION_ROLE_MAP.get(specific_position, set())
+                if player_role and valid_roles and player_role not in valid_roles:
+                    print(f"[POS RESOLVE] Cache role mismatch: {req.playerName} {specific_position}/{player_role} — clearing cache")
+                    await db.player_positions.delete_one({"playerId": req.playerId})
+                    specific_position = ""
+                    player_role = ""
+                else:
+                    print(f"[POS RESOLVE] Cache hit: {req.playerName} → {specific_position} ({player_role})")
+
+            if not specific_position:
                 try:
                     from openai import OpenAI as SyncOpenAI
                     pos_client = SyncOpenAI(api_key=XAI_API_KEY, base_url="https://api.x.ai/v1")
+
+                    # Build constrained position list based on API-Sports category
+                    allowed_positions = GENERIC_TO_SPECIFIC.get(player_position, None)
+                    if allowed_positions:
+                        pos_list = ", ".join(sorted(allowed_positions))
+                        category_hint = f"\nAPI-Sports categorizes this player as: {player_position}. ONLY choose from positions within that category: {pos_list}"
+                    else:
+                        pos_list = "GK, CB, LB, RB, LWB, RWB, CDM, CM, CAM, LM, RM, LW, RW, CF, ST, SS"
+                        category_hint = ""
+
                     pos_resp = await aio.wait_for(
                         aio.to_thread(
                             pos_client.chat.completions.create,
                             model="grok-4-1-fast-non-reasoning",
                             messages=[
                                 {"role": "system", "content": "You are a football/soccer tactical analyst. Reply in EXACTLY this format on one line:\nPOSITION|ROLE\nNothing else."},
-                                {"role": "user", "content": f"What is {req.playerName}'s primary position and tactical role at {req.teamName}?\nPosition must be one of: GK, CB, LB, RB, LWB, RWB, CDM, CM, CAM, LM, RM, LW, RW, CF, ST, SS\nRole must be one of: Shot-Stopper, Sweeper Keeper, Ball-Playing CB, Stopper, Fullback, Wing-Back, Inverted Fullback, Anchor, Box-to-Box, Deep-Lying Playmaker, Ball Winner, Mezzala, Advanced Playmaker, Wide Playmaker, Traditional Winger, Inverted Winger, Progressive Carrier, Inside Forward, Target Man, Poacher, False 9, Shadow Striker, Complete Forward, Pressing Forward\nReply ONLY: POSITION|ROLE"},
+                                {"role": "user", "content": f"What is {req.playerName}'s primary position and tactical role at {req.teamName}?{category_hint}\nPosition must be one of: {pos_list}\nRole must be one of: Shot-Stopper, Sweeper Keeper, Ball-Playing CB, Stopper, Fullback, Wing-Back, Inverted Fullback, Anchor, Box-to-Box, Deep-Lying Playmaker, Ball Winner, Mezzala, Advanced Playmaker, Wide Playmaker, Traditional Winger, Inverted Winger, Progressive Carrier, Inside Forward, Target Man, Poacher, False 9, Shadow Striker, Complete Forward, Pressing Forward\nReply ONLY: POSITION|ROLE"},
                             ],
                             temperature=0,
                         ),
@@ -867,9 +913,14 @@ async def predict(req: PredictionRequest):
                     parts = pos_text.split("|")
                     pos_code = parts[0].strip().upper().replace(".", "").replace(",", "") if parts else ""
                     role_text = parts[1].strip() if len(parts) > 1 else ""
-                    valid_positions = {"GK","CB","LB","RB","LWB","RWB","CDM","CM","CAM","LM","RM","LW","RW","CF","ST","SS"}
+                    valid_positions = allowed_positions or {"GK","CB","LB","RB","LWB","RWB","CDM","CM","CAM","LM","RM","LW","RW","CF","ST","SS"}
                     if pos_code in valid_positions:
                         specific_position = pos_code
+                        # Validate role matches position
+                        valid_roles = POSITION_ROLE_MAP.get(pos_code, set())
+                        if role_text and valid_roles and role_text not in valid_roles:
+                            print(f"[POS RESOLVE] Role '{role_text}' invalid for {pos_code}, stripping")
+                            role_text = ""
                         player_role = role_text
                         await db.player_positions.update_one(
                             {"playerId": req.playerId},
@@ -885,7 +936,7 @@ async def predict(req: PredictionRequest):
                         )
                         print(f"[POS RESOLVE] AI resolved: {req.playerName} → {specific_position} | {player_role} (cached)")
                     else:
-                        print(f"[POS RESOLVE] AI returned invalid: '{pos_text}'")
+                        print(f"[POS RESOLVE] AI returned invalid: '{pos_text}' (allowed: {valid_positions})")
                 except Exception as e:
                     print(f"[POS RESOLVE] Error: {e}")
         else:
@@ -896,8 +947,8 @@ async def predict(req: PredictionRequest):
         display_role = player_role
 
         # =============================================
-        # MULTI-AI CONSENSUS ENGINE (5 AIs — first 3 valid responses win)
-        # Grok + Gemini Flash + Gemini 2.5 + GPT-4o + Claude
+        # MULTI-AI CONSENSUS ENGINE (3 AIs)
+        # Gemini Flash (GE) + Grok (GK) + GPT-4.1-mini (GP)
         # =============================================
         PREDICTION_SYSTEM = """Elite soccer prop prediction engine. Analyze data thoroughly, return calibrated JSON.
 
@@ -1151,9 +1202,9 @@ recentSamples=[]
 
 Analyze ALL data thoroughly. Return JSON only."""
 
-        # Run 5 AIs in TRULY PARALLEL (using litellm.acompletion, not blocking LlmChat)
+        # Run 3 AIs in TRULY PARALLEL (using litellm.acompletion, not blocking LlmChat)
         # LlmChat uses litellm.completion (sync) which blocks the event loop.
-        # litellm.acompletion is truly async — all 5 AIs execute concurrently.
+        # litellm.acompletion is truly async — all 3 AIs execute concurrently.
         import litellm
         litellm.drop_params = True
         EMERGENT_PROXY = "https://integrations.emergentagent.com/llm"
@@ -1359,7 +1410,7 @@ Analyze ALL data thoroughly. Return JSON only."""
             over_count = sum(1 for r in recs if r == "over")
             under_count = len(recs) - over_count
             if all(r == prediction["recommendation"] for r in recs):
-                consensus = f"Unanimous {prediction['recommendation'].upper()} — {len(valid_preds)}/4 AI models agree."
+                consensus = f"Unanimous {prediction['recommendation'].upper()} — {len(valid_preds)}/{len(valid_preds)} AI models agree."
             else:
                 majority_rec = prediction["recommendation"]
                 dissenters = [p for p in valid_preds if p.get("recommendation") != majority_rec]
@@ -1369,7 +1420,7 @@ Analyze ALL data thoroughly. Return JSON only."""
                     if reason:
                         dissent_reasons.append(reason[:200])
                 dissent_text = " Dissent: " + " | ".join(dissent_reasons) if dissent_reasons else ""
-                consensus = f"Split: {over_count}/4 OVER, {under_count}/4 UNDER. Consensus → {prediction['recommendation'].upper()}.{dissent_text}"
+                consensus = f"Split: {over_count}/{len(valid_preds)} OVER, {under_count}/{len(valid_preds)} UNDER. Consensus → {prediction['recommendation'].upper()}.{dissent_text}"
             prediction["consensusNote"] = consensus
 
         else:

@@ -29,7 +29,7 @@ export function ProjectionCard({ projection, onSave, excludedIndices, onToggleSa
                   {projection.player.role && <span style={{ fontWeight: 600, opacity: 0.8 }}> · {projection.player.role}</span>}
                 </span>
               )}
-              {projection.player?.team} vs {projection.opponent}
+              {projection.player?.team} {projection._request?.venue === 'away' ? '@' : 'vs'} {projection.opponent}
             </div>
           </div>
           <div style={{ textAlign: 'right' }}>
@@ -199,7 +199,7 @@ export function ProjectionCard({ projection, onSave, excludedIndices, onToggleSa
                     textAlign: 'center',
                   }}>
                     <div style={{ fontSize: 9, fontWeight: 700, color: '#a855f7', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>
-                      {m.model === 'grok' ? 'AI-1' : m.model === 'gemini' ? 'AI-2' : m.model === 'gpt' ? 'AI-3' : `AI-${i+1}`}
+                      {m.model === 'gemini' ? 'GE' : m.model === 'grok' ? 'GK' : m.model === 'gpt41mini' || m.model === 'gpt' ? 'GP' : `AI-${i+1}`}
                     </div>
                     <div style={{
                       fontSize: 13, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace",
