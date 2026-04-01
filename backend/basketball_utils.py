@@ -16,8 +16,8 @@ import os
 import asyncio
 import httpx
 from datetime import datetime
+from config import get_dynamic_api_key
 
-API_KEY = os.environ.get("API_FOOTBALL_KEY", "")
 BASE_URL = "https://v1.basketball.api-sports.io"
 NBA_LEAGUE_ID = 12
 
@@ -37,7 +37,7 @@ BBALL_CURRENT_SEASON = get_current_nba_season()
 async def _api_get(endpoint: str, params: dict) -> list:
     """Make a GET request to the basketball API."""
     url = f"{BASE_URL}/{endpoint}"
-    headers = {"x-apisports-key": API_KEY}
+    headers = {"x-apisports-key": get_dynamic_api_key()}
     try:
         async with httpx.AsyncClient(timeout=12) as client:
             resp = await client.get(url, headers=headers, params=params)

@@ -240,3 +240,25 @@ export async function cancelSquareSubscription(email) {
     body: JSON.stringify({ email }),
   });
 }
+
+// Admin Settings APIs
+export async function getAdminSettings(email, token) {
+  return apiCall('/api/admin/settings', {
+    method: 'POST',
+    body: JSON.stringify({ email, token, key: '', value: '' }),
+  });
+}
+
+export async function updateAdminSetting(email, token, key, value) {
+  return apiCall('/api/admin/settings/update', {
+    method: 'POST',
+    body: JSON.stringify({ email, token, key, value }),
+  });
+}
+
+export async function testApiKey(email, token, api_key) {
+  return apiCall('/api/admin/test-key', {
+    method: 'POST',
+    body: JSON.stringify({ email, token, api_key }),
+  });
+}

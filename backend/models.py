@@ -126,3 +126,16 @@ class BasketballPredictionRequest(BaseModel):
 class LiveUpdateRequest(BaseModel):
     email: str
     token: str
+
+
+class AdminSettingsRequest(BaseModel):
+    email: str
+    token: str
+    key: str
+    value: str
+
+
+class AdminTestKeyRequest(BaseModel):
+    email: str
+    token: str
+    api_key: str

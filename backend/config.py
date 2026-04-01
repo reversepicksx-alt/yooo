@@ -22,6 +22,30 @@ SQUARE_APPLICATION_ID = os.environ.get("SQUARE_APPLICATION_ID")
 SQUARE_LOCATION_ID = os.environ.get("SQUARE_LOCATION_ID")
 SQUARE_ENVIRONMENT = os.environ.get("SQUARE_ENVIRONMENT", "sandbox")
 
+# ── Dynamic settings (overridable via admin panel, persisted in MongoDB) ──
+_dynamic_settings = {}
+
+async def init_dynamic_settings():
+    """Load settings overrides from MongoDB on startup."""
+    doc = await db.settings.find_one({"key": "API_FOOTBALL_KEY"}, {"_id": 0})
+    if doc and doc.get("value"):
+        _dynamic_settings["API_FOOTBALL_KEY"] = doc["value"]
+    else:
+        _dynamic_settings["API_FOOTBALL_KEY"] = API_FOOTBALL_KEY
+
+def get_dynamic_api_key():
+    """Get the current API-Football key (DB override > env)."""
+    return _dynamic_settings.get("API_FOOTBALL_KEY") or API_FOOTBALL_KEY
+
+async def set_dynamic_api_key(value: str):
+    """Update API-Football key in memory + MongoDB."""
+    _dynamic_settings["API_FOOTBALL_KEY"] = value
+    await db.settings.update_one(
+        {"key": "API_FOOTBALL_KEY"},
+        {"$set": {"key": "API_FOOTBALL_KEY", "value": value}},
+        upsert=True
+    )
+
 # ── Lifetime VIP Emails ──
 LIFETIME_SUB_EMAILS = [
     "faron2allen@gmail.com", "jossel0701@gmail.com", "josselj001@gmail.com",

@@ -1,7 +1,7 @@
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from config import db, LIFETIME_SUB_EMAILS, OWNER_EMAIL
+from config import db, LIFETIME_SUB_EMAILS, OWNER_EMAIL, init_dynamic_settings
 
 # ── Create App ──
 app = FastAPI(title="ReversePicks API")
@@ -27,6 +27,7 @@ from routes.misc import router as misc_router
 from routes.tactical import router as tactical_router
 from routes.basketball_predict import router as basketball_router
 from routes.square import router as square_router
+from routes.admin import router as admin_router
 from cache import seed_cache, background_refresh_loop
 from basketball_cache import seed_bball_cache, bball_background_refresh, get_bball_cache_status
 
@@ -42,11 +43,14 @@ app.include_router(misc_router)
 app.include_router(tactical_router)
 app.include_router(basketball_router)
 app.include_router(square_router)
+app.include_router(admin_router)
 
 
 # ── Startup: seed grants for lifetime VIPs ──
 @app.on_event("startup")
 async def seed_grants():
+    # Load dynamic settings (API keys from MongoDB) before anything else
+    await init_dynamic_settings()
     for email in LIFETIME_SUB_EMAILS:
         await db.manual_access_grants.update_one(
             {"email": email},

@@ -15,11 +15,13 @@ LEGAL: ALL 3rd-party app names and player/team images removed. No AI model names
 ## Key Files
 - `/app/backend/routes/square.py` — Square subscription management
 - `/app/backend/routes/auth.py` — Dual auth: Square + Whop
+- `/app/backend/routes/admin.py` — Admin settings (API key management, owner-only)
 - `/app/backend/routes/picks.py` — Live tracking (30s refresh, name-based fallback)
 - `/app/backend/routes/basketball_predict.py` — Basketball prediction
 - `/app/backend/routes/predict.py` — Soccer prediction
 - `/app/backend/routes/scan.py` — Sport-aware OCR scan (19 soccer + 17 basketball props)
 - `/app/backend/basketball_cache.py` — NBA abbreviation map + team/player cache
+- `/app/backend/config.py` — Dynamic settings system (get_dynamic_api_key, init_dynamic_settings)
 - `/app/frontend/src/components/app/LoginPage.jsx` — Login + Subscribe flow
 - `/app/frontend/src/App.css` — Compact card styling (max-width: 400px centered)
 
@@ -42,6 +44,7 @@ LEGAL: ALL 3rd-party app names and player/team images removed. No AI model names
 - API key updated (new key active, Mega plan)
 - Soccer + Basketball odds verified working
 - Fixed .gitignore blocking .env files from production deployment
+- **Admin Settings Panel** — Owner can update API-Sports key directly from Profile tab, stored in MongoDB, takes effect instantly without redeployment. Includes Test Key and Save Key functionality.
 
 ## Resolved Issues
 - P0: Soccer Odds / Moneyline — RESOLVED (was expired API key)

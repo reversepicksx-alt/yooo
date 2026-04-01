@@ -3,13 +3,14 @@ import httpx
 import asyncio as aio
 import unicodedata
 from fastapi import HTTPException
-from config import API_FOOTBALL_KEY, API_FOOTBALL_BASE, api_semaphore
+from config import API_FOOTBALL_BASE, api_semaphore, get_dynamic_api_key
 
 
 async def api_football_request(endpoint: str, params: dict = None):
+    key = get_dynamic_api_key()
     headers = {
-        "x-apisports-key": API_FOOTBALL_KEY,
-        "x-rapidapi-key": API_FOOTBALL_KEY,
+        "x-apisports-key": key,
+        "x-rapidapi-key": key,
     }
     async with api_semaphore:
         for attempt in range(3):
