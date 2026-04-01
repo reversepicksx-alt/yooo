@@ -26,6 +26,7 @@ export function ProjectionCard({ projection, onSave, excludedIndices, onToggleSa
               {projection.player?.position && projection.player.position !== 'Unknown' && (
                 <span style={{ display: 'inline-block', background: 'rgba(59,130,246,0.15)', color: '#60a5fa', fontSize: 10, fontWeight: 800, padding: '2px 8px', borderRadius: 4, marginRight: 6, letterSpacing: '0.05em', verticalAlign: 'middle' }} data-testid="player-position-badge">
                   {projection.player.position}
+                  {projection.player.role && <span style={{ fontWeight: 600, opacity: 0.8 }}> · {projection.player.role}</span>}
                 </span>
               )}
               {projection.player?.team} vs {projection.opponent}

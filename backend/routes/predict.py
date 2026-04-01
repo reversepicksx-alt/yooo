@@ -785,17 +785,19 @@ async def predict(req: PredictionRequest):
         # Uses cache first, then Gemini Flash as fallback
         # =============================================
         specific_position = ""
+        player_role = ""
         GENERIC_POSITIONS = {"Goalkeeper", "Defender", "Midfielder", "Attacker", ""}
         if player_position in GENERIC_POSITIONS or not player_position:
             # Check cache first
             cached_pos = await db.player_positions.find_one(
-                {"playerId": req.playerId}, {"_id": 0, "specificPosition": 1}
+                {"playerId": req.playerId}, {"_id": 0, "specificPosition": 1, "role": 1}
             )
             if cached_pos and cached_pos.get("specificPosition"):
                 specific_position = cached_pos["specificPosition"]
-                print(f"[POS RESOLVE] Cache hit: {req.playerName} → {specific_position}")
+                player_role = cached_pos.get("role", "")
+                print(f"[POS RESOLVE] Cache hit: {req.playerName} → {specific_position} ({player_role})")
             else:
-                # Ask Gemini Flash for the specific position
+                # Ask Grok for position + tactical role
                 try:
                     from openai import OpenAI as SyncOpenAI
                     pos_client = SyncOpenAI(api_key=XAI_API_KEY, base_url="https://api.x.ai/v1")
@@ -804,18 +806,21 @@ async def predict(req: PredictionRequest):
                             pos_client.chat.completions.create,
                             model="grok-4-1-fast-non-reasoning",
                             messages=[
-                                {"role": "system", "content": "You are a football/soccer position expert. Reply with ONLY the position code, nothing else."},
-                                {"role": "user", "content": f"What is {req.playerName}'s primary playing position at {req.teamName}? Reply with ONLY one of: GK, CB, LB, RB, LWB, RWB, CDM, CM, CAM, LM, RM, LW, RW, CF, ST, SS. Nothing else."},
+                                {"role": "system", "content": "You are a football/soccer tactical analyst. Reply in EXACTLY this format on one line:\nPOSITION|ROLE\nNothing else."},
+                                {"role": "user", "content": f"What is {req.playerName}'s primary position and tactical role at {req.teamName}?\nPosition must be one of: GK, CB, LB, RB, LWB, RWB, CDM, CM, CAM, LM, RM, LW, RW, CF, ST, SS\nRole must be one of: Shot-Stopper, Sweeper Keeper, Ball-Playing CB, Stopper, Fullback, Wing-Back, Inverted Fullback, Anchor, Box-to-Box, Deep-Lying Playmaker, Ball Winner, Mezzala, Advanced Playmaker, Wide Playmaker, Traditional Winger, Inverted Winger, Progressive Carrier, Inside Forward, Target Man, Poacher, False 9, Shadow Striker, Complete Forward, Pressing Forward\nReply ONLY: POSITION|ROLE"},
                             ],
                             temperature=0,
                         ),
                         timeout=6
                     )
-                    pos_text = pos_resp.choices[0].message.content.strip().upper().replace(".", "").replace(",", "")
+                    pos_text = pos_resp.choices[0].message.content.strip()
+                    parts = pos_text.split("|")
+                    pos_code = parts[0].strip().upper().replace(".", "").replace(",", "") if parts else ""
+                    role_text = parts[1].strip() if len(parts) > 1 else ""
                     valid_positions = {"GK","CB","LB","RB","LWB","RWB","CDM","CM","CAM","LM","RM","LW","RW","CF","ST","SS"}
-                    if pos_text in valid_positions:
-                        specific_position = pos_text
-                        # Cache it
+                    if pos_code in valid_positions:
+                        specific_position = pos_code
+                        player_role = role_text
                         await db.player_positions.update_one(
                             {"playerId": req.playerId},
                             {"$set": {
@@ -824,10 +829,11 @@ async def predict(req: PredictionRequest):
                                 "team": req.teamName,
                                 "genericPosition": player_position,
                                 "specificPosition": specific_position,
+                                "role": player_role,
                             }},
                             upsert=True
                         )
-                        print(f"[POS RESOLVE] AI resolved: {req.playerName} → {specific_position} (cached)")
+                        print(f"[POS RESOLVE] AI resolved: {req.playerName} → {specific_position} | {player_role} (cached)")
                     else:
                         print(f"[POS RESOLVE] AI returned invalid: '{pos_text}'")
                 except Exception as e:
@@ -837,6 +843,7 @@ async def predict(req: PredictionRequest):
 
         # Use specific position if available, otherwise fall back to generic
         display_position = specific_position or player_position
+        display_role = player_role
 
         # =============================================
         # MULTI-AI CONSENSUS ENGINE (5 AIs — first 3 valid responses win)
@@ -1011,6 +1018,8 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             pos_map = {"Goalkeeper": "GK", "Defender": "DEF", "Midfielder": "MID", "Attacker": "FWD"}
             pos_short = specific_position if specific_position else pos_map.get(player_position, player_position)
             position_context = f"\n[PLAYER POSITION] {req.playerName} plays as {pos_short}"
+            if player_role:
+                position_context += f" — Role: {player_role}"
             if specific_position and player_position:
                 position_context += f" (API category: {player_position})"
             if position_comparison:
@@ -1023,8 +1032,8 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
                     comp_lines.append(f"  {p['name']} ({p['team']}) — {p['statValue']} {req.propType} in {p['minutes']}min (per90: {p['per90']}) | {p['date']} | rating: {p.get('rating', 'N/A')}")
                 position_context += f"""
 [POSITION COMPARISON — {pos_short}s vs {req.opponentName}]
-{req.playerName} is a {pos_short}. Below are other {player_position}s who played against {req.opponentName} recently.
-Focus on players who play a similar role to {pos_short} when weighing this comparison:
+{req.playerName} is a {pos_short}{f' ({player_role})' if player_role else ''}. Below are other {player_position}s who played against {req.opponentName} recently.
+Focus on players who play a similar role to {pos_short}{f' ({player_role})' if player_role else ''} when weighing this comparison:
 {chr(10).join(comp_lines)}
 Average {req.propType}: {comp_avg} | Per-90 avg: {comp_per90_avg} | Sample: {len(comp_values)} players
 >>> Compare {req.playerName}'s projected {req.propType} against this positional baseline vs the opponent. <<<"""
@@ -1323,6 +1332,7 @@ Analyze ALL data thoroughly. Return JSON only."""
             "name": req.playerName,
             "team": player_team_display,
             "position": display_position or "Unknown",
+            "role": display_role or "",
         }
         prediction["opponent"] = req.opponentName
         prediction["propType"] = req.propType
