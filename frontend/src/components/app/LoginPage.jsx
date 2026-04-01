@@ -312,7 +312,8 @@ export function LoginPage({ onAuth }) {
                 </div>
                 <p style={{ fontSize: 11, color: 'var(--text-muted)' }}>Enter card details to complete subscription</p>
               </div>
-              <div data-testid="square-payment-form">
+              <div data-testid="square-payment-form" style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 12, padding: '16px', border: '1px solid rgba(255,255,255,0.06)' }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.5)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 10 }}>Card Details</div>
                 {squareAppId && squareLocationId ? (
                 <PaymentForm
                   applicationId={squareAppId}
@@ -329,8 +330,6 @@ export function LoginPage({ onAuth }) {
                       '.input-container.is-focus': { borderColor: '#10b981' },
                       '.message-text': { color: '#f43f5e' },
                       '.message-icon': { color: '#f43f5e' },
-                      input: { color: '#fff', fontSize: '14px' },
-                      'input::placeholder': { color: 'rgba(255,255,255,0.3)' },
                     }}
                     render={(Button) => (
                       <Button

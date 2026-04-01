@@ -75,6 +75,12 @@ TEAM_LEAGUE_MAP = {
     "gremio": 71, "internacional": 71, "cruzeiro": 71, "fluminense": 71, "santos": 71,
     "vasco": 71, "bahia": 71, "fortaleza": 71, "bragantino": 71, "juventude": 71,
     "cuiaba": 71, "goias": 71, "vitoria": 71, "sport": 71, "ceara": 71,
+    "coritiba": 71, "mirassol": 71, "sport recife": 71, "america mineiro": 71,
+    "chapecoense": 71, "criciuma": 71, "guarani": 71, "ponte preta": 71,
+    "operario": 71, "novorizontino": 71, "avai": 71, "nautico": 71,
+    "londrina": 71, "vila nova": 71, "sampaio correa": 71, "ituano": 71,
+    "botafogo sp": 71, "csa": 71, "abc": 71, "tombense": 71,
+    "paysandu": 71, "remo": 71, "santa cruz": 71, "atletico go": 71,
     "arsenal": 39, "chelsea": 39, "liverpool": 39, "manchester city": 39, "man city": 39,
     "manchester united": 39, "man united": 39, "tottenham": 39, "spurs": 39,
     "newcastle": 39, "aston villa": 39, "west ham": 39, "brighton": 39, "wolves": 39,
@@ -112,9 +118,6 @@ TEAM_LEAGUE_MAP = {
 
 async def _infer_league_id(team_name: str, opponent_name: str, ai_league_id: int) -> int:
     """Infer league ID: cache first, then hardcoded map, then AI guess."""
-    if ai_league_id and ai_league_id != 39:
-        return ai_league_id
-
     # Try cache for both team and opponent
     for name in [team_name, opponent_name]:
         if not name:
@@ -123,7 +126,7 @@ async def _infer_league_id(team_name: str, opponent_name: str, ai_league_id: int
         if info and info.get("leagueId"):
             return info["leagueId"]
 
-    # Hardcoded map fallback
+    # Hardcoded map (most reliable for known teams)
     for name in [team_name, opponent_name]:
         if not name:
             continue
@@ -133,6 +136,10 @@ async def _infer_league_id(team_name: str, opponent_name: str, ai_league_id: int
         for key, lid in TEAM_LEAGUE_MAP.items():
             if key in name_lower or name_lower in key:
                 return lid
+
+    # AI guess fallback (only if not default Premier League guess)
+    if ai_league_id and ai_league_id != 39:
+        return ai_league_id
 
     return ai_league_id or 71
 

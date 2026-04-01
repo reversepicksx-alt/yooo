@@ -65,6 +65,8 @@ LEGAL: ALL 3rd-party app names and player/team images removed. No AI model names
 - P1: Position comparison showing wrong-position players (LB in CB comparison) — RESOLVED (specific position filtering via cached positions)
 - P0: Basketball FGA/FGM stats only counting 2pt attempts, missing 3pt attempts — RESOLVED (combined field_goals + threepoint_goals). Kelly Oubre: 5.9→10.6, Paul George: 6.3→13.1
 - P1: Basketball DNP games (0 minutes) counted as 0-stat data points deflating averages — RESOLVED (< 5 min filter)
+- P0: Brazilian teams (Coritiba, Botafogo) showing as CONCACAF Nations League — RESOLVED (league inference now checks hardcoded team map BEFORE trusting AI vision guess; added 24+ missing Brazilian teams to TEAM_LEAGUE_MAP)
+- P1: Square payment card input all white on dark theme — Styling improved with dark container frame (Square iframe background is unchangeable per their security policy)
 
 ## Prioritized Backlog
 ### P1: Slip correlation analysis
