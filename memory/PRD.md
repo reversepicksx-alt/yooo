@@ -60,6 +60,9 @@ LEGAL: ALL 3rd-party app names and player/team images removed. No AI model names
 - Production deployment not receiving .env updates — RESOLVED (fixed .gitignore)
 - P0: Position resolver misclassifying players (e.g., Alex Sandro as CB) — RESOLVED (added category constraints + role validation)
 - P0: Consensus text showing "4 AI models" instead of 3 — RESOLVED (dynamic count)
+- P0: AI model recommendation contradicting projected value (e.g., OVER with projection below line) — RESOLVED (enforced per-model recommendation based on projectedValue vs line)
+- P1: Position comparison showing 4+ players from same team — RESOLVED (max 1 per team dedup)
+- P1: Position comparison showing wrong-position players (LB in CB comparison) — RESOLVED (specific position filtering via cached positions)
 
 ## Prioritized Backlog
 ### P1: Slip correlation analysis
