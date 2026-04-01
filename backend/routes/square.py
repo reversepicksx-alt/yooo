@@ -160,6 +160,11 @@ async def create_checkout(req: CheckoutRequest):
         salt = bcrypt.gensalt()
         password_hash = bcrypt.hashpw(req.password.encode("utf-8"), salt).decode("utf-8")
 
+        # Calculate expiration based on plan cadence
+        from datetime import timedelta
+        cadence_days = {"weekly": 7, "monthly": 30, "quarterly": 90}
+        expires_at = (datetime.now(timezone.utc) + timedelta(days=cadence_days.get(plan_key, 30))).isoformat()
+
         await db.pending_checkouts.update_one(
             {"email": email_lower},
             {"$set": {
@@ -169,32 +174,44 @@ async def create_checkout(req: CheckoutRequest):
                 "passwordHash": password_hash,
                 "planKey": plan_key,
                 "checkoutToken": checkout_token,
+                "expiresAt": expires_at,
                 "createdAt": now,
                 "status": "pending",
             }},
             upsert=True,
         )
 
-        # 2. Create Square payment link with subscription plan
+        # 2. Ensure subscription plans exist in Square catalog
+        plans = await _ensure_plans_exist()
+        plan_doc = plans.get(plan_key)
+
+        # 3. Create Square payment link with subscription plan for recurring billing
         redirect_url = f"{req.redirectUrl.rstrip('/')}?checkout_token={checkout_token}"
 
-        result = client.checkout.payment_links.create(
-            idempotency_key=str(uuid.uuid4()),
-            quick_pay={
-                "name": f"ReversePicks {plan_doc['name']} Subscription",
+        checkout_body = {
+            "idempotency_key": str(uuid.uuid4()),
+            "quick_pay": {
+                "name": f"ReversePicks {PLANS[plan_key]['name']} Subscription",
                 "price_money": {
-                    "amount": plan_doc["amount"],
+                    "amount": PLANS[plan_key]["amount"],
                     "currency": "USD",
                 },
                 "location_id": location_id,
             },
-            checkout_options={
+            "checkout_options": {
                 "redirect_url": redirect_url,
             },
-            pre_populated_data={
+            "pre_populated_data": {
                 "buyer_email": email_lower,
             },
-        )
+        }
+
+        # Add subscription plan for recurring billing if available
+        if plan_doc and plan_doc.get("variation_id"):
+            checkout_body["checkout_options"]["subscription_plan_id"] = plan_doc["variation_id"]
+            print(f"[SQUARE CHECKOUT] Using subscription plan: {plan_doc['variation_id']}")
+
+        result = client.checkout.payment_links.create(**checkout_body)
 
         checkout_url = result.payment_link.url
         link_id = result.payment_link.id
@@ -274,7 +291,11 @@ async def verify_checkout(body: dict):
             upsert=True,
         )
 
-        # Create subscription record
+        # Create subscription record with expiration
+        from datetime import timedelta
+        cadence_days = {"weekly": 7, "monthly": 30, "quarterly": 90}
+        expires_at = pending.get("expiresAt") or (datetime.now(timezone.utc) + timedelta(days=cadence_days.get(plan_key, 30))).isoformat()
+
         await db.square_subscriptions.update_one(
             {"email": email_lower},
             {"$set": {
@@ -283,8 +304,11 @@ async def verify_checkout(body: dict):
                 "lastName": pending["lastName"],
                 "planKey": plan_key,
                 "planName": plan_doc_info.get("name", plan_key),
+                "planLabel": plan_doc_info.get("label", ""),
+                "cadence": plan_doc_info.get("cadence", "MONTHLY"),
                 "status": "ACTIVE",
                 "subscribedAt": now,
+                "expiresAt": expires_at,
                 "updatedAt": now,
                 "source": "checkout_link",
             }},
@@ -470,10 +494,13 @@ async def get_subscription_status(email: str):
         "active": sub.get("status") in ("ACTIVE", "PENDING"),
         "plan": sub.get("planName"),
         "planKey": sub.get("planKey"),
+        "planLabel": sub.get("planLabel", ""),
+        "cadence": sub.get("cadence", ""),
         "status": sub.get("status"),
         "cardLast4": sub.get("cardLast4"),
         "cardBrand": sub.get("cardBrand"),
         "subscribedAt": sub.get("subscribedAt"),
+        "expiresAt": sub.get("expiresAt"),
     }
 
 

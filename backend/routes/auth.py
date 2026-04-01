@@ -63,7 +63,24 @@ async def check_access(email_lower: str):
         {"_id": 0}
     )
     if square_sub:
-        return "Premium"
+        # Check expiration
+        expires_at = square_sub.get("expiresAt")
+        if expires_at:
+            try:
+                exp_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+                if datetime.now(timezone.utc) > exp_dt:
+                    # Subscription expired — update status
+                    await db.square_subscriptions.update_one(
+                        {"email": email_lower},
+                        {"$set": {"status": "EXPIRED", "updatedAt": datetime.now(timezone.utc).isoformat()}}
+                    )
+                    print(f"[AUTH] Subscription expired for {email_lower} (expired {expires_at})")
+                else:
+                    return "Premium"
+            except Exception:
+                return "Premium"  # Can't parse date, allow access
+        else:
+            return "Premium"  # No expiration set (legacy), allow access
 
     # Check Whop membership
     try:
