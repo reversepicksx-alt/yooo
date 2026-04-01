@@ -48,11 +48,18 @@ LEGAL: ALL 3rd-party app names and player/team images removed. No AI model names
 - **Admin Settings Extended** — All Square payment keys (Access Token, App ID, Location ID, Environment) now manageable from admin panel. Frontend payment form dynamically fetches Square config from backend.
 - **Soccer Position Comparison Engine** — When predicting a prop, fetches 3-7 same-position players (FWD vs FWDs, MID vs MIDs, DEF vs DEFs, GK vs GKs) who played against the same opponent recently. Shows per-90 rates, ratings, and averages. Data is fed to all 3 AIs as additional context and displayed on the prediction card.
 - **AI Position Resolver** — When the API returns generic positions (Attacker, Midfielder, etc.), Grok AI identifies the exact position (LW, ST, CM, CB, etc.) and caches it in MongoDB. First call uses AI, all subsequent calls are instant from cache. Player position badge on card shows the specific position (e.g., "LW" instead of "Attacker").
+- **Position Resolver Accuracy Fix (Apr 2026)** — Added API-Sports category constraints (GENERIC_TO_SPECIFIC map) so Defender→only CB/LB/RB/LWB/RWB, Attacker→only LW/RW/CF/ST/SS/CAM. Added POSITION_ROLE_MAP validation preventing mismatches (e.g., "Ball-Playing CB" on a LB). Clears cache on mismatch detection.
+- **Consensus Text Fix (Apr 2026)** — Fixed hardcoded "4 AI models" in consensus strings to dynamically reflect actual model count (len(valid_preds)). Applied to both soccer and basketball prediction pipelines.
+- **AI Model Nicknames (Apr 2026)** — Model breakdown UI now shows GE (Gemini), GK (Grok), GP (GPT) instead of generic AI-1/AI-2/AI-3.
+- **Matchup Home/Away Format (Apr 2026)** — Projection card now shows "Team @ Opponent" for away games, "Team vs Opponent" for home games.
+- **Position on Scan Card (Apr 2026)** — Scan results now look up player_positions MongoDB cache and display position/role badge on the pre-prediction scan card when available.
 
 ## Resolved Issues
 - P0: Soccer Odds / Moneyline — RESOLVED (was expired API key)
 - NBA team abbreviations not resolving — RESOLVED (added NBA_ABBREV_MAP)
 - Production deployment not receiving .env updates — RESOLVED (fixed .gitignore)
+- P0: Position resolver misclassifying players (e.g., Alex Sandro as CB) — RESOLVED (added category constraints + role validation)
+- P0: Consensus text showing "4 AI models" instead of 3 — RESOLVED (dynamic count)
 
 ## Prioritized Backlog
 ### P1: Slip correlation analysis
