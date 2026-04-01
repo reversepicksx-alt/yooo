@@ -91,11 +91,16 @@ export function ProjectionCard({ projection, onSave, excludedIndices, onToggleSa
             <div className="stat-label flex items-center gap-2 mb-3">
               <Users style={{ width: 12, height: 12, color: '#60a5fa' }} />
               {projection.positionComparison.positionShort || projection.positionComparison.position}s vs {projection.positionComparison.opponent}
+              {projection.positionComparison.venue && (
+                <span style={{ fontSize: 9, fontWeight: 700, color: '#f59e0b', textTransform: 'uppercase', marginLeft: 4 }}>
+                  {projection.positionComparison.venue} only
+                </span>
+              )}
             </div>
             <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 10, lineHeight: 1.4 }}>
-              How other {projection.positionComparison.positionShort || projection.positionComparison.position}s performed against this opponent recently
+              How other {projection.positionComparison.positionShort || projection.positionComparison.position}s performed {projection.positionComparison.venue ? `${projection.positionComparison.venue.toUpperCase()} ` : ''}against this opponent
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: projection.positionComparison.avgPossession ? '1fr 1fr 1fr' : '1fr 1fr', gap: 8, marginBottom: 12 }}>
               <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 8, padding: '8px 10px', textAlign: 'center' }}>
                 <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
                   Avg {getPropLabel(projection.positionComparison.propType)}
@@ -116,6 +121,17 @@ export function ProjectionCard({ projection, onSave, excludedIndices, onToggleSa
                 </div>
                 <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>normalized rate</div>
               </div>
+              {projection.positionComparison.avgPossession && (
+                <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 8, padding: '8px 10px', textAlign: 'center' }}>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+                    Avg Possession
+                  </div>
+                  <div style={{ fontSize: 18, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: '#f59e0b', marginTop: 2 }}>
+                    {projection.positionComparison.avgPossession}%
+                  </div>
+                  <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>team ball %</div>
+                </div>
+              )}
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               {projection.positionComparison.players.map((p, i) => (
@@ -130,7 +146,11 @@ export function ProjectionCard({ projection, onSave, excludedIndices, onToggleSa
                       <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 140 }}>
                         {p.name}
                       </div>
-                      <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>{p.team} · {p.date}</div>
+                      <div style={{ fontSize: 9, color: 'var(--text-muted)', display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                        <span>{p.team}</span>
+                        {p.position && <span style={{ color: '#60a5fa' }}>{p.position}{p.role ? ` · ${p.role}` : ''}</span>}
+                        {p.teamPossession != null && <span style={{ color: '#f59e0b' }}>{p.teamPossession}% poss</span>}
+                      </div>
                     </div>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>

@@ -322,27 +322,62 @@ async def predict(req: PredictionRequest):
             "duels_won": ("duels", "won"), "yellow_cards": ("cards", "yellow"),
         }
 
-        async def fetch_position_comparison(opp_fixtures, target_pos, prop_type, opponent_id, limit=5):
-            """Fetch same-position players who played against the opponent recently."""
+        async def fetch_position_comparison(opp_fixtures, target_pos, prop_type, opponent_id, player_venue_filter, limit=5):
+            """Fetch same-position players who played against the opponent recently.
+            Filters by venue: if target player is AWAY, only show comparison players' AWAY performances.
+            Also fetches possession data for each match."""
             fixture_pos = FIXTURE_POS_MAP.get(target_pos, "")
             if not fixture_pos or not opp_fixtures:
                 return []
             stat_cat, stat_sub = PROP_STAT_KEYS.get(prop_type, ("passes", "total"))
+            # The comparison players' venue should match the TARGET player's venue
+            # If target is AWAY, we want other players who also played AWAY against this opponent
+            comp_venue = player_venue_filter  # "home" or "away"
 
             async def fetch_pos_from_fixture(fix):
                 fid = fix.get("fixtureId")
                 if not fid:
                     return []
                 try:
-                    data = await api_football_request("fixtures/players", {"fixture": fid})
-                    if not data:
+                    # Fetch players AND fixture statistics (possession) in parallel
+                    players_task = api_football_request("fixtures/players", {"fixture": fid})
+                    stats_task = api_football_request("fixtures/statistics", {"fixture": fid})
+                    players_data, fixture_stats_data = await aio.gather(players_task, stats_task)
+
+                    if not players_data:
                         return []
+
+                    # Parse possession from fixture stats
+                    possession_map = {}  # team_id -> possession %
+                    if fixture_stats_data:
+                        for team_stats in fixture_stats_data:
+                            tid = team_stats.get("team", {}).get("id")
+                            for stat in team_stats.get("statistics", []):
+                                if stat.get("type") == "Ball Possession":
+                                    poss_str = str(stat.get("value", "0")).replace("%", "")
+                                    try:
+                                        possession_map[tid] = int(poss_str)
+                                    except (ValueError, TypeError):
+                                        pass
+
                     results = []
-                    for team_data in data:
+                    for team_data in players_data:
                         tid = team_data.get("team", {}).get("id")
                         team_name = team_data.get("team", {}).get("name", "")
                         if tid == opponent_id:
-                            continue  # Skip opponent's own players — we want teams who PLAYED AGAINST them
+                            continue  # Skip opponent — we want teams who PLAYED AGAINST them
+
+                        # Venue filter: determine if this team was home or away in this fixture
+                        # The opponent's fixture list has opp_venue (opponent's venue)
+                        # If opponent was HOME, the comparison team was AWAY, and vice versa
+                        opp_fixture_venue = fix.get("venue", "")  # opponent's venue in this fixture
+                        comp_team_venue = "away" if opp_fixture_venue == "home" else "home"
+                        if comp_team_venue != comp_venue:
+                            continue  # Skip — wrong venue for comparison
+
+                        team_poss = possession_map.get(tid, None)
+                        opp_poss = possession_map.get(opponent_id, None)
+
                         for p in team_data.get("players", []):
                             pstats = p.get("statistics", [{}])[0] if p.get("statistics") else {}
                             pos = pstats.get("games", {}).get("position", "")
@@ -353,14 +388,29 @@ async def predict(req: PredictionRequest):
                             if stat_val is None:
                                 continue
                             rating = pstats.get("games", {}).get("rating")
+                            p_id = p.get("player", {}).get("id")
+                            p_name = p.get("player", {}).get("name", "")
+
+                            # Look up cached specific position + role
+                            cached_pr = await db.player_positions.find_one(
+                                {"playerId": p_id}, {"_id": 0, "specificPosition": 1, "role": 1}
+                            ) if p_id else None
+                            spec_pos = (cached_pr or {}).get("specificPosition", "")
+                            spec_role = (cached_pr or {}).get("role", "")
+
                             results.append({
-                                "name": p.get("player", {}).get("name", ""),
+                                "name": p_name,
                                 "team": team_name,
                                 "minutes": minutes,
                                 "statValue": stat_val,
                                 "rating": float(rating) if rating else None,
                                 "date": fix.get("date", "")[:10],
                                 "per90": round((stat_val / minutes) * 90, 2) if minutes > 0 else 0,
+                                "venue": comp_team_venue,
+                                "position": spec_pos or pos,
+                                "role": spec_role,
+                                "teamPossession": team_poss,
+                                "oppPossession": opp_poss,
                             })
                     return results
                 except Exception:
@@ -1004,9 +1054,10 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
         try:
             position_comparison = await aio.wait_for(
                 fetch_position_comparison(
-                    opponent_fixture_list, player_position, req.propType, req.opponentId, 5
+                    opponent_fixture_list, player_position, req.propType, req.opponentId,
+                    player_venue, 5
                 ) if player_position else _empty_list(),
-                timeout=8
+                timeout=10
             )
         except Exception as e:
             print(f"[POS COMP] Error/timeout: {e}")
@@ -1025,27 +1076,39 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             if position_comparison:
                 comp_values = [p["statValue"] for p in position_comparison]
                 comp_per90 = [p["per90"] for p in position_comparison if p.get("per90")]
+                comp_poss = [p["teamPossession"] for p in position_comparison if p.get("teamPossession")]
                 comp_avg = round(sum(comp_values) / len(comp_values), 2) if comp_values else 0
                 comp_per90_avg = round(sum(comp_per90) / len(comp_per90), 2) if comp_per90 else 0
+                comp_poss_avg = round(sum(comp_poss) / len(comp_poss), 1) if comp_poss else None
                 comp_lines = []
                 for p in position_comparison[:7]:
-                    comp_lines.append(f"  {p['name']} ({p['team']}) — {p['statValue']} {req.propType} in {p['minutes']}min (per90: {p['per90']}) | {p['date']} | rating: {p.get('rating', 'N/A')}")
+                    p_pos_label = f"{p.get('position', '?')}"
+                    if p.get('role'):
+                        p_pos_label += f" ({p['role']})"
+                    poss_str = f" | team poss: {p['teamPossession']}%" if p.get('teamPossession') else ""
+                    comp_lines.append(f"  {p['name']} [{p_pos_label}] ({p['team']}, {p.get('venue','').upper()}) — {p['statValue']} {req.propType} in {p['minutes']}min (per90: {p['per90']}) | {p['date']} | rating: {p.get('rating', 'N/A')}{poss_str}")
+                venue_note = f"All comparisons are {player_venue.upper()} performances only."
+                poss_note = f"\nAverage team possession in these matches: {comp_poss_avg}%" if comp_poss_avg else ""
                 position_context += f"""
-[POSITION COMPARISON — {pos_short}s vs {req.opponentName}]
-{req.playerName} is a {pos_short}{f' ({player_role})' if player_role else ''}. Below are other {player_position}s who played against {req.opponentName} recently.
-Focus on players who play a similar role to {pos_short}{f' ({player_role})' if player_role else ''} when weighing this comparison:
+[POSITION COMPARISON — {pos_short}s vs {req.opponentName} ({player_venue.upper()} only)]
+{req.playerName} is a {pos_short}{f' ({player_role})' if player_role else ''}. {venue_note}
+Below are other {player_position}s who played {player_venue.upper()} against {req.opponentName} recently:
 {chr(10).join(comp_lines)}
-Average {req.propType}: {comp_avg} | Per-90 avg: {comp_per90_avg} | Sample: {len(comp_values)} players
->>> Compare {req.playerName}'s projected {req.propType} against this positional baseline vs the opponent. <<<"""
+Average {req.propType}: {comp_avg} | Per-90 avg: {comp_per90_avg} | Sample: {len(comp_values)} players{poss_note}
+>>> Compare {req.playerName}'s projected {req.propType} against this positional baseline.
+>>> Factor in possession context: teams with more possession tend to have more passing/creative stats; teams with less tend to have more defensive/counter-attacking stats.
+>>> Consider {req.playerName}'s team expected possession profile vs the opponent. <<<"""
                 position_comp_data = {
                     "position": display_position,
                     "positionShort": pos_short,
                     "players": position_comparison,
                     "avgStatValue": comp_avg,
                     "avgPer90": comp_per90_avg,
+                    "avgPossession": comp_poss_avg,
                     "sampleSize": len(comp_values),
                     "propType": req.propType,
                     "opponent": req.opponentName,
+                    "venue": player_venue,
                 }
 
         # Compose data for Gemini
@@ -1500,7 +1563,9 @@ Analyze ALL data thoroughly. Return JSON only."""
         comp_context = ""
         if position_comp_data:
             pc = position_comp_data
-            comp_context = f"\nPosition Comparison: {pc['sampleSize']} {pc.get('positionShort', '')}s vs {pc['opponent']} averaged {pc['avgStatValue']} {pl.lower()} (per-90: {pc['avgPer90']})"
+            comp_context = f"\nPosition Comparison ({player_venue.upper()} only): {pc['sampleSize']} {pc.get('positionShort', '')}s vs {pc['opponent']} averaged {pc['avgStatValue']} {pl.lower()} (per-90: {pc['avgPer90']})"
+            if pc.get('avgPossession'):
+                comp_context += f" | Avg team possession: {pc['avgPossession']}%"
 
         try:
             synth_prompt = f"""You are synthesizing multiple AI analyses into ONE elite tactical breakdown for a {pl} prop prediction.
@@ -1517,10 +1582,10 @@ Write a single cohesive ~1500 char markdown tactical breakdown. Format:
 [1-2 sentence sharp summary with projection vs line]
 
 **Position & Role Context**
-[1-2 sentences about how the player's specific position ({display_position}) and role ({display_role or 'N/A'}) affects their {pl.lower()} output. How does this role generate or limit this stat? Reference the positional comparison data if available.]
+[1-2 sentences about how the player's specific position ({display_position}) and role ({display_role or 'N/A'}) affects their {pl.lower()} output. How does this role generate or limit this stat? Reference the positional comparison data if available. Mention venue ({player_venue.upper()}) — are {player_venue} performances typically better or worse for this stat? If possession data is available, note how expected possession impacts this prop type.]
 
 **Analysis**
-[3-4 sentences combining the BEST insights from ALL analyses. Cite specific numbers: per-game averages, venue splits ({player_venue.upper()} context), sample sizes, opponent tendencies. Reference the positional comparison baseline when relevant. Merge complementary insights, resolve contradictions]
+[3-4 sentences combining the BEST insights from ALL analyses. Cite specific numbers: per-game averages, venue splits ({player_venue.upper()} context), sample sizes, opponent tendencies. Reference the positional comparison baseline when relevant. Factor in possession context — how does team possession % correlate with {pl.lower()} output for a {display_position}? Merge complementary insights, resolve contradictions]
 
 **Game Script Scenarios**
 [Best case / Worst case / Most likely — with stat projections for each]
