@@ -159,10 +159,12 @@
 
 /* ===== MAIN CONTENT ===== */
 .main-content {
-  padding: 20px 20px 110px;
-  max-width: 480px;
+  padding: 14px 14px 100px;
+  max-width: 400px;
   margin: 0 auto;
   min-height: 80vh;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 /* ===== BOTTOM NAV ===== */
@@ -765,7 +767,7 @@
 .reasoning-text { font-size: 13px; color: var(--text-secondary); line-height: 1.7; white-space: pre-wrap; }
 
 /* ===== TRACKING PICKS ===== */
-.pick-card { padding: 16px; position: relative; }
+.pick-card { padding: 10px 12px; position: relative; }
 
 .pick-status-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 .status-indicator { display: flex; align-items: center; gap: 6px; }
@@ -1577,6 +1579,7 @@ html, body {
 
 .login-page {
   min-height: 100dvh;
+}
 
 /* =============================================
    LIVE TRACKING CARDS
@@ -1584,8 +1587,8 @@ html, body {
 
 .live-pick-card {
   background: var(--bg-card);
-  border-radius: 12px;
-  padding: 16px;
+  border-radius: 8px;
+  padding: 10px 12px;
   transition: all 0.3s ease;
 }
 
@@ -1593,38 +1596,38 @@ html, body {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  margin-bottom: 10px;
+  margin-bottom: 6px;
 }
 
 .live-pick-name {
-  font-size: 16px;
+  font-size: 13px;
   font-weight: 800;
   color: var(--text-primary);
   letter-spacing: -0.3px;
 }
 
 .live-pick-team {
-  font-size: 11px;
+  font-size: 9px;
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  margin-top: 2px;
+  margin-top: 1px;
 }
 
 .live-badge {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 11px;
+  gap: 4px;
+  font-size: 9px;
   font-weight: 800;
   color: #f43f5e;
   letter-spacing: 0.05em;
 }
 
 .live-dot {
-  width: 7px;
-  height: 7px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
   background: #f43f5e;
   animation: livePulse 1.5s infinite;
@@ -1638,35 +1641,35 @@ html, body {
 .final-badge {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 11px;
+  gap: 4px;
+  font-size: 9px;
   font-weight: 800;
   color: var(--text-muted);
   letter-spacing: 0.05em;
 }
 
 .final-dot {
-  width: 7px;
-  height: 7px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
   background: var(--text-muted);
 }
 
 .scheduled-badge {
-  font-size: 10px;
+  font-size: 8px;
   font-weight: 700;
   color: var(--text-muted);
   letter-spacing: 0.1em;
   background: rgba(255,255,255,0.05);
-  padding: 3px 8px;
+  padding: 2px 6px;
   border-radius: 4px;
 }
 
 .live-pick-type {
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.05em;
-  margin-bottom: 12px;
+  margin-bottom: 6px;
 }
 
 .live-pick-type.over {
@@ -1680,8 +1683,8 @@ html, body {
 .live-stats-row {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
-  margin-bottom: 10px;
+  gap: 4px;
+  margin-bottom: 6px;
 }
 
 .live-stat {
@@ -1689,16 +1692,16 @@ html, body {
 }
 
 .live-stat-label {
-  font-size: 9px;
+  font-size: 7px;
   font-weight: 700;
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.1em;
-  margin-bottom: 4px;
+  margin-bottom: 2px;
 }
 
 .live-stat-value {
-  font-size: 18px;
+  font-size: 14px;
   font-weight: 900;
   color: var(--text-primary);
   font-family: 'JetBrains Mono', monospace;
@@ -1714,10 +1717,10 @@ html, body {
 
 .live-progress-bar-container {
   position: relative;
-  height: 6px;
+  height: 4px;
   background: rgba(255,255,255,0.06);
-  border-radius: 3px;
-  margin-bottom: 12px;
+  border-radius: 2px;
+  margin-bottom: 6px;
   overflow: visible;
 }
 
@@ -1737,9 +1740,9 @@ html, body {
 
 .live-progress-line-marker {
   position: absolute;
-  top: -3px;
+  top: -2px;
   width: 2px;
-  height: 12px;
+  height: 8px;
   background: rgba(255,255,255,0.4);
   border-radius: 1px;
   transform: translateX(-50%);
@@ -1749,7 +1752,7 @@ html, body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 11px;
+  font-size: 9px;
   font-family: 'JetBrains Mono', monospace;
   color: var(--text-muted);
 }
@@ -1757,17 +1760,17 @@ html, body {
 .live-prop-label {
   font-weight: 800;
   color: var(--accent);
-  font-size: 12px;
+  font-size: 10px;
 }
 
 .result-tag {
   display: inline-block;
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 8px;
   font-weight: 800;
   letter-spacing: 0.05em;
-  margin-left: 6px;
+  margin-left: 4px;
 }
 
 .result-tag.hit {
@@ -1783,7 +1786,6 @@ html, body {
 .result-tag.push {
   background: rgba(245,158,11,0.15);
   color: #f59e0b;
-}
 }
 
 /* Matchup Overview */

@@ -417,9 +417,13 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str) -> dict:
 
     if player_stats_data:
         player_id = pick.get("playerId")
+        player_name = (pick.get("playerName") or "").lower()
         for team_data in player_stats_data:
             for p in team_data.get("players", []):
-                if p.get("player", {}).get("id") == player_id:
+                p_id = p.get("player", {}).get("id")
+                p_name = (p.get("player", {}).get("name") or "").lower()
+                # Match by ID first, fallback to name substring match
+                if p_id == player_id or (player_name and (player_name in p_name or p_name in player_name)):
                     pstats = p.get("statistics", [{}])[0] if p.get("statistics") else {}
                     minutes_played = pstats.get("games", {}).get("minutes") or 0
                     getter = SOCCER_STAT_MAP.get(pick.get("propType", ""))

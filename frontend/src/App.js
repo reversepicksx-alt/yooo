@@ -239,7 +239,7 @@ export default function App() {
     };
 
     fetchLiveUpdates();
-    const interval = setInterval(fetchLiveUpdates, 2 * 60 * 1000);
+    const interval = setInterval(fetchLiveUpdates, 30 * 1000);
     return () => clearInterval(interval);
   }, [auth, livePickCount]);
 
@@ -1455,13 +1455,13 @@ export default function App() {
               return (
                 <div data-testid="record-tracker" style={{
                   background: '#0a0a0f', border: '1px solid rgba(100,100,120,0.2)',
-                  borderRadius: 14, padding: '14px 16px', marginBottom: 4,
+                  borderRadius: 10, padding: '10px 12px', marginBottom: 4,
                 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12 }}>
-                    <BarChart3 style={{ width: 13, height: 13, color: 'var(--accent)' }} />
-                    <span style={{ fontSize: 10, fontWeight: 900, letterSpacing: '0.12em', color: 'var(--accent)', textTransform: 'uppercase' }}>Your Record</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                    <BarChart3 style={{ width: 11, height: 11, color: 'var(--accent)' }} />
+                    <span style={{ fontSize: 9, fontWeight: 900, letterSpacing: '0.12em', color: 'var(--accent)', textTransform: 'uppercase' }}>Your Record</span>
                   </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr', gap: 8 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr', gap: 4 }}>
                     {[
                       { label: 'HITS', value: hits, color: '#10b981' },
                       { label: 'MISSES', value: misses, color: '#f43f5e' },
@@ -1470,13 +1470,13 @@ export default function App() {
                       { label: 'STREAK', value: streakLabel, color: streakType === 'hit' ? '#10b981' : streakType === 'miss' ? '#f43f5e' : 'var(--text-muted)' },
                     ].map(s => (
                       <div key={s.label} style={{ textAlign: 'center' }}>
-                        <div style={{ fontSize: 20, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: s.color, lineHeight: 1 }}>{s.value}</div>
-                        <div style={{ fontSize: 8, fontWeight: 800, color: 'rgba(255,255,255,0.35)', letterSpacing: '0.12em', marginTop: 4 }}>{s.label}</div>
+                        <div style={{ fontSize: 14, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: s.color, lineHeight: 1 }}>{s.value}</div>
+                        <div style={{ fontSize: 7, fontWeight: 800, color: 'rgba(255,255,255,0.35)', letterSpacing: '0.12em', marginTop: 3 }}>{s.label}</div>
                       </div>
                     ))}
                   </div>
                   {/* Win rate bar */}
-                  <div style={{ marginTop: 12, height: 6, borderRadius: 3, overflow: 'hidden', background: 'rgba(255,255,255,0.06)', display: 'flex' }}>
+                  <div style={{ marginTop: 8, height: 4, borderRadius: 2, overflow: 'hidden', background: 'rgba(255,255,255,0.06)', display: 'flex' }}>
                     {hits > 0 && <div style={{ width: `${(hits / (total + pushes)) * 100}%`, background: '#10b981', transition: 'width 0.4s' }} />}
                     {pushes > 0 && <div style={{ width: `${(pushes / (total + pushes)) * 100}%`, background: '#f59e0b', transition: 'width 0.4s' }} />}
                     {misses > 0 && <div style={{ width: `${(misses / (total + pushes)) * 100}%`, background: '#f43f5e', transition: 'width 0.4s' }} />}
@@ -1485,7 +1485,7 @@ export default function App() {
               );
             })()}
 
-            <div className="space-y-4">
+            <div className="space-y-2">
               {savedPicks.filter(p => trackingView === 'live' ? p.status === 'live' : p.status === 'settled').length === 0 ? (
                 <div className="empty-state" data-testid="tracking-empty">
                   <div className="empty-icon"><Clock /></div>
@@ -1519,77 +1519,77 @@ export default function App() {
                     <div key={pick.pickId} className="live-pick-card" data-testid={`pick-${pick.pickId}`}
                       style={{
                         background: '#0a0a0f',
-                        borderRadius: 14,
+                        borderRadius: 10,
                         padding: 0,
-                        border: `1.5px solid ${isMatchLive ? 'var(--accent)' : isHit ? 'rgba(16,185,129,0.5)' : isMiss ? 'rgba(244,63,94,0.4)' : isPush ? 'rgba(245,158,11,0.5)' : 'rgba(100,100,120,0.25)'}`,
+                        border: `1px solid ${isMatchLive ? 'var(--accent)' : isHit ? 'rgba(16,185,129,0.5)' : isMiss ? 'rgba(244,63,94,0.4)' : isPush ? 'rgba(245,158,11,0.5)' : 'rgba(100,100,120,0.25)'}`,
                         overflow: 'hidden',
                       }}>
 
                       {/* HEADER */}
-                      <div style={{ padding: '14px 16px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <div style={{ padding: '8px 10px 4px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                         <div style={{ flex: 1 }}>
-                          <div style={{ fontSize: 17, fontWeight: 800, color: '#fff', letterSpacing: '-0.3px' }} data-testid="pick-player-name">
+                          <div style={{ fontSize: 13, fontWeight: 800, color: '#fff', letterSpacing: '-0.3px' }} data-testid="pick-player-name">
                             {pick.playerName}
                           </div>
-                          <div style={{ fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,0.45)', textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 3 }}>
+                          <div style={{ fontSize: 9, fontWeight: 600, color: 'rgba(255,255,255,0.45)', textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 1 }}>
                             {pick.teamName || 'Team'} &middot; {(pick.venue || 'home').toUpperCase()} &middot; {pick.sport === 'basketball' ? 'NBA' : 'Soccer'}
                           </div>
                           {pick.trackingId && (
-                            <div style={{ fontSize: 9, fontWeight: 700, color: 'rgba(255,255,255,0.25)', letterSpacing: '0.1em', marginTop: 2, fontFamily: 'var(--font-mono)' }}
+                            <div style={{ fontSize: 7, fontWeight: 700, color: 'rgba(255,255,255,0.25)', letterSpacing: '0.1em', marginTop: 1, fontFamily: 'var(--font-mono)' }}
                               data-testid={`tracking-id-${pick.pickId}`}>
                               {pick.trackingId}
                             </div>
                           )}
                         </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                           {isMatchLive && (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 800, color: '#f43f5e' }}>
-                              <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#f43f5e', animation: 'pulse 1.5s infinite' }} />
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 9, fontWeight: 800, color: '#f43f5e' }}>
+                              <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#f43f5e', animation: 'pulse 1.5s infinite' }} />
                               LIVE {live?.quarter ? `· ${live.quarter}` : (live?.period ? `· ${live.period}` : '')}
                             </div>
                           )}
                           {isMatchFinal && !isMatchLive && (
-                            <div style={{ fontSize: 11, fontWeight: 800, color: 'rgba(255,255,255,0.4)' }}>FINAL</div>
+                            <div style={{ fontSize: 9, fontWeight: 800, color: 'rgba(255,255,255,0.4)' }}>FINAL</div>
                           )}
                           {!isMatchLive && !isMatchFinal && (
-                            <div style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.3)' }}>SCHEDULED</div>
+                            <div style={{ fontSize: 9, fontWeight: 700, color: 'rgba(255,255,255,0.3)' }}>SCHEDULED</div>
                           )}
                           {pick.status === 'live' && (
                             <button className="reanalyze-btn" onClick={e => reanalyzePick(pick, e)}
                               disabled={reanalyzingPick === pick.pickId}
                               data-testid={`reanalyze-pick-${pick.pickId}`}
-                              title="Re-analyze" style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}>
+                              title="Re-analyze" style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2 }}>
                               {reanalyzingPick === pick.pickId
-                                ? <Loader2 style={{ width: 14, height: 14, color: 'var(--accent)', animation: 'spin 1s linear infinite' }} />
-                                : <RotateCcw style={{ width: 14, height: 14, color: 'rgba(255,255,255,0.4)' }} />}
+                                ? <Loader2 style={{ width: 12, height: 12, color: 'var(--accent)', animation: 'spin 1s linear infinite' }} />
+                                : <RotateCcw style={{ width: 12, height: 12, color: 'rgba(255,255,255,0.4)' }} />}
                             </button>
                           )}
-                          <button style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}
+                          <button style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2 }}
                             onClick={e => removePickFn(pick.pickId, e)} data-testid={`remove-pick-${pick.pickId}`}>
-                            <Trash2 style={{ width: 14, height: 14, color: 'rgba(255,255,255,0.3)' }} />
+                            <Trash2 style={{ width: 12, height: 12, color: 'rgba(255,255,255,0.3)' }} />
                           </button>
                         </div>
                       </div>
 
                       {/* PICK LINE + PROP */}
-                      <div style={{ padding: '0 16px 12px', fontSize: 13, fontWeight: 800, letterSpacing: '0.06em' }}>
+                      <div style={{ padding: '0 10px 6px', fontSize: 11, fontWeight: 800, letterSpacing: '0.06em' }}>
                         <span style={{ color: 'rgba(255,255,255,0.5)' }}>PICK: </span>
                         <span style={{ color: isOver ? 'var(--accent)' : '#f43f5e' }}>
                           {isOver ? 'OVER' : 'UNDER'} {pick.line}
                         </span>
-                        <span style={{ color: 'rgba(255,255,255,0.35)', fontSize: 11, marginLeft: 6 }}>{propLabel}</span>
+                        <span style={{ color: 'rgba(255,255,255,0.35)', fontSize: 9, marginLeft: 4 }}>{propLabel}</span>
                       </div>
 
                       {/* MATCH SCORE (when live or final) */}
                       {matchScore && (isMatchLive || isMatchFinal) && (
-                        <div style={{ padding: '0 16px 8px', fontSize: 12, fontWeight: 700, color: 'rgba(255,255,255,0.5)' }}>
+                        <div style={{ padding: '0 10px 4px', fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.5)' }}>
                           {pick.opponentName ? `vs ${pick.opponentName}` : ''} {matchScore && <span style={{ color: isMatchLive ? '#f43f5e' : 'rgba(255,255,255,0.6)', fontWeight: 800 }}>{matchScore}</span>}
                         </div>
                       )}
 
                       {/* STATS ROW — NOW / LINE / PACE / HIT% */}
                       {(isMatchLive || isMatchFinal) && (
-                        <div style={{ padding: '0 16px 12px' }}>
+                        <div style={{ padding: '0 10px 6px' }}>
                           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', borderTop: '1px solid rgba(255,255,255,0.06)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
                             {[
                               { label: 'NOW', value: nowVal, color: onTrack ? 'var(--accent)' : '#f43f5e' },
@@ -1598,24 +1598,24 @@ export default function App() {
                               { label: 'HIT%', value: hitPct != null ? `${hitPct}%` : '-', color: hitPct > 50 ? 'var(--accent)' : '#f43f5e' },
                             ].map((stat, i) => (
                               <div key={stat.label} style={{
-                                textAlign: 'center', padding: '10px 0',
+                                textAlign: 'center', padding: '5px 0',
                                 borderRight: i < 3 ? '1px solid rgba(255,255,255,0.06)' : 'none',
                               }}>
-                                <div style={{ fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>{stat.label}</div>
-                                <div style={{ fontSize: 20, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: stat.color }}>{stat.value}</div>
+                                <div style={{ fontSize: 7, fontWeight: 700, color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 2 }}>{stat.label}</div>
+                                <div style={{ fontSize: 14, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: stat.color }}>{stat.value}</div>
                               </div>
                             ))}
                           </div>
 
                           {/* PROGRESS BAR */}
-                          <div style={{ position: 'relative', height: 6, background: 'rgba(255,255,255,0.06)', borderRadius: 3, marginTop: 10, overflow: 'visible' }}>
+                          <div style={{ position: 'relative', height: 4, background: 'rgba(255,255,255,0.06)', borderRadius: 2, marginTop: 6, overflow: 'visible' }}>
                             <div style={{
-                              height: '100%', borderRadius: 3, transition: 'width 0.5s ease',
+                              height: '100%', borderRadius: 2, transition: 'width 0.5s ease',
                               width: `${progressPct}%`,
                               background: onTrack ? 'var(--accent)' : '#f43f5e',
                             }} />
                             <div style={{
-                              position: 'absolute', top: -2, width: 2, height: 10, borderRadius: 1,
+                              position: 'absolute', top: -2, width: 2, height: 8, borderRadius: 1,
                               background: 'rgba(255,255,255,0.6)',
                               left: `${lineMarkerPct}%`,
                             }} />
@@ -1625,7 +1625,7 @@ export default function App() {
 
                       {/* SCHEDULED STATE — PROJ / LINE / CONF */}
                       {!isMatchLive && !isMatchFinal && (
-                        <div style={{ padding: '0 16px 12px' }}>
+                        <div style={{ padding: '0 10px 6px' }}>
                           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', borderTop: '1px solid rgba(255,255,255,0.06)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
                             {[
                               { label: 'PROJ', value: pick.projectedValue, color: 'var(--accent)' },
@@ -1633,11 +1633,11 @@ export default function App() {
                               { label: 'CONF', value: `${pick.confidenceScore}%`, color: 'rgba(255,255,255,0.7)' },
                             ].map((stat, i) => (
                               <div key={stat.label} style={{
-                                textAlign: 'center', padding: '10px 0',
+                                textAlign: 'center', padding: '5px 0',
                                 borderRight: i < 2 ? '1px solid rgba(255,255,255,0.06)' : 'none',
                               }}>
-                                <div style={{ fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>{stat.label}</div>
-                                <div style={{ fontSize: 20, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: stat.color }}>{stat.value}</div>
+                                <div style={{ fontSize: 7, fontWeight: 700, color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 2 }}>{stat.label}</div>
+                                <div style={{ fontSize: 14, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: stat.color }}>{stat.value}</div>
                               </div>
                             ))}
                           </div>
@@ -1645,16 +1645,16 @@ export default function App() {
                       )}
 
                       {/* FOOTER — Score, Result, Prop Label */}
-                      <div style={{ padding: '8px 16px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, fontFamily: "'JetBrains Mono', monospace", color: 'rgba(255,255,255,0.35)' }}>
+                      <div style={{ padding: '4px 10px 6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 9, fontFamily: "'JetBrains Mono', monospace", color: 'rgba(255,255,255,0.35)' }}>
                           {isMatchLive && <span>{elapsed}&apos;</span>}
                           {matchScore && <span>{matchScore}</span>}
                           {minutesPlayed > 0 && minutesPlayed < 90 && isMatchFinal && (
-                            <span style={{ color: '#f59e0b', fontSize: 10 }}>{minutesPlayed}&apos; played</span>
+                            <span style={{ color: '#f59e0b', fontSize: 8 }}>{minutesPlayed}&apos; played</span>
                           )}
                           {resultLabel && (
                             <span data-testid="pick-result" style={{
-                              padding: '3px 10px', borderRadius: 6, fontSize: 11, fontWeight: 900, letterSpacing: '0.08em',
+                              padding: '1px 6px', borderRadius: 4, fontSize: 8, fontWeight: 900, letterSpacing: '0.08em',
                               background: isHit ? 'rgba(16,185,129,0.15)' : isMiss ? 'rgba(244,63,94,0.15)' : 'rgba(245,158,11,0.15)',
                               color: isHit ? '#10b981' : isMiss ? '#f43f5e' : '#f59e0b',
                               border: `1px solid ${isHit ? 'rgba(16,185,129,0.3)' : isMiss ? 'rgba(244,63,94,0.3)' : 'rgba(245,158,11,0.3)'}`,
@@ -1663,29 +1663,29 @@ export default function App() {
                             </span>
                           )}
                           {pick.correctedManually && (
-                            <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.25)', fontStyle: 'italic' }}>corrected</span>
+                            <span style={{ fontSize: 7, color: 'rgba(255,255,255,0.25)', fontStyle: 'italic' }}>corrected</span>
                           )}
                           {pick.status === 'settled' && correctingPick !== pick.pickId && (
                             <button onClick={() => { setCorrectingPick(pick.pickId); setCorrectValue(String(pick.actualValue || '')); }}
                               data-testid={`correct-pick-${pick.pickId}`}
                               style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, display: 'flex' }}>
-                              <Edit3 style={{ width: 12, height: 12, color: 'rgba(255,255,255,0.3)' }} />
+                              <Edit3 style={{ width: 10, height: 10, color: 'rgba(255,255,255,0.3)' }} />
                             </button>
                           )}
                         </div>
-                        <span style={{ fontSize: 12, fontWeight: 800, color: 'var(--accent)', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.06em' }}>
+                        <span style={{ fontSize: 9, fontWeight: 800, color: 'var(--accent)', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.06em' }}>
                           {propLabel.toUpperCase()}
                         </span>
                       </div>
 
                       {/* CORRECTION INPUT */}
                       {correctingPick === pick.pickId && (
-                        <div style={{ padding: '0 16px 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', whiteSpace: 'nowrap' }}>Actual:</span>
+                        <div style={{ padding: '0 10px 6px', display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.5)', whiteSpace: 'nowrap' }}>Actual:</span>
                           <input type="number" step="1" value={correctValue}
                             onChange={e => setCorrectValue(e.target.value)}
                             data-testid="correct-value-input"
-                            style={{ flex: 1, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 6, padding: '6px 10px', color: '#fff', fontSize: 14, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}
+                            style={{ flex: 1, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 4, padding: '4px 8px', color: '#fff', fontSize: 12, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}
                             autoFocus />
                           <button onClick={() => submitCorrection(pick.pickId)}
                             data-testid="correct-submit-btn"
