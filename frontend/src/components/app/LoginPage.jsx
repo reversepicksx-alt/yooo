@@ -486,14 +486,6 @@ export function LoginPage({ onAuth }) {
             <CreditCard style={{ width: 16, height: 16 }} />
             Subscribe Now
           </button>
-          <div style={{ marginTop: 12 }}>
-            <a href="https://whop.com/checkout/plan_XZqvPZlrENzGt" target="_blank" rel="noopener noreferrer"
-              style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', textDecoration: 'none', transition: 'color 0.2s' }}
-              onMouseEnter={e => e.currentTarget.style.color = 'var(--accent)'}
-              onMouseLeave={e => e.currentTarget.style.color = 'var(--text-muted)'}>
-              Or join via Whop &rarr;
-            </a>
-          </div>
         </div>
       </div>
     </div>
