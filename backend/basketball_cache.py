@@ -246,10 +246,30 @@ async def sync_all_bball_players():
 #  LOOKUP FUNCTIONS
 # ══════════════════════════════════════════════
 
+# NBA team abbreviation map (covers all 30 NBA teams + common WNBA abbreviations)
+NBA_ABBREV_MAP = {
+    "atl": "atlanta hawks", "bos": "boston celtics", "bkn": "brooklyn nets",
+    "cha": "charlotte hornets", "chi": "chicago bulls", "cle": "cleveland cavaliers",
+    "dal": "dallas mavericks", "den": "denver nuggets", "det": "detroit pistons",
+    "gsw": "golden state warriors", "gs": "golden state warriors",
+    "hou": "houston rockets", "ind": "indiana pacers",
+    "lac": "los angeles clippers", "lal": "los angeles lakers",
+    "mem": "memphis grizzlies", "mia": "miami heat", "mil": "milwaukee bucks",
+    "min": "minnesota timberwolves", "nop": "new orleans pelicans",
+    "no": "new orleans pelicans", "nyk": "new york knicks", "ny": "new york knicks",
+    "okc": "oklahoma city thunder", "orl": "orlando magic",
+    "phi": "philadelphia 76ers", "phx": "phoenix suns",
+    "por": "portland trail blazers", "sac": "sacramento kings",
+    "sas": "san antonio spurs", "sa": "san antonio spurs",
+    "tor": "toronto raptors", "uta": "utah jazz",
+    "was": "washington wizards", "wsh": "washington wizards",
+}
+
+
 async def get_bball_team_by_name(team_name: str, league_id: int = None) -> dict:
     """
     Look up a basketball team by name. Returns {teamId, name, leagueId, leagueName, season} or None.
-    Searches exact, short name (without W suffix), then fuzzy substring.
+    Searches abbreviation map, exact, short name (without W suffix), then fuzzy substring.
     """
     name_lower = team_name.lower().strip()
     # Remove common suffixes for matching
@@ -262,24 +282,39 @@ async def get_bball_team_by_name(team_name: str, league_id: int = None) -> dict:
     if league_id:
         query_base["leagueId"] = league_id
 
+    # 0. Abbreviation map lookup (e.g. "LAC" → "los angeles clippers")
+    if clean_name in NBA_ABBREV_MAP:
+        full_name = NBA_ABBREV_MAP[clean_name]
+        doc = await db[COL_BBALL_TEAMS].find_one({**query_base, "nameLower": full_name}, {"_id": 0})
+        if doc:
+            return doc
+
     # 1. Exact match on full name
     doc = await db[COL_BBALL_TEAMS].find_one({**query_base, "nameLower": name_lower}, {"_id": 0})
     if doc:
         return doc
 
-    # 2. Exact match on short name (without W suffix)
+    # 2. NBA-preferred substring match on full name (catches city names like "Portland" → "Portland Trail Blazers")
+    if not league_id:
+        doc = await db[COL_BBALL_TEAMS].find_one(
+            {"leagueId": 12, "nameLower": {"$regex": re.escape(clean_name)}}, {"_id": 0}
+        )
+        if doc:
+            return doc
+
+    # 3. Exact/substring match on short name
     doc = await db[COL_BBALL_TEAMS].find_one({**query_base, "nameShortLower": clean_name}, {"_id": 0})
     if doc:
         return doc
 
-    # 3. Substring match (e.g. "Suns" matches "Phoenix Suns")
+    # 4. General substring match on full name
     doc = await db[COL_BBALL_TEAMS].find_one(
         {**query_base, "nameLower": {"$regex": re.escape(clean_name)}}, {"_id": 0}
     )
     if doc:
         return doc
 
-    # 4. Reverse substring match (e.g. "Phoenix" matches "Phoenix Suns")
+    # 5. Substring match on short name
     doc = await db[COL_BBALL_TEAMS].find_one(
         {**query_base, "nameShortLower": {"$regex": re.escape(clean_name)}}, {"_id": 0}
     )
@@ -358,9 +393,12 @@ async def search_bball_teams(query: str, league_id: int = None) -> list:
         if clean.endswith(suffix):
             clean = clean[:-len(suffix)]
 
+    # Check abbreviation map first
+    search_term = NBA_ABBREV_MAP.get(clean, clean)
+
     q = {"$or": [
-        {"nameLower": {"$regex": re.escape(clean)}},
-        {"nameShortLower": {"$regex": re.escape(clean)}},
+        {"nameLower": {"$regex": re.escape(search_term)}},
+        {"nameShortLower": {"$regex": re.escape(search_term)}},
     ]}
     if league_id:
         q["leagueId"] = league_id
