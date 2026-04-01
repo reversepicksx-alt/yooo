@@ -41,10 +41,12 @@ LEGAL: ALL 3rd-party app names and player/team images removed. No AI model names
 - NBA-preferred team lookup (Portland → Trail Blazers, not WNBA)
 - API key updated (new key active, Mega plan)
 - Soccer + Basketball odds verified working
+- Fixed .gitignore blocking .env files from production deployment
 
 ## Resolved Issues
 - P0: Soccer Odds / Moneyline — RESOLVED (was expired API key)
 - NBA team abbreviations not resolving — RESOLVED (added NBA_ABBREV_MAP)
+- Production deployment not receiving .env updates — RESOLVED (fixed .gitignore)
 
 ## Prioritized Backlog
 ### P1: Slip correlation analysis
