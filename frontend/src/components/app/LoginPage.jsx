@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Zap, Loader2, Lock, Mail, ShieldAlert, CreditCard, Check, ArrowLeft, User } from 'lucide-react';
-import { verifyWhop, authLogin, setPassword as apiSetPassword, resetPassword, squareSubscribe, getSquarePlans, getSquareConfig } from '../../api';
-import { PaymentForm, CreditCard as SquareCreditCard } from 'react-square-web-payments-sdk';
+import { verifyWhop, authLogin, setPassword as apiSetPassword, resetPassword, squareCreateCheckout, squareVerifyCheckout, getSquarePlans, getSquareConfig } from '../../api';
 
 export function LoginPage({ onAuth }) {
   const [step, setStep] = useState('email');
@@ -11,10 +10,6 @@ export function LoginPage({ onAuth }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [accessType, setAccessType] = useState(null);
-
-  // Square config from backend (dynamic)
-  const [squareAppId, setSquareAppId] = useState('');
-  const [squareLocationId, setSquareLocationId] = useState('');
 
   // Square subscribe state
   const [showSubscribe, setShowSubscribe] = useState(false);
@@ -28,16 +23,6 @@ export function LoginPage({ onAuth }) {
   const [subLoading, setSubLoading] = useState(false);
   const [subError, setSubError] = useState(null);
   const [plans, setPlans] = useState([]);
-
-  // Fetch Square config from backend on mount
-  useEffect(() => {
-    getSquareConfig()
-      .then(res => {
-        setSquareAppId(res.appId || '');
-        setSquareLocationId(res.locationId || '');
-      })
-      .catch(() => {});
-  }, []);
 
   useEffect(() => {
     if (showSubscribe && plans.length === 0) {
@@ -161,35 +146,60 @@ export function LoginPage({ onAuth }) {
     }
   };
 
-  // Square payment callback
-  const handleCardTokenized = async (token) => {
-    if (!token?.token) { setSubError('Card tokenization failed.'); return; }
+  // Square checkout redirect flow
+  const handleCheckoutRedirect = async () => {
     if (subPassword.length < 6) { setSubError('Password must be at least 6 characters.'); return; }
     if (subPassword !== subConfirmPw) { setSubError('Passwords do not match.'); return; }
 
     setSubLoading(true);
     setSubError(null);
     try {
-      const res = await squareSubscribe({
+      const res = await squareCreateCheckout({
         email: subEmail,
         firstName: subFirstName,
         lastName: subLastName,
-        sourceId: token.token,
         planKey: selectedPlan,
         password: subPassword,
+        redirectUrl: window.location.origin,
       });
-      if (res.success) {
-        localStorage.setItem('rp_email', res.email);
-        localStorage.setItem('rp_token', res.session_token);
-        localStorage.setItem('rp_access', res.access_type);
-        onAuth({ email: res.email, token: res.session_token, accessType: res.access_type });
+      if (res.checkoutUrl) {
+        // Redirect to Square's hosted checkout page
+        window.location.href = res.checkoutUrl;
+      } else {
+        setSubError('Failed to create checkout link.');
       }
     } catch (err) {
-      setSubError(err.message || 'Subscription failed.');
+      setSubError(err.message || 'Checkout failed.');
     } finally {
       setSubLoading(false);
     }
   };
+
+  // Handle return from Square checkout
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const checkoutToken = params.get('checkout_token');
+    if (checkoutToken) {
+      // Remove token from URL
+      window.history.replaceState({}, '', window.location.pathname);
+      // Verify checkout and activate account
+      setSubLoading(true);
+      squareVerifyCheckout(checkoutToken)
+        .then(res => {
+          if (res.success) {
+            localStorage.setItem('rp_email', res.email);
+            localStorage.setItem('rp_token', res.session_token);
+            localStorage.setItem('rp_access', res.access_type);
+            onAuth({ email: res.email, token: res.session_token, accessType: res.access_type });
+          }
+        })
+        .catch(err => {
+          setSubError(err.message || 'Payment verification failed. Please contact support.');
+          setShowSubscribe(true);
+        })
+        .finally(() => setSubLoading(false));
+    }
+  }, []); // eslint-disable-line
 
   const resetSubscribeFlow = () => {
     setShowSubscribe(false);
@@ -310,54 +320,43 @@ export function LoginPage({ onAuth }) {
                 <div className="badge neon" style={{ marginBottom: 8 }}>
                   {selectedPlan === 'weekly' ? '$11/week' : selectedPlan === 'monthly' ? '$39.99/month' : '$99.99/3 months'}
                 </div>
-                <p style={{ fontSize: 11, color: 'var(--text-muted)' }}>Enter card details to complete subscription</p>
+                <p style={{ fontSize: 11, color: 'var(--text-muted)' }}>You'll be redirected to Square's secure checkout</p>
               </div>
-              <div data-testid="square-payment-form" style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 12, padding: '16px', border: '1px solid rgba(255,255,255,0.06)' }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.5)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 10 }}>Card Details</div>
-                {squareAppId && squareLocationId ? (
-                <PaymentForm
-                  applicationId={squareAppId}
-                  locationId={squareLocationId}
-                  cardTokenizeResponseReceived={(token) => handleCardTokenized(token)}
-                  createPaymentRequest={() => ({
-                    countryCode: 'US',
-                    currencyCode: 'USD',
-                  })}
+              <div data-testid="square-checkout-info" style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 12, padding: '20px 16px', border: '1px solid rgba(255,255,255,0.06)', textAlign: 'center' }}>
+                <div style={{ display: 'flex', justifyContent: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>
+                    <CreditCard style={{ width: 14, height: 14 }} /> Card
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>
+                    <ShieldAlert style={{ width: 14, height: 14 }} /> Apple Pay
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>
+                    <Zap style={{ width: 14, height: 14 }} /> Google Pay
+                  </div>
+                </div>
+                <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', marginBottom: 16 }}>
+                  Secure payment powered by Square. All major cards, Apple Pay & Google Pay accepted.
+                </p>
+                <button
+                  data-testid="sub-checkout-btn"
+                  onClick={handleCheckoutRedirect}
+                  disabled={subLoading}
+                  style={{
+                    width: '100%',
+                    background: 'linear-gradient(135deg, var(--accent), var(--neon))',
+                    color: '#000',
+                    fontWeight: 800,
+                    fontSize: 14,
+                    borderRadius: 10,
+                    padding: '14px',
+                    cursor: subLoading ? 'not-allowed' : 'pointer',
+                    border: 'none',
+                    opacity: subLoading ? 0.5 : 1,
+                    transition: 'opacity 0.2s',
+                  }}
                 >
-                  <SquareCreditCard
-                    style={{
-                      '.input-container': { borderColor: 'rgba(255,255,255,0.15)', borderRadius: '8px' },
-                      '.input-container.is-focus': { borderColor: '#10b981' },
-                      '.message-text': { color: '#f43f5e' },
-                      '.message-icon': { color: '#f43f5e' },
-                    }}
-                    render={(Button) => (
-                      <Button
-                        css={{
-                          background: 'linear-gradient(135deg, var(--accent), var(--neon))',
-                          color: '#000',
-                          fontWeight: 800,
-                          fontSize: 14,
-                          borderRadius: 10,
-                          padding: '14px',
-                          marginTop: 12,
-                          width: '100%',
-                          cursor: 'pointer',
-                          border: 'none',
-                          transition: 'opacity 0.2s',
-                          '&:hover': { opacity: 0.9 },
-                          '&:disabled': { opacity: 0.5, cursor: 'not-allowed' },
-                        }}
-                        data-testid="sub-pay-btn"
-                      >
-                        {subLoading ? 'Processing...' : 'Subscribe Now'}
-                      </Button>
-                    )}
-                  />
-                </PaymentForm>
-                ) : (
-                  <div style={{ textAlign: 'center', padding: 20, color: 'var(--text-muted)', fontSize: 13 }}>Loading payment form...</div>
-                )}
+                  {subLoading ? 'Redirecting...' : 'Pay Securely with Square'}
+                </button>
               </div>
               <button className="btn-secondary" onClick={() => setSubStep('details')} style={{ marginTop: 12, width: '100%' }}>
                 <ArrowLeft style={{ width: 14, height: 14 }} /> Back

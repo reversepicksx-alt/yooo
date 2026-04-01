@@ -66,7 +66,7 @@ LEGAL: ALL 3rd-party app names and player/team images removed. No AI model names
 - P0: Basketball FGA/FGM stats only counting 2pt attempts, missing 3pt attempts — RESOLVED (combined field_goals + threepoint_goals). Kelly Oubre: 5.9→10.6, Paul George: 6.3→13.1
 - P1: Basketball DNP games (0 minutes) counted as 0-stat data points deflating averages — RESOLVED (< 5 min filter)
 - P0: Brazilian teams (Coritiba, Botafogo) showing as CONCACAF Nations League — RESOLVED (league inference now checks hardcoded team map BEFORE trusting AI vision guess; added 24+ missing Brazilian teams to TEAM_LEAGUE_MAP)
-- P1: Square payment card input all white on dark theme — Styling improved with dark container frame (Square iframe background is unchangeable per their security policy)
+- P1: Square payment card input all white on dark theme — REPLACED with Square Checkout Links (hosted payment page). Supports Card, Apple Pay, Google Pay automatically. No more iframe/domain issues.
 
 ## Prioritized Backlog
 ### P1: Slip correlation analysis

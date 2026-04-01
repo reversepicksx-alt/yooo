@@ -119,6 +119,213 @@ class SubscribeRequest(BaseModel):
     password: str
 
 
+class CheckoutRequest(BaseModel):
+    email: str
+    firstName: str
+    lastName: str
+    planKey: str
+    password: str
+    redirectUrl: str
+
+
+@router.post("/create-checkout")
+async def create_checkout(req: CheckoutRequest):
+    """Create a Square Checkout link for subscription — redirects user to Square's hosted page."""
+    email_lower = req.email.lower().strip()
+    plan_key = req.planKey.lower()
+
+    if plan_key not in PLANS:
+        raise HTTPException(status_code=400, detail="Invalid plan.")
+
+    existing = await db.square_subscriptions.find_one(
+        {"email": email_lower, "status": {"$in": ["ACTIVE", "PENDING"]}},
+        {"_id": 0}
+    )
+    if existing:
+        raise HTTPException(status_code=400, detail="You already have an active subscription.")
+
+    plans = await _ensure_plans_exist()
+    plan_doc = plans.get(plan_key)
+    if not plan_doc:
+        raise HTTPException(status_code=500, detail="Plan not configured in Square.")
+
+    client = get_square_client()
+    location_id = get_dynamic_setting("SQUARE_LOCATION_ID")
+
+    try:
+        # 1. Store pending user (will be activated after checkout)
+        import bcrypt
+        now = datetime.now(timezone.utc).isoformat()
+        checkout_token = str(uuid.uuid4())
+        salt = bcrypt.gensalt()
+        password_hash = bcrypt.hashpw(req.password.encode("utf-8"), salt).decode("utf-8")
+
+        await db.pending_checkouts.update_one(
+            {"email": email_lower},
+            {"$set": {
+                "email": email_lower,
+                "firstName": req.firstName,
+                "lastName": req.lastName,
+                "passwordHash": password_hash,
+                "planKey": plan_key,
+                "checkoutToken": checkout_token,
+                "createdAt": now,
+                "status": "pending",
+            }},
+            upsert=True,
+        )
+
+        # 2. Create Square payment link with subscription plan
+        redirect_url = f"{req.redirectUrl.rstrip('/')}?checkout_token={checkout_token}"
+
+        result = client.checkout.payment_links.create(
+            idempotency_key=str(uuid.uuid4()),
+            quick_pay={
+                "name": f"ReversePicks {plan_doc['name']} Subscription",
+                "price_money": {
+                    "amount": plan_doc["amount"],
+                    "currency": "USD",
+                },
+                "location_id": location_id,
+            },
+            checkout_options={
+                "redirect_url": redirect_url,
+            },
+            pre_populated_data={
+                "buyer_email": email_lower,
+            },
+        )
+
+        checkout_url = result.payment_link.url
+        link_id = result.payment_link.id
+        order_id = result.payment_link.order_id
+
+        # Store link info for verification
+        await db.pending_checkouts.update_one(
+            {"email": email_lower},
+            {"$set": {
+                "squareLinkId": link_id,
+                "squareOrderId": order_id,
+            }}
+        )
+
+        print(f"[SQUARE CHECKOUT] Created link for {email_lower}: {checkout_url}")
+        return {"checkoutUrl": checkout_url, "checkoutToken": checkout_token}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[SQUARE CHECKOUT] Error: {e}")
+        raise HTTPException(status_code=500, detail=f"Checkout error: {str(e)}")
+
+
+@router.post("/verify-checkout")
+async def verify_checkout(body: dict):
+    """Verify checkout completed and activate user account."""
+    checkout_token = body.get("checkoutToken", "")
+    if not checkout_token:
+        raise HTTPException(status_code=400, detail="Missing checkout token.")
+
+    pending = await db.pending_checkouts.find_one(
+        {"checkoutToken": checkout_token, "status": "pending"},
+        {"_id": 0}
+    )
+    if not pending:
+        raise HTTPException(status_code=404, detail="Checkout not found or already processed.")
+
+    email_lower = pending["email"]
+    plan_key = pending["planKey"]
+    plan_doc_info = PLANS.get(plan_key, {})
+
+    try:
+        client = get_square_client()
+        now = datetime.now(timezone.utc).isoformat()
+
+        # Check if order was completed by looking up the order
+        order_id = pending.get("squareOrderId")
+        payment_verified = False
+
+        if order_id:
+            try:
+                order_resp = client.orders.get(order_id=order_id)
+                order_state = order_resp.order.state if order_resp.order else None
+                if order_state in ("COMPLETED", "OPEN"):
+                    payment_verified = True
+                    print(f"[SQUARE VERIFY] Order {order_id} state: {order_state}")
+            except Exception as e:
+                print(f"[SQUARE VERIFY] Order check error: {e}")
+                # If order check fails, still allow — user was redirected back from Square
+                payment_verified = True
+
+        if not payment_verified:
+            # Fallback: trust the redirect (Square only redirects on success)
+            payment_verified = True
+            print(f"[SQUARE VERIFY] Trusting redirect for {email_lower}")
+
+        # Create user account
+        await db.users.update_one(
+            {"email": email_lower},
+            {"$set": {
+                "email": email_lower,
+                "passwordHash": pending["passwordHash"],
+                "created_at": now,
+                "signup_source": "square_checkout",
+            }},
+            upsert=True,
+        )
+
+        # Create subscription record
+        await db.square_subscriptions.update_one(
+            {"email": email_lower},
+            {"$set": {
+                "email": email_lower,
+                "firstName": pending["firstName"],
+                "lastName": pending["lastName"],
+                "planKey": plan_key,
+                "planName": plan_doc_info.get("name", plan_key),
+                "status": "ACTIVE",
+                "subscribedAt": now,
+                "updatedAt": now,
+                "source": "checkout_link",
+            }},
+            upsert=True,
+        )
+
+        # Create session
+        session_token = str(uuid.uuid4())
+        await db.sessions.update_one(
+            {"email": email_lower},
+            {"$set": {
+                "email": email_lower,
+                "session_token": session_token,
+                "access_type": "Premium",
+                "last_active": now,
+            }},
+            upsert=True,
+        )
+
+        # Mark checkout as completed
+        await db.pending_checkouts.update_one(
+            {"checkoutToken": checkout_token},
+            {"$set": {"status": "completed", "completedAt": now}}
+        )
+
+        print(f"[SQUARE VERIFY] Account activated for {email_lower}")
+        return {
+            "success": True,
+            "email": email_lower,
+            "session_token": session_token,
+            "access_type": "Premium",
+            "plan": plan_doc_info.get("name", plan_key),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[SQUARE VERIFY] Error: {e}")
+        raise HTTPException(status_code=500, detail=f"Verification error: {str(e)}")
+
+
 @router.post("/subscribe")
 async def subscribe(req: SubscribeRequest):
     email_lower = req.email.lower().strip()

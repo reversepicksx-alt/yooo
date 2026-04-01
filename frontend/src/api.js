@@ -230,6 +230,20 @@ export async function squareSubscribe(data) {
   });
 }
 
+export async function squareCreateCheckout(data) {
+  return apiCall('/api/square/create-checkout', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function squareVerifyCheckout(checkoutToken) {
+  return apiCall('/api/square/verify-checkout', {
+    method: 'POST',
+    body: JSON.stringify({ checkoutToken }),
+  });
+}
+
 export async function getSquareSubscriptionStatus(email) {
   return apiCall(`/api/square/status/${encodeURIComponent(email)}`);
 }
