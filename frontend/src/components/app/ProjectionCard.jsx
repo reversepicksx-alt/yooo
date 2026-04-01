@@ -156,6 +156,50 @@ export function ProjectionCard({ projection, onSave, excludedIndices, onToggleSa
           <span className={`badge ${rec === 'over' ? 'neon' : 'danger'}`}>{projection.confidenceLevel}</span>
         </div>
 
+        {/* Model Agreement — always visible */}
+        <div className="stat-box mt-4" data-testid="model-agreement" style={{ borderColor: 'rgba(168,85,247,0.2)', background: 'rgba(168,85,247,0.04)' }}>
+          <div className="stat-label flex items-center gap-2 mb-3">
+            <BarChart3 style={{ width: 12, height: 12, color: '#a855f7' }} />
+            Model Agreement
+          </div>
+          {projection.consensusNote && (
+            <div style={{ fontSize: 12, color: 'var(--text-primary)', marginBottom: 10, lineHeight: 1.5, fontWeight: 600 }} data-testid="consensus-note">
+              {projection.consensusNote}
+            </div>
+          )}
+          {projection.modelBreakdown && projection.modelBreakdown.length > 0 && (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {projection.modelBreakdown.map((m, i) => {
+                const isOver = m.recommendation === 'over';
+                return (
+                  <div key={i} style={{
+                    flex: 1, minWidth: 80, padding: '8px 10px', borderRadius: 8,
+                    background: 'rgba(255,255,255,0.03)',
+                    border: `1px solid ${isOver ? 'rgba(0,255,136,0.15)' : 'rgba(239,68,68,0.15)'}`,
+                    textAlign: 'center',
+                  }}>
+                    <div style={{ fontSize: 9, fontWeight: 700, color: '#a855f7', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>
+                      {m.model === 'grok' ? 'AI-1' : m.model === 'gemini' ? 'AI-2' : m.model === 'gpt' ? 'AI-3' : `AI-${i+1}`}
+                    </div>
+                    <div style={{
+                      fontSize: 13, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace",
+                      color: isOver ? 'var(--accent)' : '#f43f5e',
+                    }}>
+                      {m.projectedValue}
+                    </div>
+                    <div style={{
+                      fontSize: 9, fontWeight: 700, textTransform: 'uppercase', marginTop: 2,
+                      color: isOver ? 'var(--accent)' : '#f43f5e',
+                    }}>
+                      {m.recommendation}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
         {projection.matchupOverview && (
           <div className="matchup-overview mt-6" data-testid="matchup-overview">
             <div className="stat-label flex items-center gap-2 mb-3">

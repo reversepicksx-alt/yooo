@@ -1314,10 +1314,25 @@ Analyze ALL data thoroughly. Return JSON only."""
             pv = prediction.get("projectedValue", req.line)
             prediction["recommendation"] = "over" if pv > req.line else "under"
 
-        # Clean up internal source tags (after synthesis used them)
+        # Clean up internal source tags AFTER building model breakdown
+        model_breakdown = []
+        for p in valid_preds:
+            src = p.get("_source", "AI")
+            model_breakdown.append({
+                "model": src,
+                "recommendation": p.get("recommendation", ""),
+                "projectedValue": p.get("projectedValue", 0),
+                "confidenceScore": p.get("confidenceScore", 50),
+            })
+        prediction["modelBreakdown"] = model_breakdown
+
         for p in valid_preds:
             p.pop("_source", None)
         prediction.pop("_source", None)
+
+        # Always set consensusNote even for single AI
+        if not prediction.get("consensusNote"):
+            prediction["consensusNote"] = f"Single AI analysis — {prediction.get('recommendation', 'over').upper()} recommendation."
 
         # Set confidence level
         cs = prediction.get("confidenceScore", 50)
@@ -1476,11 +1491,22 @@ Analyze ALL data thoroughly. Return JSON only."""
         synthesis_input = "\n\n".join(all_texts)
 
         # Fast Gemini synthesis — combine insights into one cohesive breakdown
+        # Build dynamic context from all available data
+        pos_context_for_synth = ""
+        if display_position:
+            pos_context_for_synth = f"\nPosition: {display_position}"
+            if display_role:
+                pos_context_for_synth += f" ({display_role})"
+        comp_context = ""
+        if position_comp_data:
+            pc = position_comp_data
+            comp_context = f"\nPosition Comparison: {pc['sampleSize']} {pc.get('positionShort', '')}s vs {pc['opponent']} averaged {pc['avgStatValue']} {pl.lower()} (per-90: {pc['avgPer90']})"
+
         try:
             synth_prompt = f"""You are synthesizing multiple AI analyses into ONE elite tactical breakdown for a {pl} prop prediction.
 
 FINAL VERDICT: {rec} {line} {pl} (Projected: {proj}, Confidence: {conf}%, {consensus_note})
-Player: {req.playerName} vs {req.opponentName} ({player_venue.upper()})
+Player: {req.playerName} vs {req.opponentName} ({player_venue.upper()}){pos_context_for_synth}{comp_context}
 
 Here are the individual AI analyses to synthesize:
 
@@ -1490,21 +1516,24 @@ Write a single cohesive ~1500 char markdown tactical breakdown. Format:
 **Verdict: {rec} {line} {pl}**
 [1-2 sentence sharp summary with projection vs line]
 
+**Position & Role Context**
+[1-2 sentences about how the player's specific position ({display_position}) and role ({display_role or 'N/A'}) affects their {pl.lower()} output. How does this role generate or limit this stat? Reference the positional comparison data if available.]
+
 **Analysis**
-[3-4 sentences combining the BEST insights from ALL analyses. Cite specific numbers: per-game averages, venue splits, sample sizes, opponent tendencies. Merge complementary insights, resolve contradictions]
+[3-4 sentences combining the BEST insights from ALL analyses. Cite specific numbers: per-game averages, venue splits ({player_venue.upper()} context), sample sizes, opponent tendencies. Reference the positional comparison baseline when relevant. Merge complementary insights, resolve contradictions]
 
 **Game Script Scenarios**
 [Best case / Worst case / Most likely — with stat projections for each]
 
 **Key Evidence**
-[3-4 bullet points — strongest data points from across all analyses]
+[3-4 bullet points — strongest data points from across all analyses, including position comparison baseline and venue-specific trends]
 
 **Risk Radar**
 [Sub risk, sensitivity factors, what would flip the pick]
 
 **TL;DR** — {rec} {line} at {conf}% confidence. Projected: {proj} {pl.lower()}. {consensus_note}
 
-Rules: No AI model names. Be specific with numbers. Be decisive."""
+Rules: No AI model names. Be specific with numbers. Be decisive. ALWAYS reference the player's position/role and how it impacts the prop. ALWAYS reference venue (home/away) context."""
 
             synth_resp = await aio.wait_for(
                 litellm.acompletion(
