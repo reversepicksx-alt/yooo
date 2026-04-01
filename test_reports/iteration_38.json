@@ -1,0 +1,66 @@
+{
+  "summary": "Verified basketball FGA/FGM stat parsing fix. All 16 tests passed. FGA now correctly combines 2pt + 3pt field goal attempts. Kelly Oubre FGA avg = 10.6 (was 5.9), Paul George FGA avg = 13.1 (was 6.3). DNP filter (< 5 min) working. Recommendation enforcement verified.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration_38_basketball_fga_fix.py",
+    "/app/test_reports/pytest/basketball_fga_fix_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "FGA/FGM fix verified in basketball_utils.py lines 239-240: fgm = fg.total + tp.total, fga = fg.attempts + tp.attempts",
+    "DNP filter verified in basketball_predict.py lines 507-509: Games with < 5 minutes are skipped with continue",
+    "Recommendation enforcement verified in basketball_predict.py line 878: r['recommendation'] = 'over' if pv > req.line else 'under'"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration_38_basketball_fga_fix.py"
+  ],
+  "success_rate": {
+    "backend": "100%",
+    "frontend": "N/A (backend only testing)"
+  },
+  "test_credentials": "josselj001@gmail.com (Owner/Lifetime VIP)",
+  "seed_data_creation": "",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 38 verified basketball FGA/FGM stat parsing fix. API-Sports basketball API provides field_goals (2pt) and threepoint_goals (3pt) as SEPARATE objects. The fix combines both: fga = field_goals.attempts + threepoint_goals.attempts, fgm = field_goals.total + threepoint_goals.total. Also verified DNP filter (< 5 min games skipped) and recommendation enforcement. Live API tests confirmed: Kelly Oubre FGA avg = 10.6 (was 5.9), Paul George FGA avg = 13.1 (was 6.3).",
+  "features_verified": {
+    "fga_combines_2pt_3pt_attempts": "PASS - FGA = field_goals.attempts + threepoint_goals.attempts",
+    "fgm_combines_2pt_3pt_made": "PASS - FGM = field_goals.total + threepoint_goals.total",
+    "dnp_filter_less_than_5_min": "PASS - Games with < 5 minutes filtered out in build_player_game_logs",
+    "recommendation_enforcement": "PASS - Each model's rec forced to match projectedValue vs line",
+    "kelly_oubre_fga_avg": "PASS - 10.6 (expected ~10-11, was 5.9 before fix)",
+    "paul_george_fga_avg": "PASS - 13.1 (expected ~13, was 6.3 before fix)",
+    "handles_missing_3pt_data": "PASS - Gracefully handles None/empty threepoint_goals",
+    "handles_empty_dicts": "PASS - Returns 0 for empty field_goals/threepoint_goals dicts"
+  },
+  "live_api_verification": {
+    "kelly_oubre": {
+      "player_id": 925,
+      "prop_type": "fga",
+      "raw_avg": 10.6,
+      "sample_size": 45,
+      "projected_value": 10.7,
+      "per_min_rate": 0.335,
+      "avg_minutes": 31.8,
+      "status": "FIXED - was 5.9 before"
+    },
+    "paul_george": {
+      "player_id": 729,
+      "prop_type": "fga",
+      "raw_avg": 13.1,
+      "sample_size": 28,
+      "projected_value": 13.4,
+      "per_min_rate": 0.436,
+      "avg_minutes": 30.8,
+      "status": "FIXED - was 6.3 before"
+    }
+  }
+}

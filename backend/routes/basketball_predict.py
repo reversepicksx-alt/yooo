@@ -503,6 +503,12 @@ async def build_player_game_logs(player_id: int, team_id: int, prop_type: str, t
         game_id = parsed.get("gameId")
         stat_val = get_stat_value(parsed, prop_type)
 
+        # Filter out DNP / injury exit games (< 5 minutes played)
+        # These 0-stat entries massively deflate averages and corrupt projections
+        mins = parse_minutes_float(parsed.get("minutes", "0:00"))
+        if mins < 5:
+            continue
+
         # Get game context from team games lookup
         game_info = game_lookup.get(game_id, {})
 
