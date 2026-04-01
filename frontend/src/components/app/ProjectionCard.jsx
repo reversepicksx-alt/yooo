@@ -1,7 +1,7 @@
 import React from 'react';
 import {
   Zap, Clock, Activity, Shield, ShieldAlert, Target,
-  TrendingUp, TrendingDown, BarChart3
+  TrendingUp, TrendingDown, BarChart3, Users
 } from 'lucide-react';
 import { getPropLabel } from '../../constants';
 import { ProbabilityChart } from './ProbabilityChart';
@@ -22,7 +22,14 @@ export function ProjectionCard({ projection, onSave, excludedIndices, onToggleSa
           <div>
             <span className="badge neon">Projection Ready</span>
             <div className="projection-player" data-testid="projection-player-name">{projection.player?.name}</div>
-            <div className="projection-matchup">{projection.player?.team} vs {projection.opponent}</div>
+            <div className="projection-matchup">
+              {projection.player?.position && projection.player.position !== 'Unknown' && (
+                <span style={{ display: 'inline-block', background: 'rgba(59,130,246,0.15)', color: '#60a5fa', fontSize: 10, fontWeight: 800, padding: '2px 8px', borderRadius: 4, marginRight: 6, letterSpacing: '0.05em', verticalAlign: 'middle' }} data-testid="player-position-badge">
+                  {projection.player.position}
+                </span>
+              )}
+              {projection.player?.team} vs {projection.opponent}
+            </div>
           </div>
           <div style={{ textAlign: 'right' }}>
             <div className="stat-label">Confidence</div>
@@ -77,6 +84,68 @@ export function ProjectionCard({ projection, onSave, excludedIndices, onToggleSa
         <MatchStatZones teamStats={projection.teamMatchStats} opponentStats={projection.opponentMatchStats} venue={projection._request?.venue || 'home'} />
 
         <H2HSection h2hData={projection.h2hPlayerStats} propType={projection.propType} />
+
+        {projection.positionComparison && projection.positionComparison.players?.length > 0 && (
+          <div className="stat-box mt-6" style={{ borderColor: 'rgba(59,130,246,0.25)', background: 'rgba(59,130,246,0.04)' }} data-testid="position-comparison">
+            <div className="stat-label flex items-center gap-2 mb-3">
+              <Users style={{ width: 12, height: 12, color: '#60a5fa' }} />
+              {projection.positionComparison.positionShort || projection.positionComparison.position}s vs {projection.positionComparison.opponent}
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 10, lineHeight: 1.4 }}>
+              How other {projection.positionComparison.positionShort || projection.positionComparison.position}s performed against this opponent recently
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
+              <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 8, padding: '8px 10px', textAlign: 'center' }}>
+                <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+                  Avg {getPropLabel(projection.positionComparison.propType)}
+                </div>
+                <div style={{ fontSize: 18, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: '#60a5fa', marginTop: 2 }}>
+                  {projection.positionComparison.avgStatValue}
+                </div>
+                <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>
+                  {projection.positionComparison.sampleSize} players
+                </div>
+              </div>
+              <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 8, padding: '8px 10px', textAlign: 'center' }}>
+                <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+                  {projection.sport === 'basketball' ? 'Per-36 Avg' : 'Per-90 Avg'}
+                </div>
+                <div style={{ fontSize: 18, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: 'var(--accent)', marginTop: 2 }}>
+                  {projection.positionComparison.avgPer90 || projection.positionComparison.avgPer36 || '-'}
+                </div>
+                <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>normalized rate</div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {projection.positionComparison.players.map((p, i) => (
+                <div key={i} style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  padding: '6px 10px', borderRadius: 6,
+                  background: i % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'transparent',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', width: 14, textAlign: 'center' }}>{i + 1}</span>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 140 }}>
+                        {p.name}
+                      </div>
+                      <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>{p.team} · {p.date}</div>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+                    <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{p.minutes}'</span>
+                    <span style={{
+                      fontSize: 14, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace",
+                      color: p.statValue > projection.line ? 'var(--accent)' : '#f43f5e',
+                    }}>
+                      {p.statValue}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className={`rec-banner ${rec} mt-6`} data-testid="recommendation-banner">
           <div className={`rec-label ${rec}`}>

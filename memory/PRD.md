@@ -45,6 +45,9 @@ LEGAL: ALL 3rd-party app names and player/team images removed. No AI model names
 - Soccer + Basketball odds verified working
 - Fixed .gitignore blocking .env files from production deployment
 - **Admin Settings Panel** — Owner can update API-Sports key directly from Profile tab, stored in MongoDB, takes effect instantly without redeployment. Includes Test Key and Save Key functionality.
+- **Admin Settings Extended** — All Square payment keys (Access Token, App ID, Location ID, Environment) now manageable from admin panel. Frontend payment form dynamically fetches Square config from backend.
+- **Soccer Position Comparison Engine** — When predicting a prop, fetches 3-7 same-position players (FWD vs FWDs, MID vs MIDs, DEF vs DEFs, GK vs GKs) who played against the same opponent recently. Shows per-90 rates, ratings, and averages. Data is fed to all 3 AIs as additional context and displayed on the prediction card.
+- **Player Position Badge** — Player position now displayed prominently on the prediction card (e.g., "Attacker", "Midfielder").
 
 ## Resolved Issues
 - P0: Soccer Odds / Moneyline — RESOLVED (was expired API key)

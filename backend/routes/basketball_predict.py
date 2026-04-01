@@ -606,6 +606,9 @@ async def basketball_predict(req: BasketballPredictionRequest):
 
         print(f"[BBALL TIMING] Wave 1: {_t.time()-t0:.1f}s | Player logs: {len(player_game_logs)} | Team games: {len(team_games)}")
 
+        # Player position for card display
+        player_pos = player_info.get("position", "") if player_info else ""
+
         # ═══════════════════════════════════════
         # ADVANCED ANALYTICS & DATA DIGEST
         # ═══════════════════════════════════════

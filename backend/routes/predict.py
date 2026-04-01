@@ -308,6 +308,82 @@ async def predict(req: PredictionRequest):
             return results
 
         # =============================================
+        # POSITION COMPARISON: Same-position players vs opponent
+        # =============================================
+        FIXTURE_POS_MAP = {"Goalkeeper": "G", "Defender": "D", "Midfielder": "M", "Attacker": "F"}
+        PROP_STAT_KEYS = {
+            "pass_attempts": ("passes", "total"), "shots": ("shots", "total"),
+            "shots_on_target": ("shots", "on"), "tackles": ("tackles", "total"),
+            "key_passes": ("passes", "key"), "saves": ("goals", "saves"),
+            "interceptions": ("tackles", "interceptions"), "blocks": ("tackles", "blocks"),
+            "dribbles": ("dribbles", "attempts"), "fouls_drawn": ("fouls", "drawn"),
+            "goals": ("goals", "total"), "assists": ("goals", "assists"),
+            "crosses": ("passes", "cross"), "clearances": ("tackles", "clearances"),
+            "duels_won": ("duels", "won"), "yellow_cards": ("cards", "yellow"),
+        }
+
+        async def fetch_position_comparison(opp_fixtures, target_pos, prop_type, opponent_id, limit=5):
+            """Fetch same-position players who played against the opponent recently."""
+            fixture_pos = FIXTURE_POS_MAP.get(target_pos, "")
+            if not fixture_pos or not opp_fixtures:
+                return []
+            stat_cat, stat_sub = PROP_STAT_KEYS.get(prop_type, ("passes", "total"))
+
+            async def fetch_pos_from_fixture(fix):
+                fid = fix.get("fixtureId")
+                if not fid:
+                    return []
+                try:
+                    data = await api_football_request("fixtures/players", {"fixture": fid})
+                    if not data:
+                        return []
+                    results = []
+                    for team_data in data:
+                        tid = team_data.get("team", {}).get("id")
+                        team_name = team_data.get("team", {}).get("name", "")
+                        if tid == opponent_id:
+                            continue  # Skip opponent's own players — we want teams who PLAYED AGAINST them
+                        for p in team_data.get("players", []):
+                            pstats = p.get("statistics", [{}])[0] if p.get("statistics") else {}
+                            pos = pstats.get("games", {}).get("position", "")
+                            minutes = pstats.get("games", {}).get("minutes") or 0
+                            if pos != fixture_pos or minutes < 30:
+                                continue
+                            stat_val = pstats.get(stat_cat, {}).get(stat_sub)
+                            if stat_val is None:
+                                continue
+                            rating = pstats.get("games", {}).get("rating")
+                            results.append({
+                                "name": p.get("player", {}).get("name", ""),
+                                "team": team_name,
+                                "minutes": minutes,
+                                "statValue": stat_val,
+                                "rating": float(rating) if rating else None,
+                                "date": fix.get("date", "")[:10],
+                                "per90": round((stat_val / minutes) * 90, 2) if minutes > 0 else 0,
+                            })
+                    return results
+                except Exception:
+                    return []
+
+            tasks = [fetch_pos_from_fixture(f) for f in opp_fixtures[:limit]]
+            raw_results = await aio.gather(*tasks, return_exceptions=True)
+            all_players = []
+            for r in raw_results:
+                if isinstance(r, list):
+                    all_players.extend(r)
+            # Sort by stat value descending, dedupe by name, take top 7
+            seen = set()
+            unique = []
+            for p in sorted(all_players, key=lambda x: x.get("statValue", 0), reverse=True):
+                if p["name"] not in seen:
+                    seen.add(p["name"])
+                    unique.append(p)
+                if len(unique) >= 7:
+                    break
+            return unique
+
+        # =============================================
         # VENUE-FILTERED DATA: Everything is venue-based
         # =============================================
         # If player is HOME → team's HOME games + opponent's AWAY games
@@ -358,6 +434,10 @@ async def predict(req: PredictionRequest):
         venue_first_fixtures = venue_filtered_team_fixtures + [f for f in all_team_fixtures if f.get("venue") != player_venue]
         player_game_logs_task = fetch_player_game_logs(venue_first_fixtures, req.playerId, 30)
 
+        # Position comparison task — same-position players vs this opponent
+        # (started later after player_position is resolved)
+        async def _empty_list():
+            return []
         # =============================================
         # BUILD STRUCTURED DATA DIGEST (no AI needed — pure code extraction)
         # =============================================
@@ -854,12 +934,49 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
 {'LEAN OVER' if projected_saves > req.line else 'LEAN UNDER' if projected_saves < req.line else 'PUSH ZONE'} — but weight scenarios (blowout, cagey game, etc.)
 """
 
-        # POSITION CONTEXT: Compute position-specific baseline from game logs
+        # POSITION COMPARISON: Fetch same-position players vs opponent (run after player_position resolved)
+        position_comparison = []
+        try:
+            position_comparison = await aio.wait_for(
+                fetch_position_comparison(
+                    opponent_fixture_list, player_position, req.propType, req.opponentId, 5
+                ) if player_position else _empty_list(),
+                timeout=8
+            )
+        except Exception as e:
+            print(f"[POS COMP] Error/timeout: {e}")
+
+        # POSITION CONTEXT: Compute position-specific baseline from game logs + comparison
         position_context = ""
-        if player_position and player_game_logs:
+        position_comp_data = None
+        if player_position:
             pos_map = {"Goalkeeper": "GK", "Defender": "DEF", "Midfielder": "MID", "Attacker": "FWD"}
             pos_short = pos_map.get(player_position, player_position)
-            position_context = f"\n[POSITION BASELINE] Player position: {player_position} ({pos_short}). Calibrate expectations for this position — {pos_short}s have different stat ceilings than other positions."
+            position_context = f"\n[PLAYER POSITION] {player_position} ({pos_short})"
+            if position_comparison:
+                comp_values = [p["statValue"] for p in position_comparison]
+                comp_per90 = [p["per90"] for p in position_comparison if p.get("per90")]
+                comp_avg = round(sum(comp_values) / len(comp_values), 2) if comp_values else 0
+                comp_per90_avg = round(sum(comp_per90) / len(comp_per90), 2) if comp_per90 else 0
+                comp_lines = []
+                for p in position_comparison[:7]:
+                    comp_lines.append(f"  {p['name']} ({p['team']}) — {p['statValue']} {req.propType} in {p['minutes']}min (per90: {p['per90']}) | {p['date']} | rating: {p.get('rating', 'N/A')}")
+                position_context += f"""
+[POSITION COMPARISON — {pos_short}s vs {req.opponentName}]
+How other {pos_short}s performed against this opponent recently:
+{chr(10).join(comp_lines)}
+Average {req.propType}: {comp_avg} | Per-90 avg: {comp_per90_avg} | Sample: {len(comp_values)} players
+>>> Compare {req.playerName}'s projected {req.propType} against this {pos_short} baseline vs the opponent. <<<"""
+                position_comp_data = {
+                    "position": player_position,
+                    "positionShort": pos_short,
+                    "players": position_comparison,
+                    "avgStatValue": comp_avg,
+                    "avgPer90": comp_per90_avg,
+                    "sampleSize": len(comp_values),
+                    "propType": req.propType,
+                    "opponent": req.opponentName,
+                }
 
         # Compose data for Gemini
         final_data_parts = []
@@ -1383,6 +1500,8 @@ Rules: No AI model names. Be specific with numbers. Be decisive."""
             prediction["playerGameLogs"] = historical_data["playerGameLogs"]
         if gk_formula_data:
             prediction["gkFormula"] = gk_formula_data
+        if position_comp_data:
+            prediction["positionComparison"] = position_comp_data
 
         await db.predictions.insert_one(prediction)
         prediction.pop("_id", None)
