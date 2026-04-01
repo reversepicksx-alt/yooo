@@ -1,0 +1,51 @@
+{
+  "summary": "Verified 4 user-reported production issues are fixed via code verification tests. All 14 tests passed. (1) Recommendation enforcement: Each AI model's recommendation is now forced to match projectedValue vs line BEFORE consensus calculation in both predict.py and basketball_predict.py. (2) Position comparison specific position filter: fetch_position_comparison now accepts target_specific_pos parameter and filters out players whose cached specificPosition doesn't match. (3) Team dedup: Position comparison now limits to max 1 player per team (prevents 4 Flamengo players). (4) Fixture limit: Position comparison now searches up to 10 fixtures (increased from 5).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration_37_user_fixes.py"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "All 4 user-reported issues verified fixed in code:",
+    "1. RECOMMENDATION ENFORCEMENT: Lines 1379-1380 in predict.py and 871-872 in basketball_predict.py now enforce r['recommendation'] = 'over' if pv > req.line else 'under' for EACH model before consensus. Also enforced after averaging at lines 1399-1400 and 885-886.",
+    "2. SPECIFIC POSITION FILTER: fetch_position_comparison at line 325 now accepts target_specific_pos parameter. Lines 402-404 filter out players where spec_pos != target_specific_pos. Call site at line 1121 passes target_specific_pos=specific_position.",
+    "3. TEAM DEDUP: Lines 431-442 implement max 1 player per team using seen_teams dict with check 'seen_teams.get(team, 0) >= 1'.",
+    "4. FIXTURE LIMIT: Function signature at line 325 has limit=10 (not 5). Line 424 uses opp_fixtures[:limit] for task creation."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration_37_user_fixes.py"
+  ],
+  "success_rate": {
+    "backend": "100%",
+    "frontend": "N/A (backend only testing)"
+  },
+  "test_credentials": "josselj001@gmail.com (Owner/Lifetime VIP)",
+  "seed_data_creation": "",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 37 verified 4 specific user-reported production issues are fixed: (1) Recommendation enforcement ensures projectedValue vs line determines recommendation for each AI model BEFORE consensus - eliminates 'GP says OVER with 58.2 when line is 60.5' contradiction. (2) Position comparison now filters by specific position (CB vs LB) - fixes Alex Sandro showing as CB when he's LB. (3) Max 1 player per team in position comparison - fixes 4 Flamengo players appearing. (4) Fixture limit increased to 10 for more diverse data. All tests pass via code verification.",
+  "features_verified": {
+    "recommendation_enforcement_soccer_loop": "PASS - predict.py line 1379-1380 enforces recommendation in valid_preds loop",
+    "recommendation_enforcement_soccer_consensus": "PASS - predict.py line 1399-1400 enforces after averaging",
+    "recommendation_enforcement_basketball_loop": "PASS - basketball_predict.py line 871-872 enforces in valid_preds loop",
+    "recommendation_enforcement_basketball_consensus": "PASS - basketball_predict.py line 885-886 enforces after averaging",
+    "position_comparison_specific_pos_param": "PASS - fetch_position_comparison accepts target_specific_pos",
+    "position_comparison_specific_pos_filter": "PASS - Filters out players with mismatched specificPosition",
+    "position_comparison_call_passes_specific_pos": "PASS - Call site passes target_specific_pos=specific_position",
+    "position_comparison_max_1_per_team": "PASS - seen_teams.get(team, 0) >= 1 check",
+    "position_comparison_tracks_teams": "PASS - seen_teams dict incremented per team",
+    "position_comparison_limit_10": "PASS - Default limit=10 in function signature",
+    "position_comparison_call_uses_limit_10": "PASS - Call site uses limit 10",
+    "position_comparison_tasks_use_limit": "PASS - opp_fixtures[:limit] for task creation",
+    "no_hardcoded_limit_5": "PASS - No [:5] in position comparison function",
+    "recommendation_logic_consistent": "PASS - 3 consistent enforcement patterns found"
+  }
+}

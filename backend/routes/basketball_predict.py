@@ -868,6 +868,8 @@ Analyze the statistical verdict, per-minute projection, and over-rate FIRST. The
             if isinstance(r, dict) and r.get("projectedValue") is not None:
                 pv = r.get("projectedValue", 0)
                 if isinstance(pv, (int, float)) and pv >= 0:
+                    # ENFORCE: each model's recommendation MUST match its projected value vs line
+                    r["recommendation"] = "over" if pv > req.line else "under"
                     valid_preds.append(r)
                     print(f"[BBALL MULTI-AI] {r.get('_source','AI'+str(i))}: proj={pv} rec={r.get('recommendation')} conf={r.get('confidenceScore')}")
 

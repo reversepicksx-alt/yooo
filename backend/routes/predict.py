@@ -322,10 +322,11 @@ async def predict(req: PredictionRequest):
             "duels_won": ("duels", "won"), "yellow_cards": ("cards", "yellow"),
         }
 
-        async def fetch_position_comparison(opp_fixtures, target_pos, prop_type, opponent_id, player_venue_filter, limit=5):
+        async def fetch_position_comparison(opp_fixtures, target_pos, prop_type, opponent_id, player_venue_filter, limit=10, target_specific_pos=None):
             """Fetch same-position players who played against the opponent recently.
             Filters by venue: if target player is AWAY, only show comparison players' AWAY performances.
-            Also fetches possession data for each match."""
+            Also fetches possession data for each match.
+            If target_specific_pos is set (e.g., 'CB'), filters out players with cached positions that don't match."""
             fixture_pos = FIXTURE_POS_MAP.get(target_pos, "")
             if not fixture_pos or not opp_fixtures:
                 return []
@@ -398,6 +399,10 @@ async def predict(req: PredictionRequest):
                             spec_pos = (cached_pr or {}).get("specificPosition", "")
                             spec_role = (cached_pr or {}).get("role", "")
 
+                            # Filter by specific position if target has one
+                            if target_specific_pos and spec_pos and spec_pos != target_specific_pos:
+                                continue  # Skip — cached position doesn't match target
+
                             results.append({
                                 "name": p_name,
                                 "team": team_name,
@@ -422,13 +427,20 @@ async def predict(req: PredictionRequest):
             for r in raw_results:
                 if isinstance(r, list):
                     all_players.extend(r)
-            # Sort by stat value descending, dedupe by name, take top 7
-            seen = set()
+            # Sort by stat value descending, max 1 per team for diversity, take top 7
+            seen_names = set()
+            seen_teams = {}
             unique = []
             for p in sorted(all_players, key=lambda x: x.get("statValue", 0), reverse=True):
-                if p["name"] not in seen:
-                    seen.add(p["name"])
-                    unique.append(p)
+                team = p.get("team", "")
+                if p["name"] in seen_names:
+                    continue
+                if team and seen_teams.get(team, 0) >= 1:
+                    continue  # Max 1 player per team
+                seen_names.add(p["name"])
+                if team:
+                    seen_teams[team] = seen_teams.get(team, 0) + 1
+                unique.append(p)
                 if len(unique) >= 7:
                     break
             return unique
@@ -1106,7 +1118,7 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             position_comparison = await aio.wait_for(
                 fetch_position_comparison(
                     opponent_fixture_list, player_position, req.propType, req.opponentId,
-                    player_venue, 5
+                    player_venue, 10, target_specific_pos=specific_position
                 ) if player_position else _empty_list(),
                 timeout=10
             )
@@ -1364,6 +1376,8 @@ Analyze ALL data thoroughly. Return JSON only."""
                 pv = r.get("projectedValue", 0)
                 # Filter out obviously bad predictions (0 or negative)
                 if isinstance(pv, (int, float)) and pv > 0:
+                    # ENFORCE: each model's recommendation MUST match its projected value vs line
+                    r["recommendation"] = "over" if pv > req.line else "under"
                     valid_preds.append(r)
                     print(f"[MULTI-AI] {r.get('_source','AI'+str(i))}: proj={pv} rec={r.get('recommendation')} conf={r.get('confidenceScore')}")
                 else:
