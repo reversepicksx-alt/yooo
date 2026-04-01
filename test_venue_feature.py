@@ -2,7 +2,7 @@ import requests
 import json
 
 # Test the venue filter feature by checking if backend returns recent samples with venue data
-BASE_URL = "https://5e1e7943-4a41-4a29-a8e4-9314cbbb7644.preview.emergentagent.com"
+BASE_URL = "https://props-ai-predict.preview.emergentagent.com"
 
 def test_venue_feature():
     print("🔍 Testing Venue Filter Feature...")

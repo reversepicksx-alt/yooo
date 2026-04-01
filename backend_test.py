@@ -4,7 +4,7 @@ import sys
 from datetime import datetime
 
 class ReversePicsAPITester:
-    def __init__(self, base_url="https://5e1e7943-4a41-4a29-a8e4-9314cbbb7644.preview.emergentagent.com"):
+    def __init__(self, base_url="https://props-ai-predict.preview.emergentagent.com"):
         self.base_url = base_url
         self.tests_run = 0
         self.tests_passed = 0

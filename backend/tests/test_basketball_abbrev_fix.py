@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dotenv import load_dotenv
 load_dotenv()
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://ai-sports-analytics-2.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://props-ai-predict.preview.emergentagent.com").rstrip("/")
 
 
 class TestNBAAbrevMap:

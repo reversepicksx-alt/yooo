@@ -1,0 +1,115 @@
+<analysis>Here is the handover summary based on the LLM message history:
+
+**original_problem_statement**: This is a web app remake of a sports analytics app focusing on Sports Player Props (pass attempts, shots, points, assists, etc.). Users scan prop screenshots, an AI Vision model extracts the details, resolves the player/team, and runs a prediction pipeline. PRODUCT REQUIREMENTS & LEGAL COMPLIANCE: ALL 3rd-party app names and player/team images have been removed to avoid lawsuits. Do not reintroduce them. Do not use explicit AI branding in the UI.
+
+**User's preferred language**: English (INSTRUCT next agent to respond in English only)
+
+**what currently exists?** 
+A React/FastAPI full-stack application supporting Soccer and Basketball. It features a fully parallel 3-AI Consensus engine (Gemini 2.0 Flash, Grok 4.1 Fast, GPT-4.1-mini) with deterministic outputs (temperature=0). It includes automated local MongoDB caching, live game tracking (updated every 30s), custom Square Subscription integration, and an image-scanning pipeline for prop predictions.
+
+**Last working item**: 
+- Last item agent was working: Fixing a Production Deployment issue. The user was deploying via Save to Github, but the production site kept using an expired API key. The agent discovered  was blocking  files, preventing the newly updated API-Sports key from being pushed to the user's production server. The agent updated  to track  files.
+- Status: RESOLVED
+- Agent Testing Done: Y
+- Which testing method agent to use? manual testing by curl/bash (Git status verification)
+- User Testing Done: Y
+
+**All Pending/In progress Issue list**: 
+There are no immediate P0 bugs remaining. The critical data issues (Odds API, Image Scanning, and Team resolution) were all successfully resolved in the last session.
+
+**In progress Task List**: 
+None at this time.
+
+**Upcoming and Future Tasks**:
+Upcoming Tasks:
+- Slip correlation analysis (P1) - Analyze multiple saved picks for the same game to flag conflicting or boosting correlations.
+
+Future Tasks:
+- Prediction self-correction feedback loop (P2) - Store outcomes after settlement and feed calibration patterns back to AI.
+- Batch scan predictions (P2) - Support scanning multiple props from one image.
+- Integrate RapidAPI SofaScore (P3) - Replace API-Sports for NWSL data.
+
+**Completed work in this session**:
+- Fixed NO MATCH bug for NBA players: Added  in  (resolving LAC, POR, etc.) and optimized lookup logic to prefer NBA over WNBA for ambiguous city names (DONE).
+- Fixed missing Soccer & Basketball Odds: User provided a new  which was updated in the backend, restoring odds fetching (DONE).
+- Fixed 500 Error on Image Scan: Upgraded  from v0.1.0 to v0.1.1 to fix a base64 image parsing bug failing in the LiteLLM pipeline (DONE).
+- Fixed Production Git Sync: Removed  from  so the updated API keys could successfully be pushed to the user's production repository (DONE).
+
+**Earlier issues found/mentioned but not fixed**:
+None.
+
+**Known issue recurrence from previous fork**:
+- Issue recurrence in previous fork: 60-second Kubernetes Ingress Proxy Timeout on .
+- Recurrence count: 5+
+- Status: RESOLVED
+- Note: Still heavily relevant. The current implementation uses async gather and a 15-second grace period. DO NOT introduce synchronous blocking calls in the prediction pipeline.
+
+**Code Architecture**:
+
+
+**Key Technical Concepts**:
+- Frontend: React.js, Shadcn/UI
+- Backend: FastAPI, Python , MongoDB
+- Architecture: Fully parallel 3-AI consensus routing using . Models run at . Custom base64 image parsing via .
+
+**key DB schema**:
+- : {userId, pickId, playerId, propType, actualValue, settledAt, trackingId, matchStatus, sport, pace}
+- Square Subscriptions mapped to users.
+
+**changes in tech stack**:
+- Updated  to version  to resolve image base64 processing issues. 
+
+**All files of reference**:
+-  (Contains the new abbreviation mapping and lookup logic)
+-  (Updated to allow  tracking)
+-  (Prop screenshot extraction)
+-  (Contains updated API keys)
+
+**Areas that need refactoring**:
+-  is extremely large (>2600 lines) and contains highly nested inline styling. This needs to be broken down into smaller components.
+
+**key api endpoints**:
+-  (Vision extraction)
+-  (Soccer prediction pipeline)
+-  (Basketball prediction pipeline)
+
+**Critical Info for New Agent**:
+- **AI Lineup:** The engine is STRICTLY a 3-AI setup: , , and . Do NOT re-add Claude or GPT-4o to save on credits.
+- ** and Git:** The  was explicitly modified to allow  files to be tracked. The user relies on the Save to Github feature to deploy directly to a production server, so  changes MUST be committed. Do not revert this  behavior.
+- **Live Games Rule:** In , a team can only play one live game at a time. Both basketball and soccer ignore strict opponent name matching if a match is actively live.
+
+**documents and test reports created in this job**:
+- 
+
+**Last 10 User Messages and any pending HUMAN messages**:
+1. Asked for help because the app wasn't matching player teams and odds weren't fetching. (Resolved)
+2. Provided the new API-Sports Key. (Resolved)
+3. Complained the app was throwing a 500 error on scan. (Resolved - library update)
+4. Provided a reminder about the basketball API URL endpoint. (Resolved)
+5. Uploaded a screenshot showing the production website API dot was red (Network Error), despite the preview working. (Resolved)
+6. Stated they re-deployed from emergent twice already without success. (Resolved - fixed gitignore)
+7. Said Thank you bye. (Acknowledged)
+
+**Project Health Check:**
+- Core Application: Working perfectly.
+- Integrations: Working (API-Sports key updated and verified).
+
+**3rd Party Integrations**:
+- API-Sports (Sports Data) — requires User API Key
+- Whop (Legacy Auth/Subs) — requires User API Key
+- Square (Payments/Subs) — requires User API Key (currently using Sandbox credentials)
+- xAI Grok (grok-4.1-fast-non-reasoning) — requires User API Key 
+- Gemini 2.0 Flash — uses Emergent LLM Key
+- OpenAI GPT-4.1-mini — uses Emergent LLM Key
+
+**Testing status**:
+- Testing agent used after significant changes: YES 
+- Troubleshoot agent used after agent stuck in loop: NO
+- Test files created: None new in this specific loop.
+- Known regressions: None.
+
+**Credentials to test flow:**
+Email: 
+
+**What agent forgot to execute**:
+No tasks were forgotten. All immediate user issues (NO MATCH bugs, Odds failures, 500 errors, and deployment failures) were resolved.</analysis>
