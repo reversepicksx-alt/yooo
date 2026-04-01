@@ -1,7 +1,7 @@
 # ReversePicks - Multi-Sport Player Props AI Analytics
 
 ## Problem Statement
-Multi-sport player prop analysis app. Users scan prop screenshots, AI extracts details, resolves players/teams, and runs a multi-AI consensus prediction pipeline. Supports Soccer, NBA, and WNBA with full live in-game tracking.
+Multi-sport player prop analysis app. Users scan prop screenshots, AI extracts details, resolves players/teams via cache, and runs a multi-AI consensus prediction pipeline. Supports Soccer, NBA, and WNBA with full live in-game tracking.
 
 LEGAL: ALL 3rd-party app names and player/team images removed. No AI model names in user-facing UI text.
 
@@ -19,6 +19,7 @@ LEGAL: ALL 3rd-party app names and player/team images removed. No AI model names
 - `/app/backend/routes/basketball_predict.py` — Basketball prediction
 - `/app/backend/routes/predict.py` — Soccer prediction
 - `/app/backend/routes/scan.py` — Sport-aware OCR scan (19 soccer + 17 basketball props)
+- `/app/backend/basketball_cache.py` — NBA abbreviation map + team/player cache
 - `/app/frontend/src/components/app/LoginPage.jsx` — Login + Subscribe flow
 - `/app/frontend/src/App.css` — Compact card styling (max-width: 400px centered)
 
@@ -36,11 +37,19 @@ LEGAL: ALL 3rd-party app names and player/team images removed. No AI model names
 - Soccer player name-based stat matching fallback
 - All prop types: 19 soccer + 17 basketball
 - Cross-league protection, identity field hardening
+- NBA team abbreviation map (35 entries, all 30 teams) — fixes NO MATCH for LAC, POR, etc.
+- NBA-preferred team lookup (Portland → Trail Blazers, not WNBA)
+- API key updated (new key active, Mega plan)
+- Soccer + Basketball odds verified working
 
-## Pending Issues
-### P0: Soccer Odds / Moneyline — needs verification
+## Resolved Issues
+- P0: Soccer Odds / Moneyline — RESOLVED (was expired API key)
+- NBA team abbreviations not resolving — RESOLVED (added NBA_ABBREV_MAP)
 
 ## Prioritized Backlog
 ### P1: Slip correlation analysis
 ### P2: Prediction feedback loop, Batch scan
 ### P3: SofaScore for NWSL
+
+## Refactoring Needs
+- App.js is 2600+ lines — should be split into smaller components
