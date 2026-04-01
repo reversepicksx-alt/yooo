@@ -100,8 +100,9 @@ export default function App() {
   const [profilePwLoading, setProfilePwLoading] = useState(false);
 
   // Admin settings state (owner only)
-  const [adminKeyInput, setAdminKeyInput] = useState('');
-  const [adminKeyMasked, setAdminKeyMasked] = useState('');
+  const [adminSettings, setAdminSettings] = useState({});
+  const [adminEditKey, setAdminEditKey] = useState(null);
+  const [adminEditValue, setAdminEditValue] = useState('');
   const [adminKeyLoading, setAdminKeyLoading] = useState(false);
   const [adminTestResult, setAdminTestResult] = useState(null);
   const [adminShowKey, setAdminShowKey] = useState(false);
@@ -812,24 +813,21 @@ export default function App() {
     setAuth(null);
   };
 
-  // Admin: load current key info when profile tab opens
+  // Admin: load current settings when profile tab opens
   const isOwner = auth?.accessType === 'Owner';
   useEffect(() => {
     if (!isOwner || activeTab !== 'profile') return;
     getAdminSettings(auth.email, auth.token)
-      .then(res => {
-        const info = res.settings?.API_FOOTBALL_KEY;
-        if (info) setAdminKeyMasked(info.masked_value || '');
-      })
+      .then(res => setAdminSettings(res.settings || {}))
       .catch(() => {});
   }, [isOwner, activeTab, auth?.email, auth?.token]);
 
   const handleTestApiKey = async () => {
-    if (!adminKeyInput.trim()) { toast.error('Enter a key to test'); return; }
+    if (!adminEditValue.trim()) { toast.error('Enter a key to test'); return; }
     setAdminKeyLoading(true);
     setAdminTestResult(null);
     try {
-      const res = await testApiKey(auth.email, auth.token, adminKeyInput.trim());
+      const res = await testApiKey(auth.email, auth.token, adminEditValue.trim());
       setAdminTestResult(res);
       if (res.valid) toast.success(`Key valid: ${res.plan} plan (${res.account})`);
       else toast.error(`Key invalid: ${res.error || 'Unknown error'}`);
@@ -840,18 +838,18 @@ export default function App() {
     }
   };
 
-  const handleSaveApiKey = async () => {
-    if (!adminKeyInput.trim()) { toast.error('Enter a key first'); return; }
+  const handleSaveAdminSetting = async (key) => {
+    const val = adminEditValue.trim();
+    if (!val) { toast.error('Enter a value'); return; }
     setAdminKeyLoading(true);
     try {
-      await updateAdminSetting(auth.email, auth.token, 'API_FOOTBALL_KEY', adminKeyInput.trim());
-      toast.success('API key updated — live immediately, no redeploy needed');
-      setAdminKeyInput('');
+      await updateAdminSetting(auth.email, auth.token, key, val);
+      toast.success(`${key} updated — live immediately`);
+      setAdminEditKey(null);
+      setAdminEditValue('');
       setAdminTestResult(null);
-      // Refresh masked display
       const res = await getAdminSettings(auth.email, auth.token);
-      const info = res.settings?.API_FOOTBALL_KEY;
-      if (info) setAdminKeyMasked(info.masked_value || '');
+      setAdminSettings(res.settings || {});
     } catch (err) {
       toast.error(err.message);
     } finally {
@@ -2601,59 +2599,81 @@ export default function App() {
                   <Settings style={{ width: 12, height: 12, display: 'inline', marginRight: 4, verticalAlign: 'middle' }} />
                   Admin Settings
                 </div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.4, marginBottom: 12 }}>
+                  Manage your API keys and payment settings. Changes take effect instantly — no redeployment needed.
+                </div>
                 <div className="space-y-3">
-                  <div className="profile-field">
-                    <div className="profile-field-icon"><Shield style={{ width: 16, height: 16, color: '#f59e0b' }} /></div>
-                    <div className="profile-field-content">
-                      <div className="profile-field-label">Current API-Sports Key</div>
-                      <div className="profile-field-value" style={{ fontFamily: 'monospace', fontSize: 12 }} data-testid="admin-current-key">
-                        {adminKeyMasked || 'Not set'}
+                  {[
+                    { key: 'API_FOOTBALL_KEY', label: 'API-Sports Key', testable: true },
+                    { key: 'SQUARE_ACCESS_TOKEN', label: 'Square Access Token' },
+                    { key: 'SQUARE_APPLICATION_ID', label: 'Square App ID' },
+                    { key: 'SQUARE_LOCATION_ID', label: 'Square Location ID' },
+                    { key: 'SQUARE_ENVIRONMENT', label: 'Square Environment' },
+                  ].map(({ key, label, testable }) => (
+                    <div key={key}>
+                      <div className="profile-field" style={{ cursor: 'pointer' }}
+                        onClick={() => { if (adminEditKey !== key) { setAdminEditKey(key); setAdminEditValue(''); setAdminTestResult(null); } }}>
+                        <div className="profile-field-icon"><Shield style={{ width: 16, height: 16, color: key.startsWith('SQUARE') ? '#818cf8' : '#f59e0b' }} /></div>
+                        <div className="profile-field-content">
+                          <div className="profile-field-label">{label}</div>
+                          <div className="profile-field-value" style={{ fontFamily: 'monospace', fontSize: 11 }} data-testid={`admin-val-${key}`}>
+                            {adminSettings[key]?.masked_value || 'Not set'}
+                          </div>
+                        </div>
+                        <Edit3 style={{ width: 13, height: 13, color: 'var(--text-muted)', flexShrink: 0 }} />
                       </div>
+                      {adminEditKey === key && (
+                        <div style={{ marginTop: 8, marginLeft: 4, marginBottom: 4 }}>
+                          <div className="profile-field" style={{ padding: '8px 12px' }}>
+                            <input
+                              type={adminShowKey ? 'text' : 'password'}
+                              value={adminEditValue}
+                              onChange={e => { setAdminEditValue(e.target.value); setAdminTestResult(null); }}
+                              placeholder={key === 'SQUARE_ENVIRONMENT' ? 'sandbox or production' : `Paste new ${label}`}
+                              data-testid={`admin-input-${key}`}
+                              autoFocus
+                              style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: 'var(--text-primary)', fontSize: 13, fontFamily: 'monospace' }}
+                            />
+                            <button onClick={() => setAdminShowKey(!adminShowKey)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}>
+                              {adminShowKey ? <EyeOff style={{ width: 14, height: 14, color: 'var(--text-muted)' }} /> : <Eye style={{ width: 14, height: 14, color: 'var(--text-muted)' }} />}
+                            </button>
+                          </div>
+                          {testable && adminTestResult && (
+                            <div style={{
+                              fontSize: 12, padding: '8px 12px', borderRadius: 8, marginTop: 6,
+                              background: adminTestResult.valid ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
+                              color: adminTestResult.valid ? '#22c55e' : '#ef4444',
+                              border: `1px solid ${adminTestResult.valid ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)'}`,
+                            }} data-testid="admin-test-result">
+                              {adminTestResult.valid
+                                ? `Valid — ${adminTestResult.plan} plan (${adminTestResult.account})`
+                                : `Invalid — ${adminTestResult.error}`}
+                            </div>
+                          )}
+                          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                            {testable && (
+                              <button className="btn-secondary" onClick={handleTestApiKey}
+                                disabled={adminKeyLoading || !adminEditValue.trim()} data-testid="admin-test-key-btn"
+                                style={{ flex: 1, fontSize: 12 }}>
+                                {adminKeyLoading ? <Loader2 className="animate-spin" style={{ width: 14, height: 14 }} /> : <Activity style={{ width: 14, height: 14 }} />}
+                                Test
+                              </button>
+                            )}
+                            <button className="btn-primary" onClick={() => handleSaveAdminSetting(key)}
+                              disabled={adminKeyLoading || !adminEditValue.trim()} data-testid={`admin-save-${key}`}
+                              style={{ flex: 1, fontSize: 12 }}>
+                              {adminKeyLoading ? <Loader2 className="animate-spin" style={{ width: 14, height: 14 }} /> : <Check style={{ width: 14, height: 14 }} />}
+                              Save
+                            </button>
+                            <button className="btn-secondary" onClick={() => { setAdminEditKey(null); setAdminEditValue(''); setAdminTestResult(null); }}
+                              style={{ fontSize: 12, padding: '8px 12px' }}>
+                              <X style={{ width: 14, height: 14 }} />
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  </div>
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.4 }}>
-                    Update your API-Sports key here. Changes take effect instantly — no redeployment needed.
-                  </div>
-                  <div className="profile-field" style={{ padding: '8px 12px' }}>
-                    <div className="profile-field-icon"><Lock style={{ width: 16, height: 16, color: '#f59e0b' }} /></div>
-                    <input
-                      type={adminShowKey ? 'text' : 'password'}
-                      value={adminKeyInput}
-                      onChange={e => { setAdminKeyInput(e.target.value); setAdminTestResult(null); }}
-                      placeholder="Paste new API key here"
-                      data-testid="admin-key-input"
-                      style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: 'var(--text-primary)', fontSize: 13, fontFamily: 'monospace' }}
-                    />
-                    <button onClick={() => setAdminShowKey(!adminShowKey)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}>
-                      {adminShowKey ? <EyeOff style={{ width: 14, height: 14, color: 'var(--text-muted)' }} /> : <Eye style={{ width: 14, height: 14, color: 'var(--text-muted)' }} />}
-                    </button>
-                  </div>
-                  {adminTestResult && (
-                    <div style={{
-                      fontSize: 12, padding: '8px 12px', borderRadius: 8,
-                      background: adminTestResult.valid ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
-                      color: adminTestResult.valid ? '#22c55e' : '#ef4444',
-                      border: `1px solid ${adminTestResult.valid ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)'}`,
-                    }} data-testid="admin-test-result">
-                      {adminTestResult.valid
-                        ? `Valid — ${adminTestResult.plan} plan (${adminTestResult.account})`
-                        : `Invalid — ${adminTestResult.error}`}
-                    </div>
-                  )}
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <button className="btn-secondary" onClick={handleTestApiKey}
-                      disabled={adminKeyLoading || !adminKeyInput.trim()} data-testid="admin-test-key-btn"
-                      style={{ flex: 1, fontSize: 12 }}>
-                      {adminKeyLoading ? <Loader2 className="animate-spin" style={{ width: 14, height: 14 }} /> : <Activity style={{ width: 14, height: 14 }} />}
-                      Test Key
-                    </button>
-                    <button className="btn-primary" onClick={handleSaveApiKey}
-                      disabled={adminKeyLoading || !adminKeyInput.trim()} data-testid="admin-save-key-btn"
-                      style={{ flex: 1, fontSize: 12 }}>
-                      {adminKeyLoading ? <Loader2 className="animate-spin" style={{ width: 14, height: 14 }} /> : <Check style={{ width: 14, height: 14 }} />}
-                      Save Key
-                    </button>
-                  </div>
+                  ))}
                 </div>
               </div>
             )}

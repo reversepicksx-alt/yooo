@@ -1,9 +1,18 @@
 import httpx
 from fastapi import APIRouter, HTTPException
-from config import db, OWNER_EMAIL, get_dynamic_api_key, set_dynamic_api_key
+from config import (
+    db, OWNER_EMAIL, DYNAMIC_KEYS,
+    get_dynamic_setting, set_dynamic_setting,
+)
 from models import AdminSettingsRequest, AdminTestKeyRequest
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+
+def _mask(val: str) -> str:
+    if not val or len(val) < 8:
+        return val or ""
+    return val[:6] + "..." + val[-4:]
 
 
 async def verify_owner(email: str, token: str):
@@ -21,30 +30,35 @@ async def verify_owner(email: str, token: str):
 
 @router.post("/settings")
 async def get_settings(req: AdminSettingsRequest):
-    """Get current admin settings (owner only). Key value is masked."""
+    """Get current admin settings (owner only). Values are masked."""
     await verify_owner(req.email, req.token)
-    current_key = get_dynamic_api_key() or ""
-    masked = current_key[:8] + "..." + current_key[-4:] if len(current_key) > 12 else current_key
-    return {
-        "settings": {
-            "API_FOOTBALL_KEY": {
-                "masked_value": masked,
-                "is_set": bool(current_key),
-            }
+    settings = {}
+    for key in DYNAMIC_KEYS:
+        val = get_dynamic_setting(key) or ""
+        settings[key] = {
+            "masked_value": _mask(val),
+            "is_set": bool(val),
         }
-    }
+    return {"settings": settings}
 
 
 @router.post("/settings/update")
 async def update_settings(req: AdminSettingsRequest):
     """Update admin settings (owner only)."""
     await verify_owner(req.email, req.token)
-    if req.key != "API_FOOTBALL_KEY":
-        raise HTTPException(status_code=400, detail="Unsupported setting key.")
-    if not req.value or len(req.value.strip()) < 10:
-        raise HTTPException(status_code=400, detail="Invalid API key value.")
-    await set_dynamic_api_key(req.value.strip())
-    return {"success": True, "message": "API key updated successfully. Changes are live immediately."}
+    if req.key not in DYNAMIC_KEYS:
+        raise HTTPException(status_code=400, detail=f"Unsupported setting: {req.key}")
+    val = req.value.strip()
+    if req.key == "SQUARE_ENVIRONMENT":
+        if val not in ("sandbox", "production"):
+            raise HTTPException(status_code=400, detail="Must be 'sandbox' or 'production'.")
+    elif not val or len(val) < 5:
+        raise HTTPException(status_code=400, detail="Value too short.")
+    await set_dynamic_setting(req.key, val)
+    # Clear cached Square plans when Square keys change so they get recreated
+    if req.key.startswith("SQUARE_"):
+        await db.square_plans.delete_many({})
+    return {"success": True, "message": f"{req.key} updated. Changes are live immediately."}
 
 
 @router.post("/test-key")
@@ -74,3 +88,12 @@ async def test_api_key(req: AdminTestKeyRequest):
             return {"valid": False, "error": str(errors) if errors else "Unknown error"}
     except Exception as e:
         return {"valid": False, "error": str(e)}
+
+
+@router.get("/square-config")
+async def get_square_config():
+    """Public endpoint: returns Square App ID + Location ID for the payment form."""
+    return {
+        "appId": get_dynamic_setting("SQUARE_APPLICATION_ID"),
+        "locationId": get_dynamic_setting("SQUARE_LOCATION_ID"),
+    }

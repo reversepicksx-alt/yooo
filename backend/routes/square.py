@@ -6,15 +6,15 @@ from square import Square
 from square.environment import SquareEnvironment
 
 from config import (
-    db, SQUARE_ACCESS_TOKEN, SQUARE_LOCATION_ID, SQUARE_ENVIRONMENT,
+    db, get_dynamic_setting,
 )
 
 router = APIRouter(prefix="/api/square", tags=["square"])
 
 
 def get_square_client():
-    env = SquareEnvironment.SANDBOX if SQUARE_ENVIRONMENT == "sandbox" else SquareEnvironment.PRODUCTION
-    return Square(token=SQUARE_ACCESS_TOKEN, environment=env)
+    env = SquareEnvironment.SANDBOX if get_dynamic_setting("SQUARE_ENVIRONMENT") == "sandbox" else SquareEnvironment.PRODUCTION
+    return Square(token=get_dynamic_setting("SQUARE_ACCESS_TOKEN"), environment=env)
 
 
 PLANS = {
@@ -163,7 +163,7 @@ async def subscribe(req: SubscribeRequest):
 
         # 3. Create subscription
         sub_resp = client.subscriptions.create(
-            location_id=SQUARE_LOCATION_ID,
+            location_id=get_dynamic_setting("SQUARE_LOCATION_ID"),
             customer_id=square_customer_id,
             idempotency_key=str(uuid.uuid4()),
             plan_variation_id=plan_doc["variation_id"],

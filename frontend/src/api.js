@@ -262,3 +262,7 @@ export async function testApiKey(email, token, api_key) {
     body: JSON.stringify({ email, token, api_key }),
   });
 }
+
+export async function getSquareConfig() {
+  return apiCall('/api/admin/square-config');
+}

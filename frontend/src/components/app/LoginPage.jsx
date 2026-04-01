@@ -1,10 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Zap, Loader2, Lock, Mail, ShieldAlert, CreditCard, Check, ArrowLeft, User } from 'lucide-react';
-import { verifyWhop, authLogin, setPassword as apiSetPassword, resetPassword, squareSubscribe, getSquarePlans } from '../../api';
+import { verifyWhop, authLogin, setPassword as apiSetPassword, resetPassword, squareSubscribe, getSquarePlans, getSquareConfig } from '../../api';
 import { PaymentForm, CreditCard as SquareCreditCard } from 'react-square-web-payments-sdk';
-
-const SQUARE_APP_ID = process.env.REACT_APP_SQUARE_APP_ID;
-const SQUARE_LOCATION_ID = process.env.REACT_APP_SQUARE_LOCATION_ID;
 
 export function LoginPage({ onAuth }) {
   const [step, setStep] = useState('email');
@@ -14,6 +11,10 @@ export function LoginPage({ onAuth }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [accessType, setAccessType] = useState(null);
+
+  // Square config from backend (dynamic)
+  const [squareAppId, setSquareAppId] = useState('');
+  const [squareLocationId, setSquareLocationId] = useState('');
 
   // Square subscribe state
   const [showSubscribe, setShowSubscribe] = useState(false);
@@ -27,6 +28,16 @@ export function LoginPage({ onAuth }) {
   const [subLoading, setSubLoading] = useState(false);
   const [subError, setSubError] = useState(null);
   const [plans, setPlans] = useState([]);
+
+  // Fetch Square config from backend on mount
+  useEffect(() => {
+    getSquareConfig()
+      .then(res => {
+        setSquareAppId(res.appId || '');
+        setSquareLocationId(res.locationId || '');
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (showSubscribe && plans.length === 0) {
@@ -302,9 +313,10 @@ export function LoginPage({ onAuth }) {
                 <p style={{ fontSize: 11, color: 'var(--text-muted)' }}>Enter card details to complete subscription</p>
               </div>
               <div data-testid="square-payment-form">
+                {squareAppId && squareLocationId ? (
                 <PaymentForm
-                  applicationId={SQUARE_APP_ID}
-                  locationId={SQUARE_LOCATION_ID}
+                  applicationId={squareAppId}
+                  locationId={squareLocationId}
                   cardTokenizeResponseReceived={(token) => handleCardTokenized(token)}
                   createPaymentRequest={() => ({
                     countryCode: 'US',
@@ -344,6 +356,9 @@ export function LoginPage({ onAuth }) {
                     )}
                   />
                 </PaymentForm>
+                ) : (
+                  <div style={{ textAlign: 'center', padding: 20, color: 'var(--text-muted)', fontSize: 13 }}>Loading payment form...</div>
+                )}
               </div>
               <button className="btn-secondary" onClick={() => setSubStep('details')} style={{ marginTop: 12, width: '100%' }}>
                 <ArrowLeft style={{ width: 14, height: 14 }} /> Back
