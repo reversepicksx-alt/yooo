@@ -68,7 +68,10 @@ LEGAL: ALL 3rd-party app names and player/team images removed. No AI model names
 - P0: Brazilian teams (Coritiba, Botafogo) showing as CONCACAF Nations League — RESOLVED (league inference now checks hardcoded team map BEFORE trusting AI vision guess; added 24+ missing Brazilian teams to TEAM_LEAGUE_MAP)
 - P0: "Team field cannot be 0" crash when teamId/opponentId not resolved — RESOLVED (400 guard with clear error message)
 - P0: Wrong player matched (Vítinha → Genoa instead of PSG) — RESOLVED (pick_best now uses opponent league context for disambiguation)
+- P0: Wrong opponent resolved (Newcastle United EPL instead of Newcastle Jets A-League) — RESOLVED (_resolve_opponent now searches with league_id filter FIRST)
+- P0: AI confusing which team the player plays for — RESOLVED (prompt now explicitly states "plays for {teamName}" and "OPPONENT: {opponentName}")
 - P1: Missing European teams in TEAM_LEAGUE_MAP — RESOLVED (added 80+ teams: Toulouse, Bundesliga, Serie A, La Liga expansion → 241 total teams)
+- P1: Only 2/3 AI models responding — IMPROVED (grace period increased from 15s to 25s for both soccer and basketball)
 - P1: Square payment card input all white on dark theme — REPLACED with Square Checkout Links (hosted payment page). Supports Card, Apple Pay, Google Pay automatically. No more iframe/domain issues.
 
 ## Prioritized Backlog
