@@ -92,6 +92,18 @@ TEAM_LEAGUE_MAP = {
     "rayo vallecano": 140, "alaves": 140, "las palmas": 140, "cadiz": 140,
     "leganes": 140, "valladolid": 140, "real valladolid": 140, "espanyol": 140,
     "real betis": 140,
+    # Argentine Liga Profesional - league 128
+    "independiente": 128, "boca juniors": 128, "boca": 128, "river plate": 128, "river": 128,
+    "racing": 128, "racing club": 128, "san lorenzo": 128, "huracan": 128,
+    "velez sarsfield": 128, "velez": 128, "argentinos juniors": 128, "argentinos jrs": 128,
+    "lanus": 128, "banfield": 128, "defensa y justicia": 128, "defensa": 128,
+    "tigre": 128, "platense": 128, "belgrano": 128, "talleres": 128,
+    "union": 128, "union santa fe": 128, "colon": 128, "newells": 128,
+    "newells old boys": 128, "rosario central": 128, "godoy cruz": 128,
+    "estudiantes": 128, "gimnasia": 128, "gimnasia lp": 128,
+    "atletico tucuman": 128, "central cordoba": 128, "sarmiento": 128,
+    "barracas central": 128, "instituto": 128, "aldosivi": 128,
+    "independiente rivadavia": 128, "riestra": 128,
     # A-League (Australia) - league 188
     "melbourne victory": 188, "melbourne city": 188, "sydney fc": 188, "western sydney": 188,
     "western sydney wanderers": 188, "central coast mariners": 188, "macarthur": 188,
@@ -237,10 +249,10 @@ async def _resolve_player_via_api(player_name: str, player_team_hint: str,
             league_matched = [c for c in candidates if c[2]]
             if league_matched:
                 return league_matched[0][0]
-            if not team_hint:
-                return candidates[0][0]
-            # If team hint exists but nothing matched, still return best candidate
-            # but prefer players from top-5 leagues
+            # If we have a team hint but NO candidate matched the team,
+            # don't return a random wrong player — let the caller handle it
+            if team_hint:
+                return None
             return candidates[0][0]
         return None
 
