@@ -167,6 +167,13 @@ export async function scanProp(imageBase64, sport = 'soccer') {
   });
 }
 
+export async function reResolvePick(playerName, playerTeam, opponentName, sport = 'soccer') {
+  return apiCall('/api/re-resolve', {
+    method: 'POST',
+    body: JSON.stringify({ playerName, playerTeam, opponentName, sport }),
+  });
+}
+
 export const SUPPORTED_LEAGUES = [
   { id: 39, name: "Premier League", type: "Domestic" },
   { id: 140, name: "La Liga", type: "Domestic" },

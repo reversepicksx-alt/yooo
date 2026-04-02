@@ -1,0 +1,71 @@
+{
+  "summary": "Tested new POST /api/re-resolve endpoint for editable scan cards feature. Fixed 2 bugs: (1) Basketball re-resolve import error - changed get_bball_player to get_bball_player_by_name, (2) League ID resolution - team-based league inference now takes priority over cached player's league. All 15 backend tests pass. Frontend code verified: Edit3 icon, scanEditMode state, handleScanEdit functions, and reResolvePick API function all present.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration_41_re_resolve.py",
+    "/app/test_reports/pytest/iteration_41_re_resolve_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "FIXED: scan.py line 928 - Changed 'from basketball_cache import get_bball_player' to 'from basketball_cache import get_bball_player_by_name' to match actual function name",
+    "FIXED: scan.py lines 979-984 - League ID from cached player now only overrides if team-based inference returned default fallback (71), ensuring user's team correction takes priority",
+    "VERIFIED: api.js line 170 - reResolvePick function exists and correctly calls POST /api/re-resolve",
+    "VERIFIED: App.js line 4 - Edit3 icon imported from lucide-react",
+    "VERIFIED: App.js lines 2478-2491 - Edit button renders on scan result cards with data-testid='scan-edit-btn-{idx}'",
+    "VERIFIED: App.js lines 2521-2600 - Edit mode panel with player/team/opponent inputs and confirm/cancel buttons",
+    "VERIFIED: App.js lines 714-749 - handleScanEditConfirm calls reResolvePick and updates scanResults state"
+  ],
+  "updated_files": [
+    "/app/backend/routes/scan.py",
+    "/app/backend/tests/test_iteration_41_re_resolve.py"
+  ],
+  "success_rate": {
+    "backend": "100%",
+    "frontend": "100%"
+  },
+  "test_credentials": "josselj001@gmail.com (Owner/Lifetime VIP) - Whop member, no password required",
+  "seed_data_creation": "",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 41 tested the new re-resolve endpoint for editable scan cards. Two bugs were fixed: (1) Basketball re-resolve had wrong import name (get_bball_player vs get_bball_player_by_name), (2) League ID resolution was overriding team-based inference with cached player's league (e.g., Champions League instead of Premier League). Both fixes applied to /app/backend/routes/scan.py. Frontend code structure verified - Edit3 icon, scanEditMode state, and all handler functions are properly implemented with data-testid attributes for testing.",
+  "features_verified": {
+    "re_resolve_endpoint_exists": "PASS - POST /api/re-resolve accepts requests",
+    "re_resolve_known_player_messi": "PASS - Messi/Inter Miami/LA Galaxy returns correct resolution with MLS league (253)",
+    "re_resolve_corrected_team_name": "PASS - Salah/Liverpool/Man City returns Premier League (39)",
+    "re_resolve_basketball_sport": "PASS - LeBron/Lakers/Celtics returns NBA league",
+    "re_resolve_unknown_player": "PASS - Unknown player returns resolved=null gracefully",
+    "re_resolve_validation": "PASS - Missing/empty playerName or playerTeam returns 400/422",
+    "re_resolve_optional_opponent": "PASS - Works without opponentName",
+    "re_resolve_default_sport_soccer": "PASS - Defaults to soccer when sport not specified",
+    "re_resolve_la_liga": "PASS - Vinicius/Real Madrid returns La Liga (140)",
+    "re_resolve_bundesliga": "PASS - Musiala/Bayern Munich returns Bundesliga (78)",
+    "re_resolve_position_info": "PASS - Returns position field in response",
+    "re_resolve_response_structure": "PASS - All fields needed for scan result update present",
+    "frontend_edit3_icon_imported": "PASS - Edit3 imported from lucide-react",
+    "frontend_scan_edit_mode_state": "PASS - scanEditMode state exists",
+    "frontend_handle_scan_edit_functions": "PASS - handleScanEdit, handleScanEditCancel, handleScanEditConfirm exist",
+    "frontend_re_resolve_pick_api": "PASS - reResolvePick function exists in api.js"
+  },
+  "bugs_fixed": {
+    "basketball_import_error": {
+      "file": "/app/backend/routes/scan.py",
+      "line": 928,
+      "issue": "Import error: cannot import name 'get_bball_player' from 'basketball_cache'",
+      "fix": "Changed to 'get_bball_player_by_name' which is the actual function name"
+    },
+    "league_id_override": {
+      "file": "/app/backend/routes/scan.py",
+      "lines": "979-984",
+      "issue": "Cached player's leagueId (e.g., Champions League 2) was overriding team-based inference (e.g., Premier League 39)",
+      "fix": "Only use cached player's leagueId if team-based inference returned default fallback (71)"
+    }
+  }
+}

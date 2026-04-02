@@ -140,9 +140,6 @@ TEAM_LEAGUE_MAP = {
     "toulouse": 61, "nantes": 61, "reims": 61, "montpellier": 61, "brest": 61,
     "le havre": 61, "clermont": 61, "metz": 61, "lorient": 61, "auxerre": 61,
     "angers": 61, "saint-etienne": 61, "st etienne": 61, "ajaccio": 61,
-    "la galaxy": 253, "lafc": 253, "inter miami": 253, "atlanta united": 253,
-    "new york city fc": 253, "nycfc": 253, "new york red bulls": 253, "seattle sounders": 253,
-    "portland timbers": 253, "columbus crew": 253, "fc cincinnati": 253, "nashville sc": 253,
     "portland thorns": 254, "washington spirit": 254, "north carolina courage": 254,
     "orlando pride": 254, "gotham fc": 254, "angel city": 254, "kansas city current": 254,
     "italy": 5, "france": 5, "germany": 5, "spain": 5, "england": 5,
@@ -894,3 +891,144 @@ async def scan_prop(req: ScanPropRequest):
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Scan failed: {str(e)}")
+
+
+# ═══════════════════════════════════════════════════
+#  RE-RESOLVE: Let users correct scan results
+# ═══════════════════════════════════════════════════
+from pydantic import BaseModel as PydanticBaseModel
+from typing import Optional
+
+class ReResolveRequest(PydanticBaseModel):
+    playerName: str
+    playerTeam: str
+    opponentName: str = ""
+    sport: str = "soccer"
+
+@router.post("/re-resolve")
+async def re_resolve(req: ReResolveRequest):
+    """Re-resolve a player/team/opponent after user correction."""
+    try:
+        player_name = req.playerName.strip()
+        player_team = req.playerTeam.strip()
+        opponent_hint = req.opponentName.strip()
+        sport = req.sport.lower()
+
+        if not player_name or not player_team:
+            raise HTTPException(status_code=400, detail="Player name and team are required")
+
+        if sport == "basketball":
+            # Basketball re-resolution
+            team_data = await get_bball_team_by_name(player_team)
+            resolved_player = None
+            resolved_opponent = None
+
+            if team_data:
+                team_id = team_data.get("teamId")
+                from basketball_cache import get_bball_player_by_name
+                cached = await get_bball_player_by_name(player_name, team_id)
+                if cached:
+                    resolved_player = {
+                        "playerId": cached["playerId"],
+                        "playerName": cached["name"],
+                        "photo": "",
+                        "teamId": team_id,
+                        "teamName": team_data.get("name", player_team),
+                    }
+
+            if opponent_hint:
+                opp_data = await get_bball_team_by_name(opponent_hint)
+                if opp_data:
+                    resolved_opponent = {
+                        "teamId": opp_data["teamId"],
+                        "teamName": opp_data.get("name", opponent_hint),
+                    }
+
+            return {
+                "resolved": resolved_player,
+                "resolvedOpponent": resolved_opponent,
+                "leagueId": None,
+                "leagueName": "NBA",
+            }
+
+        # Soccer re-resolution
+        player_team_lower = player_team.lower().strip()
+        league_id = await _infer_league_id(player_team, opponent_hint, None)
+        league_name = None
+        for sl in SUPPORTED_LEAGUES:
+            if sl["id"] == league_id:
+                league_name = sl["name"]
+                break
+
+        # Resolve player
+        resolved_player = None
+        cache_team_id = None
+        club_id, _ = await get_team_by_name(player_team_lower)
+        if club_id:
+            cache_team_id = club_id
+
+        cached_player = await _resolve_player_via_cache(player_name, cache_team_id)
+        if cached_player:
+            resolved_player = {
+                "playerId": cached_player["playerId"],
+                "playerName": cached_player["name"],
+                "photo": "",
+                "teamId": cached_player.get("teamId"),
+                "teamName": cached_player.get("teamName", player_team),
+            }
+            # Only use cached player's leagueId if we couldn't infer from team name
+            # (i.e., league_id is still the default fallback value)
+            # This ensures user's team correction takes priority
+            if cached_player.get("leagueId") and league_id in [71, None]:
+                # 71 is the default fallback in _infer_league_id
+                league_id = cached_player["leagueId"]
+                for sl in SUPPORTED_LEAGUES:
+                    if sl["id"] == league_id:
+                        league_name = sl["name"]
+                        break
+
+        if not resolved_player:
+            leagues_to_try = [league_id]
+            api_player, api_lid, api_lname = await _resolve_player_via_api(
+                player_name, player_team_lower, leagues_to_try,
+                False, None, player_team,
+                opponent_hint=opponent_hint
+            )
+            if api_player:
+                resolved_player = api_player
+                if api_lid:
+                    league_id = api_lid
+                if api_lname:
+                    league_name = api_lname
+
+        # Resolve opponent
+        resolved_opponent = None
+        if opponent_hint:
+            resolved_opponent = await _resolve_opponent(opponent_hint, False, league_id)
+
+        # Position info
+        position_info = {}
+        if resolved_player and resolved_player.get("playerId"):
+            cached_pos = await db.player_positions.find_one(
+                {"playerId": resolved_player["playerId"]},
+                {"_id": 0, "specificPosition": 1, "role": 1}
+            )
+            if cached_pos and cached_pos.get("specificPosition"):
+                position_info = {
+                    "position": cached_pos["specificPosition"],
+                    "role": cached_pos.get("role", ""),
+                }
+
+        return {
+            "resolved": resolved_player,
+            "resolvedOpponent": resolved_opponent,
+            "leagueId": league_id,
+            "leagueName": league_name,
+            "position": position_info,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Re-resolve failed: {str(e)}")

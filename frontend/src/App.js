@@ -11,7 +11,7 @@ import {
   checkApiStatus, SUPPORTED_LEAGUES,
   verifyWhop, authLogin, setPassword as apiSetPassword, resetPassword, verifySession, authLogout,
   getPickOfTheDay, savePick, listPicks, deletePick, correctPick, liveUpdatePicks,
-  scanProp, basketballSearchTeams, basketballPredict,
+  scanProp, reResolvePick, basketballSearchTeams, basketballPredict,
   getAdminSettings, updateAdminSetting, testApiKey
 } from './api';
 import { toast, Toaster } from 'sonner';
@@ -133,6 +133,9 @@ export default function App() {
   const [scanPredictingIdx, setScanPredictingIdx] = useState(null);
   const [scanExcludedIndices, setScanExcludedIndices] = useState([]);
   const [scanVenueOverrides, setScanVenueOverrides] = useState({});
+  const [scanEditMode, setScanEditMode] = useState({}); // { idx: true/false }
+  const [scanEditValues, setScanEditValues] = useState({}); // { idx: { playerName, playerTeam, opponentName } }
+  const [scanResolving, setScanResolving] = useState({}); // { idx: true/false }
   const [scanFollowUp, setScanFollowUp] = useState('');
   const [scanFollowUpMessages, setScanFollowUpMessages] = useState([]);
   const [isScanFollowUpSending, setIsScanFollowUpSending] = useState(false);
@@ -682,9 +685,67 @@ export default function App() {
     setScanPrediction(null);
     setScanPredictingIdx(null);
     setScanVenueOverrides({});
+    setScanEditMode({});
+    setScanEditValues({});
+    setScanResolving({});
     setScanFollowUpMessages([]);
     setScanFollowUp('');
     if (scanFileRef.current) scanFileRef.current.value = '';
+  };
+
+  const handleScanEdit = (idx, pick) => {
+    const ext = pick.extracted;
+    const res = pick.resolved;
+    setScanEditMode(prev => ({ ...prev, [idx]: true }));
+    setScanEditValues(prev => ({
+      ...prev,
+      [idx]: {
+        playerName: res?.playerName || ext.playerName || '',
+        playerTeam: res?.teamName || ext.playerTeam || '',
+        opponentName: ext.opponentName || '',
+      }
+    }));
+  };
+
+  const handleScanEditCancel = (idx) => {
+    setScanEditMode(prev => ({ ...prev, [idx]: false }));
+  };
+
+  const handleScanEditConfirm = async (idx) => {
+    const vals = scanEditValues[idx];
+    if (!vals?.playerName || !vals?.playerTeam) {
+      toast.error('Player name and team are required');
+      return;
+    }
+    setScanResolving(prev => ({ ...prev, [idx]: true }));
+    try {
+      const sport = scanResults[idx]?.sport || scanResults[idx]?.extracted?.sport || 'soccer';
+      const result = await reResolvePick(vals.playerName, vals.playerTeam, vals.opponentName, sport);
+      setScanResults(prev => {
+        const updated = [...prev];
+        const pick = { ...updated[idx] };
+        pick.resolved = result.resolved;
+        pick.resolvedOpponent = result.resolvedOpponent;
+        pick.extracted = {
+          ...pick.extracted,
+          playerName: vals.playerName,
+          playerTeam: vals.playerTeam,
+          opponentName: vals.opponentName,
+          leagueId: result.leagueId || pick.extracted.leagueId,
+          league: result.leagueName || pick.extracted.league,
+          position: result.position?.position || '',
+          role: result.position?.role || '',
+        };
+        updated[idx] = pick;
+        return updated;
+      });
+      setScanEditMode(prev => ({ ...prev, [idx]: false }));
+      toast.success(result.resolved ? 'Player re-resolved successfully' : 'Player not found in database — you can still try predicting');
+    } catch (e) {
+      toast.error(e.message || 'Re-resolve failed');
+    } finally {
+      setScanResolving(prev => ({ ...prev, [idx]: false }));
+    }
   };
 
   // ── Reverse Tactical ──
@@ -2368,7 +2429,7 @@ export default function App() {
                                         <span>{resolvedPlayers[1]?.teamName || ext.players?.[1]?.team || '?'}</span>
                                       </div>
                                     </>
-                                  ) : (
+                                  ) : scanEditMode[idx] ? null : (
                                     <>
                                       <div style={{ fontSize: 15, fontWeight: 800, color: '#fff' }}>
                                         {res?.playerName || ext.playerName}
@@ -2413,32 +2474,132 @@ export default function App() {
                                     </>
                                   )}
                                 </div>
-                                {comboMatched ? (
-                                  <div style={{
-                                    padding: '4px 10px', borderRadius: 6, fontSize: 9, fontWeight: 900,
-                                    background: 'rgba(16,185,129,0.12)', color: '#10b981', border: '1px solid rgba(16,185,129,0.25)',
-                                    letterSpacing: '0.1em',
-                                  }}>
-                                    {isCombo ? '2/2 MATCHED' : 'MATCHED'}
-                                  </div>
-                                ) : isCombo && (resolvedPlayers[0] || resolvedPlayers[1]) ? (
-                                  <div style={{
-                                    padding: '4px 10px', borderRadius: 6, fontSize: 9, fontWeight: 900,
-                                    background: 'rgba(245,158,11,0.12)', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.25)',
-                                    letterSpacing: '0.1em',
-                                  }}>
-                                    1/2 MATCHED
-                                  </div>
-                                ) : (
-                                  <div style={{
-                                    padding: '4px 10px', borderRadius: 6, fontSize: 9, fontWeight: 900,
-                                    background: 'rgba(245,158,11,0.12)', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.25)',
-                                    letterSpacing: '0.1em',
-                                  }}>
-                                    NO MATCH
-                                  </div>
-                                )}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                  {!isCombo && !scanEditMode[idx] && (
+                                    <div
+                                      onClick={() => handleScanEdit(idx, pick)}
+                                      data-testid={`scan-edit-btn-${idx}`}
+                                      style={{
+                                        width: 28, height: 28, borderRadius: 6, cursor: 'pointer',
+                                        background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.25)',
+                                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                      }}
+                                      title="Edit player/team info"
+                                    >
+                                      <Edit3 style={{ width: 13, height: 13, color: '#f59e0b' }} />
+                                    </div>
+                                  )}
+                                  {comboMatched ? (
+                                    <div style={{
+                                      padding: '4px 10px', borderRadius: 6, fontSize: 9, fontWeight: 900,
+                                      background: 'rgba(16,185,129,0.12)', color: '#10b981', border: '1px solid rgba(16,185,129,0.25)',
+                                      letterSpacing: '0.1em',
+                                    }}>
+                                      {isCombo ? '2/2 MATCHED' : 'MATCHED'}
+                                    </div>
+                                  ) : isCombo && (resolvedPlayers[0] || resolvedPlayers[1]) ? (
+                                    <div style={{
+                                      padding: '4px 10px', borderRadius: 6, fontSize: 9, fontWeight: 900,
+                                      background: 'rgba(245,158,11,0.12)', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.25)',
+                                      letterSpacing: '0.1em',
+                                    }}>
+                                      1/2 MATCHED
+                                    </div>
+                                  ) : (
+                                    <div style={{
+                                      padding: '4px 10px', borderRadius: 6, fontSize: 9, fontWeight: 900,
+                                      background: 'rgba(245,158,11,0.12)', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.25)',
+                                      letterSpacing: '0.1em',
+                                    }}>
+                                      NO MATCH
+                                    </div>
+                                  )}
+                                </div>
                               </div>
+
+                              {/* Edit Mode Fields */}
+                              {!isCombo && scanEditMode[idx] && (
+                                <div style={{ padding: '0 16px 14px', display: 'flex', flexDirection: 'column', gap: 8 }} data-testid={`scan-edit-panel-${idx}`}>
+                                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                                    <div>
+                                      <label style={{ fontSize: 9, fontWeight: 800, color: 'rgba(255,255,255,0.4)', letterSpacing: '0.1em', display: 'block', marginBottom: 4 }}>PLAYER</label>
+                                      <input
+                                        data-testid={`scan-edit-player-${idx}`}
+                                        value={scanEditValues[idx]?.playerName || ''}
+                                        onChange={(e) => setScanEditValues(prev => ({
+                                          ...prev, [idx]: { ...prev[idx], playerName: e.target.value }
+                                        }))}
+                                        style={{
+                                          width: '100%', padding: '8px 10px', borderRadius: 8, fontSize: 13, fontWeight: 700,
+                                          background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(245,158,11,0.3)',
+                                          color: '#fff', outline: 'none',
+                                        }}
+                                      />
+                                    </div>
+                                    <div>
+                                      <label style={{ fontSize: 9, fontWeight: 800, color: 'rgba(255,255,255,0.4)', letterSpacing: '0.1em', display: 'block', marginBottom: 4 }}>TEAM</label>
+                                      <input
+                                        data-testid={`scan-edit-team-${idx}`}
+                                        value={scanEditValues[idx]?.playerTeam || ''}
+                                        onChange={(e) => setScanEditValues(prev => ({
+                                          ...prev, [idx]: { ...prev[idx], playerTeam: e.target.value }
+                                        }))}
+                                        style={{
+                                          width: '100%', padding: '8px 10px', borderRadius: 8, fontSize: 13, fontWeight: 700,
+                                          background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(245,158,11,0.3)',
+                                          color: '#fff', outline: 'none',
+                                        }}
+                                      />
+                                    </div>
+                                  </div>
+                                  <div>
+                                    <label style={{ fontSize: 9, fontWeight: 800, color: 'rgba(255,255,255,0.4)', letterSpacing: '0.1em', display: 'block', marginBottom: 4 }}>OPPONENT</label>
+                                    <input
+                                      data-testid={`scan-edit-opponent-${idx}`}
+                                      value={scanEditValues[idx]?.opponentName || ''}
+                                      onChange={(e) => setScanEditValues(prev => ({
+                                        ...prev, [idx]: { ...prev[idx], opponentName: e.target.value }
+                                      }))}
+                                      style={{
+                                        width: '100%', padding: '8px 10px', borderRadius: 8, fontSize: 13, fontWeight: 700,
+                                        background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(245,158,11,0.3)',
+                                        color: '#fff', outline: 'none',
+                                      }}
+                                    />
+                                  </div>
+                                  <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                                    <button
+                                      onClick={() => handleScanEditConfirm(idx)}
+                                      disabled={scanResolving[idx]}
+                                      data-testid={`scan-edit-confirm-${idx}`}
+                                      style={{
+                                        flex: 1, padding: '10px', borderRadius: 8, border: 'none',
+                                        background: '#f59e0b', color: '#000', fontSize: 12, fontWeight: 900,
+                                        cursor: scanResolving[idx] ? 'wait' : 'pointer',
+                                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                                        letterSpacing: '0.06em', opacity: scanResolving[idx] ? 0.7 : 1,
+                                      }}
+                                    >
+                                      {scanResolving[idx] ? (
+                                        <><Loader2 style={{ width: 14, height: 14, animation: 'spin 1s linear infinite' }} /> RESOLVING...</>
+                                      ) : (
+                                        <><Check style={{ width: 14, height: 14 }} /> CONFIRM</>
+                                      )}
+                                    </button>
+                                    <button
+                                      onClick={() => handleScanEditCancel(idx)}
+                                      data-testid={`scan-edit-cancel-${idx}`}
+                                      style={{
+                                        padding: '10px 16px', borderRadius: 8,
+                                        background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(100,100,120,0.2)',
+                                        color: 'rgba(255,255,255,0.5)', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                                      }}
+                                    >
+                                      <X style={{ width: 14, height: 14 }} />
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
 
                               {/* Prop Details */}
                               <div style={{
