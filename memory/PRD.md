@@ -66,6 +66,9 @@ LEGAL: ALL 3rd-party app names and player/team images removed. No AI model names
 - P0: Basketball FGA/FGM stats only counting 2pt attempts, missing 3pt attempts — RESOLVED (combined field_goals + threepoint_goals). Kelly Oubre: 5.9→10.6, Paul George: 6.3→13.1
 - P1: Basketball DNP games (0 minutes) counted as 0-stat data points deflating averages — RESOLVED (< 5 min filter)
 - P0: Brazilian teams (Coritiba, Botafogo) showing as CONCACAF Nations League — RESOLVED (league inference now checks hardcoded team map BEFORE trusting AI vision guess; added 24+ missing Brazilian teams to TEAM_LEAGUE_MAP)
+- P0: "Team field cannot be 0" crash when teamId/opponentId not resolved — RESOLVED (400 guard with clear error message)
+- P0: Wrong player matched (Vítinha → Genoa instead of PSG) — RESOLVED (pick_best now uses opponent league context for disambiguation)
+- P1: Missing European teams in TEAM_LEAGUE_MAP — RESOLVED (added 80+ teams: Toulouse, Bundesliga, Serie A, La Liga expansion → 241 total teams)
 - P1: Square payment card input all white on dark theme — REPLACED with Square Checkout Links (hosted payment page). Supports Card, Apple Pay, Google Pay automatically. No more iframe/domain issues.
 
 ## Prioritized Backlog
