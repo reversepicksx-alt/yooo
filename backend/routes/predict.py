@@ -885,21 +885,27 @@ async def predict(req: PredictionRequest):
         }
 
         if player_position in GENERIC_POSITIONS or not player_position:
-            cached_pos = await db.player_positions.find_one(
-                {"playerId": req.playerId}, {"_id": 0, "specificPosition": 1, "role": 1}
-            )
-            if cached_pos and cached_pos.get("specificPosition"):
-                specific_position = cached_pos["specificPosition"]
-                player_role = cached_pos.get("role", "")
-                # Validate cached role matches position
-                valid_roles = POSITION_ROLE_MAP.get(specific_position, set())
-                if player_role and valid_roles and player_role not in valid_roles:
-                    print(f"[POS RESOLVE] Cache role mismatch: {req.playerName} {specific_position}/{player_role} — clearing cache")
-                    await db.player_positions.delete_one({"playerId": req.playerId})
-                    specific_position = ""
-                    player_role = ""
-                else:
-                    print(f"[POS RESOLVE] Cache hit: {req.playerName} → {specific_position} ({player_role})")
+            # Check user-provided position override first
+            if req.positionOverride:
+                specific_position = req.positionOverride
+                player_role = req.roleOverride or ""
+                print(f"[POS RESOLVE] User override: {req.playerName} → {specific_position} ({player_role})")
+            else:
+                cached_pos = await db.player_positions.find_one(
+                    {"playerId": req.playerId}, {"_id": 0, "specificPosition": 1, "role": 1}
+                )
+                if cached_pos and cached_pos.get("specificPosition"):
+                    specific_position = cached_pos["specificPosition"]
+                    player_role = cached_pos.get("role", "")
+                    # Validate cached role matches position
+                    valid_roles = POSITION_ROLE_MAP.get(specific_position, set())
+                    if player_role and valid_roles and player_role not in valid_roles:
+                        print(f"[POS RESOLVE] Cache role mismatch: {req.playerName} {specific_position}/{player_role} — clearing cache")
+                        await db.player_positions.delete_one({"playerId": req.playerId})
+                        specific_position = ""
+                        player_role = ""
+                    else:
+                        print(f"[POS RESOLVE] Cache hit: {req.playerName} → {specific_position} ({player_role})")
 
             if not specific_position:
                 try:

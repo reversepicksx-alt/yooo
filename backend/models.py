@@ -43,6 +43,8 @@ class PredictionRequest(BaseModel):
     venue: str = "home"
     propType: str = "pass_attempts"
     line: float = 0
+    positionOverride: str = ""
+    roleOverride: str = ""
 
 
 class ComboRequest(BaseModel):

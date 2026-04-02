@@ -633,6 +633,8 @@ export default function App() {
           venue: venue,
           propType: pickData.extracted.propType,
           line: pickData.extracted.line,
+          positionOverride: pickData.extracted.position || '',
+          roleOverride: pickData.extracted.role || '',
         });
         setScanPrediction(result);
         toast.success('Analysis complete!');
@@ -703,6 +705,8 @@ export default function App() {
         playerName: res?.playerName || ext.playerName || '',
         playerTeam: res?.teamName || ext.playerTeam || '',
         opponentName: ext.opponentName || '',
+        position: ext.position || '',
+        role: ext.role || '',
       }
     }));
   };
@@ -733,8 +737,8 @@ export default function App() {
           opponentName: vals.opponentName,
           leagueId: result.leagueId || pick.extracted.leagueId,
           league: result.leagueName || pick.extracted.league,
-          position: result.position?.position || '',
-          role: result.position?.role || '',
+          position: vals.position || result.position?.position || '',
+          role: vals.role || result.position?.role || '',
         };
         updated[idx] = pick;
         return updated;
@@ -2566,6 +2570,52 @@ export default function App() {
                                         color: '#fff', outline: 'none',
                                       }}
                                     />
+                                  </div>
+                                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                                    <div>
+                                      <label style={{ fontSize: 9, fontWeight: 800, color: 'rgba(255,255,255,0.4)', letterSpacing: '0.1em', display: 'block', marginBottom: 4 }}>POSITION</label>
+                                      <select
+                                        data-testid={`scan-edit-position-${idx}`}
+                                        value={scanEditValues[idx]?.position || ''}
+                                        onChange={(e) => setScanEditValues(prev => ({
+                                          ...prev, [idx]: { ...prev[idx], position: e.target.value }
+                                        }))}
+                                        style={{
+                                          width: '100%', padding: '8px 10px', borderRadius: 8, fontSize: 13, fontWeight: 700,
+                                          background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(245,158,11,0.3)',
+                                          color: '#fff', outline: 'none', appearance: 'none',
+                                        }}
+                                      >
+                                        <option value="" style={{ background: '#1a1a2e' }}>Auto-detect</option>
+                                        <option value="GK" style={{ background: '#1a1a2e' }}>GK</option>
+                                        <option value="CB" style={{ background: '#1a1a2e' }}>CB</option>
+                                        <option value="LB" style={{ background: '#1a1a2e' }}>LB</option>
+                                        <option value="RB" style={{ background: '#1a1a2e' }}>RB</option>
+                                        <option value="CDM" style={{ background: '#1a1a2e' }}>CDM</option>
+                                        <option value="CM" style={{ background: '#1a1a2e' }}>CM</option>
+                                        <option value="CAM" style={{ background: '#1a1a2e' }}>CAM</option>
+                                        <option value="LW" style={{ background: '#1a1a2e' }}>LW</option>
+                                        <option value="RW" style={{ background: '#1a1a2e' }}>RW</option>
+                                        <option value="CF" style={{ background: '#1a1a2e' }}>CF</option>
+                                        <option value="ST" style={{ background: '#1a1a2e' }}>ST</option>
+                                      </select>
+                                    </div>
+                                    <div>
+                                      <label style={{ fontSize: 9, fontWeight: 800, color: 'rgba(255,255,255,0.4)', letterSpacing: '0.1em', display: 'block', marginBottom: 4 }}>ROLE</label>
+                                      <input
+                                        data-testid={`scan-edit-role-${idx}`}
+                                        value={scanEditValues[idx]?.role || ''}
+                                        onChange={(e) => setScanEditValues(prev => ({
+                                          ...prev, [idx]: { ...prev[idx], role: e.target.value }
+                                        }))}
+                                        placeholder="e.g. Box-to-Box"
+                                        style={{
+                                          width: '100%', padding: '8px 10px', borderRadius: 8, fontSize: 13, fontWeight: 700,
+                                          background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(245,158,11,0.3)',
+                                          color: '#fff', outline: 'none',
+                                        }}
+                                      />
+                                    </div>
                                   </div>
                                   <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
                                     <button
