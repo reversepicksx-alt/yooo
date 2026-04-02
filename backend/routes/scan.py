@@ -316,7 +316,7 @@ async def _resolve_opponent(opponent_name: str, is_international: bool, league_i
     if club_id:
         return {"teamId": club_id, "teamName": club_name}
 
-    # 3. API-Sports fallback with common spelling variants
+    # 3. API-Sports fallback — search WITH league filter first, then without
     opp_searches = [opponent_name.strip()]
     variant_th = opponent_name.strip().replace("th", "t").replace("Th", "T")
     if variant_th != opponent_name.strip():
@@ -325,6 +325,25 @@ async def _resolve_opponent(opponent_name: str, is_international: bool, league_i
     first_word = opp_lower.split()[0]
     first_word_variant = first_word.replace("th", "t")
 
+    # Try league-filtered search first (most accurate)
+    if league_id and not is_international:
+        for opp_query in opp_searches:
+            try:
+                teams_data = await api_football_request("teams", {"search": opp_query, "league": league_id, "season": CURRENT_SEASON})
+                if teams_data:
+                    for t in teams_data[:10]:
+                        tname = t.get("team", {}).get("name", "")
+                        tname_lower = tname.lower()
+                        is_youth = any(s in tname_lower for s in ["u20", "u23", "u21", "u19", "u18", "u17", " ii", " b "])
+                        is_women = tname_lower.endswith(" w")
+                        name_match = first_word in tname_lower or first_word_variant in tname_lower
+                        if name_match and not is_youth and not is_women:
+                            print(f"[OPP RESOLVE] League-filtered match: {tname} (league {league_id})")
+                            return {"teamId": t["team"]["id"], "teamName": tname}
+            except Exception:
+                continue
+
+    # Fallback: broad search without league filter
     for opp_query in opp_searches:
         try:
             teams_data = await api_football_request("teams", {"search": opp_query})

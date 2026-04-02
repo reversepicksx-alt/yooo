@@ -1,0 +1,66 @@
+{
+  "summary": "Verified all 7 fixes for opponent disambiguation and AI prompt clarity. All 25 tests passed. Code verification confirms: (1) _resolve_opponent does league-filtered search FIRST, (2) AI prompts explicitly state 'plays for {teamName}' and 'OPPONENT: {opponentName}', (3) Grace period increased to 25s, (4) teamId=0 returns 400, (5) TEAM_LEAGUE_MAP has 241 teams.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration_40_opponent_disambiguation.py",
+    "/app/test_reports/pytest/iteration_40_opponent_disambiguation_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "VERIFIED: scan.py _resolve_opponent (lines 318-355) does league-filtered API search FIRST with 'league': league_id parameter, then falls back to broad search",
+    "VERIFIED: predict.py line 1214 prompt format: '{playerName} ({position}) — plays for {teamName} ({venue}) | OPPONENT: {opponentName}'",
+    "VERIFIED: basketball_predict.py line 715 prompt format: '{playerName} — plays for {teamName} ({venue}) | OPPONENT: {opponentName}'",
+    "VERIFIED: predict.py line 1364 grace period: timeout=25.0 (increased from 15s)",
+    "VERIFIED: basketball_predict.py line 858 grace period: timeout=25.0 (increased from 15s)",
+    "VERIFIED: predict.py lines 51-54 have guards for teamId=0 and opponentId=0 returning HTTP 400",
+    "VERIFIED: TEAM_LEAGUE_MAP has 241 team entries covering EPL (39), Ligue 1 (61), Bundesliga (78), Serie A (135), La Liga (140), Brasileirao (71)",
+    "VERIFIED: 'newcastle' maps to league_id 39 (EPL), not A-League — fixes the Newcastle United vs Newcastle Jets disambiguation issue"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration_40_opponent_disambiguation.py"
+  ],
+  "success_rate": {
+    "backend": "100%",
+    "frontend": "N/A (backend only testing)"
+  },
+  "test_credentials": "josselj001@gmail.com (Owner/Lifetime VIP)",
+  "seed_data_creation": "",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 40 verified opponent disambiguation and AI prompt clarity fixes. Key changes verified: (1) _resolve_opponent now does league-filtered API search FIRST (lines 328-344 in scan.py) before falling back to broad search. (2) AI prompts in both predict.py (line 1214) and basketball_predict.py (line 715) now explicitly state 'plays for {teamName}' and 'OPPONENT: {opponentName}' to prevent AI confusion. (3) Grace period for 3rd AI model increased from 15s to 25s in both files. (4) TEAM_LEAGUE_MAP has 241 teams with 'newcastle' correctly mapping to EPL (39).",
+  "features_verified": {
+    "resolve_opponent_league_filtered_first": "PASS - League-filtered search at lines 328-344 comes BEFORE broad search at lines 346-362",
+    "resolve_opponent_uses_league_id_param": "PASS - API call includes 'league': league_id parameter",
+    "resolve_opponent_logs_league_match": "PASS - Logs '[OPP RESOLVE] League-filtered match:' when found",
+    "soccer_prompt_plays_for": "PASS - Line 1214 includes 'plays for {req.teamName}'",
+    "soccer_prompt_opponent_label": "PASS - Line 1214 includes 'OPPONENT: {req.opponentName}'",
+    "basketball_prompt_plays_for": "PASS - Line 715 includes 'plays for {req.teamName}'",
+    "basketball_prompt_opponent_label": "PASS - Line 715 includes 'OPPONENT: {req.opponentName}'",
+    "soccer_grace_period_25s": "PASS - Line 1364 has timeout=25.0",
+    "basketball_grace_period_25s": "PASS - Line 858 has timeout=25.0",
+    "teamid_zero_guard": "PASS - Returns HTTP 400 with message 'Player's team could not be resolved'",
+    "opponentid_zero_guard": "PASS - Returns HTTP 400 with message 'Opponent team could not be resolved'",
+    "team_league_map_count": "PASS - 241 teams in map",
+    "ligue1_teams": "PASS - psg, marseille, lyon, monaco, lille, toulouse, nice, rennes → 61",
+    "bundesliga_teams": "PASS - bayern, dortmund, leverkusen, leipzig, frankfurt → 78",
+    "serie_a_teams": "PASS - inter, milan, juventus, napoli, roma, genoa → 135",
+    "la_liga_teams": "PASS - real madrid, barcelona, atletico madrid, sevilla, valencia → 140",
+    "brasileirao_teams": "PASS - flamengo, palmeiras, fluminense, botafogo, corinthians → 71",
+    "epl_teams": "PASS - arsenal, chelsea, liverpool, manchester city, newcastle → 39",
+    "newcastle_epl_not_aleague": "PASS - 'newcastle' maps to 39 (EPL), not A-League"
+  },
+  "user_reported_issues_addressed": {
+    "wrong_opponent_resolved": "FIXED - _resolve_opponent now searches with league_id filter FIRST, so Newcastle United (EPL) will be found before Newcastle Jets (A-League) when player is in EPL",
+    "only_2_of_3_ai_models_responding": "FIXED - Grace period increased from 15s to 25s to allow slower 3rd AI model (Grok) more time to respond",
+    "ai_confusing_player_team": "FIXED - AI prompt now explicitly states 'plays for {teamName}' so AI knows which team the player is on",
+    "similar_players_wrong_league": "FIXED - Position comparison uses same league context as player's team"
+  }
+}

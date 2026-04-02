@@ -712,7 +712,7 @@ OUTPUT FORMAT — Return valid JSON only:
 
 RULES: recentSamples=[]. No AI model names in output."""
 
-        prompt = f"""{req.playerName} | {req.teamName} vs {req.opponentName} | {player_venue.upper()} | {prop_label} line {req.line}
+        prompt = f"""{req.playerName} — plays for {req.teamName} ({player_venue.upper()}) | OPPONENT: {req.opponentName} | {prop_label} line {req.line}
 Sport: NBA/WNBA Basketball
 recentSamples=[]
 
@@ -855,7 +855,7 @@ Analyze the statistical verdict, per-minute projection, and over-rate FIRST. The
 
         # Grab any additional results that finished while we were processing (don't wait, just collect)
         if pending:
-            done_extra, still_pending = await aio.wait(pending, timeout=15.0, return_when=aio.ALL_COMPLETED)
+            done_extra, still_pending = await aio.wait(pending, timeout=25.0, return_when=aio.ALL_COMPLETED)
             for t in done_extra:
                 try:
                     r = t.result()

@@ -1211,7 +1211,7 @@ Average {req.propType}: {comp_avg} | Per-90 avg: {comp_per90_avg} | Sample: {len
                 if is_knockout:
                     match_context += "\n** KNOCKOUT/ELIMINATION MATCH — Higher stakes, tactical conservatism likely, possible extra time. Account for this in projections.**"
 
-        prompt = f"""{req.playerName} ({display_position}) | {req.opponentName} | {player_venue.upper()} | {req.propType} line {req.line}
+        prompt = f"""{req.playerName} ({display_position}) — plays for {req.teamName} ({player_venue.upper()}) | OPPONENT: {req.opponentName} | {req.propType} line {req.line}
 Odds: {json.dumps(match_odds.get('bookmakerOdds',{}), default=str) if match_odds else 'N/A'}{match_context}
 {pronoun_note}
 recentSamples=[]
@@ -1361,7 +1361,7 @@ Analyze ALL data thoroughly. Return JSON only."""
 
         # Grab any additional results that finished while we were processing
         if pending:
-            done_extra, still_pending = await aio.wait(pending, timeout=15.0, return_when=aio.ALL_COMPLETED)
+            done_extra, still_pending = await aio.wait(pending, timeout=25.0, return_when=aio.ALL_COMPLETED)
             for t in done_extra:
                 try:
                     r = t.result()
