@@ -104,6 +104,13 @@ TEAM_LEAGUE_MAP = {
     "atletico tucuman": 128, "central cordoba": 128, "sarmiento": 128,
     "barracas central": 128, "instituto": 128, "aldosivi": 128,
     "independiente rivadavia": 128, "riestra": 128,
+    # Liga Pro Ecuador - league 242
+    "barcelona sc": 242, "barcelona sporting club": 242, "emelec": 242,
+    "liga de quito": 242, "ldu quito": 242, "ldu de quito": 242,
+    "independiente del valle": 242, "delfin": 242, "aucas": 242,
+    "deportivo cuenca": 242, "mushuc runa": 242, "orense": 242,
+    "guayaquil city": 242, "tecnico universitario": 242, "el nacional": 242,
+    "libertad fc": 242, "cumbaya": 242, "macara": 242,
     # A-League (Australia) - league 188
     "melbourne victory": 188, "melbourne city": 188, "sydney fc": 188, "western sydney": 188,
     "western sydney wanderers": 188, "central coast mariners": 188, "macarthur": 188,
@@ -156,25 +163,49 @@ TEAM_LEAGUE_MAP = {
 
 
 async def _infer_league_id(team_name: str, opponent_name: str, ai_league_id: int) -> int:
-    """Infer league ID: cache first, then hardcoded map, then AI guess."""
-    # Try cache for both team and opponent
-    for name in [team_name, opponent_name]:
+    """Infer league ID: check both teams for cross-country Copa/UCL detection first."""
+    SOUTH_AMERICAN_LEAGUES = {71, 128, 242}  # Brasileirao, Argentine Liga, Liga Pro Ecuador
+    EUROPEAN_TOP_LEAGUES = {39, 140, 135, 78, 61}  # EPL, La Liga, Serie A, Bundesliga, Ligue 1
+
+    # Step 1: Resolve league for BOTH teams (cache + map)
+    team_league = None
+    opp_league = None
+    for name, is_team in [(team_name, True), (opponent_name, False)]:
         if not name:
             continue
+        found_lid = None
+        # Try cache
         info = await get_team_info(name)
         if info and info.get("leagueId"):
-            return info["leagueId"]
+            found_lid = info["leagueId"]
+        # Try hardcoded map
+        if not found_lid:
+            name_lower = name.lower().strip()
+            if name_lower in TEAM_LEAGUE_MAP:
+                found_lid = TEAM_LEAGUE_MAP[name_lower]
+            else:
+                for key, lid in TEAM_LEAGUE_MAP.items():
+                    if key in name_lower or name_lower in key:
+                        found_lid = lid
+                        break
+        if found_lid:
+            if is_team:
+                team_league = found_lid
+            else:
+                opp_league = found_lid
 
-    # Hardcoded map (most reliable for known teams)
-    for name in [team_name, opponent_name]:
-        if not name:
-            continue
-        name_lower = name.lower().strip()
-        if name_lower in TEAM_LEAGUE_MAP:
-            return TEAM_LEAGUE_MAP[name_lower]
-        for key, lid in TEAM_LEAGUE_MAP.items():
-            if key in name_lower or name_lower in key:
-                return lid
+    # Step 2: Cross-country detection → Copa / Champions League
+    if team_league and opp_league and team_league != opp_league:
+        if team_league in SOUTH_AMERICAN_LEAGUES and opp_league in SOUTH_AMERICAN_LEAGUES:
+            return 13  # Copa Libertadores
+        if team_league in EUROPEAN_TOP_LEAGUES and opp_league in EUROPEAN_TOP_LEAGUES:
+            return 2  # Champions League
+
+    # Step 3: Return whichever league we found
+    if team_league:
+        return team_league
+    if opp_league:
+        return opp_league
 
     # AI guess fallback (only if not default Premier League guess)
     if ai_league_id and ai_league_id != 39:
@@ -368,6 +399,7 @@ async def _resolve_opponent(opponent_name: str, is_international: bool, league_i
         39: "england", 61: "france", 71: "brazil", 78: "germany",
         135: "italy", 140: "spain", 188: "australia", 253: "usa",
         254: "usa", 262: "mexico", 128: "argentina", 169: "china",
+        242: "ecuador",
         292: "south-korea", 307: "saudi-arabia", 332: "japan",
     }
     target_country = LEAGUE_COUNTRY.get(league_id, "")

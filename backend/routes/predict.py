@@ -899,11 +899,15 @@ async def predict(req: PredictionRequest):
                     player_role = cached_pos.get("role", "")
                     # Validate cached role matches position
                     valid_roles = POSITION_ROLE_MAP.get(specific_position, set())
-                    if player_role and valid_roles and player_role not in valid_roles:
-                        print(f"[POS RESOLVE] Cache role mismatch: {req.playerName} {specific_position}/{player_role} — clearing cache")
-                        await db.player_positions.delete_one({"playerId": req.playerId})
-                        specific_position = ""
-                        player_role = ""
+                    if valid_roles and (not player_role or player_role not in valid_roles):
+                        # Fix the role to a valid one for this position
+                        corrected_role = sorted(valid_roles)[0] if valid_roles else ""
+                        print(f"[POS RESOLVE] Cache role fix: {req.playerName} {specific_position}/{player_role} → {corrected_role}")
+                        player_role = corrected_role
+                        await db.player_positions.update_one(
+                            {"playerId": req.playerId},
+                            {"$set": {"role": corrected_role}}
+                        )
                     else:
                         print(f"[POS RESOLVE] Cache hit: {req.playerName} → {specific_position} ({player_role})")
 
@@ -943,8 +947,10 @@ async def predict(req: PredictionRequest):
                         # Validate role matches position
                         valid_roles = POSITION_ROLE_MAP.get(pos_code, set())
                         if role_text and valid_roles and role_text not in valid_roles:
-                            print(f"[POS RESOLVE] Role '{role_text}' invalid for {pos_code}, stripping")
-                            role_text = ""
+                            print(f"[POS RESOLVE] Role '{role_text}' invalid for {pos_code}, defaulting to first valid role")
+                            role_text = sorted(valid_roles)[0] if valid_roles else ""
+                        elif not role_text and valid_roles:
+                            role_text = sorted(valid_roles)[0]
                         player_role = role_text
                         await db.player_positions.update_one(
                             {"playerId": req.playerId},
