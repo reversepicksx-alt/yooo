@@ -73,6 +73,7 @@ LEGAL: ALL 3rd-party app names and player/team images removed. No AI model names
 - P1: Missing European teams in TEAM_LEAGUE_MAP — RESOLVED (added 80+ teams: Toulouse, Bundesliga, Serie A, La Liga expansion → 241 total teams)
 - P1: Only 2/3 AI models responding — IMPROVED (grace period increased from 15s to 25s for both soccer and basketball)
 - P1: Square payment card input all white on dark theme — REPLACED with Square Checkout Links (hosted payment page). Supports Card, Apple Pay, Google Pay automatically. No more iframe/domain issues.
+- P0: Square Checkout "Sorry. Your order didn't go through" error — RESOLVED (removed conflicting `subscription_plan_id` from `checkout_options` when using `quick_pay` mode. These two Square API features conflict — payments now process as one-time charges with `expiresAt` access control).
 
 ## Prioritized Backlog
 ### P1: Slip correlation analysis

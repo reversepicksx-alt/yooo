@@ -206,11 +206,6 @@ async def create_checkout(req: CheckoutRequest):
             },
         }
 
-        # Add subscription plan for recurring billing if available
-        if plan_doc and plan_doc.get("variation_id"):
-            checkout_body["checkout_options"]["subscription_plan_id"] = plan_doc["variation_id"]
-            print(f"[SQUARE CHECKOUT] Using subscription plan: {plan_doc['variation_id']}")
-
         result = client.checkout.payment_links.create(**checkout_body)
 
         checkout_url = result.payment_link.url
