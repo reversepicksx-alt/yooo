@@ -92,6 +92,24 @@ TEAM_LEAGUE_MAP = {
     "rayo vallecano": 140, "alaves": 140, "las palmas": 140, "cadiz": 140,
     "leganes": 140, "valladolid": 140, "real valladolid": 140, "espanyol": 140,
     "real betis": 140,
+    # A-League (Australia) - league 188
+    "melbourne victory": 188, "melbourne city": 188, "sydney fc": 188, "western sydney": 188,
+    "western sydney wanderers": 188, "central coast mariners": 188, "macarthur": 188,
+    "macarthur fc": 188, "wellington phoenix": 188, "perth glory": 188,
+    "adelaide united": 188, "newcastle jets": 188, "brisbane roar": 188,
+    "auckland fc": 188,
+    # MLS (USA) - league 253
+    "inter miami": 253, "la galaxy": 253, "lafc": 253, "los angeles fc": 253,
+    "new york city fc": 253, "nycfc": 253, "atlanta united": 253,
+    "seattle sounders": 253, "portland timbers": 253, "austin fc": 253,
+    "nashville sc": 253, "columbus crew": 253, "fc cincinnati": 253,
+    "philadelphia union": 253, "new england revolution": 253,
+    "toronto fc": 253, "cf montreal": 253, "vancouver whitecaps": 253,
+    "sporting kansas city": 253, "houston dynamo": 253, "real salt lake": 253,
+    "minnesota united": 253, "colorado rapids": 253, "fc dallas": 253,
+    "san jose earthquakes": 253, "charlotte fc": 253, "dc united": 253,
+    "new york red bulls": 253, "chicago fire": 253, "st louis city": 253,
+    "san diego fc": 253,
     "bayern munich": 78, "bayern": 78, "dortmund": 78, "borussia dortmund": 78,
     "leverkusen": 78, "bayer leverkusen": 78, "rb leipzig": 78, "leipzig": 78,
     "stuttgart": 78, "frankfurt": 78, "wolfsburg": 78, "freiburg": 78,
@@ -316,7 +334,7 @@ async def _resolve_opponent(opponent_name: str, is_international: bool, league_i
     if club_id:
         return {"teamId": club_id, "teamName": club_name}
 
-    # 3. API-Sports fallback — search WITH league filter first, then without
+    # 3. API-Sports fallback — search and prefer teams from same league
     opp_searches = [opponent_name.strip()]
     variant_th = opponent_name.strip().replace("th", "t").replace("Th", "T")
     if variant_th != opponent_name.strip():
@@ -325,39 +343,45 @@ async def _resolve_opponent(opponent_name: str, is_international: bool, league_i
     first_word = opp_lower.split()[0]
     first_word_variant = first_word.replace("th", "t")
 
-    # Try league-filtered search first (most accurate)
-    if league_id and not is_international:
-        for opp_query in opp_searches:
-            try:
-                teams_data = await api_football_request("teams", {"search": opp_query, "league": league_id, "season": CURRENT_SEASON})
-                if teams_data:
-                    for t in teams_data[:10]:
-                        tname = t.get("team", {}).get("name", "")
-                        tname_lower = tname.lower()
-                        is_youth = any(s in tname_lower for s in ["u20", "u23", "u21", "u19", "u18", "u17", " ii", " b "])
-                        is_women = tname_lower.endswith(" w")
-                        name_match = first_word in tname_lower or first_word_variant in tname_lower
-                        if name_match and not is_youth and not is_women:
-                            print(f"[OPP RESOLVE] League-filtered match: {tname} (league {league_id})")
-                            return {"teamId": t["team"]["id"], "teamName": tname}
-            except Exception:
-                continue
+    # Map league IDs to their country for disambiguation
+    LEAGUE_COUNTRY = {
+        39: "england", 61: "france", 71: "brazil", 78: "germany",
+        135: "italy", 140: "spain", 188: "australia", 253: "usa",
+        254: "usa", 262: "mexico", 128: "argentina", 169: "china",
+        292: "south-korea", 307: "saudi-arabia", 332: "japan",
+    }
+    target_country = LEAGUE_COUNTRY.get(league_id, "")
 
-    # Fallback: broad search without league filter
     for opp_query in opp_searches:
         try:
             teams_data = await api_football_request("teams", {"search": opp_query})
-            if teams_data:
-                for t in teams_data[:15]:
-                    tname = t.get("team", {}).get("name", "")
-                    tname_lower = tname.lower()
-                    is_youth = any(s in tname_lower for s in ["u20", "u23", "u21", "u19", "u18", "u17", " ii", " b "])
-                    is_women = tname_lower.endswith(" w")
-                    name_match = first_word in tname_lower or first_word_variant in tname_lower
-                    if name_match and not is_youth and not is_women:
-                        return {"teamId": t["team"]["id"], "teamName": tname}
-                # If no filtered match, use first result
-                return {"teamId": teams_data[0]["team"]["id"], "teamName": teams_data[0]["team"]["name"]}
+            if not teams_data:
+                continue
+
+            # Filter valid matches (name match, not youth/women)
+            valid = []
+            for t in teams_data[:15]:
+                tname = t.get("team", {}).get("name", "")
+                tname_lower = tname.lower()
+                tcountry = (t.get("team", {}).get("country") or "").lower()
+                is_youth = any(s in tname_lower for s in ["u20", "u23", "u21", "u19", "u18", "u17", " ii", " b "])
+                is_women = tname_lower.endswith(" w") or "women" in tname_lower
+                name_match = first_word in tname_lower or first_word_variant in tname_lower
+                if name_match and not is_youth and not is_women:
+                    country_match = target_country and target_country in tcountry
+                    valid.append({"teamId": t["team"]["id"], "teamName": tname, "country_match": country_match})
+
+            if valid:
+                # Prefer teams from the same country as the league
+                country_matched = [v for v in valid if v["country_match"]]
+                if country_matched:
+                    print(f"[OPP RESOLVE] Country-matched: {country_matched[0]['teamName']} (league {league_id})")
+                    return {"teamId": country_matched[0]["teamId"], "teamName": country_matched[0]["teamName"]}
+                # Otherwise return first valid match
+                return {"teamId": valid[0]["teamId"], "teamName": valid[0]["teamName"]}
+
+            # If no filtered match, use first result
+            return {"teamId": teams_data[0]["team"]["id"], "teamName": teams_data[0]["team"]["name"]}
         except Exception:
             continue
 

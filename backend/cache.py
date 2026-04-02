@@ -381,10 +381,18 @@ async def get_team_by_name(team_name: str, league_id: int = None) -> tuple:
     if doc:
         return doc["teamId"], doc["name"]
 
-    # Fuzzy: substring match
+    # Fuzzy: substring match (with league filter if provided)
     name_lower = team_name.lower().strip()
-    async for doc in db[COL_TEAMS].find({"nameLower": {"$regex": name_lower}}, {"_id": 0}).limit(1):
+    fuzzy_query = {"nameLower": {"$regex": name_lower}}
+    if league_id:
+        fuzzy_query["leagueId"] = league_id
+    async for doc in db[COL_TEAMS].find(fuzzy_query, {"_id": 0}).limit(1):
         return doc["teamId"], doc["name"]
+
+    # If league-filtered fuzzy found nothing, try without league filter
+    if league_id:
+        async for doc in db[COL_TEAMS].find({"nameLower": {"$regex": name_lower}}, {"_id": 0}).limit(1):
+            return doc["teamId"], doc["name"]
 
     return None, None
 
