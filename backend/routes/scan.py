@@ -71,7 +71,7 @@ BASKETBALL_PROP_ALIASES = {
 # Hardcoded team→league fallback (used when cache misses)
 TEAM_LEAGUE_MAP = {
     "botafogo": 71, "flamengo": 71, "palmeiras": 71, "sao paulo": 71, "corinthians": 71,
-    "atletico mineiro": 71, "atletico paranaense": 71, "athletico": 71, "athletico pr": 71,
+    "atletico mineiro": 71, "atletico mg": 71, "atletico paranaense": 71, "athletico": 71, "athletico pr": 71,
     "gremio": 71, "internacional": 71, "cruzeiro": 71, "fluminense": 71, "santos": 71,
     "vasco": 71, "bahia": 71, "fortaleza": 71, "bragantino": 71, "juventude": 71,
     "cuiaba": 71, "goias": 71, "vitoria": 71, "sport": 71, "ceara": 71,
@@ -330,7 +330,7 @@ async def _resolve_opponent(opponent_name: str, is_international: bool, league_i
     if not opponent_name:
         return None
 
-    opp_lower = opponent_name.lower().strip()
+    opp_lower = strip_accents(opponent_name.lower().strip())
 
     # 1. For international matches, try national team cache
     if is_international:
@@ -339,17 +339,28 @@ async def _resolve_opponent(opponent_name: str, is_international: bool, league_i
             return {"teamId": opp_nat_id, "teamName": opp_canonical or opponent_name.strip()}
 
     # 2. Try club team cache
-    club_id, club_name = await get_team_by_name(opponent_name, league_id if not is_international else None)
+    club_id, club_name = await get_team_by_name(strip_accents(opponent_name), league_id if not is_international else None)
     if club_id:
         return {"teamId": club_id, "teamName": club_name}
 
     # 3. API-Sports fallback — search and prefer teams from same league
-    opp_searches = [opponent_name.strip()]
-    variant_th = opponent_name.strip().replace("th", "t").replace("Th", "T")
-    if variant_th != opponent_name.strip():
+    opp_searches = [strip_accents(opponent_name.strip())]
+    # Expand common abbreviations (e.g., "Atletico MG" → "Atletico Mineiro")
+    TEAM_ABBREV_MAP = {
+        "mg": "mineiro", "sp": "sao paulo", "pr": "paranaense",
+        "rj": "rio de janeiro", "go": "goianiense", "ba": "bahia",
+    }
+    opp_words = opp_lower.split()
+    if len(opp_words) >= 2:
+        last_word = opp_words[-1]
+        if last_word in TEAM_ABBREV_MAP:
+            expanded = " ".join(opp_words[:-1]) + " " + TEAM_ABBREV_MAP[last_word]
+            opp_searches.append(expanded)
+    variant_th = opp_searches[0].replace("th", "t").replace("Th", "T")
+    if variant_th != opp_searches[0]:
         opp_searches.append(variant_th)
 
-    first_word = opp_lower.split()[0]
+    first_word = strip_accents(opp_lower.split()[0])
     first_word_variant = first_word.replace("th", "t")
 
     # Map league IDs to their country for disambiguation
@@ -371,7 +382,7 @@ async def _resolve_opponent(opponent_name: str, is_international: bool, league_i
             valid = []
             for t in teams_data[:15]:
                 tname = t.get("team", {}).get("name", "")
-                tname_lower = tname.lower()
+                tname_lower = strip_accents(tname.lower())
                 tcountry = (t.get("team", {}).get("country") or "").lower()
                 is_youth = any(s in tname_lower for s in ["u20", "u23", "u21", "u19", "u18", "u17", " ii", " b "])
                 is_women = tname_lower.endswith(" w") or "women" in tname_lower
@@ -820,11 +831,15 @@ async def scan_prop(req: ScanPropRequest):
                         "teamName": cached_player.get("teamName", player_team_hint.title()),
                     }
                     if cached_player.get("leagueId") and not is_international:
-                        league_id = cached_player["leagueId"]
-                        for sl in SUPPORTED_LEAGUES:
-                            if sl["id"] == league_id:
-                                league_name = sl["name"]
-                                break
+                        # Only use cached player's league if team name wasn't explicitly mapped
+                        team_in_map = player_team_hint in TEAM_LEAGUE_MAP
+                        opp_in_map = (opponent_hint.lower().strip() in TEAM_LEAGUE_MAP) if opponent_hint else False
+                        if not team_in_map and not opp_in_map:
+                            league_id = cached_player["leagueId"]
+                            for sl in SUPPORTED_LEAGUES:
+                                if sl["id"] == league_id:
+                                    league_name = sl["name"]
+                                    break
                 print(f"[SCAN] Cache HIT: {player_name} -> {resolved_player['playerName']} (ID {resolved_player['playerId']})")
 
             # FALLBACK: API-Sports search
@@ -954,6 +969,8 @@ async def re_resolve(req: ReResolveRequest):
         # Soccer re-resolution
         player_team_lower = player_team.lower().strip()
         league_id = await _infer_league_id(player_team, opponent_hint, None)
+        # Track if league was explicitly matched via TEAM_LEAGUE_MAP
+        team_league_explicit = (player_team_lower in TEAM_LEAGUE_MAP) or (opponent_hint.lower().strip() in TEAM_LEAGUE_MAP if opponent_hint else False)
         league_name = None
         for sl in SUPPORTED_LEAGUES:
             if sl["id"] == league_id:
@@ -976,11 +993,8 @@ async def re_resolve(req: ReResolveRequest):
                 "teamId": cached_player.get("teamId"),
                 "teamName": cached_player.get("teamName", player_team),
             }
-            # Only use cached player's leagueId if we couldn't infer from team name
-            # (i.e., league_id is still the default fallback value)
-            # This ensures user's team correction takes priority
-            if cached_player.get("leagueId") and league_id in [71, None]:
-                # 71 is the default fallback in _infer_league_id
+            # Only use cached player's leagueId if we couldn't explicitly infer from team name
+            if cached_player.get("leagueId") and not team_league_explicit:
                 league_id = cached_player["leagueId"]
                 for sl in SUPPORTED_LEAGUES:
                     if sl["id"] == league_id:
