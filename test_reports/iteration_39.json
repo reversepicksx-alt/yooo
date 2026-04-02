@@ -1,0 +1,58 @@
+{
+  "summary": "Verified 5 player disambiguation and league resolution fixes. All 24 tests passed. Fixed HTTPException handling bug in predict.py that was wrapping 400 errors as 500.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration_39_player_disambiguation.py",
+    "/app/test_reports/pytest/iteration_39_player_disambiguation_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "FIXED: predict.py exception handler was catching HTTPException and wrapping it as 500. Added explicit 'except HTTPException: raise' before the generic Exception handler.",
+    "VERIFIED: teamId=0 guard at predict.py lines 51-52 now correctly returns HTTP 400 with message 'Player's team could not be resolved'",
+    "VERIFIED: opponentId=0 guard at predict.py lines 53-54 now correctly returns HTTP 400 with message 'Opponent team could not be resolved'",
+    "VERIFIED: TEAM_LEAGUE_MAP has 241 teams including toulouse→61, paris sg→61, genoa→135, fluminense→71",
+    "VERIFIED: pick_best function accepts opponent_hint parameter and uses it for league-based disambiguation",
+    "VERIFIED: _infer_league_id checks: cache first → hardcoded map → AI guess (only if not default 39)"
+  ],
+  "updated_files": [
+    "/app/backend/routes/predict.py",
+    "/app/backend/tests/test_iteration_39_player_disambiguation.py"
+  ],
+  "success_rate": {
+    "backend": "100%",
+    "frontend": "N/A (backend only testing)"
+  },
+  "test_credentials": "josselj001@gmail.com (Owner/Lifetime VIP)",
+  "seed_data_creation": "",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 39 verified player disambiguation fixes. Key changes: (1) predict.py now properly returns 400 for teamId=0 or opponentId=0 (fixed HTTPException handling bug). (2) pick_best in scan.py uses opponent_hint to prefer players whose league matches opponent's league (e.g., Vítinha at PSG vs Toulouse will match Ligue 1 player, not Genoa player). (3) TEAM_LEAGUE_MAP expanded to 241 teams including all Ligue 1, Bundesliga, Serie A, La Liga teams. (4) _infer_league_id checks cache → hardcoded map → AI guess in that order.",
+  "features_verified": {
+    "teamId_zero_guard": "PASS - Returns HTTP 400 with clear message",
+    "opponentId_zero_guard": "PASS - Returns HTTP 400 with clear message",
+    "team_league_map_toulouse": "PASS - toulouse → 61 (Ligue 1)",
+    "team_league_map_paris_sg": "PASS - paris sg → 61 (Ligue 1)",
+    "team_league_map_genoa": "PASS - genoa → 135 (Serie A)",
+    "team_league_map_fluminense": "PASS - fluminense → 71 (Brasileirao)",
+    "team_league_map_count": "PASS - 241 teams in map (80+ requirement met)",
+    "pick_best_opponent_hint_param": "PASS - Function accepts opponent_hint parameter",
+    "pick_best_league_disambiguation": "PASS - Uses TEAM_LEAGUE_MAP to match player's league with opponent's league",
+    "pick_best_priority_order": "PASS - team match > league match > first result",
+    "resolve_player_via_api_opponent_hint": "PASS - Passes opponent_hint to pick_best",
+    "infer_league_id_order": "PASS - cache → hardcoded map → AI guess"
+  },
+  "bug_fixed": {
+    "issue": "HTTPException being wrapped as 500 error",
+    "location": "predict.py line 1766-1768",
+    "fix": "Added 'except HTTPException: raise' before generic Exception handler",
+    "impact": "teamId=0 and opponentId=0 now correctly return HTTP 400 instead of 500"
+  }
+}

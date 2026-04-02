@@ -47,6 +47,12 @@ async def predict(req: PredictionRequest):
         actual_team_id = req.teamId
         league_id = req.leagueId or 39
 
+        # Guard: reject if critical IDs are missing
+        if not actual_team_id or actual_team_id == 0:
+            raise HTTPException(status_code=400, detail="Player's team could not be resolved. Please try scanning again.")
+        if not req.opponentId or req.opponentId == 0:
+            raise HTTPException(status_code=400, detail="Opponent team could not be resolved. Please try scanning again.")
+
         # Fire ALL API calls at once (optimized — kept odds for game context)
         player_data_task = get_player_data()
         async def get_team_stats_multi_season(team_id, lid):
@@ -1757,6 +1763,8 @@ Rules: No AI model names. Be specific with numbers. Be decisive. ALWAYS referenc
             "tacticalInsights": "",
             "explanation": "Fallback prediction due to AI parsing error."
         }
+    except HTTPException:
+        raise  # Re-raise HTTPException directly (e.g., 400 for teamId=0)
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")

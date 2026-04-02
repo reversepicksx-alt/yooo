@@ -90,14 +90,26 @@ TEAM_LEAGUE_MAP = {
     "real sociedad": 140, "betis": 140, "villarreal": 140, "sevilla": 140, "girona": 140,
     "valencia": 140, "getafe": 140, "osasuna": 140, "celta vigo": 140, "mallorca": 140,
     "rayo vallecano": 140, "alaves": 140, "las palmas": 140, "cadiz": 140,
+    "leganes": 140, "valladolid": 140, "real valladolid": 140, "espanyol": 140,
+    "real betis": 140,
     "bayern munich": 78, "bayern": 78, "dortmund": 78, "borussia dortmund": 78,
     "leverkusen": 78, "bayer leverkusen": 78, "rb leipzig": 78, "leipzig": 78,
     "stuttgart": 78, "frankfurt": 78, "wolfsburg": 78, "freiburg": 78,
+    "union berlin": 78, "hoffenheim": 78, "mainz": 78, "augsburg": 78,
+    "werder bremen": 78, "bremen": 78, "heidenheim": 78, "bochum": 78,
+    "monchengladbach": 78, "borussia monchengladbach": 78, "gladbach": 78,
+    "st pauli": 78, "holstein kiel": 78, "koln": 78, "cologne": 78,
     "inter milan": 135, "inter": 135, "ac milan": 135, "milan": 135, "juventus": 135,
     "napoli": 135, "roma": 135, "lazio": 135, "atalanta": 135, "fiorentina": 135,
     "bologna": 135, "torino": 135, "monza": 135, "genoa": 135, "cagliari": 135,
-    "psg": 61, "paris saint-germain": 61, "marseille": 61, "lyon": 61, "monaco": 61,
+    "udinese": 135, "empoli": 135, "verona": 135, "hellas verona": 135,
+    "lecce": 135, "sassuolo": 135, "salernitana": 135, "frosinone": 135,
+    "como": 135, "venezia": 135, "parma": 135, "sampdoria": 135,
+    "psg": 61, "paris saint-germain": 61, "paris sg": 61, "marseille": 61, "lyon": 61, "monaco": 61,
     "lille": 61, "lens": 61, "nice": 61, "rennes": 61, "strasbourg": 61,
+    "toulouse": 61, "nantes": 61, "reims": 61, "montpellier": 61, "brest": 61,
+    "le havre": 61, "clermont": 61, "metz": 61, "lorient": 61, "auxerre": 61,
+    "angers": 61, "saint-etienne": 61, "st etienne": 61, "ajaccio": 61,
     "la galaxy": 253, "lafc": 253, "inter miami": 253, "atlanta united": 253,
     "new york city fc": 253, "nycfc": 253, "new york red bulls": 253, "seattle sounders": 253,
     "portland timbers": 253, "columbus crew": 253, "fc cincinnati": 253, "nashville sc": 253,
@@ -159,7 +171,8 @@ async def _resolve_player_via_cache(player_name: str, team_id: int = None) -> di
 
 async def _resolve_player_via_api(player_name: str, player_team_hint: str,
                                    leagues_to_try: list, is_international: bool,
-                                   nat_team_id: int, original_team_name: str) -> tuple:
+                                   nat_team_id: int, original_team_name: str,
+                                   opponent_hint: str = "") -> tuple:
     """Fallback: search API-Sports for a player. Returns (resolved_player, league_id, league_name) or (None, None, None)."""
     search_clean = strip_accents(player_name.strip())
     search_variants = [search_clean]
@@ -169,7 +182,7 @@ async def _resolve_player_via_api(player_name: str, player_team_hint: str,
         if last != search_clean:
             search_variants.append(last)
 
-    def pick_best(data_list, query, team_hint):
+    def pick_best(data_list, query, team_hint, opponent_hint=None):
         query_lower = strip_accents(query.lower())
         last_name = query_lower.split()[-1] if query_lower.split() else query_lower
         team_hints = []
@@ -184,16 +197,33 @@ async def _resolve_player_via_api(player_name: str, player_team_hint: str,
         for d in data_list[:20]:
             pname = strip_accents(d["player"]["name"].lower())
             team_name = (d.get("statistics", [{}])[0].get("team", {}).get("name") or "").lower()
+            league_name = (d.get("statistics", [{}])[0].get("league", {}).get("name") or "").lower()
             name_match = query_lower in pname or pname in query_lower or last_name in pname
             team_match = any(th in team_name or team_name in th for th in team_hints) if team_hints else False
+            # Check if this player's league matches the opponent's league (disambiguation)
+            league_match = False
+            if opponent_hint and not team_match:
+                opp_lower = opponent_hint.lower().strip()
+                if opp_lower in TEAM_LEAGUE_MAP:
+                    opp_league = TEAM_LEAGUE_MAP[opp_lower]
+                    player_league_id = d.get("statistics", [{}])[0].get("league", {}).get("id")
+                    if player_league_id == opp_league:
+                        league_match = True
             if name_match:
-                candidates.append((d, team_match))
+                candidates.append((d, team_match, league_match))
         if candidates:
+            # Priority: team match > league match > first result
             team_matched = [c for c in candidates if c[1]]
             if team_matched:
                 return team_matched[0][0]
+            league_matched = [c for c in candidates if c[2]]
+            if league_matched:
+                return league_matched[0][0]
             if not team_hint:
                 return candidates[0][0]
+            # If team hint exists but nothing matched, still return best candidate
+            # but prefer players from top-5 leagues
+            return candidates[0][0]
         return None
 
     resolved = None
@@ -213,7 +243,7 @@ async def _resolve_player_via_api(player_name: str, player_team_hint: str,
                     data = await api_football_request("players", {"search": variant, "league": try_league, "season": season})
                     if not data:
                         continue
-                    best = pick_best(data, player_name, player_team_hint)
+                    best = pick_best(data, player_name, player_team_hint, opponent_hint)
                     if not best and (not player_team_hint or is_international):
                         best = data[0]
                     if best:
@@ -245,7 +275,7 @@ async def _resolve_player_via_api(player_name: str, player_team_hint: str,
                     data = await api_football_request("players", {"search": variant, "season": season})
                     if not data:
                         continue
-                    best = pick_best(data, player_name, player_team_hint)
+                    best = pick_best(data, player_name, player_team_hint, opponent_hint)
                     if not best and (not player_team_hint or is_international):
                         best = data[0]
                     if best:
@@ -751,7 +781,8 @@ async def scan_prop(req: ScanPropRequest):
                 leagues_to_try = NATION_TO_LEAGUES.get(player_team_hint, TOP_5_LEAGUES) if is_international else [league_id]
                 api_player, api_league_id, api_league_name = await _resolve_player_via_api(
                     player_name, player_team_hint, leagues_to_try,
-                    is_international, nat_team_id, original_team_name
+                    is_international, nat_team_id, original_team_name,
+                    opponent_hint=opponent_hint
                 )
                 if api_player:
                     resolved_player = api_player
