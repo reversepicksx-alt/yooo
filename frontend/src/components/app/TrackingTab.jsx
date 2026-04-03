@@ -337,7 +337,9 @@ function PickCard({ pick, liveData, missAnalyses, reanalyzePick, reanalyzingPick
   const paceNum = typeof paceVal === 'number' ? paceVal : 0;
   const progressPct = Math.min(100, Math.max(0, (nowNum / (lineNum * 1.3)) * 100));
   const lineMarkerPct = Math.min(95, (lineNum / (lineNum * 1.3)) * 100);
-  const onTrack = isOver ? paceNum > lineNum : paceNum < lineNum;
+  const onTrack = isPush ? null : (isOver ? paceNum > lineNum : paceNum < lineNum);
+  const statColor = isPush ? 'rgba(255,255,255,0.45)' : (onTrack ? 'var(--accent)' : '#f43f5e');
+  const barColor = isPush ? 'rgba(255,255,255,0.25)' : (onTrack ? 'var(--accent)' : '#f43f5e');
   const resultLabel = pick.result === 'hit' ? 'HIT' : pick.result === 'push' ? 'PUSH' : pick.result === 'miss' ? 'MISS' : '';
   const isHit = pick.result === 'hit';
   const isMiss = pick.result === 'miss';
@@ -400,10 +402,10 @@ function PickCard({ pick, liveData, missAnalyses, reanalyzePick, reanalyzingPick
         <div style={{ padding: '0 8px 3px' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
             {[
-              { label: 'NOW', value: nowVal, color: onTrack ? 'var(--accent)' : '#f43f5e' },
+              { label: 'NOW', value: nowVal, color: statColor },
               { label: 'LINE', value: pick.line, color: 'rgba(255,255,255,0.6)' },
-              { label: 'PACE', value: paceVal, color: onTrack ? 'var(--accent)' : '#f43f5e' },
-              { label: 'HIT%', value: hitPct != null ? `${hitPct}%` : '-', color: hitPct > 50 ? 'var(--accent)' : '#f43f5e' },
+              { label: 'PACE', value: paceVal, color: statColor },
+              { label: 'HIT%', value: hitPct != null ? `${hitPct}%` : '-', color: isPush ? 'rgba(255,255,255,0.45)' : (hitPct > 50 ? 'var(--accent)' : '#f43f5e') },
             ].map((stat, i) => (
               <div key={stat.label} style={{ textAlign: 'center', padding: '3px 0', borderRight: i < 3 ? '1px solid rgba(255,255,255,0.04)' : 'none' }}>
                 <div style={{ fontSize: 6, fontWeight: 700, color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{stat.label}</div>
@@ -412,7 +414,7 @@ function PickCard({ pick, liveData, missAnalyses, reanalyzePick, reanalyzingPick
             ))}
           </div>
           <div style={{ position: 'relative', height: 3, background: 'rgba(255,255,255,0.05)', borderRadius: 2, marginTop: 3, overflow: 'visible' }}>
-            <div style={{ height: '100%', borderRadius: 2, transition: 'width 0.5s', width: `${progressPct}%`, background: onTrack ? 'var(--accent)' : '#f43f5e' }} />
+            <div style={{ height: '100%', borderRadius: 2, transition: 'width 0.5s', width: `${progressPct}%`, background: barColor }} />
             <div style={{ position: 'absolute', top: -1, width: 1, height: 5, background: 'rgba(255,255,255,0.5)', left: `${lineMarkerPct}%` }} />
           </div>
         </div>
