@@ -263,6 +263,66 @@ async def _extract_calibration_pattern(pick: dict, analysis: dict):
         )
 
 
+
+@router.post("/calibration/insights")
+async def get_calibration_insights(req: GetMissesRequest):
+    """Return everything the system has learned from miss analyses."""
+    session = await db.sessions.find_one(
+        {"email": req.email.lower(), "session_token": req.token}, {"_id": 0}
+    )
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid session")
+
+    # Get all calibration stats
+    stats = await db.calibration_stats.find({}, {"_id": 0}).to_list(100)
+
+    insights = []
+    for s in stats:
+        miss_count = s.get("missCount", 0)
+        total_error = s.get("totalErrorPct", 0)
+        avg_error = total_error / miss_count if miss_count > 0 else 0
+        recent = s.get("recentErrors", [])
+        recent_avg = sum(recent) / len(recent) if recent else 0
+
+        # Determine bias direction
+        positive = sum(1 for e in recent if e > 0)
+        negative = sum(1 for e in recent if e < 0)
+        total = len(recent)
+        bias_consistent = (max(positive, negative) / total >= 0.6) if total > 0 else False
+
+        # Current correction being applied
+        adjustment = 0.0
+        if miss_count >= 3 and bias_consistent:
+            adjustment = max(-15.0, min(15.0, recent_avg * 0.5))
+
+        insights.append({
+            "sport": s.get("sport", "unknown"),
+            "propType": s.get("propType", "unknown"),
+            "missCount": miss_count,
+            "avgErrorPct": round(avg_error, 1),
+            "recentAvgErrorPct": round(recent_avg, 1),
+            "biasDirection": "under-projecting" if avg_error > 0 else "over-projecting",
+            "biasConsistent": bias_consistent,
+            "activeCorrection": round(adjustment, 1) if bias_consistent and miss_count >= 3 else 0,
+            "recentSampleSize": total,
+            "updatedAt": s.get("updatedAt", ""),
+        })
+
+    # Sort by most misses first
+    insights.sort(key=lambda x: x["missCount"], reverse=True)
+
+    # Get total miss analyses count
+    total_analyzed = await db.miss_analyses.count_documents({})
+    total_misses = await db.picks.count_documents({"email": req.email.lower(), "result": "miss"})
+
+    return {
+        "insights": insights,
+        "totalAnalyzed": total_analyzed,
+        "totalMisses": total_misses,
+        "totalPropTypes": len(insights),
+    }
+
+
 @router.post("/picks/analyze-miss")
 async def analyze_miss(req: AnalyzeMissRequest):
     """Run 3-AI post-mortem on a missed prediction."""

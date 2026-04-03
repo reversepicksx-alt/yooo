@@ -11,7 +11,7 @@ import {
   checkApiStatus, SUPPORTED_LEAGUES,
   verifyWhop, authLogin, setPassword as apiSetPassword, resetPassword, verifySession, authLogout,
   getPickOfTheDay, savePick, listPicks, deletePick, correctPick, liveUpdatePicks,
-  scanProp, reResolvePick, analyzeMiss, getMisses, basketballSearchTeams, basketballPredict,
+  scanProp, reResolvePick, analyzeMiss, getMisses, getCalibrationInsights, basketballSearchTeams, basketballPredict,
   getAdminSettings, updateAdminSetting, testApiKey
 } from './api';
 import { toast, Toaster } from 'sonner';
@@ -101,6 +101,9 @@ export default function App() {
   const [correctValue, setCorrectValue] = useState('');
   const [missAnalyses, setMissAnalyses] = useState({}); // { pickId: analysis }
   const [analyzingMiss, setAnalyzingMiss] = useState({}); // { pickId: true/false }
+  // Calibration insights state
+  const [calibrationInsights, setCalibrationInsights] = useState(null);
+  const [calibrationLoading, setCalibrationLoading] = useState(false);
   // Batch scan state (owner-only)
   const [batchMode, setBatchMode] = useState(false);
   const [batchSelectedProps, setBatchSelectedProps] = useState([]);
@@ -441,7 +444,7 @@ export default function App() {
 
   // Load miss analyses when switching to missed tab
   React.useEffect(() => {
-    if (trackingView === 'missed' && auth) {
+    if (trackingView === 'lost' && auth) {
       getMisses(auth.email, auth.token).then(data => {
         if (data?.misses) {
           const analyses = {};
@@ -1138,7 +1141,7 @@ export default function App() {
                     <div key={n.id} className={`notif-item ${n.read ? 'read' : 'unread'}`} onClick={() => {
                       setNotifications(prev => prev.map(x => x.id === n.id ? { ...x, read: true } : x));
                       setActiveTab('tracking');
-                      setTrackingView(n.result ? 'history' : 'live');
+                      setTrackingView(n.result === 'hit' ? 'won' : n.result === 'push' ? 'pushed' : n.result === 'miss' ? 'lost' : 'live');
                       setShowNotifications(false);
                     }}>
                       <div className={`notif-result ${n.result}`}>{n.result === 'hit' ? 'HIT' : n.result === 'push' ? 'PUSH' : 'MISS'}</div>
@@ -1690,9 +1693,24 @@ export default function App() {
                   <button className={`tab-btn ${trackingView === 'won' ? 'active' : ''}`}
                     onClick={() => setTrackingView('won')} data-testid="tracking-won-btn"
                     style={trackingView === 'won' ? { background: 'rgba(16,185,129,0.15)', borderColor: 'rgba(16,185,129,0.3)', color: '#10b981' } : {}}>Won</button>
-                  <button className={`tab-btn ${trackingView === 'missed' ? 'active' : ''}`}
-                    onClick={() => setTrackingView('missed')} data-testid="tracking-missed-btn"
-                    style={trackingView === 'missed' ? { background: 'rgba(244,63,94,0.15)', borderColor: 'rgba(244,63,94,0.3)', color: '#f43f5e' } : {}}>Missed</button>
+                  <button className={`tab-btn ${trackingView === 'lost' ? 'active' : ''}`}
+                    onClick={() => setTrackingView('lost')} data-testid="tracking-lost-btn"
+                    style={trackingView === 'lost' ? { background: 'rgba(244,63,94,0.15)', borderColor: 'rgba(244,63,94,0.3)', color: '#f43f5e' } : {}}>Lost</button>
+                  <button className={`tab-btn ${trackingView === 'pushed' ? 'active' : ''}`}
+                    onClick={() => setTrackingView('pushed')} data-testid="tracking-pushed-btn"
+                    style={trackingView === 'pushed' ? { background: 'rgba(245,158,11,0.15)', borderColor: 'rgba(245,158,11,0.3)', color: '#f59e0b' } : {}}>Pushed</button>
+                  <button className={`tab-btn ${trackingView === 'insights' ? 'active' : ''}`}
+                    onClick={() => {
+                      setTrackingView('insights');
+                      if (!calibrationInsights && auth) {
+                        setCalibrationLoading(true);
+                        getCalibrationInsights(auth.email, auth.token)
+                          .then(data => setCalibrationInsights(data))
+                          .catch(err => console.error('[CALIBRATION] Load error:', err))
+                          .finally(() => setCalibrationLoading(false));
+                      }
+                    }} data-testid="tracking-insights-btn"
+                    style={trackingView === 'insights' ? { background: 'rgba(139,92,246,0.15)', borderColor: 'rgba(139,92,246,0.3)', color: '#8b5cf6' } : {}}>Insights</button>
                 </div>
               </div>
             </div>
@@ -1748,22 +1766,163 @@ export default function App() {
               );
             })()}
 
+            {trackingView === 'insights' ? (
+              /* ── CALIBRATION INSIGHTS PANEL ── */
+              <div data-testid="calibration-panel" style={{ marginTop: 4 }}>
+                {calibrationLoading ? (
+                  <div style={{ textAlign: 'center', padding: '40px 0' }}>
+                    <Loader2 style={{ width: 24, height: 24, color: '#8b5cf6', animation: 'spin 1s linear infinite', margin: '0 auto 12px' }} />
+                    <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)' }}>Loading calibration data...</div>
+                  </div>
+                ) : !calibrationInsights || calibrationInsights.insights?.length === 0 ? (
+                  <div className="empty-state" data-testid="calibration-empty">
+                    <div className="empty-icon"><Brain /></div>
+                    <p className="empty-text">No calibration data yet. The system learns from missed picks automatically.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {/* Summary Header */}
+                    <div style={{
+                      background: '#0a0a0f', border: '1px solid rgba(139,92,246,0.2)',
+                      borderRadius: 10, padding: '12px 14px',
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                        <Brain style={{ width: 14, height: 14, color: '#8b5cf6' }} />
+                        <span style={{ fontSize: 11, fontWeight: 900, letterSpacing: '0.1em', color: '#8b5cf6', textTransform: 'uppercase' }}>System Learning Summary</span>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+                        <div style={{ textAlign: 'center', padding: '8px 0', background: 'rgba(139,92,246,0.06)', borderRadius: 8 }}>
+                          <div style={{ fontSize: 18, fontWeight: 900, color: '#8b5cf6', fontFamily: "'JetBrains Mono', monospace" }}>{calibrationInsights.totalAnalyzed}</div>
+                          <div style={{ fontSize: 8, fontWeight: 700, color: 'rgba(255,255,255,0.3)', letterSpacing: '0.1em', marginTop: 2 }}>ANALYZED</div>
+                        </div>
+                        <div style={{ textAlign: 'center', padding: '8px 0', background: 'rgba(244,63,94,0.06)', borderRadius: 8 }}>
+                          <div style={{ fontSize: 18, fontWeight: 900, color: '#f43f5e', fontFamily: "'JetBrains Mono', monospace" }}>{calibrationInsights.totalMisses}</div>
+                          <div style={{ fontSize: 8, fontWeight: 700, color: 'rgba(255,255,255,0.3)', letterSpacing: '0.1em', marginTop: 2 }}>TOTAL MISSES</div>
+                        </div>
+                        <div style={{ textAlign: 'center', padding: '8px 0', background: 'rgba(16,185,129,0.06)', borderRadius: 8 }}>
+                          <div style={{ fontSize: 18, fontWeight: 900, color: '#10b981', fontFamily: "'JetBrains Mono', monospace" }}>{calibrationInsights.insights.filter(i => i.activeCorrection !== 0).length}</div>
+                          <div style={{ fontSize: 8, fontWeight: 700, color: 'rgba(255,255,255,0.3)', letterSpacing: '0.1em', marginTop: 2 }}>ACTIVE FIXES</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Per Prop Type Insights */}
+                    {calibrationInsights.insights.map(insight => {
+                      const propObj = [...PROP_TYPES, ...BASKETBALL_PROP_TYPES].find(p => p.key === insight.propType);
+                      const propLabel = propObj ? propObj.label : insight.propType.replace(/_/g, ' ');
+                      const isActive = insight.activeCorrection !== 0;
+                      const isOverProjecting = insight.biasDirection === 'over-projecting';
+
+                      return (
+                        <div key={`${insight.sport}-${insight.propType}`} data-testid={`calibration-${insight.sport}-${insight.propType}`} style={{
+                          background: '#0a0a0f',
+                          border: `1px solid ${isActive ? 'rgba(139,92,246,0.25)' : 'rgba(100,100,120,0.15)'}`,
+                          borderRadius: 10, padding: '10px 14px',
+                        }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <span style={{
+                                fontSize: 8, fontWeight: 900, letterSpacing: '0.08em', textTransform: 'uppercase',
+                                padding: '2px 6px', borderRadius: 4,
+                                background: insight.sport === 'soccer' ? 'rgba(16,185,129,0.1)' : 'rgba(245,158,11,0.1)',
+                                color: insight.sport === 'soccer' ? '#10b981' : '#f59e0b',
+                                border: `1px solid ${insight.sport === 'soccer' ? 'rgba(16,185,129,0.2)' : 'rgba(245,158,11,0.2)'}`,
+                              }}>{insight.sport}</span>
+                              <span style={{ fontSize: 13, fontWeight: 800, color: '#fff' }}>{propLabel}</span>
+                            </div>
+                            {isActive && (
+                              <span style={{
+                                fontSize: 8, fontWeight: 900, letterSpacing: '0.08em',
+                                padding: '2px 6px', borderRadius: 4,
+                                background: 'rgba(139,92,246,0.15)', color: '#8b5cf6',
+                                border: '1px solid rgba(139,92,246,0.25)',
+                              }}>CORRECTING</span>
+                            )}
+                          </div>
+
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 6, marginBottom: 8 }}>
+                            <div style={{ textAlign: 'center' }}>
+                              <div style={{ fontSize: 14, fontWeight: 900, color: '#f43f5e', fontFamily: "'JetBrains Mono', monospace" }}>{insight.missCount}</div>
+                              <div style={{ fontSize: 7, fontWeight: 700, color: 'rgba(255,255,255,0.3)', letterSpacing: '0.08em' }}>MISSES</div>
+                            </div>
+                            <div style={{ textAlign: 'center' }}>
+                              <div style={{ fontSize: 14, fontWeight: 900, color: isOverProjecting ? '#f59e0b' : '#60a5fa', fontFamily: "'JetBrains Mono', monospace" }}>
+                                {insight.avgErrorPct > 0 ? '+' : ''}{insight.avgErrorPct}%
+                              </div>
+                              <div style={{ fontSize: 7, fontWeight: 700, color: 'rgba(255,255,255,0.3)', letterSpacing: '0.08em' }}>AVG ERR</div>
+                            </div>
+                            <div style={{ textAlign: 'center' }}>
+                              <div style={{ fontSize: 14, fontWeight: 900, color: isOverProjecting ? '#f59e0b' : '#60a5fa', fontFamily: "'JetBrains Mono', monospace" }}>
+                                {isOverProjecting ? 'HIGH' : 'LOW'}
+                              </div>
+                              <div style={{ fontSize: 7, fontWeight: 700, color: 'rgba(255,255,255,0.3)', letterSpacing: '0.08em' }}>BIAS</div>
+                            </div>
+                            <div style={{ textAlign: 'center' }}>
+                              <div style={{
+                                fontSize: 14, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace",
+                                color: isActive ? '#8b5cf6' : 'rgba(255,255,255,0.2)',
+                              }}>
+                                {isActive ? `${insight.activeCorrection > 0 ? '+' : ''}${insight.activeCorrection}%` : '—'}
+                              </div>
+                              <div style={{ fontSize: 7, fontWeight: 700, color: 'rgba(255,255,255,0.3)', letterSpacing: '0.08em' }}>FIX</div>
+                            </div>
+                          </div>
+
+                          <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', lineHeight: 1.5 }}>
+                            {isActive ? (
+                              <>System {insight.biasDirection} {propLabel.toLowerCase()} by avg {Math.abs(insight.avgErrorPct)}%. Applying <span style={{ color: '#8b5cf6', fontWeight: 700 }}>{insight.activeCorrection > 0 ? '+' : ''}{insight.activeCorrection}%</span> correction to future predictions.</>
+                            ) : insight.missCount < 3 ? (
+                              <>Need {3 - insight.missCount} more miss{3 - insight.missCount > 1 ? 'es' : ''} to activate auto-correction ({insight.missCount}/3).</>
+                            ) : (
+                              <>Bias too inconsistent to auto-correct ({insight.recentSampleSize} samples tracked).</>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {/* Refresh button */}
+                    <button
+                      data-testid="calibration-refresh-btn"
+                      onClick={() => {
+                        if (!auth) return;
+                        setCalibrationLoading(true);
+                        getCalibrationInsights(auth.email, auth.token)
+                          .then(data => setCalibrationInsights(data))
+                          .catch(err => console.error('[CALIBRATION] Refresh error:', err))
+                          .finally(() => setCalibrationLoading(false));
+                      }}
+                      style={{
+                        width: '100%', padding: '10px', borderRadius: 8, border: '1px solid rgba(139,92,246,0.2)',
+                        background: 'rgba(139,92,246,0.06)', color: '#8b5cf6', fontSize: 11, fontWeight: 800,
+                        cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                        letterSpacing: '0.06em',
+                      }}
+                    >
+                      <RefreshCw style={{ width: 12, height: 12 }} /> Refresh Insights
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
             <div className="space-y-2">
               {savedPicks.filter(p => {
                 if (trackingView === 'live') return p.status === 'live';
-                if (trackingView === 'won') return p.status === 'settled' && (p.result === 'hit' || p.result === 'push');
-                if (trackingView === 'missed') return p.status === 'settled' && p.result === 'miss';
+                if (trackingView === 'won') return p.status === 'settled' && p.result === 'hit';
+                if (trackingView === 'lost') return p.status === 'settled' && p.result === 'miss';
+                if (trackingView === 'pushed') return p.status === 'settled' && p.result === 'push';
                 return false;
               }).length === 0 ? (
                 <div className="empty-state" data-testid="tracking-empty">
                   <div className="empty-icon"><Clock /></div>
-                  <p className="empty-text">No {trackingView === 'won' ? 'winning' : trackingView} picks yet.</p>
+                  <p className="empty-text">No {trackingView === 'won' ? 'winning' : trackingView === 'lost' ? 'lost' : trackingView === 'pushed' ? 'pushed' : trackingView} picks yet.</p>
                 </div>
               ) : (
                 savedPicks.filter(p => {
                   if (trackingView === 'live') return p.status === 'live';
-                  if (trackingView === 'won') return p.status === 'settled' && (p.result === 'hit' || p.result === 'push');
-                  if (trackingView === 'missed') return p.status === 'settled' && p.result === 'miss';
+                  if (trackingView === 'won') return p.status === 'settled' && p.result === 'hit';
+                  if (trackingView === 'lost') return p.status === 'settled' && p.result === 'miss';
+                  if (trackingView === 'pushed') return p.status === 'settled' && p.result === 'push';
                   return false;
                 }).map(pick => {
                   const live = liveData[pick.pickId];
@@ -1998,6 +2157,7 @@ export default function App() {
                 })
               )}
             </div>
+            )}
           </div>
         )}
 

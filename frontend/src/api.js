@@ -168,6 +168,11 @@ export async function getMisses(email, token) {
   return apiCall('/api/picks/misses', { method: 'POST', body: JSON.stringify({ email, token }) });
 }
 
+export async function getCalibrationInsights(email, token) {
+  return apiCall('/api/calibration/insights', { method: 'POST', body: JSON.stringify({ email, token }) });
+}
+
+
 export async function scanProp(imageBase64, sport = 'soccer') {
   return apiCall('/api/scan-prop', {
     method: 'POST',

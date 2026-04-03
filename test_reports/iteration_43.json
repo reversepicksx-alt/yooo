@@ -1,0 +1,65 @@
+{
+  "summary": "Iteration 43 testing complete. All new features verified: Split tracking tabs (Live/Won/Lost/Pushed/Insights) working correctly, Calibration Insights panel loads and displays data from /api/calibration/insights endpoint, notification click routing correctly routes to appropriate tabs (hit->won, miss->lost, push->pushed).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration_43_tracking_tabs.py",
+    "/app/test_reports/pytest/iteration_43_tracking_tabs_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "VERIFIED: Tracking tabs correctly split into Live | Won | Lost | Pushed | Insights (5 tabs)",
+    "VERIFIED: Won tab filters picks with result='hit' only (NOT pushes)",
+    "VERIFIED: Lost tab filters picks with result='miss' only",
+    "VERIFIED: Pushed tab filters picks with result='push' only (shows empty state when no pushes)",
+    "VERIFIED: Insights tab loads calibration data from /api/calibration/insights endpoint",
+    "VERIFIED: Calibration panel shows System Learning Summary (analyzed count, total misses, active fixes)",
+    "VERIFIED: Per-prop calibration cards show sport, prop type, miss count, avg error, bias, correction",
+    "VERIFIED: Basketball Points has active +15% correction (4 misses, consistent bias)",
+    "VERIFIED: Refresh Insights button works correctly",
+    "VERIFIED: Notification click routing: hit->won, miss->lost, push->pushed (line 1144 in App.js)"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration_43_tracking_tabs.py"
+  ],
+  "success_rate": {
+    "backend": "100% (9/9 tests passed)",
+    "frontend": "100%"
+  },
+  "test_credentials": "josselj001@gmail.com (Owner/Lifetime VIP) - auto-verifies without password",
+  "seed_data_creation": "",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 43 verified new tracking tab split and calibration insights features. Current data: 14 hits, 6 misses, 0 pushes. Calibration system has 3 prop types tracked (basketball points with active +15% correction, basketball rebounds, soccer saves). No J. Savarino push found in current data - may have been deleted or the user mentioned it from a different account/time period.",
+  "features_verified": {
+    "tracking_tabs_split": "PASS - Live | Won | Lost | Pushed | Insights tabs all present and clickable",
+    "won_tab_filtering": "PASS - Shows only picks with result='hit'",
+    "lost_tab_filtering": "PASS - Shows only picks with result='miss'",
+    "pushed_tab_filtering": "PASS - Shows only picks with result='push' (empty state shown when no pushes)",
+    "insights_tab_loads": "PASS - Loads calibration data from /api/calibration/insights",
+    "calibration_summary": "PASS - Shows 6 analyzed, 6 total misses, 1 active fix",
+    "calibration_cards": "PASS - Shows basketball points (+15% correction), basketball rebounds, soccer saves",
+    "refresh_insights_btn": "PASS - Button present and functional",
+    "notification_routing": "PASS - hit->won, miss->lost, push->pushed routing verified in code",
+    "backend_calibration_endpoint": "PASS - Returns proper structure with insights array"
+  },
+  "calibration_data_snapshot": {
+    "totalAnalyzed": 6,
+    "totalMisses": 6,
+    "totalPropTypes": 3,
+    "activeCorrections": [
+      {"sport": "basketball", "propType": "points", "correction": "+15%", "missCount": 4}
+    ],
+    "pendingCorrections": [
+      {"sport": "basketball", "propType": "rebounds", "missCount": 2, "needsMore": 1},
+      {"sport": "soccer", "propType": "saves", "missCount": 1, "needsMore": 2}
+    ]
+  }
+}
