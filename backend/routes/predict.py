@@ -1749,7 +1749,7 @@ Analyze ALL data thoroughly. Return JSON only."""
                     prediction[field] = grok_pred[field]
                 else:
                     # Fall back to longest text from any AI
-                    best = max(valid_preds, key=lambda p: len(str(p.get(field, ""))))
+                    best = max(valid_preds, key=lambda p, f=field: len(str(p.get(f, ""))))
                     prediction[field] = best.get(field, "")
 
             # Consensus note

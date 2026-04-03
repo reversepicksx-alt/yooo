@@ -927,7 +927,7 @@ Analyze the statistical verdict, per-minute projection, and over-rate FIRST. The
                 if grok_pred and len(str(grok_pred.get(field, ""))) > 50:
                     prediction[field] = grok_pred[field]
                 else:
-                    best = max(valid_preds, key=lambda p: len(str(p.get(field, ""))))
+                    best = max(valid_preds, key=lambda p, f=field: len(str(p.get(f, ""))))
                     prediction[field] = best.get(field, "")
 
             recs = [p.get("recommendation", "over") for p in valid_preds]

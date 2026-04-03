@@ -253,7 +253,6 @@ def parse_game_for_team(game: dict, team_id: int) -> dict:
     away = teams.get("away", {})
 
     is_home = home.get("id") == team_id
-    my_team = home if is_home else away
     opp_team = away if is_home else home
     my_scores = scores.get("home", {}) if is_home else scores.get("away", {})
     opp_scores = scores.get("away", {}) if is_home else scores.get("home", {})

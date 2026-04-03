@@ -16,58 +16,15 @@ import {
 } from './api';
 import { toast, Toaster } from 'sonner';
 import './App.css';
-
-const PROP_TYPES = [
-  { key: 'goals', label: 'Goals', stat: 'goals.total', desc: 'Goals scored' },
-  { key: 'assists', label: 'Assists', stat: 'goals.assists', desc: 'Goal assists' },
-  { key: 'shots_assisted', label: 'Shots Assisted', stat: 'passes.key', desc: 'Passes leading to a shot' },
-  { key: 'pass_attempts', label: 'Pass Attempts', stat: 'passes.total', desc: 'Total passes attempted' },
-  { key: 'shots', label: 'Shots', stat: 'shots.total', desc: 'Total shots taken' },
-  { key: 'shots_on_target', label: 'Shots on Target', stat: 'shots.on', desc: 'Shots on goal' },
-  { key: 'tackles', label: 'Tackles', stat: 'tackles.total', desc: 'Total tackles won' },
-  { key: 'key_passes', label: 'Key Passes', stat: 'passes.key', desc: 'Passes leading to a shot' },
-  { key: 'saves', label: 'Saves', stat: 'goals.saves', desc: 'Goalkeeper saves' },
-  { key: 'interceptions', label: 'Interceptions', stat: 'tackles.interceptions', desc: 'Passes intercepted' },
-  { key: 'blocks', label: 'Blocks', stat: 'tackles.blocks', desc: 'Shots/passes blocked' },
-  { key: 'dribbles', label: 'Dribble Attempts', stat: 'dribbles.attempts', desc: 'Dribble attempts made' },
-  { key: 'dribbles_success', label: 'Successful Dribbles', stat: 'dribbles.success', desc: 'Dribbles completed' },
-  { key: 'fouls_drawn', label: 'Fouls Drawn', stat: 'fouls.drawn', desc: 'Fouls won by player' },
-  { key: 'fouls_committed', label: 'Fouls Committed', stat: 'fouls.committed', desc: 'Fouls committed' },
-  { key: 'crosses', label: 'Crosses', stat: 'passes.crosses', desc: 'Cross attempts' },
-  { key: 'clearances', label: 'Clearances', stat: 'tackles.clearances', desc: 'Defensive clearances' },
-  { key: 'duels_won', label: 'Duels Won', stat: 'duels.won', desc: 'Duels won' },
-  { key: 'yellow_cards', label: 'Yellow Cards', stat: 'cards.yellow', desc: 'Yellow cards received' },
-];
-
-const BASKETBALL_PROP_TYPES = [
-  { key: 'points', label: 'Points', desc: 'Total points scored' },
-  { key: 'rebounds', label: 'Rebounds', desc: 'Total rebounds' },
-  { key: 'assists', label: 'Assists', desc: 'Total assists' },
-  { key: 'pts_reb_ast', label: 'Pts+Reb+Ast', desc: 'Points + Rebounds + Assists combined' },
-  { key: 'pts_reb', label: 'Pts+Reb', desc: 'Points + Rebounds combined' },
-  { key: 'pts_ast', label: 'Pts+Ast', desc: 'Points + Assists combined' },
-  { key: 'reb_ast', label: 'Reb+Ast', desc: 'Rebounds + Assists combined' },
-  { key: 'blk_stl', label: 'Blk+Stl', desc: 'Blocks + Steals combined' },
-  { key: 'steals', label: 'Steals', desc: 'Steals' },
-  { key: 'blocks', label: 'Blocks', desc: 'Blocks' },
-  { key: 'turnovers', label: 'Turnovers', desc: 'Turnovers' },
-  { key: 'three_pointers', label: '3-Pointers Made', desc: '3-point field goals made' },
-  { key: 'fgm', label: 'FG Made', desc: 'Field goals made' },
-  { key: 'ftm', label: 'FT Made', desc: 'Free throws made' },
-];
-
-function getPropLabel(key) {
-  const all = [...PROP_TYPES, ...BASKETBALL_PROP_TYPES];
-  const p = all.find(pt => pt.key === key);
-  return p ? p.label : key.replace(/_/g, ' ');
-}
-
+import { PROP_TYPES, BASKETBALL_PROP_TYPES, OWNER_EMAIL, getPropLabel } from './constants';
 import { ProjectionCard } from './components/app/ProjectionCard';
 import { PlayerReport } from './components/app/PlayerReport';
-
-const OWNER_EMAIL = 'josselj001@gmail.com';
 import { LoginPage } from './components/app/LoginPage';
 import { PickOfTheDayCard } from './components/app/PickOfTheDayCard';
+import { Header } from './components/app/Header';
+import { GuideTab } from './components/app/GuideTab';
+import { ProfileTab } from './components/app/ProfileTab';
+import { TrackingTab } from './components/app/TrackingTab';
 
 export default function App() {
   const [auth, setAuth] = useState(null);
@@ -1089,83 +1046,14 @@ export default function App() {
   return (
     <div className="app">
       {/* Header */}
-      <header className="header">
-        <div className="header-logo">
-          <div className="logo-icon"><Zap /></div>
-          <div className="logo-text" data-testid="app-logo">Reverse<span>Picks</span></div>
-        </div>
-        <div className="header-right">
-          <div className="sport-selector" data-testid="sport-selector">
-            <button
-              className={`sport-btn ${activeSport === 'soccer' ? 'active' : ''}`}
-              onClick={() => { setActiveSport('soccer'); setScanPrediction(null); setScanResults([]); }}
-              data-testid="sport-soccer-btn"
-            >
-              Soccer
-            </button>
-            <button
-              className={`sport-btn ${activeSport === 'basketball' ? 'active' : ''}`}
-              onClick={() => { setActiveSport('basketball'); setScanPrediction(null); setScanResults([]); }}
-              data-testid="sport-basketball-btn"
-            >
-              Basketball
-            </button>
-          </div>
-          <div className="api-badge">
-            <div className={`api-dot ${apiStatus}`} data-testid="api-status-dot" />
-            <span>API</span>
-          </div>
-          <div className="version-badge">v2.2</div>
-          <div style={{ position: 'relative' }}>
-            <button className="icon-btn" onClick={() => setShowNotifications(!showNotifications)} data-testid="notification-bell">
-              <Bell />
-              {notifications.filter(n => !n.read).length > 0 && (
-                <div className="notif-badge" data-testid="notif-count">{notifications.filter(n => !n.read).length}</div>
-              )}
-            </button>
-            {showNotifications && (
-              <div className="notif-dropdown" data-testid="notif-dropdown">
-                <div className="notif-dropdown-header">
-                  <span style={{ fontWeight: 800, fontSize: 13 }}>Notifications</span>
-                  {notifications.length > 0 && (
-                    <button style={{ fontSize: 11, color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 700 }}
-                      onClick={() => { setNotifications(prev => prev.map(n => ({ ...n, read: true }))); }}>
-                      Mark all read
-                    </button>
-                  )}
-                </div>
-                <div className="notif-list">
-                  {notifications.length === 0 ? (
-                    <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>No notifications yet</div>
-                  ) : notifications.slice(0, 20).map(n => (
-                    <div key={n.id} className={`notif-item ${n.read ? 'read' : 'unread'}`} onClick={() => {
-                      setNotifications(prev => prev.map(x => x.id === n.id ? { ...x, read: true } : x));
-                      setActiveTab('tracking');
-                      setTrackingView(n.result === 'hit' ? 'won' : n.result === 'push' ? 'pushed' : n.result === 'miss' ? 'lost' : 'live');
-                      setShowNotifications(false);
-                    }}>
-                      <div className={`notif-result ${n.result}`}>{n.result === 'hit' ? 'HIT' : n.result === 'push' ? 'PUSH' : 'MISS'}</div>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: 700, fontSize: 12 }}>{n.playerName}</div>
-                        <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
-                          {n.recommendation?.toUpperCase()} {n.line} {n.propType} — Actual: {n.actualValue}
-                        </div>
-                      </div>
-                      <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>{new Date(n.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-          <button className="icon-btn" onClick={() => window.location.reload()} data-testid="refresh-btn">
-            <RefreshCw />
-          </button>
-          <button className="icon-btn" onClick={handleLogout} data-testid="logout-btn" title="Logout">
-            <LogOut />
-          </button>
-        </div>
-      </header>
+      <Header
+        activeSport={activeSport} setActiveSport={setActiveSport} apiStatus={apiStatus}
+        notifications={notifications} showNotifications={showNotifications}
+        setShowNotifications={setShowNotifications} setNotifications={setNotifications}
+        setActiveTab={setActiveTab} setTrackingView={setTrackingView}
+        setScanPrediction={setScanPrediction} setScanResults={setScanResults}
+        handleLogout={handleLogout}
+      />
 
       {/* Main */}
       <main className="main-content">
@@ -1677,638 +1565,26 @@ export default function App() {
 
         {/* TRACKING TAB */}
         {activeTab === 'tracking' && (
-          <div className="animate-fade-in space-y-6" data-testid="tracking-tab">
-            <div className="flex justify-between items-center">
-              <h2 className="section-title">Tracking</h2>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                {livePickCount > 0 && (
-                  <div className="badge neon" style={{ fontSize: 10 }} data-testid="auto-refresh-badge">
-                    <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#10b981', animation: 'pulse 2s infinite' }} />
-                    Auto 2m
-                  </div>
-                )}
-                <div className="tab-switcher" style={{ width: 'auto' }}>
-                  <button className={`tab-btn ${trackingView === 'live' ? 'active' : ''}`}
-                    onClick={() => setTrackingView('live')} data-testid="tracking-live-btn">Live</button>
-                  <button className={`tab-btn ${trackingView === 'won' ? 'active' : ''}`}
-                    onClick={() => setTrackingView('won')} data-testid="tracking-won-btn"
-                    style={trackingView === 'won' ? { background: 'rgba(16,185,129,0.15)', borderColor: 'rgba(16,185,129,0.3)', color: '#10b981' } : {}}>Won</button>
-                  <button className={`tab-btn ${trackingView === 'lost' ? 'active' : ''}`}
-                    onClick={() => setTrackingView('lost')} data-testid="tracking-lost-btn"
-                    style={trackingView === 'lost' ? { background: 'rgba(244,63,94,0.15)', borderColor: 'rgba(244,63,94,0.3)', color: '#f43f5e' } : {}}>Lost</button>
-                  <button className={`tab-btn ${trackingView === 'pushed' ? 'active' : ''}`}
-                    onClick={() => setTrackingView('pushed')} data-testid="tracking-pushed-btn"
-                    style={trackingView === 'pushed' ? { background: 'rgba(245,158,11,0.15)', borderColor: 'rgba(245,158,11,0.3)', color: '#f59e0b' } : {}}>Pushed</button>
-                  <button className={`tab-btn ${trackingView === 'insights' ? 'active' : ''}`}
-                    onClick={() => {
-                      setTrackingView('insights');
-                      if (!calibrationInsights && auth) {
-                        setCalibrationLoading(true);
-                        getCalibrationInsights(auth.email, auth.token)
-                          .then(data => setCalibrationInsights(data))
-                          .catch(err => console.error('[CALIBRATION] Load error:', err))
-                          .finally(() => setCalibrationLoading(false));
-                      }
-                    }} data-testid="tracking-insights-btn"
-                    style={trackingView === 'insights' ? { background: 'rgba(139,92,246,0.15)', borderColor: 'rgba(139,92,246,0.3)', color: '#8b5cf6' } : {}}>Insights</button>
-                </div>
-              </div>
-            </div>
-
-            {/* ── USER RECORD TRACKER ── */}
-            {(() => {
-              const settled = savedPicks.filter(p => p.status === 'settled' && p.result);
-              const hits = settled.filter(p => p.result === 'hit').length;
-              const misses = settled.filter(p => p.result === 'miss').length;
-              const pushes = settled.filter(p => p.result === 'push').length;
-              const total = hits + misses;
-              const winRate = total > 0 ? Math.round((hits / total) * 100) : 0;
-              // Streak calc (most recent first)
-              const sorted = [...settled].sort((a, b) => (b.settledAt || b.timestamp || 0) - (a.settledAt || a.timestamp || 0));
-              let streak = 0, streakType = '';
-              for (const p of sorted) {
-                if (p.result === 'push') continue;
-                if (!streakType) { streakType = p.result; streak = 1; }
-                else if (p.result === streakType) streak++;
-                else break;
-              }
-              const streakLabel = streak > 0 ? `${streak}${streakType === 'hit' ? 'W' : 'L'}` : '-';
-              if (settled.length === 0) return null;
-              return (
-                <div data-testid="record-tracker" style={{
-                  background: '#0a0a0f', border: '1px solid rgba(100,100,120,0.15)',
-                  borderRadius: 6, padding: '6px 8px', marginBottom: 2,
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
-                    <BarChart3 style={{ width: 9, height: 9, color: 'var(--accent)' }} />
-                    <span style={{ fontSize: 7, fontWeight: 900, letterSpacing: '0.1em', color: 'var(--accent)', textTransform: 'uppercase' }}>Your Record</span>
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr', gap: 2 }}>
-                    {[
-                      { label: 'HITS', value: hits, color: '#10b981' },
-                      { label: 'MISS', value: misses, color: '#f43f5e' },
-                      { label: 'PUSH', value: pushes, color: '#f59e0b' },
-                      { label: 'WIN%', value: `${winRate}%`, color: winRate >= 55 ? '#10b981' : winRate >= 45 ? '#f59e0b' : '#f43f5e' },
-                      { label: 'STRK', value: streakLabel, color: streakType === 'hit' ? '#10b981' : streakType === 'miss' ? '#f43f5e' : 'var(--text-muted)' },
-                    ].map(s => (
-                      <div key={s.label} style={{ textAlign: 'center' }}>
-                        <div style={{ fontSize: 11, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: s.color, lineHeight: 1 }}>{s.value}</div>
-                        <div style={{ fontSize: 6, fontWeight: 800, color: 'rgba(255,255,255,0.3)', letterSpacing: '0.1em', marginTop: 2 }}>{s.label}</div>
-                      </div>
-                    ))}
-                  </div>
-                  <div style={{ marginTop: 4, height: 3, borderRadius: 2, overflow: 'hidden', background: 'rgba(255,255,255,0.05)', display: 'flex' }}>
-                    {hits > 0 && <div style={{ width: `${(hits / (total + pushes)) * 100}%`, background: '#10b981', transition: 'width 0.4s' }} />}
-                    {pushes > 0 && <div style={{ width: `${(pushes / (total + pushes)) * 100}%`, background: '#f59e0b', transition: 'width 0.4s' }} />}
-                    {misses > 0 && <div style={{ width: `${(misses / (total + pushes)) * 100}%`, background: '#f43f5e', transition: 'width 0.4s' }} />}
-                  </div>
-                </div>
-              );
-            })()}
-
-            {trackingView === 'insights' ? (
-              /* ── CALIBRATION INSIGHTS PANEL ── */
-              <div data-testid="calibration-panel" style={{ marginTop: 4 }}>
-                {calibrationLoading ? (
-                  <div style={{ textAlign: 'center', padding: '40px 0' }}>
-                    <Loader2 style={{ width: 24, height: 24, color: '#8b5cf6', animation: 'spin 1s linear infinite', margin: '0 auto 12px' }} />
-                    <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)' }}>Loading calibration data...</div>
-                  </div>
-                ) : !calibrationInsights || calibrationInsights.insights?.length === 0 ? (
-                  <div className="empty-state" data-testid="calibration-empty">
-                    <div className="empty-icon"><Brain /></div>
-                    <p className="empty-text">No calibration data yet. The system learns from missed picks automatically.</p>
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    {/* Summary Header */}
-                    <div style={{
-                      background: '#0a0a0f', border: '1px solid rgba(139,92,246,0.2)',
-                      borderRadius: 10, padding: '12px 14px',
-                    }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                        <Brain style={{ width: 14, height: 14, color: '#8b5cf6' }} />
-                        <span style={{ fontSize: 11, fontWeight: 900, letterSpacing: '0.1em', color: '#8b5cf6', textTransform: 'uppercase' }}>System Learning Summary</span>
-                      </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
-                        <div style={{ textAlign: 'center', padding: '8px 0', background: 'rgba(139,92,246,0.06)', borderRadius: 8 }}>
-                          <div style={{ fontSize: 18, fontWeight: 900, color: '#8b5cf6', fontFamily: "'JetBrains Mono', monospace" }}>{calibrationInsights.totalAnalyzed}</div>
-                          <div style={{ fontSize: 8, fontWeight: 700, color: 'rgba(255,255,255,0.3)', letterSpacing: '0.1em', marginTop: 2 }}>ANALYZED</div>
-                        </div>
-                        <div style={{ textAlign: 'center', padding: '8px 0', background: 'rgba(244,63,94,0.06)', borderRadius: 8 }}>
-                          <div style={{ fontSize: 18, fontWeight: 900, color: '#f43f5e', fontFamily: "'JetBrains Mono', monospace" }}>{calibrationInsights.totalMisses}</div>
-                          <div style={{ fontSize: 8, fontWeight: 700, color: 'rgba(255,255,255,0.3)', letterSpacing: '0.1em', marginTop: 2 }}>TOTAL MISSES</div>
-                        </div>
-                        <div style={{ textAlign: 'center', padding: '8px 0', background: 'rgba(16,185,129,0.06)', borderRadius: 8 }}>
-                          <div style={{ fontSize: 18, fontWeight: 900, color: '#10b981', fontFamily: "'JetBrains Mono', monospace" }}>{calibrationInsights.insights.filter(i => i.activeCorrection !== 0).length}</div>
-                          <div style={{ fontSize: 8, fontWeight: 700, color: 'rgba(255,255,255,0.3)', letterSpacing: '0.1em', marginTop: 2 }}>ACTIVE FIXES</div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Per Prop Type Insights */}
-                    {calibrationInsights.insights.map(insight => {
-                      const propObj = [...PROP_TYPES, ...BASKETBALL_PROP_TYPES].find(p => p.key === insight.propType);
-                      const propLabel = propObj ? propObj.label : insight.propType.replace(/_/g, ' ');
-                      const isActive = insight.activeCorrection !== 0;
-                      const isOverProjecting = insight.biasDirection === 'over-projecting';
-
-                      return (
-                        <div key={`${insight.sport}-${insight.propType}`} data-testid={`calibration-${insight.sport}-${insight.propType}`} style={{
-                          background: '#0a0a0f',
-                          border: `1px solid ${isActive ? 'rgba(139,92,246,0.25)' : 'rgba(100,100,120,0.15)'}`,
-                          borderRadius: 10, padding: '10px 14px',
-                        }}>
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                              <span style={{
-                                fontSize: 8, fontWeight: 900, letterSpacing: '0.08em', textTransform: 'uppercase',
-                                padding: '2px 6px', borderRadius: 4,
-                                background: insight.sport === 'soccer' ? 'rgba(16,185,129,0.1)' : 'rgba(245,158,11,0.1)',
-                                color: insight.sport === 'soccer' ? '#10b981' : '#f59e0b',
-                                border: `1px solid ${insight.sport === 'soccer' ? 'rgba(16,185,129,0.2)' : 'rgba(245,158,11,0.2)'}`,
-                              }}>{insight.sport}</span>
-                              <span style={{ fontSize: 13, fontWeight: 800, color: '#fff' }}>{propLabel}</span>
-                            </div>
-                            {isActive && (
-                              <span style={{
-                                fontSize: 8, fontWeight: 900, letterSpacing: '0.08em',
-                                padding: '2px 6px', borderRadius: 4,
-                                background: 'rgba(139,92,246,0.15)', color: '#8b5cf6',
-                                border: '1px solid rgba(139,92,246,0.25)',
-                              }}>CORRECTING</span>
-                            )}
-                          </div>
-
-                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 6, marginBottom: 8 }}>
-                            <div style={{ textAlign: 'center' }}>
-                              <div style={{ fontSize: 14, fontWeight: 900, color: '#f43f5e', fontFamily: "'JetBrains Mono', monospace" }}>{insight.missCount}</div>
-                              <div style={{ fontSize: 7, fontWeight: 700, color: 'rgba(255,255,255,0.3)', letterSpacing: '0.08em' }}>MISSES</div>
-                            </div>
-                            <div style={{ textAlign: 'center' }}>
-                              <div style={{ fontSize: 14, fontWeight: 900, color: isOverProjecting ? '#f59e0b' : '#60a5fa', fontFamily: "'JetBrains Mono', monospace" }}>
-                                {insight.avgErrorPct > 0 ? '+' : ''}{insight.avgErrorPct}%
-                              </div>
-                              <div style={{ fontSize: 7, fontWeight: 700, color: 'rgba(255,255,255,0.3)', letterSpacing: '0.08em' }}>AVG ERR</div>
-                            </div>
-                            <div style={{ textAlign: 'center' }}>
-                              <div style={{ fontSize: 14, fontWeight: 900, color: isOverProjecting ? '#f59e0b' : '#60a5fa', fontFamily: "'JetBrains Mono', monospace" }}>
-                                {isOverProjecting ? 'HIGH' : 'LOW'}
-                              </div>
-                              <div style={{ fontSize: 7, fontWeight: 700, color: 'rgba(255,255,255,0.3)', letterSpacing: '0.08em' }}>BIAS</div>
-                            </div>
-                            <div style={{ textAlign: 'center' }}>
-                              <div style={{
-                                fontSize: 14, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace",
-                                color: isActive ? '#8b5cf6' : 'rgba(255,255,255,0.2)',
-                              }}>
-                                {isActive ? `${insight.activeCorrection > 0 ? '+' : ''}${insight.activeCorrection}%` : '—'}
-                              </div>
-                              <div style={{ fontSize: 7, fontWeight: 700, color: 'rgba(255,255,255,0.3)', letterSpacing: '0.08em' }}>FIX</div>
-                            </div>
-                          </div>
-
-                          <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', lineHeight: 1.5 }}>
-                            {isActive ? (
-                              <>System {insight.biasDirection} {propLabel.toLowerCase()} by avg {Math.abs(insight.avgErrorPct)}%. Applying <span style={{ color: '#8b5cf6', fontWeight: 700 }}>{insight.activeCorrection > 0 ? '+' : ''}{insight.activeCorrection}%</span> correction to future predictions.</>
-                            ) : insight.missCount < 3 ? (
-                              <>Need {3 - insight.missCount} more miss{3 - insight.missCount > 1 ? 'es' : ''} to activate auto-correction ({insight.missCount}/3).</>
-                            ) : (
-                              <>Bias too inconsistent to auto-correct ({insight.recentSampleSize} samples tracked).</>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-
-                    {/* Refresh button */}
-                    <button
-                      data-testid="calibration-refresh-btn"
-                      onClick={() => {
-                        if (!auth) return;
-                        setCalibrationLoading(true);
-                        getCalibrationInsights(auth.email, auth.token)
-                          .then(data => setCalibrationInsights(data))
-                          .catch(err => console.error('[CALIBRATION] Refresh error:', err))
-                          .finally(() => setCalibrationLoading(false));
-                      }}
-                      style={{
-                        width: '100%', padding: '10px', borderRadius: 8, border: '1px solid rgba(139,92,246,0.2)',
-                        background: 'rgba(139,92,246,0.06)', color: '#8b5cf6', fontSize: 11, fontWeight: 800,
-                        cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                        letterSpacing: '0.06em',
-                      }}
-                    >
-                      <RefreshCw style={{ width: 12, height: 12 }} /> Refresh Insights
-                    </button>
-                  </div>
-                )}
-              </div>
-            ) : (
-            <div className="space-y-2">
-              {savedPicks.filter(p => {
-                if (trackingView === 'live') return p.status === 'live';
-                if (trackingView === 'won') return p.status === 'settled' && p.result === 'hit';
-                if (trackingView === 'lost') return p.status === 'settled' && p.result === 'miss';
-                if (trackingView === 'pushed') return p.status === 'settled' && p.result === 'push';
-                return false;
-              }).length === 0 ? (
-                <div className="empty-state" data-testid="tracking-empty">
-                  <div className="empty-icon"><Clock /></div>
-                  <p className="empty-text">No {trackingView === 'won' ? 'winning' : trackingView === 'lost' ? 'lost' : trackingView === 'pushed' ? 'pushed' : trackingView} picks yet.</p>
-                </div>
-              ) : (
-                savedPicks.filter(p => {
-                  if (trackingView === 'live') return p.status === 'live';
-                  if (trackingView === 'won') return p.status === 'settled' && p.result === 'hit';
-                  if (trackingView === 'lost') return p.status === 'settled' && p.result === 'miss';
-                  if (trackingView === 'pushed') return p.status === 'settled' && p.result === 'push';
-                  return false;
-                }).map(pick => {
-                  const live = liveData[pick.pickId];
-                  const isMatchLive = live?.matchStatus === 'live';
-                  const isMatchFinal = live?.matchStatus === 'final' || pick.status === 'settled';
-                  const nowVal = isMatchLive ? (live?.currentValue ?? '-') : (pick.actualValue ?? '-');
-                  const paceVal = isMatchLive ? (live?.pace ?? '-') : nowVal;
-                  const hitPct = live?.hitPct ?? null;
-                  const elapsed = live?.elapsed ?? 0;
-                  const minutesPlayed = live?.minutesPlayed || 0;
-                  const matchScore = live?.matchScore || pick.matchScore || '';
-                  const propLabel = [...PROP_TYPES, ...BASKETBALL_PROP_TYPES].find(pt => pt.key === pick.propType)?.label || pick.propType;
-                  const isOver = pick.recommendation === 'over';
-                  const lineNum = pick.line || 1;
-                  const nowNum = typeof nowVal === 'number' ? nowVal : 0;
-                  const paceNum = typeof paceVal === 'number' ? paceVal : 0;
-                  const progressPct = Math.min(100, Math.max(0, (nowNum / (lineNum * 1.3)) * 100));
-                  const lineMarkerPct = Math.min(95, (lineNum / (lineNum * 1.3)) * 100);
-                  const onTrack = isOver ? paceNum > lineNum : paceNum < lineNum;
-                  const resultLabel = pick.result === 'hit' ? 'HIT' : pick.result === 'push' ? 'PUSH' : pick.result === 'miss' ? 'MISS' : '';
-                  const isHit = pick.result === 'hit';
-                  const isMiss = pick.result === 'miss';
-                  const isPush = pick.result === 'push';
-
-                  return (
-                    <div key={pick.pickId} className="live-pick-card" data-testid={`pick-${pick.pickId}`}
-                      style={{
-                        background: '#0a0a0f',
-                        borderRadius: 6,
-                        padding: 0,
-                        border: `1px solid ${isMatchLive ? 'var(--accent)' : isHit ? 'rgba(16,185,129,0.5)' : isMiss ? 'rgba(244,63,94,0.4)' : isPush ? 'rgba(245,158,11,0.5)' : 'rgba(100,100,120,0.2)'}`,
-                        overflow: 'hidden',
-                      }}>
-
-                      {/* HEADER */}
-                      <div style={{ padding: '5px 8px 2px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 11, fontWeight: 800, color: '#fff', letterSpacing: '-0.2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} data-testid="pick-player-name">
-                            {pick.playerName}
-                          </div>
-                          <div style={{ fontSize: 7, fontWeight: 600, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                            {pick.teamName || 'Team'} · {(pick.venue || 'home').toUpperCase()} · {pick.sport === 'basketball' ? 'NBA' : 'Soccer'}
-                            {pick.trackingId && <span style={{ marginLeft: 4, color: 'rgba(255,255,255,0.2)', fontFamily: 'var(--font-mono)' }}>{pick.trackingId}</span>}
-                          </div>
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-                          {isMatchLive && (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 7, fontWeight: 800, color: '#f43f5e' }}>
-                              <div style={{ width: 4, height: 4, borderRadius: '50%', background: '#f43f5e', animation: 'pulse 1.5s infinite' }} />
-                              LIVE{live?.quarter ? ` ${live.quarter}` : (live?.period ? ` ${live.period}` : '')}
-                            </div>
-                          )}
-                          {isMatchFinal && !isMatchLive && <div style={{ fontSize: 7, fontWeight: 800, color: 'rgba(255,255,255,0.35)' }}>FINAL</div>}
-                          {!isMatchLive && !isMatchFinal && <div style={{ fontSize: 7, fontWeight: 700, color: 'rgba(255,255,255,0.25)' }}>SCHED</div>}
-                          {pick.status === 'live' && (
-                            <button className="reanalyze-btn" onClick={e => reanalyzePick(pick, e)}
-                              disabled={reanalyzingPick === pick.pickId}
-                              data-testid={`reanalyze-pick-${pick.pickId}`}
-                              title="Re-analyze" style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 1 }}>
-                              {reanalyzingPick === pick.pickId
-                                ? <Loader2 style={{ width: 9, height: 9, color: 'var(--accent)', animation: 'spin 1s linear infinite' }} />
-                                : <RotateCcw style={{ width: 9, height: 9, color: 'rgba(255,255,255,0.35)' }} />}
-                            </button>
-                          )}
-                          <button style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 1 }}
-                            onClick={e => removePickFn(pick.pickId, e)} data-testid={`remove-pick-${pick.pickId}`}>
-                            <Trash2 style={{ width: 9, height: 9, color: 'rgba(255,255,255,0.25)' }} />
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* PICK LINE + OPPONENT */}
-                      <div style={{ padding: '0 8px 3px', fontSize: 8, fontWeight: 800, letterSpacing: '0.04em' }}>
-                        <span style={{ color: 'rgba(255,255,255,0.4)' }}>PICK: </span>
-                        <span style={{ color: isOver ? 'var(--accent)' : '#f43f5e' }}>{isOver ? 'OVER' : 'UNDER'} {pick.line}</span>
-                        <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: 7, marginLeft: 3 }}>{propLabel}</span>
-                        {matchScore && (isMatchLive || isMatchFinal) && (
-                          <span style={{ color: 'rgba(255,255,255,0.35)', marginLeft: 6 }}>
-                            vs {pick.opponentName} <span style={{ color: isMatchLive ? '#f43f5e' : 'rgba(255,255,255,0.5)', fontWeight: 800 }}>{matchScore}</span>
-                          </span>
-                        )}
-                      </div>
-
-                      {/* STATS ROW */}
-                      {(isMatchLive || isMatchFinal) && (
-                        <div style={{ padding: '0 8px 3px' }}>
-                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-                            {[
-                              { label: 'NOW', value: nowVal, color: onTrack ? 'var(--accent)' : '#f43f5e' },
-                              { label: 'LINE', value: pick.line, color: 'rgba(255,255,255,0.6)' },
-                              { label: 'PACE', value: paceVal, color: onTrack ? 'var(--accent)' : '#f43f5e' },
-                              { label: 'HIT%', value: hitPct != null ? `${hitPct}%` : '-', color: hitPct > 50 ? 'var(--accent)' : '#f43f5e' },
-                            ].map((stat, i) => (
-                              <div key={stat.label} style={{ textAlign: 'center', padding: '3px 0', borderRight: i < 3 ? '1px solid rgba(255,255,255,0.04)' : 'none' }}>
-                                <div style={{ fontSize: 6, fontWeight: 700, color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{stat.label}</div>
-                                <div style={{ fontSize: 11, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: stat.color }}>{stat.value}</div>
-                              </div>
-                            ))}
-                          </div>
-                          {/* PROGRESS BAR */}
-                          <div style={{ position: 'relative', height: 3, background: 'rgba(255,255,255,0.05)', borderRadius: 2, marginTop: 3, overflow: 'visible' }}>
-                            <div style={{ height: '100%', borderRadius: 2, transition: 'width 0.5s', width: `${progressPct}%`, background: onTrack ? 'var(--accent)' : '#f43f5e' }} />
-                            <div style={{ position: 'absolute', top: -1, width: 1, height: 5, background: 'rgba(255,255,255,0.5)', left: `${lineMarkerPct}%` }} />
-                          </div>
-                        </div>
-                      )}
-
-                      {/* SCHEDULED STATE */}
-                      {!isMatchLive && !isMatchFinal && (
-                        <div style={{ padding: '0 8px 3px' }}>
-                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-                            {[
-                              { label: 'PROJ', value: pick.projectedValue, color: 'var(--accent)' },
-                              { label: 'LINE', value: pick.line, color: 'rgba(255,255,255,0.6)' },
-                              { label: 'CONF', value: `${pick.confidenceScore}%`, color: 'rgba(255,255,255,0.6)' },
-                            ].map((stat, i) => (
-                              <div key={stat.label} style={{ textAlign: 'center', padding: '3px 0', borderRight: i < 2 ? '1px solid rgba(255,255,255,0.04)' : 'none' }}>
-                                <div style={{ fontSize: 6, fontWeight: 700, color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{stat.label}</div>
-                                <div style={{ fontSize: 11, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: stat.color }}>{stat.value}</div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* FOOTER */}
-                      <div style={{ padding: '2px 8px 4px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 7, fontFamily: "'JetBrains Mono', monospace", color: 'rgba(255,255,255,0.3)' }}>
-                          {isMatchLive && <span>{elapsed}&apos;</span>}
-                          {matchScore && <span>{matchScore}</span>}
-                          {minutesPlayed > 0 && minutesPlayed < 90 && isMatchFinal && (
-                            <span style={{ color: '#f59e0b', fontSize: 6 }}>{minutesPlayed}&apos;</span>
-                          )}
-                          {resultLabel && (
-                            <span data-testid="pick-result" style={{
-                              padding: '1px 4px', borderRadius: 3, fontSize: 7, fontWeight: 900,
-                              background: isHit ? 'rgba(16,185,129,0.15)' : isMiss ? 'rgba(244,63,94,0.15)' : 'rgba(245,158,11,0.15)',
-                              color: isHit ? '#10b981' : isMiss ? '#f43f5e' : '#f59e0b',
-                              border: `1px solid ${isHit ? 'rgba(16,185,129,0.3)' : isMiss ? 'rgba(244,63,94,0.3)' : 'rgba(245,158,11,0.3)'}`,
-                            }}>
-                              {resultLabel}
-                            </span>
-                          )}
-                          {pick.correctedManually && (
-                            <span style={{ fontSize: 6, color: 'rgba(255,255,255,0.2)', fontStyle: 'italic' }}>corrected</span>
-                          )}
-                          {pick.status === 'settled' && correctingPick !== pick.pickId && (
-                            <button onClick={() => { setCorrectingPick(pick.pickId); setCorrectValue(String(pick.actualValue || '')); }}
-                              data-testid={`correct-pick-${pick.pickId}`}
-                              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 1, display: 'flex' }}>
-                              <Edit3 style={{ width: 8, height: 8, color: 'rgba(255,255,255,0.25)' }} />
-                            </button>
-                          )}
-                        </div>
-                        <span style={{ fontSize: 7, fontWeight: 800, color: 'var(--accent)', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.04em' }}>
-                          {propLabel.toUpperCase()}
-                        </span>
-                      </div>
-
-                      {/* CORRECTION INPUT */}
-                      {correctingPick === pick.pickId && (
-                        <div style={{ padding: '0 8px 4px', display: 'flex', alignItems: 'center', gap: 4 }}>
-                          <span style={{ fontSize: 7, color: 'rgba(255,255,255,0.4)', whiteSpace: 'nowrap' }}>Actual:</span>
-                          <input type="number" step="1" value={correctValue}
-                            onChange={e => setCorrectValue(e.target.value)}
-                            data-testid="correct-value-input"
-                            style={{ flex: 1, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 3, padding: '2px 6px', color: '#fff', fontSize: 10, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}
-                            autoFocus />
-                          <button onClick={() => submitCorrection(pick.pickId)}
-                            data-testid="correct-submit-btn"
-                            style={{ background: 'var(--accent)', color: '#000', border: 'none', borderRadius: 6, padding: '6px 12px', fontSize: 11, fontWeight: 800, cursor: 'pointer' }}>
-                            Save
-                          </button>
-                          <button onClick={() => { setCorrectingPick(null); setCorrectValue(''); }}
-                            style={{ background: 'none', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 6, padding: '6px 10px', fontSize: 11, color: 'rgba(255,255,255,0.5)', cursor: 'pointer' }}>
-                            Cancel
-                          </button>
-                        </div>
-                      )}
-
-                      {/* AUTO MISS ANALYSIS — Self-learning feedback */}
-                      {isMiss && missAnalyses[pick.pickId] && (
-                        <div data-testid={`miss-analysis-${pick.pickId}`} style={{
-                          margin: '0 8px 6px', padding: '6px 8px',
-                          background: 'rgba(244,63,94,0.06)',
-                          border: '1px solid rgba(244,63,94,0.15)',
-                          borderRadius: 6,
-                        }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
-                            <Brain style={{ width: 9, height: 9, color: '#f43f5e' }} />
-                            <span style={{ fontSize: 7, fontWeight: 800, color: '#f43f5e', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
-                              Auto-Analysis
-                            </span>
-                            <span style={{ fontSize: 6, color: 'rgba(255,255,255,0.25)', marginLeft: 'auto' }}>
-                              {missAnalyses[pick.pickId].modelsResponded?.join(' + ') || ''}
-                            </span>
-                          </div>
-                          <p style={{ fontSize: 8, color: 'rgba(255,255,255,0.7)', margin: 0, lineHeight: 1.4 }}>
-                            {missAnalyses[pick.pickId].primaryReason}
-                          </p>
-                          {missAnalyses[pick.pickId].factors?.length > 0 && (
-                            <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-                              {missAnalyses[pick.pickId].factors.slice(0, 3).map((f) => (
-                                <span key={f} style={{
-                                  fontSize: 6, padding: '1px 4px', borderRadius: 3,
-                                  background: 'rgba(244,63,94,0.1)', color: 'rgba(244,63,94,0.7)',
-                                  border: '1px solid rgba(244,63,94,0.15)',
-                                }}>{f}</span>
-                              ))}
-                            </div>
-                          )}
-                          {missAnalyses[pick.pickId].calibrationSuggestions?.[0] && (
-                            <p style={{ fontSize: 7, color: 'rgba(139,92,246,0.7)', margin: '4px 0 0', fontStyle: 'italic' }}>
-                              Calibration: {missAnalyses[pick.pickId].calibrationSuggestions[0]}
-                            </p>
-                          )}
-                        </div>
-                      )}
-                      {isMiss && !missAnalyses[pick.pickId] && pick.actualValue != null && (
-                        <div style={{
-                          margin: '0 8px 6px', padding: '4px 8px',
-                          display: 'flex', alignItems: 'center', gap: 4,
-                          background: 'rgba(244,63,94,0.04)',
-                          borderRadius: 6,
-                        }}>
-                          <Loader2 style={{ width: 8, height: 8, color: 'rgba(244,63,94,0.4)', animation: 'spin 1s linear infinite' }} />
-                          <span style={{ fontSize: 7, color: 'rgba(255,255,255,0.3)' }}>Learning from this miss...</span>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })
-              )}
-            </div>
-            )}
-          </div>
+          <TrackingTab
+            auth={auth} savedPicks={savedPicks} liveData={liveData} livePickCount={livePickCount}
+            trackingView={trackingView} setTrackingView={setTrackingView}
+            missAnalyses={missAnalyses} reanalyzePick={reanalyzePick} reanalyzingPick={reanalyzingPick}
+            removePickFn={removePickFn}
+            correctingPick={correctingPick} setCorrectingPick={setCorrectingPick}
+            correctValue={correctValue} setCorrectValue={setCorrectValue}
+            submitCorrection={submitCorrection}
+            selectedPick={selectedPick} setSelectedPick={setSelectedPick}
+            calibrationInsights={calibrationInsights} setCalibrationInsights={setCalibrationInsights}
+            calibrationLoading={calibrationLoading} setCalibrationLoading={setCalibrationLoading}
+            getCalibrationInsights={getCalibrationInsights}
+          />
         )}
 
-      {/* Selected Pick Modal */}
-      {selectedPick && (
-        <div className="modal-overlay" data-testid="pick-detail-modal">
-          <div className="modal-content space-y-6">
-            <button className="back-btn" onClick={() => setSelectedPick(null)} data-testid="close-modal-btn">
-              <ArrowLeft /> Back to Tracking
-            </button>
-            <div>
-              <span className="badge neon">Analysis Detail</span>
-              <h2 style={{ fontSize: 32, fontWeight: 900, letterSpacing: -0.5, marginTop: 8 }}>{selectedPick.player?.name}</h2>
-              <p style={{ color: 'var(--text-secondary)' }}>{selectedPick.player?.team} vs {selectedPick.opponent}</p>
-            </div>
-            <div className="projection-card">
-              <div className="grid-2 mb-4">
-                <div className="stat-box">
-                  <div className="stat-label">Prop Line</div>
-                  <div className="stat-value">{selectedPick.line} <span className="stat-suffix">{getPropLabel(selectedPick.propType)}</span></div>
-                </div>
-                <div className="stat-box">
-                  <div className="stat-label">Projected</div>
-                  <div className="stat-value accent">{selectedPick.projectedValue}</div>
-                </div>
-              </div>
-              <div className={`rec-banner ${selectedPick.recommendation}`}>
-                <div className={`rec-label ${selectedPick.recommendation}`}>
-                  {selectedPick.recommendation === 'over' ? <TrendingUp /> : <TrendingDown />}
-                  <span>{selectedPick.recommendation}</span>
-                </div>
-                <span className={`badge ${selectedPick.recommendation === 'over' ? 'neon' : 'danger'}`}>
-                  {selectedPick.confidenceLevel}
-                </span>
-              </div>
-              {selectedPick.reasoning && (
-                <div className="mt-4">
-                  <div className="stat-label">Reasoning</div>
-                  <p className="reasoning-text mt-2">{selectedPick.reasoning}</p>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+
+
 
         {/* GUIDE TAB */}
-        {activeTab === 'guide' && (
-          <div className="tab-content" data-testid="guide-tab" style={{ padding: '16px 16px 100px' }}>
-            <div style={{ textAlign: 'center', marginBottom: 24 }}>
-              <div style={{ fontSize: 24, fontWeight: 900, color: '#fff', letterSpacing: '-0.5px' }}>How to Use ReversePicks</div>
-              <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.45)', marginTop: 6 }}>Follow these steps to get your first prediction</div>
-            </div>
-
-            {[
-              {
-                step: 1, title: 'Pick a League', icon: <Target style={{ width: 20, height: 20 }} />,
-                desc: 'Tap the PREDICT tab and select the league your match is in. We support 30+ leagues including NWSL, Premier League, La Liga, and more.',
-                tip: 'Start with leagues you know well for the best edge.',
-              },
-              {
-                step: 2, title: 'Search Your Player', icon: <Search style={{ width: 20, height: 20 }} />,
-                desc: 'Type at least 3 characters of the player\'s name. Select the player you want to analyze from the results.',
-                tip: 'Use last names for faster results. If a player doesn\'t show up, try a different spelling.',
-              },
-              {
-                step: 3, title: 'Select the Opponent', icon: <Shield style={{ width: 20, height: 20 }} />,
-                desc: 'Choose which team your player is facing. This determines the matchup analysis and defensive stats.',
-                tip: null,
-              },
-              {
-                step: 4, title: 'Home or Away?', icon: <ChevronRight style={{ width: 20, height: 20 }} />,
-                desc: 'Select whether your player\'s team is HOME or AWAY. This matters — players perform differently at home vs away.',
-                tip: 'Home teams generally have higher pass counts and possession.',
-              },
-              {
-                step: 5, title: 'Choose Your Prop', icon: <BarChart3 style={{ width: 20, height: 20 }} />,
-                desc: 'Pick the stat type: Pass Attempts, Shots, Tackles, Saves, Key Passes, etc. This is the stat the AI will predict.',
-                tip: null,
-              },
-              {
-                step: 6, title: 'Set the Line & Generate', icon: <Zap style={{ width: 20, height: 20 }} />,
-                desc: 'Enter the prop line (e.g. 25.5). Hit "Generate Projection" and wait ~30 seconds. The AI analyzes real stats, live news, and tactical data.',
-                tip: 'Want to stack 2 players? Hit "Stack 2nd Player" to get a combined projection.',
-              },
-              {
-                step: 7, title: 'Read Your Prediction', icon: <TrendingUp style={{ width: 20, height: 20 }} />,
-                desc: 'You\'ll see: Projected Value, Over/Under recommendation, Confidence Score, Recent Form, Sharp Take, and full reasoning. Scroll down for the complete analysis.',
-                tip: 'Higher confidence = stronger edge. Look for 65%+ confidence picks.',
-              },
-              {
-                step: 8, title: 'Save & Track', icon: <Activity style={{ width: 20, height: 20 }} />,
-                desc: 'Tap "Save to Tracking" to monitor your pick live during the match. Go to the TRACKING tab to see NOW/LINE/PACE/HIT% in real-time.',
-                tip: 'Settled picks can be corrected if the API data was wrong — tap the pencil icon.',
-              },
-            ].map((item) => (
-              <div key={item.step} style={{
-                background: '#0a0a0f', border: '1.5px solid rgba(100,100,120,0.2)', borderRadius: 14,
-                padding: 0, marginBottom: 12, overflow: 'hidden',
-              }}>
-                <div style={{ padding: '14px 16px', display: 'flex', gap: 14, alignItems: 'flex-start' }}>
-                  <div style={{
-                    width: 40, height: 40, borderRadius: 10, flexShrink: 0,
-                    background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.2)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--accent)',
-                  }}>
-                    {item.icon}
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                      <span style={{ fontSize: 10, fontWeight: 900, color: 'var(--accent)', fontFamily: "'JetBrains Mono', monospace" }}>STEP {item.step}</span>
-                      <span style={{ fontSize: 15, fontWeight: 800, color: '#fff' }}>{item.title}</span>
-                    </div>
-                    <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.55)', lineHeight: 1.5 }}>{item.desc}</div>
-                    {item.tip && (
-                      <div style={{ marginTop: 8, padding: '6px 10px', borderRadius: 6, background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.15)', fontSize: 11, color: '#818cf8', lineHeight: 1.4 }}>
-                        {item.tip}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))}
-
-            {/* FAQ Section */}
-            <div style={{ marginTop: 24 }}>
-              <div style={{ fontSize: 18, fontWeight: 900, color: '#fff', marginBottom: 14, letterSpacing: '-0.3px' }}>FAQ</div>
-              {[
-                { q: 'How long does a prediction take?', a: 'About 30-45 seconds. The AI searches live news, analyzes real stats, and runs tactical simulations.' },
-                { q: 'Why does it say "Data Gap Detected"?', a: 'Some leagues (especially women\'s leagues) have incomplete stats from our data provider. The AI uses web-verified data to compensate.' },
-                { q: 'Can I predict two players together?', a: 'Yes! On Step 6, tap "Stack 2nd Player" to combine two players\' projections for the same stat type.' },
-                { q: 'How does the Tracking tab work?', a: 'Save a pick and it tracks live during the match — showing your player\'s current stat, pace, and hit probability in real-time.' },
-                { q: 'A pick settled wrong. How do I fix it?', a: 'Go to History, find the pick, and tap the pencil icon. Enter the real number from SofaScore/FotMob and hit Save.' },
-              ].map((faq) => (
-                <details key={faq.q} style={{
-                  background: '#0a0a0f', border: '1.5px solid rgba(100,100,120,0.15)', borderRadius: 10,
-                  marginBottom: 8, overflow: 'hidden',
-                }}>
-                  <summary style={{
-                    padding: '12px 16px', cursor: 'pointer', fontSize: 13, fontWeight: 700, color: '#fff',
-                    listStyle: 'none', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  }}>
-                    {faq.q}
-                    <ChevronDown style={{ width: 14, height: 14, color: 'rgba(255,255,255,0.3)', flexShrink: 0 }} />
-                  </summary>
-                  <div style={{ padding: '0 16px 12px', fontSize: 12, color: 'rgba(255,255,255,0.5)', lineHeight: 1.5 }}>{faq.a}</div>
-                </details>
-              ))}
-            </div>
-          </div>
-        )}
+        {activeTab === 'guide' && <GuideTab />}
 
         {/* SCAN TAB */}
         {activeTab === 'scan' && (
@@ -2510,15 +1786,15 @@ export default function App() {
                       {scanPrediction.tacticalBreakdown.split('\n').map((line, li) => {
                         const parts = line.split(/(\*\*.*?\*\*)/g);
                         return (
-                          <div key={li} style={{ marginBottom: line === '' ? 8 : 2 }}>
+                          <div key={`tac-${li}`} style={{ marginBottom: line === '' ? 8 : 2 }}>
                             {parts.map((part, pi) => {
                               if (part.startsWith('**') && part.endsWith('**')) {
-                                return <strong key={pi} style={{ color: '#fff', fontWeight: 800 }}>{part.slice(2, -2)}</strong>;
+                                return <strong key={`tac-${li}-b-${pi}`} style={{ color: '#fff', fontWeight: 800 }}>{part.slice(2, -2)}</strong>;
                               }
                               if (part.startsWith('- ')) {
-                                return <span key={pi} style={{ paddingLeft: 8 }}><span style={{ color: '#818cf8' }}>-</span> {part.slice(2)}</span>;
+                                return <span key={`tac-${li}-d-${pi}`} style={{ paddingLeft: 8 }}><span style={{ color: '#818cf8' }}>-</span> {part.slice(2)}</span>;
                               }
-                              return <span key={pi}>{part}</span>;
+                              return <span key={`tac-${li}-t-${pi}`}>{part}</span>;
                             })}
                           </div>
                         );
@@ -2558,12 +1834,12 @@ export default function App() {
                               {msg.content.split('\n').map((line, li) => {
                                 const parts = line.split(/(\*\*.*?\*\*)/g);
                                 return (
-                                  <div key={li} style={{ marginBottom: line === '' ? 6 : 1 }}>
+                                  <div key={`fu-${msg.id}-${li}`} style={{ marginBottom: line === '' ? 6 : 1 }}>
                                     {parts.map((part, pi) => {
                                       if (part.startsWith('**') && part.endsWith('**')) {
-                                        return <strong key={pi} style={{ color: '#fff', fontWeight: 800 }}>{part.slice(2, -2)}</strong>;
+                                        return <strong key={`fu-${msg.id}-${li}-b-${pi}`} style={{ color: '#fff', fontWeight: 800 }}>{part.slice(2, -2)}</strong>;
                                       }
-                                      return <span key={pi}>{part}</span>;
+                                      return <span key={`fu-${msg.id}-${li}-t-${pi}`}>{part}</span>;
                                     })}
                                   </div>
                                 );
@@ -2780,7 +2056,7 @@ export default function App() {
                           const propLabel = PROP_TYPES.find(p => p.key === ext.propType)?.label || ext.propType;
 
                           return (
-                            <div key={idx} data-testid={`scan-result-${idx}`} style={{
+                            <div key={pick.pickId || `scan-${idx}`} data-testid={`scan-result-${idx}`} style={{
                               background: '#0a0a0f', border: `1.5px solid ${isCombo ? 'rgba(168,85,247,0.3)' : 'rgba(100,100,120,0.2)'}`, borderRadius: 14,
                               overflow: 'hidden',
                             }}>
@@ -3122,186 +2398,23 @@ export default function App() {
           </div>
         )}
 
+
         {/* PROFILE TAB */}
         {activeTab === 'profile' && (
-          <div className="animate-fade-in space-y-6" data-testid="profile-tab">
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, paddingTop: 8, paddingBottom: 8 }}>
-              <div className="profile-avatar">
-                <User />
-              </div>
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.3px' }}>{auth.email?.split('@')[0]}</div>
-                <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--accent)', letterSpacing: '0.08em', textTransform: 'uppercase', marginTop: 2 }}>{auth.accessType || 'Member'}</div>
-              </div>
-            </div>
-
-            <div className="profile-section" data-testid="profile-account-section">
-              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 12 }}>Account</div>
-              <div className="space-y-3">
-                <div className="profile-field">
-                  <div className="profile-field-icon"><Mail style={{ width: 16, height: 16 }} /></div>
-                  <div className="profile-field-content">
-                    <div className="profile-field-label">Email</div>
-                    <div className="profile-field-value" data-testid="profile-email">{auth.email}</div>
-                  </div>
-                </div>
-                <div className="profile-field">
-                  <div className="profile-field-icon"><Shield style={{ width: 16, height: 16 }} /></div>
-                  <div className="profile-field-content">
-                    <div className="profile-field-label">Access Level</div>
-                    <div className="profile-field-value" data-testid="profile-access">{auth.accessType || 'Member'}</div>
-                  </div>
-                </div>
-                <div className="profile-field">
-                  <div className="profile-field-icon"><BarChart3 style={{ width: 16, height: 16 }} /></div>
-                  <div className="profile-field-content">
-                    <div className="profile-field-label">Total Picks</div>
-                    <div className="profile-field-value" data-testid="profile-total-picks">{savedPicks.length}</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="profile-section" data-testid="profile-password-section">
-              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 12 }}>Reset Password</div>
-              <div className="space-y-3">
-                <div className="profile-field" style={{ padding: '8px 12px' }}>
-                  <div className="profile-field-icon"><Lock style={{ width: 16, height: 16 }} /></div>
-                  <input type="password" value={profileNewPw} onChange={e => setProfileNewPw(e.target.value)}
-                    placeholder="New password (min 6 chars)" data-testid="profile-new-pw"
-                    style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: 'var(--text-primary)', fontSize: 13, fontFamily: 'inherit' }} />
-                </div>
-                <div className="profile-field" style={{ padding: '8px 12px' }}>
-                  <div className="profile-field-icon"><Lock style={{ width: 16, height: 16 }} /></div>
-                  <input type="password" value={profileConfirmPw} onChange={e => setProfileConfirmPw(e.target.value)}
-                    placeholder="Confirm new password" data-testid="profile-confirm-pw"
-                    style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: 'var(--text-primary)', fontSize: 13, fontFamily: 'inherit' }} />
-                </div>
-                <button className="btn-primary" onClick={handleProfilePasswordReset}
-                  disabled={profilePwLoading || profileNewPw.length < 6} data-testid="profile-reset-pw-btn">
-                  {profilePwLoading ? <Loader2 className="animate-spin" style={{ width: 16, height: 16 }} /> : <Lock style={{ width: 16, height: 16 }} />}
-                  {profilePwLoading ? 'Updating...' : 'Update Password'}
-                </button>
-              </div>
-            </div>
-
-            <div className="profile-section">
-              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 12 }}>App</div>
-              <div className="space-y-3">
-                <div className="profile-field">
-                  <div className="profile-field-icon"><Zap style={{ width: 16, height: 16 }} /></div>
-                  <div className="profile-field-content">
-                    <div className="profile-field-label">Version</div>
-                    <div className="profile-field-value">v2.3</div>
-                  </div>
-                </div>
-                <div className="profile-field">
-                  <div className="profile-field-icon"><Activity style={{ width: 16, height: 16 }} /></div>
-                  <div className="profile-field-content">
-                    <div className="profile-field-label">API Status</div>
-                    <div className="profile-field-value" style={{ color: apiStatus === 'online' ? 'var(--accent)' : 'var(--danger)' }}>
-                      {apiStatus === 'online' ? 'Connected' : 'Offline'}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {isOwner && (
-              <div className="profile-section" data-testid="admin-settings-section">
-                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#f59e0b', marginBottom: 12 }}>
-                  <Settings style={{ width: 12, height: 12, display: 'inline', marginRight: 4, verticalAlign: 'middle' }} />
-                  Admin Settings
-                </div>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.4, marginBottom: 12 }}>
-                  Manage your API keys and payment settings. Changes take effect instantly — no redeployment needed.
-                </div>
-                <div className="space-y-3">
-                  {[
-                    { key: 'API_FOOTBALL_KEY', label: 'API-Sports Key', testable: true },
-                    { key: 'SQUARE_ACCESS_TOKEN', label: 'Square Access Token' },
-                    { key: 'SQUARE_APPLICATION_ID', label: 'Square App ID' },
-                    { key: 'SQUARE_LOCATION_ID', label: 'Square Location ID' },
-                    { key: 'SQUARE_ENVIRONMENT', label: 'Square Environment' },
-                  ].map(({ key, label, testable }) => (
-                    <div key={key}>
-                      <div className="profile-field" style={{ cursor: 'pointer' }}
-                        onClick={() => { if (adminEditKey !== key) { setAdminEditKey(key); setAdminEditValue(''); setAdminTestResult(null); } }}>
-                        <div className="profile-field-icon"><Shield style={{ width: 16, height: 16, color: key.startsWith('SQUARE') ? '#818cf8' : '#f59e0b' }} /></div>
-                        <div className="profile-field-content">
-                          <div className="profile-field-label">{label}</div>
-                          <div className="profile-field-value" style={{ fontFamily: 'monospace', fontSize: 11 }} data-testid={`admin-val-${key}`}>
-                            {adminSettings[key]?.masked_value || 'Not set'}
-                          </div>
-                        </div>
-                        <Edit3 style={{ width: 13, height: 13, color: 'var(--text-muted)', flexShrink: 0 }} />
-                      </div>
-                      {adminEditKey === key && (
-                        <div style={{ marginTop: 8, marginLeft: 4, marginBottom: 4 }}>
-                          <div className="profile-field" style={{ padding: '8px 12px' }}>
-                            <input
-                              type={adminShowKey ? 'text' : 'password'}
-                              value={adminEditValue}
-                              onChange={e => { setAdminEditValue(e.target.value); setAdminTestResult(null); }}
-                              placeholder={key === 'SQUARE_ENVIRONMENT' ? 'sandbox or production' : `Paste new ${label}`}
-                              data-testid={`admin-input-${key}`}
-                              autoFocus
-                              style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: 'var(--text-primary)', fontSize: 13, fontFamily: 'monospace' }}
-                            />
-                            <button onClick={() => setAdminShowKey(!adminShowKey)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}>
-                              {adminShowKey ? <EyeOff style={{ width: 14, height: 14, color: 'var(--text-muted)' }} /> : <Eye style={{ width: 14, height: 14, color: 'var(--text-muted)' }} />}
-                            </button>
-                          </div>
-                          {testable && adminTestResult && (
-                            <div style={{
-                              fontSize: 12, padding: '8px 12px', borderRadius: 8, marginTop: 6,
-                              background: adminTestResult.valid ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
-                              color: adminTestResult.valid ? '#22c55e' : '#ef4444',
-                              border: `1px solid ${adminTestResult.valid ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)'}`,
-                            }} data-testid="admin-test-result">
-                              {adminTestResult.valid
-                                ? `Valid — ${adminTestResult.plan} plan (${adminTestResult.account})`
-                                : `Invalid — ${adminTestResult.error}`}
-                            </div>
-                          )}
-                          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                            {testable && (
-                              <button className="btn-secondary" onClick={handleTestApiKey}
-                                disabled={adminKeyLoading || !adminEditValue.trim()} data-testid="admin-test-key-btn"
-                                style={{ flex: 1, fontSize: 12 }}>
-                                {adminKeyLoading ? <Loader2 className="animate-spin" style={{ width: 14, height: 14 }} /> : <Activity style={{ width: 14, height: 14 }} />}
-                                Test
-                              </button>
-                            )}
-                            <button className="btn-primary" onClick={() => handleSaveAdminSetting(key)}
-                              disabled={adminKeyLoading || !adminEditValue.trim()} data-testid={`admin-save-${key}`}
-                              style={{ flex: 1, fontSize: 12 }}>
-                              {adminKeyLoading ? <Loader2 className="animate-spin" style={{ width: 14, height: 14 }} /> : <Check style={{ width: 14, height: 14 }} />}
-                              Save
-                            </button>
-                            <button className="btn-secondary" onClick={() => { setAdminEditKey(null); setAdminEditValue(''); setAdminTestResult(null); }}
-                              style={{ fontSize: 12, padding: '8px 12px' }}>
-                              <X style={{ width: 14, height: 14 }} />
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <button className="btn-secondary" onClick={handleLogout} data-testid="profile-logout-btn"
-              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, color: 'var(--danger)' }}>
-              <LogOut style={{ width: 16, height: 16 }} /> Log Out
-            </button>
-          </div>
+          <ProfileTab
+            auth={auth} savedPicks={savedPicks} apiStatus={apiStatus} isOwner={isOwner}
+            profileNewPw={profileNewPw} setProfileNewPw={setProfileNewPw}
+            profileConfirmPw={profileConfirmPw} setProfileConfirmPw={setProfileConfirmPw}
+            profilePwLoading={profilePwLoading} handleProfilePasswordReset={handleProfilePasswordReset}
+            adminSettings={adminSettings} adminEditKey={adminEditKey} setAdminEditKey={setAdminEditKey}
+            adminEditValue={adminEditValue} setAdminEditValue={setAdminEditValue}
+            adminKeyLoading={adminKeyLoading} adminTestResult={adminTestResult} setAdminTestResult={setAdminTestResult}
+            adminShowKey={adminShowKey} setAdminShowKey={setAdminShowKey}
+            handleTestApiKey={handleTestApiKey} handleSaveAdminSetting={handleSaveAdminSetting}
+            handleLogout={handleLogout}
+          />
         )}
-
       </main>
-
-      {/* Bottom Nav */}
       <nav className="bottom-nav" data-testid="bottom-nav">
         <div className="nav-items">
           <button className={`nav-item ${activeTab === 'scan' ? 'active' : ''}`}

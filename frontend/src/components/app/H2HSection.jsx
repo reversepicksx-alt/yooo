@@ -30,8 +30,8 @@ export function H2HSection({ h2hData, propType }) {
       )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {h2hData.matches.map((m, i) => (
-          <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px', background: 'rgba(255,255,255,0.03)', borderRadius: 6, fontSize: 11 }}>
+        {h2hData.matches.map((m) => (
+          <div key={`${m.date}-${m.opponent}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px', background: 'rgba(255,255,255,0.03)', borderRadius: 6, fontSize: 11 }}>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <span style={{ color: 'var(--text-muted)', minWidth: 65 }}>{(m.date || '').slice(0, 10)}</span>
               <span style={{ color: 'var(--text-secondary)' }}>vs {m.opponent}</span>

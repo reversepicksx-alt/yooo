@@ -48,7 +48,6 @@ async def _run_miss_postmortem(pick: dict) -> dict:
     # Calculate how far off we were
     diff = abs(actual - projected) if actual is not None and projected else 0
     direction = "over" if actual > line else "under" if actual < line else "push"
-    was_correct = direction == recommendation
 
     prompt = f"""You are a sports analytics expert analyzing a MISSED prediction. Be brutally honest about what went wrong.
 

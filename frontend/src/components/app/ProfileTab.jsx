@@ -1,0 +1,193 @@
+import React from 'react';
+import {
+  User, Shield, BarChart3, Mail, Lock, Loader2, Zap, Activity,
+  LogOut, Settings, Edit3, Eye, EyeOff, Check, X
+} from 'lucide-react';
+
+export function ProfileTab({
+  auth, savedPicks, apiStatus, isOwner,
+  profileNewPw, setProfileNewPw, profileConfirmPw, setProfileConfirmPw,
+  profilePwLoading, handleProfilePasswordReset,
+  adminSettings, adminEditKey, setAdminEditKey,
+  adminEditValue, setAdminEditValue, adminKeyLoading,
+  adminTestResult, setAdminTestResult,
+  adminShowKey, setAdminShowKey,
+  handleTestApiKey, handleSaveAdminSetting,
+  handleLogout,
+}) {
+  return (
+    <div className="animate-fade-in space-y-6" data-testid="profile-tab">
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, paddingTop: 8, paddingBottom: 8 }}>
+        <div className="profile-avatar">
+          <User />
+        </div>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.3px' }}>{auth.email?.split('@')[0]}</div>
+          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--accent)', letterSpacing: '0.08em', textTransform: 'uppercase', marginTop: 2 }}>{auth.accessType || 'Member'}</div>
+        </div>
+      </div>
+
+      <div className="profile-section" data-testid="profile-account-section">
+        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 12 }}>Account</div>
+        <div className="space-y-3">
+          <div className="profile-field">
+            <div className="profile-field-icon"><Mail style={{ width: 16, height: 16 }} /></div>
+            <div className="profile-field-content">
+              <div className="profile-field-label">Email</div>
+              <div className="profile-field-value" data-testid="profile-email">{auth.email}</div>
+            </div>
+          </div>
+          <div className="profile-field">
+            <div className="profile-field-icon"><Shield style={{ width: 16, height: 16 }} /></div>
+            <div className="profile-field-content">
+              <div className="profile-field-label">Access Level</div>
+              <div className="profile-field-value" data-testid="profile-access">{auth.accessType || 'Member'}</div>
+            </div>
+          </div>
+          <div className="profile-field">
+            <div className="profile-field-icon"><BarChart3 style={{ width: 16, height: 16 }} /></div>
+            <div className="profile-field-content">
+              <div className="profile-field-label">Total Picks</div>
+              <div className="profile-field-value" data-testid="profile-total-picks">{savedPicks.length}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="profile-section" data-testid="profile-password-section">
+        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 12 }}>Reset Password</div>
+        <div className="space-y-3">
+          <div className="profile-field" style={{ padding: '8px 12px' }}>
+            <div className="profile-field-icon"><Lock style={{ width: 16, height: 16 }} /></div>
+            <input type="password" value={profileNewPw} onChange={e => setProfileNewPw(e.target.value)}
+              placeholder="New password (min 6 chars)" data-testid="profile-new-pw"
+              style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: 'var(--text-primary)', fontSize: 13, fontFamily: 'inherit' }} />
+          </div>
+          <div className="profile-field" style={{ padding: '8px 12px' }}>
+            <div className="profile-field-icon"><Lock style={{ width: 16, height: 16 }} /></div>
+            <input type="password" value={profileConfirmPw} onChange={e => setProfileConfirmPw(e.target.value)}
+              placeholder="Confirm new password" data-testid="profile-confirm-pw"
+              style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: 'var(--text-primary)', fontSize: 13, fontFamily: 'inherit' }} />
+          </div>
+          <button className="btn-primary" onClick={handleProfilePasswordReset}
+            disabled={profilePwLoading || profileNewPw.length < 6} data-testid="profile-reset-pw-btn">
+            {profilePwLoading ? <Loader2 className="animate-spin" style={{ width: 16, height: 16 }} /> : <Lock style={{ width: 16, height: 16 }} />}
+            {profilePwLoading ? 'Updating...' : 'Update Password'}
+          </button>
+        </div>
+      </div>
+
+      <div className="profile-section">
+        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 12 }}>App</div>
+        <div className="space-y-3">
+          <div className="profile-field">
+            <div className="profile-field-icon"><Zap style={{ width: 16, height: 16 }} /></div>
+            <div className="profile-field-content">
+              <div className="profile-field-label">Version</div>
+              <div className="profile-field-value">v2.3</div>
+            </div>
+          </div>
+          <div className="profile-field">
+            <div className="profile-field-icon"><Activity style={{ width: 16, height: 16 }} /></div>
+            <div className="profile-field-content">
+              <div className="profile-field-label">API Status</div>
+              <div className="profile-field-value" style={{ color: apiStatus === 'online' ? 'var(--accent)' : 'var(--danger)' }}>
+                {apiStatus === 'online' ? 'Connected' : 'Offline'}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {isOwner && (
+        <div className="profile-section" data-testid="admin-settings-section">
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#f59e0b', marginBottom: 12 }}>
+            <Settings style={{ width: 12, height: 12, display: 'inline', marginRight: 4, verticalAlign: 'middle' }} />
+            Admin Settings
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.4, marginBottom: 12 }}>
+            Manage your API keys and payment settings. Changes take effect instantly — no redeployment needed.
+          </div>
+          <div className="space-y-3">
+            {[
+              { key: 'API_FOOTBALL_KEY', label: 'API-Sports Key', testable: true },
+              { key: 'SQUARE_ACCESS_TOKEN', label: 'Square Access Token' },
+              { key: 'SQUARE_APPLICATION_ID', label: 'Square App ID' },
+              { key: 'SQUARE_LOCATION_ID', label: 'Square Location ID' },
+              { key: 'SQUARE_ENVIRONMENT', label: 'Square Environment' },
+            ].map(({ key, label, testable }) => (
+              <div key={key}>
+                <div className="profile-field" style={{ cursor: 'pointer' }}
+                  onClick={() => { if (adminEditKey !== key) { setAdminEditKey(key); setAdminEditValue(''); setAdminTestResult(null); } }}>
+                  <div className="profile-field-icon"><Shield style={{ width: 16, height: 16, color: key.startsWith('SQUARE') ? '#818cf8' : '#f59e0b' }} /></div>
+                  <div className="profile-field-content">
+                    <div className="profile-field-label">{label}</div>
+                    <div className="profile-field-value" style={{ fontFamily: 'monospace', fontSize: 11 }} data-testid={`admin-val-${key}`}>
+                      {adminSettings[key]?.masked_value || 'Not set'}
+                    </div>
+                  </div>
+                  <Edit3 style={{ width: 13, height: 13, color: 'var(--text-muted)', flexShrink: 0 }} />
+                </div>
+                {adminEditKey === key && (
+                  <div style={{ marginTop: 8, marginLeft: 4, marginBottom: 4 }}>
+                    <div className="profile-field" style={{ padding: '8px 12px' }}>
+                      <input
+                        type={adminShowKey ? 'text' : 'password'}
+                        value={adminEditValue}
+                        onChange={e => { setAdminEditValue(e.target.value); setAdminTestResult(null); }}
+                        placeholder={key === 'SQUARE_ENVIRONMENT' ? 'sandbox or production' : `Paste new ${label}`}
+                        data-testid={`admin-input-${key}`}
+                        autoFocus
+                        style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: 'var(--text-primary)', fontSize: 13, fontFamily: 'monospace' }}
+                      />
+                      <button onClick={() => setAdminShowKey(!adminShowKey)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}>
+                        {adminShowKey ? <EyeOff style={{ width: 14, height: 14, color: 'var(--text-muted)' }} /> : <Eye style={{ width: 14, height: 14, color: 'var(--text-muted)' }} />}
+                      </button>
+                    </div>
+                    {testable && adminTestResult && (
+                      <div style={{
+                        fontSize: 12, padding: '8px 12px', borderRadius: 8, marginTop: 6,
+                        background: adminTestResult.valid ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
+                        color: adminTestResult.valid ? '#22c55e' : '#ef4444',
+                        border: `1px solid ${adminTestResult.valid ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)'}`,
+                      }} data-testid="admin-test-result">
+                        {adminTestResult.valid
+                          ? `Valid \u2014 ${adminTestResult.plan} plan (${adminTestResult.account})`
+                          : `Invalid \u2014 ${adminTestResult.error}`}
+                      </div>
+                    )}
+                    <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                      {testable && (
+                        <button className="btn-secondary" onClick={handleTestApiKey}
+                          disabled={adminKeyLoading || !adminEditValue.trim()} data-testid="admin-test-key-btn"
+                          style={{ flex: 1, fontSize: 12 }}>
+                          {adminKeyLoading ? <Loader2 className="animate-spin" style={{ width: 14, height: 14 }} /> : <Activity style={{ width: 14, height: 14 }} />}
+                          Test
+                        </button>
+                      )}
+                      <button className="btn-primary" onClick={() => handleSaveAdminSetting(key)}
+                        disabled={adminKeyLoading || !adminEditValue.trim()} data-testid={`admin-save-${key}`}
+                        style={{ flex: 1, fontSize: 12 }}>
+                        {adminKeyLoading ? <Loader2 className="animate-spin" style={{ width: 14, height: 14 }} /> : <Check style={{ width: 14, height: 14 }} />}
+                        Save
+                      </button>
+                      <button className="btn-secondary" onClick={() => { setAdminEditKey(null); setAdminEditValue(''); setAdminTestResult(null); }}
+                        style={{ fontSize: 12, padding: '8px 12px' }}>
+                        <X style={{ width: 14, height: 14 }} />
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <button className="btn-secondary" onClick={handleLogout} data-testid="profile-logout-btn"
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, color: 'var(--danger)' }}>
+        <LogOut style={{ width: 16, height: 16 }} /> Log Out
+      </button>
+    </div>
+  );
+}

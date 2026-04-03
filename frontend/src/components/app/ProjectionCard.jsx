@@ -134,8 +134,8 @@ export function ProjectionCard({ projection, onSave, excludedIndices, onToggleSa
               )}
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {projection.positionComparison.players.map((p, i) => (
-                <div key={i} style={{
+              {projection.positionComparison.players.map((p) => (
+                <div key={`${p.name}-${p.team}`} style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                   padding: '6px 10px', borderRadius: 6,
                   background: i % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'transparent',
@@ -189,17 +189,17 @@ export function ProjectionCard({ projection, onSave, excludedIndices, onToggleSa
           )}
           {projection.modelBreakdown && projection.modelBreakdown.length > 0 && (
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {projection.modelBreakdown.map((m, i) => {
+              {projection.modelBreakdown.map((m) => {
                 const isOver = m.recommendation === 'over';
                 return (
-                  <div key={i} style={{
+                  <div key={m.model} style={{
                     flex: 1, minWidth: 80, padding: '8px 10px', borderRadius: 8,
                     background: 'rgba(255,255,255,0.03)',
                     border: `1px solid ${isOver ? 'rgba(0,255,136,0.15)' : 'rgba(239,68,68,0.15)'}`,
                     textAlign: 'center',
                   }}>
                     <div style={{ fontSize: 9, fontWeight: 700, color: '#a855f7', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>
-                      {m.model === 'gemini' ? 'GE' : m.model === 'grok' ? 'GK' : m.model === 'gpt41mini' || m.model === 'gpt' ? 'GP' : `AI-${i+1}`}
+                      {m.model === 'gemini' ? 'GE' : m.model === 'grok' ? 'GK' : m.model === 'gpt41mini' || m.model === 'gpt' ? 'GP' : m.model}
                     </div>
                     <div style={{
                       fontSize: 13, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace",

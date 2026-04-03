@@ -588,8 +588,6 @@ async def _build_basketball_update(pick: dict, game: dict, team_id: int, email: 
     status_short = status.get("short", "")
     timer = status.get("timer")
 
-    home = game.get("teams", {}).get("home", {})
-    away = game.get("teams", {}).get("away", {})
     home_score = game.get("scores", {}).get("home", {}).get("total", 0) or 0
     away_score = game.get("scores", {}).get("away", {}).get("total", 0) or 0
     match_score = f"{home_score}-{away_score}"
