@@ -67,12 +67,17 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 ### Tracking Tab Split + Calibration Insights Panel (Completed April 3, 2026)
 - **Tab split**: Tracking tabs changed from `Live | Won | Missed` to `Live | Won | Lost | Pushed | Insights`
 - **Pushes separated**: Push results now have their own tab instead of being grouped with Won
-- **Calibration Insights panel**: New "Insights" tab showing everything the system learned from miss analysis:
-  - System Learning Summary: total analyzed, total misses, active corrections count
-  - Per sport/prop type cards: miss count, avg error %, bias direction, active correction %
-  - Status indicators: CORRECTING (active), pending (needs more misses), or inconsistent bias
-  - Refresh button to reload latest calibration data
-- **Notification routing**: Click-through from notifications now routes to correct tab (hit→Won, miss→Lost, push→Pushed)
+- **Calibration Insights panel**: New "Insights" tab showing everything the system learned from miss analysis
+- **Notification routing**: Click-through from notifications now routes to correct tab
+
+### Square Subscription Sync Fix (Completed April 3, 2026) — P0
+- **Root cause**: Webhook only handled `subscription.updated` but checkout creates Payment Links (not subscriptions). Square sends `payment.completed` for these — which was ignored. Zero records ever created in `square_subscriptions`.
+- **Webhook enhanced**: Now handles `payment.completed`, `order.updated`, `order.completed`, `invoice.payment_made` events. Matches by buyer email AND order_id.
+- **Self-recovery flow**: "Already paid? Verify your payment" button on login page. Searches Square's payment history directly by email (last 90 days). User provides email + password, system finds their payment, creates account + subscription, logs them in.
+- **Admin tools**: `POST /api/square/admin/activate` (activate specific customer), `POST /api/square/admin/bulk-verify` (check all pending checkouts against Square payments).
+- **App.js checkout_token fix**: Moved checkout_token detection to App.js level — clears stale localStorage sessions so LoginPage renders and handles the redirect token.
+- **Square SDK fix**: Fixed SyncPager iteration bug (iterate directly, not via `.payments` attribute).
+- **Result**: 16 real Square payments confirmed accessible. Paying customers can now self-recover.
 
 ## Key API Endpoints
 - `POST /api/scan-prop` — Vision extraction from prop screenshots
@@ -85,6 +90,10 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 - `POST /api/picks/save` — Save a pick for tracking
 - `POST /api/picks/live-update` — Refresh live game data
 - `POST /api/picks/correct` — Manual correction of actual value
+- `POST /api/square/webhook` — Square webhook (payment.completed, order events, subscription events)
+- `POST /api/square/verify-payment` — Self-recovery for paid users
+- `POST /api/square/admin/activate` — Admin: activate specific customer
+- `POST /api/square/admin/bulk-verify` — Admin: bulk-verify all pending checkouts
 
 ## DB Collections
 - `picks` — User picks with settlement data
@@ -94,6 +103,9 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 - `player_positions` — Cached position/role data
 - `settings` — Admin config key-value store
 - `users` — User auth and subscription data
+- `square_subscriptions` — Square payment subscription records
+- `pending_checkouts` — In-progress checkout records
+- `manual_access_grants` — Manually granted access (lifetime, owner)
 
 ## 3rd Party Integrations
 - API-Sports (Sports Data) — User API Key
