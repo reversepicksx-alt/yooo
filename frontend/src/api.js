@@ -160,6 +160,14 @@ export async function liveUpdatePicks(email, token) {
   return apiCall('/api/picks/live-update', { method: 'POST', body: JSON.stringify({ email, token }) });
 }
 
+export async function analyzeMiss(email, token, pickId) {
+  return apiCall('/api/picks/analyze-miss', { method: 'POST', body: JSON.stringify({ email, token, pickId }) });
+}
+
+export async function getMisses(email, token) {
+  return apiCall('/api/picks/misses', { method: 'POST', body: JSON.stringify({ email, token }) });
+}
+
 export async function scanProp(imageBase64, sport = 'soccer') {
   return apiCall('/api/scan-prop', {
     method: 'POST',

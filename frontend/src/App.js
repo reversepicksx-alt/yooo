@@ -11,7 +11,7 @@ import {
   checkApiStatus, SUPPORTED_LEAGUES,
   verifyWhop, authLogin, setPassword as apiSetPassword, resetPassword, verifySession, authLogout,
   getPickOfTheDay, savePick, listPicks, deletePick, correctPick, liveUpdatePicks,
-  scanProp, reResolvePick, basketballSearchTeams, basketballPredict,
+  scanProp, reResolvePick, analyzeMiss, getMisses, basketballSearchTeams, basketballPredict,
   getAdminSettings, updateAdminSetting, testApiKey
 } from './api';
 import { toast, Toaster } from 'sonner';
@@ -95,6 +95,8 @@ export default function App() {
   const [reanalyzingPick, setReanalyzingPick] = useState(null);
   const [correctingPick, setCorrectingPick] = useState(null); // pickId being corrected
   const [correctValue, setCorrectValue] = useState('');
+  const [missAnalyses, setMissAnalyses] = useState({}); // { pickId: analysis }
+  const [analyzingMiss, setAnalyzingMiss] = useState({}); // { pickId: true/false }
   const [profileNewPw, setProfileNewPw] = useState('');
   const [profileConfirmPw, setProfileConfirmPw] = useState('');
   const [profilePwLoading, setProfilePwLoading] = useState(false);
@@ -407,6 +409,35 @@ export default function App() {
       toast.error(err.message || 'Correction failed');
     }
   };
+
+  const handleAnalyzeMiss = async (pickId) => {
+    if (!user) return;
+    setAnalyzingMiss(prev => ({ ...prev, [pickId]: true }));
+    try {
+      const result = await analyzeMiss(user.email, user.token, pickId);
+      setMissAnalyses(prev => ({ ...prev, [pickId]: result.analysis }));
+      toast.success('Miss analysis complete');
+    } catch (err) {
+      toast.error(err.message || 'Analysis failed');
+    } finally {
+      setAnalyzingMiss(prev => ({ ...prev, [pickId]: false }));
+    }
+  };
+
+  // Load miss analyses when switching to missed tab
+  React.useEffect(() => {
+    if (trackingView === 'missed' && user) {
+      getMisses(user.email, user.token).then(data => {
+        if (data?.misses) {
+          const analyses = {};
+          data.misses.forEach(m => {
+            if (m.missAnalysis) analyses[m.pickId] = m.missAnalysis;
+          });
+          setMissAnalyses(prev => ({ ...prev, ...analyses }));
+        }
+      }).catch(() => {});
+    }
+  }, [trackingView, user]);
 
   const savePickFn = async () => {
     if (!projection || !auth) return;
@@ -1545,8 +1576,12 @@ export default function App() {
                 <div className="tab-switcher" style={{ width: 'auto' }}>
                   <button className={`tab-btn ${trackingView === 'live' ? 'active' : ''}`}
                     onClick={() => setTrackingView('live')} data-testid="tracking-live-btn">Live</button>
-                  <button className={`tab-btn ${trackingView === 'history' ? 'active' : ''}`}
-                    onClick={() => setTrackingView('history')} data-testid="tracking-history-btn">History</button>
+                  <button className={`tab-btn ${trackingView === 'won' ? 'active' : ''}`}
+                    onClick={() => setTrackingView('won')} data-testid="tracking-won-btn"
+                    style={trackingView === 'won' ? { background: 'rgba(16,185,129,0.15)', borderColor: 'rgba(16,185,129,0.3)', color: '#10b981' } : {}}>Won</button>
+                  <button className={`tab-btn ${trackingView === 'missed' ? 'active' : ''}`}
+                    onClick={() => setTrackingView('missed')} data-testid="tracking-missed-btn"
+                    style={trackingView === 'missed' ? { background: 'rgba(244,63,94,0.15)', borderColor: 'rgba(244,63,94,0.3)', color: '#f43f5e' } : {}}>Missed</button>
                 </div>
               </div>
             </div>
@@ -1603,13 +1638,23 @@ export default function App() {
             })()}
 
             <div className="space-y-2">
-              {savedPicks.filter(p => trackingView === 'live' ? p.status === 'live' : p.status === 'settled').length === 0 ? (
+              {savedPicks.filter(p => {
+                if (trackingView === 'live') return p.status === 'live';
+                if (trackingView === 'won') return p.status === 'settled' && (p.result === 'hit' || p.result === 'push');
+                if (trackingView === 'missed') return p.status === 'settled' && p.result === 'miss';
+                return false;
+              }).length === 0 ? (
                 <div className="empty-state" data-testid="tracking-empty">
                   <div className="empty-icon"><Clock /></div>
-                  <p className="empty-text">No {trackingView} picks being tracked.</p>
+                  <p className="empty-text">No {trackingView === 'won' ? 'winning' : trackingView} picks yet.</p>
                 </div>
               ) : (
-                savedPicks.filter(p => trackingView === 'live' ? p.status === 'live' : p.status === 'settled').map(pick => {
+                savedPicks.filter(p => {
+                  if (trackingView === 'live') return p.status === 'live';
+                  if (trackingView === 'won') return p.status === 'settled' && (p.result === 'hit' || p.result === 'push');
+                  if (trackingView === 'missed') return p.status === 'settled' && p.result === 'miss';
+                  return false;
+                }).map(pick => {
                   const live = liveData[pick.pickId];
                   const isMatchLive = live?.matchStatus === 'live';
                   const isMatchFinal = live?.matchStatus === 'final' || pick.status === 'settled';

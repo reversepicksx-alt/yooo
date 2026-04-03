@@ -28,6 +28,7 @@ from routes.tactical import router as tactical_router
 from routes.basketball_predict import router as basketball_router
 from routes.square import router as square_router
 from routes.admin import router as admin_router
+from routes.miss_analysis import router as miss_router
 from cache import seed_cache, background_refresh_loop
 from basketball_cache import seed_bball_cache, bball_background_refresh, get_bball_cache_status
 
@@ -44,6 +45,7 @@ app.include_router(tactical_router)
 app.include_router(basketball_router)
 app.include_router(square_router)
 app.include_router(admin_router)
+app.include_router(miss_router)
 
 
 # ── Startup: seed grants for lifetime VIPs ──
