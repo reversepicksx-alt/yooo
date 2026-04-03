@@ -167,7 +167,8 @@ export const PlayerReport = ({
             const pred = predictions[propType];
             if (!prop) return null;
             const isOver = pred?.recommendation === 'over';
-            const edge = pred ? (pred.projectedValue - prop.line).toFixed(1) : '—';
+            const edgeNum = pred && pred.projectedValue !== '?' ? (pred.projectedValue - prop.line) : null;
+            const edge = edgeNum !== null ? edgeNum.toFixed(1) : '—';
             const isBest = propType === bestProp;
             const isExpanded = expandedProp === propType;
 
@@ -217,9 +218,9 @@ export const PlayerReport = ({
                   <div style={{
                     fontSize: 10, fontWeight: 800, textAlign: 'center',
                     fontFamily: "'JetBrains Mono', monospace",
-                    color: pred ? (parseFloat(edge) > 0 ? '#4ade80' : '#f87171') : 'rgba(255,255,255,0.2)',
+                    color: pred && edgeNum !== null ? (edgeNum > 0 ? '#4ade80' : '#f87171') : 'rgba(255,255,255,0.2)',
                   }}>
-                    {pred ? (parseFloat(edge) > 0 ? '+' : '') + edge : '—'}
+                    {edgeNum !== null ? (edgeNum > 0 ? '+' : '') + edge : '—'}
                   </div>
                 </div>
 

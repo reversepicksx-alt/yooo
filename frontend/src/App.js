@@ -778,6 +778,10 @@ export default function App() {
     const { resolved, resolvedOpponent, extracted, sport } = batchPlayerInfo;
     const allProps = batchPlayerInfo.props;
 
+    const opponentId = resolvedOpponent?.teamId || extracted?.opponentId || 0;
+    const opponentName = resolvedOpponent?.teamName || extracted?.opponentName || '';
+    const venue = extracted?.venue || 'home';
+
     for (const propType of batchSelectedProps) {
       const prop = allProps.find(p => p.propType === propType);
       if (!prop) continue;
@@ -785,32 +789,30 @@ export default function App() {
         let result;
         if (sport === 'basketball') {
           result = await basketballPredict({
-            email: auth.email, token: auth.token,
-            playerId: resolved?.playerId || extracted.playerId,
-            playerName: resolved?.playerName || extracted.playerName,
-            teamName: resolved?.teamName || extracted.playerTeam,
-            teamId: resolved?.teamId,
-            opponentName: resolvedOpponent?.teamName || extracted.opponentName,
-            opponentId: resolvedOpponent?.teamId,
+            playerId: resolved?.playerId || 0,
+            playerName: resolved?.playerName || extracted?.playerName || '',
+            teamName: resolved?.teamName || extracted?.playerTeam || '',
+            teamId: resolved?.teamId || 0,
+            opponentName: opponentName,
+            opponentId: opponentId,
             propType: propType,
             line: prop.line,
-            venue: extracted.venue || 'home',
+            venue: venue,
           });
         } else {
           result = await predict({
-            email: auth.email, token: auth.token,
-            playerId: resolved?.playerId || extracted.playerId,
-            playerName: resolved?.playerName || extracted.playerName,
-            teamName: resolved?.teamName || extracted.playerTeam,
-            teamId: resolved?.teamId,
-            opponentName: resolvedOpponent?.teamName || extracted.opponentName,
-            opponentId: resolvedOpponent?.teamId,
+            playerId: resolved?.playerId || 0,
+            playerName: resolved?.playerName || extracted?.playerName || '',
+            teamName: resolved?.teamName || extracted?.playerTeam || '',
+            teamId: resolved?.teamId || 0,
+            opponentName: opponentName,
+            opponentId: opponentId,
             propType: propType,
             line: prop.line,
-            venue: extracted.venue || 'home',
-            leagueId: extracted.leagueId,
-            positionOverride: extracted.position || '',
-            roleOverride: extracted.role || '',
+            venue: venue,
+            leagueId: extracted?.leagueId || 39,
+            positionOverride: extracted?.position || '',
+            roleOverride: extracted?.role || '',
           });
         }
         setBatchPredictions(prev => ({ ...prev, [propType]: result }));
