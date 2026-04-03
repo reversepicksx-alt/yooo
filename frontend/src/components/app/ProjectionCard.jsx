@@ -134,14 +134,14 @@ export function ProjectionCard({ projection, onSave, excludedIndices, onToggleSa
               )}
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {projection.positionComparison.players.map((p) => (
+              {projection.positionComparison.players.map((p, pIdx) => (
                 <div key={`${p.name}-${p.team}`} style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                   padding: '6px 10px', borderRadius: 6,
-                  background: i % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'transparent',
+                  background: pIdx % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'transparent',
                 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
-                    <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', width: 14, textAlign: 'center' }}>{i + 1}</span>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', width: 14, textAlign: 'center' }}>{pIdx + 1}</span>
                     <div style={{ minWidth: 0 }}>
                       <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 140 }}>
                         {p.name}
