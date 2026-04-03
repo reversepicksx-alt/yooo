@@ -337,13 +337,13 @@ function PickCard({ pick, liveData, missAnalyses, reanalyzePick, reanalyzingPick
   const paceNum = typeof paceVal === 'number' ? paceVal : 0;
   const progressPct = Math.min(100, Math.max(0, (nowNum / (lineNum * 1.3)) * 100));
   const lineMarkerPct = Math.min(95, (lineNum / (lineNum * 1.3)) * 100);
-  const onTrack = isPush ? null : (isOver ? paceNum > lineNum : paceNum < lineNum);
-  const statColor = isPush ? 'rgba(255,255,255,0.45)' : (onTrack ? 'var(--accent)' : '#f43f5e');
-  const barColor = isPush ? 'rgba(255,255,255,0.25)' : (onTrack ? 'var(--accent)' : '#f43f5e');
   const resultLabel = pick.result === 'hit' ? 'HIT' : pick.result === 'push' ? 'PUSH' : pick.result === 'miss' ? 'MISS' : '';
   const isHit = pick.result === 'hit';
   const isMiss = pick.result === 'miss';
   const isPush = pick.result === 'push';
+  const onTrack = isPush ? null : (isOver ? paceNum > lineNum : paceNum < lineNum);
+  const statColor = isPush ? 'rgba(255,255,255,0.45)' : (onTrack ? 'var(--accent)' : '#f43f5e');
+  const barColor = isPush ? 'rgba(255,255,255,0.25)' : (onTrack ? 'var(--accent)' : '#f43f5e');
 
   return (
     <div className="live-pick-card" data-testid={`pick-${pick.pickId}`} style={{
