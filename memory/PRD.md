@@ -54,6 +54,16 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 - Fixed broken eslint-disable comment format (em-dash -> proper format)
 - Moved hardcoded test emails to env vars in test_auth.py
 
+### Tracking Tab Split + Calibration Insights Panel (Completed April 3, 2026)
+- **Tab split**: Tracking tabs changed from `Live | Won | Missed` to `Live | Won | Lost | Pushed | Insights`
+- **Pushes separated**: Push results now have their own tab instead of being grouped with Won
+- **Calibration Insights panel**: New "Insights" tab showing everything the system learned from miss analysis:
+  - System Learning Summary: total analyzed, total misses, active corrections count
+  - Per sport/prop type cards: miss count, avg error %, bias direction, active correction %
+  - Status indicators: CORRECTING (active), pending (needs more misses), or inconsistent bias
+  - Refresh button to reload latest calibration data
+- **Notification routing**: Click-through from notifications now routes to correct tab (hit→Won, miss→Lost, push→Pushed)
+
 ## Key API Endpoints
 - `POST /api/scan-prop` — Vision extraction from prop screenshots
 - `POST /api/predict` — Soccer prediction pipeline (with calibration)
@@ -61,6 +71,7 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 - `POST /api/re-resolve` — Re-resolve player after editable scan card changes
 - `POST /api/picks/misses` — Get missed picks with auto-analysis
 - `POST /api/picks/analyze-miss` — Manual miss analysis trigger (fallback)
+- `POST /api/calibration/insights` — Get all calibration learnings per sport/prop type
 - `POST /api/picks/save` — Save a pick for tracking
 - `POST /api/picks/live-update` — Refresh live game data
 - `POST /api/picks/correct` — Manual correction of actual value
