@@ -246,6 +246,46 @@ export function ProjectionCard({ projection, onSave, excludedIndices, onToggleSa
           </div>
         )}
 
+        {/* Match Dominance Multiplier */}
+        {projection.matchDominance?.applied && (
+          <div data-testid="dominance-indicator" className="stat-box mt-4" style={{
+            borderColor: 'rgba(251,191,36,0.25)',
+            background: 'rgba(251,191,36,0.04)',
+          }}>
+            <div className="stat-label flex items-center gap-2" style={{ marginBottom: 4 }}>
+              <TrendingUp style={{ width: 10, height: 10, color: '#fbbf24' }} />
+              <span style={{ color: '#fbbf24' }}>Match Dominance</span>
+            </div>
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)', lineHeight: 1.5 }}>
+              Expected possession:{' '}
+              <span style={{ fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: '#fbbf24' }}>
+                {projection.matchDominance.expectedPoss}%
+              </span>
+              {projection.matchDominance.teamSeasonAvg && (
+                <span style={{ fontSize: 9, marginLeft: 4, color: 'rgba(255,255,255,0.35)' }}>
+                  (avg: {projection.matchDominance.teamSeasonAvg}%)
+                </span>
+              )}
+              {' → '}
+              <span style={{ fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: 'rgba(255,255,255,0.4)', textDecoration: 'line-through' }}>
+                {projection.matchDominance.oldProjection}
+              </span>
+              {' → '}
+              <span style={{ fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: '#fbbf24' }}>
+                {projection.matchDominance.newProjection}
+              </span>
+              <span style={{ fontSize: 9, marginLeft: 4, color: 'rgba(251,191,36,0.6)' }}>
+                (x{projection.matchDominance.multiplier})
+              </span>
+            </div>
+            {projection.matchDominance.notes?.length > 0 && (
+              <div style={{ marginTop: 4, fontSize: 9, color: 'rgba(251,191,36,0.5)', fontStyle: 'italic' }}>
+                {projection.matchDominance.notes[0]}
+              </div>
+            )}
+          </div>
+        )}
+
         {projection.matchupOverview && (
           <div className="matchup-overview mt-6" data-testid="matchup-overview">
             <div className="stat-label flex items-center gap-2 mb-3">

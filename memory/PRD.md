@@ -24,6 +24,13 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 - Admin Settings panel
 - Cross-country league detection (Copa Libertadores/Sudamericana)
 
+### Match Dominance Engine + Possession Model + GPT Fix (Completed April 3, 2026)
+- **Opponent-Aware Possession Model**: Replaced simple historical averaging with formula: `base = (team_avg + (100 - opp_avg)) / 2`, adjusted for home advantage (+2.5%), standings quality gap (±4%), and odds-derived dominance (±7%). Produces accurate matchup-specific possession predictions.
+- **Match Dominance Multiplier**: Calculates how expected possession divergence from season average should adjust projections. Pass-dependent props (pass_attempts, key_passes, crosses) get boosted when expected possession is above average; defensive props scale inversely.
+- **GPT Minutes Double-Count Fix**: Added explicit PREDICTION_SYSTEM rule: "NEVER double-count minutes. If data shows 43 passes in 26 minutes, the 43 IS the actual output." Prevents GPT from re-scaling by minutes.
+- **Match Context Override in AI Prompt**: Injected [MATCH DOMINANCE ANALYSIS] section with explicit instructions that AIs must raise/lower projections when match context predicts significant possession advantage/disadvantage.
+- **Frontend**: ProjectionCard shows Match Dominance indicator (expected possession vs avg, old→new projection, multiplier).
+
 ### Stats-Aware Position Resolver + Force-3-Model Consensus (Completed April 3, 2026)
 - **Stats-Aware Position Resolution**: Position resolver now extracts player's actual season stats (tackles, blocks, aerial duels, passes, key passes, dribbles, shots, goals) and feeds them to the AI. Stats evidence makes CB vs LB misclassification impossible — a CB with 0 crosses and high blocks can't be confused with a fullback.
 - **Dual-AI Validation for Defenders**: For players categorized as "Defender" by API-Football, both Grok + Gemini resolve positions in parallel. If they disagree, stats heuristics break the tie (high tackles+blocks = CB, high key passes+dribbles = fullback).
