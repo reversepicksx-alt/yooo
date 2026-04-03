@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Zap, Loader2, Lock, Mail, ShieldAlert, CreditCard, Check, ArrowLeft, User } from 'lucide-react';
-import { verifyWhop, authLogin, setPassword as apiSetPassword, resetPassword, squareCreateCheckout, squareVerifyCheckout, getSquarePlans, getSquareConfig } from '../../api';
+import { verifyWhop, authLogin, setPassword as apiSetPassword, resetPassword, squareCreateCheckout, squareVerifyCheckout, squareVerifyPayment, getSquarePlans, getSquareConfig } from '../../api';
 
 export function LoginPage({ onAuth }) {
   const [step, setStep] = useState('email');
@@ -23,6 +23,13 @@ export function LoginPage({ onAuth }) {
   const [subLoading, setSubLoading] = useState(false);
   const [subError, setSubError] = useState(null);
   const [plans, setPlans] = useState([]);
+
+  // "Already Paid?" verification state
+  const [showVerifyPayment, setShowVerifyPayment] = useState(false);
+  const [verifyEmail, setVerifyEmail] = useState('');
+  const [verifyLoading, setVerifyLoading] = useState(false);
+  const [verifyError, setVerifyError] = useState(null);
+  const [verifySuccess, setVerifySuccess] = useState(null);
 
   useEffect(() => {
     if (showSubscribe && plans.length === 0) {
@@ -201,6 +208,44 @@ export function LoginPage({ onAuth }) {
     }
   }, []); // eslint-disable-line
 
+  // Handle "Already Paid?" verification
+  const handleVerifyPayment = async (e) => {
+    e.preventDefault();
+    if (!verifyEmail.trim()) return;
+    setVerifyLoading(true);
+    setVerifyError(null);
+    setVerifySuccess(null);
+    try {
+      const res = await squareVerifyPayment(verifyEmail);
+      if (res.success && res.session_token) {
+        // Payment verified and account activated — log them in
+        localStorage.setItem('rp_email', res.email);
+        localStorage.setItem('rp_token', res.session_token);
+        localStorage.setItem('rp_access', res.access_type);
+        onAuth({ email: res.email, token: res.session_token, accessType: res.access_type });
+      } else if (res.status === 'active') {
+        // Already active, needs to log in with password
+        setVerifySuccess(res.message);
+        setTimeout(() => {
+          setShowVerifyPayment(false);
+          setEmail(verifyEmail);
+          setStep('password');
+        }, 2000);
+      } else if (res.status === 'needs_password') {
+        setVerifySuccess(res.message);
+        setTimeout(() => {
+          setShowVerifyPayment(false);
+          setEmail(verifyEmail);
+          setStep('setup');
+        }, 2000);
+      }
+    } catch (err) {
+      setVerifyError(err.message || 'Could not verify payment.');
+    } finally {
+      setVerifyLoading(false);
+    }
+  };
+
   const resetSubscribeFlow = () => {
     setShowSubscribe(false);
     setSubStep('plans');
@@ -212,6 +257,53 @@ export function LoginPage({ onAuth }) {
     setSubConfirmPw('');
     setSubError(null);
   };
+
+  // ── "ALREADY PAID?" VERIFICATION FLOW ──
+  if (showVerifyPayment) {
+    return (
+      <div className="login-page" data-testid="verify-payment-page">
+        <div className="login-bg-glow" />
+        <div className="login-bg-logo"><img src="/rp-logo.png" alt="" /></div>
+        <div className="login-container" style={{ maxWidth: 420 }}>
+          <div className="login-logo">
+            <img src="/rp-logo.png" alt="ReversePicks" className="login-logo-img" />
+            <div className="logo-text" style={{ fontSize: 28 }}>Reverse<span>Picks</span></div>
+          </div>
+          <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.15em', textTransform: 'uppercase', color: 'var(--accent)', textAlign: 'center', marginBottom: 8 }}>Verify Your Payment</p>
+          <p style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', marginBottom: 16 }}>
+            Already paid but can't access? Enter your email below and we'll verify your payment with Square.
+          </p>
+          <form onSubmit={handleVerifyPayment} className="login-form">
+            <div className="login-field">
+              <div className="login-field-icon"><Mail style={{ width: 16, height: 16 }} /></div>
+              <input
+                type="email" placeholder="Email used at checkout" value={verifyEmail}
+                onChange={e => setVerifyEmail(e.target.value)} autoFocus required
+                data-testid="verify-payment-email"
+              />
+            </div>
+            <button className="btn-primary" type="submit" disabled={verifyLoading || !verifyEmail.trim()} data-testid="verify-payment-btn">
+              {verifyLoading ? <Loader2 className="animate-spin" /> : <Check style={{ width: 16, height: 16 }} />}
+              {verifyLoading ? 'Checking Square...' : 'Verify My Payment'}
+            </button>
+            <button type="button" className="btn-secondary" onClick={() => { setShowVerifyPayment(false); setVerifyError(null); setVerifySuccess(null); }}>
+              <ArrowLeft style={{ width: 14, height: 14 }} /> Back
+            </button>
+          </form>
+          {verifySuccess && (
+            <div style={{ marginTop: 16, padding: '12px 16px', borderRadius: 10, background: 'rgba(0, 255, 136, 0.08)', border: '1px solid rgba(0, 255, 136, 0.2)', textAlign: 'center' }}>
+              <p style={{ fontSize: 13, color: '#00ff88', fontWeight: 600 }}>{verifySuccess}</p>
+            </div>
+          )}
+          {verifyError && (
+            <div className="error-box" style={{ marginTop: 16 }}>
+              <ShieldAlert /><p>{verifyError}</p>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   // ── SUBSCRIBE FLOW ──
   if (showSubscribe) {
@@ -499,6 +591,21 @@ export function LoginPage({ onAuth }) {
             <CreditCard style={{ width: 16, height: 16 }} />
             Subscribe Now
           </button>
+          <div style={{ marginTop: 12 }}>
+            <button
+              onClick={() => setShowVerifyPayment(true)}
+              data-testid="already-paid-btn"
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                fontSize: 12, color: 'var(--accent)', textDecoration: 'underline',
+                opacity: 0.8, transition: 'opacity 0.2s',
+              }}
+              onMouseEnter={e => e.currentTarget.style.opacity = '1'}
+              onMouseLeave={e => e.currentTarget.style.opacity = '0.8'}
+            >
+              Already paid? Verify your payment
+            </button>
+          </div>
         </div>
       </div>
     </div>

@@ -264,6 +264,20 @@ export async function squareVerifyCheckout(checkoutToken) {
   });
 }
 
+export async function squareVerifyPayment(email) {
+  return apiCall('/api/square/verify-payment', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+}
+
+export async function squareAdminBulkVerify(email) {
+  return apiCall('/api/square/admin/bulk-verify', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+}
+
 export async function getSquareSubscriptionStatus(email) {
   return apiCall(`/api/square/status/${encodeURIComponent(email)}`);
 }

@@ -537,17 +537,272 @@ async def cancel_subscription(req: CancelRequest):
         raise HTTPException(status_code=500, detail=f"Cancel error: {str(e)}")
 
 
+async def _activate_pending_checkout(pending: dict, source: str = "webhook"):
+    """Shared helper to activate a user from a pending checkout record."""
+    email_lower = pending["email"]
+    plan_key = pending.get("planKey", "monthly")
+    plan_doc_info = PLANS.get(plan_key, {})
+    now = datetime.now(timezone.utc).isoformat()
+
+    from datetime import timedelta
+    cadence_days = {"weekly": 7, "monthly": 30, "quarterly": 90}
+    expires_at = pending.get("expiresAt") or (
+        datetime.now(timezone.utc) + timedelta(days=cadence_days.get(plan_key, 30))
+    ).isoformat()
+
+    # Create user account
+    await db.users.update_one(
+        {"email": email_lower},
+        {"$set": {
+            "email": email_lower,
+            "passwordHash": pending.get("passwordHash", ""),
+            "created_at": now,
+            "signup_source": f"square_{source}",
+        }},
+        upsert=True,
+    )
+
+    # Create subscription record
+    await db.square_subscriptions.update_one(
+        {"email": email_lower},
+        {"$set": {
+            "email": email_lower,
+            "firstName": pending.get("firstName", ""),
+            "lastName": pending.get("lastName", ""),
+            "planKey": plan_key,
+            "planName": plan_doc_info.get("name", plan_key),
+            "planLabel": plan_doc_info.get("label", ""),
+            "cadence": plan_doc_info.get("cadence", "MONTHLY"),
+            "status": "ACTIVE",
+            "subscribedAt": now,
+            "expiresAt": expires_at,
+            "updatedAt": now,
+            "source": source,
+        }},
+        upsert=True,
+    )
+
+    # Mark checkout as completed
+    await db.pending_checkouts.update_one(
+        {"email": email_lower, "status": "pending"},
+        {"$set": {"status": "completed", "completedAt": now, "activatedBy": source}}
+    )
+
+    print(f"[SQUARE ACTIVATE] {source} activated {email_lower} on plan {plan_key}")
+    return True
+
+
 @router.post("/webhook")
 async def square_webhook(event: dict):
+    """Handle Square webhook events — payment.completed, order.updated, subscription.updated."""
     event_type = event.get("type", "")
     data = event.get("data", {}).get("object", {})
+    print(f"[SQUARE WEBHOOK] Received event: {event_type}")
 
-    if event_type == "subscription.updated":
-        sq_sub_id = data.get("subscription", {}).get("id") or data.get("id")
-        new_status = data.get("subscription", {}).get("status") or data.get("status")
-        if sq_sub_id and new_status:
-            await db.square_subscriptions.update_one(
-                {"squareSubscriptionId": sq_sub_id},
-                {"$set": {"status": new_status, "updatedAt": datetime.now(timezone.utc).isoformat()}}
-            )
+    try:
+        # ── payment.completed — most common for checkout links ──
+        if event_type == "payment.completed":
+            payment = data.get("payment", data)
+            buyer_email = (payment.get("buyer_email_address") or "").lower().strip()
+            order_id = payment.get("order_id", "")
+            print(f"[SQUARE WEBHOOK] payment.completed — email={buyer_email}, order={order_id}")
+
+            # Try matching by email first
+            if buyer_email:
+                pending = await db.pending_checkouts.find_one(
+                    {"email": buyer_email, "status": "pending"}, {"_id": 0}
+                )
+                if pending:
+                    await _activate_pending_checkout(pending, source="webhook_payment")
+                    return {"received": True, "activated": True}
+
+            # Fallback: match by order_id
+            if order_id:
+                pending = await db.pending_checkouts.find_one(
+                    {"squareOrderId": order_id, "status": "pending"}, {"_id": 0}
+                )
+                if pending:
+                    await _activate_pending_checkout(pending, source="webhook_payment_order")
+                    return {"received": True, "activated": True}
+
+            print(f"[SQUARE WEBHOOK] No pending checkout found for payment email={buyer_email} order={order_id}")
+
+        # ── order.updated / order.completed ──
+        elif event_type in ("order.updated", "order.completed"):
+            order = data.get("order", data)
+            order_id = order.get("id", "")
+            order_state = order.get("state", "")
+            print(f"[SQUARE WEBHOOK] {event_type} — order={order_id}, state={order_state}")
+
+            if order_state == "COMPLETED" and order_id:
+                pending = await db.pending_checkouts.find_one(
+                    {"squareOrderId": order_id, "status": "pending"}, {"_id": 0}
+                )
+                if pending:
+                    await _activate_pending_checkout(pending, source="webhook_order")
+                    return {"received": True, "activated": True}
+
+        # ── subscription.updated (legacy) ──
+        elif event_type == "subscription.updated":
+            sq_sub_id = data.get("subscription", {}).get("id") or data.get("id")
+            new_status = data.get("subscription", {}).get("status") or data.get("status")
+            if sq_sub_id and new_status:
+                await db.square_subscriptions.update_one(
+                    {"squareSubscriptionId": sq_sub_id},
+                    {"$set": {"status": new_status, "updatedAt": datetime.now(timezone.utc).isoformat()}}
+                )
+
+        # ── invoice.payment_made ──
+        elif event_type == "invoice.payment_made":
+            invoice = data.get("invoice", data)
+            order_id = invoice.get("order_id", "")
+            print(f"[SQUARE WEBHOOK] invoice.payment_made — order={order_id}")
+            if order_id:
+                pending = await db.pending_checkouts.find_one(
+                    {"squareOrderId": order_id, "status": "pending"}, {"_id": 0}
+                )
+                if pending:
+                    await _activate_pending_checkout(pending, source="webhook_invoice")
+                    return {"received": True, "activated": True}
+
+    except Exception as e:
+        print(f"[SQUARE WEBHOOK] Error processing {event_type}: {e}")
+
     return {"received": True}
+
+
+class VerifyPaymentRequest(BaseModel):
+    email: str
+
+
+@router.post("/verify-payment")
+async def verify_payment(req: VerifyPaymentRequest):
+    """Self-recovery: user enters email, we check Square for their payment and activate."""
+    email_lower = req.email.lower().strip()
+
+    # Check if already active
+    existing_sub = await db.square_subscriptions.find_one(
+        {"email": email_lower, "status": {"$in": ["ACTIVE", "PENDING"]}},
+        {"_id": 0}
+    )
+    if existing_sub:
+        # Already has active sub — check if they have a user account with password
+        user = await db.users.find_one({"email": email_lower}, {"_id": 0})
+        if user and user.get("passwordHash"):
+            return {"found": True, "status": "active", "message": "Your subscription is active. Please log in with your password."}
+        return {"found": True, "status": "needs_password", "message": "Subscription found! Please set a password to continue."}
+
+    # Check pending checkouts
+    pending = await db.pending_checkouts.find_one(
+        {"email": email_lower, "status": "pending"}, {"_id": 0}
+    )
+    if not pending:
+        raise HTTPException(status_code=404, detail="No pending payment found for this email. Please subscribe first.")
+
+    # Try to verify the order with Square
+    order_id = pending.get("squareOrderId")
+    payment_verified = False
+
+    if order_id:
+        try:
+            client = get_square_client()
+            order_resp = client.orders.get(order_id=order_id)
+            order_state = order_resp.order.state if order_resp.order else None
+            print(f"[SQUARE VERIFY-PAYMENT] Order {order_id} state: {order_state}")
+            if order_state in ("COMPLETED", "OPEN"):
+                payment_verified = True
+        except Exception as e:
+            print(f"[SQUARE VERIFY-PAYMENT] Order check error: {e}")
+
+    if not payment_verified:
+        # Fallback: search recent payments by email
+        try:
+            client = get_square_client()
+            payments_resp = client.payments.list(
+                begin_time=(datetime.now(timezone.utc).replace(day=1)).isoformat(),
+                sort_order="DESC",
+            )
+            if payments_resp.payments:
+                for pmt in payments_resp.payments:
+                    if (pmt.buyer_email_address or "").lower().strip() == email_lower:
+                        payment_verified = True
+                        print(f"[SQUARE VERIFY-PAYMENT] Found payment for {email_lower}: {pmt.id}")
+                        break
+        except Exception as e:
+            print(f"[SQUARE VERIFY-PAYMENT] Payment search error: {e}")
+
+    if not payment_verified:
+        raise HTTPException(status_code=404, detail="Could not verify payment. Please contact support if you've already paid.")
+
+    # Activate the user
+    await _activate_pending_checkout(pending, source="self_recovery")
+
+    # Create session
+    session_token = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    await db.sessions.update_one(
+        {"email": email_lower},
+        {"$set": {
+            "email": email_lower,
+            "session_token": session_token,
+            "access_type": "Premium",
+            "last_active": now,
+        }},
+        upsert=True,
+    )
+
+    return {
+        "found": True,
+        "status": "activated",
+        "success": True,
+        "email": email_lower,
+        "session_token": session_token,
+        "access_type": "Premium",
+        "message": "Payment verified! Your account is now active.",
+    }
+
+
+@router.post("/admin/bulk-verify")
+async def admin_bulk_verify(body: dict):
+    """Admin endpoint: check all pending checkouts against Square and activate paid ones."""
+    owner_email = (body.get("email", "")).lower().strip()
+    from config import OWNER_EMAIL
+    if owner_email != OWNER_EMAIL:
+        raise HTTPException(status_code=403, detail="Admin only.")
+
+    pending_list = await db.pending_checkouts.find(
+        {"status": "pending"}, {"_id": 0}
+    ).to_list(200)
+
+    if not pending_list:
+        return {"activated": 0, "message": "No pending checkouts found."}
+
+    client = get_square_client()
+    activated = []
+
+    for pending in pending_list:
+        order_id = pending.get("squareOrderId")
+        p_email = pending.get("email", "")
+        verified = False
+
+        if order_id:
+            try:
+                order_resp = client.orders.get(order_id=order_id)
+                if order_resp.order and order_resp.order.state in ("COMPLETED", "OPEN"):
+                    verified = True
+            except Exception as e:
+                print(f"[BULK VERIFY] Order check error for {p_email}: {e}")
+
+        if verified:
+            try:
+                await _activate_pending_checkout(pending, source="admin_bulk_verify")
+                activated.append(p_email)
+            except Exception as e:
+                print(f"[BULK VERIFY] Activation error for {p_email}: {e}")
+
+    return {
+        "activated": len(activated),
+        "emails": activated,
+        "total_pending": len(pending_list),
+        "message": f"Activated {len(activated)} of {len(pending_list)} pending checkouts.",
+    }

@@ -127,7 +127,21 @@ export default function App() {
   const tacticalFileRef = useRef(null);
 
   // Auth check on mount — intentionally runs once
+  // If checkout_token is in URL, skip session check and force LoginPage
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const hasCheckoutToken = params.has('checkout_token');
+
+    if (hasCheckoutToken) {
+      // Force clear stale session so LoginPage renders and handles the token
+      localStorage.removeItem('rp_email');
+      localStorage.removeItem('rp_token');
+      localStorage.removeItem('rp_access');
+      setAuth(null);
+      setAuthChecking(false);
+      return;
+    }
+
     const checkAuth = async () => {
       const email = localStorage.getItem('rp_email');
       const token = localStorage.getItem('rp_token');
