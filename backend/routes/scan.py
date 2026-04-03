@@ -163,6 +163,12 @@ TEAM_LEAGUE_MAP = {
     "angers": 61, "saint-etienne": 61, "st etienne": 61, "ajaccio": 61,
     "portland thorns": 254, "washington spirit": 254, "north carolina courage": 254,
     "orlando pride": 254, "gotham fc": 254, "angel city": 254, "kansas city current": 254,
+    "san diego wave": 254, "wave fc": 254, "houston dash": 254, "racing louisville": 254,
+    "chicago red stars": 254, "bay fc": 254, "utah royals": 254,
+    "boston legacy": 254, "seattle reign": 254, "reign fc": 254,
+    "angel city fc": 254, "north carolina": 254, "nc courage": 254,
+    "nj/ny gotham": 254, "ny/nj gotham": 254, "portland thorns fc": 254,
+    "tampa bay sun": 254, "brooklyn fc": 254,
     "italy": 5, "france": 5, "germany": 5, "spain": 5, "england": 5,
     "portugal": 5, "brazil": 5, "argentina": 5, "netherlands": 5, "belgium": 5,
     "croatia": 5, "usa": 5, "united states": 5, "mexico": 5, "japan": 5,
@@ -922,6 +928,24 @@ async def scan_prop(req: ScanPropRequest):
                     cache_team_id = club_id
 
             cached_player = await _resolve_player_via_cache(player_name, cache_team_id)
+            if cached_player:
+                # Guard: If we have a team hint but couldn't find the team in cache,
+                # validate the cached player's team doesn't belong to a completely different league
+                if not cache_team_id and player_team_hint and not is_international:
+                    cached_league = cached_player.get("leagueId")
+                    expected_league = TEAM_LEAGUE_MAP.get(player_team_hint)
+                    if expected_league and cached_league and cached_league != expected_league:
+                        print(f"[SCAN] Cache REJECTED: {player_name} found as {cached_player['name']} in league {cached_league}, but expected league {expected_league} for team '{player_team_hint}'")
+                        cached_player = None
+                    elif not expected_league and cached_league:
+                        # If the team hint isn't in map at all, check if cached player's team name
+                        # is at least loosely related to the team hint
+                        cached_team_lower = (cached_player.get("teamName") or "").lower()
+                        hint_words = player_team_hint.split()
+                        if hint_words and not any(w in cached_team_lower for w in hint_words):
+                            print(f"[SCAN] Cache REJECTED: {player_name} found as {cached_player['name']} on '{cached_player.get('teamName')}', doesn't match team hint '{player_team_hint}'")
+                            cached_player = None
+
             if cached_player:
                 if is_international and nat_team_id:
                     resolved_player = {
