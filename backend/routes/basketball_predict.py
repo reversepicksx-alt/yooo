@@ -24,6 +24,7 @@ from basketball_utils import (
     BBALL_CURRENT_SEASON, get_basketball_odds,
 )
 from basketball_cache import get_bball_player_by_name, get_bball_team_by_name, search_bball_teams
+from routes.miss_analysis import get_calibration_adjustment
 
 router = APIRouter(prefix="/api", tags=["basketball"])
 
@@ -638,6 +639,15 @@ async def basketball_predict(req: BasketballPredictionRequest):
         if analytics:
             print(f"[BBALL ANALYTICS] Over-rate: {analytics['over_pct']}% | Lean: {analytics['stat_lean']} | Edge: {analytics['edge_signal']} | Role: {analytics['role']} | Min: {analytics['avg_minutes']} | Rate-proj: {analytics['projected_from_rate']}")
 
+        # =============================================
+        # SELF-LEARNING CALIBRATION: Fetch historical miss patterns
+        # =============================================
+        calibration = await get_calibration_adjustment("basketball", req.propType, req.venue)
+        calibration_context = ""
+        if calibration["applied"]:
+            calibration_context = f"\n{calibration['context']}"
+            print(f"[CALIBRATE] Basketball {req.propType}: {calibration['adjustment']:+.1f}% adjustment ({calibration['missCount']} misses)")
+
         # ═══════════════════════════════════════
         # REAL RECENT SAMPLES for frontend
         # ═══════════════════════════════════════
@@ -716,7 +726,7 @@ RULES: recentSamples=[]. No AI model names in output."""
 Sport: NBA/WNBA Basketball
 recentSamples=[]
 
-{data_digest[:7000]}
+{data_digest[:7000]}{calibration_context}
 
 Analyze the statistical verdict, per-minute projection, and over-rate FIRST. Then factor in matchup context. Return JSON only."""
 
@@ -976,6 +986,27 @@ Analyze the statistical verdict, per-minute projection, and over-rate FIRST. The
 
             # Re-determine recommendation after all overrides
             prediction["recommendation"] = "over" if prediction["projectedValue"] > req.line else "under"
+
+        # =============================================
+        # APPLY SELF-LEARNING CALIBRATION TO PROJECTION
+        # =============================================
+        if calibration["applied"]:
+            old_proj = prediction.get("projectedValue", req.line)
+            adj_factor = calibration["adjustment"] / 100.0
+            new_proj = round(old_proj * (1 + adj_factor), 1)
+            prediction["projectedValue"] = new_proj
+            prediction["recommendation"] = "over" if new_proj > req.line else "under"
+            prediction["calibration"] = {
+                "applied": True,
+                "adjustment": calibration["adjustment"],
+                "oldProjection": old_proj,
+                "newProjection": new_proj,
+                "missCount": calibration["missCount"],
+                "biasDirection": calibration["biasDirection"],
+            }
+            print(f"[CALIBRATE] Adjusted projection: {old_proj} → {new_proj} ({calibration['adjustment']:+.1f}%)")
+        else:
+            prediction["calibration"] = {"applied": False}
 
         # Force-set identity fields from REQUEST data — never trust AI output for these
         player_pos = player_info.get("position", "") if player_info else ""

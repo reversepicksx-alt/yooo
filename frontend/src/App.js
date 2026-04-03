@@ -400,7 +400,7 @@ export default function App() {
     const val = parseFloat(correctValue);
     if (isNaN(val) || val < 0) { toast.error('Enter a valid number'); return; }
     try {
-      const result = await correctPick(user.email, user.token, pickId, val);
+      const result = await correctPick(auth.email, auth.token, pickId, val);
       toast.success(`Corrected → ${result.result.toUpperCase()}`);
       setSavedPicks(prev => prev.map(p => p.pickId === pickId ? { ...p, actualValue: val, result: result.result, correctedManually: true } : p));
       setCorrectingPick(null);
@@ -411,10 +411,10 @@ export default function App() {
   };
 
   const handleAnalyzeMiss = async (pickId) => {
-    if (!user) return;
+    if (!auth) return;
     setAnalyzingMiss(prev => ({ ...prev, [pickId]: true }));
     try {
-      const result = await analyzeMiss(user.email, user.token, pickId);
+      const result = await analyzeMiss(auth.email, auth.token, pickId);
       setMissAnalyses(prev => ({ ...prev, [pickId]: result.analysis }));
       toast.success('Miss analysis complete');
     } catch (err) {
@@ -426,8 +426,8 @@ export default function App() {
 
   // Load miss analyses when switching to missed tab
   React.useEffect(() => {
-    if (trackingView === 'missed' && user) {
-      getMisses(user.email, user.token).then(data => {
+    if (trackingView === 'missed' && auth) {
+      getMisses(auth.email, auth.token).then(data => {
         if (data?.misses) {
           const analyses = {};
           data.misses.forEach(m => {
@@ -437,7 +437,7 @@ export default function App() {
         }
       }).catch(() => {});
     }
-  }, [trackingView, user]);
+  }, [trackingView, auth]);
 
   const savePickFn = async () => {
     if (!projection || !auth) return;
@@ -1830,6 +1830,56 @@ export default function App() {
                             style={{ background: 'none', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 6, padding: '6px 10px', fontSize: 11, color: 'rgba(255,255,255,0.5)', cursor: 'pointer' }}>
                             Cancel
                           </button>
+                        </div>
+                      )}
+
+                      {/* AUTO MISS ANALYSIS — Self-learning feedback */}
+                      {isMiss && missAnalyses[pick.pickId] && (
+                        <div data-testid={`miss-analysis-${pick.pickId}`} style={{
+                          margin: '0 8px 6px', padding: '6px 8px',
+                          background: 'rgba(244,63,94,0.06)',
+                          border: '1px solid rgba(244,63,94,0.15)',
+                          borderRadius: 6,
+                        }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+                            <Brain style={{ width: 9, height: 9, color: '#f43f5e' }} />
+                            <span style={{ fontSize: 7, fontWeight: 800, color: '#f43f5e', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                              Auto-Analysis
+                            </span>
+                            <span style={{ fontSize: 6, color: 'rgba(255,255,255,0.25)', marginLeft: 'auto' }}>
+                              {missAnalyses[pick.pickId].modelsResponded?.join(' + ') || ''}
+                            </span>
+                          </div>
+                          <p style={{ fontSize: 8, color: 'rgba(255,255,255,0.7)', margin: 0, lineHeight: 1.4 }}>
+                            {missAnalyses[pick.pickId].primaryReason}
+                          </p>
+                          {missAnalyses[pick.pickId].factors?.length > 0 && (
+                            <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                              {missAnalyses[pick.pickId].factors.slice(0, 3).map((f, i) => (
+                                <span key={i} style={{
+                                  fontSize: 6, padding: '1px 4px', borderRadius: 3,
+                                  background: 'rgba(244,63,94,0.1)', color: 'rgba(244,63,94,0.7)',
+                                  border: '1px solid rgba(244,63,94,0.15)',
+                                }}>{f}</span>
+                              ))}
+                            </div>
+                          )}
+                          {missAnalyses[pick.pickId].calibrationSuggestions?.[0] && (
+                            <p style={{ fontSize: 7, color: 'rgba(139,92,246,0.7)', margin: '4px 0 0', fontStyle: 'italic' }}>
+                              Calibration: {missAnalyses[pick.pickId].calibrationSuggestions[0]}
+                            </p>
+                          )}
+                        </div>
+                      )}
+                      {isMiss && !missAnalyses[pick.pickId] && pick.actualValue != null && (
+                        <div style={{
+                          margin: '0 8px 6px', padding: '4px 8px',
+                          display: 'flex', alignItems: 'center', gap: 4,
+                          background: 'rgba(244,63,94,0.04)',
+                          borderRadius: 6,
+                        }}>
+                          <Loader2 style={{ width: 8, height: 8, color: 'rgba(244,63,94,0.4)', animation: 'spin 1s linear infinite' }} />
+                          <span style={{ fontSize: 7, color: 'rgba(255,255,255,0.3)' }}>Learning from this miss...</span>
                         </div>
                       )}
                     </div>

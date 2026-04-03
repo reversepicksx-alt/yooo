@@ -1,7 +1,7 @@
 import React from 'react';
 import {
   Zap, Clock, Activity, Shield, ShieldAlert, Target,
-  TrendingUp, TrendingDown, BarChart3, Users
+  TrendingUp, TrendingDown, BarChart3, Users, RotateCcw
 } from 'lucide-react';
 import { getPropLabel } from '../../constants';
 import { ProbabilityChart } from './ProbabilityChart';
@@ -219,6 +219,32 @@ export function ProjectionCard({ projection, onSave, excludedIndices, onToggleSa
             </div>
           )}
         </div>
+
+        {/* Self-Learning Calibration Indicator */}
+        {projection.calibration?.applied && (
+          <div data-testid="calibration-indicator" className="stat-box mt-4" style={{
+            borderColor: 'rgba(139,92,246,0.25)',
+            background: 'rgba(139,92,246,0.04)',
+          }}>
+            <div className="stat-label flex items-center gap-2" style={{ marginBottom: 4 }}>
+              <RotateCcw style={{ width: 10, height: 10, color: '#8b5cf6' }} />
+              <span style={{ color: '#8b5cf6' }}>Self-Learning Calibration</span>
+            </div>
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)', lineHeight: 1.5 }}>
+              Adjusted projection from{' '}
+              <span style={{ fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: 'rgba(255,255,255,0.4)', textDecoration: 'line-through' }}>
+                {projection.calibration.oldProjection}
+              </span>
+              {' → '}
+              <span style={{ fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: '#8b5cf6' }}>
+                {projection.calibration.newProjection}
+              </span>
+              <span style={{ fontSize: 9, marginLeft: 6, color: 'rgba(139,92,246,0.6)' }}>
+                ({projection.calibration.adjustment > 0 ? '+' : ''}{projection.calibration.adjustment}% | {projection.calibration.missCount} misses learned)
+              </span>
+            </div>
+          </div>
+        )}
 
         {projection.matchupOverview && (
           <div className="matchup-overview mt-6" data-testid="matchup-overview">

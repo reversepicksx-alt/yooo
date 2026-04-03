@@ -1,10 +1,12 @@
 """
 Self-Learning Miss Analysis Engine
-- Runs 3-AI post-mortem on missed predictions
-- Extracts calibration patterns
-- Applies learned adjustments to future predictions
+- Automatically runs 3-AI post-mortem on missed predictions at settlement
+- Extracts calibration patterns (sport, propType, venue, position)
+- Applies learned adjustments to ALL future predictions across both pipelines
+- No manual triggers — fully autonomous feedback loop
 """
 import traceback
+import asyncio
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 from config import db, EMERGENT_LLM_KEY
@@ -87,32 +89,74 @@ Return ONLY valid JSON, no markdown or explanation."""
 
     models = [
         ("gemini/gemini-2.0-flash", "GE"),
-        ("xai/grok-4.1-fast-non-reasoning", "GK"),
+        ("grok-4-1-fast-non-reasoning", "GK"),
         ("gpt-4.1-mini", "GP"),
     ]
 
+    EMERGENT_PROXY = "https://integrations.emergentagent.com/llm"
+    import litellm
+    litellm.drop_params = True
+
     async def call_model(model_id, label):
         try:
-            api_key = EMERGENT_LLM_KEY
-            extra = {}
-            if "xai/" in model_id:
-                import os
-                api_key = os.environ.get("XAI_API_KEY", EMERGENT_LLM_KEY)
-                extra = {}
+            import json as jmod
 
-            resp = await asyncio.wait_for(
-                acompletion(
-                    model=model_id,
-                    messages=[{"role": "user", "content": prompt}],
-                    api_key=api_key,
-                    temperature=0,
-                    max_tokens=500,
-                    **extra,
-                ),
-                timeout=20,
-            )
-            import json
-            text = resp.choices[0].message.content.strip()
+            if label == "GK":
+                # Grok: Direct OpenAI SDK with xAI base URL (proven pattern from predict.py)
+                import os
+                from openai import OpenAI
+                xai_key = os.environ.get("XAI_API_KEY", "")
+                if not xai_key:
+                    return label, None
+                grok_client = OpenAI(api_key=xai_key, base_url="https://api.x.ai/v1")
+                loop = asyncio.get_event_loop()
+                resp = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        None,
+                        lambda: grok_client.chat.completions.create(
+                            model="grok-4-1-fast-non-reasoning",
+                            messages=[{"role": "user", "content": prompt}],
+                            temperature=0,
+                            max_tokens=500,
+                        )
+                    ),
+                    timeout=20,
+                )
+                text = resp.choices[0].message.content.strip()
+            elif label == "GP":
+                # GPT: Via Emergent proxy using OpenAI SDK (proven pattern from predict.py)
+                from openai import OpenAI
+                gpt_client = OpenAI(api_key=EMERGENT_LLM_KEY, base_url=EMERGENT_PROXY + "/v1")
+                loop = asyncio.get_event_loop()
+                resp = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        None,
+                        lambda: gpt_client.chat.completions.create(
+                            model="gpt-4.1-mini",
+                            messages=[{"role": "user", "content": prompt}],
+                            temperature=0,
+                            max_tokens=500,
+                        )
+                    ),
+                    timeout=20,
+                )
+                text = resp.choices[0].message.content.strip()
+            else:
+                # Gemini: Via litellm with Emergent proxy + custom_llm_provider (proven pattern)
+                resp = await asyncio.wait_for(
+                    acompletion(
+                        model=model_id,
+                        messages=[{"role": "user", "content": prompt}],
+                        api_key=EMERGENT_LLM_KEY,
+                        api_base=EMERGENT_PROXY,
+                        custom_llm_provider="openai",
+                        temperature=0,
+                        max_tokens=500,
+                    ),
+                    timeout=20,
+                )
+                text = resp.choices[0].message.content.strip()
+
             # Clean markdown fences
             if text.startswith("```"):
                 text = text.split("\n", 1)[1] if "\n" in text else text[3:]
@@ -120,7 +164,7 @@ Return ONLY valid JSON, no markdown or explanation."""
                 text = text[:-3]
             if text.startswith("json"):
                 text = text[4:]
-            return label, json.loads(text.strip())
+            return label, jmod.loads(text.strip())
         except Exception as e:
             print(f"[MISS ANALYSIS] {label} error: {e}")
             return label, None
@@ -290,9 +334,16 @@ async def get_misses(req: GetMissesRequest):
         ):
             analyses[a["pickId"]] = a
 
-    # Merge analyses into picks
+    # Merge analyses into picks + auto-trigger for unanalyzed misses
+    unanalyzed = []
     for m in misses:
         m["missAnalysis"] = analyses.get(m["pickId"])
+        if not m["missAnalysis"]:
+            unanalyzed.append(m)
+
+    # Auto-trigger analysis for unanalyzed misses (background, non-blocking)
+    for m in unanalyzed[:5]:  # Cap at 5 to avoid overloading
+        asyncio.create_task(auto_analyze_miss_background(m["pickId"], req.email.lower()))
 
     # Get calibration stats
     stats = await db.calibration_stats.find({}, {"_id": 0}).to_list(20)
@@ -317,27 +368,92 @@ async def get_misses(req: GetMissesRequest):
     }
 
 
-async def get_calibration_adjustment(sport: str, prop_type: str) -> float:
+async def auto_analyze_miss_background(pick_id: str, email: str):
+    """Background task: automatically analyze a missed prediction on settlement.
+    Fire-and-forget — runs 3-AI postmortem, stores analysis, extracts calibration."""
+    try:
+        await asyncio.sleep(2)  # Brief delay to ensure DB write is committed
+        pick = await db.picks.find_one(
+            {"pickId": pick_id, "email": email}, {"_id": 0}
+        )
+        if not pick or pick.get("result") != "miss":
+            return
+
+        existing = await db.miss_analyses.find_one({"pickId": pick_id}, {"_id": 0})
+        if existing:
+            return
+
+        analysis = await _run_miss_postmortem(pick)
+        if not analysis:
+            print(f"[AUTO-CALIBRATE] All AIs failed for pick {pick_id}")
+            return
+
+        analysis_doc = {
+            "pickId": pick_id,
+            "email": email,
+            "auto": True,
+            **analysis,
+        }
+        await db.miss_analyses.update_one(
+            {"pickId": pick_id}, {"$set": analysis_doc}, upsert=True
+        )
+
+        await _extract_calibration_pattern(pick, analysis)
+
+        player = pick.get("playerName", "?")
+        prop = pick.get("propType", "?")
+        proj = pick.get("projectedValue", 0)
+        actual = pick.get("actualValue", 0)
+        print(f"[AUTO-CALIBRATE] {player} {prop}: projected {proj}, actual {actual} — {analysis.get('primaryReason', '')[:80]}")
+    except Exception as e:
+        print(f"[AUTO-CALIBRATE] Error analyzing pick {pick_id}: {e}")
+        traceback.print_exc()
+
+
+async def get_calibration_adjustment(sport: str, prop_type: str, venue: str = None) -> dict:
     """Get calibration adjustment for a prop type based on historical misses.
-    Returns a percentage adjustment (e.g., -5.2 means reduce projection by 5.2%)
+    Returns a dict with adjustment percentage, context string, and metadata.
+    This is called by BOTH prediction pipelines before AI models run.
     """
+    result = {"adjustment": 0.0, "applied": False, "context": "", "missCount": 0}
+
     stat = await db.calibration_stats.find_one(
         {"propType": prop_type, "sport": sport}, {"_id": 0}
     )
     if not stat or stat.get("missCount", 0) < 3:
-        return 0.0  # Need at least 3 misses to calibrate
+        return result  # Need at least 3 misses to calibrate
 
     recent = stat.get("recentErrors", [])
     if not recent:
-        return 0.0
+        return result
 
+    miss_count = stat.get("missCount", 0)
     avg_error = sum(recent) / len(recent)
+
     # Only apply if the bias is consistent (>60% of errors in same direction)
     positive = sum(1 for e in recent if e > 0)
     negative = sum(1 for e in recent if e < 0)
     total = len(recent)
     if max(positive, negative) / total < 0.6:
-        return 0.0  # Too mixed, no clear bias
+        return result  # Too mixed, no clear bias
 
     # Cap adjustment at ±15%
-    return max(-15.0, min(15.0, -avg_error * 0.5))
+    adjustment = max(-15.0, min(15.0, -avg_error * 0.5))
+    bias_dir = "over-projecting" if avg_error > 0 else "under-projecting"
+    prop_label = prop_type.replace("_", " ").title()
+
+    result = {
+        "adjustment": round(adjustment, 1),
+        "applied": True,
+        "context": (
+            f"[SELF-LEARNING CALIBRATION]\n"
+            f"System has historically {bias_dir} {prop_label} by {abs(avg_error):.1f}% "
+            f"({miss_count} misses analyzed, last {total} tracked).\n"
+            f"Applying {adjustment:+.1f}% correction to projection.\n"
+            f">>> Adjust your projection accordingly. If system over-projects, lean lower. If under-projects, lean higher. <<<"
+        ),
+        "missCount": miss_count,
+        "avgError": round(avg_error, 1),
+        "biasDirection": bias_dir,
+    }
+    return result
