@@ -78,7 +78,8 @@ LEGAL: ALL 3rd-party app names and player/team images removed. No AI model names
 - P1: Opponent resolution failures ("Atlético MG", "Sheff Wed", "Sheff Utd") — RESOLVED: Added accent stripping, Brazilian abbreviation expansion, English football abbreviation expansion (TEAM_NAME_EXPANSIONS map), fixed women/youth team filtering fallback.
 - P1: Championship/Copa league detection — RESOLVED: Added 30+ Championship teams to TEAM_LEAGUE_MAP, added Liga Pro Ecuador teams, added Copa Libertadores (13) and Copa Sudamericana (11) to SUPPORTED_LEAGUES, added cross-country Copa/UCL detection in `_infer_league_id`.
 - P1: Position/Role contradictions (GK · Fullback) — RESOLVED: Position validation now auto-corrects invalid role combos to default valid role for that position.
-- P1: Editable Scan Cards — DONE: Users can now tap a pencil icon on scan results to correct player name, team, and opponent. Calls POST /api/re-resolve to re-resolve with corrected data. Supports both soccer and basketball.
+- P1: Editable Scan Cards — DONE: Users can now tap a pencil icon on scan results to correct player name, team, opponent, position, and role. Calls POST /api/re-resolve to re-resolve with corrected data. Supports both soccer and basketball.
+- P0: Systematic team resolution — DONE: Built auto-caching team resolver (`team_resolver.py`) that fetches ALL teams from 14 supported leagues (266 teams) and does smart fuzzy matching. Handles "Paris SG", "Sheff Wed", "Man Utd", "PSG", "Wolves" etc. automatically. Cache refreshes every 7 days.
 
 ## Prioritized Backlog
 ### P1: Slip correlation analysis

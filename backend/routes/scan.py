@@ -207,6 +207,16 @@ async def _infer_league_id(team_name: str, opponent_name: str, ai_league_id: int
                 team_league = found_lid
             else:
                 opp_league = found_lid
+        else:
+            # Try smart team cache for teams not in hardcoded map
+            from team_resolver import find_team
+            smart = await find_team(name.lower().strip())
+            if smart:
+                found_lid = smart["leagueId"]
+                if is_team:
+                    team_league = found_lid
+                else:
+                    opp_league = found_lid
 
     # Step 2: Cross-country detection → Copa / Champions League
     if team_league and opp_league and team_league != opp_league:
@@ -371,7 +381,7 @@ async def _resolve_player_via_api(player_name: str, player_team_hint: str,
 
 
 async def _resolve_opponent(opponent_name: str, is_international: bool, league_id: int) -> dict:
-    """Resolve opponent team: cache first, API-Sports fallback."""
+    """Resolve opponent team: smart cache first, then API-Sports fallback."""
     if not opponent_name:
         return None
 
@@ -383,7 +393,14 @@ async def _resolve_opponent(opponent_name: str, is_international: bool, league_i
         if opp_nat_id:
             return {"teamId": opp_nat_id, "teamName": opp_canonical or opponent_name.strip()}
 
-    # 2. Try club team cache
+    # 2. Smart team resolver (auto-cached from all supported leagues)
+    from team_resolver import find_team
+    smart_match = await find_team(opp_lower, league_id if not is_international else None)
+    if smart_match:
+        print(f"[OPP RESOLVE] Smart cache hit: '{opponent_name}' → {smart_match['teamName']} (ID: {smart_match['teamId']})")
+        return {"teamId": smart_match["teamId"], "teamName": smart_match["teamName"]}
+
+    # 3. Try legacy club team cache
     club_id, club_name = await get_team_by_name(strip_accents(opponent_name), league_id if not is_international else None)
     if club_id:
         return {"teamId": club_id, "teamName": club_name}

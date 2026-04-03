@@ -65,6 +65,9 @@ async def seed_grants():
     # Seed the API-Football lookup cache (non-blocking)
     import asyncio
     asyncio.create_task(seed_cache())
+    # Build master team cache for smart opponent resolution
+    from team_resolver import build_teams_cache
+    asyncio.create_task(build_teams_cache())
     # Start 24h auto-refresh loop for transfers + data freshness
     asyncio.create_task(background_refresh_loop())
     # Seed basketball (NBA + WNBA) cache
