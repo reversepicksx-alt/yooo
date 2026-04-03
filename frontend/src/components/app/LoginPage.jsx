@@ -27,6 +27,7 @@ export function LoginPage({ onAuth }) {
   // "Already Paid?" verification state
   const [showVerifyPayment, setShowVerifyPayment] = useState(false);
   const [verifyEmail, setVerifyEmail] = useState('');
+  const [verifyPassword, setVerifyPassword] = useState('');
   const [verifyLoading, setVerifyLoading] = useState(false);
   const [verifyError, setVerifyError] = useState(null);
   const [verifySuccess, setVerifySuccess] = useState(null);
@@ -212,19 +213,21 @@ export function LoginPage({ onAuth }) {
   const handleVerifyPayment = async (e) => {
     e.preventDefault();
     if (!verifyEmail.trim()) return;
+    if (verifyPassword.length < 6) { setVerifyError('Password must be at least 6 characters.'); return; }
     setVerifyLoading(true);
     setVerifyError(null);
     setVerifySuccess(null);
     try {
-      const res = await squareVerifyPayment(verifyEmail);
+      const res = await squareVerifyPayment(verifyEmail, verifyPassword);
       if (res.success && res.session_token) {
-        // Payment verified and account activated — log them in
+        setVerifySuccess(res.message || 'Payment verified! Logging you in...');
         localStorage.setItem('rp_email', res.email);
         localStorage.setItem('rp_token', res.session_token);
         localStorage.setItem('rp_access', res.access_type);
-        onAuth({ email: res.email, token: res.session_token, accessType: res.access_type });
+        setTimeout(() => {
+          onAuth({ email: res.email, token: res.session_token, accessType: res.access_type });
+        }, 1000);
       } else if (res.status === 'active') {
-        // Already active, needs to log in with password
         setVerifySuccess(res.message);
         setTimeout(() => {
           setShowVerifyPayment(false);
@@ -282,11 +285,19 @@ export function LoginPage({ onAuth }) {
                 data-testid="verify-payment-email"
               />
             </div>
-            <button className="btn-primary" type="submit" disabled={verifyLoading || !verifyEmail.trim()} data-testid="verify-payment-btn">
+            <div className="login-field">
+              <div className="login-field-icon"><Lock style={{ width: 16, height: 16 }} /></div>
+              <input
+                type="password" placeholder="Create password (min 6 chars)" value={verifyPassword}
+                onChange={e => setVerifyPassword(e.target.value)} required
+                data-testid="verify-payment-password"
+              />
+            </div>
+            <button className="btn-primary" type="submit" disabled={verifyLoading || !verifyEmail.trim() || verifyPassword.length < 6} data-testid="verify-payment-btn">
               {verifyLoading ? <Loader2 className="animate-spin" /> : <Check style={{ width: 16, height: 16 }} />}
               {verifyLoading ? 'Checking Square...' : 'Verify My Payment'}
             </button>
-            <button type="button" className="btn-secondary" onClick={() => { setShowVerifyPayment(false); setVerifyError(null); setVerifySuccess(null); }}>
+            <button type="button" className="btn-secondary" onClick={() => { setShowVerifyPayment(false); setVerifyError(null); setVerifySuccess(null); setVerifyPassword(''); }}>
               <ArrowLeft style={{ width: 14, height: 14 }} /> Back
             </button>
           </form>

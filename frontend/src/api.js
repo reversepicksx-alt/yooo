@@ -264,10 +264,10 @@ export async function squareVerifyCheckout(checkoutToken) {
   });
 }
 
-export async function squareVerifyPayment(email) {
+export async function squareVerifyPayment(email, password) {
   return apiCall('/api/square/verify-payment', {
     method: 'POST',
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ email, password }),
   });
 }
 
@@ -275,6 +275,13 @@ export async function squareAdminBulkVerify(email) {
   return apiCall('/api/square/admin/bulk-verify', {
     method: 'POST',
     body: JSON.stringify({ email }),
+  });
+}
+
+export async function squareAdminActivate(adminEmail, customerEmail, planKey) {
+  return apiCall('/api/square/admin/activate', {
+    method: 'POST',
+    body: JSON.stringify({ admin_email: adminEmail, customer_email: customerEmail, plan_key: planKey }),
   });
 }
 

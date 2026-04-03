@@ -673,11 +673,33 @@ async def square_webhook(event: dict):
 
 class VerifyPaymentRequest(BaseModel):
     email: str
+    password: str = ""
+
+
+def _search_square_payments(client, email_lower: str):
+    """Search Square payments for a specific buyer email. Returns the first matching payment or None."""
+    try:
+        # Search last 90 days of payments
+        from datetime import timedelta
+        begin = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+        # Square SDK returns SyncPager - iterate directly over the response
+        for pmt in client.payments.list(begin_time=begin, sort_order="DESC"):
+            buyer = (pmt.buyer_email_address or "").lower().strip()
+            if buyer == email_lower and pmt.status == "COMPLETED":
+                return {
+                    "id": pmt.id,
+                    "amount": pmt.amount_money.amount if pmt.amount_money else 0,
+                    "created_at": str(pmt.created_at) if pmt.created_at else "",
+                    "order_id": pmt.order_id or "",
+                }
+    except Exception as e:
+        print(f"[SQUARE] Payment search error: {e}")
+    return None
 
 
 @router.post("/verify-payment")
 async def verify_payment(req: VerifyPaymentRequest):
-    """Self-recovery: user enters email, we check Square for their payment and activate."""
+    """Self-recovery: user enters email + password, we search Square payment history and activate."""
     email_lower = req.email.lower().strip()
 
     # Check if already active
@@ -686,60 +708,107 @@ async def verify_payment(req: VerifyPaymentRequest):
         {"_id": 0}
     )
     if existing_sub:
-        # Already has active sub — check if they have a user account with password
         user = await db.users.find_one({"email": email_lower}, {"_id": 0})
         if user and user.get("passwordHash"):
             return {"found": True, "status": "active", "message": "Your subscription is active. Please log in with your password."}
         return {"found": True, "status": "needs_password", "message": "Subscription found! Please set a password to continue."}
 
-    # Check pending checkouts
-    pending = await db.pending_checkouts.find_one(
-        {"email": email_lower, "status": "pending"}, {"_id": 0}
+    # Step 1: Search Square payment history directly for this email
+    client = get_square_client()
+    payment_record = _search_square_payments(client, email_lower)
+
+    # Step 2: If no direct payment found, check pending_checkouts order
+    if not payment_record:
+        pending = await db.pending_checkouts.find_one(
+            {"email": email_lower}, {"_id": 0}
+        )
+        if pending and pending.get("squareOrderId"):
+            try:
+                order_resp = client.orders.get(order_id=pending["squareOrderId"])
+                if order_resp.order and order_resp.order.state in ("COMPLETED", "OPEN"):
+                    payment_record = {"id": "order_verified", "order_id": pending["squareOrderId"]}
+            except Exception as e:
+                print(f"[VERIFY-PAYMENT] Order check error: {e}")
+
+    if not payment_record:
+        raise HTTPException(
+            status_code=404,
+            detail="No completed payment found for this email in Square. If you paid with a different email, try that one. Otherwise, contact support."
+        )
+
+    # Step 3: Determine plan from payment amount
+    amount = payment_record.get("amount", 0)
+    plan_key = "monthly"  # default
+    if amount <= 1200:
+        plan_key = "weekly"
+    elif amount <= 4100:
+        plan_key = "monthly"
+    else:
+        plan_key = "quarterly"
+
+    plan_info = PLANS.get(plan_key, {})
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Step 4: Hash password if provided
+    import bcrypt
+    password_hash = ""
+    if req.password and len(req.password) >= 6:
+        salt = bcrypt.gensalt()
+        password_hash = bcrypt.hashpw(req.password.encode("utf-8"), salt).decode("utf-8")
+    else:
+        # Check if pending checkout has a password hash
+        pending = await db.pending_checkouts.find_one({"email": email_lower}, {"_id": 0})
+        if pending:
+            password_hash = pending.get("passwordHash", "")
+
+    if not password_hash:
+        raise HTTPException(
+            status_code=400,
+            detail="Payment found! Please provide a password (min 6 characters) to activate your account."
+        )
+
+    # Step 5: Create user + subscription
+    from datetime import timedelta
+    cadence_days = {"weekly": 7, "monthly": 30, "quarterly": 90}
+    expires_at = (datetime.now(timezone.utc) + timedelta(days=cadence_days.get(plan_key, 30))).isoformat()
+
+    await db.users.update_one(
+        {"email": email_lower},
+        {"$set": {
+            "email": email_lower,
+            "passwordHash": password_hash,
+            "created_at": now,
+            "signup_source": "square_self_recovery",
+        }},
+        upsert=True,
     )
-    if not pending:
-        raise HTTPException(status_code=404, detail="No pending payment found for this email. Please subscribe first.")
 
-    # Try to verify the order with Square
-    order_id = pending.get("squareOrderId")
-    payment_verified = False
+    await db.square_subscriptions.update_one(
+        {"email": email_lower},
+        {"$set": {
+            "email": email_lower,
+            "planKey": plan_key,
+            "planName": plan_info.get("name", plan_key),
+            "planLabel": plan_info.get("label", ""),
+            "cadence": plan_info.get("cadence", "MONTHLY"),
+            "status": "ACTIVE",
+            "subscribedAt": now,
+            "expiresAt": expires_at,
+            "updatedAt": now,
+            "source": "self_recovery",
+            "squarePaymentId": payment_record.get("id", ""),
+        }},
+        upsert=True,
+    )
 
-    if order_id:
-        try:
-            client = get_square_client()
-            order_resp = client.orders.get(order_id=order_id)
-            order_state = order_resp.order.state if order_resp.order else None
-            print(f"[SQUARE VERIFY-PAYMENT] Order {order_id} state: {order_state}")
-            if order_state in ("COMPLETED", "OPEN"):
-                payment_verified = True
-        except Exception as e:
-            print(f"[SQUARE VERIFY-PAYMENT] Order check error: {e}")
-
-    if not payment_verified:
-        # Fallback: search recent payments by email
-        try:
-            client = get_square_client()
-            payments_resp = client.payments.list(
-                begin_time=(datetime.now(timezone.utc).replace(day=1)).isoformat(),
-                sort_order="DESC",
-            )
-            if payments_resp.payments:
-                for pmt in payments_resp.payments:
-                    if (pmt.buyer_email_address or "").lower().strip() == email_lower:
-                        payment_verified = True
-                        print(f"[SQUARE VERIFY-PAYMENT] Found payment for {email_lower}: {pmt.id}")
-                        break
-        except Exception as e:
-            print(f"[SQUARE VERIFY-PAYMENT] Payment search error: {e}")
-
-    if not payment_verified:
-        raise HTTPException(status_code=404, detail="Could not verify payment. Please contact support if you've already paid.")
-
-    # Activate the user
-    await _activate_pending_checkout(pending, source="self_recovery")
+    # Mark pending checkout as completed if it exists
+    await db.pending_checkouts.update_one(
+        {"email": email_lower, "status": "pending"},
+        {"$set": {"status": "completed", "completedAt": now, "activatedBy": "self_recovery"}}
+    )
 
     # Create session
     session_token = str(uuid.uuid4())
-    now = datetime.now(timezone.utc).isoformat()
     await db.sessions.update_one(
         {"email": email_lower},
         {"$set": {
@@ -751,6 +820,7 @@ async def verify_payment(req: VerifyPaymentRequest):
         upsert=True,
     )
 
+    print(f"[VERIFY-PAYMENT] Activated {email_lower} via self-recovery (plan={plan_key}, payment={payment_record.get('id')})")
     return {
         "found": True,
         "status": "activated",
@@ -758,51 +828,144 @@ async def verify_payment(req: VerifyPaymentRequest):
         "email": email_lower,
         "session_token": session_token,
         "access_type": "Premium",
+        "plan": plan_info.get("name", plan_key),
         "message": "Payment verified! Your account is now active.",
+    }
+
+
+class AdminActivateRequest(BaseModel):
+    admin_email: str
+    customer_email: str
+    plan_key: str = "monthly"
+
+
+@router.post("/admin/activate")
+async def admin_activate_customer(req: AdminActivateRequest):
+    """Admin: directly activate a customer by searching Square or forcing activation."""
+    from config import OWNER_EMAIL
+    if req.admin_email.lower().strip() != OWNER_EMAIL:
+        raise HTTPException(status_code=403, detail="Admin only.")
+
+    email_lower = req.customer_email.lower().strip()
+    plan_key = req.plan_key.lower()
+    if plan_key not in PLANS:
+        plan_key = "monthly"
+
+    # Check if already active
+    existing = await db.square_subscriptions.find_one(
+        {"email": email_lower, "status": {"$in": ["ACTIVE", "PENDING"]}},
+        {"_id": 0}
+    )
+    if existing:
+        return {"status": "already_active", "email": email_lower, "plan": existing.get("planName")}
+
+    # Search Square for payment proof
+    client = get_square_client()
+    payment_record = _search_square_payments(client, email_lower)
+    verified_source = "admin_verified"
+    if payment_record:
+        verified_source = f"admin_verified_payment_{payment_record['id']}"
+
+    # Activate
+    plan_info = PLANS.get(plan_key, {})
+    now = datetime.now(timezone.utc).isoformat()
+    from datetime import timedelta
+    cadence_days = {"weekly": 7, "monthly": 30, "quarterly": 90}
+    expires_at = (datetime.now(timezone.utc) + timedelta(days=cadence_days.get(plan_key, 30))).isoformat()
+
+    await db.square_subscriptions.update_one(
+        {"email": email_lower},
+        {"$set": {
+            "email": email_lower,
+            "planKey": plan_key,
+            "planName": plan_info.get("name", plan_key),
+            "planLabel": plan_info.get("label", ""),
+            "cadence": plan_info.get("cadence", "MONTHLY"),
+            "status": "ACTIVE",
+            "subscribedAt": now,
+            "expiresAt": expires_at,
+            "updatedAt": now,
+            "source": verified_source,
+            "squarePaymentId": payment_record.get("id", "") if payment_record else "",
+        }},
+        upsert=True,
+    )
+
+    print(f"[ADMIN ACTIVATE] {email_lower} activated by admin (plan={plan_key}, payment={'FOUND' if payment_record else 'NOT_FOUND'})")
+    return {
+        "status": "activated",
+        "email": email_lower,
+        "plan": plan_info.get("name", plan_key),
+        "payment_found": payment_record is not None,
+        "message": f"Activated {email_lower} on {plan_info.get('name', plan_key)} plan.",
     }
 
 
 @router.post("/admin/bulk-verify")
 async def admin_bulk_verify(body: dict):
-    """Admin endpoint: check all pending checkouts against Square and activate paid ones."""
+    """Admin: search ALL Square payments and activate any matching pending checkouts."""
     owner_email = (body.get("email", "")).lower().strip()
     from config import OWNER_EMAIL
     if owner_email != OWNER_EMAIL:
         raise HTTPException(status_code=403, detail="Admin only.")
 
+    client = get_square_client()
+    activated = []
+    not_found = []
+
+    # Step 1: Get all pending checkouts
     pending_list = await db.pending_checkouts.find(
         {"status": "pending"}, {"_id": 0}
     ).to_list(200)
 
-    if not pending_list:
-        return {"activated": 0, "message": "No pending checkouts found."}
+    # Step 2: Get all recent payments from Square
+    all_payments = {}
+    try:
+        from datetime import timedelta
+        begin = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+        # Square SDK returns SyncPager - iterate directly over the response
+        for pmt in client.payments.list(begin_time=begin, sort_order="DESC"):
+            buyer = (pmt.buyer_email_address or "").lower().strip()
+            if buyer and pmt.status == "COMPLETED":
+                all_payments[buyer] = {
+                    "id": pmt.id,
+                    "amount": pmt.amount_money.amount if pmt.amount_money else 0,
+                }
+    except Exception as e:
+        print(f"[BULK VERIFY] Payment list error: {e}")
 
-    client = get_square_client()
-    activated = []
-
+    # Step 3: Match pending checkouts to payments
     for pending in pending_list:
+        p_email = pending.get("email", "").lower().strip()
         order_id = pending.get("squareOrderId")
-        p_email = pending.get("email", "")
-        verified = False
 
+        # Check by email in payment list
+        if p_email in all_payments:
+            try:
+                await _activate_pending_checkout(pending, source="admin_bulk_verify")
+                activated.append(p_email)
+                continue
+            except Exception as e:
+                print(f"[BULK VERIFY] Activation error for {p_email}: {e}")
+
+        # Check by order_id
         if order_id:
             try:
                 order_resp = client.orders.get(order_id=order_id)
                 if order_resp.order and order_resp.order.state in ("COMPLETED", "OPEN"):
-                    verified = True
-            except Exception as e:
-                print(f"[BULK VERIFY] Order check error for {p_email}: {e}")
+                    await _activate_pending_checkout(pending, source="admin_bulk_verify")
+                    activated.append(p_email)
+                    continue
+            except Exception:
+                pass
 
-        if verified:
-            try:
-                await _activate_pending_checkout(pending, source="admin_bulk_verify")
-                activated.append(p_email)
-            except Exception as e:
-                print(f"[BULK VERIFY] Activation error for {p_email}: {e}")
+        not_found.append(p_email)
 
     return {
         "activated": len(activated),
-        "emails": activated,
+        "activated_emails": activated,
+        "not_found": not_found,
         "total_pending": len(pending_list),
-        "message": f"Activated {len(activated)} of {len(pending_list)} pending checkouts.",
+        "total_square_payments": len(all_payments),
+        "message": f"Activated {len(activated)} of {len(pending_list)} pending checkouts. {len(all_payments)} payments found in Square.",
     }

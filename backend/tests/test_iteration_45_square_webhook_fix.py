@@ -180,24 +180,41 @@ class TestVerifyPaymentEndpoint:
     """Test the self-recovery verify-payment endpoint"""
     
     def test_verify_payment_unknown_email_returns_404(self):
-        """POST /api/square/verify-payment with unknown email should return 404"""
+        """POST /api/square/verify-payment with unknown email should return 404 with helpful message"""
         unknown_email = f"unknown_{uuid.uuid4().hex[:8]}@nonexistent.com"
         
         response = requests.post(
             f"{BASE_URL}/api/square/verify-payment",
-            json={"email": unknown_email}
+            json={"email": unknown_email, "password": "testpass123"}
         )
         
         assert response.status_code == 404
         data = response.json()
-        assert "detail" in data or "message" in data
-        print(f"PASS: verify-payment with unknown email returns 404")
+        assert "detail" in data
+        # Should have helpful message about trying different email or contacting support
+        detail = data.get("detail", "")
+        assert "payment" in detail.lower() or "email" in detail.lower() or "support" in detail.lower()
+        print(f"PASS: verify-payment with unknown email returns 404 with helpful message: {detail[:80]}...")
+    
+    def test_verify_payment_no_password_returns_error(self):
+        """POST /api/square/verify-payment with no password should return 400 or 404 (not 500)"""
+        unknown_email = f"unknown_{uuid.uuid4().hex[:8]}@nonexistent.com"
+        
+        response = requests.post(
+            f"{BASE_URL}/api/square/verify-payment",
+            json={"email": unknown_email, "password": ""}
+        )
+        
+        # Should return 400 (bad request) or 404 (no payment found), NOT 500
+        assert response.status_code in [400, 404]
+        assert response.status_code != 500
+        print(f"PASS: verify-payment with no password returns {response.status_code} (not 500)")
     
     def test_verify_payment_empty_email(self):
         """POST /api/square/verify-payment with empty email should return error"""
         response = requests.post(
             f"{BASE_URL}/api/square/verify-payment",
-            json={"email": ""}
+            json={"email": "", "password": "testpass123"}
         )
         
         # Should return 404 (no pending payment found) or 422 (validation error)
@@ -209,7 +226,7 @@ class TestVerifyPaymentEndpoint:
         # Test with a valid email format but non-existent
         response = requests.post(
             f"{BASE_URL}/api/square/verify-payment",
-            json={"email": "test@example.com"}
+            json={"email": "test@example.com", "password": "testpass123"}
         )
         
         # Should not return 405 (Method Not Allowed) or 404 for the route itself
@@ -317,6 +334,115 @@ class TestWebhookWithPendingCheckout:
         assert data.get("received") == True
         # Note: activated will be False if no pending checkout exists for this email
         print(f"PASS: Webhook processed payment.completed for {test_email}")
+
+
+class TestAdminActivateEndpoint:
+    """Test the admin/activate endpoint"""
+    
+    def test_admin_activate_non_admin_returns_403(self):
+        """POST /api/square/admin/activate with non-admin email should return 403"""
+        non_admin_email = "notadmin@example.com"
+        
+        response = requests.post(
+            f"{BASE_URL}/api/square/admin/activate",
+            json={
+                "admin_email": non_admin_email,
+                "customer_email": "customer@test.com",
+                "plan_key": "monthly"
+            }
+        )
+        
+        assert response.status_code == 403
+        data = response.json()
+        assert "detail" in data
+        assert "Admin only" in data.get("detail", "")
+        print(f"PASS: admin/activate with non-admin email returns 403")
+    
+    def test_admin_activate_with_admin_creates_subscription(self):
+        """POST /api/square/admin/activate with admin (josselj001@gmail.com) creates subscription"""
+        test_customer = f"test_admin_activate_{uuid.uuid4().hex[:8]}@test.com"
+        
+        response = requests.post(
+            f"{BASE_URL}/api/square/admin/activate",
+            json={
+                "admin_email": ADMIN_EMAIL,
+                "customer_email": test_customer,
+                "plan_key": "monthly"
+            }
+        )
+        
+        assert response.status_code == 200
+        data = response.json()
+        assert data.get("status") in ["activated", "already_active"]
+        assert data.get("email") == test_customer
+        assert "plan" in data
+        print(f"PASS: admin/activate with admin email creates subscription - status: {data.get('status')}, plan: {data.get('plan')}")
+        
+        # Verify subscription was created by checking status
+        status_resp = requests.get(f"{BASE_URL}/api/square/status/{test_customer}")
+        assert status_resp.status_code == 200
+        status_data = status_resp.json()
+        assert status_data.get("active") == True
+        print(f"PASS: Verified subscription is active for {test_customer}")
+    
+    def test_admin_activate_endpoint_exists(self):
+        """Verify the /api/square/admin/activate endpoint exists"""
+        response = requests.post(
+            f"{BASE_URL}/api/square/admin/activate",
+            json={
+                "admin_email": "test@example.com",
+                "customer_email": "customer@test.com",
+                "plan_key": "monthly"
+            }
+        )
+        
+        # Should return 403 (forbidden) not 404 (not found) or 405 (method not allowed)
+        assert response.status_code == 403
+        print(f"PASS: admin/activate endpoint exists (returns 403 for non-admin)")
+
+
+class TestExistingAuthFlows:
+    """Test that existing auth flows still work for manual_access_grants users"""
+    
+    def test_verify_whop_for_owner_email(self):
+        """Verify that verify-whop still works for owner email (josselj001@gmail.com)"""
+        response = requests.post(
+            f"{BASE_URL}/api/auth/verify-whop",
+            json={"email": ADMIN_EMAIL}
+        )
+        
+        assert response.status_code == 200
+        data = response.json()
+        # Owner should be verified or require password
+        assert data.get("verified") == True or data.get("requires_password") == True or data.get("requires_password_setup") == True
+        print(f"PASS: verify-whop works for owner email - verified: {data.get('verified')}, requires_password: {data.get('requires_password')}")
+    
+    def test_verify_whop_for_lifetime_user(self):
+        """Verify that verify-whop still works for lifetime user (its2famous@gmail.com)"""
+        lifetime_email = "its2famous@gmail.com"
+        
+        response = requests.post(
+            f"{BASE_URL}/api/auth/verify-whop",
+            json={"email": lifetime_email}
+        )
+        
+        assert response.status_code == 200
+        data = response.json()
+        # Lifetime user should be verified or require password
+        assert data.get("verified") == True or data.get("requires_password") == True or data.get("requires_password_setup") == True
+        print(f"PASS: verify-whop works for lifetime user - verified: {data.get('verified')}, requires_password: {data.get('requires_password')}")
+    
+    def test_login_endpoint_exists(self):
+        """Verify the /api/auth/login endpoint exists"""
+        response = requests.post(
+            f"{BASE_URL}/api/auth/login",
+            json={"email": "test@example.com", "password": "wrongpassword"}
+        )
+        
+        # Should return 401 (unauthorized) not 404 (not found) or 405 (method not allowed)
+        assert response.status_code in [401, 404]  # 404 if user doesn't exist
+        assert response.status_code != 405
+        print(f"PASS: login endpoint exists (returns {response.status_code})")
 
 
 if __name__ == "__main__":
