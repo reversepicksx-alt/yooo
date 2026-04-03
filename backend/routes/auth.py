@@ -113,7 +113,7 @@ async def verify_whop(req: VerifyWhopRequest):
     email_lower = req.email.lower().strip()
     access_type = await check_access(email_lower)
     if not access_type:
-        return {"verified": False, "email": email_lower, "message": "No active membership found. If you already paid, tap 'Already paid? Verify your payment' below."}
+        return {"verified": False, "email": email_lower, "message": "No active membership found. If you already paid, tap 'Already paid? Verify your payment' below, or subscribe to gain access."}
     if email_lower == OWNER_EMAIL:
         token = await create_session(email_lower, "Owner")
         return {"verified": True, "email": email_lower, "session_token": token, "access_type": "Owner", "message": "Premium access granted"}
