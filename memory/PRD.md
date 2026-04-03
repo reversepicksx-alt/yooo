@@ -75,6 +75,9 @@ LEGAL: ALL 3rd-party app names and player/team images removed. No AI model names
 - P1: Square payment card input all white on dark theme — REPLACED with Square Checkout Links (hosted payment page). Supports Card, Apple Pay, Google Pay automatically. No more iframe/domain issues.
 - P0: Square Checkout "Sorry. Your order didn't go through" error — RESOLVED (updated MongoDB to use proven-working Square plan variation IDs that have 3+ active subscriptions; `subscription_plan_id` re-enabled in checkout_options for auto-renewal). Duplicate old plans identified for manual deactivation in Square Dashboard.
 - P1: Player/team confusion (A. Villa GK from Ecuador instead of Sebastián Villa Attacker from Argentina) — RESOLVED: Added 39 Argentine Liga teams to TEAM_LEAGUE_MAP, fixed `pick_best` to not return wrong player when team hint doesn't match, added country-based disambiguation.
+- P1: Opponent resolution failures ("Atlético MG", "Sheff Wed", "Sheff Utd") — RESOLVED: Added accent stripping, Brazilian abbreviation expansion, English football abbreviation expansion (TEAM_NAME_EXPANSIONS map), fixed women/youth team filtering fallback.
+- P1: Championship/Copa league detection — RESOLVED: Added 30+ Championship teams to TEAM_LEAGUE_MAP, added Liga Pro Ecuador teams, added Copa Libertadores (13) and Copa Sudamericana (11) to SUPPORTED_LEAGUES, added cross-country Copa/UCL detection in `_infer_league_id`.
+- P1: Position/Role contradictions (GK · Fullback) — RESOLVED: Position validation now auto-corrects invalid role combos to default valid role for that position.
 - P1: Editable Scan Cards — DONE: Users can now tap a pencil icon on scan results to correct player name, team, and opponent. Calls POST /api/re-resolve to re-resolve with corrected data. Supports both soccer and basketball.
 
 ## Prioritized Backlog

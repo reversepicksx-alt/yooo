@@ -104,6 +104,20 @@ TEAM_LEAGUE_MAP = {
     "atletico tucuman": 128, "central cordoba": 128, "sarmiento": 128,
     "barracas central": 128, "instituto": 128, "aldosivi": 128,
     "independiente rivadavia": 128, "riestra": 128,
+    # EFL Championship (England) - league 40
+    "sheffield wednesday": 40, "sheff wed": 40, "sheffield wed": 40,
+    "sheffield united": 40, "sheff utd": 40, "sheffield utd": 40,
+    "stoke": 40, "stoke city": 40, "swansea": 40, "swansea city": 40,
+    "burnley": 40, "leeds": 40, "leeds united": 40,
+    "sunderland": 40, "middlesbrough": 40, "norwich": 40, "norwich city": 40,
+    "west brom": 40, "west bromwich": 40, "west bromwich albion": 40,
+    "watford": 40, "coventry": 40, "coventry city": 40,
+    "bristol city": 40, "blackburn": 40, "blackburn rovers": 40,
+    "millwall": 40, "hull": 40, "hull city": 40,
+    "qpr": 40, "queens park rangers": 40, "preston": 40, "preston north end": 40,
+    "plymouth": 40, "plymouth argyle": 40, "luton": 40, "luton town": 40,
+    "cardiff": 40, "cardiff city": 40, "portsmouth": 40,
+    "derby": 40, "derby county": 40, "oxford united": 40,
     # Liga Pro Ecuador - league 242
     "barcelona sc": 242, "barcelona sporting club": 242, "emelec": 242,
     "liga de quito": 242, "ldu quito": 242, "ldu de quito": 242,
@@ -376,11 +390,31 @@ async def _resolve_opponent(opponent_name: str, is_international: bool, league_i
 
     # 3. API-Sports fallback — search and prefer teams from same league
     opp_searches = [strip_accents(opponent_name.strip())]
-    # Expand common abbreviations (e.g., "Atletico MG" → "Atletico Mineiro")
+    # Expand common abbreviations
     TEAM_ABBREV_MAP = {
         "mg": "mineiro", "sp": "sao paulo", "pr": "paranaense",
         "rj": "rio de janeiro", "go": "goianiense", "ba": "bahia",
     }
+    # Full team name expansions for common short names
+    TEAM_NAME_EXPANSIONS = {
+        "sheff wed": "Sheffield Wednesday", "sheff utd": "Sheffield Utd",
+        "sheffield utd": "Sheffield Utd",
+        "man utd": "Manchester United", "man city": "Manchester City",
+        "west brom": "West Bromwich", "west ham": "West Ham",
+        "qpr": "Queens Park Rangers", "wolves": "Wolverhampton",
+        "spurs": "Tottenham", "stoke": "Stoke City",
+        "swansea": "Swansea City", "norwich": "Norwich City",
+        "burnley": "Burnley", "leeds": "Leeds United",
+        "hull": "Hull City", "derby": "Derby County",
+        "cardiff": "Cardiff City", "luton": "Luton Town",
+        "coventry": "Coventry City", "plymouth": "Plymouth Argyle",
+        "preston": "Preston North End", "blackburn": "Blackburn Rovers",
+        "portsmouth": "Portsmouth", "middlesbrough": "Middlesbrough",
+    }
+    # Check full name expansion first
+    if opp_lower in TEAM_NAME_EXPANSIONS:
+        expanded = TEAM_NAME_EXPANSIONS[opp_lower]
+        opp_searches = [expanded] + opp_searches
     opp_words = opp_lower.split()
     if len(opp_words) >= 2:
         last_word = opp_words[-1]
@@ -396,7 +430,7 @@ async def _resolve_opponent(opponent_name: str, is_international: bool, league_i
 
     # Map league IDs to their country for disambiguation
     LEAGUE_COUNTRY = {
-        39: "england", 61: "france", 71: "brazil", 78: "germany",
+        39: "england", 40: "england", 61: "france", 71: "brazil", 78: "germany",
         135: "italy", 140: "spain", 188: "australia", 253: "usa",
         254: "usa", 262: "mexico", 128: "argentina", 169: "china",
         242: "ecuador",
@@ -432,8 +466,6 @@ async def _resolve_opponent(opponent_name: str, is_international: bool, league_i
                 # Otherwise return first valid match
                 return {"teamId": valid[0]["teamId"], "teamName": valid[0]["teamName"]}
 
-            # If no filtered match, use first result
-            return {"teamId": teams_data[0]["team"]["id"], "teamName": teams_data[0]["team"]["name"]}
         except Exception:
             continue
 
