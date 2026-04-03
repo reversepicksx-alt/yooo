@@ -91,6 +91,7 @@ export default function App() {
   const [excludedSampleIndices, setExcludedSampleIndices] = useState([]);
 
   const [savedPicks, setSavedPicks] = useState([]);
+  const savedPicksRef = useRef([]);
   const [selectedPick, setSelectedPick] = useState(null);
   const [liveData, setLiveData] = useState({});
   const [notifications, setNotifications] = useState([]);
@@ -191,14 +192,17 @@ export default function App() {
       setAuthChecking(false);
     };
     checkAuth();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps — mount-only auth check
+  }, []); // eslint-disable-line
+
+  // Keep savedPicksRef in sync
+  useEffect(() => { savedPicksRef.current = savedPicks; }, [savedPicks]);
 
   // Load picks from MongoDB on auth
   useEffect(() => {
     if (!auth) return;
     listPicks(auth.email, auth.token)
       .then(data => setSavedPicks(data.picks || []))
-      .catch(() => {});
+      .catch(err => console.error('[PICKS] Load error:', err));
     checkApiStatus().then(ok => setApiStatus(ok ? 'online' : 'offline')).catch(() => setApiStatus('offline'));
     getPickOfTheDay()
       .then(data => setPotd(data))
@@ -222,7 +226,7 @@ export default function App() {
             if (u.matchStatus === 'final' && u.result) {
               settledIds.push(u.pickId);
               // Find the pick to get player name
-              const pick = savedPicks.find(p => p.pickId === u.pickId);
+              const pick = savedPicksRef.current.find(p => p.pickId === u.pickId);
               if (pick) {
                 const propLabel = [...PROP_TYPES, ...BASKETBALL_PROP_TYPES].find(pt => pt.key === pick.propType)?.label || pick.propType;
                 const isHit = u.result === 'hit';
@@ -266,7 +270,7 @@ export default function App() {
     fetchLiveUpdates();
     const interval = setInterval(fetchLiveUpdates, 30 * 1000);
     return () => clearInterval(interval);
-  }, [auth, livePickCount]);
+  }, [auth, livePickCount]); // eslint-disable-line
 
   useEffect(() => {
     if (chatEndRef.current) chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
@@ -276,9 +280,9 @@ export default function App() {
     try {
       const data = await startChat();
       setChatSessionId(data.session_id);
-      setChatMessages([{ role: 'model', text: data.message }]);
+      setChatMessages([{ id: `init-${Date.now()}`, role: 'model', text: data.message }]);
     } catch (err) {
-      setChatMessages([{ role: 'model', text: 'Failed to connect. Please try again.' }]);
+      setChatMessages([{ id: `err-${Date.now()}`, role: 'model', text: 'Failed to connect. Please try again.' }]);
     }
   }, []);
 
@@ -290,13 +294,13 @@ export default function App() {
     if (!chatInput.trim() || !chatSessionId) return;
     const msg = chatInput;
     setChatInput('');
-    setChatMessages(prev => [...prev, { role: 'user', text: msg }]);
+    setChatMessages(prev => [...prev, { id: `user-${Date.now()}`, role: 'user', text: msg }]);
     setIsChatting(true);
     try {
       const data = await sendChatMessage(chatSessionId, msg);
-      setChatMessages(prev => [...prev, { role: 'model', text: data.response }]);
+      setChatMessages(prev => [...prev, { id: `resp-${Date.now()}`, role: 'model', text: data.response }]);
     } catch {
-      setChatMessages(prev => [...prev, { role: 'model', text: 'Error connecting to tactical search. Please try again.' }]);
+      setChatMessages(prev => [...prev, { id: `err-${Date.now()}`, role: 'model', text: 'Error connecting to tactical search. Please try again.' }]);
     } finally {
       setIsChatting(false);
     }
@@ -446,7 +450,7 @@ export default function App() {
           });
           setMissAnalyses(prev => ({ ...prev, ...analyses }));
         }
-      }).catch(() => {});
+      }).catch(err => console.error('[MISS ANALYSES] Load error:', err));
     }
   }, [trackingView, auth]);
 
@@ -470,7 +474,9 @@ export default function App() {
       await savePick(auth.email, auth.token, newPick);
       const refreshed = await listPicks(auth.email, auth.token);
       setSavedPicks(refreshed.picks || []);
-    } catch {}
+    } catch (err) {
+      console.error('[SAVE PICK] Error:', err);
+    }
     setProjection(null);
     setExcludedSampleIndices([]);
     setWizardStep(1);
@@ -484,7 +490,9 @@ export default function App() {
     try {
       await deletePick(auth.email, auth.token, pickId);
       setSavedPicks(prev => prev.filter(p => p.pickId !== pickId));
-    } catch {}
+    } catch (err) {
+      console.error('[DELETE PICK] Error:', err);
+    }
   };
 
   const reanalyzePick = async (pick, e) => {
@@ -889,9 +897,9 @@ export default function App() {
     try {
       const res = await startTactical();
       setTacticalSessionId(res.session_id);
-      setTacticalMessages([{ role: 'assistant', content: res.message }]);
+      setTacticalMessages([{ id: `init-${Date.now()}`, role: 'assistant', content: res.message }]);
     } catch (e) {
-      setTacticalMessages([{ role: 'assistant', content: 'Failed to initialize tactical session. Please try again.' }]);
+      setTacticalMessages([{ id: `err-${Date.now()}`, role: 'assistant', content: 'Failed to initialize tactical session. Please try again.' }]);
     }
   }, []);
 
@@ -913,6 +921,7 @@ export default function App() {
     if (isTacticalSending) return;
     setTacticalInput('');
     setTacticalMessages(prev => [...prev, {
+      id: `user-${Date.now()}`,
       role: 'user',
       content: msg || (imageBase64 ? 'Analyze this prop screenshot' : ''),
       hasImage: !!imageBase64,
@@ -921,12 +930,13 @@ export default function App() {
     try {
       const res = await sendTacticalMessage(tacticalSessionId, msg, imageBase64);
       setTacticalMessages(prev => [...prev, {
+        id: `resp-${Date.now()}`,
         role: 'assistant',
         content: res.response,
         scanEntries: res.scanEntries,
       }]);
     } catch (e) {
-      setTacticalMessages(prev => [...prev, { role: 'assistant', content: `Error: ${e.message}` }]);
+      setTacticalMessages(prev => [...prev, { id: `err-${Date.now()}`, role: 'assistant', content: `Error: ${e.message}` }]);
     } finally {
       setIsTacticalSending(false);
       setTimeout(() => tacticalInputRef.current?.focus(), 100);
@@ -955,7 +965,7 @@ export default function App() {
     const msg = scanFollowUp.trim();
     if (!msg || isScanFollowUpSending) return;
     setScanFollowUp('');
-    setScanFollowUpMessages(prev => [...prev, { role: 'user', content: msg }]);
+    setScanFollowUpMessages(prev => [...prev, { id: `user-${Date.now()}`, role: 'user', content: msg }]);
     setIsScanFollowUpSending(true);
     try {
       let sid = tacticalSessionId;
@@ -971,9 +981,9 @@ export default function App() {
         contextMsg = `Context: I just got a prediction for ${p.player?.name || '?'} — ${p.propType || '?'} line ${p.line || '?'}, projected ${p.projectedValue || '?'}, recommendation ${p.recommendation || '?'}. The tactical breakdown was provided.\n\nMy follow-up question: ${msg}`;
       }
       const res = await sendTacticalMessage(sid, contextMsg);
-      setScanFollowUpMessages(prev => [...prev, { role: 'assistant', content: res.response }]);
+      setScanFollowUpMessages(prev => [...prev, { id: `resp-${Date.now()}`, role: 'assistant', content: res.response }]);
     } catch (e) {
-      setScanFollowUpMessages(prev => [...prev, { role: 'assistant', content: `Error: ${e.message}` }]);
+      setScanFollowUpMessages(prev => [...prev, { id: `err-${Date.now()}`, role: 'assistant', content: `Error: ${e.message}` }]);
     } finally {
       setIsScanFollowUpSending(false);
       setTimeout(() => scanFollowUpRef.current?.focus(), 100);
@@ -1002,7 +1012,7 @@ export default function App() {
 
   const handleLogout = async () => {
     if (auth) {
-      try { await authLogout(auth.email, auth.token); } catch {}
+      try { await authLogout(auth.email, auth.token); } catch (err) { console.error('[LOGOUT] Error:', err); }
     }
     localStorage.removeItem('rp_email');
     localStorage.removeItem('rp_token');
@@ -1016,7 +1026,7 @@ export default function App() {
     if (!isOwner || activeTab !== 'profile') return;
     getAdminSettings(auth.email, auth.token)
       .then(res => setAdminSettings(res.settings || {}))
-      .catch(() => {});
+      .catch(err => console.error('[ADMIN SETTINGS] Load error:', err));
   }, [isOwner, activeTab, auth?.email, auth?.token]);
 
   const handleTestApiKey = async () => {
@@ -1252,8 +1262,8 @@ export default function App() {
                     </div>
 
                     <div className="chat-messages" data-testid="chat-messages" style={{ minHeight: 300, maxHeight: 450 }}>
-                      {chatMessages.map((msg, i) => (
-                        <div key={i} className={`chat-msg ${msg.role}`} data-testid={`chat-msg-${i}`}>
+                      {chatMessages.map((msg) => (
+                        <div key={msg.id} className={`chat-msg ${msg.role}`} data-testid={`chat-msg-${msg.id}`}>
                           {msg.text}
                         </div>
                       ))}
@@ -1591,7 +1601,7 @@ export default function App() {
                   {/* INDIVIDUAL BREAKDOWNS */}
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
                     {[comboProjection.player1, comboProjection.player2].map((pred, idx) => (
-                      <div key={idx} style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10, padding: 14 }}>
+                      <div key={`combo-player-${idx + 1}`} style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10, padding: 14 }}>
                         <div style={{ fontSize: 10, fontWeight: 700, color: idx === 0 ? 'var(--accent)' : '#f59e0b', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>
                           Player {idx + 1}
                         </div>
@@ -1648,7 +1658,7 @@ export default function App() {
                   {/* SHARP TAKES */}
                   <div style={{ display: 'grid', gap: 10 }}>
                     {[comboProjection.player1, comboProjection.player2].map((pred, idx) => pred.sharpSummary && (
-                      <div key={idx} style={{ background: 'rgba(99,102,241,0.04)', border: '1px solid rgba(99,102,241,0.15)', borderRadius: 10, padding: 12 }}>
+                      <div key={`combo-sharp-${idx + 1}`} style={{ background: 'rgba(99,102,241,0.04)', border: '1px solid rgba(99,102,241,0.15)', borderRadius: 10, padding: 12 }}>
                         <div style={{ fontSize: 10, fontWeight: 700, color: '#6366f1', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>
                           {pred.player?.name} — Sharp Take
                         </div>
@@ -1956,8 +1966,8 @@ export default function App() {
                           </p>
                           {missAnalyses[pick.pickId].factors?.length > 0 && (
                             <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-                              {missAnalyses[pick.pickId].factors.slice(0, 3).map((f, i) => (
-                                <span key={i} style={{
+                              {missAnalyses[pick.pickId].factors.slice(0, 3).map((f) => (
+                                <span key={f} style={{
                                   fontSize: 6, padding: '1px 4px', borderRadius: 3,
                                   background: 'rgba(244,63,94,0.1)', color: 'rgba(244,63,94,0.7)',
                                   border: '1px solid rgba(244,63,94,0.15)',
@@ -2121,8 +2131,8 @@ export default function App() {
                 { q: 'Can I predict two players together?', a: 'Yes! On Step 6, tap "Stack 2nd Player" to combine two players\' projections for the same stat type.' },
                 { q: 'How does the Tracking tab work?', a: 'Save a pick and it tracks live during the match — showing your player\'s current stat, pace, and hit probability in real-time.' },
                 { q: 'A pick settled wrong. How do I fix it?', a: 'Go to History, find the pick, and tap the pencil icon. Enter the real number from SofaScore/FotMob and hit Save.' },
-              ].map((faq, i) => (
-                <details key={i} style={{
+              ].map((faq) => (
+                <details key={faq.q} style={{
                   background: '#0a0a0f', border: '1.5px solid rgba(100,100,120,0.15)', borderRadius: 10,
                   marginBottom: 8, overflow: 'hidden',
                 }}>
@@ -2191,7 +2201,7 @@ export default function App() {
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
                       {[scanPrediction.player1, scanPrediction.player2].map((pred, idx) => (
                         pred?.player && (
-                          <div key={idx} style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10, padding: 14 }}>
+                          <div key={`scan-player-${idx + 1}`} style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10, padding: 14 }}>
                             <div style={{ fontSize: 10, fontWeight: 700, color: idx === 0 ? 'var(--accent)' : '#f59e0b', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>
                               Player {idx + 1}
                             </div>
@@ -2251,7 +2261,7 @@ export default function App() {
                     {/* SHARP TAKES */}
                     <div style={{ display: 'grid', gap: 10 }}>
                       {[scanPrediction.player1, scanPrediction.player2].map((pred, idx) => pred?.sharpSummary && (
-                        <div key={idx} style={{ background: 'rgba(99,102,241,0.04)', border: '1px solid rgba(99,102,241,0.15)', borderRadius: 10, padding: 12 }}>
+                        <div key={`scan-sharp-${idx + 1}`} style={{ background: 'rgba(99,102,241,0.04)', border: '1px solid rgba(99,102,241,0.15)', borderRadius: 10, padding: 12 }}>
                           <div style={{ fontSize: 10, fontWeight: 700, color: '#6366f1', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>
                             {pred.player?.name} — Sharp Take
                           </div>
@@ -2306,7 +2316,7 @@ export default function App() {
                         {scanPrediction.h2hGames.map((g, i) => {
                           const isHit = g.hit === (scanPrediction.recommendation === 'over' ? 'over' : 'under');
                           return (
-                            <div key={i} className={`sample-cell ${isHit ? 'hit' : 'miss'}`}
+                            <div key={`${g.date}-${g.opponent}-${i}`} className={`sample-cell ${isHit ? 'hit' : 'miss'}`}
                               title={`${g.date} vs ${g.opponent} (${g.venue}) - ${g.result}`}
                               style={{ cursor: 'default' }}>
                               <span className="sample-value">{g.value}</span>
@@ -2366,8 +2376,8 @@ export default function App() {
                     {/* Follow-up messages */}
                     {scanFollowUpMessages.length > 0 && (
                       <div style={{ padding: '12px 16px 8px', display: 'flex', flexDirection: 'column', gap: 12, maxHeight: 400, overflowY: 'auto' }}>
-                        {scanFollowUpMessages.map((msg, mi) => (
-                          <div key={mi} style={{
+                        {scanFollowUpMessages.map((msg) => (
+                          <div key={msg.id} style={{
                             alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start',
                             maxWidth: '90%',
                           }}>

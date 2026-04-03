@@ -14,10 +14,10 @@ import os
 
 BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', '').rstrip('/')
 
-# Test credentials from requirements
-OWNER_EMAIL = "josselj001@gmail.com"
-LIFETIME_SUB_EMAIL = "rijulgauchan1@gmail.com"
-NON_MEMBER_EMAIL = "nobody@test.com"
+# Test credentials from environment
+OWNER_EMAIL = os.environ.get("TEST_OWNER_EMAIL", "josselj001@gmail.com")
+LIFETIME_SUB_EMAIL = os.environ.get("TEST_LIFETIME_EMAIL", "rijulgauchan1@gmail.com")
+NON_MEMBER_EMAIL = os.environ.get("TEST_NON_MEMBER_EMAIL", "nobody@test.com")
 TEST_PASSWORD = os.environ.get("TEST_PASSWORD", "testpass1")
 
 
@@ -116,7 +116,7 @@ class TestLifetimeSubPasswordSetup:
             return data.get("session_token")
         elif response.status_code == 401:
             # User doesn't have valid subscription
-            print(f"✓ User doesn't have valid subscription (expected for some test cases)")
+            print("✓ User doesn't have valid subscription (expected for some test cases)")
         else:
             pytest.fail(f"Unexpected status code: {response.status_code}, response: {response.text}")
     
@@ -179,7 +179,7 @@ class TestLoginWithPassword:
             json={"email": "newuser_nopassword@test.com", "password": "anypassword"}
         )
         assert response.status_code == 401, f"No password user should return 401, got: {response.status_code}"
-        print(f"✓ Login without password correctly rejected")
+        print("✓ Login without password correctly rejected")
 
 
 class TestSessionVerification:
@@ -251,7 +251,7 @@ class TestLogout:
             verify_data = verify_response.json()
             assert verify_data.get("valid") == False, f"Session should be invalid after logout, got: {verify_data}"
             
-            print(f"✓ Logout successful, session invalidated")
+            print("✓ Logout successful, session invalidated")
         else:
             pytest.skip("Could not get session token for logout test")
 

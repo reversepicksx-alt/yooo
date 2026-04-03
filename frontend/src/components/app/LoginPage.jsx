@@ -28,7 +28,7 @@ export function LoginPage({ onAuth }) {
     if (showSubscribe && plans.length === 0) {
       getSquarePlans().then(res => setPlans(res.plans || [])).catch(err => console.error('[PLANS] Load error:', err));
     }
-  }, [showSubscribe]); // eslint-disable-line react-hooks/exhaustive-deps — plans.length intentionally omitted to avoid refetch loop
+  }, [showSubscribe]); // eslint-disable-line
 
   const handleEmailSubmit = async (e) => {
     e.preventDefault();
