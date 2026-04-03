@@ -11,7 +11,7 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 ## What's Been Implemented
 
 ### Core Features (Complete)
-- Image scanning pipeline (prop screenshot → AI extraction → player/team resolution)
+- Image scanning pipeline (prop screenshot -> AI extraction -> player/team resolution)
 - Soccer prediction pipeline (19 prop types, per-90 analysis, H2H, position comparison)
 - Basketball prediction pipeline (17 prop types, pace analysis, matchup context)
 - 3-AI parallel consensus engine with deterministic outputs
@@ -25,36 +25,34 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 - Cross-country league detection (Copa Libertadores/Sudamericana)
 
 ### Batch Scan Player Report (Completed April 3, 2026) — Owner-Only
-- **Multi-prop extraction**: Scan extracts ALL props from a single screenshot (already supported by backend)
-- **Player Report UI**: When owner scans image with multiple props, activates batch mode with:
-  - Prop selection checklist (toggle which props to analyze)
-  - Sequential 3-AI prediction for each selected prop (data fetched once, cached)
-  - Comparison table: PROP | LINE | PROJ | REC | CONF | EDGE
-  - Color-coded recommendations (green OVER / red UNDER)
-  - Expandable detail sections per prop (reasoning, calibration, dominance)
-  - **Best Value** auto-highlight — identifies which prop has the strongest edge×confidence for this matchup
-- **Owner-only gate**: Feature only activates for josselj001@gmail.com until fully tested
-- **Component**: `/app/frontend/src/components/app/PlayerReport.jsx`
+- Multi-prop extraction from single screenshots
+- Player Report UI with prop selection, sequential predictions, comparison table
+- Color-coded recommendations, expandable details, Best Value auto-highlight
+- Owner-only gate for testing
 
-### Match Dominance Engine + Possession Model + GPT Fix (Completed April 3, 2026)
-- **Opponent-Aware Possession Model**: Replaced simple historical averaging with formula: `base = (team_avg + (100 - opp_avg)) / 2`, adjusted for home advantage (+2.5%), standings quality gap (±4%), and odds-derived dominance (±7%). Produces accurate matchup-specific possession predictions.
-- **Match Dominance Multiplier**: Calculates how expected possession divergence from season average should adjust projections. Pass-dependent props (pass_attempts, key_passes, crosses) get boosted when expected possession is above average; defensive props scale inversely.
-- **GPT Minutes Double-Count Fix**: Added explicit PREDICTION_SYSTEM rule: "NEVER double-count minutes. If data shows 43 passes in 26 minutes, the 43 IS the actual output." Prevents GPT from re-scaling by minutes.
-- **Match Context Override in AI Prompt**: Injected [MATCH DOMINANCE ANALYSIS] section with explicit instructions that AIs must raise/lower projections when match context predicts significant possession advantage/disadvantage.
-- **Frontend**: ProjectionCard shows Match Dominance indicator (expected possession vs avg, old→new projection, multiplier).
+### Self-Learning Calibration System (Completed April 3, 2026)
+- Automatic post-mortem 3-AI analysis for missed picks
+- Calibration pattern extraction and bias correction injection
+- Auto-trigger on settlement, manual correction, and backfill
+- Autonomous fire-and-forget background tasks
 
-### Stats-Aware Position Resolver + Force-3-Model Consensus (Completed April 3, 2026)
-- **Stats-Aware Position Resolution**: Position resolver now extracts player's actual season stats (tackles, blocks, aerial duels, passes, key passes, dribbles, shots, goals) and feeds them to the AI. Stats evidence makes CB vs LB misclassification impossible — a CB with 0 crosses and high blocks can't be confused with a fullback.
-- **Dual-AI Validation for Defenders**: For players categorized as "Defender" by API-Football, both Grok + Gemini resolve positions in parallel. If they disagree, stats heuristics break the tie (high tackles+blocks = CB, high key passes+dribbles = fullback).
-- **30-Day Cache Expiry**: Position cache now expires after 30 days. Legacy entries without timestamps cleared — all positions re-resolved with the new stats-aware system on next prediction.
-- **Force-3-Model Consensus**: Changed from "first-2-wins" to "all-3-required" with automatic retry for any model that fails. Both Soccer and Basketball pipelines now wait for all 3 AIs (Gemini + Grok + GPT) before merging, with a single retry for failures, staying within the 48s K8s deadline.
-- **Auto-trigger on settlement**: When a pick settles as a miss (soccer or basketball), background 3-AI postmortem runs automatically
-- **Auto-trigger on manual correction**: When user corrects a pick result to "miss", analysis fires
-- **Auto-backfill**: When user views "Missed" tab, unanalyzed misses get triggered in background (cap 5)
-- **Calibration pattern extraction**: Stores sport/propType bias data (avgError%, missCount, recentErrors)
-- **Prediction pipeline injection**: Both soccer and basketball pipelines fetch calibration data before AI calls, inject calibration context into prompts, and apply percentage adjustments to projected values post-consensus
-- **Frontend display**: Missed pick cards show inline auto-analysis (primaryReason, factors, calibrationSuggestions, modelsResponded). Prediction cards show calibration indicator when adjustment applied.
-- **No manual buttons**: Entire system is autonomous — fire-and-forget background tasks
+### Match Dominance Engine (Completed April 3, 2026)
+- Opponent-aware possession model with home advantage and odds-derived dominance
+- Match dominance multiplier for pass-dependent props
+- GPT minutes double-count fix
+
+### Stats-Aware Position Resolver (Completed April 3, 2026)
+- Stats-evidence position resolution (tackles, blocks, aerials, passes, dribbles, shots)
+- Dual-AI validation for defenders with stats heuristic tiebreaker
+- 30-day cache expiry
+- Force-3-model consensus with retry logic
+
+### Code Quality Fixes (Completed April 3, 2026)
+- Fixed React hook stale closure bug in live polling (savedPicksRef pattern)
+- Replaced all index-as-key anti-patterns with unique IDs (chat messages, follow-ups, FAQs, factors, h2h games, player breakdowns)
+- Added error logging to all 6 empty catch blocks in App.js
+- Fixed broken eslint-disable comment format (em-dash -> proper format)
+- Moved hardcoded test emails to env vars in test_auth.py
 
 ## Key API Endpoints
 - `POST /api/scan-prop` — Vision extraction from prop screenshots
@@ -87,9 +85,12 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 - Slip correlation analysis — Analyze multiple saved picks for the same game to flag conflicting or boosting correlations
 
 ## Future Backlog
-- Batch scan predictions (P2) — Support scanning multiple props from one image
+- Frontend Refactoring: Split App.js (~3,150 lines) into smaller components + custom hooks (P3)
+- Backend Refactoring: Break down high-complexity functions in basketball_predict.py, basketball_utils.py, auth.py (P3)
+- Auth Architecture Migration: Move from localStorage to httpOnly cookies (P3)
+- Enable Batch Scan for all users (P3)
+- Prediction self-correction feedback loop (P2)
 - SofaScore Integration (P3) — Replace API-Sports for NWSL data
-- App.js Component Splitting (P3) — Break down ~3000-line file into smaller components
 
 ## Legal Compliance
 ALL 3rd-party app names and player/team images have been removed. Do not reintroduce them. Do not use explicit AI branding in the UI.
