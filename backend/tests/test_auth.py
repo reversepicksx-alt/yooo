@@ -18,7 +18,7 @@ BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', '').rstrip('/')
 OWNER_EMAIL = "josselj001@gmail.com"
 LIFETIME_SUB_EMAIL = "rijulgauchan1@gmail.com"
 NON_MEMBER_EMAIL = "nobody@test.com"
-TEST_PASSWORD = "testpass1"
+TEST_PASSWORD = os.environ.get("TEST_PASSWORD", "testpass1")
 
 
 class TestHealthCheck:

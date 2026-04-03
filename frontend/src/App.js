@@ -165,7 +165,7 @@ export default function App() {
   const tacticalInputRef = useRef(null);
   const tacticalFileRef = useRef(null);
 
-  // Auth check on mount
+  // Auth check on mount — intentionally runs once
   useEffect(() => {
     const checkAuth = async () => {
       const email = localStorage.getItem('rp_email');
@@ -181,8 +181,8 @@ export default function App() {
             localStorage.removeItem('rp_token');
             localStorage.removeItem('rp_access');
           }
-        } catch {
-          // Session check failed, clear auth
+        } catch (err) {
+          console.error('[AUTH] Session check failed:', err);
           localStorage.removeItem('rp_email');
           localStorage.removeItem('rp_token');
           localStorage.removeItem('rp_access');
@@ -191,7 +191,7 @@ export default function App() {
       setAuthChecking(false);
     };
     checkAuth();
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps — mount-only auth check
 
   // Load picks from MongoDB on auth
   useEffect(() => {
@@ -258,7 +258,9 @@ export default function App() {
             setSavedPicks(refreshed.picks || []);
           }
         }
-      } catch {}
+      } catch (err) {
+        console.error('[LIVE UPDATE] Error fetching live data:', err);
+      }
     };
 
     fetchLiveUpdates();

@@ -26,9 +26,9 @@ export function LoginPage({ onAuth }) {
 
   useEffect(() => {
     if (showSubscribe && plans.length === 0) {
-      getSquarePlans().then(res => setPlans(res.plans || [])).catch(() => {});
+      getSquarePlans().then(res => setPlans(res.plans || [])).catch(err => console.error('[PLANS] Load error:', err));
     }
-  }, [showSubscribe, plans.length]);
+  }, [showSubscribe]); // eslint-disable-line react-hooks/exhaustive-deps — plans.length intentionally omitted to avoid refetch loop
 
   const handleEmailSubmit = async (e) => {
     e.preventDefault();
