@@ -1037,7 +1037,6 @@ async def predict(req: PredictionRequest):
                     cached_at = cached_pos.get("updatedAt", "")
                     if cached_at:
                         try:
-                            from datetime import datetime, timezone
                             cached_dt = datetime.fromisoformat(cached_at.replace("Z", "+00:00"))
                             age_days = (datetime.now(timezone.utc) - cached_dt).days
                             cache_valid = age_days < 30
@@ -1226,7 +1225,6 @@ POSITION CLUES: CB=high tackles/blocks/aerial duels, low crosses/key passes/drib
                         elif not role_text and valid_roles:
                             role_text = sorted(valid_roles)[0]
                         player_role = role_text
-                        from datetime import datetime, timezone
                         await db.player_positions.update_one(
                             {"playerId": req.playerId},
                             {"$set": {
