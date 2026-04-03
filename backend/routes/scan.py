@@ -683,6 +683,34 @@ async def _resolve_basketball_picks(extracted: list) -> dict:
                         best = live_opps[0]
                         resolved_opp = {"teamId": best["id"], "teamName": best.get("name", opp_hint)}
 
+        # VENUE VERIFICATION: Cross-check against actual basketball fixture data
+        if resolved_team and resolved_team.get("teamId") and resolved_opp and resolved_opp.get("teamId"):
+            try:
+                from basketball_utils import _api_get as bball_api_get
+                import datetime
+                games = await bball_api_get("games", {"team": resolved_team["teamId"], "season": "2024-2025"})
+                if games:
+                    today = datetime.date.today().isoformat()
+                    for g in games[-20:]:
+                        home = g.get("teams", {}).get("home", {})
+                        away = g.get("teams", {}).get("visitors", {})
+                        home_id = home.get("id")
+                        away_id = away.get("id")
+                        game_date = g.get("date", "")[:10]
+                        if game_date >= today:
+                            if home_id == resolved_team["teamId"] and away_id == resolved_opp["teamId"]:
+                                if venue != "home":
+                                    print(f"[BBALL VENUE FIX] {resolved_team['teamName']} is HOME (was: {venue})")
+                                venue = "home"
+                                break
+                            elif away_id == resolved_team["teamId"] and home_id == resolved_opp["teamId"]:
+                                if venue != "away":
+                                    print(f"[BBALL VENUE FIX] {resolved_team['teamName']} is AWAY (was: {venue})")
+                                venue = "away"
+                                break
+            except Exception as e:
+                print(f"[BBALL VENUE VERIFY] Error: {e}")
+
         results.append({
             "extracted": {
                 "playerName": player_name,
@@ -948,6 +976,46 @@ async def scan_prop(req: ScanPropRequest):
             resolved_opponent = None
             if opponent_hint and resolved_player:
                 resolved_opponent = await _resolve_opponent(opponent_hint, is_international, league_id)
+
+            # VENUE VERIFICATION: Cross-check against actual fixture data
+            if resolved_player and resolved_player.get("teamId"):
+                try:
+                    fixtures = await api_football_request("fixtures", {
+                        "team": resolved_player["teamId"], "next": 5
+                    })
+                    if fixtures:
+                        opp_id = resolved_opponent.get("teamId") if resolved_opponent else None
+                        for fx in fixtures:
+                            home_team = fx.get("teams", {}).get("home", {})
+                            away_team = fx.get("teams", {}).get("away", {})
+                            home_id = home_team.get("id")
+                            away_id = away_team.get("id")
+
+                            # Match by opponent ID
+                            if opp_id:
+                                if home_id == resolved_player["teamId"] and away_id == opp_id:
+                                    if venue != "home":
+                                        print(f"[VENUE FIX] {resolved_player['teamName']} is HOME vs {resolved_opponent.get('teamName','?')} (was: {venue})")
+                                    venue = "home"
+                                    break
+                                elif away_id == resolved_player["teamId"] and home_id == opp_id:
+                                    if venue != "away":
+                                        print(f"[VENUE FIX] {resolved_player['teamName']} is AWAY at {resolved_opponent.get('teamName','?')} (was: {venue})")
+                                    venue = "away"
+                                    break
+                            else:
+                                # No opponent ID — match by opponent name fuzzy
+                                opp_lower = opponent_hint.lower().strip()
+                                home_name = home_team.get("name", "").lower()
+                                away_name = away_team.get("name", "").lower()
+                                if home_id == resolved_player["teamId"] and opp_lower in away_name:
+                                    venue = "home"
+                                    break
+                                elif away_id == resolved_player["teamId"] and opp_lower in home_name:
+                                    venue = "away"
+                                    break
+                except Exception as e:
+                    print(f"[VENUE VERIFY] Error checking fixtures: {e}")
 
             # Look up cached position/role for display on scan card
             player_pos_info = {}
