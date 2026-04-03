@@ -438,8 +438,10 @@ async def get_calibration_adjustment(sport: str, prop_type: str, venue: str = No
         return result  # Too mixed, no clear bias
 
     # Cap adjustment at ±15%
-    adjustment = max(-15.0, min(15.0, -avg_error * 0.5))
-    bias_dir = "over-projecting" if avg_error > 0 else "under-projecting"
+    # avg_error > 0 means actual > projected (under-projecting) → need positive adjustment to raise projection
+    # avg_error < 0 means actual < projected (over-projecting) → need negative adjustment to lower projection
+    adjustment = max(-15.0, min(15.0, avg_error * 0.5))
+    bias_dir = "under-projecting" if avg_error > 0 else "over-projecting"
     prop_label = prop_type.replace("_", " ").title()
 
     result = {
@@ -450,7 +452,7 @@ async def get_calibration_adjustment(sport: str, prop_type: str, venue: str = No
             f"System has historically {bias_dir} {prop_label} by {abs(avg_error):.1f}% "
             f"({miss_count} misses analyzed, last {total} tracked).\n"
             f"Applying {adjustment:+.1f}% correction to projection.\n"
-            f">>> Adjust your projection accordingly. If system over-projects, lean lower. If under-projects, lean higher. <<<"
+            f">>> If system under-projects, raise your projection. If over-projects, lower it. <<<"
         ),
         "missCount": miss_count,
         "avgError": round(avg_error, 1),

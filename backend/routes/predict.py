@@ -688,28 +688,28 @@ async def predict(req: PredictionRequest):
                 DEF_PROPS = {"tackles", "interceptions", "blocks", "clearances"}
 
                 if req.propType in PASS_PROPS:
-                    # Pass props scale with possession: every 5% extra → ~10% more passes
+                    # Pass props: capped at ±12%
                     if poss_diff > 2:
-                        adj = poss_diff * 0.018
+                        adj = min(0.12, poss_diff * 0.008)
                         dom["multiplier"] = round(1.0 + adj, 3)
-                        dom["notes"].append(f"Pass volume boost: expected {base_poss:.0f}% poss vs {team_avg:.0f}% avg → {adj*100:.0f}% uplift")
+                        dom["notes"].append(f"Pass volume boost: expected {base_poss:.0f}% poss vs {team_avg:.0f}% avg → +{adj*100:.0f}% uplift")
                     elif poss_diff < -2:
-                        adj = poss_diff * 0.012
+                        adj = max(-0.12, poss_diff * 0.006)
                         dom["multiplier"] = round(1.0 + adj, 3)
                         dom["notes"].append(f"Pass volume drop: expected {base_poss:.0f}% poss vs {team_avg:.0f}% avg → {adj*100:.0f}% reduction")
                 elif req.propType in DEF_PROPS:
-                    # Defensive props scale inversely: more possession → fewer tackles
+                    # Defensive props: capped at ±10%
                     if poss_diff > 2:
-                        adj = -poss_diff * 0.010
+                        adj = max(-0.10, -poss_diff * 0.005)
                         dom["multiplier"] = round(1.0 + adj, 3)
                         dom["notes"].append(f"Def action drop: high expected poss → {adj*100:.0f}% fewer def actions")
                     elif poss_diff < -2:
-                        adj = -poss_diff * 0.010
+                        adj = min(0.10, -poss_diff * 0.005)
                         dom["multiplier"] = round(1.0 + adj, 3)
                         dom["notes"].append(f"Def action boost: low expected poss → +{adj*100:.0f}% more def actions")
                 elif req.propType in {"shots", "shots_on_target"}:
                     if poss_diff > 3:
-                        adj = poss_diff * 0.008
+                        adj = min(0.08, poss_diff * 0.004)
                         dom["multiplier"] = round(1.0 + adj, 3)
                         dom["notes"].append("Shot volume boost from expected dominance")
 
@@ -719,9 +719,12 @@ async def predict(req: PredictionRequest):
         standing_data = {}
         if standings:
             for s in standings:
-                if s.get("team", "").lower() == req.teamName.lower() or str(s.get("team_id")) == str(req.teamId):
+                s_team = s.get("team", "")
+                s_team_name = s_team.get("name", "") if isinstance(s_team, dict) else str(s_team)
+                s_team_id = s_team.get("id", "") if isinstance(s_team, dict) else s.get("team_id", "")
+                if s_team_name.lower() == req.teamName.lower() or str(s_team_id) == str(req.teamId):
                     standing_data["teamRank"] = s.get("rank")
-                if s.get("team", "").lower() == req.opponentName.lower() or str(s.get("team_id")) == str(req.opponentId):
+                if s_team_name.lower() == req.opponentName.lower() or str(s_team_id) == str(req.opponentId):
                     standing_data["oppRank"] = s.get("rank")
 
         match_dominance = compute_match_dominance(
