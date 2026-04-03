@@ -24,6 +24,18 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 - Admin Settings panel
 - Cross-country league detection (Copa Libertadores/Sudamericana)
 
+### Batch Scan Player Report (Completed April 3, 2026) — Owner-Only
+- **Multi-prop extraction**: Scan extracts ALL props from a single screenshot (already supported by backend)
+- **Player Report UI**: When owner scans image with multiple props, activates batch mode with:
+  - Prop selection checklist (toggle which props to analyze)
+  - Sequential 3-AI prediction for each selected prop (data fetched once, cached)
+  - Comparison table: PROP | LINE | PROJ | REC | CONF | EDGE
+  - Color-coded recommendations (green OVER / red UNDER)
+  - Expandable detail sections per prop (reasoning, calibration, dominance)
+  - **Best Value** auto-highlight — identifies which prop has the strongest edge×confidence for this matchup
+- **Owner-only gate**: Feature only activates for josselj001@gmail.com until fully tested
+- **Component**: `/app/frontend/src/components/app/PlayerReport.jsx`
+
 ### Match Dominance Engine + Possession Model + GPT Fix (Completed April 3, 2026)
 - **Opponent-Aware Possession Model**: Replaced simple historical averaging with formula: `base = (team_avg + (100 - opp_avg)) / 2`, adjusted for home advantage (+2.5%), standings quality gap (±4%), and odds-derived dominance (±7%). Produces accurate matchup-specific possession predictions.
 - **Match Dominance Multiplier**: Calculates how expected possession divergence from season average should adjust projections. Pass-dependent props (pass_attempts, key_passes, crosses) get boosted when expected possession is above average; defensive props scale inversely.
