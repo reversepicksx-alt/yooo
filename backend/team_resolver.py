@@ -96,6 +96,20 @@ def _generate_aliases(name: str) -> list:
         if w in SHORT_PREFIXES:
             aliases.add(SHORT_PREFIXES[w])
 
+    # Handle "United" ↔ "Utd", "Wednesday" ↔ "Wed", "City" stays "City"
+    WORD_ABBREVS = {"united": "utd", "wednesday": "wed", "athletic": "ath", "albion": "alb", "forest": "for"}
+    expanded_aliases = set()
+    for alias in list(aliases):
+        alias_words = alias.split()
+        for full_form, short_form in WORD_ABBREVS.items():
+            if full_form in alias_words:
+                new_alias = alias.replace(full_form, short_form)
+                expanded_aliases.add(new_alias)
+            if short_form in alias_words:
+                new_alias = alias.replace(short_form, full_form)
+                expanded_aliases.add(new_alias)
+    aliases.update(expanded_aliases)
+
     return list(aliases)
 
 
@@ -165,6 +179,66 @@ SCAN_ALIASES = {
     "como": "como",
     "venezia": "venezia",
     "monza": "monza",
+    # Premier League common abbreviations
+    "man utd": "manchester united",
+    "man united": "manchester united",
+    "man city": "manchester city",
+    "spurs": "tottenham",
+    "wolves": "wolves",
+    "sheff utd": "sheffield utd",
+    "newcastle": "newcastle",
+    "newcastle utd": "newcastle",
+    "west ham": "west ham united",
+    "west brom": "west bromwich",
+    "nottm forest": "nottingham forest",
+    "nott forest": "nottingham forest",
+    "nottingham": "nottingham forest",
+    "crystal palace": "crystal palace",
+    "aston villa": "aston villa",
+    "leeds": "leeds united",
+    "leeds utd": "leeds united",
+    "leicester": "leicester city",
+    "everton": "everton",
+    "burnley": "burnley",
+    "southampton": "southampton",
+    "brighton": "brighton",
+    "brentford": "brentford",
+    "fulham": "fulham",
+    "bournemouth": "bournemouth",
+    "ipswich": "ipswich town",
+    "luton": "luton town",
+    # MLS common
+    "lafc": "los angeles fc",
+    "la galaxy": "los angeles galaxy",
+    "nycfc": "new york city fc",
+    "nyrb": "new york red bulls",
+    "red bulls": "new york red bulls",
+    "atlanta utd": "atlanta united",
+    "atlanta united": "atlanta united",
+    "columbus": "columbus crew",
+    "portland": "portland timbers",
+    "seattle": "seattle sounders",
+    "miami": "inter miami",
+    "inter miami": "inter miami",
+    # Liga MX common
+    "america": "club america",
+    "guadalajara": "guadalajara",
+    "chivas": "guadalajara",
+    "monterrey": "monterrey",
+    "tigres": "tigres uanl",
+    "cruz azul": "cruz azul",
+    "pumas": "pumas unam",
+    "santos": "santos laguna",
+    "toluca": "toluca",
+    "leon": "club leon",
+    "pachuca": "pachuca",
+    "atlas": "atlas",
+    "mazatlan": "mazatlan",
+    "necaxa": "necaxa",
+    "puebla": "puebla",
+    "queretaro": "queretaro",
+    "juarez": "fc juarez",
+    "tijuana": "club tijuana",
 }
 
 
@@ -285,25 +359,37 @@ async def find_team(query: str, league_id: int = None) -> dict:
         if doc:
             return {"teamId": doc["teamId"], "teamName": doc["name"], "leagueId": doc["leagueId"]}
 
+    # Strategy 0b: Try expanding abbreviations in the query itself
+    # "man utd" → try "man united", "newcastle utd" → "newcastle united"
+    QUERY_EXPANSIONS = {"utd": "united", "wed": "wednesday", "ath": "athletic", "alb": "albion", "for": "forest"}
+    expanded_norms = [norm]
+    for abbr, full in QUERY_EXPANSIONS.items():
+        if abbr in norm.split():
+            expanded_norms.append(norm.replace(abbr, full))
+        if full in norm.split():
+            expanded_norms.append(norm.replace(full, abbr))
+
     norm = _normalize(query)
     if not norm:
         return None
 
     # Strategy 1: Exact normalized name match
-    filt = {"nameNormalized": norm}
-    if league_id:
-        filt["leagueId"] = league_id
-    doc = await db[COL_TEAMS_MASTER].find_one(filt, {"_id": 0})
-    if doc:
-        return {"teamId": doc["teamId"], "teamName": doc["name"], "leagueId": doc["leagueId"]}
+    for n in expanded_norms:
+        filt = {"nameNormalized": n}
+        if league_id:
+            filt["leagueId"] = league_id
+        doc = await db[COL_TEAMS_MASTER].find_one(filt, {"_id": 0})
+        if doc:
+            return {"teamId": doc["teamId"], "teamName": doc["name"], "leagueId": doc["leagueId"]}
 
     # Strategy 2: Alias match (handles "paris sg", "psg", "sheff wed", etc.)
-    filt = {"aliases": norm}
-    if league_id:
-        filt["leagueId"] = league_id
-    doc = await db[COL_TEAMS_MASTER].find_one(filt, {"_id": 0})
-    if doc:
-        return {"teamId": doc["teamId"], "teamName": doc["name"], "leagueId": doc["leagueId"]}
+    for n in expanded_norms:
+        filt = {"aliases": n}
+        if league_id:
+            filt["leagueId"] = league_id
+        doc = await db[COL_TEAMS_MASTER].find_one(filt, {"_id": 0})
+        if doc:
+            return {"teamId": doc["teamId"], "teamName": doc["name"], "leagueId": doc["leagueId"]}
 
     # Strategy 3: Substring match on normalized name
     filt = {"nameNormalized": {"$regex": re.escape(norm)}}
