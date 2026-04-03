@@ -244,17 +244,24 @@ async def _infer_league_id(team_name: str, opponent_name: str, ai_league_id: int
     return ai_league_id or 71
 
 
-async def _resolve_player_via_cache(player_name: str, team_id: int = None) -> dict:
+async def _resolve_player_via_cache(player_name: str, team_id: int = None, league_id: int = None) -> dict:
     """Try to find a player in the MongoDB cache. Returns player doc or None."""
-    player = await get_player_by_name(player_name, team_id)
-    if player:
-        return player
-    # If team filter was used and missed, try without it
     if team_id:
-        player = await get_player_by_name(player_name)
+        # Search with team filter
+        player = await get_player_by_name(player_name, team_id)
         if player:
             return player
-    return None
+        # Team filter failed — do NOT fall back to unfiltered search.
+        # This prevents matching random players from wrong teams/leagues.
+        return None
+
+    # No team_id — unfiltered search, but validate league if provided
+    player = await get_player_by_name(player_name)
+    if player and league_id:
+        cached_league = player.get("leagueId")
+        if cached_league and cached_league != league_id:
+            return None  # Wrong league — reject
+    return player
 
 
 async def _resolve_player_via_api(player_name: str, player_team_hint: str,
@@ -859,7 +866,7 @@ async def scan_prop(req: ScanPropRequest):
                             team_canonical = club_name
 
                     # Resolve the player from cache
-                    cached = await _resolve_player_via_cache(cp_name, team_id)
+                    cached = await _resolve_player_via_cache(cp_name, team_id, league_id=league_id)
                     if cached:
                         resolved_players.append({
                             "playerId": cached["playerId"],
@@ -949,7 +956,7 @@ async def scan_prop(req: ScanPropRequest):
                 if club_id:
                     cache_team_id = club_id
 
-            cached_player = await _resolve_player_via_cache(player_name, cache_team_id)
+            cached_player = await _resolve_player_via_cache(player_name, cache_team_id, league_id=league_id)
             if cached_player:
                 # Guard: If we have a team hint but couldn't find the team in cache,
                 # validate the cached player's team doesn't belong to a completely different league
@@ -1179,7 +1186,7 @@ async def re_resolve(req: ReResolveRequest):
         if club_id:
             cache_team_id = club_id
 
-        cached_player = await _resolve_player_via_cache(player_name, cache_team_id)
+        cached_player = await _resolve_player_via_cache(player_name, cache_team_id, league_id=league_id)
         if cached_player:
             resolved_player = {
                 "playerId": cached_player["playerId"],
