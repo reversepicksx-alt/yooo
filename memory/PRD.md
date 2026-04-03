@@ -24,7 +24,11 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 - Admin Settings panel
 - Cross-country league detection (Copa Libertadores/Sudamericana)
 
-### Self-Learning Calibration System (Completed April 3, 2026)
+### Stats-Aware Position Resolver + Force-3-Model Consensus (Completed April 3, 2026)
+- **Stats-Aware Position Resolution**: Position resolver now extracts player's actual season stats (tackles, blocks, aerial duels, passes, key passes, dribbles, shots, goals) and feeds them to the AI. Stats evidence makes CB vs LB misclassification impossible — a CB with 0 crosses and high blocks can't be confused with a fullback.
+- **Dual-AI Validation for Defenders**: For players categorized as "Defender" by API-Football, both Grok + Gemini resolve positions in parallel. If they disagree, stats heuristics break the tie (high tackles+blocks = CB, high key passes+dribbles = fullback).
+- **30-Day Cache Expiry**: Position cache now expires after 30 days. Legacy entries without timestamps cleared — all positions re-resolved with the new stats-aware system on next prediction.
+- **Force-3-Model Consensus**: Changed from "first-2-wins" to "all-3-required" with automatic retry for any model that fails. Both Soccer and Basketball pipelines now wait for all 3 AIs (Gemini + Grok + GPT) before merging, with a single retry for failures, staying within the 48s K8s deadline.
 - **Auto-trigger on settlement**: When a pick settles as a miss (soccer or basketball), background 3-AI postmortem runs automatically
 - **Auto-trigger on manual correction**: When user corrects a pick result to "miss", analysis fires
 - **Auto-backfill**: When user views "Missed" tab, unanalyzed misses get triggered in background (cap 5)

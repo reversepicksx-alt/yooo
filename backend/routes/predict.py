@@ -892,16 +892,32 @@ async def predict(req: PredictionRequest):
                 player_role = req.roleOverride or ""
                 print(f"[POS RESOLVE] User override: {req.playerName} → {specific_position} ({player_role})")
             else:
+                # Check cache (with 30-day expiry)
                 cached_pos = await db.player_positions.find_one(
-                    {"playerId": req.playerId}, {"_id": 0, "specificPosition": 1, "role": 1}
+                    {"playerId": req.playerId}, {"_id": 0, "specificPosition": 1, "role": 1, "updatedAt": 1}
                 )
+                cache_valid = False
                 if cached_pos and cached_pos.get("specificPosition"):
+                    # Check if cache is fresh (< 30 days)
+                    cached_at = cached_pos.get("updatedAt", "")
+                    if cached_at:
+                        try:
+                            from datetime import datetime, timezone
+                            cached_dt = datetime.fromisoformat(cached_at.replace("Z", "+00:00"))
+                            age_days = (datetime.now(timezone.utc) - cached_dt).days
+                            cache_valid = age_days < 30
+                            if not cache_valid:
+                                print(f"[POS RESOLVE] Cache expired ({age_days} days): {req.playerName}")
+                        except Exception:
+                            cache_valid = True  # If we can't parse date, trust the cache
+                    else:
+                        cache_valid = True  # Legacy cache entries without updatedAt
+
+                if cache_valid:
                     specific_position = cached_pos["specificPosition"]
                     player_role = cached_pos.get("role", "")
-                    # Validate cached role matches position
                     valid_roles = POSITION_ROLE_MAP.get(specific_position, set())
                     if valid_roles and (not player_role or player_role not in valid_roles):
-                        # Fix the role to a valid one for this position
                         corrected_role = sorted(valid_roles)[0] if valid_roles else ""
                         print(f"[POS RESOLVE] Cache role fix: {req.playerName} {specific_position}/{player_role} → {corrected_role}")
                         player_role = corrected_role
@@ -915,7 +931,6 @@ async def predict(req: PredictionRequest):
             if not specific_position:
                 try:
                     from openai import OpenAI as SyncOpenAI
-                    pos_client = SyncOpenAI(api_key=XAI_API_KEY, base_url="https://api.x.ai/v1")
 
                     # Build constrained position list based on API-Sports category
                     allowed_positions = GENERIC_TO_SPECIFIC.get(player_position, None)
@@ -926,24 +941,147 @@ async def predict(req: PredictionRequest):
                         pos_list = "GK, CB, LB, RB, LWB, RWB, CDM, CM, CAM, LM, RM, LW, RW, CF, ST, SS"
                         category_hint = ""
 
-                    pos_resp = await aio.wait_for(
-                        aio.to_thread(
-                            pos_client.chat.completions.create,
-                            model="grok-4-1-fast-non-reasoning",
-                            messages=[
-                                {"role": "system", "content": "You are a football/soccer tactical analyst. Reply in EXACTLY this format on one line:\nPOSITION|ROLE\nNothing else."},
-                                {"role": "user", "content": f"What is {req.playerName}'s primary position and tactical role at {req.teamName}?{category_hint}\nPosition must be one of: {pos_list}\nRole must be one of: Shot-Stopper, Sweeper Keeper, Ball-Playing CB, Stopper, Fullback, Wing-Back, Inverted Fullback, Anchor, Box-to-Box, Deep-Lying Playmaker, Ball Winner, Mezzala, Advanced Playmaker, Wide Playmaker, Traditional Winger, Inverted Winger, Progressive Carrier, Inside Forward, Target Man, Poacher, False 9, Shadow Striker, Complete Forward, Pressing Forward\nReply ONLY: POSITION|ROLE"},
-                            ],
-                            temperature=0,
-                        ),
-                        timeout=6
-                    )
-                    pos_text = pos_resp.choices[0].message.content.strip()
-                    parts = pos_text.split("|")
-                    pos_code = parts[0].strip().upper().replace(".", "").replace(",", "") if parts else ""
-                    role_text = parts[1].strip() if len(parts) > 1 else ""
+                    # STATS-AWARE: Extract position-relevant stats for evidence-based resolution
+                    stats_evidence = ""
+                    stats_list = player_stats.get("statistics", []) if player_stats else []
+                    if stats_list:
+                        latest = stats_list[-1] if stats_list else {}
+                        tck = latest.get("tackles", {})
+                        duels = latest.get("duels", {})
+                        pss = latest.get("passes", {})
+                        drb = latest.get("dribbles", {})
+                        sht = latest.get("shots", {})
+                        gls = latest.get("goals", {})
+                        fls = latest.get("fouls", {})
+                        cards = latest.get("cards", {})
+                        games = latest.get("games", {})
+                        stats_evidence = f"""
+ACTUAL SEASON STATS (use these to determine position — stats don't lie):
+- Appearances: {games.get('appearances', '?')}, Minutes: {games.get('minutes', '?')}, Rating: {games.get('rating', '?')}
+- Tackles: {tck.get('total', 0)}, Interceptions: {tck.get('interceptions', 0)}, Blocks: {tck.get('blocks', 0)}
+- Duels won: {duels.get('won', 0)}/{duels.get('total', 0)}
+- Passes total: {pss.get('total', 0)}, Key passes: {pss.get('key', 0)}, Accuracy: {pss.get('accuracy', '?')}%
+- Dribbles: {drb.get('attempts', 0)} attempts, {drb.get('success', 0)} successful
+- Shots: {sht.get('total', 0)}, On target: {sht.get('on', 0)}
+- Goals: {gls.get('total', 0)}, Assists: {gls.get('assists', 0)}
+- Fouls drawn: {fls.get('drawn', 0)}, Committed: {fls.get('committed', 0)}
+- Yellow cards: {cards.get('yellow', 0)}, Red: {cards.get('red', 0)}
+POSITION CLUES: CB=high tackles/blocks/aerial duels, low crosses/key passes/dribbles. LB/RB=crosses, some key passes, overlapping runs. CDM=high interceptions, moderate passing. CM=balanced. CAM=high key passes. Winger=high dribbles/crosses. ST=high shots/goals."""
+
+                    pos_prompt = f"What is {req.playerName}'s primary position and tactical role at {req.teamName}?{category_hint}{stats_evidence}\nPosition must be one of: {pos_list}\nRole must be one of: Shot-Stopper, Sweeper Keeper, Ball-Playing CB, Stopper, Fullback, Wing-Back, Inverted Fullback, Anchor, Box-to-Box, Deep-Lying Playmaker, Ball Winner, Mezzala, Advanced Playmaker, Wide Playmaker, Traditional Winger, Inverted Winger, Progressive Carrier, Inside Forward, Target Man, Poacher, False 9, Shadow Striker, Complete Forward, Pressing Forward\nReply ONLY: POSITION|ROLE"
+
+                    # DUAL-AI POSITION VALIDATION: Grok + Gemini in parallel for defenders
+                    is_defender = player_position == "Defender"
+
+                    pos_client = SyncOpenAI(api_key=XAI_API_KEY, base_url="https://api.x.ai/v1")
+
+                    async def resolve_pos_grok():
+                        return await aio.wait_for(
+                            aio.to_thread(
+                                pos_client.chat.completions.create,
+                                model="grok-4-1-fast-non-reasoning",
+                                messages=[
+                                    {"role": "system", "content": "You are a football/soccer tactical analyst. Reply in EXACTLY this format on one line:\nPOSITION|ROLE\nNothing else."},
+                                    {"role": "user", "content": pos_prompt},
+                                ],
+                                temperature=0,
+                            ),
+                            timeout=8
+                        )
+
+                    async def resolve_pos_gemini():
+                        EMERGENT_PROXY = "https://integrations.emergentagent.com/llm"
+                        import litellm
+                        litellm.drop_params = True
+                        return await aio.wait_for(
+                            litellm.acompletion(
+                                model="gemini/gemini-2.0-flash",
+                                messages=[
+                                    {"role": "system", "content": "You are a football/soccer tactical analyst. Reply in EXACTLY this format on one line:\nPOSITION|ROLE\nNothing else."},
+                                    {"role": "user", "content": pos_prompt},
+                                ],
+                                api_key=EMERGENT_LLM_KEY,
+                                api_base=EMERGENT_PROXY,
+                                custom_llm_provider="openai",
+                                temperature=0,
+                                max_tokens=50,
+                            ),
+                            timeout=8
+                        )
+
+                    def parse_pos_response(resp_text, allowed):
+                        parts = resp_text.strip().split("|")
+                        pos = parts[0].strip().upper().replace(".", "").replace(",", "") if parts else ""
+                        role = parts[1].strip() if len(parts) > 1 else ""
+                        if pos in (allowed or {"GK","CB","LB","RB","LWB","RWB","CDM","CM","CAM","LM","RM","LW","RW","CF","ST","SS"}):
+                            return pos, role
+                        return None, None
+
                     valid_positions = allowed_positions or {"GK","CB","LB","RB","LWB","RWB","CDM","CM","CAM","LM","RM","LW","RW","CF","ST","SS"}
-                    if pos_code in valid_positions:
+
+                    if is_defender:
+                        # Dual-AI for defenders (most common source of errors)
+                        try:
+                            grok_resp, gemini_resp = await aio.gather(
+                                resolve_pos_grok(), resolve_pos_gemini(),
+                                return_exceptions=True
+                            )
+                            grok_pos, grok_role = None, None
+                            gemini_pos, gemini_role = None, None
+                            if not isinstance(grok_resp, Exception):
+                                grok_pos, grok_role = parse_pos_response(grok_resp.choices[0].message.content, valid_positions)
+                            if not isinstance(gemini_resp, Exception):
+                                gemini_pos, gemini_role = parse_pos_response(gemini_resp.choices[0].message.content, valid_positions)
+
+                            if grok_pos and gemini_pos:
+                                if grok_pos == gemini_pos:
+                                    pos_code = grok_pos
+                                    role_text = grok_role or gemini_role or ""
+                                    print(f"[POS RESOLVE] Dual-AI AGREE: {req.playerName} → {pos_code} (Grok={grok_pos}, Gemini={gemini_pos})")
+                                else:
+                                    # Disagreement — use stats heuristic as tiebreaker
+                                    pos_code = grok_pos  # default to Grok
+                                    role_text = grok_role or ""
+                                    if stats_list:
+                                        latest_s = stats_list[-1]
+                                        key_passes = latest_s.get("passes", {}).get("key", 0) or 0
+                                        dribble_att = latest_s.get("dribbles", {}).get("attempts", 0) or 0
+                                        tackles_total = latest_s.get("tackles", {}).get("total", 0) or 0
+                                        blocks = latest_s.get("tackles", {}).get("blocks", 0) or 0
+                                        # CB indicators: high tackles+blocks, low key passes & dribbles
+                                        cb_score = (tackles_total + blocks * 2) - (key_passes + dribble_att)
+                                        if cb_score > 10 and "CB" in {grok_pos, gemini_pos}:
+                                            pos_code = "CB"
+                                            role_text = grok_role if grok_pos == "CB" else gemini_role or "Ball-Playing CB"
+                                        elif cb_score < -5 and ("LB" in {grok_pos, gemini_pos} or "RB" in {grok_pos, gemini_pos}):
+                                            pos_code = grok_pos if grok_pos in ("LB", "RB") else gemini_pos
+                                            role_text = grok_role if grok_pos == pos_code else gemini_role or "Fullback"
+                                    print(f"[POS RESOLVE] Dual-AI DISAGREE: Grok={grok_pos}, Gemini={gemini_pos} → tiebreak={pos_code} (stats-based)")
+                            elif grok_pos:
+                                pos_code = grok_pos
+                                role_text = grok_role or ""
+                                print(f"[POS RESOLVE] Grok only: {req.playerName} → {pos_code}")
+                            elif gemini_pos:
+                                pos_code = gemini_pos
+                                role_text = gemini_role or ""
+                                print(f"[POS RESOLVE] Gemini only: {req.playerName} → {pos_code}")
+                            else:
+                                raise ValueError("Both AIs failed for position")
+                        except Exception as e:
+                            # Fallback to single Grok call
+                            print(f"[POS RESOLVE] Dual-AI failed ({e}), trying single Grok...")
+                            pos_resp = await resolve_pos_grok()
+                            pos_code, role_text = parse_pos_response(pos_resp.choices[0].message.content, valid_positions)
+                            if not pos_code:
+                                raise ValueError("Grok returned invalid position")
+                    else:
+                        # Non-defenders: single Grok call (with stats context)
+                        pos_resp = await resolve_pos_grok()
+                        pos_code, role_text = parse_pos_response(pos_resp.choices[0].message.content, valid_positions)
+                        if not pos_code:
+                            raise ValueError("Grok returned invalid position")
+
+                    if pos_code:
                         specific_position = pos_code
                         # Validate role matches position
                         valid_roles = POSITION_ROLE_MAP.get(pos_code, set())
@@ -953,6 +1091,7 @@ async def predict(req: PredictionRequest):
                         elif not role_text and valid_roles:
                             role_text = sorted(valid_roles)[0]
                         player_role = role_text
+                        from datetime import datetime, timezone
                         await db.player_positions.update_one(
                             {"playerId": req.playerId},
                             {"$set": {
@@ -962,12 +1101,13 @@ async def predict(req: PredictionRequest):
                                 "genericPosition": player_position,
                                 "specificPosition": specific_position,
                                 "role": player_role,
+                                "updatedAt": datetime.now(timezone.utc).isoformat(),
                             }},
                             upsert=True
                         )
                         print(f"[POS RESOLVE] AI resolved: {req.playerName} → {specific_position} | {player_role} (cached)")
                     else:
-                        print(f"[POS RESOLVE] AI returned invalid: '{pos_text}' (allowed: {valid_positions})")
+                        print("[POS RESOLVE] AI returned invalid position")
                 except Exception as e:
                     print(f"[POS RESOLVE] Error: {e}")
         else:
@@ -1361,40 +1501,53 @@ Analyze ALL data thoroughly. Return JSON only."""
             aio.ensure_future(call_grok("grok", "grok-4-1-fast-non-reasoning")),
         ]
 
-        # FIRST-2-WINS: Take the first 2 valid results, then grab the 3rd
-        MIN_RESULTS = 2
+        # FORCE-3-MODELS: Wait for ALL 3 AIs, retry failures once
         ai_results = []
-        pending = set(ai_tasks)
-        deadline = _t0 + 48  # absolute cap: 48s from route start guarantees < 55s total
+        deadline = _t0 + 48  # absolute cap: 48s from route start
 
-        while pending and len(ai_results) < MIN_RESULTS and _t.time() < deadline:
-            remaining_time = max(0.1, deadline - _t.time())
-            done, pending = await aio.wait(pending, timeout=remaining_time, return_when=aio.FIRST_COMPLETED)
-            for t in done:
-                try:
-                    r = t.result()
-                    if r and isinstance(r, dict) and r.get("projectedValue") is not None:
-                        pv = r.get("projectedValue", 0)
-                        if isinstance(pv, (int, float)) and pv > 0:
-                            ai_results.append(r)
-                except Exception:
-                    pass
+        # First pass: wait for all 3 to complete
+        done, pending = await aio.wait(ai_tasks, timeout=max(0.1, deadline - _t.time()))
+        for t in done:
+            try:
+                r = t.result()
+                if r and isinstance(r, dict) and r.get("projectedValue") is not None:
+                    pv = r.get("projectedValue", 0)
+                    if isinstance(pv, (int, float)) and pv > 0:
+                        ai_results.append(r)
+            except Exception:
+                pass
+        for t in pending:
+            t.cancel()
 
-        # Grab any additional results that finished while we were processing
-        if pending:
-            done_extra, still_pending = await aio.wait(pending, timeout=25.0, return_when=aio.ALL_COMPLETED)
-            for t in done_extra:
-                try:
-                    r = t.result()
-                    if r and isinstance(r, dict) and r.get("projectedValue") is not None:
-                        pv = r.get("projectedValue", 0)
-                        if isinstance(pv, (int, float)) and pv > 0:
-                            ai_results.append(r)
-                except Exception:
-                    pass
-            for t in still_pending:
-                t.cancel()
-        print(f"[TIMING] AIs done: {_t.time()-_t0:.1f}s total, {len(ai_results)} succeeded ({', '.join(r.get('_source','?') for r in ai_results)})")
+        # Retry any failed models (one retry each, only if time allows)
+        responded_sources = {r.get("_source") for r in ai_results}
+        if len(ai_results) < 3 and _t.time() < deadline - 10:
+            retry_tasks = []
+            if "gemini" not in responded_sources:
+                retry_tasks.append(aio.ensure_future(call_ai("gemini-2.0-flash", "gemini", "gemini")))
+                print("[MULTI-AI] Retrying gemini...")
+            if "gpt41mini" not in responded_sources:
+                retry_tasks.append(aio.ensure_future(call_ai("gpt-4.1-mini", "gpt41mini")))
+                print("[MULTI-AI] Retrying gpt41mini...")
+            if "grok" not in responded_sources:
+                retry_tasks.append(aio.ensure_future(call_grok("grok", "grok-4-1-fast-non-reasoning")))
+                print("[MULTI-AI] Retrying grok...")
+
+            if retry_tasks:
+                done_retry, pending_retry = await aio.wait(retry_tasks, timeout=max(0.1, deadline - _t.time()))
+                for t in done_retry:
+                    try:
+                        r = t.result()
+                        if r and isinstance(r, dict) and r.get("projectedValue") is not None:
+                            pv = r.get("projectedValue", 0)
+                            if isinstance(pv, (int, float)) and pv > 0:
+                                ai_results.append(r)
+                    except Exception:
+                        pass
+                for t in pending_retry:
+                    t.cancel()
+
+        print(f"[TIMING] AIs done: {_t.time()-_t0:.1f}s total, {len(ai_results)}/3 succeeded ({', '.join(r.get('_source','?') for r in ai_results)})")
 
         # Collect valid predictions
         valid_preds = []

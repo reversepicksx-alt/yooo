@@ -845,39 +845,53 @@ Analyze the statistical verdict, per-minute projection, and over-rate FIRST. The
             aio.ensure_future(call_grok("grok", "grok-4-1-fast-non-reasoning")),
         ]
 
-        MIN_RESULTS = 2
+        # FORCE-3-MODELS: Wait for ALL 3 AIs, retry failures once
         ai_results = []
-        pending = set(ai_tasks)
         deadline = t0 + 48
 
-        while pending and len(ai_results) < MIN_RESULTS and _t.time() < deadline:
-            remaining_time = max(0.1, deadline - _t.time())
-            done, pending = await aio.wait(pending, timeout=remaining_time, return_when=aio.FIRST_COMPLETED)
-            for t in done:
-                try:
-                    r = t.result()
-                    if r and isinstance(r, dict) and r.get("projectedValue") is not None:
-                        pv = r.get("projectedValue", 0)
-                        if isinstance(pv, (int, float)) and pv >= 0:
-                            ai_results.append(r)
-                except Exception:
-                    pass
+        # First pass: wait for all 3 to complete
+        done, pending = await aio.wait(ai_tasks, timeout=max(0.1, deadline - _t.time()))
+        for t in done:
+            try:
+                r = t.result()
+                if r and isinstance(r, dict) and r.get("projectedValue") is not None:
+                    pv = r.get("projectedValue", 0)
+                    if isinstance(pv, (int, float)) and pv >= 0:
+                        ai_results.append(r)
+            except Exception:
+                pass
+        for t in pending:
+            t.cancel()
 
-        # Grab any additional results that finished while we were processing (don't wait, just collect)
-        if pending:
-            done_extra, still_pending = await aio.wait(pending, timeout=25.0, return_when=aio.ALL_COMPLETED)
-            for t in done_extra:
-                try:
-                    r = t.result()
-                    if r and isinstance(r, dict) and r.get("projectedValue") is not None:
-                        pv = r.get("projectedValue", 0)
-                        if isinstance(pv, (int, float)) and pv >= 0:
-                            ai_results.append(r)
-                except Exception:
-                    pass
-            for t in still_pending:
-                t.cancel()
-        print(f"[BBALL TIMING] AIs done: {_t.time()-t0:.1f}s, {len(ai_results)} succeeded ({', '.join(r.get('_source','?') for r in ai_results)})")
+        # Retry any failed models (one retry each, only if time allows)
+        responded_sources = {r.get("_source") for r in ai_results}
+        if len(ai_results) < 3 and _t.time() < deadline - 10:
+            retry_tasks = []
+            if "gemini" not in responded_sources:
+                retry_tasks.append(aio.ensure_future(call_ai("gemini-2.0-flash", "gemini", "gemini")))
+                print("[BBALL MULTI-AI] Retrying gemini...")
+            if "gpt41mini" not in responded_sources:
+                retry_tasks.append(aio.ensure_future(call_ai("gpt-4.1-mini", "gpt41mini")))
+                print("[BBALL MULTI-AI] Retrying gpt41mini...")
+            if "grok" not in responded_sources:
+                retry_tasks.append(aio.ensure_future(call_grok("grok", "grok-4-1-fast-non-reasoning")))
+                print("[BBALL MULTI-AI] Retrying grok...")
+
+            if retry_tasks:
+                done_retry, pending_retry = await aio.wait(retry_tasks, timeout=max(0.1, deadline - _t.time()))
+                for t in done_retry:
+                    try:
+                        r = t.result()
+                        if r and isinstance(r, dict) and r.get("projectedValue") is not None:
+                            pv = r.get("projectedValue", 0)
+                            if isinstance(pv, (int, float)) and pv >= 0:
+                                ai_results.append(r)
+                    except Exception:
+                        pass
+                for t in pending_retry:
+                    t.cancel()
+
+        print(f"[BBALL TIMING] AIs done: {_t.time()-t0:.1f}s, {len(ai_results)}/3 succeeded ({', '.join(r.get('_source','?') for r in ai_results)})")
 
         valid_preds = []
         for i, r in enumerate(ai_results):
