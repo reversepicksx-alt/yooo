@@ -391,7 +391,14 @@ async def _resolve_opponent(opponent_name: str, is_international: bool, league_i
     if not opponent_name:
         return None
 
-    opp_lower = strip_accents(opponent_name.lower().strip())
+    # Strip common prefixes from scan output: "@ M'gladbach" → "M'gladbach", "vs Arsenal" → "Arsenal"
+    clean_name = opponent_name.strip()
+    for prefix in ["@", "vs", "vs.", "v"]:
+        if clean_name.lower().startswith(prefix + " "):
+            clean_name = clean_name[len(prefix):].strip()
+            break
+
+    opp_lower = strip_accents(clean_name.lower().strip())
 
     # 1. For international matches, try national team cache
     if is_international:
@@ -491,6 +498,21 @@ async def _resolve_opponent(opponent_name: str, is_international: bool, league_i
 
         except Exception:
             continue
+
+    # Strategy: If we have a partial match from SCAN_ALIASES, try it
+    norm_opp = strip_accents(opp_lower)
+    # Remove punctuation for matching
+    import re as _re
+    clean_opp = _re.sub(r"[^a-z0-9\s]", "", norm_opp).strip()
+    if clean_opp:
+        from team_resolver import SCAN_ALIASES, _normalize
+        if clean_opp in SCAN_ALIASES:
+            canonical = _normalize(SCAN_ALIASES[clean_opp])
+            from team_resolver import find_team as ft
+            result = await ft(canonical, league_id if not is_international else None)
+            if result:
+                print(f"[OPP RESOLVE] SCAN_ALIAS hit: '{opponent_name}' → {result['teamName']}")
+                return {"teamId": result["teamId"], "teamName": result["teamName"]}
 
     return None
 

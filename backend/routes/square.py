@@ -321,7 +321,7 @@ async def verify_checkout(body: dict):
             {"$set": {
                 "email": email_lower,
                 "session_token": session_token,
-                "access_type": "Premium",
+                "access_type": "Premium (Square)",
                 "last_active": now,
             }},
             upsert=True,
@@ -338,7 +338,7 @@ async def verify_checkout(body: dict):
             "success": True,
             "email": email_lower,
             "session_token": session_token,
-            "access_type": "Premium",
+            "access_type": "Premium (Square)",
             "plan": plan_doc_info.get("name", plan_key),
         }
 
@@ -447,7 +447,7 @@ async def subscribe(req: SubscribeRequest):
             {"$set": {
                 "email": email_lower,
                 "session_token": session_token,
-                "access_type": "Premium",
+                "access_type": "Premium (Square)",
                 "last_active": now,
             }},
             upsert=True,
@@ -457,7 +457,7 @@ async def subscribe(req: SubscribeRequest):
             "success": True,
             "email": email_lower,
             "session_token": session_token,
-            "access_type": "Premium",
+            "access_type": "Premium (Square)",
             "plan": plan_doc["name"],
             "status": sub_status,
         }
@@ -814,7 +814,7 @@ async def verify_payment(req: VerifyPaymentRequest):
         {"$set": {
             "email": email_lower,
             "session_token": session_token,
-            "access_type": "Premium",
+            "access_type": "Premium (Square)",
             "last_active": now,
         }},
         upsert=True,
@@ -827,7 +827,7 @@ async def verify_payment(req: VerifyPaymentRequest):
         "success": True,
         "email": email_lower,
         "session_token": session_token,
-        "access_type": "Premium",
+        "access_type": "Premium (Square)",
         "plan": plan_info.get("name", plan_key),
         "message": "Payment verified! Your account is now active.",
     }

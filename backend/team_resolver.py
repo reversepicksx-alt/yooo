@@ -53,9 +53,28 @@ def _generate_aliases(name: str) -> list:
     # Handle common patterns
     # "FC Barcelona" → "barcelona"
     # "Real Madrid CF" → "real madrid"
-    filtered = [w for w in words if w not in ("fc", "cf", "sc", "ac", "as", "us", "ss", "cd", "ca", "rc")]
+    STRIP_PREFIXES = ("fc", "cf", "sc", "ac", "as", "us", "ss", "cd", "ca", "rc",
+                      "sv", "vfb", "vfl", "rb", "tsg", "fsv", "1")
+    filtered = [w for w in words if w not in STRIP_PREFIXES]
     if filtered and filtered != words:
         aliases.add(" ".join(filtered))
+        # Also add just the city part if there's a compound like "eintracht frankfurt" → "frankfurt"
+        for w in filtered:
+            if len(w) >= 4:
+                aliases.add(w)
+
+    # Strip common team prefixes to get city names
+    # "Borussia Mönchengladbach" → "monchengladbach", "gladbach"
+    # "Eintracht Frankfurt" → "frankfurt"
+    # "Bayer Leverkusen" → "leverkusen"
+    COMMON_PREFIXES = ("borussia", "eintracht", "bayer", "deportivo", "atletico",
+                       "sporting", "real", "racing", "dynamo", "cska")
+    if len(words) >= 2 and words[0] in COMMON_PREFIXES:
+        city_part = " ".join(words[1:])
+        aliases.add(city_part)
+        for w in words[1:]:
+            if len(w) >= 4:
+                aliases.add(w)
 
     # "Sheffield Utd" → "sheff utd", "sheffield utd"
     # "Manchester United" → "man utd", "man united"
@@ -63,6 +82,7 @@ def _generate_aliases(name: str) -> list:
         "sheffield": "sheff", "manchester": "man",
         "wolverhampton": "wolves", "nottingham": "notts",
         "tottenham": "spurs", "newcastle": "newc",
+        "monchengladbach": "gladbach",
     }
     if words and words[0] in SHORT_PREFIXES:
         short = SHORT_PREFIXES[words[0]]
@@ -71,7 +91,81 @@ def _generate_aliases(name: str) -> list:
             aliases.add(f"{short} {rest}")
         aliases.add(short)
 
+    # Also check if any word in the name has a known short form
+    for w in words:
+        if w in SHORT_PREFIXES:
+            aliases.add(SHORT_PREFIXES[w])
+
     return list(aliases)
+
+
+# Known scan abbreviations that AI vision models commonly output
+SCAN_ALIASES = {
+    "mgladbach": "borussia monchengladbach",
+    "gladbach": "borussia monchengladbach",
+    "monchengladbach": "borussia monchengladbach",
+    "b dortmund": "borussia dortmund",
+    "dortmund": "borussia dortmund",
+    "leverkusen": "bayer leverkusen",
+    "frankfurt": "eintracht frankfurt",
+    "hoffenheim": "tsg hoffenheim",
+    "heidenheim": "1 fc heidenheim 1846",
+    "freiburg": "sc freiburg",
+    "mainz": "1 fsv mainz 05",
+    "augsburg": "fc augsburg",
+    "st pauli": "fc st pauli",
+    "union berlin": "1 fc union berlin",
+    "hertha": "hertha bsc",
+    "koln": "1 fc koln",
+    "cologne": "1 fc koln",
+    "schalke": "fc schalke 04",
+    "wolfsburg": "vfl wolfsburg",
+    "bremen": "werder bremen",
+    "bochum": "vfl bochum",
+    "stuttgart": "vfb stuttgart",
+    "atletico": "atletico madrid",
+    "betis": "real betis",
+    "sociedad": "real sociedad",
+    "villarreal": "villarreal",
+    "bilbao": "athletic club",
+    "getafe": "getafe",
+    "osasuna": "ca osasuna",
+    "vallecano": "rayo vallecano",
+    "celta": "celta vigo",
+    "lyon": "olympique lyonnais",
+    "marseille": "olympique de marseille",
+    "monaco": "as monaco",
+    "psg": "paris saint germain",
+    "paris sg": "paris saint germain",
+    "saint etienne": "as saint etienne",
+    "lens": "rc lens",
+    "nice": "ogc nice",
+    "rennes": "stade rennais fc 1901",
+    "strasbourg": "rc strasbourg alsace",
+    "lille": "lille",
+    "nantes": "fc nantes",
+    "brest": "stade brestois 29",
+    "inter": "inter",
+    "napoli": "napoli",
+    "atalanta": "atalanta",
+    "lazio": "lazio",
+    "fiorentina": "fiorentina",
+    "roma": "as roma",
+    "juventus": "juventus",
+    "milan": "ac milan",
+    "torino": "torino",
+    "genoa": "genoa",
+    "udinese": "udinese",
+    "bologna": "bologna",
+    "empoli": "empoli",
+    "lecce": "lecce",
+    "verona": "hellas verona",
+    "parma": "parma",
+    "cagliari": "cagliari",
+    "como": "como",
+    "venezia": "venezia",
+    "monza": "monza",
+}
 
 
 async def build_teams_cache(force: bool = False):
@@ -163,6 +257,33 @@ async def find_team(query: str, league_id: int = None) -> dict:
     count = await db[COL_TEAMS_MASTER].count_documents({})
     if count == 0:
         await build_teams_cache()
+
+    norm = _normalize(query)
+    if not norm:
+        return None
+
+    # Strategy 0: Known scan aliases (AI vision model abbreviations)
+    if norm in SCAN_ALIASES:
+        canonical = _normalize(SCAN_ALIASES[norm])
+        filt = {"nameNormalized": canonical}
+        if league_id:
+            filt["leagueId"] = league_id
+        doc = await db[COL_TEAMS_MASTER].find_one(filt, {"_id": 0})
+        if doc:
+            return {"teamId": doc["teamId"], "teamName": doc["name"], "leagueId": doc["leagueId"]}
+        # Try alias match on canonical
+        filt2 = {"aliases": canonical}
+        if league_id:
+            filt2["leagueId"] = league_id
+        doc = await db[COL_TEAMS_MASTER].find_one(filt2, {"_id": 0})
+        if doc:
+            return {"teamId": doc["teamId"], "teamName": doc["name"], "leagueId": doc["leagueId"]}
+        # Try without league filter
+        doc = await db[COL_TEAMS_MASTER].find_one({"nameNormalized": canonical}, {"_id": 0})
+        if not doc:
+            doc = await db[COL_TEAMS_MASTER].find_one({"aliases": canonical}, {"_id": 0})
+        if doc:
+            return {"teamId": doc["teamId"], "teamName": doc["name"], "leagueId": doc["leagueId"]}
 
     norm = _normalize(query)
     if not norm:

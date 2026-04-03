@@ -21,95 +21,52 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 - Live game tracking (updated every 30s)
 - Won/Missed tabs (replaced old History tab)
 - Square Checkout subscription integration
+- Whop subscription integration (legacy, still active)
 - Admin Settings panel
 - Cross-country league detection (Copa Libertadores/Sudamericana)
 
-### Batch Scan Player Report (Completed April 3, 2026) — Owner-Only
-- Multi-prop extraction from single screenshots
-- Player Report UI with prop selection, sequential predictions, comparison table
-- Color-coded recommendations, expandable details, Best Value auto-highlight
-- Owner-only gate for testing
+### Square Subscription Sync Fix (Completed April 3, 2026) — P0
+- **Root cause**: Webhook only handled `subscription.updated` but checkout creates Payment Links. Square sends `payment.completed` which was ignored. Zero records ever created in `square_subscriptions`.
+- **Webhook enhanced**: Now handles `payment.completed`, `order.updated`, `order.completed`, `invoice.payment_made` events. Matches by buyer email AND order_id.
+- **Self-recovery flow**: "Already paid? Verify your payment" on login page. Searches Square's 90-day payment history directly.
+- **Admin tools**: `POST /api/square/admin/activate` and `POST /api/square/admin/bulk-verify`.
+- **All 16 paying customers activated** via admin bulk activation.
+
+### AI Contradiction Fix (Completed April 3, 2026) — P0
+- **Bug**: Calibration/dominance post-processing could flip recommendation direction AFTER consensus was computed, causing "Unanimous UNDER" + "RECOMMEND: OVER" contradiction.
+- **Fix**: Unanimous consensus (all 3 models agree) can no longer be overridden by calibration or match dominance adjustments. Applied to both soccer and basketball prediction pipelines.
+
+### Opponent Resolution Enhancement (Completed April 3, 2026) — P1
+- **Bug**: AI vision models output abbreviated team names (M'gladbach, Dortmund, Leverkusen, etc.) that didn't match anything in the team cache.
+- **Fix**: Added `SCAN_ALIASES` dictionary with 80+ common team abbreviations covering Bundesliga, La Liga, Serie A, Ligue 1. Enhanced `_generate_aliases` to extract city names from compound team names (Borussia → gladbach/monchengladbach). Added `@`/`vs` prefix stripping in `_resolve_opponent`.
+
+### Access Type Source Display (Completed April 3, 2026)
+- Access type now shows source: "Premium (Square)", "Premium (Whop)", "Lifetime", "Owner"
+- Displayed in profile tab so admin can see how each user was verified
 
 ### Self-Learning Calibration System (Completed April 3, 2026)
 - Automatic post-mortem 3-AI analysis for missed picks
 - Calibration pattern extraction and bias correction injection
 - Auto-trigger on settlement, manual correction, and backfill
-- Autonomous fire-and-forget background tasks
-
-### Match Dominance Engine (Completed April 3, 2026)
-- Opponent-aware possession model with home advantage and odds-derived dominance
-- Match dominance multiplier for pass-dependent props
-- GPT minutes double-count fix
-
-### Stats-Aware Position Resolver (Completed April 3, 2026)
-- Stats-evidence position resolution (tackles, blocks, aerials, passes, dribbles, shots)
-- Dual-AI validation for defenders with stats heuristic tiebreaker
-- 30-day cache expiry
-- Force-3-model consensus with retry logic
-
-### Code Quality Fixes (Completed April 3, 2026)
-- Fixed React hook stale closure bug in live polling (savedPicksRef pattern)
-- Replaced all index-as-key anti-patterns with unique IDs across App.js, ProjectionCard.jsx, H2HSection.jsx
-- Added error logging to all 6 empty catch blocks in App.js
-- Fixed broken eslint-disable comment format
-- Moved hardcoded test emails to env vars in test_auth.py
-- Fixed Python late binding closures in predict.py and basketball_predict.py (default arg pattern)
-- Removed unused Python variables in basketball_utils.py, miss_analysis.py, picks.py
 
 ### Component Split Refactor (Completed April 3, 2026)
-- **App.js reduced from 3,328 to 2,441 lines** (27% reduction / 887 lines extracted)
-- Extracted `Header.jsx` (89 lines) — sport selector, API badge, notifications, refresh, logout
-- Extracted `TrackingTab.jsx` (557 lines) — live/won/lost/pushed/insights tabs, calibration panel, pick cards
-- Extracted `ProfileTab.jsx` (194 lines) — account info, password reset, admin settings (owner)
-- Extracted `GuideTab.jsx` (112 lines) — static how-to guide with FAQ
-- Extracted `constants.js` (48 lines) — PROP_TYPES, BASKETBALL_PROP_TYPES, getPropLabel, OWNER_EMAIL
-
-### Tracking Tab Split + Calibration Insights Panel (Completed April 3, 2026)
-- **Tab split**: Tracking tabs changed from `Live | Won | Missed` to `Live | Won | Lost | Pushed | Insights`
-- **Pushes separated**: Push results now have their own tab instead of being grouped with Won
-- **Calibration Insights panel**: New "Insights" tab showing everything the system learned from miss analysis
-- **Notification routing**: Click-through from notifications now routes to correct tab
-
-### Square Subscription Sync Fix (Completed April 3, 2026) — P0
-- **Root cause**: Webhook only handled `subscription.updated` but checkout creates Payment Links (not subscriptions). Square sends `payment.completed` for these — which was ignored. Zero records ever created in `square_subscriptions`.
-- **Webhook enhanced**: Now handles `payment.completed`, `order.updated`, `order.completed`, `invoice.payment_made` events. Matches by buyer email AND order_id.
-- **Self-recovery flow**: "Already paid? Verify your payment" button on login page. Searches Square's payment history directly by email (last 90 days). User provides email + password, system finds their payment, creates account + subscription, logs them in.
-- **Admin tools**: `POST /api/square/admin/activate` (activate specific customer), `POST /api/square/admin/bulk-verify` (check all pending checkouts against Square payments).
-- **App.js checkout_token fix**: Moved checkout_token detection to App.js level — clears stale localStorage sessions so LoginPage renders and handles the redirect token.
-- **Square SDK fix**: Fixed SyncPager iteration bug (iterate directly, not via `.payments` attribute).
-- **Result**: 16 real Square payments confirmed accessible. Paying customers can now self-recover.
+- App.js reduced from 3,328 to 2,441 lines (27% reduction)
+- Extracted Header.jsx, TrackingTab.jsx, ProfileTab.jsx, GuideTab.jsx, constants.js
 
 ## Key API Endpoints
 - `POST /api/scan-prop` — Vision extraction from prop screenshots
-- `POST /api/predict` — Soccer prediction pipeline (with calibration)
-- `POST /api/basketball/predict` — Basketball prediction pipeline (with calibration)
-- `POST /api/re-resolve` — Re-resolve player after editable scan card changes
-- `POST /api/picks/misses` — Get missed picks with auto-analysis
-- `POST /api/picks/analyze-miss` — Manual miss analysis trigger (fallback)
-- `POST /api/calibration/insights` — Get all calibration learnings per sport/prop type
-- `POST /api/picks/save` — Save a pick for tracking
-- `POST /api/picks/live-update` — Refresh live game data
-- `POST /api/picks/correct` — Manual correction of actual value
-- `POST /api/square/webhook` — Square webhook (payment.completed, order events, subscription events)
+- `POST /api/predict` — Soccer prediction pipeline
+- `POST /api/basketball/predict` — Basketball prediction pipeline
+- `POST /api/square/webhook` — Square webhook (payment.completed, order events)
 - `POST /api/square/verify-payment` — Self-recovery for paid users
 - `POST /api/square/admin/activate` — Admin: activate specific customer
 - `POST /api/square/admin/bulk-verify` — Admin: bulk-verify all pending checkouts
-
-## DB Collections
-- `picks` — User picks with settlement data
-- `miss_analyses` — 3-AI postmortem results per missed pick
-- `calibration_stats` — Aggregated bias patterns per sport+propType
-- `calibration_patterns` — Individual miss calibration records
-- `player_positions` — Cached position/role data
-- `settings` — Admin config key-value store
-- `users` — User auth and subscription data
-- `square_subscriptions` — Square payment subscription records
-- `pending_checkouts` — In-progress checkout records
-- `manual_access_grants` — Manually granted access (lifetime, owner)
+- `POST /api/calibration/insights` — Calibration learnings
 
 ## 3rd Party Integrations
 - API-Sports (Sports Data) — User API Key
 - Square (Payments/Subs) — User API Key
+- Whop (Legacy Auth/Subs) — User API Key (still active)
 - xAI Grok (grok-4-1-fast-non-reasoning) — User API Key
 - Gemini 2.0 Flash — Emergent LLM Key
 - OpenAI GPT-4.1-mini — Emergent LLM Key
@@ -118,12 +75,12 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 - Slip correlation analysis — Analyze multiple saved picks for the same game to flag conflicting or boosting correlations
 
 ## Future Backlog
-- Further App.js splitting: Extract ScanTab (~800 lines) into its own component (P3)
-- Backend Refactoring: Break down high-complexity functions in basketball_predict.py, basketball_utils.py, auth.py (P3)
-- Auth Architecture Migration: Move from localStorage to httpOnly cookies (P3)
+- ScanTab component extraction from App.js (P3)
+- Backend refactoring: break down high-complexity functions (P3)
+- Auth cookie migration: localStorage → httpOnly cookies (P3)
 - Enable Batch Scan for all users (P3)
 - Prediction self-correction feedback loop (P2)
-- SofaScore Integration (P3) — Replace API-Sports for NWSL data
+- SofaScore Integration for NWSL data (P3)
 
 ## Legal Compliance
 ALL 3rd-party app names and player/team images have been removed. Do not reintroduce them. Do not use explicit AI branding in the UI.

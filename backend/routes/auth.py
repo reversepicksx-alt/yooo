@@ -76,11 +76,11 @@ async def check_access(email_lower: str):
                     )
                     print(f"[AUTH] Subscription expired for {email_lower} (expired {expires_at})")
                 else:
-                    return "Premium"
+                    return "Premium (Square)"
             except Exception:
-                return "Premium"  # Can't parse date, allow access
+                return "Premium (Square)"  # Can't parse date, allow access
         else:
-            return "Premium"  # No expiration set (legacy), allow access
+            return "Premium (Square)"  # No expiration set (legacy), allow access
 
     # Check Whop membership
     try:
@@ -92,7 +92,7 @@ async def check_access(email_lower: str):
                 continue
             status = (m.get("status") or "").lower()
             if status in ["active", "trialing", "completed"] or m.get("valid") is True:
-                return "Premium"
+                return "Premium (Whop)"
     except Exception:
         pass
     return None
