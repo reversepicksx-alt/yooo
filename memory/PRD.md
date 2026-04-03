@@ -49,10 +49,20 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 
 ### Code Quality Fixes (Completed April 3, 2026)
 - Fixed React hook stale closure bug in live polling (savedPicksRef pattern)
-- Replaced all index-as-key anti-patterns with unique IDs (chat messages, follow-ups, FAQs, factors, h2h games, player breakdowns)
+- Replaced all index-as-key anti-patterns with unique IDs across App.js, ProjectionCard.jsx, H2HSection.jsx
 - Added error logging to all 6 empty catch blocks in App.js
-- Fixed broken eslint-disable comment format (em-dash -> proper format)
+- Fixed broken eslint-disable comment format
 - Moved hardcoded test emails to env vars in test_auth.py
+- Fixed Python late binding closures in predict.py and basketball_predict.py (default arg pattern)
+- Removed unused Python variables in basketball_utils.py, miss_analysis.py, picks.py
+
+### Component Split Refactor (Completed April 3, 2026)
+- **App.js reduced from 3,328 to 2,441 lines** (27% reduction / 887 lines extracted)
+- Extracted `Header.jsx` (89 lines) — sport selector, API badge, notifications, refresh, logout
+- Extracted `TrackingTab.jsx` (557 lines) — live/won/lost/pushed/insights tabs, calibration panel, pick cards
+- Extracted `ProfileTab.jsx` (194 lines) — account info, password reset, admin settings (owner)
+- Extracted `GuideTab.jsx` (112 lines) — static how-to guide with FAQ
+- Extracted `constants.js` (48 lines) — PROP_TYPES, BASKETBALL_PROP_TYPES, getPropLabel, OWNER_EMAIL
 
 ### Tracking Tab Split + Calibration Insights Panel (Completed April 3, 2026)
 - **Tab split**: Tracking tabs changed from `Live | Won | Missed` to `Live | Won | Lost | Pushed | Insights`
@@ -96,7 +106,7 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 - Slip correlation analysis — Analyze multiple saved picks for the same game to flag conflicting or boosting correlations
 
 ## Future Backlog
-- Frontend Refactoring: Split App.js (~3,150 lines) into smaller components + custom hooks (P3)
+- Further App.js splitting: Extract ScanTab (~800 lines) into its own component (P3)
 - Backend Refactoring: Break down high-complexity functions in basketball_predict.py, basketball_utils.py, auth.py (P3)
 - Auth Architecture Migration: Move from localStorage to httpOnly cookies (P3)
 - Enable Batch Scan for all users (P3)
