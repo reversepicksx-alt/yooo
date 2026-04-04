@@ -68,13 +68,29 @@ def _generate_aliases(name: str) -> list:
     # "Eintracht Frankfurt" → "frankfurt"
     # "Bayer Leverkusen" → "leverkusen"
     COMMON_PREFIXES = ("borussia", "eintracht", "bayer", "deportivo", "atletico",
-                       "sporting", "real", "racing", "dynamo", "cska")
+                       "sporting", "real", "racing", "dynamo", "cska",
+                       "al", "al-")
     if len(words) >= 2 and words[0] in COMMON_PREFIXES:
         city_part = " ".join(words[1:])
         aliases.add(city_part)
         for w in words[1:]:
             if len(w) >= 4:
                 aliases.add(w)
+
+    # Handle "Al-Hilal Saudi FC" → "hilal", "al hilal"
+    # Handle "Al Taawon" → "taawon", "al taawon"
+    joined = " ".join(words)
+    if joined.startswith("al-") or joined.startswith("al "):
+        without_al = joined[3:] if joined.startswith("al-") else joined[3:]
+        without_al = without_al.strip()
+        aliases.add(without_al)
+        # Also strip trailing qualifiers like "saudi fc", "fc", "jeddah"
+        STRIP_SUFFIXES = ("saudi fc", "fc", "jeddah", "saihat")
+        for sfx in STRIP_SUFFIXES:
+            if without_al.endswith(sfx):
+                core = without_al[:-len(sfx)].strip()
+                if core and len(core) >= 3:
+                    aliases.add(core)
 
     # "Sheffield Utd" → "sheff utd", "sheffield utd"
     # "Manchester United" → "man utd", "man united"
@@ -267,6 +283,68 @@ SCAN_ALIASES = {
     "royals": "utah royals w",
     "seattle reign": "seattle reign w",
     "reign": "seattle reign w",
+    # Saudi Pro League common
+    "hilal": "al-hilal saudi fc",
+    "al hilal": "al-hilal saudi fc",
+    "al-hilal": "al-hilal saudi fc",
+    "alhilal": "al-hilal saudi fc",
+    "nassr": "al-nassr",
+    "al nassr": "al-nassr",
+    "al-nassr": "al-nassr",
+    "alnassr": "al-nassr",
+    "ittihad": "al-ittihad fc",
+    "al ittihad": "al-ittihad fc",
+    "al-ittihad": "al-ittihad fc",
+    "alittihad": "al-ittihad fc",
+    "ahli": "al-ahli jeddah",
+    "al ahli": "al-ahli jeddah",
+    "al-ahli": "al-ahli jeddah",
+    "alahli": "al-ahli jeddah",
+    "al ahli jeddah": "al-ahli jeddah",
+    "ettifaq": "al-ettifaq",
+    "al ettifaq": "al-ettifaq",
+    "al-ettifaq": "al-ettifaq",
+    "alettifaq": "al-ettifaq",
+    "taawon": "al taawon",
+    "taawoun": "al taawon",
+    "al taawon": "al taawon",
+    "al taawoun": "al taawon",
+    "al-taawon": "al taawon",
+    "al-taawoun": "al taawon",
+    "altaawon": "al taawon",
+    "altaawoun": "al taawon",
+    "fateh": "al-fateh",
+    "al fateh": "al-fateh",
+    "al-fateh": "al-fateh",
+    "alfateh": "al-fateh",
+    "shabab": "al shabab",
+    "al shabab": "al shabab",
+    "alshabab": "al shabab",
+    "fayha": "al-fayha",
+    "al fayha": "al-fayha",
+    "al-fayha": "al-fayha",
+    "alfayha": "al-fayha",
+    "qadisiyah": "al-qadisiyah fc",
+    "al qadisiyah": "al-qadisiyah fc",
+    "al-qadisiyah": "al-qadisiyah fc",
+    "alqadisiyah": "al-qadisiyah fc",
+    "damac": "damac",
+    "khaleej": "al khaleej saihat",
+    "al khaleej": "al khaleej saihat",
+    "alkhaleej": "al khaleej saihat",
+    "okhdood": "al okhdood",
+    "al okhdood": "al okhdood",
+    "alokhdood": "al okhdood",
+    "kholood": "al kholood",
+    "al kholood": "al kholood",
+    "alkholood": "al kholood",
+    "neom": "neom",
+    "riyadh": "al riyadh",
+    "al riyadh": "al riyadh",
+    "alriyadh": "al riyadh",
+    "najma": "al najma",
+    "al najma": "al najma",
+    "alnajma": "al najma",
 }
 
 
