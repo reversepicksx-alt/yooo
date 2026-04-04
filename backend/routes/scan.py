@@ -481,8 +481,10 @@ async def _resolve_opponent(opponent_name: str, is_international: bool, league_i
             if not teams_data:
                 continue
 
-            # Filter valid matches (name match, not youth/women)
+            # Filter valid matches
             valid = []
+            # For women's leagues (NWSL=254), don't exclude women's teams
+            is_womens_league = league_id in (254,)
             for t in teams_data[:15]:
                 tname = t.get("team", {}).get("name", "")
                 tname_lower = strip_accents(tname.lower())
@@ -490,7 +492,13 @@ async def _resolve_opponent(opponent_name: str, is_international: bool, league_i
                 is_youth = any(s in tname_lower for s in ["u20", "u23", "u21", "u19", "u18", "u17", " ii", " b "])
                 is_women = tname_lower.endswith(" w") or "women" in tname_lower
                 name_match = first_word in tname_lower or first_word_variant in tname_lower
-                if name_match and not is_youth and not is_women:
+                # For women's leagues, prefer women's teams. For men's leagues, exclude them.
+                if name_match and not is_youth:
+                    if is_womens_league:
+                        # Prefer women's variants for NWSL
+                        pass  # Allow all (women and non-women)
+                    elif is_women:
+                        continue  # Skip women's teams for men's leagues
                     country_match = target_country and target_country in tcountry
                     valid.append({"teamId": t["team"]["id"], "teamName": tname, "country_match": country_match})
 

@@ -1004,23 +1004,12 @@ Analyze the statistical verdict, per-minute projection, and over-rate FIRST. The
         # =============================================
         # APPLY SELF-LEARNING CALIBRATION TO PROJECTION
         # =============================================
-        # Track unanimous direction BEFORE adjustments
-        pre_adjustment_rec = prediction.get("recommendation", "over")
-        model_recs = [p.get("recommendation", "over") for p in valid_preds]
-        is_unanimous = len(valid_preds) >= 2 and all(r == pre_adjustment_rec for r in model_recs)
-
         if calibration["applied"]:
             old_proj = prediction.get("projectedValue", req.line)
             adj_factor = calibration["adjustment"] / 100.0
             new_proj = round(old_proj * (1 + adj_factor), 1)
             prediction["projectedValue"] = new_proj
-            new_rec = "over" if new_proj > req.line else "under"
-            # GUARD: calibration cannot flip a unanimous consensus
-            if is_unanimous and new_rec != pre_adjustment_rec:
-                print(f"[CALIBRATE] BLOCKED flip: {pre_adjustment_rec}→{new_rec} overruled by unanimous {pre_adjustment_rec.upper()}")
-                prediction["recommendation"] = pre_adjustment_rec
-            else:
-                prediction["recommendation"] = new_rec
+            prediction["recommendation"] = "over" if new_proj > req.line else "under"
             prediction["calibration"] = {
                 "applied": True,
                 "adjustment": calibration["adjustment"],

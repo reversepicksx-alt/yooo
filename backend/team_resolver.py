@@ -239,6 +239,34 @@ SCAN_ALIASES = {
     "queretaro": "queretaro",
     "juarez": "fc juarez",
     "tijuana": "club tijuana",
+    # NWSL common
+    "houston dash": "houston dash w",
+    "racing louisville": "racing louisville w",
+    "racing": "racing louisville w",
+    "angel city": "angel city w",
+    "portland thorns": "portland thorns w",
+    "thorns": "portland thorns w",
+    "chicago stars": "chicago red stars w",
+    "red stars": "chicago red stars w",
+    "kansas city": "kansas city current w",
+    "kc current": "kansas city current w",
+    "orlando pride": "orlando pride w",
+    "pride": "orlando pride w",
+    "gotham": "gotham fc w",
+    "gotham fc": "gotham fc w",
+    "north carolina": "north carolina courage w",
+    "nc courage": "north carolina courage w",
+    "courage": "north carolina courage w",
+    "washington spirit": "washington spirit w",
+    "spirit": "washington spirit w",
+    "san diego wave": "san diego wave w",
+    "wave": "san diego wave w",
+    "bay fc": "bay fc w",
+    "boston legacy": "boston legacy w",
+    "utah royals": "utah royals w",
+    "royals": "utah royals w",
+    "seattle reign": "seattle reign w",
+    "reign": "seattle reign w",
 }
 
 
@@ -276,10 +304,12 @@ async def build_teams_cache(force: bool = False):
                     country = (team.get("country") or "").lower()
                     if not team_id or not name:
                         continue
-                    # Skip women/youth teams
+                    # Skip youth teams
                     name_lower = name.lower()
-                    if name_lower.endswith(" w") or "women" in name_lower:
-                        continue
+                    # For women's leagues (NWSL=254), keep women's teams
+                    if lid not in (254,):
+                        if name_lower.endswith(" w") or "women" in name_lower:
+                            continue
                     if any(s in name_lower for s in ["u20", "u23", "u21", "u19", "u18", " ii", " b "]):
                         continue
                     aliases = _generate_aliases(name)
