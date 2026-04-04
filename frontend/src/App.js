@@ -3,7 +3,7 @@ import {
   Zap, ChevronRight, RefreshCw, ArrowLeft, Clock, Activity,
   Shield, Send, Loader2, Trash2, User, Search, Users, Edit3, HelpCircle, ChevronDown,
   TrendingUp, TrendingDown, BarChart3, ShieldAlert, Target, LogOut, Lock, Mail, Bell, RotateCcw,
-  Camera, Upload, Check, X, ImageIcon, Brain, Crosshair, MessageSquare, Swords, Settings, Eye, EyeOff
+  Camera, Upload, Check, X, Settings, Eye, EyeOff
 } from 'lucide-react';
 import {
   getTeamsByLeague, searchPlayers, predict, predictCombo, startChat, sendChatMessage,
@@ -91,7 +91,6 @@ export default function App() {
   const [isScanning, setIsScanning] = useState(false);
   const [scanError, setScanError] = useState(null);
   const [scanPrediction, setScanPrediction] = useState({}); // { idx: projection result }
-  const [isScanPredicting, setIsScanPredicting] = useState(false);
   const [scanPredictingIdx, setScanPredictingIdx] = useState({}); // { idx: true/false }
   const [scanExcludedIndices, setScanExcludedIndices] = useState([]);
   const [scanVenueOverrides, setScanVenueOverrides] = useState({});
@@ -99,7 +98,6 @@ export default function App() {
   const [scanEditValues, setScanEditValues] = useState({});
   const [scanResolving, setScanResolving] = useState({});
   const scanFileRef = useRef(null);
-  const scanFollowUpRef = useRef(null);
 
   const searchTimeout = useRef(null);
   const chatEndRef = useRef(null);
@@ -649,36 +647,27 @@ export default function App() {
     }
   };
 
-  const scanSavePickFn = async () => {
-    if (!scanPrediction || !auth) return;
+  const scanSavePickFn = async (idx) => {
+    const pred = scanPrediction[idx];
+    if (!pred || !auth) return;
     const newPick = {
-      ...scanPrediction,
+      ...pred,
       id: Math.random().toString(36).substring(2, 9),
       timestamp: Date.now(),
       status: 'live',
       result: 'pending',
-      sport: scanPrediction.sport || activeSport || 'soccer',
+      sport: pred.sport || activeSport || 'soccer',
       excludedSampleIndices: scanExcludedIndices,
-      _request: scanPrediction._request || {},
+      _request: pred._request || {},
     };
     try {
       await savePick(auth.email, auth.token, newPick);
       const refreshed = await listPicks(auth.email, auth.token);
       setSavedPicks(refreshed.picks || []);
       toast.success('Saved to Tracking!');
-      setScanPrediction(null);
-      setScanExcludedIndices([]);
-      setActiveTab('tracking');
     } catch (err) {
       toast.error('Failed to save pick');
     }
-  };
-
-  const backToScanResults = () => {
-    setScanPrediction(null);
-    setScanExcludedIndices([]);
-    setScanFollowUpMessages([]);
-    setScanFollowUp('');
   };
 
   const resetScan = () => {
@@ -817,36 +806,6 @@ export default function App() {
     setTacticalMessages([]);
     setTacticalInput('');
     initTactical();
-  };
-
-  // Follow-up chat on scan prediction
-  const sendScanFollowUp = async () => {
-    const msg = scanFollowUp.trim();
-    if (!msg || isScanFollowUpSending) return;
-    setScanFollowUp('');
-    setScanFollowUpMessages(prev => [...prev, { id: `user-${Date.now()}`, role: 'user', content: msg }]);
-    setIsScanFollowUpSending(true);
-    try {
-      let sid = tacticalSessionId;
-      if (!sid) {
-        const startRes = await startTactical();
-        sid = startRes.session_id;
-        setTacticalSessionId(sid);
-      }
-      // Include prediction context in first follow-up
-      let contextMsg = msg;
-      if (scanFollowUpMessages.length === 0 && scanPrediction) {
-        const p = scanPrediction;
-        contextMsg = `Context: I just got a prediction for ${p.player?.name || '?'} — ${p.propType || '?'} line ${p.line || '?'}, projected ${p.projectedValue || '?'}, recommendation ${p.recommendation || '?'}. The tactical breakdown was provided.\n\nMy follow-up question: ${msg}`;
-      }
-      const res = await sendTacticalMessage(sid, contextMsg);
-      setScanFollowUpMessages(prev => [...prev, { id: `resp-${Date.now()}`, role: 'assistant', content: res.response }]);
-    } catch (e) {
-      setScanFollowUpMessages(prev => [...prev, { id: `err-${Date.now()}`, role: 'assistant', content: `Error: ${e.message}` }]);
-    } finally {
-      setIsScanFollowUpSending(false);
-      setTimeout(() => scanFollowUpRef.current?.focus(), 100);
-    }
   };
 
   const handleProfilePasswordReset = async () => {
@@ -1486,224 +1445,7 @@ export default function App() {
         {activeTab === 'scan' && (
           <div className="animate-fade-in" data-testid="scan-tab" style={{ padding: '0 0 100px' }}>
 
-            {/* ── FULL ANALYSIS VIEW ── */}
-            {scanPrediction && !isScanPredicting && (
-              <div className="space-y-6">
-                <button className="back-btn" onClick={backToScanResults} data-testid="scan-back-to-results">
-                  <ArrowLeft /> Back to Scan
-                </button>
-                {scanPrediction._isCombo ? (
-                  <div className="combo-result-card" data-testid="scan-combo-result">
-                    {/* COMBO HEADER */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
-                      <Users style={{ width: 18, height: 18, color: '#a855f7' }} />
-                      <div style={{ fontSize: 12, fontWeight: 800, color: '#a855f7', textTransform: 'uppercase', letterSpacing: 1.5 }}>Combo Prediction</div>
-                    </div>
-
-                    {/* COMBINED RESULT */}
-                    <div style={{ background: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.15)', borderRadius: 12, padding: 20, marginBottom: 20, textAlign: 'center' }}>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>
-                        Combined {getPropLabel(scanPrediction.player1?.propType || '')}
-                      </div>
-                      <div style={{ fontSize: 40, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)', lineHeight: 1 }}>
-                        {scanPrediction.combined?.projectedValue}
-                      </div>
-                      <div style={{ fontSize: 13, color: 'var(--text-muted)', margin: '8px 0 12px' }}>
-                        vs Line: <span style={{ fontWeight: 800, color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace" }}>{scanPrediction._comboLine}</span>
-                      </div>
-                      <div style={{
-                        display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 20px', borderRadius: 8,
-                        background: scanPrediction.combined?.recommendation === 'over' ? 'rgba(16,185,129,0.15)' : 'rgba(244,63,94,0.15)',
-                        border: `1px solid ${scanPrediction.combined?.recommendation === 'over' ? 'rgba(16,185,129,0.3)' : 'rgba(244,63,94,0.3)'}`,
-                      }}>
-                        {scanPrediction.combined?.recommendation === 'over'
-                          ? <TrendingUp style={{ width: 16, height: 16, color: '#10b981' }} />
-                          : <TrendingDown style={{ width: 16, height: 16, color: '#f43f5e' }} />
-                        }
-                        <span style={{ fontSize: 16, fontWeight: 900, color: scanPrediction.combined?.recommendation === 'over' ? '#10b981' : '#f43f5e', textTransform: 'uppercase' }}>
-                          {scanPrediction.combined?.recommendation}
-                        </span>
-                        <span className={`badge ${scanPrediction.combined?.confidenceLevel === 'High' ? 'neon' : scanPrediction.combined?.confidenceLevel === 'Medium' ? '' : 'caution'}`} style={{ fontSize: 10, marginLeft: 4 }}>
-                          {scanPrediction.combined?.confidenceLevel}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* INDIVIDUAL BREAKDOWNS */}
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
-                      {[scanPrediction.player1, scanPrediction.player2].map((pred, idx) => (
-                        pred?.player && (
-                          <div key={`scan-player-${idx + 1}`} style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10, padding: 14 }}>
-                            <div style={{ fontSize: 10, fontWeight: 700, color: idx === 0 ? 'var(--accent)' : '#f59e0b', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>
-                              Player {idx + 1}
-                            </div>
-                            <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-primary)', marginBottom: 4 }}>
-                              {pred.player?.name || 'Unknown'}
-                            </div>
-                            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 10 }}>
-                              {pred.player?.team || ''} &middot; {pred.player?.position || ''}
-                            </div>
-                            <div style={{ fontSize: 28, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)' }}>
-                              {pred.projectedValue}
-                            </div>
-                            <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>projected</div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 8 }}>
-                              {pred.recommendation === 'over'
-                                ? <TrendingUp style={{ width: 12, height: 12, color: '#10b981' }} />
-                                : <TrendingDown style={{ width: 12, height: 12, color: '#f43f5e' }} />}
-                              <span style={{ fontSize: 11, fontWeight: 700, color: pred.recommendation === 'over' ? '#10b981' : '#f43f5e', textTransform: 'uppercase' }}>
-                                {pred.recommendation}
-                              </span>
-                              <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 4 }}>{pred.confidenceScore}%</span>
-                            </div>
-                          </div>
-                        )
-                      ))}
-                    </div>
-
-                    {/* MATCHUP OVERVIEW */}
-                    {scanPrediction.player1?.matchupOverview && (
-                      <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10, padding: 14, marginBottom: 16 }}>
-                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 }}>Matchup Overview</div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{scanPrediction.player1.matchupOverview.homeTeam}</div>
-                          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>vs</div>
-                          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{scanPrediction.player1.matchupOverview.awayTeam}</div>
-                        </div>
-                        {scanPrediction.player1.matchupOverview.expectedPossession && (
-                          <div style={{ marginBottom: 8 }}>
-                            <div style={{ display: 'flex', height: 6, borderRadius: 3, overflow: 'hidden' }}>
-                              <div style={{ width: `${scanPrediction.player1.matchupOverview.expectedPossession.home || 50}%`, background: 'var(--accent)' }} />
-                              <div style={{ width: `${scanPrediction.player1.matchupOverview.expectedPossession.away || 50}%`, background: '#f43f5e' }} />
-                            </div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
-                              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent)' }}>{scanPrediction.player1.matchupOverview.expectedPossession.home}%</span>
-                              <span style={{ fontSize: 11, fontWeight: 700, color: '#f43f5e' }}>{scanPrediction.player1.matchupOverview.expectedPossession.away}%</span>
-                            </div>
-                          </div>
-                        )}
-                        {scanPrediction.player1.matchupOverview.expectedGameType && (
-                          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                            Game Type: <span style={{ color: 'var(--text-primary)', fontWeight: 700, textTransform: 'capitalize' }}>{scanPrediction.player1.matchupOverview.expectedGameType}</span>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* SHARP TAKES */}
-                    <div style={{ display: 'grid', gap: 10 }}>
-                      {[scanPrediction.player1, scanPrediction.player2].map((pred, idx) => pred?.sharpSummary && (
-                        <div key={`scan-sharp-${idx + 1}`} style={{ background: 'rgba(99,102,241,0.04)', border: '1px solid rgba(99,102,241,0.15)', borderRadius: 10, padding: 12 }}>
-                          <div style={{ fontSize: 10, fontWeight: 700, color: '#6366f1', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>
-                            {pred.player?.name} — Sharp Take
-                          </div>
-                          <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>{pred.sharpSummary}</div>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* TACTICAL BREAKDOWNS */}
-                    {[scanPrediction.player1, scanPrediction.player2].map((pred, idx) => pred?.tacticalBreakdown && (
-                      <div key={`tact-${idx}`} style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10, padding: 14, marginTop: 12 }}>
-                        <div style={{ fontSize: 10, fontWeight: 700, color: idx === 0 ? 'var(--accent)' : '#f59e0b', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>
-                          {pred.player?.name} — Analysis
-                        </div>
-                        <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6, whiteSpace: 'pre-line' }}>{pred.tacticalBreakdown}</div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <ProjectionCard
-                    projection={scanPrediction}
-                    onSave={scanSavePickFn}
-                    excludedIndices={scanExcludedIndices}
-                    onToggleSample={idx => setScanExcludedIndices(prev =>
-                      prev.includes(idx) ? prev.filter(i => i !== idx) : [...prev, idx]
-                    )}
-                  />
-                )}
-
-                {/* ── HEAD TO HEAD (Player Stats vs Opponent) ── */}
-                {scanPrediction && !scanPrediction._isCombo && scanPrediction.h2hGames && scanPrediction.h2hGames.length > 0 && (
-                  <div data-testid="scan-h2h-section" style={{
-                    background: '#0a0a0f', border: '1px solid rgba(100,100,120,0.15)',
-                    borderRadius: 14, overflow: 'hidden', marginTop: 8,
-                  }}>
-                    <div style={{
-                      padding: '10px 16px', borderBottom: '1px solid rgba(100,100,120,0.1)',
-                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <Swords style={{ width: 14, height: 14, color: '#f59e0b' }} />
-                        <span style={{ fontSize: 11, fontWeight: 900, letterSpacing: '0.1em', color: '#f59e0b', textTransform: 'uppercase' }}>
-                          H2H vs {scanPrediction.opponent || scanPrediction.matchupOverview?.awayTeam || scanPrediction.matchupOverview?.homeTeam || '—'} ({scanPrediction.h2hGames.length})
-                        </span>
-                      </div>
-                      <span style={{ fontSize: 11, fontWeight: 800, color: 'rgba(255,255,255,0.5)', fontFamily: "'JetBrains Mono', monospace" }}>
-                        {scanPrediction.h2hGames.filter(g => g.hit === (scanPrediction.recommendation === 'over' ? 'over' : 'under')).length} / {scanPrediction.h2hGames.length} HIT RATE
-                      </span>
-                    </div>
-                    <div style={{ padding: '10px 16px' }}>
-                      <div className="samples-grid">
-                        {scanPrediction.h2hGames.map((g, i) => {
-                          const isHit = g.hit === (scanPrediction.recommendation === 'over' ? 'over' : 'under');
-                          return (
-                            <div key={`${g.date}-${g.opponent}-${i}`} className={`sample-cell ${isHit ? 'hit' : 'miss'}`}
-                              title={`${g.date} vs ${g.opponent} (${g.venue}) - ${g.result}`}
-                              style={{ cursor: 'default' }}>
-                              <span className="sample-value">{g.value}</span>
-                              <span className="sample-minutes">{g.minutesPlayed}'</span>
-                              <span className="sample-venue-tag">{g.venue === 'home' ? 'H' : 'A'}</span>
-                              <span className="sample-opponent">{(g.opponent || '').substring(0, 3).toUpperCase()}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* ── UNIFIED TACTICAL BREAKDOWN (from prediction) ── */}
-                {scanPrediction && !scanPrediction._isCombo && scanPrediction.tacticalBreakdown && (
-                  <div data-testid="scan-tactical-section" style={{
-                    background: '#0a0a0f', border: '1px solid rgba(99,102,241,0.2)',
-                    borderRadius: 14, overflow: 'hidden', marginTop: 8,
-                  }}>
-                    <div style={{
-                      padding: '10px 16px', borderBottom: '1px solid rgba(99,102,241,0.1)',
-                      display: 'flex', alignItems: 'center', gap: 8,
-                    }}>
-                      <Crosshair style={{ width: 14, height: 14, color: '#818cf8' }} />
-                      <span style={{ fontSize: 11, fontWeight: 900, letterSpacing: '0.1em', color: '#818cf8', textTransform: 'uppercase' }}>
-                        Tactical Breakdown
-                      </span>
-                    </div>
-                    <div style={{ padding: '14px 16px', fontSize: 13, lineHeight: 1.7, color: 'rgba(255,255,255,0.8)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                      {scanPrediction.tacticalBreakdown.split('\n').map((line, li) => {
-                        const parts = line.split(/(\*\*.*?\*\*)/g);
-                        return (
-                          <div key={`tac-${li}`} style={{ marginBottom: line === '' ? 8 : 2 }}>
-                            {parts.map((part, pi) => {
-                              if (part.startsWith('**') && part.endsWith('**')) {
-                                return <strong key={`tac-${li}-b-${pi}`} style={{ color: '#fff', fontWeight: 800 }}>{part.slice(2, -2)}</strong>;
-                              }
-                              if (part.startsWith('- ')) {
-                                return <span key={`tac-${li}-d-${pi}`} style={{ paddingLeft: 8 }}><span style={{ color: '#818cf8' }}>-</span> {part.slice(2)}</span>;
-                              }
-                              return <span key={`tac-${li}-t-${pi}`}>{part}</span>;
-                            })}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-
-              </div>
-            )}
-
             {/* ── SCAN UPLOAD & RESULTS VIEW ── */}
-            {!scanPrediction && (
               <>
                 {/* Header */}
                 <div style={{ textAlign: 'center', marginBottom: 24 }}>
@@ -1783,14 +1525,6 @@ export default function App() {
                   </div>
                 )}
 
-                {/* Predicting Spinner */}
-                {isScanPredicting && (
-                  <div style={{ textAlign: 'center', padding: '40px 0' }} data-testid="scan-predicting">
-                    <div className="spinner-ring"><Zap className="inner-icon" style={{ width: 24, height: 24 }} /></div>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', marginTop: 16 }}>Running Deep Analysis...</div>
-                    <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', marginTop: 4 }}>Tactical research + AI analysis</div>
-                  </div>
-                )}
 
                 {/* Error State */}
                 {scanError && (
@@ -1801,7 +1535,7 @@ export default function App() {
                 )}
 
                 {/* Image Preview + Results */}
-                {scanImage && !isScanning && !isScanPredicting && (
+                {scanImage && !isScanning && (
                   <div style={{ marginTop: 8 }}>
                     {/* Preview */}
                     <div style={{ position: 'relative', marginBottom: 16 }}>
@@ -1830,8 +1564,25 @@ export default function App() {
                     {/* Extracted Props */}
                     {scanResults && scanResults.length > 0 && (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                            <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: '0.15em', color: 'var(--accent)', textTransform: 'uppercase' }}>
-                              {scanResults.length} Prop{scanResults.length > 1 ? 's' : ''} Detected
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                              <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: '0.15em', color: 'var(--accent)', textTransform: 'uppercase' }}>
+                                {scanResults.length} Prop{scanResults.length > 1 ? 's' : ''} Detected
+                              </div>
+                              {scanResults.length > 1 && (
+                                <button
+                                  onClick={handlePredictAll}
+                                  disabled={Object.values(scanPredictingIdx).some(v => v)}
+                                  data-testid="scan-predict-all-btn"
+                                  style={{
+                                    padding: '6px 14px', borderRadius: 8, border: 'none',
+                                    background: 'rgba(16,185,129,0.12)', color: 'var(--accent)',
+                                    fontSize: 10, fontWeight: 900, letterSpacing: '0.08em',
+                                    cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6,
+                                  }}
+                                >
+                                  <Zap style={{ width: 12, height: 12 }} /> PREDICT ALL
+                                </button>
+                              )}
                             </div>
                         {scanResults.map((pick, idx) => {
                           const ext = pick.extracted;
@@ -1839,7 +1590,8 @@ export default function App() {
                           const isCombo = ext?.isCombo;
                           const resolvedPlayers = pick.resolvedPlayers || [];
                           const comboMatched = isCombo ? (resolvedPlayers[0] && resolvedPlayers[1]) : !!res;
-                          const isPredicting = isScanPredicting && scanPredictingIdx === idx;
+                          const isPredicting = scanPredictingIdx[idx];
+                          const prediction = scanPrediction[idx];
                           const propLabel = PROP_TYPES.find(p => p.key === ext.propType)?.label || ext.propType;
 
                           return (
@@ -2135,28 +1887,116 @@ export default function App() {
                                 </div>
                               </div>
 
-                              {/* Action Button */}
-                              <div style={{ padding: '0 16px 14px' }}>
-                                <button
-                                  onClick={() => handleScanPredict(pick, idx)}
-                                  disabled={!comboMatched || isPredicting}
-                                  data-testid={`scan-predict-btn-${idx}`}
-                                  style={{
-                                    width: '100%', padding: '12px', borderRadius: 10, border: 'none',
-                                    background: comboMatched ? (isCombo ? '#a855f7' : 'var(--accent)') : 'rgba(255,255,255,0.06)',
-                                    color: comboMatched ? '#000' : 'rgba(255,255,255,0.3)',
-                                    fontSize: 13, fontWeight: 900, letterSpacing: '0.06em',
-                                    cursor: comboMatched ? 'pointer' : 'not-allowed',
-                                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                                  }}
-                                >
-                                  {isPredicting ? (
-                                    <><Loader2 style={{ width: 16, height: 16, animation: 'spin 1s linear infinite' }} /> {isCombo ? 'COMBO ANALYSIS...' : 'ANALYZING...'}</>
-                                  ) : (
-                                    <><Zap style={{ width: 16, height: 16 }} /> {isCombo ? 'RUN COMBO PREDICTION' : 'RUN PREDICTION'}</>
-                                  )}
-                                </button>
-                              </div>
+                              {/* Action / Result Area */}
+                              {prediction ? (
+                                <div style={{ padding: '0 16px 14px' }} data-testid={`scan-prediction-result-${idx}`}>
+                                  {/* Inline Prediction Result */}
+                                  <div style={{
+                                    background: 'rgba(16,185,129,0.04)', border: '1px solid rgba(16,185,129,0.15)',
+                                    borderRadius: 10, padding: 14, marginBottom: 10,
+                                  }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                                      <span style={{ fontSize: 9, fontWeight: 900, letterSpacing: '0.15em', color: 'var(--accent)', textTransform: 'uppercase' }}>
+                                        Projection Ready
+                                      </span>
+                                      <span style={{ fontSize: 11, fontWeight: 800, color: 'rgba(255,255,255,0.5)', fontFamily: "'JetBrains Mono', monospace" }}>
+                                        {prediction.confidenceScore || prediction.combined?.confidenceScore || '—'}% conf
+                                      </span>
+                                    </div>
+
+                                    {prediction._isCombo ? (
+                                      <div>
+                                        <div style={{ fontSize: 28, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: '#fff', textAlign: 'center' }}>
+                                          {prediction.combined?.projectedValue ?? '—'}
+                                        </div>
+                                        <div style={{ textAlign: 'center', marginTop: 6 }}>
+                                          <span style={{
+                                            display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 14px', borderRadius: 6,
+                                            background: prediction.combined?.recommendation === 'over' ? 'rgba(16,185,129,0.15)' : 'rgba(244,63,94,0.15)',
+                                            border: `1px solid ${prediction.combined?.recommendation === 'over' ? 'rgba(16,185,129,0.3)' : 'rgba(244,63,94,0.3)'}`,
+                                          }}>
+                                            {prediction.combined?.recommendation === 'over'
+                                              ? <TrendingUp style={{ width: 12, height: 12, color: '#10b981' }} />
+                                              : <TrendingDown style={{ width: 12, height: 12, color: '#f43f5e' }} />}
+                                            <span style={{ fontSize: 13, fontWeight: 900, color: prediction.combined?.recommendation === 'over' ? '#10b981' : '#f43f5e', textTransform: 'uppercase' }}>
+                                              {prediction.combined?.recommendation}
+                                            </span>
+                                          </span>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <div>
+                                        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, justifyContent: 'center' }}>
+                                          <span style={{ fontSize: 28, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: '#fff' }}>
+                                            {prediction.projectedValue ?? '—'}
+                                          </span>
+                                          <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)' }}>projected</span>
+                                        </div>
+                                        <div style={{ textAlign: 'center', marginTop: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                                          <span style={{
+                                            display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 14px', borderRadius: 6,
+                                            background: prediction.recommendation === 'over' ? 'rgba(16,185,129,0.15)' : 'rgba(244,63,94,0.15)',
+                                            border: `1px solid ${prediction.recommendation === 'over' ? 'rgba(16,185,129,0.3)' : 'rgba(244,63,94,0.3)'}`,
+                                          }}>
+                                            {prediction.recommendation === 'over'
+                                              ? <TrendingUp style={{ width: 12, height: 12, color: '#10b981' }} />
+                                              : <TrendingDown style={{ width: 12, height: 12, color: '#f43f5e' }} />}
+                                            <span style={{ fontSize: 13, fontWeight: 900, color: prediction.recommendation === 'over' ? '#10b981' : '#f43f5e', textTransform: 'uppercase' }}>
+                                              {prediction.recommendation}
+                                            </span>
+                                          </span>
+                                          {prediction.matchContext && (
+                                            <span style={{ fontSize: 9, fontWeight: 700, padding: '3px 8px', borderRadius: 4, background: 'rgba(99,102,241,0.12)', color: '#818cf8', border: '1px solid rgba(99,102,241,0.2)' }}>
+                                              {prediction.matchContext.league}{prediction.matchContext.round ? ` · ${prediction.matchContext.round}` : ''}
+                                            </span>
+                                          )}
+                                        </div>
+                                        {prediction.sharpSummary && (
+                                          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.55)', marginTop: 10, lineHeight: 1.5, borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 10 }}>
+                                            {prediction.sharpSummary}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                  {/* Save Button */}
+                                  <button
+                                    onClick={() => scanSavePickFn(idx)}
+                                    data-testid={`scan-save-btn-${idx}`}
+                                    style={{
+                                      width: '100%', padding: '11px', borderRadius: 10, border: 'none',
+                                      background: '#3b82f6', color: '#fff',
+                                      fontSize: 12, fontWeight: 900, letterSpacing: '0.06em',
+                                      cursor: 'pointer',
+                                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                                    }}
+                                  >
+                                    <Shield style={{ width: 14, height: 14 }} /> SAVE TO TRACKING
+                                  </button>
+                                </div>
+                              ) : (
+                                <div style={{ padding: '0 16px 14px' }}>
+                                  <button
+                                    onClick={() => handleScanPredict(pick, idx)}
+                                    disabled={!comboMatched || isPredicting}
+                                    data-testid={`scan-predict-btn-${idx}`}
+                                    style={{
+                                      width: '100%', padding: '12px', borderRadius: 10, border: 'none',
+                                      background: isPredicting ? 'rgba(16,185,129,0.15)' : comboMatched ? (isCombo ? '#a855f7' : 'var(--accent)') : 'rgba(255,255,255,0.06)',
+                                      color: isPredicting ? 'var(--accent)' : comboMatched ? '#000' : 'rgba(255,255,255,0.3)',
+                                      fontSize: 13, fontWeight: 900, letterSpacing: '0.06em',
+                                      cursor: comboMatched && !isPredicting ? 'pointer' : 'not-allowed',
+                                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                                    }}
+                                  >
+                                    {isPredicting ? (
+                                      <><Loader2 style={{ width: 16, height: 16, animation: 'spin 1s linear infinite' }} /> {isCombo ? 'COMBO ANALYSIS...' : 'ANALYZING...'}</>
+                                    ) : (
+                                      <><Zap style={{ width: 16, height: 16 }} /> {isCombo ? 'RUN COMBO PREDICTION' : 'RUN PREDICTION'}</>
+                                    )}
+                                  </button>
+                                </div>
+                              )}
                             </div>
                           );
                         })}
@@ -2179,7 +2019,6 @@ export default function App() {
                   </div>
                 )}
               </>
-            )}
           </div>
         )}
 
