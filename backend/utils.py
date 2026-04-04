@@ -25,9 +25,13 @@ async def api_football_request(endpoint: str, params: dict = None):
                     data = resp.json()
                     if data.get("errors") and len(data["errors"]) > 0:
                         error_msg = json.dumps(data["errors"])
-                        if "Too many requests" in error_msg or "rate limit" in error_msg.lower():
-                            await aio.sleep(1.5 * (attempt + 1))
-                            continue
+                        if "Too many requests" in error_msg or "rate limit" in error_msg.lower() or "request limit" in error_msg.lower() or "reached the request limit" in error_msg.lower():
+                            if attempt < 2:
+                                await aio.sleep(1.5 * (attempt + 1))
+                                continue
+                            # Daily quota exhausted — return empty instead of crashing
+                            print(f"[API-SPORTS] Daily quota exhausted: {error_msg}")
+                            return []
                         raise HTTPException(status_code=400, detail=f"API-Sports error: {error_msg}")
                     return data.get("response", [])
             except httpx.TimeoutException:

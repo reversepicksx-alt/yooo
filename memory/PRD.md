@@ -107,6 +107,11 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 - Reduced icon-btn size from 36px to 32px, logo-icon from 36px to 30px
 - Desktop still shows full text labels
 
+### API Rate Limit & AI-Only Mode Fix (April 5, 2026) — P0 Critical
+- **Bug 1**: API-Sports daily quota error ("request limit") wasn't detected because code only checked for "rate limit" → now detects both, returns empty [] instead of crashing with 400
+- **Bug 2**: Hard guards blocked predictions when teamId=0 or opponentId=0, even though frontend allows "AI-ONLY MODE" → removed guards, predictions now gracefully skip API calls and use pure AI analysis
+- **Fix**: AI-only mode skips all API data fetching (no wasted quota on fake IDs), proceeds directly to LLM consensus with player name + team + opponent + prop type
+
 ### Recommendation vs Projection Mismatch Fix (April 5, 2026) — P0 Critical Bug
 - **Bug**: When match dominance multiplier adjusted projectedValue upward (e.g., 49→53.3), the recommendation was still set using the OLD pre-adjustment value (`avg_proj`), causing "projecting 53.3 but recommending UNDER 50.5"
 - **Root cause**: Line `prediction["recommendation"] = "over" if avg_proj > req.line` used stale `avg_proj` instead of `prediction["projectedValue"]` (post-dominance)

@@ -46,12 +46,7 @@ async def predict(req: PredictionRequest):
 
         actual_team_id = req.teamId
         league_id = req.leagueId or 39
-
-        # Guard: reject if critical IDs are missing
-        if not actual_team_id or actual_team_id == 0:
-            raise HTTPException(status_code=400, detail="Player's team could not be resolved. Please try scanning again.")
-        if not req.opponentId or req.opponentId == 0:
-            raise HTTPException(status_code=400, detail="Opponent team could not be resolved. Please try scanning again.")
+        ai_only_mode = (not actual_team_id or actual_team_id == 0 or not req.opponentId or req.opponentId == 0)
 
         # Fire ALL API calls at once (optimized — kept odds for game context)
         player_data_task = get_player_data()
@@ -70,7 +65,7 @@ async def predict(req: PredictionRequest):
 
                 # Primary: Get team's upcoming + today's fixtures across ALL competitions
                 try:
-                    next_fixtures = await api_football_request("fixtures", {"team": actual_team_id or 40, "next": 10})
+                    next_fixtures = await api_football_request("fixtures", {"team": actual_team_id, "next": 10})
                     if not next_fixtures:
                         next_fixtures = []
 
@@ -78,7 +73,7 @@ async def predict(req: PredictionRequest):
                     from datetime import date as date_type
                     today_str = date_type.today().isoformat()
                     try:
-                        today_fixtures = await api_football_request("fixtures", {"team": actual_team_id or 40, "date": today_str})
+                        today_fixtures = await api_football_request("fixtures", {"team": actual_team_id, "date": today_str})
                         if today_fixtures:
                             # Prepend today's fixtures (higher priority — game is today)
                             existing_ids = {f.get("fixture", {}).get("id") for f in next_fixtures}
@@ -110,7 +105,7 @@ async def predict(req: PredictionRequest):
                 if not fixture_match:
                     try:
                         h2h = await api_football_request("fixtures/headtohead", {
-                            "h2h": f"{actual_team_id or 40}-{req.opponentId}",
+                            "h2h": f"{actual_team_id}-{req.opponentId}",
                             "next": 2,
                         })
                         if h2h:
@@ -175,20 +170,35 @@ async def predict(req: PredictionRequest):
             except Exception:
                 return None
 
-        team_stats_task = get_team_stats_multi_season(actual_team_id or 40, league_id)
-        opponent_stats_task = get_team_stats_multi_season(req.opponentId, league_id)
-        h2h_task = safe_fetch("fixtures/headtohead", {"h2h": f"{actual_team_id or 40}-{req.opponentId}", "last": 10}, [])
+        # When in AI-only mode (missing IDs), skip API calls that would waste quota
+        if ai_only_mode:
+            print(f"[AI-ONLY] Running in AI-only mode for {req.playerName} — teamId={actual_team_id}, opponentId={req.opponentId}")
 
-        async def get_standings_multi_season():
-            for s in [CURRENT_SEASON + 1, CURRENT_SEASON, CURRENT_SEASON - 1]:
-                result = await safe_fetch("standings", {"league": league_id, "season": s})
-                if result:
-                    return result
-            return None
+            async def noop_none(): return None
+            async def noop_list(): return []
 
-        standings_task = get_standings_multi_season()
-        fixtures_task = get_recent_fixtures_fast(actual_team_id or 40, 50)
-        odds_task = get_match_odds()
+            player_data_task = get_player_data() if req.playerId and req.playerId != 0 else noop_none()
+            team_stats_task = noop_none()
+            opponent_stats_task = noop_none()
+            h2h_task = noop_list()
+            standings_task = noop_none()
+            fixtures_task = noop_list()
+            odds_task = noop_none()
+        else:
+            team_stats_task = get_team_stats_multi_season(actual_team_id, league_id)
+            opponent_stats_task = get_team_stats_multi_season(req.opponentId, league_id)
+            h2h_task = safe_fetch("fixtures/headtohead", {"h2h": f"{actual_team_id}-{req.opponentId}", "last": 10}, [])
+
+            async def get_standings_multi_season():
+                for s in [CURRENT_SEASON + 1, CURRENT_SEASON, CURRENT_SEASON - 1]:
+                    result = await safe_fetch("standings", {"league": league_id, "season": s})
+                    if result:
+                        return result
+                return None
+
+            standings_task = get_standings_multi_season()
+            fixtures_task = get_recent_fixtures_fast(actual_team_id, 50)
+            odds_task = get_match_odds()
 
         import time as _t
         _t0 = _t.time()
