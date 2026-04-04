@@ -64,43 +64,70 @@ async def predict(req: PredictionRequest):
             return None
 
         async def get_match_odds():
-            """Get bookmaker odds for the specific upcoming fixture between team and opponent"""
+            """Get bookmaker odds for the specific upcoming fixture between team and opponent.
+            Uses team's next fixtures (across ALL competitions) to find the correct match."""
             try:
-                fixtures = []
-                # First try: h2h next fixture (no season filter — next=N handles it)
+                fixture_match = None
+
+                # Primary: Get team's upcoming + today's fixtures across ALL competitions
                 try:
-                    h2h_fixtures = await api_football_request("fixtures/headtohead", {
-                        "h2h": f"{actual_team_id or 40}-{req.opponentId}",
-                        "next": 3,
-                    })
-                    if h2h_fixtures:
-                        fixtures = h2h_fixtures
+                    next_fixtures = await api_football_request("fixtures", {"team": actual_team_id or 40, "next": 10})
+                    if not next_fixtures:
+                        next_fixtures = []
+
+                    # Also check today's live/scheduled fixtures (catches matches about to start or in progress)
+                    from datetime import date as date_type
+                    today_str = date_type.today().isoformat()
+                    try:
+                        today_fixtures = await api_football_request("fixtures", {"team": actual_team_id or 40, "date": today_str})
+                        if today_fixtures:
+                            # Prepend today's fixtures (higher priority — game is today)
+                            existing_ids = {f.get("fixture", {}).get("id") for f in next_fixtures}
+                            for tf in today_fixtures:
+                                if tf.get("fixture", {}).get("id") not in existing_ids:
+                                    next_fixtures.insert(0, tf)
+                    except Exception:
+                        pass
+
+                    if next_fixtures:
+                        # Find fixtures against this specific opponent
+                        opponent_matches = []
+                        for nf in next_fixtures:
+                            home_id = nf.get("teams", {}).get("home", {}).get("id")
+                            away_id = nf.get("teams", {}).get("away", {}).get("id")
+                            if req.opponentId in (home_id, away_id):
+                                opponent_matches.append(nf)
+
+                        if opponent_matches:
+                            # Pick the SOONEST one (first in list — API returns date-ascending)
+                            fixture_match = opponent_matches[0]
+                        else:
+                            # No opponent match found — take team's next match as fallback
+                            fixture_match = next_fixtures[0]
                 except Exception:
                     pass
 
-                # Fallback: get team's next matches and find opponent
-                if not fixtures:
+                # Fallback: H2H (limited to next: 2 per API-Football max)
+                if not fixture_match:
                     try:
-                        next_fixtures = await api_football_request("fixtures", {"team": actual_team_id or 40, "next": 5})
-                        if next_fixtures:
-                            for nf in next_fixtures:
-                                home_id = nf.get("teams", {}).get("home", {}).get("id")
-                                away_id = nf.get("teams", {}).get("away", {}).get("id")
-                                if req.opponentId in (home_id, away_id):
-                                    fixtures = [nf]
-                                    break
-                            if not fixtures:
-                                fixtures = next_fixtures[:1]
+                        h2h = await api_football_request("fixtures/headtohead", {
+                            "h2h": f"{actual_team_id or 40}-{req.opponentId}",
+                            "next": 2,
+                        })
+                        if h2h:
+                            fixture_match = h2h[0]
                     except Exception:
                         pass
-                if not fixtures:
+
+                if not fixture_match:
                     return None
-                fid = fixtures[0].get("fixture", {}).get("id")
+
+                fid = fixture_match.get("fixture", {}).get("id")
                 result = {}
-                # Extract round/stage info (e.g., "Quarter-finals", "Group A - 3")
-                match_round = fixtures[0].get("league", {}).get("round", "")
-                match_league = fixtures[0].get("league", {}).get("name", "")
-                match_date = fixtures[0].get("fixture", {}).get("date", "")
+                # Extract competition context (league/cup name + round)
+                match_round = fixture_match.get("league", {}).get("round", "")
+                match_league = fixture_match.get("league", {}).get("name", "")
+                match_date = fixture_match.get("fixture", {}).get("date", "")
                 if match_round:
                     result["matchRound"] = match_round
                 if match_league:

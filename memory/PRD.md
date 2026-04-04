@@ -43,7 +43,13 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 ### Component Split Refactor (April 3, 2026)
 - App.js reduced from 3,328 to 2,441 lines (27% reduction)
 
-### Single Prop Intelligence Upgrade & Batch Mode Removal (April 4, 2026) — P0
+### Competition Detection Fix (April 4, 2026) — P0
+- **Root cause**: The `fixtures/headtohead` API has a max of `next: 2`, but we were passing `next: 3` — causing it to return NO results. The fallback then picked the wrong fixture
+- **Fix**: Rewrote `get_match_odds()` to use team's next 10 fixtures across ALL competitions as primary source (not H2H)
+- Now also checks today's live/scheduled fixtures to catch matches about to start
+- Filters for opponent, picks the SOONEST match — correctly identifies FA Cup, Champions League, Copa, etc.
+- H2H demoted to fallback-only with correct `next: 2`
+- **Verified**: Arsenal test shows FA Cup Quarter-final as first fixture (not Premier League)
 - **Client feedback**: Batch/multi-prop analysis appeared smarter than single prop because single prop's `ProjectionCard` never displayed the `tacticalBreakdown` AI narrative (despite the backend already generating it)
 - Removed batch analysis mode entirely (state, functions, PlayerReport component import, UI)
 - Added `tacticalBreakdown` display to `ProjectionCard.jsx` with markdown bold parsing for section headers
