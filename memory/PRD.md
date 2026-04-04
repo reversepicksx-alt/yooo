@@ -50,15 +50,16 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 - Added `matchContext` badge showing competition name + round (e.g., "FA CUP · Quarter-finals") so users can see if a match is Cup vs League
 - Backend now includes `matchContext` (league, round, date) in prediction response from fixture data
 - **Testing**: 100% backend (10/10), 100% frontend — verified via testing agent (iteration 48)
-- **Client request**: User "Zay_Bets" (xaviersteverson@gmail.com) asked on X/Twitter how to change from weekly to monthly plan
-- Backend: `POST /api/square/change-plan` endpoint using Square's `swap_plan` API
-- Handles plan swaps (weekly/monthly/quarterly), validates same-plan, invalid-plan, non-subscriber cases
-- Properly handles Square's pending swap state with clear error messages
-- Frontend: SubscriptionManager component in ProfileTab shows current plan, status, next billing, and card info
-- "Change Plan" toggle reveals available plan options
-- Only visible for "Premium (Square)" users — hidden for Owner/Lifetime/Whop users
-- `GET /api/square/status/{email}` now properly populates planLabel and cadence from PLANS reference
-- **Testing**: 100% backend (9/9), 100% frontend — all verified via testing agent
+
+### Subscription Plan Management (April 4, 2026) — P0
+- **Client request**: User "Zay_Bets" (xaviersteverson@gmail.com) asked how to change from weekly to monthly plan
+- Backend: `POST /api/square/change-plan` — uses **cancel+recreate** approach (swap_plan had invisible pending action bug)
+- Verifies current plan from Square directly to prevent DB/Square mismatches
+- Frontend: SubscriptionManager in ProfileTab shows plan, status, next billing + "Change Plan" toggle
+- Only visible for Square subscribers. "Close" button (not "Cancel") to avoid confusion
+- **Auto-sync fix**: sorts ACTIVE subs first, tracks emails to prevent cancelled subs overwriting active ones
+- **Plan resolution**: Sync now matches `plan_variation_id` against `square_plans` collection
+- **Testing**: 100% pass — verified via testing agent (iterations 47, 48, 49)
 
 ## 3rd Party Integrations
 - API-Sports — User API Key | Square — User API Key | Whop — User API Key (still active)
