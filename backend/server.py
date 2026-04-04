@@ -82,9 +82,9 @@ async def seed_grants():
 async def _auto_sync_square_payments():
     """On startup, check Square for payments and auto-activate any unmatched paying customers."""
     import asyncio
-    await asyncio.sleep(5)  # Wait for other services to initialize
+    await asyncio.sleep(5)
     try:
-        from routes.square import get_square_client, _search_square_payments, PLANS
+        from routes.square import get_square_client, PLANS
         from datetime import timedelta, timezone, datetime
 
         client = get_square_client()
@@ -92,7 +92,6 @@ async def _auto_sync_square_payments():
             print("[SQUARE SYNC] No Square client available, skipping auto-sync")
             return
 
-        # Get all payments from last 90 days
         begin = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
         paid_emails = {}
         try:
@@ -100,9 +99,11 @@ async def _auto_sync_square_payments():
                 if pmt.status == "COMPLETED":
                     buyer = (pmt.buyer_email_address or "").lower().strip()
                     if buyer and buyer not in paid_emails:
+                        paid_at = str(pmt.created_at) if pmt.created_at else datetime.now(timezone.utc).isoformat()
                         paid_emails[buyer] = {
                             "id": pmt.id,
                             "amount": pmt.amount_money.amount if pmt.amount_money else 0,
+                            "paid_at": paid_at,
                         }
         except Exception as e:
             print(f"[SQUARE SYNC] Error listing payments: {e}")
@@ -114,7 +115,6 @@ async def _auto_sync_square_payments():
 
         print(f"[SQUARE SYNC] Found {len(paid_emails)} unique paying emails")
 
-        # Check which ones don't have active subscriptions
         activated = 0
         for email, payment in paid_emails.items():
             existing = await db.square_subscriptions.find_one(
@@ -122,15 +122,28 @@ async def _auto_sync_square_payments():
                 {"_id": 0}
             )
             if existing:
-                continue  # Already active
+                continue
 
-            # Determine plan from amount
             amount = payment.get("amount", 0)
             plan_key = "weekly" if amount <= 1200 else ("monthly" if amount <= 4100 else "quarterly")
             plan_info = PLANS.get(plan_key, {})
-            now = datetime.now(timezone.utc).isoformat()
             cadence_days = {"weekly": 7, "monthly": 30, "quarterly": 90}
-            expires_at = (datetime.now(timezone.utc) + timedelta(days=cadence_days.get(plan_key, 30))).isoformat()
+
+            # Expiration based on PAYMENT DATE, not today
+            try:
+                paid_dt = datetime.fromisoformat(payment["paid_at"].replace("Z", "+00:00"))
+            except Exception:
+                paid_dt = datetime.now(timezone.utc)
+
+            expires_at = (paid_dt + timedelta(days=cadence_days.get(plan_key, 30))).isoformat()
+            now = datetime.now(timezone.utc)
+
+            # If subscription already expired, mark it so
+            try:
+                exp_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+                status = "EXPIRED" if now > exp_dt else "ACTIVE"
+            except Exception:
+                status = "ACTIVE"
 
             await db.square_subscriptions.update_one(
                 {"email": email},
@@ -138,22 +151,22 @@ async def _auto_sync_square_payments():
                     "email": email,
                     "planKey": plan_key,
                     "planName": plan_info.get("name", plan_key),
-                    "status": "ACTIVE",
-                    "subscribedAt": now,
+                    "status": status,
+                    "subscribedAt": payment["paid_at"],
                     "expiresAt": expires_at,
-                    "updatedAt": now,
+                    "updatedAt": now.isoformat(),
                     "source": "auto_sync_startup",
                     "squarePaymentId": payment.get("id", ""),
                 }},
                 upsert=True,
             )
-            activated += 1
-            print(f"[SQUARE SYNC] Auto-activated: {email} ({plan_key})")
+            if status == "ACTIVE":
+                activated += 1
+                print(f"[SQUARE SYNC] Activated: {email} ({plan_key}, expires {expires_at[:10]})")
+            else:
+                print(f"[SQUARE SYNC] {email} paid {paid_dt.date()} but {plan_key} already expired")
 
-        if activated:
-            print(f"[SQUARE SYNC] Done: {activated} new subscriptions created")
-        else:
-            print(f"[SQUARE SYNC] All {len(paid_emails)} paying customers already active")
+        print(f"[SQUARE SYNC] Done: {activated} new active subscriptions")
 
     except Exception as e:
         print(f"[SQUARE SYNC] Error during auto-sync: {e}")
