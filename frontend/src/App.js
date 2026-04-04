@@ -2020,41 +2020,6 @@ export default function App() {
                                         </div>
                                       )}
 
-                                      {/* Tactical Breakdown */}
-                                      {prediction.tacticalBreakdown && (
-                                        <div style={{
-                                          background: '#0a0a0f', border: '2px solid rgba(99,102,241,0.15)',
-                                          borderRadius: 14, overflow: 'hidden', marginTop: 10, boxShadow: '0 0 10px rgba(99,102,241,0.04)',
-                                        }}>
-                                          <div style={{
-                                            padding: '10px 16px', borderBottom: '1px solid rgba(99,102,241,0.08)',
-                                            display: 'flex', alignItems: 'center', gap: 8,
-                                          }}>
-                                            <Activity style={{ width: 14, height: 14, color: '#818cf8' }} />
-                                            <span style={{ fontSize: 11, fontWeight: 900, letterSpacing: '0.1em', color: '#818cf8', textTransform: 'uppercase' }}>
-                                              Tactical Breakdown
-                                            </span>
-                                          </div>
-                                          <div style={{ padding: '14px 16px', fontSize: 13, lineHeight: 1.7, color: 'rgba(255,255,255,0.8)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                                            {prediction.tacticalBreakdown.split('\n').map((line, li) => {
-                                              const parts = line.split(/(\*\*.*?\*\*)/g);
-                                              return (
-                                                <div key={`tac-${li}`} style={{ marginBottom: line === '' ? 8 : 2 }}>
-                                                  {parts.map((part, pi) => {
-                                                    if (part.startsWith('**') && part.endsWith('**')) {
-                                                      return <strong key={`b-${pi}`} style={{ color: '#fff', fontWeight: 800 }}>{part.slice(2, -2)}</strong>;
-                                                    }
-                                                    if (part.startsWith('- ')) {
-                                                      return <span key={`d-${pi}`} style={{ paddingLeft: 8 }}><span style={{ color: '#818cf8' }}>-</span> {part.slice(2)}</span>;
-                                                    }
-                                                    return <span key={`t-${pi}`}>{part}</span>;
-                                                  })}
-                                                </div>
-                                              );
-                                            })}
-                                          </div>
-                                        </div>
-                                      )}
                                     </div>
                                   )}
 
