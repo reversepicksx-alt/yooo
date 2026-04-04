@@ -1596,8 +1596,8 @@ export default function App() {
 
                           return (
                             <div key={pick.pickId || `scan-${idx}`} data-testid={`scan-result-${idx}`} style={{
-                              background: '#0a0a0f', border: `1.5px solid ${isCombo ? 'rgba(168,85,247,0.3)' : 'rgba(100,100,120,0.2)'}`, borderRadius: 14,
-                              overflow: 'hidden',
+                              background: '#0a0a0f', border: `2px solid ${isCombo ? 'rgba(168,85,247,0.3)' : 'rgba(16,185,129,0.12)'}`, borderRadius: 16,
+                              overflow: 'hidden', boxShadow: isCombo ? '0 0 12px rgba(168,85,247,0.06)' : '0 0 10px rgba(16,185,129,0.04)',
                             }}>
                               {/* Combo Badge */}
                               {isCombo && (

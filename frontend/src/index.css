@@ -3,16 +3,16 @@
 :root {
   --bg-primary: #050508;
   --bg-secondary: #0a0a10;
-  --bg-card: #0f0f18;
-  --bg-card-hover: #141420;
-  --bg-surface: #161622;
-  --bg-input: #0c0c14;
-  --border-primary: rgba(255,255,255,0.08);
-  --border-secondary: rgba(255,255,255,0.13);
+  --bg-card: #0d0d15;
+  --bg-card-hover: #121220;
+  --bg-surface: #141420;
+  --bg-input: #0a0a12;
+  --border-primary: rgba(16, 185, 129, 0.12);
+  --border-secondary: rgba(16, 185, 129, 0.22);
   --border-accent: #10b981;
   --text-primary: #f4f4f8;
-  --text-secondary: #71717a;
-  --text-muted: #3f3f50;
+  --text-secondary: #8a8a9a;
+  --text-muted: #4a4a5c;
   --accent: #10b981;
   --accent-hover: #34d399;
   --accent-dim: rgba(16, 185, 129, 0.08);
@@ -25,8 +25,10 @@
   --warning-dim: rgba(245, 158, 11, 0.08);
   --info: #6366f1;
   --info-dim: rgba(99, 102, 241, 0.08);
-  --glass: rgba(10, 10, 16, 0.80);
-  --glass-border: rgba(255, 255, 255, 0.06);
+  --glass: rgba(10, 10, 16, 0.85);
+  --glass-border: rgba(16, 185, 129, 0.08);
+  --card-glow: 0 0 12px rgba(16, 185, 129, 0.06), 0 0 1px rgba(16, 185, 129, 0.15);
+  --card-glow-hover: 0 0 20px rgba(16, 185, 129, 0.12), 0 4px 16px rgba(0,0,0,0.4);
   --transition-fast: 0.18s cubic-bezier(0.25, 0.1, 0.25, 1);
   --transition-smooth: 0.32s cubic-bezier(0.25, 0.1, 0.25, 1);
   --transition-spring: 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);

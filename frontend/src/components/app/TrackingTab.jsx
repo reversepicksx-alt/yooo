@@ -126,8 +126,9 @@ function RecordTracker({ savedPicks }) {
 
   return (
     <div data-testid="record-tracker" style={{
-      background: '#0a0a0f', border: '1px solid rgba(100,100,120,0.15)',
-      borderRadius: 6, padding: '6px 8px', marginBottom: 2,
+      background: '#0a0a0f', border: '2px solid rgba(16,185,129,0.12)',
+      borderRadius: 10, padding: '8px 10px', marginBottom: 4,
+      boxShadow: '0 0 10px rgba(16,185,129,0.04)',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
         <BarChart3 style={{ width: 9, height: 9, color: 'var(--accent)' }} />
@@ -184,7 +185,8 @@ function PickCard({ pick, liveData, missAnalyses, reanalyzePick, reanalyzingPick
   return (
     <div className="live-pick-card" data-testid={`pick-${pick.pickId}`} style={{
       background: '#0a0a0f', borderRadius: 14, padding: 0, overflow: 'hidden',
-      border: `2px solid ${isMatchLive ? 'var(--accent)' : isHit ? 'rgba(16,185,129,0.5)' : isMiss ? 'rgba(244,63,94,0.4)' : isPush ? 'rgba(245,158,11,0.5)' : 'rgba(100,100,120,0.2)'}`,
+      border: `2px solid ${isMatchLive ? 'rgba(16,185,129,0.4)' : isHit ? 'rgba(16,185,129,0.35)' : isMiss ? 'rgba(244,63,94,0.3)' : isPush ? 'rgba(245,158,11,0.35)' : 'rgba(16,185,129,0.1)'}`,
+      boxShadow: isMatchLive ? '0 0 16px rgba(16,185,129,0.1)' : isHit ? '0 0 12px rgba(16,185,129,0.08)' : isMiss ? '0 0 12px rgba(244,63,94,0.06)' : '0 0 8px rgba(16,185,129,0.04)',
     }}>
       {/* HEADER */}
       <div style={{ padding: '5px 8px 2px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
