@@ -533,33 +533,32 @@ async def _resolve_opponent(opponent_name: str, is_international: bool, league_i
 
 
 def _build_soccer_scan_prompt(leagues_list: str) -> str:
-    return f"""Analyze this screenshot of a player prop card.
+    return f"""Analyze this screenshot of a player prop card. Extract the SINGLE main prop shown.
 
-LAYOUT GUIDE — SINGLE PLAYER:
+LAYOUT GUIDE:
 - The player's FIRST NAME is on the top line, LAST NAME is on the second line (larger/bolder text)
 - Below the name: "SOCCER • [Team Name] • [Position]"
 - Below that: "vs [Opponent]" or "@ [Opponent]" with date/time
 - The prop line number (e.g., 48.5) is shown prominently with the stat type below it (e.g., "Passes Attempted")
 - "Less" and "More" buttons are just selection options — IGNORE them.
 
-LAYOUT GUIDE — COMBO PROPS (TWO players combined):
+COMBO PROPS (TWO players combined):
 - The card shows TWO player names joined by " + "
 - Teams shown as "Team1/Team2"
 - The stat label includes "(Combo)"
 - The line number is the COMBINED total for both players
-- The two players are from OPPOSING teams in the same match
 
 CRITICAL RULES:
 - Read player names EXACTLY as shown. Do NOT confuse with opponent/team names.
 - If you see " + " between two names, this is a COMBO prop — set isCombo to true.
-- If "(Combo)" appears in the stat type, this is a COMBO prop.
 - IGNORE any "Less"/"More" buttons.
+- Extract ONLY ONE prop — the main/most prominent one visible.
 
-Extract for EACH prop entry:
-1. playerName — Full name(s) as displayed. For combos: "Player A + Player B"
+Extract:
+1. playerName — Full name as displayed. For combos: "Player A + Player B"
 2. propType — Map to: goals, assists, shots_assisted, pass_attempts, shots, shots_on_target, tackles, key_passes, saves, interceptions, blocks, dribbles, dribbles_success, fouls_drawn, fouls_committed, crosses, clearances, duels_won, yellow_cards
 3. line — The numerical line (e.g., 48.5, 6, 5.5)
-4. opponentName — The opposing team (for single props). For combos: null
+4. opponentName — The opposing team
 5. league — Best guess league name
 6. leagueId — Match to one of: {leagues_list}
 7. playerTeam — The player's team
@@ -589,16 +588,16 @@ PROP TYPE MAPPING:
 
 CRITICAL: "Shots Assisted" is shots_assisted (NOT shots or assists). "Goals" is goals (NOT shots_on_target).
 
-RETURN FORMAT (JSON array):
+RETURN FORMAT (JSON object — NOT array):
 For SINGLE: {{"playerName":"...","propType":"...","line":0.0,"opponentName":"...","playerTeam":"...","venue":"home or away","league":"...","leagueId":0,"isCombo":false}}
 For COMBO: {{"playerName":"Player A + Player B","propType":"...","line":0.0,"opponentName":null,"playerTeam":"Team1/Team2","venue":null,"league":"...","leagueId":0,"isCombo":true,"players":[{{"name":"Player A","team":"Team1"}},{{"name":"Player B","team":"Team2"}}]}}
 
 VENUE: "@ [Team]" → away, "vs [Team]" → home
-If unknown, use null. Return JSON array."""
+If unknown, use null. Return ONE JSON object."""
 
 
 def _build_basketball_scan_prompt() -> str:
-    return """Analyze this screenshot of an NBA player prop card.
+    return """Analyze this screenshot of an NBA player prop card. Extract the SINGLE main prop shown.
 
 LAYOUT GUIDE:
 - Player's name (first + last), usually first name smaller above last name
@@ -611,6 +610,7 @@ CRITICAL RULES:
 - Read player names EXACTLY as shown
 - IGNORE "Less"/"More" buttons
 - This is BASKETBALL / NBA only
+- Extract ONLY ONE prop — the main/most prominent one visible.
 
 Extract:
 1. playerName — Full name as displayed
@@ -641,10 +641,10 @@ PROP TYPE MAPPING:
 
 CRITICAL: "Rebs+Asts" is reb_ast (NOT pts_reb_ast). Only include Points in the combo if "Pts" appears in the label.
 
-RETURN FORMAT (JSON array):
-[{"playerName":"...","propType":"...","line":0.0,"opponentName":"...","playerTeam":"...","venue":"home or away","sport":"basketball"}]
+RETURN FORMAT (JSON object — NOT array):
+{"playerName":"...","propType":"...","line":0.0,"opponentName":"...","playerTeam":"...","venue":"home or away","sport":"basketball"}
 
-If unknown, use null. Return JSON array."""
+If unknown, use null. Return ONE JSON object."""
 
 
 async def _resolve_basketball_picks(extracted: list) -> dict:
@@ -808,8 +808,10 @@ async def scan_prop(req: ScanPropRequest):
             response_text = "\n".join(lines)
 
         extracted = json.loads(response_text)
-        if not isinstance(extracted, list):
-            extracted = [extracted]
+        # Enforce single-prop: always work with exactly one entry
+        if isinstance(extracted, list):
+            extracted = extracted[0] if extracted else {}
+        extracted = [extracted] if extracted else []
 
         # ── Step 2: Route based on sport ──
         if is_basketball:
