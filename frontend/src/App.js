@@ -577,10 +577,6 @@ export default function App() {
       const isBasketballPick = pickData.sport === 'basketball' || pickData.extracted?.sport === 'basketball';
 
       if (isBasketballPick) {
-        if (!pickData.resolved && !pickData.resolvedOpponent) {
-          toast.error('Teams not resolved — cannot run prediction');
-          return;
-        }
         setScanPredictingIdx(prev => ({ ...prev, [idx]: true }));
         try {
           const teamId = pickData.resolved?.teamId || 0;
@@ -604,20 +600,17 @@ export default function App() {
         }
       } else {
       // SOCCER prediction flow
-      if (!pickData.resolved) {
-        toast.error('Player not found — cannot run prediction');
-        return;
-      }
+      const resolved = pickData.resolved;
       setScanPredictingIdx(prev => ({ ...prev, [idx]: true }));
       try {
         const opponentId = pickData.resolvedOpponent?.teamId || 0;
         const opponentName = pickData.resolvedOpponent?.teamName || pickData.extracted.opponentName || 'Unknown';
         const venue = scanVenueOverrides[idx] || pickData.extracted.venue || 'home';
         const result = await predict({
-          playerId: pickData.resolved.playerId,
-          playerName: pickData.resolved.playerName,
-          teamId: pickData.resolved.teamId,
-          teamName: pickData.resolved.teamName || pickData.extracted.playerTeam || '',
+          playerId: resolved?.playerId || 0,
+          playerName: resolved?.playerName || pickData.extracted?.playerName || 'Unknown',
+          teamId: resolved?.teamId || 0,
+          teamName: resolved?.teamName || pickData.extracted?.playerTeam || '',
           opponentId: opponentId,
           opponentName: opponentName,
           leagueId: pickData.extracted.leagueId || 39,
@@ -1723,7 +1716,7 @@ export default function App() {
                                       background: 'rgba(245,158,11,0.12)', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.25)',
                                       letterSpacing: '0.1em',
                                     }}>
-                                      NO MATCH
+                                      AI-ONLY MODE
                                     </div>
                                   )}
                                 </div>
@@ -2043,14 +2036,14 @@ export default function App() {
                                 <div style={{ padding: '0 16px 14px' }}>
                                   <button
                                     onClick={() => handleScanPredict(pick, idx)}
-                                    disabled={!comboMatched || isPredicting}
+                                    disabled={isPredicting}
                                     data-testid={`scan-predict-btn-${idx}`}
                                     style={{
                                       width: '100%', padding: '12px', borderRadius: 10, border: 'none',
-                                      background: isPredicting ? 'rgba(16,185,129,0.15)' : comboMatched ? (isCombo ? '#a855f7' : 'var(--accent)') : 'rgba(255,255,255,0.06)',
-                                      color: isPredicting ? 'var(--accent)' : comboMatched ? '#000' : 'rgba(255,255,255,0.3)',
+                                      background: isPredicting ? 'rgba(16,185,129,0.15)' : (isCombo ? '#a855f7' : 'var(--accent)'),
+                                      color: isPredicting ? 'var(--accent)' : '#000',
                                       fontSize: 13, fontWeight: 900, letterSpacing: '0.06em',
-                                      cursor: comboMatched && !isPredicting ? 'pointer' : 'not-allowed',
+                                      cursor: !isPredicting ? 'pointer' : 'not-allowed',
                                       display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
                                     }}
                                   >

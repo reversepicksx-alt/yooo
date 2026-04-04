@@ -1295,7 +1295,7 @@ CRITICAL RULES:
 - NEVER double-count minutes. If data shows a player averaging 43 passes in 26 minutes per game, the 43 IS their actual game output. Do NOT scale down by minutes. The average already reflects their real playing time.
 - Match context OVERRIDES raw averages: If [MATCH DOMINANCE ANALYSIS] shows expected possession significantly above the team's season average, RAISE projections for pass-dependent props (pass_attempts, key_passes) accordingly. Historical averages are baselines, not ceilings.
 - For pass/creative props: weight POSSESSION EXPECTATION heavily. A deep-lying playmaker on a team expected at 65%+ possession WILL exceed their season average.
-- GK saves capped by opp SoT. |proj-line|<0.3 → max 52% conf. Knockout = tactical conservatism + possible ET. recentSamples=[]. No AI model names.
+- GK saves: heavily driven by opponent's attacking quality and shots on target volume. An underdog GK facing a top-attacking team will often EXCEED their seasonal average. Do NOT under-project saves when the opponent is expected to dominate possession and shoot frequently. Formula gives a floor, not a ceiling — if game context suggests high offensive output from opponent, bias OVER. |proj-line|<0.3 → max 52% conf. Knockout = tactical conservatism + possible ET. recentSamples=[]. No AI model names.
 
 JSON: {"projectedValue":0,"recommendation":"over|under","confidenceScore":0,"confidenceLevel":"","sharpSummary":"","reasoning":"","scenarioAnalysis":"","keyEvidence":"","sensitivityTests":"","subRisk":"","gameFlowDynamics":"","uncertaintyNote":"","tacticalBreakdown":"","matchupOverview":{"homeTeam":"","awayTeam":"","favorite":"","moneyline":{"home":"","draw":"","away":""},"expectedPossession":{"home":0,"away":0},"expectedGameType":"","keyMatchupFactor":""},"bayesianMetrics":{"priorMean":0,"momentumEffect":0,"covariateAdjustment":0,"reversalFlag":"stable"},"probabilityCurve":[],"recentSamples":[],"player":{"id":0,"name":"","team":"","position":""},"opponent":"","propType":"","line":0,"confidenceInterval":[0,0],"tacticalAlerts":[]}"""
 
@@ -1373,26 +1373,28 @@ JSON: {"projectedValue":0,"recommendation":"over|under","confidenceScore":0,"con
                 gk_save_pct = 70.0  # League average fallback
 
             # 3. Match context multiplier
-            # Base = 1.0, adjust: underdog at home +0.10, favorite at home -0.10, etc.
+            # Base = 1.0, adjust for game context
             context_multiplier = 1.0
             context_factors = []
             if match_odds and match_odds.get("favorite"):
                 fav = match_odds["favorite"]
                 if fav == player_venue:
                     # GK's team is favored → fewer shots faced → fewer saves
-                    context_multiplier -= 0.10
-                    context_factors.append(f"Team favored ({fav}) → -10% (fewer opponent shots)")
+                    context_multiplier -= 0.08
+                    context_factors.append(f"Team favored ({fav}) → -8% (fewer opponent shots)")
                 else:
                     # GK's team is underdog → more shots faced → more saves
-                    context_multiplier += 0.10
-                    context_factors.append("Team underdog → +10% (more opponent shots)")
+                    context_multiplier += 0.15
+                    context_factors.append("Team underdog → +15% (more opponent shots, busier GK)")
             if player_venue == "away":
                 context_multiplier += 0.05
                 context_factors.append("Away GK → +5% (typically face more pressure)")
             context_multiplier = round(context_multiplier, 2)
 
             # 4. THE FORMULA: Projected Saves = Opp Avg SoT × GK Save% × Context Multiplier
-            projected_saves = round(opp_avg_sot * (gk_save_pct / 100) * context_multiplier, 1) if opp_avg_sot > 0 else gk_avg_saves
+            # Use the HIGHER of formula result and GK's recent average (formula can under-project for busy GKs)
+            formula_projection = round(opp_avg_sot * (gk_save_pct / 100) * context_multiplier, 1) if opp_avg_sot > 0 else gk_avg_saves
+            projected_saves = max(formula_projection, gk_avg_saves) if gk_avg_saves > 0 else formula_projection
 
             gk_formula_data = {
                 "opponentAvgShots": opp_avg_shots,
