@@ -80,10 +80,20 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 - Spring-bounce transitions (`cubic-bezier(0.34, 1.56, 0.64, 1)`) on interactive elements
 - Login page: green-bordered inputs, glowing VERIFY ACCESS button
 
-### PickCard Bug Fix (April 5, 2026) — P0
-- `PickCard` component was deleted during a previous refactor but still referenced by `PicksList`
-- Re-added the complete `PickCard` function to `TrackingTab.jsx`
-- Added missing `Brain` import from lucide-react
+### Header Mobile Layout Fix (April 5, 2026) — P0
+- Split header into two rows: Row 1 (logo + sport toggle + bell + logout), Row 2 (API + v2.3 + Refresh)
+- Fixed horizontal overflow on mobile (430px) with overflow-x:hidden and max-width:100vw
+- Refresh button moved from icon-only to labeled button in status row
+
+### Click-to-Expand Prediction Review (April 5, 2026) — P0
+- Added `scanExpandedIdx` state to track which prediction card is expanded
+- Tapping an inline prediction result toggles full review: ProjectionCard + H2H games + Tactical Breakdown
+- Chevron indicator rotates on expand/collapse, "Tap for full breakdown" hint text
+
+### Subscription Visibility Fix (April 5, 2026) — P0
+- Removed `isSquareUser` gate — SubscriptionManager now renders for ALL users
+- Component auto-hides if no active Square subscription found (via API check)
+- Owner and non-Square users see nothing; Square subscribers see full management UI
 
 ## 3rd Party Integrations
 - API-Sports — User API Key | Square — User API Key | Whop — User API Key (still active)
