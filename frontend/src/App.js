@@ -92,6 +92,7 @@ export default function App() {
   const [scanError, setScanError] = useState(null);
   const [scanPrediction, setScanPrediction] = useState({}); // { idx: projection result }
   const [scanPredictingIdx, setScanPredictingIdx] = useState({}); // { idx: true/false }
+  const [scanExpandedIdx, setScanExpandedIdx] = useState(null); // which prediction is expanded for full review
   const [scanExcludedIndices, setScanExcludedIndices] = useState([]);
   const [scanVenueOverrides, setScanVenueOverrides] = useState({});
   const [scanEditMode, setScanEditMode] = useState({});
@@ -1890,18 +1891,30 @@ export default function App() {
                               {/* Action / Result Area */}
                               {prediction ? (
                                 <div style={{ padding: '0 16px 14px' }} data-testid={`scan-prediction-result-${idx}`}>
-                                  {/* Inline Prediction Result */}
-                                  <div style={{
-                                    background: 'rgba(16,185,129,0.04)', border: '1px solid rgba(16,185,129,0.15)',
-                                    borderRadius: 10, padding: 14, marginBottom: 10,
-                                  }}>
+                                  {/* Clickable Inline Prediction Summary */}
+                                  <div
+                                    onClick={() => setScanExpandedIdx(scanExpandedIdx === idx ? null : idx)}
+                                    style={{
+                                      background: 'rgba(16,185,129,0.04)', border: '2px solid rgba(16,185,129,0.15)',
+                                      borderRadius: 12, padding: 14, marginBottom: 10, cursor: 'pointer',
+                                      transition: 'all 0.25s cubic-bezier(0.34,1.56,0.64,1)',
+                                    }}
+                                    data-testid={`scan-prediction-toggle-${idx}`}
+                                  >
                                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
                                       <span style={{ fontSize: 9, fontWeight: 900, letterSpacing: '0.15em', color: 'var(--accent)', textTransform: 'uppercase' }}>
                                         Projection Ready
                                       </span>
-                                      <span style={{ fontSize: 11, fontWeight: 800, color: 'rgba(255,255,255,0.5)', fontFamily: "'JetBrains Mono', monospace" }}>
-                                        {prediction.confidenceScore || prediction.combined?.confidenceScore || '—'}% conf
-                                      </span>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                        <span style={{ fontSize: 11, fontWeight: 800, color: 'rgba(255,255,255,0.5)', fontFamily: "'JetBrains Mono', monospace" }}>
+                                          {prediction.confidenceScore || prediction.combined?.confidenceScore || '—'}% conf
+                                        </span>
+                                        <ChevronRight style={{
+                                          width: 14, height: 14, color: 'var(--accent)',
+                                          transform: scanExpandedIdx === idx ? 'rotate(90deg)' : 'rotate(0)',
+                                          transition: 'transform 0.25s',
+                                        }} />
+                                      </div>
                                     </div>
 
                                     {prediction._isCombo ? (
@@ -1911,9 +1924,9 @@ export default function App() {
                                         </div>
                                         <div style={{ textAlign: 'center', marginTop: 6 }}>
                                           <span style={{
-                                            display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 14px', borderRadius: 6,
+                                            display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 14px', borderRadius: 8,
                                             background: prediction.combined?.recommendation === 'over' ? 'rgba(16,185,129,0.15)' : 'rgba(244,63,94,0.15)',
-                                            border: `1px solid ${prediction.combined?.recommendation === 'over' ? 'rgba(16,185,129,0.3)' : 'rgba(244,63,94,0.3)'}`,
+                                            border: `2px solid ${prediction.combined?.recommendation === 'over' ? 'rgba(16,185,129,0.25)' : 'rgba(244,63,94,0.25)'}`,
                                           }}>
                                             {prediction.combined?.recommendation === 'over'
                                               ? <TrendingUp style={{ width: 12, height: 12, color: '#10b981' }} />
@@ -1934,9 +1947,9 @@ export default function App() {
                                         </div>
                                         <div style={{ textAlign: 'center', marginTop: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
                                           <span style={{
-                                            display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 14px', borderRadius: 6,
+                                            display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 14px', borderRadius: 8,
                                             background: prediction.recommendation === 'over' ? 'rgba(16,185,129,0.15)' : 'rgba(244,63,94,0.15)',
-                                            border: `1px solid ${prediction.recommendation === 'over' ? 'rgba(16,185,129,0.3)' : 'rgba(244,63,94,0.3)'}`,
+                                            border: `2px solid ${prediction.recommendation === 'over' ? 'rgba(16,185,129,0.25)' : 'rgba(244,63,94,0.25)'}`,
                                           }}>
                                             {prediction.recommendation === 'over'
                                               ? <TrendingUp style={{ width: 12, height: 12, color: '#10b981' }} />
@@ -1946,29 +1959,116 @@ export default function App() {
                                             </span>
                                           </span>
                                           {prediction.matchContext && (
-                                            <span style={{ fontSize: 9, fontWeight: 700, padding: '3px 8px', borderRadius: 4, background: 'rgba(99,102,241,0.12)', color: '#818cf8', border: '1px solid rgba(99,102,241,0.2)' }}>
+                                            <span style={{ fontSize: 9, fontWeight: 700, padding: '3px 8px', borderRadius: 6, background: 'rgba(99,102,241,0.12)', color: '#818cf8', border: '1px solid rgba(99,102,241,0.2)' }}>
                                               {prediction.matchContext.league}{prediction.matchContext.round ? ` · ${prediction.matchContext.round}` : ''}
                                             </span>
                                           )}
                                         </div>
-                                        {prediction.sharpSummary && (
-                                          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.55)', marginTop: 10, lineHeight: 1.5, borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 10 }}>
-                                            {prediction.sharpSummary}
-                                          </div>
-                                        )}
                                       </div>
                                     )}
+
+                                    {/* Tap hint */}
+                                    <div style={{ textAlign: 'center', marginTop: 8, fontSize: 9, color: 'rgba(255,255,255,0.25)', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+                                      {scanExpandedIdx === idx ? 'Tap to collapse' : 'Tap for full breakdown'}
+                                    </div>
                                   </div>
+
+                                  {/* Expanded Full Review */}
+                                  {scanExpandedIdx === idx && !prediction._isCombo && (
+                                    <div style={{ marginBottom: 10, animation: 'fadeInUp 0.2s ease-out' }} data-testid={`scan-full-review-${idx}`}>
+                                      <ProjectionCard
+                                        projection={prediction}
+                                        onSave={() => scanSavePickFn(idx)}
+                                        excludedIndices={scanExcludedIndices}
+                                        onToggleSample={si => setScanExcludedIndices(prev =>
+                                          prev.includes(si) ? prev.filter(i => i !== si) : [...prev, si]
+                                        )}
+                                      />
+
+                                      {/* H2H Section */}
+                                      {prediction.h2hGames && prediction.h2hGames.length > 0 && (
+                                        <div style={{
+                                          background: '#0a0a0f', border: '2px solid rgba(16,185,129,0.12)',
+                                          borderRadius: 14, overflow: 'hidden', marginTop: 10, boxShadow: '0 0 10px rgba(16,185,129,0.04)',
+                                        }}>
+                                          <div style={{
+                                            padding: '10px 16px', borderBottom: '1px solid rgba(16,185,129,0.08)',
+                                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                          }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                              <Activity style={{ width: 14, height: 14, color: '#f59e0b' }} />
+                                              <span style={{ fontSize: 11, fontWeight: 900, letterSpacing: '0.1em', color: '#f59e0b', textTransform: 'uppercase' }}>
+                                                H2H vs {prediction.opponent || '—'} ({prediction.h2hGames.length})
+                                              </span>
+                                            </div>
+                                          </div>
+                                          <div style={{ padding: '10px 16px' }}>
+                                            <div className="samples-grid">
+                                              {prediction.h2hGames.map((g, gi) => {
+                                                const isHitH2H = g.hit === (prediction.recommendation === 'over' ? 'over' : 'under');
+                                                return (
+                                                  <div key={`h2h-${gi}`} className={`sample-cell ${isHitH2H ? 'hit' : 'miss'}`} style={{ cursor: 'default' }}>
+                                                    <span className="sample-value">{g.value}</span>
+                                                    <span className="sample-minutes">{g.minutesPlayed}'</span>
+                                                    <span className="sample-venue-tag">{g.venue === 'home' ? 'H' : 'A'}</span>
+                                                    <span className="sample-opponent">{(g.opponent || '').substring(0, 3).toUpperCase()}</span>
+                                                  </div>
+                                                );
+                                              })}
+                                            </div>
+                                          </div>
+                                        </div>
+                                      )}
+
+                                      {/* Tactical Breakdown */}
+                                      {prediction.tacticalBreakdown && (
+                                        <div style={{
+                                          background: '#0a0a0f', border: '2px solid rgba(99,102,241,0.15)',
+                                          borderRadius: 14, overflow: 'hidden', marginTop: 10, boxShadow: '0 0 10px rgba(99,102,241,0.04)',
+                                        }}>
+                                          <div style={{
+                                            padding: '10px 16px', borderBottom: '1px solid rgba(99,102,241,0.08)',
+                                            display: 'flex', alignItems: 'center', gap: 8,
+                                          }}>
+                                            <Activity style={{ width: 14, height: 14, color: '#818cf8' }} />
+                                            <span style={{ fontSize: 11, fontWeight: 900, letterSpacing: '0.1em', color: '#818cf8', textTransform: 'uppercase' }}>
+                                              Tactical Breakdown
+                                            </span>
+                                          </div>
+                                          <div style={{ padding: '14px 16px', fontSize: 13, lineHeight: 1.7, color: 'rgba(255,255,255,0.8)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                                            {prediction.tacticalBreakdown.split('\n').map((line, li) => {
+                                              const parts = line.split(/(\*\*.*?\*\*)/g);
+                                              return (
+                                                <div key={`tac-${li}`} style={{ marginBottom: line === '' ? 8 : 2 }}>
+                                                  {parts.map((part, pi) => {
+                                                    if (part.startsWith('**') && part.endsWith('**')) {
+                                                      return <strong key={`b-${pi}`} style={{ color: '#fff', fontWeight: 800 }}>{part.slice(2, -2)}</strong>;
+                                                    }
+                                                    if (part.startsWith('- ')) {
+                                                      return <span key={`d-${pi}`} style={{ paddingLeft: 8 }}><span style={{ color: '#818cf8' }}>-</span> {part.slice(2)}</span>;
+                                                    }
+                                                    return <span key={`t-${pi}`}>{part}</span>;
+                                                  })}
+                                                </div>
+                                              );
+                                            })}
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+
                                   {/* Save Button */}
                                   <button
                                     onClick={() => scanSavePickFn(idx)}
                                     data-testid={`scan-save-btn-${idx}`}
                                     style={{
-                                      width: '100%', padding: '11px', borderRadius: 10, border: 'none',
+                                      width: '100%', padding: '11px', borderRadius: 12, border: '2px solid rgba(59,130,246,0.3)',
                                       background: '#3b82f6', color: '#fff',
                                       fontSize: 12, fontWeight: 900, letterSpacing: '0.06em',
                                       cursor: 'pointer',
                                       display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                                      boxShadow: '0 0 16px rgba(59,130,246,0.15)',
                                     }}
                                   >
                                     <Shield style={{ width: 14, height: 14 }} /> SAVE TO TRACKING

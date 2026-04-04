@@ -171,7 +171,6 @@ export function ProfileTab({
   handleTestApiKey, handleSaveAdminSetting,
   handleLogout,
 }) {
-  const isSquareUser = (auth.accessType || '').includes('Square');
 
   return (
     <div className="animate-fade-in space-y-6" data-testid="profile-tab">
@@ -212,8 +211,8 @@ export function ProfileTab({
         </div>
       </div>
 
-      {/* Subscription Management — only for Square subscribers */}
-      {isSquareUser && <SubscriptionManager email={auth.email} />}
+      {/* Subscription Management — shown for all users (shows loading then auto-hides if no sub found) */}
+      <SubscriptionManager email={auth.email} />
 
       <div className="profile-section" data-testid="profile-password-section">
         <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 12 }}>Reset Password</div>
