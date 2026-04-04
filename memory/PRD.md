@@ -107,6 +107,12 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 - Reduced icon-btn size from 36px to 32px, logo-icon from 36px to 30px
 - Desktop still shows full text labels
 
+### Prediction Calibration Overhaul (April 4, 2026) — P0 Quality Fix
+- **Root cause**: Three bad reads (Romagnoli passes, Keita+Taylor combo, Britschgi shots assisted) — AI models were recommending UNDER without proper calibration guards
+- **Fix 1 — AI Prompt Calibration Rules**: Added UNDER skew warning (stats have positive skew), binary line rule (0.5 = zero required), tight edge rule (±1 margin = low confidence), defender pass calibration
+- **Fix 2 — Over/Under Hit Rates**: Pre-compute actual hit rates from game logs (e.g., "OVER 70.5 in 5/7 games, 71%") and inject into AI prompt — gives models explicit data signal
+- **Fix 3 — Post-Consensus Confidence Guards**: Binary line (0.5) UNDER capped at 55%, tight edge (±1) capped at 58%, UNDER skew penalty of 2-4%
+
 ### GK Saves Formula Overhaul (April 4, 2026) — P0 Logic Fix
 - **Root cause**: Save rate was inflated to 76.3% because fallback assumed only 0.8 GA/game; `max(formula, avg)` always biased projections upward
 - **Fix 1**: Compute GA directly from game log scores (score + venue) — most reliable source

@@ -1295,6 +1295,13 @@ CRITICAL RULES:
 - NEVER double-count minutes. If data shows a player averaging 43 passes in 26 minutes per game, the 43 IS their actual game output. Do NOT scale down by minutes. The average already reflects their real playing time.
 - Match context OVERRIDES raw averages: If [MATCH DOMINANCE ANALYSIS] shows expected possession significantly above the team's season average, RAISE projections for pass-dependent props (pass_attempts, key_passes) accordingly. Historical averages are baselines, not ceilings.
 - For pass/creative props: weight POSSESSION EXPECTATION heavily. A deep-lying playmaker on a team expected at 65%+ possession WILL exceed their season average.
+
+CALIBRATION RULES (MUST FOLLOW):
+- UNDER SKEW: Stats have positive skew — a player can have a monster game but can't go below 0. UNDER bets are inherently riskier. If recommending UNDER, your confidence should be 3-5% LOWER than you'd give for an equivalent OVER edge.
+- BINARY LINES: If the line is 0.5 (e.g., UNDER 0.5 means ZERO of that stat), be EXTREMELY cautious recommending UNDER. One event loses the bet. Any defender can record 1 key pass, any midfielder can get 1 shot assisted. UNDER 0.5 confidence should NEVER exceed 55% unless data overwhelmingly supports it.
+- TIGHT EDGE: If your projected value is within ±1.0 of the line, this is a MARGINAL edge. Confidence should NOT exceed 60% regardless of how much data you have. Variance swings will determine outcome.
+- DEFENDER PASSES: Ball-playing center-backs (CB, LB, RB) in possession-dominant teams (55%+ possession) routinely hit 60-85+ passes per game. Do NOT assume defenders have low pass counts — check their actual per-game averages carefully.
+
 - GK saves: heavily driven by opponent's attacking quality and shots on target volume. An underdog GK facing a top-attacking team will often EXCEED their seasonal average. Do NOT under-project saves when the opponent is expected to dominate possession and shoot frequently. Formula gives a floor, not a ceiling — if game context suggests high offensive output from opponent, bias OVER. |proj-line|<0.3 → max 52% conf. Knockout = tactical conservatism + possible ET. recentSamples=[]. No AI model names.
 
 JSON: {"projectedValue":0,"recommendation":"over|under","confidenceScore":0,"confidenceLevel":"","sharpSummary":"","reasoning":"","scenarioAnalysis":"","keyEvidence":"","sensitivityTests":"","subRisk":"","gameFlowDynamics":"","uncertaintyNote":"","tacticalBreakdown":"","matchupOverview":{"homeTeam":"","awayTeam":"","favorite":"","moneyline":{"home":"","draw":"","away":""},"expectedPossession":{"home":0,"away":0},"expectedGameType":"","keyMatchupFactor":""},"bayesianMetrics":{"priorMean":0,"momentumEffect":0,"covariateAdjustment":0,"reversalFlag":"stable"},"probabilityCurve":[],"recentSamples":[],"player":{"id":0,"name":"","team":"","position":""},"opponent":"","propType":"","line":0,"confidenceInterval":[0,0],"tacticalAlerts":[]}"""
@@ -1321,6 +1328,18 @@ JSON: {"projectedValue":0,"recommendation":"over|under","confidenceScore":0,"con
                 "awayAvg": round(sum(v for g, v in zip(player_game_logs, [g.get(target_field) for g in player_game_logs]) if g.get("venue") == "away" and v) / max(1, sum(1 for g in player_game_logs if g.get("venue") == "away" and g.get(target_field))), 2) if values else 0,
                 "sampleSize": len(values),
             }
+            # Pre-compute OVER/UNDER hit rates from actual game logs
+            if values and req.line:
+                over_hits = sum(1 for v in values if v > req.line)
+                under_hits = sum(1 for v in values if v < req.line)
+                push_hits = len(values) - over_hits - under_hits
+                over_pct = round(over_hits / len(values) * 100, 1)
+                under_pct = round(under_hits / len(values) * 100, 1)
+                wave2_supplement["playerGameLogs"]["hitRates"] = {
+                    "overHits": over_hits, "underHits": under_hits, "pushHits": push_hits,
+                    "overPct": over_pct, "underPct": under_pct, "total": len(values),
+                    "summary": f"OVER {req.line} in {over_hits}/{len(values)} games ({over_pct}%), UNDER in {under_hits}/{len(values)} ({under_pct}%)"
+                }
         if team_fixture_stats:
             wave2_supplement["teamMatchStats"] = team_fixture_stats
         if opponent_fixture_stats:
@@ -1572,11 +1591,20 @@ Expected possession for {req.opponentName}: {match_dominance['oppExpectedPoss']}
                 if is_knockout:
                     match_context += "\n** KNOCKOUT/ELIMINATION MATCH — Higher stakes, tactical conservatism likely, possible extra time. Account for this in projections.**"
 
+        # Inject hit rate context into prompt
+        hit_rate_context = ""
+        hit_rates = wave2_supplement.get("playerGameLogs", {}).get("hitRates")
+        if hit_rates:
+            hit_rate_context = f"""
+[OVER/UNDER HIT RATE — CRITICAL DATA]
+{hit_rates['summary']}
+>>> If over-rate >= 65%, strongly lean OVER. If under-rate >= 65%, lean UNDER. If neither exceeds 60%, treat as close call — lower confidence. <<<"""
+
         prompt = f"""{req.playerName} ({display_position}) — plays for {req.teamName} ({player_venue.upper()}) | OPPONENT: {req.opponentName} | {req.propType} line {req.line}
 Odds: {json.dumps(match_odds.get('bookmakerOdds',{}), default=str) if match_odds else 'N/A'}{match_context}
 {pronoun_note}
 recentSamples=[]
-
+{hit_rate_context}
 {final_data[:6000]}
 
 Analyze ALL data thoroughly. Return JSON only."""
@@ -1869,6 +1897,42 @@ Analyze ALL data thoroughly. Return JSON only."""
 
         # HARD GUARD: recommendation stays locked to AI consensus — never flipped by post-processing
         prediction["recommendation"] = "over" if avg_proj > req.line else "under"
+
+        # =============================================
+        # POST-CONSENSUS CONFIDENCE GUARDS
+        # =============================================
+        conf = prediction.get("confidenceScore", 50)
+        proj_val = prediction.get("projectedValue", req.line)
+        edge = abs(proj_val - req.line)
+        rec = prediction.get("recommendation", "over")
+
+        # Guard 1: Binary line (0.5) — UNDER means zero, very risky
+        if req.line <= 0.5 and rec == "under" and conf > 55:
+            prediction["confidenceScore"] = 55
+            prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [
+                "Binary line (0.5): UNDER requires ZERO of this stat — high-risk"
+            ]
+            print(f"[GUARD] Binary line 0.5 UNDER: confidence capped at 55% (was {conf})")
+
+        # Guard 2: Tight edge — projected value within ±1 of line
+        if edge < 1.0 and conf > 58:
+            prediction["confidenceScore"] = 58
+            prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [
+                f"Tight edge: projection {proj_val} is within 1.0 of line {req.line} — marginal"
+            ]
+            print(f"[GUARD] Tight edge ({edge:.1f}): confidence capped at 58% (was {conf})")
+
+        # Guard 3: UNDER skew penalty — stats have positive skew
+        if rec == "under":
+            adj_conf = prediction.get("confidenceScore", 50)
+            penalty = min(4, max(2, round(edge * 0.5)))  # 2-4% penalty based on edge size
+            prediction["confidenceScore"] = max(45, adj_conf - penalty)
+            if adj_conf != prediction["confidenceScore"]:
+                print(f"[GUARD] UNDER skew penalty: -{penalty}% confidence ({adj_conf} → {prediction['confidenceScore']})")
+
+        # Recalculate confidence level after guards
+        cs = prediction.get("confidenceScore", 50)
+        prediction["confidenceLevel"] = "Very High" if cs >= 75 else "High" if cs >= 65 else "Medium" if cs >= 50 else "Low"
 
         response_text = json.dumps(prediction)
 
