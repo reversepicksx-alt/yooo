@@ -32,7 +32,7 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 
 ### Opponent Resolution Enhancement (April 3, 2026) — P0
 - Added SCAN_ALIASES: 80+ team abbreviations (Bundesliga, PL, La Liga, Serie A, Ligue 1, MLS, Liga MX)
-- Enhanced _generate_aliases: city name extraction from compound names, "utd"↔"united" expansion
+- Enhanced _generate_aliases: city name extraction from compound names, "utd"<->"united" expansion
 - Added @ / vs prefix stripping in _resolve_opponent
 - Query expansion in find_team: tries abbreviation variants automatically
 - **70/70 resolution tests passed** (55 find_team + 15 _resolve_opponent with real scan formats)
@@ -42,6 +42,17 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 
 ### Component Split Refactor (April 3, 2026)
 - App.js reduced from 3,328 to 2,441 lines (27% reduction)
+
+### Subscription Plan Management (April 4, 2026) — P0
+- **Client request**: User "Zay_Bets" (xaviersteverson@gmail.com) asked on X/Twitter how to change from weekly to monthly plan
+- Backend: `POST /api/square/change-plan` endpoint using Square's `swap_plan` API
+- Handles plan swaps (weekly/monthly/quarterly), validates same-plan, invalid-plan, non-subscriber cases
+- Properly handles Square's pending swap state with clear error messages
+- Frontend: SubscriptionManager component in ProfileTab shows current plan, status, next billing, and card info
+- "Change Plan" toggle reveals available plan options
+- Only visible for "Premium (Square)" users — hidden for Owner/Lifetime/Whop users
+- `GET /api/square/status/{email}` now properly populates planLabel and cadence from PLANS reference
+- **Testing**: 100% backend (9/9), 100% frontend — all verified via testing agent
 
 ## 3rd Party Integrations
 - API-Sports — User API Key | Square — User API Key | Whop — User API Key (still active)
