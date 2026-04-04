@@ -1344,57 +1344,84 @@ JSON: {"projectedValue":0,"recommendation":"over|under","confidenceScore":0,"con
 
             # 2. GK save rate from LAST 5-7 game logs only (recent form)
             gk_saves_list = []
-            gk_sot_faced_list = []
+            gk_ga_from_logs = []
             recent_gk_logs = [g for g in player_game_logs if g.get("goals_saves") is not None and g.get("minutes", 0) > 0][:7]
             for g in recent_gk_logs:
                 gk_saves_list.append(g.get("goals_saves"))
+                # Compute GA directly from game score + venue (most reliable source)
+                score = g.get("score", "")
+                venue = g.get("venue", "")
+                try:
+                    parts = score.split("-")
+                    home_goals = int(parts[0].strip())
+                    away_goals = int(parts[1].strip())
+                    ga_this_game = away_goals if venue == "home" else home_goals
+                    gk_ga_from_logs.append(ga_this_game)
+                except Exception:
+                    pass
             gk_avg_saves = round(sum(gk_saves_list) / len(gk_saves_list), 2) if gk_saves_list else 0
             gk_saves_per90 = round(sum(gk_saves_list) / max(1, sum((g.get("minutes") or 0) for g in recent_gk_logs)) * 90, 2) if gk_saves_list else 0
 
-            # Calculate save % from LAST 5-7 games only
+            # Goals against: prefer game-log-derived, fallback to team stats
             total_saves = sum(gk_saves_list) if gk_saves_list else 0
             games_with_saves = len(gk_saves_list)
-            # Estimate goals conceded per game from team stats
-            goals_against = None
-            if team_stats:
+            total_ga_from_logs = sum(gk_ga_from_logs) if gk_ga_from_logs else 0
+            goals_against = round(total_ga_from_logs / len(gk_ga_from_logs), 2) if gk_ga_from_logs else None
+
+            # Fallback to team stats if game logs didn't yield GA
+            if goals_against is None and team_stats:
                 ga = team_stats.get("goals", {}).get("against", {})
                 if ga:
-                    total_ga = ga.get("total", {}).get(player_venue) or ga.get("total", {}).get("total") or 0
-                    played = team_stats.get("fixtures", {}).get("played", {}).get(player_venue) or team_stats.get("fixtures", {}).get("played", {}).get("total") or 1
+                    ga_total = ga.get("total", {})
+                    if isinstance(ga_total, dict):
+                        total_ga = ga_total.get(player_venue) or ga_total.get("total") or 0
+                    else:
+                        total_ga = ga_total or 0
+                    played_data = team_stats.get("fixtures", {}).get("played", {})
+                    if isinstance(played_data, dict):
+                        played = played_data.get(player_venue) or played_data.get("total") or 1
+                    else:
+                        played = played_data or 1
                     goals_against = round(total_ga / max(played, 1), 2) if total_ga else None
 
-            # Save % calculation
-            if total_saves > 0 and goals_against is not None and games_with_saves > 0:
+            # Save % = saves / (saves + goals conceded)
+            if total_saves > 0 and total_ga_from_logs > 0:
+                est_sot_faced = total_saves + total_ga_from_logs
+                gk_save_pct = round((total_saves / max(est_sot_faced, 1)) * 100, 1)
+            elif total_saves > 0 and goals_against is not None and games_with_saves > 0:
                 est_sot_faced = total_saves + (goals_against * games_with_saves)
                 gk_save_pct = round((total_saves / max(est_sot_faced, 1)) * 100, 1)
             elif total_saves > 0:
-                gk_save_pct = round(min(85, (total_saves / max(total_saves + games_with_saves * 0.8, 1)) * 100), 1)
+                # Fallback: assume 1.3 GA/game (league average)
+                gk_save_pct = round(min(80, (total_saves / max(total_saves + games_with_saves * 1.3, 1)) * 100), 1)
             else:
-                gk_save_pct = 70.0  # League average fallback
+                gk_save_pct = 65.0  # Conservative league average fallback
+            # Cap save rate at realistic bounds
+            gk_save_pct = min(80.0, max(50.0, gk_save_pct))
 
-            # 3. Match context multiplier
-            # Base = 1.0, adjust for game context
+            # 3. Match context multiplier (symmetric adjustments)
             context_multiplier = 1.0
             context_factors = []
             if match_odds and match_odds.get("favorite"):
                 fav = match_odds["favorite"]
                 if fav == player_venue:
-                    # GK's team is favored → fewer shots faced → fewer saves
-                    context_multiplier -= 0.08
-                    context_factors.append(f"Team favored ({fav}) → -8% (fewer opponent shots)")
+                    context_multiplier -= 0.10
+                    context_factors.append(f"Team favored ({fav}) → -10% (fewer opponent shots)")
                 else:
-                    # GK's team is underdog → more shots faced → more saves
-                    context_multiplier += 0.15
-                    context_factors.append("Team underdog → +15% (more opponent shots, busier GK)")
+                    context_multiplier += 0.10
+                    context_factors.append("Team underdog → +10% (more opponent shots)")
             if player_venue == "away":
                 context_multiplier += 0.05
                 context_factors.append("Away GK → +5% (typically face more pressure)")
             context_multiplier = round(context_multiplier, 2)
 
-            # 4. THE FORMULA: Projected Saves = Opp Avg SoT × GK Save% × Context Multiplier
-            # Use the HIGHER of formula result and GK's recent average (formula can under-project for busy GKs)
-            formula_projection = round(opp_avg_sot * (gk_save_pct / 100) * context_multiplier, 1) if opp_avg_sot > 0 else gk_avg_saves
-            projected_saves = max(formula_projection, gk_avg_saves) if gk_avg_saves > 0 else formula_projection
+            # 4. THE FORMULA: Projected Saves = Opp Avg SoT × GK Save% × Context
+            # Weighted blend: 60% formula (match-specific) + 40% GK average (form)
+            raw_formula = round(opp_avg_sot * (gk_save_pct / 100) * context_multiplier, 1) if opp_avg_sot > 0 else gk_avg_saves
+            if gk_avg_saves > 0 and raw_formula > 0:
+                projected_saves = round(raw_formula * 0.6 + gk_avg_saves * 0.4, 1)
+            else:
+                projected_saves = raw_formula if raw_formula > 0 else gk_avg_saves
 
             gk_formula_data = {
                 "opponentAvgShots": opp_avg_shots,
@@ -1409,7 +1436,7 @@ JSON: {"projectedValue":0,"recommendation":"over|under","confidenceScore":0,"con
                 "contextMultiplier": context_multiplier,
                 "contextFactors": context_factors,
                 "formulaProjection": projected_saves,
-                "formula": f"{opp_avg_sot} SoT × {gk_save_pct}% save rate (last {games_with_saves} games) × {context_multiplier} context = {projected_saves}",
+                "formula": f"{opp_avg_sot} SoT × {gk_save_pct}% save rate × {context_multiplier} context → {raw_formula} formula, blended with {gk_avg_saves} avg = {projected_saves}",
             }
             wave2_supplement["savesAnalysis"] = gk_formula_data
 
@@ -1430,7 +1457,7 @@ FORMULA: Projected Saves = Opponent Avg SoT × GK Save% × Match Context Multipl
 3. MATCH CONTEXT MULTIPLIER: {context_multiplier}
    {chr(10).join('   - ' + f for f in context_factors) if context_factors else '   - Neutral'}
 
-4. FORMULA RESULT: {opp_avg_sot} × {gk_save_pct}% × {context_multiplier} = {projected_saves} projected saves
+4. FORMULA RESULT: {opp_avg_sot} × {gk_save_pct}% × {context_multiplier} = {raw_formula} (blended with {gk_avg_saves} avg → {projected_saves})
 
 COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
 {'LEAN OVER' if projected_saves > req.line else 'LEAN UNDER' if projected_saves < req.line else 'PUSH ZONE'} — but weight scenarios (blowout, cagey game, etc.)

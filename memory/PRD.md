@@ -107,6 +107,14 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 - Reduced icon-btn size from 36px to 32px, logo-icon from 36px to 30px
 - Desktop still shows full text labels
 
+### GK Saves Formula Overhaul (April 4, 2026) — P0 Logic Fix
+- **Root cause**: Save rate was inflated to 76.3% because fallback assumed only 0.8 GA/game; `max(formula, avg)` always biased projections upward
+- **Fix 1**: Compute GA directly from game log scores (score + venue) — most reliable source
+- **Fix 2**: Fallback GA/game raised from 0.8 to 1.3 (league average); save rate capped at 50-80%
+- **Fix 3**: Replaced `max(formula, avg)` with weighted blend (60% formula + 40% GK average) — formula can now project below GK's average when appropriate
+- **Fix 4**: Symmetric context multiplier (±10% for underdog/favorite, was asymmetric -8/+15%)
+- Example: Daniel Peretz (avg 2.57 saves) vs Arsenal → Old: 4.0 projected, New: ~2.7 projected (realistic)
+
 ### Duplicate Save Button Fix (April 4, 2026) — Bug Fix
 - ProjectionCard's "Save to Tracking" button was showing alongside the inline blue "SAVE TO TRACKING" button when expanded
 - Added `hideSave` prop to ProjectionCard, passed `hideSave={true}` from scan inline context
