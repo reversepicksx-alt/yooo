@@ -11,7 +11,7 @@ import {
   checkApiStatus, SUPPORTED_LEAGUES,
   verifyWhop, authLogin, setPassword as apiSetPassword, resetPassword, verifySession, authLogout,
   getPickOfTheDay, savePick, listPicks, deletePick, correctPick, liveUpdatePicks,
-  scanProp, reResolvePick, analyzeMiss, getMisses, getCalibrationInsights, basketballSearchTeams, basketballPredict,
+  scanProp, reResolvePick, analyzeMiss, getMisses, basketballSearchTeams, basketballPredict,
   getAdminSettings, updateAdminSetting, testApiKey
 } from './api';
 import { toast, Toaster } from 'sonner';
@@ -57,9 +57,6 @@ export default function App() {
   const [correctValue, setCorrectValue] = useState('');
   const [missAnalyses, setMissAnalyses] = useState({}); // { pickId: analysis }
   const [analyzingMiss, setAnalyzingMiss] = useState({}); // { pickId: true/false }
-  // Calibration insights state
-  const [calibrationInsights, setCalibrationInsights] = useState(null);
-  const [calibrationLoading, setCalibrationLoading] = useState(false);
   const [profileNewPw, setProfileNewPw] = useState('');
   const [profileConfirmPw, setProfileConfirmPw] = useState('');
   const [profilePwLoading, setProfilePwLoading] = useState(false);
@@ -1491,9 +1488,6 @@ export default function App() {
             correctValue={correctValue} setCorrectValue={setCorrectValue}
             submitCorrection={submitCorrection}
             selectedPick={selectedPick} setSelectedPick={setSelectedPick}
-            calibrationInsights={calibrationInsights} setCalibrationInsights={setCalibrationInsights}
-            calibrationLoading={calibrationLoading} setCalibrationLoading={setCalibrationLoading}
-            getCalibrationInsights={getCalibrationInsights}
           />
         )}
 
@@ -1892,7 +1886,7 @@ export default function App() {
                   <div style={{ textAlign: 'center', padding: '40px 0' }} data-testid="scan-predicting">
                     <div className="spinner-ring"><Zap className="inner-icon" style={{ width: 24, height: 24 }} /></div>
                     <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', marginTop: 16 }}>Running Deep Analysis...</div>
-                    <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', marginTop: 4 }}>Tactical research + AI calibration</div>
+                    <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', marginTop: 4 }}>Tactical research + AI analysis</div>
                   </div>
                 )}
 

@@ -15,7 +15,6 @@ from config import (
 )
 from models import PredictionRequest
 from utils import api_football_request, get_recent_fixtures_fast, strip_accents, get_soccer_odds, decimal_to_american
-from routes.miss_analysis import get_calibration_adjustment
 
 router = APIRouter(prefix="/api", tags=["predict"])
 
@@ -1514,14 +1513,6 @@ Average {req.propType}: {comp_avg} | Per-90 avg: {comp_per90_avg} | Sample: {len
             final_data = json.dumps(historical_data, default=str)[:8000]
 
         # =============================================
-        # SELF-LEARNING CALIBRATION: Fetch historical miss patterns
-        # =============================================
-        calibration = await get_calibration_adjustment("soccer", req.propType, player_venue)
-        if calibration["applied"]:
-            final_data += f"\n\n{calibration['context']}"
-            print(f"[CALIBRATE] Soccer {req.propType}: {calibration['adjustment']:+.1f}% adjustment ({calibration['missCount']} misses)")
-
-        # =============================================
         # MATCH DOMINANCE CONTEXT: Inject possession & multiplier into AI prompt
         # =============================================
         if match_dominance.get("expectedPoss", 50) != 50 or match_dominance.get("notes"):
@@ -1827,34 +1818,13 @@ Analyze ALL data thoroughly. Return JSON only."""
         prediction["confidenceLevel"] = "Very High" if cs >= 75 else "High" if cs >= 65 else "Medium" if cs >= 50 else "Low"
 
         # =============================================
-        # APPLY SELF-LEARNING CALIBRATION TO PROJECTION
-        # =============================================
-        if calibration["applied"]:
-            old_proj = prediction.get("projectedValue", req.line)
-            adj_factor = calibration["adjustment"] / 100.0
-            new_proj = round(old_proj * (1 + adj_factor), 1)
-            prediction["projectedValue"] = new_proj
-            prediction["recommendation"] = "over" if new_proj > req.line else "under"
-            prediction["calibration"] = {
-                "applied": True,
-                "adjustment": calibration["adjustment"],
-                "oldProjection": old_proj,
-                "newProjection": new_proj,
-                "missCount": calibration["missCount"],
-                "biasDirection": calibration["biasDirection"],
-            }
-            print(f"[CALIBRATE] Adjusted projection: {old_proj} → {new_proj} ({calibration['adjustment']:+.1f}%)")
-        else:
-            prediction["calibration"] = {"applied": False}
-
-        # =============================================
         # APPLY MATCH DOMINANCE MULTIPLIER
         # =============================================
         if match_dominance["multiplier"] != 1.0:
             old_proj = prediction.get("projectedValue", req.line)
             new_proj = round(old_proj * match_dominance["multiplier"], 1)
             prediction["projectedValue"] = new_proj
-            prediction["recommendation"] = "over" if new_proj > req.line else "under"
+            # Dominance adjusts projected value but NEVER flips the recommendation
             prediction["matchDominance"] = {
                 "applied": True,
                 "multiplier": match_dominance["multiplier"],
@@ -1864,9 +1834,12 @@ Analyze ALL data thoroughly. Return JSON only."""
                 "newProjection": new_proj,
                 "notes": match_dominance["notes"],
             }
-            print(f"[DOMINANCE] Adjusted projection: {old_proj} → {new_proj} (×{match_dominance['multiplier']}, poss={match_dominance['expectedPoss']}%)")
+            print(f"[DOMINANCE] Adjusted projection: {old_proj} -> {new_proj} (x{match_dominance['multiplier']}, poss={match_dominance['expectedPoss']}%)")
         else:
             prediction["matchDominance"] = {"applied": False}
+
+        # HARD GUARD: recommendation stays locked to AI consensus — never flipped by post-processing
+        prediction["recommendation"] = "over" if avg_proj > req.line else "under"
 
         response_text = json.dumps(prediction)
 
