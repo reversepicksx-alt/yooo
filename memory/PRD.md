@@ -99,6 +99,19 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 - API-Sports — User API Key | Square — User API Key | Whop — User API Key (still active)
 - xAI Grok — User API Key | Gemini 2.0 Flash — Emergent LLM Key | OpenAI GPT-4.1-mini — Emergent LLM Key
 
+### Header Slim Redesign (April 4, 2026) — UI Fix
+- Collapsed header from 2 rows to 1 slim row
+- Mobile (≤480px): hides "ReversePicks" text + sport label text, shows icon-only sport toggles
+- API dot + v2.3 version integrated inline next to logo instead of separate status row
+- Removed Refresh button (pull-to-refresh native on mobile)
+- Reduced icon-btn size from 36px to 32px, logo-icon from 36px to 30px
+- Desktop still shows full text labels
+
+### Saudi Pro League Resolution (April 4, 2026) — P0 Verified
+- Added SCAN_ALIASES for all Saudi Pro League teams (Al-Hilal, Al-Nassr, Al Taawon, etc.)
+- Enhanced `_generate_aliases` to strip "Al-" prefixes and trailing qualifiers (saudi fc, jeddah, etc.)
+- All 9 test variants verified: Taawoun→Al Taawon, Hilal→Al-Hilal Saudi FC, etc.
+
 ## Upcoming Tasks (P1)
 - Slip correlation analysis
 

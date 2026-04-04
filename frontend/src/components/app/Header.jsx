@@ -1,5 +1,5 @@
 import React from 'react';
-import { Zap, RefreshCw, Bell, LogOut } from 'lucide-react';
+import { Zap, Bell, LogOut } from 'lucide-react';
 
 function CartoonSoccer({ active }) {
   return (
@@ -45,6 +45,10 @@ export function Header({
         <div className="header-logo">
           <div className="logo-icon"><Zap /></div>
           <div className="logo-text" data-testid="app-logo">Reverse<span>Picks</span></div>
+          <div className="header-status-inline">
+            <div className={`api-dot ${apiStatus}`} data-testid="api-status-dot" />
+            <span className="version-tag">v2.3</span>
+          </div>
         </div>
         <div className="header-actions">
           <div className="sport-selector" data-testid="sport-selector">
@@ -52,24 +56,24 @@ export function Header({
               className={`sport-btn ${activeSport === 'soccer' ? 'active' : ''}`}
               onClick={() => { setActiveSport('soccer'); setScanPrediction({}); setScanResults([]); }}
               data-testid="sport-soccer-btn"
-              style={{ display: 'flex', alignItems: 'center', gap: 5 }}
+              style={{ display: 'flex', alignItems: 'center', gap: 4 }}
             >
               <CartoonSoccer active={activeSport === 'soccer'} />
-              <span>Soccer</span>
+              <span className="sport-label">Soccer</span>
             </button>
             <button
               className={`sport-btn ${activeSport === 'basketball' ? 'active' : ''}`}
               onClick={() => { setActiveSport('basketball'); setScanPrediction({}); setScanResults([]); }}
               data-testid="sport-basketball-btn"
-              style={{ display: 'flex', alignItems: 'center', gap: 5 }}
+              style={{ display: 'flex', alignItems: 'center', gap: 4 }}
             >
               <CartoonBasketball active={activeSport === 'basketball'} />
-              <span>Basketball</span>
+              <span className="sport-label">Basketball</span>
             </button>
           </div>
           <div style={{ position: 'relative' }}>
             <button className="icon-btn" onClick={() => setShowNotifications(!showNotifications)} data-testid="notification-bell">
-              <Bell />
+              <Bell size={18} />
               {notifications.filter(n => !n.read).length > 0 && (
                 <div className="notif-badge" data-testid="notif-count">{notifications.filter(n => !n.read).length}</div>
               )}
@@ -110,20 +114,9 @@ export function Header({
             )}
           </div>
           <button className="icon-btn" onClick={handleLogout} data-testid="logout-btn" title="Logout">
-            <LogOut />
+            <LogOut size={18} />
           </button>
         </div>
-      </div>
-      <div className="header-status-row">
-        <div className="api-badge">
-          <div className={`api-dot ${apiStatus}`} data-testid="api-status-dot" />
-          <span>API</span>
-        </div>
-        <div className="version-badge">v2.3</div>
-        <button className="header-refresh-btn" onClick={() => window.location.reload()} data-testid="refresh-btn">
-          <RefreshCw style={{ width: 12, height: 12 }} />
-          <span>Refresh</span>
-        </button>
       </div>
     </header>
   );

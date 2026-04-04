@@ -12,13 +12,12 @@
   background: rgba(5, 5, 8, 0.92);
   backdrop-filter: blur(40px) saturate(1.8);
   -webkit-backdrop-filter: blur(40px) saturate(1.8);
-  border-bottom: 2px solid rgba(16, 185, 129, 0.15);
-  padding: 10px 16px 6px;
+  border-bottom: 1px solid rgba(16, 185, 129, 0.15);
+  padding: 8px 12px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
   transition: background var(--transition-smooth);
-  box-shadow: 0 2px 20px rgba(0,0,0,0.5), 0 1px 0 rgba(16,185,129,0.08);
+  box-shadow: 0 2px 16px rgba(0,0,0,0.4), 0 1px 0 rgba(16,185,129,0.06);
   overflow-x: hidden;
   max-width: 100vw;
 }
@@ -27,7 +26,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 6px;
   width: 100%;
   max-width: 100%;
   overflow: hidden;
@@ -36,72 +35,63 @@
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   flex-shrink: 0;
 }
 
-.header-status-row {
+.header-status-inline {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
+  margin-left: 2px;
 }
 
-.header-refresh-btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 10px;
-  border-radius: 100px;
-  background: var(--bg-card);
-  border: 2px solid rgba(16, 185, 129, 0.12);
-  font-size: 8px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: all var(--transition-spring);
-  box-shadow: var(--card-glow);
-  margin-left: auto;
+.header-status-inline .api-dot {
+  width: 6px;
+  height: 6px;
 }
 
-.header-refresh-btn:hover {
-  border-color: rgba(16, 185, 129, 0.3);
-  color: var(--accent);
+.header-status-inline .version-tag {
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--text-muted);
+  letter-spacing: 0.03em;
 }
 
 .logo-icon {
-  width: 36px;
-  height: 36px;
+  width: 30px;
+  height: 30px;
   background: var(--accent);
   border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 0 16px var(--accent-glow-strong), 0 0 4px var(--accent), 0 2px 8px rgba(0,0,0,0.4);
+  box-shadow: 0 0 12px var(--accent-glow-strong), 0 0 3px var(--accent);
   transition: all var(--transition-spring);
-  border: 2px solid rgba(16,185,129,0.6);
+  border: 1.5px solid rgba(16,185,129,0.5);
+  flex-shrink: 0;
 }
 
 .logo-icon:hover {
-  box-shadow: 0 0 24px var(--accent-glow-strong), 0 0 8px var(--accent), inset 0 1px 0 rgba(255,255,255,0.2);
+  box-shadow: 0 0 20px var(--accent-glow-strong), 0 0 6px var(--accent);
   transform: rotate(-8deg) scale(1.1);
 }
 
 .logo-icon svg {
-  width: 20px;
-  height: 20px;
+  width: 16px;
+  height: 16px;
   color: #000;
   fill: currentColor;
 }
 
 .logo-text {
-  font-size: 18px;
+  font-size: 15px;
   font-weight: 900;
   letter-spacing: -0.3px;
   text-transform: uppercase;
   font-style: italic;
   text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+  white-space: nowrap;
 }
 
 .logo-text span { color: var(--accent); text-shadow: 0 0 10px var(--accent-glow), 0 1px 2px rgba(0,0,0,0.5); }
@@ -109,7 +99,7 @@
 .header-logo {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex-shrink: 1;
   min-width: 0;
 }
@@ -117,54 +107,54 @@
 .sport-selector {
   display: flex;
   align-items: center;
-  gap: 2px;
-  padding: 3px;
-  border-radius: 12px;
+  gap: 1px;
+  padding: 2px;
+  border-radius: 10px;
   background: var(--bg-card);
-  border: 2px solid rgba(16, 185, 129, 0.15);
+  border: 1.5px solid rgba(16, 185, 129, 0.12);
   box-shadow: var(--card-glow);
 }
+
 .sport-btn {
-  padding: 5px 12px;
-  border-radius: 9px;
+  padding: 4px 8px;
+  border-radius: 8px;
   border: none;
   background: transparent;
   color: var(--text-muted);
   font-size: 10px;
   font-weight: 800;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.04em;
   cursor: pointer;
   transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
+
+.sport-label {
+  display: inline;
+}
+
 .sport-btn.active {
   background: var(--accent);
   color: #000;
   transform: scale(1.04);
-  box-shadow: 0 0 12px var(--accent-glow-strong), 0 0 4px var(--accent);
+  box-shadow: 0 0 10px var(--accent-glow-strong), 0 0 3px var(--accent);
   text-shadow: 0 1px 1px rgba(0,0,0,0.2);
 }
+
 .sport-btn:hover:not(.active) {
   color: var(--text-primary);
   background: rgba(16, 185, 129, 0.06);
   transform: scale(1.02);
 }
 
-
-.api-badge {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border-radius: 100px;
-  background: var(--bg-card);
-  border: 2px solid rgba(16, 185, 129, 0.12);
-  font-size: 8px;
-  font-weight: 800;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--text-secondary);
-  box-shadow: var(--card-glow);
+/* Mobile: hide text labels, icon-only sport buttons */
+@media (max-width: 480px) {
+  .logo-text { display: none; }
+  .sport-label { display: none; }
+  .sport-btn { padding: 5px 10px; }
+  .header { padding: 6px 10px; }
+  .header-status-inline { margin-left: 0; }
 }
+
 
 .api-dot {
   width: 6px;
@@ -177,23 +167,11 @@
 .api-dot.offline { background: var(--danger); box-shadow: 0 0 8px rgba(244,63,94,0.4); }
 .api-dot.checking { background: var(--text-muted); animation: pulse 1.5s ease-in-out infinite; }
 
-.version-badge {
-  padding: 4px 10px;
-  border-radius: 100px;
-  background: var(--accent-dim);
-  border: 2px solid rgba(16,185,129,0.25);
-  font-size: 9px;
-  font-weight: 700;
-  color: var(--accent);
-  letter-spacing: 0.05em;
-  box-shadow: 0 0 8px rgba(16,185,129,0.1);
-}
-
 .icon-btn {
-  width: 36px;
-  height: 36px;
-  border-radius: 12px;
-  border: 2px solid rgba(16, 185, 129, 0.12);
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  border: 1.5px solid rgba(16, 185, 129, 0.12);
   background: var(--bg-card);
   color: var(--text-secondary);
   display: flex;
@@ -1491,9 +1469,9 @@
 
 /* iOS safe areas */
 .header {
-  padding-top: max(14px, env(safe-area-inset-top));
-  padding-left: max(20px, env(safe-area-inset-left));
-  padding-right: max(20px, env(safe-area-inset-right));
+  padding-top: max(8px, env(safe-area-inset-top));
+  padding-left: max(12px, env(safe-area-inset-left));
+  padding-right: max(12px, env(safe-area-inset-right));
 }
 
 .bottom-nav {
