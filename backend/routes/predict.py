@@ -1945,6 +1945,18 @@ Analyze ALL data thoroughly. Return JSON only."""
         real_matchup["awayTeam"] = req.opponentName if player_venue == "home" else player_team
         prediction["matchupOverview"] = real_matchup
 
+        # Add match context (competition name, round) for frontend display
+        if match_odds:
+            mc = {}
+            if match_odds.get("matchLeague"):
+                mc["league"] = match_odds["matchLeague"]
+            if match_odds.get("matchRound"):
+                mc["round"] = match_odds["matchRound"]
+            if match_odds.get("matchDate"):
+                mc["date"] = match_odds["matchDate"][:10]
+            if mc:
+                prediction["matchContext"] = mc
+
         # DATA QUALITY INDICATOR — flag when API data might be unreliable
         total_game_logs = len(player_game_logs)
         gl_target_field_map_check = {

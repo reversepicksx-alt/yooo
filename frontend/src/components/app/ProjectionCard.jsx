@@ -95,6 +95,39 @@ export function ProjectionCard({ projection, onSave, excludedIndices, onToggleSa
           <span className={`badge ${rec === 'over' ? 'neon' : 'danger'}`}>{projection.confidenceLevel}</span>
         </div>
 
+        {/* Tactical Breakdown — the AI narrative */}
+        {projection.tacticalBreakdown && (
+          <div data-testid="tactical-breakdown" className="stat-box mt-4" style={{
+            borderColor: 'rgba(59,130,246,0.2)',
+            background: 'rgba(59,130,246,0.03)',
+          }}>
+            <div className="stat-label flex items-center gap-2 mb-3">
+              <Target style={{ width: 12, height: 12, color: '#60a5fa' }} />
+              <span style={{ color: '#60a5fa' }}>Tactical Breakdown</span>
+              {projection.matchContext?.league && (
+                <span style={{
+                  fontSize: 8, fontWeight: 800, padding: '2px 6px', borderRadius: 3,
+                  background: 'rgba(251,191,36,0.1)', color: '#fbbf24',
+                  border: '1px solid rgba(251,191,36,0.2)', marginLeft: 'auto',
+                  letterSpacing: '0.05em', textTransform: 'uppercase',
+                }}>
+                  {projection.matchContext.league}{projection.matchContext.round ? ` · ${projection.matchContext.round}` : ''}
+                </span>
+              )}
+            </div>
+            <div style={{
+              fontSize: 12, color: 'rgba(255,255,255,0.72)', lineHeight: 1.65,
+              whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+            }}>
+              {projection.tacticalBreakdown.split(/\*\*([^*]+)\*\*/g).map((part, i) =>
+                i % 2 === 1
+                  ? <span key={i} style={{ fontWeight: 800, color: '#e2e8f0', display: 'block', marginTop: i > 1 ? 10 : 0, marginBottom: 3, fontSize: 11, letterSpacing: '0.02em' }}>{part}</span>
+                  : <span key={i}>{part}</span>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Model Agreement — always visible */}
         <div className="stat-box mt-4" data-testid="model-agreement" style={{ borderColor: 'rgba(168,85,247,0.2)', background: 'rgba(168,85,247,0.04)' }}>
           <div className="stat-label flex items-center gap-2 mb-3">

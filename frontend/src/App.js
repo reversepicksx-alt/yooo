@@ -18,7 +18,6 @@ import { toast, Toaster } from 'sonner';
 import './App.css';
 import { PROP_TYPES, BASKETBALL_PROP_TYPES, OWNER_EMAIL, getPropLabel } from './constants';
 import { ProjectionCard } from './components/app/ProjectionCard';
-import { PlayerReport } from './components/app/PlayerReport';
 import { LoginPage } from './components/app/LoginPage';
 import { PickOfTheDayCard } from './components/app/PickOfTheDayCard';
 import { Header } from './components/app/Header';
@@ -61,12 +60,6 @@ export default function App() {
   // Calibration insights state
   const [calibrationInsights, setCalibrationInsights] = useState(null);
   const [calibrationLoading, setCalibrationLoading] = useState(false);
-  // Batch scan state (owner-only)
-  const [batchMode, setBatchMode] = useState(false);
-  const [batchSelectedProps, setBatchSelectedProps] = useState([]);
-  const [batchPredictions, setBatchPredictions] = useState({});
-  const [batchLoading, setBatchLoading] = useState(false);
-  const [batchPlayerInfo, setBatchPlayerInfo] = useState(null);
   const [profileNewPw, setProfileNewPw] = useState('');
   const [profileConfirmPw, setProfileConfirmPw] = useState('');
   const [profilePwLoading, setProfilePwLoading] = useState(false);
@@ -539,29 +532,6 @@ export default function App() {
         if (result.picks && result.picks.length > 0) {
           setScanResults(result.picks);
           toast.success(`Found ${result.picks.length} prop${result.picks.length > 1 ? 's' : ''} in image`);
-
-          // Activate batch mode for owner when multiple props detected
-          const isOwner = auth?.email?.toLowerCase() === OWNER_EMAIL;
-          if (isOwner && result.picks.length > 1) {
-            const firstPick = result.picks[0];
-            const allProps = result.picks.map(p => ({
-              propType: p.extracted?.propType,
-              line: p.extracted?.line,
-            })).filter(p => p.propType && p.line);
-            if (allProps.length > 1) {
-              setBatchMode(true);
-              setBatchSelectedProps(allProps.map(p => p.propType));
-              setBatchPredictions({});
-              setBatchPlayerInfo({
-                resolved: firstPick.resolved,
-                resolvedOpponent: firstPick.resolvedOpponent,
-                extracted: firstPick.extracted,
-                sport: firstPick.sport || firstPick.extracted?.sport || activeSport,
-                props: allProps,
-              });
-              toast.success('Batch mode activated — select props to analyze');
-            }
-          }
         } else {
           setScanError('No player props detected in this image. Try a clearer screenshot.');
         }
@@ -739,74 +709,7 @@ export default function App() {
     setScanResolving({});
     setScanFollowUpMessages([]);
     setScanFollowUp('');
-    setBatchMode(false);
-    setBatchSelectedProps([]);
-    setBatchPredictions({});
-    setBatchLoading(false);
-    setBatchPlayerInfo(null);
     if (scanFileRef.current) scanFileRef.current.value = '';
-  };
-
-  // Batch scan: toggle prop selection
-  const handleBatchToggleProp = (propType) => {
-    setBatchSelectedProps(prev =>
-      prev.includes(propType) ? prev.filter(p => p !== propType) : [...prev, propType]
-    );
-  };
-
-  // Batch scan: run predictions for all selected props sequentially
-  const handleBatchPredictAll = async () => {
-    if (!batchPlayerInfo || batchSelectedProps.length === 0) return;
-    setBatchLoading(true);
-    setBatchPredictions({});
-    const { resolved, resolvedOpponent, extracted, sport } = batchPlayerInfo;
-    const allProps = batchPlayerInfo.props;
-
-    const opponentId = resolvedOpponent?.teamId || extracted?.opponentId || 0;
-    const opponentName = resolvedOpponent?.teamName || extracted?.opponentName || '';
-    const venue = extracted?.venue || 'home';
-
-    for (const propType of batchSelectedProps) {
-      const prop = allProps.find(p => p.propType === propType);
-      if (!prop) continue;
-      try {
-        let result;
-        if (sport === 'basketball') {
-          result = await basketballPredict({
-            playerId: resolved?.playerId || 0,
-            playerName: resolved?.playerName || extracted?.playerName || '',
-            teamName: resolved?.teamName || extracted?.playerTeam || '',
-            teamId: resolved?.teamId || 0,
-            opponentName: opponentName,
-            opponentId: opponentId,
-            propType: propType,
-            line: prop.line,
-            venue: venue,
-          });
-        } else {
-          result = await predict({
-            playerId: resolved?.playerId || 0,
-            playerName: resolved?.playerName || extracted?.playerName || '',
-            teamName: resolved?.teamName || extracted?.playerTeam || '',
-            teamId: resolved?.teamId || 0,
-            opponentName: opponentName,
-            opponentId: opponentId,
-            propType: propType,
-            line: prop.line,
-            venue: venue,
-            leagueId: extracted?.leagueId || 39,
-            positionOverride: extracted?.position || '',
-            roleOverride: extracted?.role || '',
-          });
-        }
-        setBatchPredictions(prev => ({ ...prev, [propType]: result }));
-      } catch (err) {
-        console.error(`Batch predict ${propType} failed:`, err);
-        setBatchPredictions(prev => ({ ...prev, [propType]: { error: err.message, projectedValue: '?', confidenceScore: 0, recommendation: '?' } }));
-      }
-    }
-    setBatchLoading(false);
-    toast.success('Batch analysis complete!');
   };
 
   const handleScanEdit = (idx, pick) => {
@@ -2031,32 +1934,6 @@ export default function App() {
                     {/* Extracted Props */}
                     {scanResults && scanResults.length > 0 && (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                        {/* BATCH MODE: Player Report (owner-only) */}
-                        {batchMode && batchPlayerInfo && (
-                          <>
-                            <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: '0.15em', color: '#8b5cf6', textTransform: 'uppercase' }}>
-                              Batch Analysis Mode
-                            </div>
-                            <PlayerReport
-                              playerName={batchPlayerInfo.resolved?.playerName || batchPlayerInfo.extracted?.playerName || ''}
-                              teamName={batchPlayerInfo.resolved?.teamName || batchPlayerInfo.extracted?.playerTeam || ''}
-                              opponentName={batchPlayerInfo.resolvedOpponent?.teamName || batchPlayerInfo.extracted?.opponentName || ''}
-                              venue={batchPlayerInfo.extracted?.venue || 'home'}
-                              position={batchPlayerInfo.extracted?.position}
-                              role={batchPlayerInfo.extracted?.role}
-                              props={batchPlayerInfo.props}
-                              predictions={batchPredictions}
-                              loading={batchLoading}
-                              selectedProps={batchSelectedProps}
-                              onToggleProp={handleBatchToggleProp}
-                              onPredictAll={handleBatchPredictAll}
-                            />
-                          </>
-                        )}
-
-                        {/* Normal mode: Individual scan cards */}
-                        {!batchMode && (
-                          <>
                             <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: '0.15em', color: 'var(--accent)', textTransform: 'uppercase' }}>
                               {scanResults.length} Prop{scanResults.length > 1 ? 's' : ''} Detected
                             </div>
@@ -2401,8 +2278,6 @@ export default function App() {
                         >
                           <Camera style={{ width: 16, height: 16 }} /> Scan Another Image
                         </button>
-                          </>
-                        )}
                       </div>
                     )}
                   </div>
