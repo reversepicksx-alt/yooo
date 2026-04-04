@@ -69,14 +69,16 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 - Basketball: orange with seam lines, pulsing glow when active
 - Both scale up with spring bounce when selected
 
-### Cartoon Theme Overhaul (April 5, 2026) — UI Enhancement
+### Cartoon Glow Theme (April 5, 2026) — Full UI Overhaul
 - Replaced Manrope font with Nunito (rounder, friendlier, cartoon-appropriate)
-- All borders thickened from 1px to 2px across cards, inputs, badges, nav, buttons
-- Increased border-radius values (+2px across all CSS variables)
-- Added spring-bounce transitions (cubic-bezier) to cards, buttons, nav icons, tabs
-- Active nav icons scale up 1.15x, hover states bounce with scale(1.05-1.1)
-- Buttons use spring transitions with slight scale on hover/press
-- Badge borders thickened with bolder font weights
+- All borders green-tinted (`rgba(16,185,129,...)`) instead of white/grey — cards, inputs, badges, nav, buttons
+- Added `--card-glow` CSS variable: subtle green glow `box-shadow` on all cards and containers
+- Bottom nav active state: filled pill-shape with green-tinted background + green icon/text glow
+- Tab switcher active state: green-tinted background with green text + text-shadow glow
+- Buttons: luminous green glow with `box-shadow: 0 0 20px` on primary buttons
+- Text headings: `text-shadow` for depth/pop effect
+- Spring-bounce transitions (`cubic-bezier(0.34, 1.56, 0.64, 1)`) on interactive elements
+- Login page: green-bordered inputs, glowing VERIFY ACCESS button
 
 ### PickCard Bug Fix (April 5, 2026) — P0
 - `PickCard` component was deleted during a previous refactor but still referenced by `PicksList`
