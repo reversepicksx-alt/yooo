@@ -80,96 +80,117 @@ async def seed_grants():
 
 
 async def _auto_sync_square_payments():
-    """On startup, check Square for payments and auto-activate any unmatched paying customers."""
+    """On startup, sync Square subscriptions to local DB for webhook matching."""
     import asyncio
     await asyncio.sleep(5)
     try:
         from routes.square import get_square_client, PLANS
         from datetime import timedelta, timezone, datetime
+        import os
 
         client = get_square_client()
         if not client:
-            print("[SQUARE SYNC] No Square client available, skipping auto-sync")
+            print("[SQUARE SYNC] No Square client available, skipping")
             return
 
-        begin = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
-        paid_emails = {}
-        try:
-            for pmt in client.payments.list(begin_time=begin, sort_order="DESC"):
-                if pmt.status == "COMPLETED":
-                    buyer = (pmt.buyer_email_address or "").lower().strip()
-                    if buyer and buyer not in paid_emails:
-                        paid_at = str(pmt.created_at) if pmt.created_at else datetime.now(timezone.utc).isoformat()
-                        paid_emails[buyer] = {
-                            "id": pmt.id,
-                            "amount": pmt.amount_money.amount if pmt.amount_money else 0,
-                            "paid_at": paid_at,
-                        }
-        except Exception as e:
-            print(f"[SQUARE SYNC] Error listing payments: {e}")
+        location_id = os.environ.get("SQUARE_LOCATION_ID")
+        if not location_id:
+            print("[SQUARE SYNC] No SQUARE_LOCATION_ID, skipping")
             return
 
-        if not paid_emails:
-            print("[SQUARE SYNC] No Square payments found")
+        # Fetch all subscriptions from Square
+        result = client.subscriptions.search(
+            query={"filter": {"location_ids": [location_id]}}
+        )
+        sq_subs = result.subscriptions or []
+        if not sq_subs:
+            print("[SQUARE SYNC] No subscriptions found in Square")
             return
 
-        print(f"[SQUARE SYNC] Found {len(paid_emails)} unique paying emails")
+        print(f"[SQUARE SYNC] Found {len(sq_subs)} subscriptions in Square")
 
-        activated = 0
-        for email, payment in paid_emails.items():
-            existing = await db.square_subscriptions.find_one(
-                {"email": email, "status": {"$in": ["ACTIVE", "PENDING"]}},
-                {"_id": 0}
-            )
-            if existing:
+        synced = 0
+        for sub in sq_subs:
+            # Resolve customer email
+            email = ""
+            try:
+                cust = client.customers.get(customer_id=sub.customer_id)
+                email = (cust.customer.email_address or "").lower().strip()
+            except Exception:
                 continue
 
-            amount = payment.get("amount", 0)
-            plan_key = "weekly" if amount <= 1200 else ("monthly" if amount <= 4100 else "quarterly")
+            if not email:
+                continue
+
+            sq_status = sub.status  # ACTIVE, CANCELED, PAUSED, etc.
+            our_status = "ACTIVE" if sq_status == "ACTIVE" else "EXPIRED"
+            start_date = str(sub.start_date)[:10] if sub.start_date else ""
+
+            # Determine plan from subscription (check phases or plan ID)
+            plan_key = "weekly"  # default
+            if sub.plan_variation_id:
+                plan_var = (sub.plan_variation_id or "").lower()
+                # Check existing subscription in DB for plan info
+                existing = await db.square_subscriptions.find_one(
+                    {"email": email}, {"_id": 0, "planKey": 1}
+                )
+                if existing:
+                    plan_key = existing.get("planKey", "weekly")
+                else:
+                    # Infer from phases or keep default
+                    try:
+                        # Check the charged_through_date to determine cadence
+                        if sub.charged_through_date and sub.start_date:
+                            start = datetime.fromisoformat(str(sub.start_date))
+                            charged = datetime.fromisoformat(str(sub.charged_through_date))
+                            diff = (charged - start).days
+                            if diff <= 10:
+                                plan_key = "weekly"
+                            elif diff <= 35:
+                                plan_key = "monthly"
+                            else:
+                                plan_key = "quarterly"
+                    except Exception:
+                        pass
+
             plan_info = PLANS.get(plan_key, {})
-            cadence_days = {"weekly": 7, "monthly": 30, "quarterly": 90}
 
-            # Expiration based on PAYMENT DATE, not today
-            try:
-                paid_dt = datetime.fromisoformat(payment["paid_at"].replace("Z", "+00:00"))
-            except Exception:
-                paid_dt = datetime.now(timezone.utc)
+            # Calculate expiration from charged_through_date (Square's next billing date)
+            expires_at = ""
+            if sub.charged_through_date:
+                expires_at = str(sub.charged_through_date) + "T23:59:59+00:00"
+            elif start_date:
+                cadence_days = {"weekly": 7, "monthly": 30, "quarterly": 90}
+                try:
+                    start_dt = datetime.fromisoformat(start_date)
+                    expires_at = (start_dt + timedelta(days=cadence_days.get(plan_key, 30))).isoformat()
+                except Exception:
+                    pass
 
-            expires_at = (paid_dt + timedelta(days=cadence_days.get(plan_key, 30))).isoformat()
-            now = datetime.now(timezone.utc)
-
-            # If subscription already expired, mark it so
-            try:
-                exp_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
-                status = "EXPIRED" if now > exp_dt else "ACTIVE"
-            except Exception:
-                status = "ACTIVE"
+            now = datetime.now(timezone.utc).isoformat()
 
             await db.square_subscriptions.update_one(
                 {"email": email},
                 {"$set": {
                     "email": email,
+                    "squareSubscriptionId": sub.id,
+                    "squareCustomerId": sub.customer_id,
                     "planKey": plan_key,
                     "planName": plan_info.get("name", plan_key),
-                    "status": status,
-                    "subscribedAt": payment["paid_at"],
+                    "status": our_status,
+                    "subscribedAt": start_date,
                     "expiresAt": expires_at,
-                    "updatedAt": now.isoformat(),
-                    "source": "auto_sync_startup",
-                    "squarePaymentId": payment.get("id", ""),
+                    "updatedAt": now,
+                    "source": "square_sync",
                 }},
                 upsert=True,
             )
-            if status == "ACTIVE":
-                activated += 1
-                print(f"[SQUARE SYNC] Activated: {email} ({plan_key}, expires {expires_at[:10]})")
-            else:
-                print(f"[SQUARE SYNC] {email} paid {paid_dt.date()} but {plan_key} already expired")
+            synced += 1
 
-        print(f"[SQUARE SYNC] Done: {activated} new active subscriptions")
+        print(f"[SQUARE SYNC] Synced {synced} subscriptions (IDs stored for webhook matching)")
 
     except Exception as e:
-        print(f"[SQUARE SYNC] Error during auto-sync: {e}")
+        print(f"[SQUARE SYNC] Error: {e}")
 
 
 # ── Legacy alias: /api/search-player ──
