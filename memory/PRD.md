@@ -43,7 +43,13 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 ### Component Split Refactor (April 3, 2026)
 - App.js reduced from 3,328 to 2,441 lines (27% reduction)
 
-### Subscription Plan Management (April 4, 2026) — P0
+### Single Prop Intelligence Upgrade & Batch Mode Removal (April 4, 2026) — P0
+- **Client feedback**: Batch/multi-prop analysis appeared smarter than single prop because single prop's `ProjectionCard` never displayed the `tacticalBreakdown` AI narrative (despite the backend already generating it)
+- Removed batch analysis mode entirely (state, functions, PlayerReport component import, UI)
+- Added `tacticalBreakdown` display to `ProjectionCard.jsx` with markdown bold parsing for section headers
+- Added `matchContext` badge showing competition name + round (e.g., "FA CUP · Quarter-finals") so users can see if a match is Cup vs League
+- Backend now includes `matchContext` (league, round, date) in prediction response from fixture data
+- **Testing**: 100% backend (10/10), 100% frontend — verified via testing agent (iteration 48)
 - **Client request**: User "Zay_Bets" (xaviersteverson@gmail.com) asked on X/Twitter how to change from weekly to monthly plan
 - Backend: `POST /api/square/change-plan` endpoint using Square's `swap_plan` API
 - Handles plan swaps (weekly/monthly/quarterly), validates same-plan, invalid-plan, non-subscriber cases
