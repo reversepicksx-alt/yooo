@@ -44,28 +44,29 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 - App.js reduced from 3,328 to 2,441 lines (27% reduction)
 
 ### Competition Detection Fix (April 4, 2026) — P0
-- **Root cause**: The `fixtures/headtohead` API has a max of `next: 2`, but we were passing `next: 3` — causing it to return NO results. The fallback then picked the wrong fixture
-- **Fix**: Rewrote `get_match_odds()` to use team's next 10 fixtures across ALL competitions as primary source (not H2H)
-- Now also checks today's live/scheduled fixtures to catch matches about to start
-- Filters for opponent, picks the SOONEST match — correctly identifies FA Cup, Champions League, Copa, etc.
+- Rewrote `get_match_odds()` to use team's next 10 fixtures across ALL competitions
 - H2H demoted to fallback-only with correct `next: 2`
-- **Verified**: Arsenal test shows FA Cup Quarter-final as first fixture (not Premier League)
-- **Client feedback**: Batch/multi-prop analysis appeared smarter than single prop because single prop's `ProjectionCard` never displayed the `tacticalBreakdown` AI narrative (despite the backend already generating it)
-- Removed batch analysis mode entirely (state, functions, PlayerReport component import, UI)
-- Added `tacticalBreakdown` display to `ProjectionCard.jsx` with markdown bold parsing for section headers
-- Added `matchContext` badge showing competition name + round (e.g., "FA CUP · Quarter-finals") so users can see if a match is Cup vs League
-- Backend now includes `matchContext` (league, round, date) in prediction response from fixture data
-- **Testing**: 100% backend (10/10), 100% frontend — verified via testing agent (iteration 48)
+- Added `tacticalBreakdown` display to `ProjectionCard.jsx`
+- Added `matchContext` badge showing competition name + round
+- **Testing**: 100% pass — verified via testing agent (iteration 48)
 
 ### Subscription Plan Management (April 4, 2026) — P0
-- **Client request**: User "Zay_Bets" (xaviersteverson@gmail.com) asked how to change from weekly to monthly plan
-- Backend: `POST /api/square/change-plan` — uses **cancel+recreate** approach (swap_plan had invisible pending action bug)
-- Verifies current plan from Square directly to prevent DB/Square mismatches
-- Frontend: SubscriptionManager in ProfileTab shows plan, status, next billing + "Change Plan" toggle
-- Only visible for Square subscribers. "Close" button (not "Cancel") to avoid confusion
-- **Auto-sync fix**: sorts ACTIVE subs first, tracks emails to prevent cancelled subs overwriting active ones
-- **Plan resolution**: Sync now matches `plan_variation_id` against `square_plans` collection
+- Backend: `POST /api/square/change-plan` — cancel+recreate approach
+- Frontend: SubscriptionManager in ProfileTab
 - **Testing**: 100% pass — verified via testing agent (iterations 47, 48, 49)
+
+### Multi-Prop Inline Predictions (April 5, 2026) — P0
+- Refactored `scanPrediction` from single object to index-keyed map `{ idx: result }`
+- Each scanned prop card shows prediction results inline (projected value, recommendation, confidence, match context)
+- Each predicted card has its own SAVE TO TRACKING button — saves independently without navigating away
+- PREDICT ALL button appears above prop list when 2+ props detected
+- Removed old "Full Analysis View" navigation — prop cards always stay visible
+- Cleaned up dead code: sendScanFollowUp, isScanPredicting, backToScanResults
+
+### Cartoon Sport Toggle (April 5, 2026) — UI Enhancement
+- Custom SVG cartoon ball icons with animated faces (blinking eyes, smiling mouth)
+- Orange basketball with seam lines, classic black/white soccer ball
+- Spring-bounce CSS transition on toggle switch
 
 ## 3rd Party Integrations
 - API-Sports — User API Key | Square — User API Key | Whop — User API Key (still active)

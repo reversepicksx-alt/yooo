@@ -1,6 +1,52 @@
 import React from 'react';
 import { Zap, RefreshCw, Bell, LogOut } from 'lucide-react';
 
+function CartoonSoccer({ active }) {
+  return (
+    <svg width="22" height="22" viewBox="0 0 100 100" style={{ filter: active ? 'drop-shadow(0 0 6px rgba(16,185,129,0.5))' : 'none', transition: 'filter 0.3s' }}>
+      <circle cx="50" cy="50" r="46" fill={active ? '#fff' : '#888'} stroke={active ? '#222' : '#555'} strokeWidth="3" />
+      <polygon points="50,18 62,28 58,42 42,42 38,28" fill={active ? '#1a1a2e' : '#555'} />
+      <polygon points="26,52 22,38 34,30 44,40 38,54" fill={active ? '#1a1a2e' : '#555'} />
+      <polygon points="74,52 78,38 66,30 56,40 62,54" fill={active ? '#1a1a2e' : '#555'} />
+      <polygon points="36,68 42,56 58,56 64,68 56,78 44,78" fill={active ? '#1a1a2e' : '#555'} />
+      <circle cx="42" cy="40" r="4" fill={active ? '#fff' : '#888'}>
+        <animate attributeName="r" values="4;3.5;4" dur="2s" repeatCount="indefinite" />
+      </circle>
+      <circle cx="58" cy="40" r="4" fill={active ? '#fff' : '#888'}>
+        <animate attributeName="r" values="4;3.5;4" dur="2s" repeatCount="indefinite" begin="0.2s" />
+      </circle>
+      <circle cx="42" cy="39" r="1.8" fill={active ? '#1a1a2e' : '#333'} />
+      <circle cx="58" cy="39" r="1.8" fill={active ? '#1a1a2e' : '#333'} />
+      <path d="M 45 50 Q 50 55 55 50" stroke={active ? '#1a1a2e' : '#555'} strokeWidth="2" fill="none" strokeLinecap="round">
+        {active && <animate attributeName="d" values="M 45 50 Q 50 55 55 50;M 45 49 Q 50 56 55 49;M 45 50 Q 50 55 55 50" dur="3s" repeatCount="indefinite" />}
+      </path>
+    </svg>
+  );
+}
+
+function CartoonBasketball({ active }) {
+  return (
+    <svg width="22" height="22" viewBox="0 0 100 100" style={{ filter: active ? 'drop-shadow(0 0 6px rgba(16,185,129,0.5))' : 'none', transition: 'filter 0.3s' }}>
+      <circle cx="50" cy="50" r="46" fill={active ? '#f97316' : '#886040'} stroke={active ? '#c2410c' : '#664830'} strokeWidth="3" />
+      <path d="M 50 4 Q 50 50 50 96" stroke={active ? '#7c2d12' : '#553020'} strokeWidth="2.5" fill="none" />
+      <path d="M 4 50 Q 50 50 96 50" stroke={active ? '#7c2d12' : '#553020'} strokeWidth="2.5" fill="none" />
+      <path d="M 15 20 Q 50 35 85 20" stroke={active ? '#7c2d12' : '#553020'} strokeWidth="2" fill="none" />
+      <path d="M 15 80 Q 50 65 85 80" stroke={active ? '#7c2d12' : '#553020'} strokeWidth="2" fill="none" />
+      <circle cx="40" cy="40" r="4.5" fill="#fff">
+        <animate attributeName="r" values="4.5;4;4.5" dur="2s" repeatCount="indefinite" />
+      </circle>
+      <circle cx="60" cy="40" r="4.5" fill="#fff">
+        <animate attributeName="r" values="4.5;4;4.5" dur="2s" repeatCount="indefinite" begin="0.2s" />
+      </circle>
+      <circle cx="40" cy="39" r="2" fill={active ? '#1a1a2e' : '#333'} />
+      <circle cx="60" cy="39" r="2" fill={active ? '#1a1a2e' : '#333'} />
+      <path d="M 44 52 Q 50 58 56 52" stroke="#fff" strokeWidth="2.5" fill="none" strokeLinecap="round">
+        {active && <animate attributeName="d" values="M 44 52 Q 50 58 56 52;M 44 51 Q 50 59 56 51;M 44 52 Q 50 58 56 52" dur="3s" repeatCount="indefinite" />}
+      </path>
+    </svg>
+  );
+}
+
 export function Header({
   activeSport, setActiveSport, apiStatus,
   notifications, showNotifications, setShowNotifications, setNotifications,
@@ -17,17 +63,21 @@ export function Header({
         <div className="sport-selector" data-testid="sport-selector">
           <button
             className={`sport-btn ${activeSport === 'soccer' ? 'active' : ''}`}
-            onClick={() => { setActiveSport('soccer'); setScanPrediction(null); setScanResults([]); }}
+            onClick={() => { setActiveSport('soccer'); setScanPrediction({}); setScanResults([]); }}
             data-testid="sport-soccer-btn"
+            style={{ display: 'flex', alignItems: 'center', gap: 5 }}
           >
-            Soccer
+            <CartoonSoccer active={activeSport === 'soccer'} />
+            <span>Soccer</span>
           </button>
           <button
             className={`sport-btn ${activeSport === 'basketball' ? 'active' : ''}`}
-            onClick={() => { setActiveSport('basketball'); setScanPrediction(null); setScanResults([]); }}
+            onClick={() => { setActiveSport('basketball'); setScanPrediction({}); setScanResults([]); }}
             data-testid="sport-basketball-btn"
+            style={{ display: 'flex', alignItems: 'center', gap: 5 }}
           >
-            Basketball
+            <CartoonBasketball active={activeSport === 'basketball'} />
+            <span>Basketball</span>
           </button>
         </div>
         <div className="api-badge">

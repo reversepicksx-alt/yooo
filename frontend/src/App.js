@@ -505,8 +505,8 @@ export default function App() {
     if (!file) return;
     setScanError(null);
     setScanResults(null);
-    setScanPrediction(null);
-    setScanPredictingIdx(null);
+    setScanPrediction({});
+    setScanPredictingIdx({});
     setScanVenueOverrides({});
 
     // Convert to base64

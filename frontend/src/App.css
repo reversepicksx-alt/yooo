@@ -69,14 +69,14 @@
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 2px;
-  border-radius: 8px;
+  padding: 3px;
+  border-radius: 10px;
   background: var(--bg-card);
   border: 1px solid var(--border-primary);
 }
 .sport-btn {
-  padding: 4px 10px;
-  border-radius: 6px;
+  padding: 5px 12px;
+  border-radius: 8px;
   border: none;
   background: transparent;
   color: var(--text-tertiary);
@@ -84,15 +84,17 @@
   font-weight: 800;
   letter-spacing: 0.06em;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 .sport-btn.active {
   background: var(--accent);
   color: #000;
+  transform: scale(1.04);
 }
 .sport-btn:hover:not(.active) {
   color: var(--text-primary);
   background: rgba(255,255,255,0.04);
+  transform: scale(1.02);
 }
 
 
