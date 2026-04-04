@@ -3,46 +3,32 @@ import { Zap, RefreshCw, Bell, LogOut } from 'lucide-react';
 
 function CartoonSoccer({ active }) {
   return (
-    <svg width="22" height="22" viewBox="0 0 100 100" style={{ filter: active ? 'drop-shadow(0 0 6px rgba(16,185,129,0.5))' : 'none', transition: 'filter 0.3s' }}>
-      <circle cx="50" cy="50" r="46" fill={active ? '#fff' : '#888'} stroke={active ? '#222' : '#555'} strokeWidth="3" />
-      <polygon points="50,18 62,28 58,42 42,42 38,28" fill={active ? '#1a1a2e' : '#555'} />
-      <polygon points="26,52 22,38 34,30 44,40 38,54" fill={active ? '#1a1a2e' : '#555'} />
-      <polygon points="74,52 78,38 66,30 56,40 62,54" fill={active ? '#1a1a2e' : '#555'} />
-      <polygon points="36,68 42,56 58,56 64,68 56,78 44,78" fill={active ? '#1a1a2e' : '#555'} />
-      <circle cx="42" cy="40" r="4" fill={active ? '#fff' : '#888'}>
-        <animate attributeName="r" values="4;3.5;4" dur="2s" repeatCount="indefinite" />
-      </circle>
-      <circle cx="58" cy="40" r="4" fill={active ? '#fff' : '#888'}>
-        <animate attributeName="r" values="4;3.5;4" dur="2s" repeatCount="indefinite" begin="0.2s" />
-      </circle>
-      <circle cx="42" cy="39" r="1.8" fill={active ? '#1a1a2e' : '#333'} />
-      <circle cx="58" cy="39" r="1.8" fill={active ? '#1a1a2e' : '#333'} />
-      <path d="M 45 50 Q 50 55 55 50" stroke={active ? '#1a1a2e' : '#555'} strokeWidth="2" fill="none" strokeLinecap="round">
-        {active && <animate attributeName="d" values="M 45 50 Q 50 55 55 50;M 45 49 Q 50 56 55 49;M 45 50 Q 50 55 55 50" dur="3s" repeatCount="indefinite" />}
-      </path>
+    <svg width="20" height="20" viewBox="0 0 100 100" style={{ transition: 'transform 0.3s cubic-bezier(0.34,1.56,0.64,1)', transform: active ? 'scale(1.15)' : 'scale(0.9)' }}>
+      <circle cx="50" cy="50" r="46" fill={active ? '#fff' : '#666'} stroke={active ? '#333' : '#444'} strokeWidth="4" />
+      <polygon points="50,15 63,26 58,42 42,42 37,26" fill={active ? '#222' : '#444'} stroke={active ? '#333' : '#555'} strokeWidth="1" />
+      <polygon points="80,38 82,55 68,62 58,50 66,36" fill={active ? '#222' : '#444'} stroke={active ? '#333' : '#555'} strokeWidth="1" />
+      <polygon points="20,38 18,55 32,62 42,50 34,36" fill={active ? '#222' : '#444'} stroke={active ? '#333' : '#555'} strokeWidth="1" />
+      <polygon points="30,74 40,64 50,68 60,64 70,74 62,86 38,86" fill={active ? '#222' : '#444'} stroke={active ? '#333' : '#555'} strokeWidth="1" />
+      {active && <circle cx="50" cy="50" r="46" fill="none" stroke="rgba(16,185,129,0.4)" strokeWidth="3">
+        <animate attributeName="r" values="46;48;46" dur="2s" repeatCount="indefinite" />
+        <animate attributeName="opacity" values="0.4;0;0.4" dur="2s" repeatCount="indefinite" />
+      </circle>}
     </svg>
   );
 }
 
 function CartoonBasketball({ active }) {
   return (
-    <svg width="22" height="22" viewBox="0 0 100 100" style={{ filter: active ? 'drop-shadow(0 0 6px rgba(16,185,129,0.5))' : 'none', transition: 'filter 0.3s' }}>
-      <circle cx="50" cy="50" r="46" fill={active ? '#f97316' : '#886040'} stroke={active ? '#c2410c' : '#664830'} strokeWidth="3" />
-      <path d="M 50 4 Q 50 50 50 96" stroke={active ? '#7c2d12' : '#553020'} strokeWidth="2.5" fill="none" />
-      <path d="M 4 50 Q 50 50 96 50" stroke={active ? '#7c2d12' : '#553020'} strokeWidth="2.5" fill="none" />
-      <path d="M 15 20 Q 50 35 85 20" stroke={active ? '#7c2d12' : '#553020'} strokeWidth="2" fill="none" />
-      <path d="M 15 80 Q 50 65 85 80" stroke={active ? '#7c2d12' : '#553020'} strokeWidth="2" fill="none" />
-      <circle cx="40" cy="40" r="4.5" fill="#fff">
-        <animate attributeName="r" values="4.5;4;4.5" dur="2s" repeatCount="indefinite" />
-      </circle>
-      <circle cx="60" cy="40" r="4.5" fill="#fff">
-        <animate attributeName="r" values="4.5;4;4.5" dur="2s" repeatCount="indefinite" begin="0.2s" />
-      </circle>
-      <circle cx="40" cy="39" r="2" fill={active ? '#1a1a2e' : '#333'} />
-      <circle cx="60" cy="39" r="2" fill={active ? '#1a1a2e' : '#333'} />
-      <path d="M 44 52 Q 50 58 56 52" stroke="#fff" strokeWidth="2.5" fill="none" strokeLinecap="round">
-        {active && <animate attributeName="d" values="M 44 52 Q 50 58 56 52;M 44 51 Q 50 59 56 51;M 44 52 Q 50 58 56 52" dur="3s" repeatCount="indefinite" />}
-      </path>
+    <svg width="20" height="20" viewBox="0 0 100 100" style={{ transition: 'transform 0.3s cubic-bezier(0.34,1.56,0.64,1)', transform: active ? 'scale(1.15)' : 'scale(0.9)' }}>
+      <circle cx="50" cy="50" r="46" fill={active ? '#f97316' : '#886040'} stroke={active ? '#c2410c' : '#664830'} strokeWidth="4" />
+      <ellipse cx="50" cy="50" rx="1.5" ry="46" fill="none" stroke={active ? '#9a3412' : '#553020'} strokeWidth="3" />
+      <ellipse cx="50" cy="50" rx="46" ry="1.5" fill="none" stroke={active ? '#9a3412' : '#553020'} strokeWidth="3" />
+      <path d="M 10 25 Q 30 40 50 35 Q 70 30 90 25" fill="none" stroke={active ? '#9a3412' : '#553020'} strokeWidth="2.5" />
+      <path d="M 10 75 Q 30 60 50 65 Q 70 70 90 75" fill="none" stroke={active ? '#9a3412' : '#553020'} strokeWidth="2.5" />
+      {active && <circle cx="50" cy="50" r="46" fill="none" stroke="rgba(16,185,129,0.4)" strokeWidth="3">
+        <animate attributeName="r" values="46;48;46" dur="2s" repeatCount="indefinite" />
+        <animate attributeName="opacity" values="0.4;0;0.4" dur="2s" repeatCount="indefinite" />
+      </circle>}
     </svg>
   );
 }

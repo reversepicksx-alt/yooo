@@ -64,9 +64,24 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 - Cleaned up dead code: sendScanFollowUp, isScanPredicting, backToScanResults
 
 ### Cartoon Sport Toggle (April 5, 2026) — UI Enhancement
-- Custom SVG cartoon ball icons with animated faces (blinking eyes, smiling mouth)
-- Orange basketball with seam lines, classic black/white soccer ball
-- Spring-bounce CSS transition on toggle switch
+- Custom SVG cartoon ball icons (no faces — regular balls, cartoon-styled with bold outlines)
+- Soccer ball: classic black/white pentagon pattern, pulsing glow when active
+- Basketball: orange with seam lines, pulsing glow when active
+- Both scale up with spring bounce when selected
+
+### Cartoon Theme Overhaul (April 5, 2026) — UI Enhancement
+- Replaced Manrope font with Nunito (rounder, friendlier, cartoon-appropriate)
+- All borders thickened from 1px to 2px across cards, inputs, badges, nav, buttons
+- Increased border-radius values (+2px across all CSS variables)
+- Added spring-bounce transitions (cubic-bezier) to cards, buttons, nav icons, tabs
+- Active nav icons scale up 1.15x, hover states bounce with scale(1.05-1.1)
+- Buttons use spring transitions with slight scale on hover/press
+- Badge borders thickened with bolder font weights
+
+### PickCard Bug Fix (April 5, 2026) — P0
+- `PickCard` component was deleted during a previous refactor but still referenced by `PicksList`
+- Re-added the complete `PickCard` function to `TrackingTab.jsx`
+- Added missing `Brain` import from lucide-react
 
 ## 3rd Party Integrations
 - API-Sports — User API Key | Square — User API Key | Whop — User API Key (still active)
