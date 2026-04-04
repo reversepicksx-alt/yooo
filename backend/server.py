@@ -109,6 +109,12 @@ async def _auto_sync_square_payments():
 
         print(f"[SQUARE SYNC] Found {len(sq_subs)} subscriptions in Square")
 
+        # Sort: ACTIVE subscriptions first so they take priority over CANCELLED
+        sq_subs.sort(key=lambda s: 0 if s.status == "ACTIVE" else 1)
+
+        # Track which emails already have ACTIVE subs to prevent overwrite
+        active_emails = set()
+
         synced = 0
         for sub in sq_subs:
             # Resolve customer email
@@ -123,35 +129,44 @@ async def _auto_sync_square_payments():
                 continue
 
             sq_status = sub.status  # ACTIVE, CANCELED, PAUSED, etc.
+
+            # Skip if we already synced an ACTIVE sub for this email
+            if email in active_emails and sq_status != "ACTIVE":
+                continue
+
             our_status = "ACTIVE" if sq_status == "ACTIVE" else "EXPIRED"
             start_date = str(sub.start_date)[:10] if sub.start_date else ""
 
-            # Determine plan from subscription (check phases or plan ID)
+            # Determine plan from subscription variation_id
             plan_key = "weekly"  # default
             if sub.plan_variation_id:
-                plan_var = (sub.plan_variation_id or "").lower()
-                # Check existing subscription in DB for plan info
-                existing = await db.square_subscriptions.find_one(
-                    {"email": email}, {"_id": 0, "planKey": 1}
+                # Match variation_id to our stored plans
+                plan_doc = await db.square_plans.find_one(
+                    {"variation_id": sub.plan_variation_id}, {"_id": 0, "key": 1}
                 )
-                if existing:
-                    plan_key = existing.get("planKey", "weekly")
+                if plan_doc and plan_doc.get("key"):
+                    plan_key = plan_doc["key"]
                 else:
-                    # Infer from phases or keep default
-                    try:
-                        # Check the charged_through_date to determine cadence
-                        if sub.charged_through_date and sub.start_date:
-                            start = datetime.fromisoformat(str(sub.start_date))
-                            charged = datetime.fromisoformat(str(sub.charged_through_date))
-                            diff = (charged - start).days
-                            if diff <= 10:
-                                plan_key = "weekly"
-                            elif diff <= 35:
-                                plan_key = "monthly"
-                            else:
-                                plan_key = "quarterly"
-                    except Exception:
-                        pass
+                    # Fallback: use existing DB value or infer from cadence
+                    existing = await db.square_subscriptions.find_one(
+                        {"email": email}, {"_id": 0, "planKey": 1}
+                    )
+                    if existing and existing.get("planKey"):
+                        plan_key = existing["planKey"]
+                    else:
+                        try:
+                            if sub.charged_through_date and sub.start_date:
+                                start = datetime.fromisoformat(str(sub.start_date))
+                                charged = datetime.fromisoformat(str(sub.charged_through_date))
+                                diff = (charged - start).days
+                                if diff <= 10:
+                                    plan_key = "weekly"
+                                elif diff <= 35:
+                                    plan_key = "monthly"
+                                else:
+                                    plan_key = "quarterly"
+                        except Exception:
+                            pass
 
             plan_info = PLANS.get(plan_key, {})
 
@@ -185,6 +200,8 @@ async def _auto_sync_square_payments():
                 }},
                 upsert=True,
             )
+            if sq_status == "ACTIVE":
+                active_emails.add(email)
             synced += 1
 
         print(f"[SQUARE SYNC] Synced {synced} subscriptions (IDs stored for webhook matching)")

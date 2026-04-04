@@ -1,0 +1,61 @@
+{
+  "summary": "Iteration 49 testing complete. Change-plan fix (cancel+recreate approach) verified. All backend tests passed. Frontend UI verified - 'Close' button text confirmed, subscription section visibility correct.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration_49_change_plan_fix.py",
+    "/app/test_reports/pytest/iteration_49_change_plan_fix_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "VERIFIED: POST /api/square/change-plan uses cancel+recreate approach (lines 517-627 in square.py)",
+    "VERIFIED: change-plan rejects non-subscriber with 404 and clear error message",
+    "VERIFIED: change-plan rejects invalid plan key with 400",
+    "VERIFIED: change-plan rejects same-plan change with 400 and message 'You're already on the Weekly plan.'",
+    "VERIFIED: GET /api/square/status/{email} returns planKey, planLabel, cadence correctly",
+    "VERIFIED: Auto-sync in server.py (lines 110-207) sorts ACTIVE subscriptions first and tracks active_emails to prevent overwrite",
+    "VERIFIED: Frontend Cancel button shows 'Close' (not 'Cancel') when plan options are expanded",
+    "VERIFIED: Subscription section visible for Square subscribers (xaviersteverson@gmail.com)",
+    "VERIFIED: Subscription section hidden for Owner users (josselj001@gmail.com)",
+    "VERIFIED: Batch mode completely removed from App.js - zero references to batchMode, BatchMode, PlayerReport"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration_49_change_plan_fix.py"
+  ],
+  "success_rate": {
+    "backend": "100% (9/9 passed, 1 skipped)",
+    "frontend": "100% (all UI tests passed)"
+  },
+  "test_credentials": "xaviersteverson@gmail.com / test123456 (Square subscriber on weekly plan, ACTIVE), josselj001@gmail.com (Owner - auto-verified)",
+  "seed_data_creation": "None - used existing test accounts",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 49 verified the change-plan fix using cancel+recreate approach. Key points: (1) The change-plan endpoint now cancels the old subscription and creates a new one instead of using swap_plan. This avoids the 'pending action' issue that blocked future swaps. (2) Auto-sync on startup sorts ACTIVE subscriptions first and tracks which emails already have active subs to prevent overwriting new active sub IDs with old cancelled ones. (3) The Cancel button in subscription section now says 'Close' when plan options are expanded (UX fix). (4) Test user xaviersteverson@gmail.com is on weekly plan with ACTIVE status. (5) Batch mode completely removed from App.js.",
+  "features_verified": {
+    "change_plan_cancel_recreate_approach": "PASS (code review verified)",
+    "change_plan_rejects_non_subscriber": "PASS (404 with clear error)",
+    "change_plan_rejects_invalid_plan": "PASS (400)",
+    "change_plan_rejects_same_plan": "PASS (400 with 'You're already on the Weekly plan.')",
+    "status_endpoint_planKey_planLabel_cadence": "PASS",
+    "auto_sync_active_first_sorting": "PASS (code review verified lines 113-116 in server.py)",
+    "auto_sync_email_tracking": "PASS (code review verified lines 116-117, 134-135, 203-204 in server.py)",
+    "frontend_close_button_text": "PASS (shows 'Close' not 'Cancel')",
+    "frontend_subscription_section_square_user": "PASS (visible)",
+    "frontend_subscription_section_owner_hidden": "PASS (hidden)",
+    "batch_mode_removed": "PASS (0 references in App.js)"
+  },
+  "current_subscription_state": {
+    "email": "xaviersteverson@gmail.com",
+    "planKey": "weekly",
+    "planLabel": "$11/week",
+    "status": "ACTIVE",
+    "expiresAt": "2026-04-11T23:59:59+00:00"
+  }
+}

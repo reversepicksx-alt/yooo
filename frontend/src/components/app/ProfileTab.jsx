@@ -125,7 +125,7 @@ function SubscriptionManager({ email }) {
           style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%', fontSize: 13 }}
         >
           <ArrowRightLeft style={{ width: 15, height: 15 }} />
-          {showPlans ? 'Cancel' : 'Change Plan'}
+          {showPlans ? 'Close' : 'Change Plan'}
         </button>
 
         {/* Plan Options */}
