@@ -8,7 +8,7 @@ import { ProbabilityChart } from './ProbabilityChart';
 import { MatchStatZones } from './MatchStatZones';
 import { H2HSection } from './H2HSection';
 
-export function ProjectionCard({ projection, onSave, excludedIndices, onToggleSample }) {
+export function ProjectionCard({ projection, onSave, excludedIndices, onToggleSample, hideSave }) {
   const rec = projection.recommendation;
   const [venueFilter, setVenueFilter] = React.useState('all');
 
@@ -349,9 +349,11 @@ export function ProjectionCard({ projection, onSave, excludedIndices, onToggleSa
         )}
       </div>
 
-      <button className="btn-primary" onClick={onSave} data-testid="save-to-tracking-btn">
-        Save to Tracking
-      </button>
+      {!hideSave && (
+        <button className="btn-primary" onClick={onSave} data-testid="save-to-tracking-btn">
+          Save to Tracking
+        </button>
+      )}
     </div>
   );
 }

@@ -1972,6 +1972,7 @@ export default function App() {
                                       <ProjectionCard
                                         projection={prediction}
                                         onSave={() => scanSavePickFn(idx)}
+                                        hideSave={true}
                                         excludedIndices={scanExcludedIndices}
                                         onToggleSample={si => setScanExcludedIndices(prev =>
                                           prev.includes(si) ? prev.filter(i => i !== si) : [...prev, si]

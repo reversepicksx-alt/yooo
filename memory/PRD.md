@@ -107,6 +107,11 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 - Reduced icon-btn size from 36px to 32px, logo-icon from 36px to 30px
 - Desktop still shows full text labels
 
+### Duplicate Save Button Fix (April 4, 2026) — Bug Fix
+- ProjectionCard's "Save to Tracking" button was showing alongside the inline blue "SAVE TO TRACKING" button when expanded
+- Added `hideSave` prop to ProjectionCard, passed `hideSave={true}` from scan inline context
+- Only the blue inline save button renders now (no duplicate)
+
 ### Saudi Pro League Resolution (April 4, 2026) — P0 Verified
 - Added SCAN_ALIASES for all Saudi Pro League teams (Al-Hilal, Al-Nassr, Al Taawon, etc.)
 - Enhanced `_generate_aliases` to strip "Al-" prefixes and trailing qualifiers (saudi fc, jeddah, etc.)
