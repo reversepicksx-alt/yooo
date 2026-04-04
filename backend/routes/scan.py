@@ -533,7 +533,7 @@ async def _resolve_opponent(opponent_name: str, is_international: bool, league_i
 
 
 def _build_soccer_scan_prompt(leagues_list: str) -> str:
-    return f"""Analyze this screenshot of a player prop card. Extract the SINGLE main prop shown.
+    return f"""Analyze this screenshot of a player prop card. Extract ALL props shown.
 
 LAYOUT GUIDE:
 - The player's FIRST NAME is on the top line, LAST NAME is on the second line (larger/bolder text)
@@ -552,9 +552,9 @@ CRITICAL RULES:
 - Read player names EXACTLY as shown. Do NOT confuse with opponent/team names.
 - If you see " + " between two names, this is a COMBO prop — set isCombo to true.
 - IGNORE any "Less"/"More" buttons.
-- Extract ONLY ONE prop — the main/most prominent one visible.
+- Extract EVERY prop visible in the screenshot.
 
-Extract:
+Extract for EACH prop:
 1. playerName — Full name as displayed. For combos: "Player A + Player B"
 2. propType — Map to: goals, assists, shots_assisted, pass_attempts, shots, shots_on_target, tackles, key_passes, saves, interceptions, blocks, dribbles, dribbles_success, fouls_drawn, fouls_committed, crosses, clearances, duels_won, yellow_cards
 3. line — The numerical line (e.g., 48.5, 6, 5.5)
@@ -588,16 +588,16 @@ PROP TYPE MAPPING:
 
 CRITICAL: "Shots Assisted" is shots_assisted (NOT shots or assists). "Goals" is goals (NOT shots_on_target).
 
-RETURN FORMAT (JSON object — NOT array):
+RETURN FORMAT (JSON array):
 For SINGLE: {{"playerName":"...","propType":"...","line":0.0,"opponentName":"...","playerTeam":"...","venue":"home or away","league":"...","leagueId":0,"isCombo":false}}
 For COMBO: {{"playerName":"Player A + Player B","propType":"...","line":0.0,"opponentName":null,"playerTeam":"Team1/Team2","venue":null,"league":"...","leagueId":0,"isCombo":true,"players":[{{"name":"Player A","team":"Team1"}},{{"name":"Player B","team":"Team2"}}]}}
 
 VENUE: "@ [Team]" → away, "vs [Team]" → home
-If unknown, use null. Return ONE JSON object."""
+If unknown, use null. Return JSON array of ALL props found."""
 
 
 def _build_basketball_scan_prompt() -> str:
-    return """Analyze this screenshot of an NBA player prop card. Extract the SINGLE main prop shown.
+    return """Analyze this screenshot of an NBA player prop card. Extract ALL props shown.
 
 LAYOUT GUIDE:
 - Player's name (first + last), usually first name smaller above last name
@@ -610,9 +610,9 @@ CRITICAL RULES:
 - Read player names EXACTLY as shown
 - IGNORE "Less"/"More" buttons
 - This is BASKETBALL / NBA only
-- Extract ONLY ONE prop — the main/most prominent one visible.
+- Extract EVERY prop visible in the screenshot.
 
-Extract:
+Extract for EACH prop:
 1. playerName — Full name as displayed
 2. propType — Map to one of: points, rebounds, assists, pts_reb_ast, pts_reb, pts_ast, reb_ast, blk_stl, steals, blocks, turnovers, three_pointers, fgm, ftm, fga, fta, tpa
 3. line — The numerical line (e.g., 24.5, 7.5, 5.5)
@@ -641,10 +641,10 @@ PROP TYPE MAPPING:
 
 CRITICAL: "Rebs+Asts" is reb_ast (NOT pts_reb_ast). Only include Points in the combo if "Pts" appears in the label.
 
-RETURN FORMAT (JSON object — NOT array):
-{"playerName":"...","propType":"...","line":0.0,"opponentName":"...","playerTeam":"...","venue":"home or away","sport":"basketball"}
+RETURN FORMAT (JSON array):
+[{"playerName":"...","propType":"...","line":0.0,"opponentName":"...","playerTeam":"...","venue":"home or away","sport":"basketball"}]
 
-If unknown, use null. Return ONE JSON object."""
+If unknown, use null. Return JSON array of ALL props found."""
 
 
 async def _resolve_basketball_picks(extracted: list) -> dict:
@@ -808,10 +808,9 @@ async def scan_prop(req: ScanPropRequest):
             response_text = "\n".join(lines)
 
         extracted = json.loads(response_text)
-        # Enforce single-prop: always work with exactly one entry
-        if isinstance(extracted, list):
-            extracted = extracted[0] if extracted else {}
-        extracted = [extracted] if extracted else []
+        # Support both single object and array from AI
+        if not isinstance(extracted, list):
+            extracted = [extracted]
 
         # ── Step 2: Route based on sport ──
         if is_basketball:

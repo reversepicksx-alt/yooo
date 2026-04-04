@@ -90,17 +90,14 @@ export default function App() {
   const [scanResults, setScanResults] = useState(null); // extracted picks array
   const [isScanning, setIsScanning] = useState(false);
   const [scanError, setScanError] = useState(null);
-  const [scanPrediction, setScanPrediction] = useState(null); // full projection result
+  const [scanPrediction, setScanPrediction] = useState({}); // { idx: projection result }
   const [isScanPredicting, setIsScanPredicting] = useState(false);
-  const [scanPredictingIdx, setScanPredictingIdx] = useState(null);
+  const [scanPredictingIdx, setScanPredictingIdx] = useState({}); // { idx: true/false }
   const [scanExcludedIndices, setScanExcludedIndices] = useState([]);
   const [scanVenueOverrides, setScanVenueOverrides] = useState({});
-  const [scanEditMode, setScanEditMode] = useState({}); // { idx: true/false }
-  const [scanEditValues, setScanEditValues] = useState({}); // { idx: { playerName, playerTeam, opponentName } }
-  const [scanResolving, setScanResolving] = useState({}); // { idx: true/false }
-  const [scanFollowUp, setScanFollowUp] = useState('');
-  const [scanFollowUpMessages, setScanFollowUpMessages] = useState([]);
-  const [isScanFollowUpSending, setIsScanFollowUpSending] = useState(false);
+  const [scanEditMode, setScanEditMode] = useState({});
+  const [scanEditValues, setScanEditValues] = useState({});
+  const [scanResolving, setScanResolving] = useState({});
   const scanFileRef = useRef(null);
   const scanFollowUpRef = useRef(null);
 
@@ -551,11 +548,7 @@ export default function App() {
         toast.error('Could not match both players — cannot run combo prediction');
         return;
       }
-      setIsScanPredicting(true);
-      setScanPredictingIdx(idx);
-      setScanPrediction(null);
-      setScanExcludedIndices([]);
-      setScanFollowUpMessages([]);
+      setScanPredictingIdx(prev => ({ ...prev, [idx]: true }));
       try {
         const result = await predictCombo({
           leagueId: pickData.extracted.leagueId || 39,
@@ -574,29 +567,22 @@ export default function App() {
         if (!result?.player1?.player || !result?.player2?.player) {
           throw new Error('One or both predictions failed.');
         }
-        setScanPrediction({ ...result, _isCombo: true, _comboLine: pickData.extracted.line });
+        setScanPrediction(prev => ({ ...prev, [idx]: { ...result, _isCombo: true, _comboLine: pickData.extracted.line } }));
         toast.success('Analysis complete!');
       } catch (err) {
         toast.error(err.message || 'Combo prediction failed');
       } finally {
-        setIsScanPredicting(false);
-        setScanPredictingIdx(null);
+        setScanPredictingIdx(prev => ({ ...prev, [idx]: false }));
       }
     } else {
-      // Check if this is a basketball pick
       const isBasketballPick = pickData.sport === 'basketball' || pickData.extracted?.sport === 'basketball';
 
       if (isBasketballPick) {
-        // BASKETBALL prediction flow
         if (!pickData.resolved && !pickData.resolvedOpponent) {
           toast.error('Teams not resolved — cannot run prediction');
           return;
         }
-        setIsScanPredicting(true);
-        setScanPredictingIdx(idx);
-        setScanPrediction(null);
-        setScanExcludedIndices([]);
-        setScanFollowUpMessages([]);
+        setScanPredictingIdx(prev => ({ ...prev, [idx]: true }));
         try {
           const teamId = pickData.resolved?.teamId || 0;
           const teamName = pickData.resolved?.teamName || pickData.extracted?.playerTeam || 'Unknown';
@@ -604,22 +590,18 @@ export default function App() {
           const opponentName = pickData.resolvedOpponent?.teamName || pickData.extracted?.opponentName || 'Unknown';
           const venue = scanVenueOverrides[idx] || pickData.extracted?.venue || 'home';
           const result = await basketballPredict({
-            teamId,
-            teamName,
-            opponentId,
-            opponentName,
+            teamId, teamName, opponentId, opponentName,
             playerName: pickData.extracted?.playerName || 'Unknown',
             venue,
             propType: pickData.extracted?.propType || 'points',
             line: pickData.extracted?.line || 0,
           });
-          setScanPrediction(result);
+          setScanPrediction(prev => ({ ...prev, [idx]: result }));
           toast.success('Basketball analysis complete!');
         } catch (err) {
           toast.error(err.message || 'Basketball prediction failed');
         } finally {
-          setIsScanPredicting(false);
-          setScanPredictingIdx(null);
+          setScanPredictingIdx(prev => ({ ...prev, [idx]: false }));
         }
       } else {
       // SOCCER prediction flow
@@ -627,11 +609,7 @@ export default function App() {
         toast.error('Player not found — cannot run prediction');
         return;
       }
-      setIsScanPredicting(true);
-      setScanPredictingIdx(idx);
-      setScanPrediction(null);
-      setScanExcludedIndices([]);
-      setScanFollowUpMessages([]);
+      setScanPredictingIdx(prev => ({ ...prev, [idx]: true }));
       try {
         const opponentId = pickData.resolvedOpponent?.teamId || 0;
         const opponentName = pickData.resolvedOpponent?.teamName || pickData.extracted.opponentName || 'Unknown';
@@ -650,15 +628,24 @@ export default function App() {
           positionOverride: pickData.extracted.position || '',
           roleOverride: pickData.extracted.role || '',
         });
-        setScanPrediction(result);
+        setScanPrediction(prev => ({ ...prev, [idx]: result }));
         toast.success('Analysis complete!');
       } catch (err) {
         toast.error(err.message || 'Prediction failed');
       } finally {
-        setIsScanPredicting(false);
-        setScanPredictingIdx(null);
+        setScanPredictingIdx(prev => ({ ...prev, [idx]: false }));
       }
       }
+    }
+  };
+
+  // Predict All — run predictions for all detected props sequentially
+  const handlePredictAll = async () => {
+    if (!scanResults || scanResults.length <= 1) return;
+    for (let i = 0; i < scanResults.length; i++) {
+      if (scanExcludedIndices.includes(i)) continue;
+      if (scanPrediction[i]) continue; // already predicted
+      await handleScanPredict(scanResults[i], i);
     }
   };
 
@@ -698,14 +685,12 @@ export default function App() {
     setScanImage(null);
     setScanResults(null);
     setScanError(null);
-    setScanPrediction(null);
-    setScanPredictingIdx(null);
+    setScanPrediction({});
+    setScanPredictingIdx({});
     setScanVenueOverrides({});
     setScanEditMode({});
     setScanEditValues({});
     setScanResolving({});
-    setScanFollowUpMessages([]);
-    setScanFollowUp('');
     if (scanFileRef.current) scanFileRef.current.value = '';
   };
 
@@ -1714,89 +1699,6 @@ export default function App() {
                   </div>
                 )}
 
-                {/* ── FOLLOW-UP CHAT ── */}
-                {scanPrediction && (
-                  <div data-testid="scan-followup-section" style={{
-                    background: '#0a0a0f', border: '1px solid rgba(100,100,120,0.15)',
-                    borderRadius: 14, overflow: 'hidden', marginTop: 8,
-                  }}>
-                    {/* Follow-up messages */}
-                    {scanFollowUpMessages.length > 0 && (
-                      <div style={{ padding: '12px 16px 8px', display: 'flex', flexDirection: 'column', gap: 12, maxHeight: 400, overflowY: 'auto' }}>
-                        {scanFollowUpMessages.map((msg) => (
-                          <div key={msg.id} style={{
-                            alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start',
-                            maxWidth: '90%',
-                          }}>
-                            {msg.role === 'assistant' && (
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
-                                <Crosshair style={{ width: 10, height: 10, color: '#818cf8' }} />
-                                <span style={{ fontSize: 8, fontWeight: 900, letterSpacing: '0.1em', color: '#818cf8' }}>TACTICAL</span>
-                              </div>
-                            )}
-                            <div style={{
-                              padding: '8px 12px',
-                              borderRadius: msg.role === 'user' ? '12px 12px 4px 12px' : '12px 12px 12px 4px',
-                              background: msg.role === 'user' ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.03)',
-                              border: `1px solid ${msg.role === 'user' ? 'rgba(99,102,241,0.25)' : 'rgba(100,100,120,0.15)'}`,
-                              fontSize: 12, lineHeight: 1.6, color: msg.role === 'user' ? '#c7d2fe' : 'rgba(255,255,255,0.8)',
-                              whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                            }}>
-                              {msg.content.split('\n').map((line, li) => {
-                                const parts = line.split(/(\*\*.*?\*\*)/g);
-                                return (
-                                  <div key={`fu-${msg.id}-${li}`} style={{ marginBottom: line === '' ? 6 : 1 }}>
-                                    {parts.map((part, pi) => {
-                                      if (part.startsWith('**') && part.endsWith('**')) {
-                                        return <strong key={`fu-${msg.id}-${li}-b-${pi}`} style={{ color: '#fff', fontWeight: 800 }}>{part.slice(2, -2)}</strong>;
-                                      }
-                                      return <span key={`fu-${msg.id}-${li}-t-${pi}`}>{part}</span>;
-                                    })}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        ))}
-                        {isScanFollowUpSending && (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(100,100,120,0.15)', borderRadius: 12, alignSelf: 'flex-start' }}>
-                            <Loader2 style={{ width: 12, height: 12, color: '#818cf8', animation: 'spin 1s linear infinite' }} />
-                            <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)' }}>Analyzing...</span>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Input */}
-                    <div style={{ padding: '8px 12px', display: 'flex', gap: 8, alignItems: 'center', borderTop: scanFollowUpMessages.length > 0 ? '1px solid rgba(100,100,120,0.1)' : 'none' }}>
-                      <MessageSquare style={{ width: 14, height: 14, color: 'rgba(255,255,255,0.2)', flexShrink: 0 }} />
-                      <input
-                        ref={scanFollowUpRef}
-                        value={scanFollowUp}
-                        onChange={e => setScanFollowUp(e.target.value)}
-                        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); sendScanFollowUp(); } }}
-                        placeholder="Ask a follow-up..."
-                        data-testid="scan-followup-input"
-                        style={{
-                          flex: 1, background: 'transparent', border: 'none', outline: 'none',
-                          color: '#fff', fontSize: 12, fontWeight: 500, fontFamily: 'inherit',
-                        }}
-                      />
-                      <button onClick={sendScanFollowUp} disabled={!scanFollowUp.trim() || isScanFollowUpSending}
-                        data-testid="scan-followup-send"
-                        style={{
-                          width: 32, height: 32, borderRadius: 8, border: 'none', flexShrink: 0,
-                          background: scanFollowUp.trim() ? 'rgba(99,102,241,0.2)' : 'transparent',
-                          color: scanFollowUp.trim() ? '#818cf8' : 'rgba(255,255,255,0.15)',
-                          cursor: scanFollowUp.trim() ? 'pointer' : 'default',
-                          display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        }}
-                      >
-                        <Send style={{ width: 14, height: 14 }} />
-                      </button>
-                    </div>
-                  </div>
-                )}
               </div>
             )}
 
