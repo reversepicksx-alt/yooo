@@ -489,18 +489,128 @@ async def get_subscription_status(email: str):
         except Exception:
             pass
 
+    # Fill in missing planLabel/cadence from PLANS reference
+    plan_key = sub.get("planKey", "")
+    plan_ref = PLANS.get(plan_key, {})
+    plan_label = sub.get("planLabel") or plan_ref.get("label", "")
+    cadence = sub.get("cadence") or plan_ref.get("cadence", "")
+
     return {
         "active": sub.get("status") in ("ACTIVE", "PENDING"),
         "plan": sub.get("planName"),
-        "planKey": sub.get("planKey"),
-        "planLabel": sub.get("planLabel", ""),
-        "cadence": sub.get("cadence", ""),
+        "planKey": plan_key,
+        "planLabel": plan_label,
+        "cadence": cadence,
         "status": sub.get("status"),
         "cardLast4": sub.get("cardLast4"),
         "cardBrand": sub.get("cardBrand"),
         "subscribedAt": sub.get("subscribedAt"),
         "expiresAt": sub.get("expiresAt"),
     }
+
+
+class ChangePlanRequest(BaseModel):
+    email: str
+    new_plan_key: str
+
+
+@router.post("/change-plan")
+async def change_plan(req: ChangePlanRequest):
+    """Change a user's subscription from one plan to another via Square swap_plan."""
+    email_lower = req.email.lower().strip()
+    new_plan_key = req.new_plan_key.lower()
+
+    if new_plan_key not in PLANS:
+        raise HTTPException(status_code=400, detail="Invalid plan. Choose weekly, monthly, or quarterly.")
+
+    # Find active subscription
+    sub = await db.square_subscriptions.find_one(
+        {"email": email_lower, "status": {"$in": ["ACTIVE", "PENDING"]}},
+        {"_id": 0}
+    )
+    if not sub:
+        raise HTTPException(status_code=404, detail="No active subscription found.")
+
+    current_plan_key = sub.get("planKey", "")
+    if current_plan_key == new_plan_key:
+        raise HTTPException(status_code=400, detail=f"You're already on the {PLANS[new_plan_key]['name']} plan.")
+
+    sq_sub_id = sub.get("squareSubscriptionId")
+    if not sq_sub_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Subscription ID not found. Please contact support to change your plan."
+        )
+
+    # Ensure plans exist and get target variation
+    plans = await _ensure_plans_exist()
+    new_plan_doc = plans.get(new_plan_key)
+    if not new_plan_doc or not new_plan_doc.get("variation_id"):
+        raise HTTPException(status_code=500, detail="Target plan not configured in Square.")
+
+    client = get_square_client()
+
+    try:
+        # Use Square's swap_plan API — takes effect at end of current billing cycle
+        result = client.subscriptions.swap_plan(
+            subscription_id=sq_sub_id,
+            new_plan_variation_id=new_plan_doc["variation_id"],
+            phases=[{"ordinal": 0}],
+        )
+
+        new_status = result.subscription.status if result.subscription else "ACTIVE"
+        now = datetime.now(timezone.utc).isoformat()
+        new_plan_info = PLANS[new_plan_key]
+
+        # Update local DB
+        await db.square_subscriptions.update_one(
+            {"email": email_lower},
+            {"$set": {
+                "planKey": new_plan_key,
+                "planName": new_plan_info["name"],
+                "planLabel": new_plan_info["label"],
+                "cadence": new_plan_info["cadence"],
+                "variationId": new_plan_doc["variation_id"],
+                "status": new_status,
+                "updatedAt": now,
+                "planChangedAt": now,
+                "previousPlanKey": current_plan_key,
+            }}
+        )
+
+        print(f"[SQUARE CHANGE-PLAN] {email_lower}: {current_plan_key} -> {new_plan_key}")
+        return {
+            "success": True,
+            "previous_plan": PLANS.get(current_plan_key, {}).get("name", current_plan_key),
+            "new_plan": new_plan_info["name"],
+            "new_label": new_plan_info["label"],
+            "message": f"Plan changed to {new_plan_info['name']} ({new_plan_info['label']}). Takes effect at next billing cycle.",
+        }
+
+    except Exception as e:
+        err_msg = str(e)
+        print(f"[SQUARE CHANGE-PLAN] Error for {email_lower}: {err_msg}")
+
+        # Handle "same as current plan" — swap is already pending from a previous change
+        if "same as current plan" in err_msg.lower():
+            raise HTTPException(
+                status_code=400,
+                detail="A plan change is already pending. It will take effect at your next billing cycle."
+            )
+
+        # Handle "already pending a plan change"
+        if "pending" in err_msg.lower() and "plan" in err_msg.lower():
+            raise HTTPException(
+                status_code=400,
+                detail="A plan change is already scheduled. Please wait until your next billing cycle."
+            )
+
+        if "not found" in err_msg.lower():
+            raise HTTPException(
+                status_code=400,
+                detail="Subscription not found in Square. Please contact support."
+            )
+        raise HTTPException(status_code=500, detail=f"Plan change error: {err_msg}")
 
 
 class CancelRequest(BaseModel):

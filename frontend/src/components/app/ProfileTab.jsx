@@ -1,8 +1,164 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   User, Shield, BarChart3, Mail, Lock, Loader2, Zap, Activity,
-  LogOut, Settings, Edit3, Eye, EyeOff, Check, X
+  LogOut, Settings, Edit3, Eye, EyeOff, Check, X,
+  CreditCard, ArrowRightLeft, Calendar, AlertCircle
 } from 'lucide-react';
+import { getSquareSubscriptionStatus, changeSquarePlan } from '../../api';
+import { toast } from 'sonner';
+
+const PLAN_OPTIONS = [
+  { key: 'weekly', name: 'Weekly', label: '$11/week', amount: 1100 },
+  { key: 'monthly', name: 'Monthly', label: '$39.99/month', amount: 3999 },
+  { key: 'quarterly', name: 'Quarterly', label: '$99.99/3 months', amount: 9999 },
+];
+
+function SubscriptionManager({ email }) {
+  const [subStatus, setSubStatus] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [changingPlan, setChangingPlan] = useState(false);
+  const [showPlans, setShowPlans] = useState(false);
+
+  useEffect(() => {
+    if (!email) return;
+    fetchStatus();
+  }, [email]);
+
+  async function fetchStatus() {
+    setLoading(true);
+    try {
+      const data = await getSquareSubscriptionStatus(email);
+      setSubStatus(data);
+    } catch {
+      setSubStatus(null);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleChangePlan(newKey) {
+    if (changingPlan) return;
+    setChangingPlan(true);
+    try {
+      const result = await changeSquarePlan(email, newKey);
+      toast.success(result.message || `Switched to ${result.new_plan}`);
+      setShowPlans(false);
+      await fetchStatus();
+    } catch (err) {
+      toast.error(err.message || 'Failed to change plan');
+    } finally {
+      setChangingPlan(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="profile-section" data-testid="subscription-section">
+        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 12 }}>Subscription</div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, gap: 8, color: 'var(--text-muted)', fontSize: 13 }}>
+          <Loader2 className="animate-spin" style={{ width: 16, height: 16 }} /> Loading...
+        </div>
+      </div>
+    );
+  }
+
+  if (!subStatus || !subStatus.active) return null;
+
+  const currentPlanKey = subStatus.planKey || '';
+  const otherPlans = PLAN_OPTIONS.filter(p => p.key !== currentPlanKey);
+
+  return (
+    <div className="profile-section" data-testid="subscription-section">
+      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 12 }}>Subscription</div>
+      <div className="space-y-3">
+        <div className="profile-field">
+          <div className="profile-field-icon"><CreditCard style={{ width: 16, height: 16, color: '#818cf8' }} /></div>
+          <div className="profile-field-content">
+            <div className="profile-field-label">Current Plan</div>
+            <div className="profile-field-value" data-testid="current-plan-name">
+              {subStatus.plan || 'Unknown'}{subStatus.planLabel ? ` — ${subStatus.planLabel}` : ''}
+            </div>
+          </div>
+        </div>
+
+        {subStatus.status && (
+          <div className="profile-field">
+            <div className="profile-field-icon"><Activity style={{ width: 16, height: 16, color: subStatus.status === 'ACTIVE' ? 'var(--accent)' : '#f59e0b' }} /></div>
+            <div className="profile-field-content">
+              <div className="profile-field-label">Status</div>
+              <div className="profile-field-value" style={{ color: subStatus.status === 'ACTIVE' ? 'var(--accent)' : '#f59e0b' }} data-testid="sub-status">
+                {subStatus.status}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {subStatus.expiresAt && (
+          <div className="profile-field">
+            <div className="profile-field-icon"><Calendar style={{ width: 16, height: 16 }} /></div>
+            <div className="profile-field-content">
+              <div className="profile-field-label">Next Billing</div>
+              <div className="profile-field-value" data-testid="sub-next-billing">
+                {new Date(subStatus.expiresAt).toLocaleDateString()}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {subStatus.cardLast4 && (
+          <div className="profile-field">
+            <div className="profile-field-icon"><CreditCard style={{ width: 16, height: 16 }} /></div>
+            <div className="profile-field-content">
+              <div className="profile-field-label">Payment Method</div>
+              <div className="profile-field-value" data-testid="sub-card">
+                {subStatus.cardBrand || 'Card'} ····{subStatus.cardLast4}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Change Plan Toggle */}
+        <button
+          className="btn-secondary"
+          onClick={() => setShowPlans(!showPlans)}
+          data-testid="change-plan-toggle"
+          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%', fontSize: 13 }}
+        >
+          <ArrowRightLeft style={{ width: 15, height: 15 }} />
+          {showPlans ? 'Cancel' : 'Change Plan'}
+        </button>
+
+        {/* Plan Options */}
+        {showPlans && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }} data-testid="plan-options">
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
+              <AlertCircle style={{ width: 12, height: 12 }} />
+              Change takes effect at your next billing cycle
+            </div>
+            {otherPlans.map(plan => (
+              <button
+                key={plan.key}
+                className="btn-primary"
+                onClick={() => handleChangePlan(plan.key)}
+                disabled={changingPlan}
+                data-testid={`switch-to-${plan.key}`}
+                style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                  width: '100%', fontSize: 13, padding: '10px 16px',
+                }}
+              >
+                {changingPlan
+                  ? <Loader2 className="animate-spin" style={{ width: 15, height: 15 }} />
+                  : <ArrowRightLeft style={{ width: 15, height: 15 }} />}
+                Switch to {plan.name} ({plan.label})
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export function ProfileTab({
   auth, savedPicks, apiStatus, isOwner,
@@ -15,6 +171,8 @@ export function ProfileTab({
   handleTestApiKey, handleSaveAdminSetting,
   handleLogout,
 }) {
+  const isSquareUser = (auth.accessType || '').includes('Square');
+
   return (
     <div className="animate-fade-in space-y-6" data-testid="profile-tab">
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, paddingTop: 8, paddingBottom: 8 }}>
@@ -53,6 +211,9 @@ export function ProfileTab({
           </div>
         </div>
       </div>
+
+      {/* Subscription Management — only for Square subscribers */}
+      {isSquareUser && <SubscriptionManager email={auth.email} />}
 
       <div className="profile-section" data-testid="profile-password-section">
         <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 12 }}>Reset Password</div>

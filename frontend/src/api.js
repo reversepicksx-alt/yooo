@@ -296,6 +296,13 @@ export async function cancelSquareSubscription(email) {
   });
 }
 
+export async function changeSquarePlan(email, newPlanKey) {
+  return apiCall('/api/square/change-plan', {
+    method: 'POST',
+    body: JSON.stringify({ email, new_plan_key: newPlanKey }),
+  });
+}
+
 // Admin Settings APIs
 export async function getAdminSettings(email, token) {
   return apiCall('/api/admin/settings', {
