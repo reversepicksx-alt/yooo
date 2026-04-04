@@ -107,6 +107,11 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 - Reduced icon-btn size from 36px to 32px, logo-icon from 36px to 30px
 - Desktop still shows full text labels
 
+### Recommendation vs Projection Mismatch Fix (April 5, 2026) — P0 Critical Bug
+- **Bug**: When match dominance multiplier adjusted projectedValue upward (e.g., 49→53.3), the recommendation was still set using the OLD pre-adjustment value (`avg_proj`), causing "projecting 53.3 but recommending UNDER 50.5"
+- **Root cause**: Line `prediction["recommendation"] = "over" if avg_proj > req.line` used stale `avg_proj` instead of `prediction["projectedValue"]` (post-dominance)
+- **Fix**: Changed to use `prediction.get("projectedValue", avg_proj)` — recommendation now always matches the FINAL projected value
+
 ### Prediction Calibration Overhaul (April 4, 2026) — P0 Quality Fix
 - **Root cause**: Three bad reads (Romagnoli passes, Keita+Taylor combo, Britschgi shots assisted) — AI models were recommending UNDER without proper calibration guards
 - **Fix 1 — AI Prompt Calibration Rules**: Added UNDER skew warning (stats have positive skew), binary line rule (0.5 = zero required), tight edge rule (±1 margin = low confidence), defender pass calibration

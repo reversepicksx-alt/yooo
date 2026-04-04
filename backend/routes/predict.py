@@ -1895,8 +1895,9 @@ Analyze ALL data thoroughly. Return JSON only."""
         else:
             prediction["matchDominance"] = {"applied": False}
 
-        # HARD GUARD: recommendation stays locked to AI consensus — never flipped by post-processing
-        prediction["recommendation"] = "over" if avg_proj > req.line else "under"
+        # HARD GUARD: recommendation MUST match the FINAL projected value vs line
+        final_proj = prediction.get("projectedValue", avg_proj)
+        prediction["recommendation"] = "over" if final_proj > req.line else "under"
 
         # =============================================
         # POST-CONSENSUS CONFIDENCE GUARDS
