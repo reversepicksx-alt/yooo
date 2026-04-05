@@ -107,6 +107,12 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 - Reduced icon-btn size from 36px to 32px, logo-icon from 36px to 30px
 - Desktop still shows full text labels
 
+### Cancel Subscription Button (April 5, 2026) — Feature
+- Added "Cancel Subscription" button to ProfileTab's SubscriptionManager
+- Two-step confirmation: "Cancel Subscription" → "Are you sure?" with "Yes, Cancel" / "Keep Plan" buttons
+- Calls existing `POST /api/square/cancel` endpoint which cancels via Square API
+- Shows toast on success/error, refreshes subscription status after cancel
+
 ### API Rate Limit & AI-Only Mode Fix (April 5, 2026) — P0 Critical
 - **Bug 1**: API-Sports daily quota error ("request limit") wasn't detected because code only checked for "rate limit" → now detects both, returns empty [] instead of crashing with 400
 - **Bug 2**: Hard guards blocked predictions when teamId=0 or opponentId=0, even though frontend allows "AI-ONLY MODE" → removed guards, predictions now gracefully skip API calls and use pure AI analysis

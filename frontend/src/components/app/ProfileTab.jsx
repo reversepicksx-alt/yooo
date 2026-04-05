@@ -4,7 +4,7 @@ import {
   LogOut, Settings, Edit3, Eye, EyeOff, Check, X,
   CreditCard, ArrowRightLeft, Calendar, AlertCircle
 } from 'lucide-react';
-import { getSquareSubscriptionStatus, changeSquarePlan } from '../../api';
+import { getSquareSubscriptionStatus, changeSquarePlan, cancelSquareSubscription } from '../../api';
 import { toast } from 'sonner';
 
 const PLAN_OPTIONS = [
@@ -18,6 +18,8 @@ function SubscriptionManager({ email }) {
   const [loading, setLoading] = useState(true);
   const [changingPlan, setChangingPlan] = useState(false);
   const [showPlans, setShowPlans] = useState(false);
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const [canceling, setCanceling] = useState(false);
 
   useEffect(() => {
     if (!email) return;
@@ -48,6 +50,21 @@ function SubscriptionManager({ email }) {
       toast.error(err.message || 'Failed to change plan');
     } finally {
       setChangingPlan(false);
+    }
+  }
+
+  async function handleCancel() {
+    if (canceling) return;
+    setCanceling(true);
+    try {
+      await cancelSquareSubscription(email);
+      toast.success('Subscription canceled successfully');
+      setShowCancelConfirm(false);
+      await fetchStatus();
+    } catch (err) {
+      toast.error(err.message || 'Failed to cancel subscription');
+    } finally {
+      setCanceling(false);
     }
   }
 
@@ -153,6 +170,65 @@ function SubscriptionManager({ email }) {
                 Switch to {plan.name} ({plan.label})
               </button>
             ))}
+          </div>
+        )}
+
+        {/* Cancel Subscription */}
+        {!showCancelConfirm ? (
+          <button
+            onClick={() => setShowCancelConfirm(true)}
+            data-testid="cancel-sub-btn"
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+              width: '100%', fontSize: 12, padding: '10px 16px', marginTop: 8,
+              background: 'transparent', border: '1.5px solid rgba(244, 63, 94, 0.25)',
+              borderRadius: 10, color: '#f43f5e', cursor: 'pointer', fontWeight: 700,
+              letterSpacing: '0.04em', transition: 'all 0.2s',
+            }}
+          >
+            <X style={{ width: 14, height: 14 }} />
+            Cancel Subscription
+          </button>
+        ) : (
+          <div data-testid="cancel-confirm-box" style={{
+            marginTop: 8, padding: 14, borderRadius: 10,
+            background: 'rgba(244, 63, 94, 0.06)',
+            border: '1.5px solid rgba(244, 63, 94, 0.2)',
+          }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: '#f43f5e', marginBottom: 6 }}>
+              Are you sure?
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 12, lineHeight: 1.5 }}>
+              Your access will remain active until the end of your current billing period.
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                onClick={handleCancel}
+                disabled={canceling}
+                data-testid="cancel-confirm-yes"
+                style={{
+                  flex: 1, padding: '8px 12px', borderRadius: 8, border: 'none',
+                  background: '#f43f5e', color: '#fff', fontSize: 12, fontWeight: 800,
+                  cursor: canceling ? 'wait' : 'pointer', display: 'flex',
+                  alignItems: 'center', justifyContent: 'center', gap: 6,
+                }}
+              >
+                {canceling ? <Loader2 className="animate-spin" style={{ width: 13, height: 13 }} /> : null}
+                {canceling ? 'Canceling...' : 'Yes, Cancel'}
+              </button>
+              <button
+                onClick={() => setShowCancelConfirm(false)}
+                data-testid="cancel-confirm-no"
+                style={{
+                  flex: 1, padding: '8px 12px', borderRadius: 8,
+                  border: '1.5px solid rgba(255,255,255,0.1)',
+                  background: 'transparent', color: 'var(--text-secondary)',
+                  fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                }}
+              >
+                Keep Plan
+              </button>
+            </div>
           </div>
         )}
       </div>
