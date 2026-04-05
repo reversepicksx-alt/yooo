@@ -25,6 +25,7 @@ import { GuideTab } from './components/app/GuideTab';
 import { ProfileTab } from './components/app/ProfileTab';
 import { TrackingTab } from './components/app/TrackingTab';
 import { ManualSearch } from './components/app/ManualSearch';
+import { IntelTab } from './components/app/IntelTab';
 
 export default function App() {
   const [auth, setAuth] = useState(null);
@@ -2190,6 +2191,11 @@ export default function App() {
         )}
 
 
+        {/* INTEL TAB — Owner Only */}
+        {activeTab === 'intel' && isOwner && (
+          <IntelTab auth={auth} />
+        )}
+
         {/* PROFILE TAB */}
         {activeTab === 'profile' && (
           <ProfileTab
@@ -2218,6 +2224,13 @@ export default function App() {
             <Activity />
             <span>Tracking</span>
           </button>
+          {isOwner && (
+            <button className={`nav-item ${activeTab === 'intel' ? 'active' : ''}`}
+              onClick={() => setActiveTab('intel')} data-testid="nav-intel">
+              <BarChart3 />
+              <span>Intel</span>
+            </button>
+          )}
           <button className={`nav-item ${activeTab === 'profile' ? 'active' : ''}`}
             onClick={() => setActiveTab('profile')} data-testid="nav-profile">
             <User />

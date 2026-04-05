@@ -30,6 +30,7 @@ from routes.square import router as square_router
 from routes.admin import router as admin_router
 from routes.miss_analysis import router as miss_router
 from routes.manual_search import router as manual_router
+from routes.intel import router as intel_router
 from cache import seed_cache, background_refresh_loop
 from basketball_cache import seed_bball_cache, bball_background_refresh, get_bball_cache_status
 
@@ -48,6 +49,7 @@ app.include_router(square_router)
 app.include_router(admin_router)
 app.include_router(miss_router)
 app.include_router(manual_router)
+app.include_router(intel_router)
 
 
 # ── Startup: seed grants for lifetime VIPs ──
