@@ -156,10 +156,40 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 - Enhanced `_generate_aliases` to strip "Al-" prefixes and trailing qualifiers (saudi fc, jeddah, etc.)
 - All 9 test variants verified: Taawoun→Al Taawon, Hilal→Al-Hilal Saudi FC, etc.
 
+### Auto-Analysis Token Drain Fix (April 5, 2026) — P0 Critical
+- Removed ALL 4 `auto_analyze_miss_background` triggers from picks.py (3) and miss_analysis.py (1)
+- These were firing on every miss settlement, draining AI tokens and API quota
+- Function still exists for manual on-demand analysis via API
+- Verified: 0 auto-triggers remain, backend starts clean
+
+### GPT-5.2 Anchor Brain Upgrade (April 5, 2026) — P0
+- Upgraded GPT-4.1-mini → GPT-5.2 across all 3 prediction pipelines (soccer, basketball, miss analysis)
+- GPT-5.2 is the premium "anchor brain" — best math/reasoning scores (100% AIME, 52.9% ARC-AGI-2)
+- Lineup: GPT-5.2 (anchor) + Gemini 2.0 Flash (consensus) + Grok 4.1 Fast (consensus)
+- Updated all labels, retry logic, and frontend model display
+
+### Calibration Engine v2 — Granular Feedback Loop (April 5, 2026) — P1
+- Full rewrite of `calibration.py` with new tracking dimensions:
+  - **Position inference**: GK/DEF/MID/ATK (soccer), Guard/Big (basketball) from prop type
+  - **Game context**: Blowout/close/normal classification from final scores
+  - **Prop+Position combos**: e.g., "saves for goalkeepers" accuracy
+  - **Prop+Context combos**: e.g., "saves in blowout games" patterns
+  - **League names**: Human-readable league labels in prompts
+- Generates actionable "reasons WHY" explanations, not just numbers
+- Now integrated into BOTH soccer AND basketball prediction pipelines
+- Basketball: calibration_context injected into prompt + calibration guards applied post-consensus
+
+## AI Engine Configuration
+- **AI Lineup**: GPT-5.2 (anchor) + Gemini 2.0 Flash + Grok 4.1 Fast
+- **Temperature**: 0 (deterministic)
+- **Key sources**: GPT-5.2 + Gemini via Emergent LLM Key, Grok via xAI API Key
+
+
 ## Upcoming Tasks (P1)
 - Slip correlation analysis
 
 ## Future Backlog
+- Route Prediction API calls through MongoDB Cache (P2)
 - ScanTab extraction from App.js (P3)
 - Backend function refactoring (P3)
 - Auth cookie migration (P3)
