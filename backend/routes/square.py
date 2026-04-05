@@ -657,7 +657,19 @@ async def cancel_subscription(req: CancelRequest):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Cancel error: {str(e)}")
+        err_str = str(e)
+        # Handle "already has a pending cancel date" — treat as success
+        if "pending cancel" in err_str.lower() or "already" in err_str.lower():
+            await db.square_subscriptions.update_one(
+                {"email": email_lower},
+                {"$set": {
+                    "status": "CANCELED",
+                    "canceledAt": datetime.now(timezone.utc).isoformat(),
+                    "updatedAt": datetime.now(timezone.utc).isoformat(),
+                }}
+            )
+            return {"success": True, "status": "CANCELED", "message": "Subscription cancellation is already pending."}
+        raise HTTPException(status_code=500, detail="Failed to cancel subscription. Please try again or contact support.")
 
 
 async def _activate_pending_checkout(pending: dict, source: str = "webhook"):
