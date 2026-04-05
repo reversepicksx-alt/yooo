@@ -326,6 +326,11 @@ async def predict(req: PredictionRequest):
                         "duels_total": stats.get("duels", {}).get("total"),
                         "duels_won": stats.get("duels", {}).get("won"),
                         "goals_saves": stats.get("goals", {}).get("saves"),
+                        "goals_total": stats.get("goals", {}).get("total"),
+                        "goals_assists": stats.get("goals", {}).get("assists"),
+                        "passes_crosses": stats.get("passes", {}).get("cross"),
+                        "tackles_clearances": stats.get("tackles", {}).get("clearances"),
+                        "cards_yellow": stats.get("cards", {}).get("yellow"),
                     }
                     stat_field_map = {
                         "goals": "goals_total", "assists": "goals_assists",
@@ -358,7 +363,8 @@ async def predict(req: PredictionRequest):
         PROP_STAT_KEYS = {
             "pass_attempts": ("passes", "total"), "shots": ("shots", "total"),
             "shots_on_target": ("shots", "on"), "tackles": ("tackles", "total"),
-            "key_passes": ("passes", "key"), "saves": ("goals", "saves"),
+            "key_passes": ("passes", "key"), "shots_assisted": ("passes", "key"),
+            "saves": ("goals", "saves"),
             "interceptions": ("tackles", "interceptions"), "blocks": ("tackles", "blocks"),
             "dribbles": ("dribbles", "attempts"), "fouls_drawn": ("fouls", "drawn"),
             "goals": ("goals", "total"), "assists": ("goals", "assists"),
@@ -797,6 +803,7 @@ async def predict(req: PredictionRequest):
                 "shots_on_target": "shots_on",
                 "tackles": "tackles_total",
                 "key_passes": "passes_key",
+                "shots_assisted": "passes_key",
                 "saves": "goals_saves",
                 "interceptions": "tackles_interceptions",
                 "blocks": "tackles_blocks",
@@ -841,7 +848,8 @@ async def predict(req: PredictionRequest):
         if player_game_logs:
             gl_target_field_map = {
                 "pass_attempts": "passes_total", "shots": "shots_total", "shots_on_target": "shots_on",
-                "tackles": "tackles_total", "key_passes": "passes_key", "saves": "goals_saves",
+                "tackles": "tackles_total", "key_passes": "passes_key", "shots_assisted": "passes_key",
+                "saves": "goals_saves",
                 "interceptions": "tackles_interceptions", "blocks": "tackles_blocks",
                 "dribbles": "dribbles_attempts", "fouls_drawn": "fouls_drawn",
             }
@@ -871,11 +879,19 @@ async def predict(req: PredictionRequest):
                 "shots_on_target": ("shots", "on"),
                 "tackles": ("tackles", "total"),
                 "key_passes": ("passes", "key"),
+                "shots_assisted": ("passes", "key"),
                 "saves": ("goals", "saves"),
                 "interceptions": ("tackles", "interceptions"),
                 "blocks": ("tackles", "blocks"),
                 "dribbles": ("dribbles", "attempts"),
                 "fouls_drawn": ("fouls", "drawn"),
+                "crosses": ("passes", "cross"),
+                "clearances": ("tackles", "clearances"),
+                "goals": ("goals", "total"),
+                "assists": ("goals", "assists"),
+                "duels_won": ("duels", "won"),
+                "yellow_cards": ("cards", "yellow"),
+                "fouls_committed": ("fouls", "committed"),
             }
             for stat_entry in player_stats.get("statistics", []):
                 league_name = stat_entry.get("league", {}).get("name", "Unknown")
@@ -954,11 +970,19 @@ async def predict(req: PredictionRequest):
                                     "shots_on_target": stats.get("shots", {}).get("on"),
                                     "tackles": stats.get("tackles", {}).get("total"),
                                     "key_passes": stats.get("passes", {}).get("key"),
+                                    "shots_assisted": stats.get("passes", {}).get("key"),
                                     "saves": stats.get("goals", {}).get("saves"),
                                     "interceptions": stats.get("tackles", {}).get("interceptions"),
                                     "blocks": stats.get("tackles", {}).get("blocks"),
                                     "dribbles": stats.get("dribbles", {}).get("attempts"),
                                     "fouls_drawn": stats.get("fouls", {}).get("drawn"),
+                                    "crosses": stats.get("passes", {}).get("cross"),
+                                    "clearances": stats.get("tackles", {}).get("clearances"),
+                                    "goals": stats.get("goals", {}).get("total"),
+                                    "assists": stats.get("goals", {}).get("assists"),
+                                    "duels_won": stats.get("duels", {}).get("won"),
+                                    "yellow_cards": stats.get("cards", {}).get("yellow"),
+                                    "fouls_committed": stats.get("fouls", {}).get("committed"),
                                 }
                                 return {
                                     "date": fixture_info.get("fixture", {}).get("date", ""),
@@ -1322,9 +1346,14 @@ JSON: {"projectedValue":0,"recommendation":"over|under","confidenceScore":0,"con
         if player_game_logs:
             target_field_map = {
                 "pass_attempts": "passes_total", "shots": "shots_total", "shots_on_target": "shots_on",
-                "tackles": "tackles_total", "key_passes": "passes_key", "saves": "goals_saves",
+                "tackles": "tackles_total", "key_passes": "passes_key", "shots_assisted": "passes_key",
+                "saves": "goals_saves",
                 "interceptions": "tackles_interceptions", "blocks": "tackles_blocks",
                 "dribbles": "dribbles_attempts", "fouls_drawn": "fouls_drawn",
+                "crosses": "passes_crosses", "clearances": "tackles_clearances",
+                "goals": "goals_total", "assists": "goals_assists",
+                "duels_won": "duels_won", "yellow_cards": "cards_yellow",
+                "fouls_committed": "fouls_committed",
             }
             target_field = target_field_map.get(req.propType, "passes_total")
             values = [g.get(target_field) for g in player_game_logs if g.get(target_field) is not None]
@@ -2089,9 +2118,14 @@ Analyze ALL data thoroughly. Return JSON only."""
         total_game_logs = len(player_game_logs)
         gl_target_field_map_check = {
             "pass_attempts": "passes_total", "shots": "shots_total", "shots_on_target": "shots_on",
-            "tackles": "tackles_total", "key_passes": "passes_key", "saves": "goals_saves",
+            "tackles": "tackles_total", "key_passes": "passes_key", "shots_assisted": "passes_key",
+            "saves": "goals_saves",
             "interceptions": "tackles_interceptions", "blocks": "tackles_blocks",
             "dribbles": "dribbles_attempts", "fouls_drawn": "fouls_drawn",
+            "crosses": "passes_crosses", "clearances": "tackles_clearances",
+            "goals": "goals_total", "assists": "goals_assists",
+            "duels_won": "duels_won", "yellow_cards": "cards_yellow",
+            "fouls_committed": "fouls_committed",
         }
         target_check = gl_target_field_map_check.get(req.propType, "passes_total")
         games_with_data = sum(1 for g in player_game_logs if g.get(target_check) is not None)
