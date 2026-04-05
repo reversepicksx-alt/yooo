@@ -19,7 +19,7 @@ export function IntelTab({ auth }) {
       .then(d => {
         if (d.error) { toast.error(d.error); return; }
         setRows(d.rows || []);
-        setMeta({ total: d.total, hits: d.hits, misses: d.misses, rate: d.rate });
+        setMeta({ total: d.total || 0, hits: d.hits || 0, misses: d.misses || 0, rate: d.rate || 0 });
       })
       .catch(() => toast.error('Failed to load intel'))
       .finally(() => setLoading(false));

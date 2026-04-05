@@ -367,85 +367,103 @@ async def intel_sheet(email: str, token: str, sport: str = "soccer"):
     rows = []
     total_h, total_m = 0, 0
     for p in picks:
-        res = p.get("result", "miss")
-        if res == "hit":
-            total_h += 1
-        else:
-            total_m += 1
+        try:
+            res = p.get("result", "miss")
+            if res == "hit":
+                total_h += 1
+            else:
+                total_m += 1
 
-        proj = p.get("projectedValue", 0) or 0
-        actual = p.get("actualValue", 0) or 0
-        line = p.get("line", 0) or 0
-        error = round(actual - proj, 1) if proj else 0
-        rec = p.get("recommendation", "")
-        conf = p.get("confidenceScore", 0) or 0
-        pt = p.get("propType", "")
-        venue = p.get("venue", "")
-        context = _game_context(p.get("matchScore"), sport)
-        league_id = str(p.get("leagueId", ""))
-        league_name = LEAGUE_NAMES.get(league_id, league_id)
+            # Safely convert numeric fields
+            def _num(v):
+                if v is None:
+                    return 0
+                try:
+                    return float(v)
+                except (TypeError, ValueError):
+                    return 0
 
-        # Match result
-        score = p.get("matchScore", "")
-        match_result = ""
-        if score and "-" in str(score):
+            proj = _num(p.get("projectedValue"))
+            actual = _num(p.get("actualValue"))
+            line = _num(p.get("line"))
+            error = round(actual - proj, 1) if proj else 0
+            rec = p.get("recommendation", "") or ""
+            conf = int(_num(p.get("confidenceScore")))
+            pt = p.get("propType", "") or ""
+            venue = p.get("venue", "") or ""
+
             try:
-                parts = str(score).split("-")
-                gh, ga = int(parts[0].strip()), int(parts[1].strip())
-                if venue == "home":
-                    match_result = "win" if gh > ga else "loss" if gh < ga else "draw"
-                elif venue == "away":
-                    match_result = "win" if ga > gh else "loss" if ga < gh else "draw"
-            except (ValueError, IndexError):
-                pass
+                context = _game_context(p.get("matchScore"), sport)
+            except Exception:
+                context = ""
 
-        # Position
-        stored_pos = (p.get("position") or "").strip()
-        if stored_pos and stored_pos.upper() in EXACT_POSITIONS:
-            position = stored_pos.upper()
-        elif stored_pos and stored_pos in ("Goalkeeper", "Defender", "Midfielder", "Attacker"):
-            position = GENERIC_POSITION_LABELS.get(stored_pos.lower(), stored_pos)
-        elif stored_pos:
-            position = stored_pos
-        else:
-            position = ""
+            league_id = str(p.get("leagueId", "") or "")
+            league_name = LEAGUE_NAMES.get(league_id, league_id)
 
-        role = (p.get("role") or "").strip()
-        edge = p.get("edgeStrength", "")
+            # Match result
+            score = p.get("matchScore", "") or ""
+            match_result = ""
+            if score and "-" in str(score):
+                try:
+                    parts = str(score).split("-")
+                    gh, ga = int(parts[0].strip()), int(parts[1].strip())
+                    if venue == "home":
+                        match_result = "win" if gh > ga else "loss" if gh < ga else "draw"
+                    elif venue == "away":
+                        match_result = "win" if ga > gh else "loss" if ga < gh else "draw"
+                except (TypeError, ValueError, IndexError):
+                    pass
 
-        # Error direction
-        err_dir = ""
-        if error < -0.5:
-            err_dir = "over"
-        elif error > 0.5:
-            err_dir = "under"
+            # Position
+            stored_pos = (p.get("position") or "").strip()
+            if stored_pos and stored_pos.upper() in EXACT_POSITIONS:
+                position = stored_pos.upper()
+            elif stored_pos and stored_pos in ("Goalkeeper", "Defender", "Midfielder", "Attacker"):
+                position = GENERIC_POSITION_LABELS.get(stored_pos.lower(), stored_pos)
+            elif stored_pos:
+                position = stored_pos
+            else:
+                position = ""
 
-        rows.append({
-            "player": p.get("playerName", ""),
-            "team": p.get("teamName", ""),
-            "opponent": p.get("opponentName", ""),
-            "prop": pt,
-            "line": line,
-            "proj": proj,
-            "actual": actual,
-            "error": error,
-            "errDir": err_dir,
-            "result": res,
-            "rec": rec,
-            "position": position,
-            "role": role,
-            "league": league_name,
-            "venue": venue,
-            "gameType": context,
-            "matchResult": match_result,
-            "score": score,
-            "confidence": conf,
-            "edge": edge,
-            "timestamp": p.get("timestamp", ""),
-        })
+            role = (p.get("role") or "").strip()
+            edge = p.get("edgeStrength", "") or ""
+
+            # Error direction
+            err_dir = ""
+            if error < -0.5:
+                err_dir = "over"
+            elif error > 0.5:
+                err_dir = "under"
+
+            rows.append({
+                "player": p.get("playerName", "") or "",
+                "team": p.get("teamName", "") or "",
+                "opponent": p.get("opponentName", "") or "",
+                "prop": pt,
+                "line": line,
+                "proj": proj,
+                "actual": actual,
+                "error": error,
+                "errDir": err_dir,
+                "result": res,
+                "rec": rec,
+                "position": position,
+                "role": role,
+                "league": league_name,
+                "venue": venue,
+                "gameType": context,
+                "matchResult": match_result,
+                "score": str(score),
+                "confidence": conf,
+                "edge": edge,
+                "timestamp": p.get("timestamp", "") or "",
+            })
+        except Exception as e:
+            print(f"[INTEL SHEET] Skipping pick {p.get('pickId', '?')}: {e}")
+            continue
 
     # Sort by timestamp descending (newest first)
-    rows.sort(key=lambda r: r.get("timestamp", ""), reverse=True)
+    rows.sort(key=lambda r: str(r.get("timestamp", "")), reverse=True)
 
     return {
         "total": total_h + total_m,
