@@ -528,7 +528,32 @@ export default function App() {
       try {
         const result = await scanProp(base64Data, activeSport);
         if (result.picks && result.picks.length > 0) {
-          setScanResults(result.picks);
+          let picks = result.picks;
+          
+          // CREDIT GUARD: If multiple picks are for the SAME player with DIFFERENT stat types,
+          // only keep the first one. Multi-scan is only for DIFFERENT players, same stat type.
+          if (picks.length > 1) {
+            const playerProps = {};
+            const excluded = [];
+            picks.forEach((p, idx) => {
+              const playerKey = (p.extracted?.playerName || '').toLowerCase().trim();
+              if (!playerKey) return;
+              if (playerProps[playerKey]) {
+                // Same player, different prop — mark for exclusion
+                if (playerProps[playerKey].prop !== p.extracted?.propType) {
+                  excluded.push(idx);
+                }
+              } else {
+                playerProps[playerKey] = { idx, prop: p.extracted?.propType };
+              }
+            });
+            if (excluded.length > 0) {
+              setScanExcludedIndices(excluded);
+              toast.warning(`Blocked ${excluded.length} duplicate props for the same player — only 1 stat per player allowed`);
+            }
+          }
+          
+          setScanResults(picks);
           toast.success(`Found ${result.picks.length} prop${result.picks.length > 1 ? 's' : ''} in image`);
         } else {
           setScanError('No player props detected in this image. Try a clearer screenshot.');
@@ -544,6 +569,21 @@ export default function App() {
   };
 
   const handleScanPredict = async (pickData, idx) => {
+    // CREDIT GUARD: Block if same player already has a different stat type predicted
+    if (scanResults && scanResults.length > 1) {
+      const thisPlayer = (pickData.extracted?.playerName || '').toLowerCase().trim();
+      const thisProp = pickData.extracted?.propType;
+      for (let i = 0; i < scanResults.length; i++) {
+        if (i === idx) continue;
+        const otherPlayer = (scanResults[i].extracted?.playerName || '').toLowerCase().trim();
+        const otherProp = scanResults[i].extracted?.propType;
+        if (thisPlayer && thisPlayer === otherPlayer && thisProp !== otherProp && scanPrediction[i]) {
+          toast.error(`${pickData.extracted?.playerName} already has a prediction for ${otherProp} — only 1 stat per player`);
+          return;
+        }
+      }
+    }
+
     const isCombo = pickData.extracted?.isCombo;
 
     if (isCombo) {

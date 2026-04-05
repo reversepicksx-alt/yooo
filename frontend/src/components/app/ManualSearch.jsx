@@ -237,7 +237,6 @@ export function ManualSearch({ onResult, activeSport }) {
                     transition: 'all 0.15s', overflow: 'hidden',
                   }}
                 >
-                  {tm.logo && <img src={tm.logo} alt="" style={{ width: 18, height: 18, borderRadius: 3 }} />}
                   <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tm.name}</span>
                 </button>
               ))}
@@ -284,11 +283,7 @@ export function ManualSearch({ onResult, activeSport }) {
                       transition: 'background 0.15s',
                     }}
                   >
-                    {p.photo ? (
-                      <img src={p.photo} alt="" style={{ width: 24, height: 24, borderRadius: 12, objectFit: 'cover' }} />
-                    ) : (
-                      <User style={{ width: 16, height: 16, color: 'var(--text-muted)' }} />
-                    )}
+                    <User style={{ width: 16, height: 16, color: 'var(--text-muted)' }} />
                     <div>
                       <div style={{ fontWeight: 700 }}>{p.name}</div>
                       <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>
@@ -315,11 +310,7 @@ export function ManualSearch({ onResult, activeSport }) {
               display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px',
               borderRadius: 8, background: 'rgba(16,185,129,0.04)', border: '1px solid rgba(16,185,129,0.1)',
             }}>
-              {selectedPlayer.photo ? (
-                <img src={selectedPlayer.photo} alt="" style={{ width: 32, height: 32, borderRadius: 16 }} />
-              ) : (
-                <User style={{ width: 20, height: 20, color: 'var(--accent)' }} />
-              )}
+              <User style={{ width: 20, height: 20, color: 'var(--accent)' }} />
               <div>
                 <div style={{ fontSize: 13, fontWeight: 800, color: '#fff' }}>{selectedPlayer.name}</div>
                 <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>

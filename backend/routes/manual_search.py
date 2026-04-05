@@ -33,7 +33,7 @@ async def get_teams(league_id: int):
     """Return cached teams for a league, sorted alphabetically."""
     teams = await db.cache_teams.find(
         {"leagueId": league_id},
-        {"_id": 0, "teamId": 1, "name": 1, "code": 1, "logo": 1}
+        {"_id": 0, "teamId": 1, "name": 1, "code": 1}
     ).sort("name", 1).to_list(100)
     if not teams:
         return {"teams": [], "message": "No teams cached for this league."}
@@ -70,7 +70,6 @@ async def search_player(req: PlayerSearchRequest):
                 "name": name,
                 "position": p.get("position", ""),
                 "number": p.get("number"),
-                "photo": p.get("photo", ""),
             })
 
         # Sort: exact matches first, then alphabetically
@@ -101,7 +100,6 @@ async def search_player(req: PlayerSearchRequest):
                 "name": player.get("name", ""),
                 "position": pos,
                 "number": stats[0].get("games", {}).get("number") if stats else None,
-                "photo": player.get("photo", ""),
             })
         return {"players": results[:30]}
     except Exception as e:
