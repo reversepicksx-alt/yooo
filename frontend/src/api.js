@@ -172,6 +172,10 @@ export async function getCalibrationInsights(email, token) {
   return apiCall('/api/calibration/insights', { method: 'POST', body: JSON.stringify({ email, token }) });
 }
 
+export async function getCalibrationStats(email, token) {
+  return apiCall(`/api/admin/calibration?email=${encodeURIComponent(email)}&token=${encodeURIComponent(token)}`);
+}
+
 
 export async function scanProp(imageBase64, sport = 'soccer') {
   return apiCall('/api/scan-prop', {

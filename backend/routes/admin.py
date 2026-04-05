@@ -97,3 +97,57 @@ async def get_square_config():
         "appId": get_dynamic_setting("SQUARE_APPLICATION_ID"),
         "locationId": get_dynamic_setting("SQUARE_LOCATION_ID"),
     }
+
+
+@router.get("/calibration")
+async def get_calibration(email: str, token: str):
+    """Owner-only: Get calibration stats from settled picks."""
+    await verify_owner(email, token)
+
+    from calibration import get_calibration_stats
+    soccer_stats = await get_calibration_stats("soccer", force_refresh=True)
+    basketball_stats = await get_calibration_stats("basketball", force_refresh=True)
+
+    def summarize(stats):
+        if not stats:
+            return None
+        result = {
+            "total": stats.get("total", 0),
+            "overallHitRate": stats.get("overall_hit_rate", 0),
+            "overHitRate": stats.get("over_hit_rate", 0),
+            "underHitRate": stats.get("under_hit_rate", 0),
+            "byProp": {},
+            "byVenue": {},
+            "byLeague": {},
+            "byConfidence": {},
+            "byLineRange": {},
+            "byPropVenue": {},
+            "blowoutMisses": len(stats.get("blowout_misses", [])),
+            "closeGameHitRate": 0,
+        }
+        for k, v in stats.get("by_prop", {}).items():
+            h, m = v.get("hit", 0), v.get("miss", 0)
+            t = h + m
+            errs = v.get("errors", [])
+            result["byProp"][k] = {
+                "hits": h, "misses": m, "total": t,
+                "rate": round(h/t*100, 1) if t else 0,
+                "avgError": round(sum(errs)/len(errs), 1) if errs else 0,
+            }
+        for section, src_key in [("byVenue", "by_venue"), ("byLeague", "by_league"),
+                                  ("byConfidence", "by_confidence_band"), ("byLineRange", "by_line_range"),
+                                  ("byPropVenue", "by_prop_venue")]:
+            for k, v in stats.get(src_key, {}).items():
+                h, m = v.get("hit", 0), v.get("miss", 0)
+                t = h + m
+                result[section][k] = {"hits": h, "misses": m, "total": t, "rate": round(h/t*100, 1) if t else 0}
+        cg = stats.get("close_game_results", {})
+        cg_h, cg_m = cg.get("hit", 0), cg.get("miss", 0)
+        cg_t = cg_h + cg_m
+        result["closeGameHitRate"] = round(cg_h/cg_t*100, 1) if cg_t else 0
+        return result
+
+    return {
+        "soccer": summarize(soccer_stats),
+        "basketball": summarize(basketball_stats),
+    }

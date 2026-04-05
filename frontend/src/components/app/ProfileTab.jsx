@@ -1,10 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import {
-  User, Shield, BarChart3, Mail, Lock, Loader2, Zap, Activity,
+import { User, Shield, BarChart3, Mail, Lock, Loader2, Zap, Activity,
   LogOut, Settings, Edit3, Eye, EyeOff, Check, X,
-  CreditCard, ArrowRightLeft, Calendar, AlertCircle
+  CreditCard, ArrowRightLeft, Calendar, AlertCircle, TrendingUp, TrendingDown
 } from 'lucide-react';
-import { getSquareSubscriptionStatus, changeSquarePlan, cancelSquareSubscription, squareResubscribeCheckout } from '../../api';
+import { getSquareSubscriptionStatus, changeSquarePlan, cancelSquareSubscription, squareResubscribeCheckout, getCalibrationStats } from '../../api';
 import { toast } from 'sonner';
 
 const PLAN_OPTIONS = [
@@ -274,6 +273,147 @@ function SubscriptionManager({ email }) {
   );
 }
 
+function CalibrationDashboard({ email, token }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [sportTab, setSportTab] = useState('soccer');
+
+  async function fetchCalibration() {
+    setLoading(true);
+    try {
+      const result = await getCalibrationStats(email, token);
+      setData(result);
+    } catch (err) {
+      toast.error('Failed to load calibration data');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { if (expanded && !data) fetchCalibration(); }, [expanded]);
+
+  const stats = data?.[sportTab];
+
+  function RateBar({ label, hits, total, rate }) {
+    const color = rate >= 70 ? 'var(--accent)' : rate >= 50 ? '#f59e0b' : '#f43f5e';
+    return (
+      <div style={{ marginBottom: 6 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, fontWeight: 700, marginBottom: 2 }}>
+          <span style={{ color: 'var(--text-secondary)' }}>{label}</span>
+          <span style={{ color }}>{rate}% <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>({hits}/{total})</span></span>
+        </div>
+        <div style={{ height: 4, borderRadius: 2, background: 'rgba(255,255,255,0.06)' }}>
+          <div style={{ height: '100%', borderRadius: 2, width: `${Math.min(rate, 100)}%`, background: color, transition: 'width 0.5s ease' }} />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="profile-section" data-testid="calibration-dashboard">
+      <button onClick={() => setExpanded(!expanded)} style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%',
+        background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--text-primary)',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <BarChart3 style={{ width: 16, height: 16, color: 'var(--accent)' }} />
+          <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
+            Calibration Engine
+          </span>
+        </div>
+        {expanded ? <X style={{ width: 14, height: 14, color: 'var(--text-muted)' }} /> : <Settings style={{ width: 14, height: 14, color: 'var(--text-muted)' }} />}
+      </button>
+
+      {expanded && (
+        <div style={{ marginTop: 12 }}>
+          {loading ? (
+            <div style={{ textAlign: 'center', padding: 20 }}><Loader2 className="animate-spin" style={{ width: 20, height: 20, color: 'var(--accent)' }} /></div>
+          ) : !stats ? (
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'center', padding: 16 }}>No settled picks yet</div>
+          ) : (
+            <>
+              {/* Sport toggle */}
+              <div style={{ display: 'flex', gap: 4, marginBottom: 12 }}>
+                {['soccer', 'basketball'].map(s => (
+                  <button key={s} onClick={() => setSportTab(s)} style={{
+                    flex: 1, padding: '5px 0', borderRadius: 8, border: '1.5px solid',
+                    borderColor: sportTab === s ? 'var(--accent)' : 'rgba(255,255,255,0.06)',
+                    background: sportTab === s ? 'var(--accent-dim)' : 'transparent',
+                    color: sportTab === s ? 'var(--accent)' : 'var(--text-muted)',
+                    fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', cursor: 'pointer',
+                  }}>{s}</button>
+                ))}
+              </div>
+
+              {/* Overall */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6, marginBottom: 12 }}>
+                {[
+                  { label: 'Overall', value: `${stats.overallHitRate}%`, sub: `${stats.total} picks` },
+                  { label: 'OVER', value: `${stats.overHitRate}%`, icon: <TrendingUp style={{ width: 10, height: 10 }} /> },
+                  { label: 'UNDER', value: `${stats.underHitRate}%`, icon: <TrendingDown style={{ width: 10, height: 10 }} /> },
+                ].map((item, i) => (
+                  <div key={i} style={{
+                    padding: '8px 6px', borderRadius: 8, textAlign: 'center',
+                    background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)',
+                  }}>
+                    <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>{item.label}</div>
+                    <div style={{ fontSize: 16, fontWeight: 900, color: parseFloat(item.value) >= 70 ? 'var(--accent)' : parseFloat(item.value) >= 50 ? '#f59e0b' : '#f43f5e' }}>
+                      {item.icon} {item.value}
+                    </div>
+                    {item.sub && <div style={{ fontSize: 8, color: 'var(--text-muted)', marginTop: 1 }}>{item.sub}</div>}
+                  </div>
+                ))}
+              </div>
+
+              {/* By Prop Type */}
+              <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>By Prop Type</div>
+              {Object.entries(stats.byProp).map(([k, v]) => (
+                <RateBar key={k} label={k.replace(/_/g, ' ')} hits={v.hits} total={v.total} rate={v.rate} />
+              ))}
+
+              {/* By Venue */}
+              <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 10, marginBottom: 6 }}>By Venue</div>
+              {Object.entries(stats.byVenue).map(([k, v]) => (
+                <RateBar key={k} label={k.toUpperCase()} hits={v.hits} total={v.total} rate={v.rate} />
+              ))}
+
+              {/* By Confidence Band */}
+              <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 10, marginBottom: 6 }}>By Confidence</div>
+              {Object.entries(stats.byConfidence).map(([k, v]) => (
+                <RateBar key={k} label={k.replace(/_/g, ' ')} hits={v.hits} total={v.total} rate={v.rate} />
+              ))}
+
+              {/* By Line Range */}
+              <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 10, marginBottom: 6 }}>By Line Range</div>
+              {Object.entries(stats.byLineRange).map(([k, v]) => (
+                <RateBar key={k} label={k.replace(/_/g, ' ')} hits={v.hits} total={v.total} rate={v.rate} />
+              ))}
+
+              {/* Context Alerts */}
+              <div style={{ marginTop: 12, padding: 10, borderRadius: 8, background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', fontSize: 10, lineHeight: 1.6 }}>
+                <div style={{ fontWeight: 800, marginBottom: 4, fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)' }}>Context Alerts</div>
+                <div style={{ color: 'var(--text-secondary)' }}>Blowout misses: <span style={{ fontWeight: 800, color: stats.blowoutMisses > 0 ? '#f43f5e' : 'var(--accent)' }}>{stats.blowoutMisses}</span></div>
+                <div style={{ color: 'var(--text-secondary)' }}>Close game hit rate: <span style={{ fontWeight: 800, color: stats.closeGameHitRate >= 70 ? 'var(--accent)' : '#f59e0b' }}>{stats.closeGameHitRate}%</span></div>
+              </div>
+
+              {/* Refresh */}
+              <button onClick={fetchCalibration} disabled={loading} style={{
+                width: '100%', marginTop: 10, padding: '7px 0', borderRadius: 8,
+                border: '1.5px solid rgba(16,185,129,0.15)', background: 'transparent',
+                color: 'var(--accent)', fontSize: 10, fontWeight: 800, cursor: 'pointer',
+                letterSpacing: '0.06em', textTransform: 'uppercase',
+              }}>
+                {loading ? 'Loading...' : 'Refresh Data'}
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ProfileTab({
   auth, savedPicks, apiStatus, isOwner,
   profileNewPw, setProfileNewPw, profileConfirmPw, setProfileConfirmPw,
@@ -462,6 +602,11 @@ export function ProfileTab({
         style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, color: 'var(--danger)' }}>
         <LogOut style={{ width: 16, height: 16 }} /> Log Out
       </button>
+
+      {/* Owner-only Calibration Dashboard */}
+      {isOwner && (
+        <CalibrationDashboard email={auth.email} token={auth.token} />
+      )}
     </div>
   );
 }
