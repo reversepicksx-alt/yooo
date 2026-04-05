@@ -689,7 +689,7 @@ DECISION RULES (FOLLOW STRICTLY):
             if cal_stats:
                 calibration_context = generate_calibration_prompt(
                     cal_stats, req.propType, "over",
-                    req.line, match_odds,
+                    req.line, None,
                     league_id=12, venue=player_venue,
                     position=None, sport="basketball"
                 )
@@ -845,120 +845,39 @@ Analyze the statistical verdict, per-minute projection, and over-rate FIRST. The
                 print(f"[BBALL MULTI-AI] {label} failed: {e}")
                 return None
 
-        ai_tasks = [
-            aio.ensure_future(call_ai("gemini-2.0-flash", "gemini", "gemini")),
-            aio.ensure_future(call_ai("gpt-5.2", "gpt52")),
-            aio.ensure_future(call_grok("grok", "grok-4-1-fast-non-reasoning")),
-        ]
+        # =============================================
+        # GPT-5.2 SOLO — Elite Calibration replaces consensus
+        # =============================================
+        gpt52_result = await aio.wait_for(
+            call_ai("gpt-5.2", "gpt52"),
+            timeout=45
+        )
 
-        # FORCE-3-MODELS: Wait for ALL 3 AIs, retry failures once
-        ai_results = []
-        deadline = t0 + 48
+        if not gpt52_result or not isinstance(gpt52_result, dict) or not gpt52_result.get("projectedValue"):
+            print("[BBALL SOLO-AI] GPT-5.2 first attempt failed, retrying...")
+            gpt52_result = await aio.wait_for(
+                call_ai("gpt-5.2", "gpt52"),
+                timeout=40
+            )
 
-        # First pass: wait for all 3 to complete
-        done, pending = await aio.wait(ai_tasks, timeout=max(0.1, deadline - _t.time()))
-        for t in done:
-            try:
-                r = t.result()
-                if r and isinstance(r, dict) and r.get("projectedValue") is not None:
-                    pv = r.get("projectedValue", 0)
-                    if isinstance(pv, (int, float)) and pv >= 0:
-                        ai_results.append(r)
-            except Exception:
-                pass
-        for t in pending:
-            t.cancel()
+        if not gpt52_result or not isinstance(gpt52_result, dict):
+            raise ValueError("GPT-5.2 failed to produce a prediction")
 
-        # Retry any failed models (one retry each, only if time allows)
-        responded_sources = {r.get("_source") for r in ai_results}
-        if len(ai_results) < 3 and _t.time() < deadline - 10:
-            retry_tasks = []
-            if "gemini" not in responded_sources:
-                retry_tasks.append(aio.ensure_future(call_ai("gemini-2.0-flash", "gemini", "gemini")))
-                print("[BBALL MULTI-AI] Retrying gemini...")
-            if "gpt52" not in responded_sources:
-                retry_tasks.append(aio.ensure_future(call_ai("gpt-5.2", "gpt52")))
-                print("[BBALL MULTI-AI] Retrying gpt52...")
-            if "grok" not in responded_sources:
-                retry_tasks.append(aio.ensure_future(call_grok("grok", "grok-4-1-fast-non-reasoning")))
-                print("[BBALL MULTI-AI] Retrying grok...")
+        pv = gpt52_result.get("projectedValue", 0)
+        if not isinstance(pv, (int, float)) or pv < 0:
+            raise ValueError(f"GPT-5.2 returned invalid projection: {pv}")
 
-            if retry_tasks:
-                done_retry, pending_retry = await aio.wait(retry_tasks, timeout=max(0.1, deadline - _t.time()))
-                for t in done_retry:
-                    try:
-                        r = t.result()
-                        if r and isinstance(r, dict) and r.get("projectedValue") is not None:
-                            pv = r.get("projectedValue", 0)
-                            if isinstance(pv, (int, float)) and pv >= 0:
-                                ai_results.append(r)
-                    except Exception:
-                        pass
-                for t in pending_retry:
-                    t.cancel()
+        print(f"[BBALL TIMING] GPT-5.2 done: {_t.time()-t0:.1f}s, proj={pv}")
 
-        print(f"[BBALL TIMING] AIs done: {_t.time()-t0:.1f}s, {len(ai_results)}/3 succeeded ({', '.join(r.get('_source','?') for r in ai_results)})")
-
-        valid_preds = []
-        for i, r in enumerate(ai_results):
-            if isinstance(r, dict) and r.get("projectedValue") is not None:
-                pv = r.get("projectedValue", 0)
-                if isinstance(pv, (int, float)) and pv >= 0:
-                    # ENFORCE: each model's recommendation MUST match its projected value vs line
-                    r["recommendation"] = "over" if pv > req.line else "under"
-                    valid_preds.append(r)
-                    print(f"[BBALL MULTI-AI] {r.get('_source','AI'+str(i))}: proj={pv} rec={r.get('recommendation')} conf={r.get('confidenceScore')}")
-
-        if not valid_preds:
-            raise ValueError("All AI models failed to produce predictions")
-
-        # MERGE: Weighted consensus
-        prediction = valid_preds[0].copy()
-
-        if len(valid_preds) > 1:
-            proj_values = [p.get("projectedValue", 0) for p in valid_preds if p.get("projectedValue") is not None]
-            avg_proj = round(sum(proj_values) / len(proj_values), 1)
-            prediction["projectedValue"] = avg_proj
-            prediction["recommendation"] = "over" if avg_proj > req.line else "under"
-
-            conf_values = []
-            for p in valid_preds:
-                c = p.get("confidenceScore", 50)
-                if isinstance(c, (int, float)):
-                    conf_values.append(c * 100 if c <= 1 else c)
-            prediction["confidenceScore"] = round(sum(conf_values) / len(conf_values)) if conf_values else 50
-
-            grok_pred = next((p for p in valid_preds if p.get("_source") == "grok"), None)
-            for field in ["tacticalBreakdown", "reasoning", "sharpSummary", "scenarioAnalysis", "keyEvidence"]:
-                if grok_pred and len(str(grok_pred.get(field, ""))) > 50:
-                    prediction[field] = grok_pred[field]
-                else:
-                    best = max(valid_preds, key=lambda p, f=field: len(str(p.get(f, ""))))
-                    prediction[field] = best.get(field, "")
-
-            recs = [p.get("recommendation", "over") for p in valid_preds]
-            over_count = sum(1 for r in recs if r == "over")
-            under_count = len(recs) - over_count
-            if all(r == prediction["recommendation"] for r in recs):
-                consensus = f"Unanimous {prediction['recommendation'].upper()} — {len(valid_preds)}/{len(valid_preds)} AI models agree."
-            else:
-                majority_rec = prediction["recommendation"]
-                dissenters = [p for p in valid_preds if p.get("recommendation") != majority_rec]
-                dissent_reasons = []
-                for d in dissenters:
-                    reason = d.get("sharpSummary") or d.get("reasoning") or ""
-                    if reason:
-                        dissent_reasons.append(reason[:200])
-                dissent_text = " Dissent: " + " | ".join(dissent_reasons) if dissent_reasons else ""
-                consensus = f"Split: {over_count}/{len(valid_preds)} OVER, {under_count}/{len(valid_preds)} UNDER. Consensus → {prediction['recommendation'].upper()}.{dissent_text}"
-            prediction["consensusNote"] = consensus
-        else:
-            pv = prediction.get("projectedValue", req.line)
-            prediction["recommendation"] = "over" if pv > req.line else "under"
-
-        for p in valid_preds:
-            p.pop("_source", None)
+        prediction = gpt52_result.copy()
         prediction.pop("_source", None)
+        prediction["recommendation"] = "over" if pv > req.line else "under"
+
+        cs = prediction.get("confidenceScore", 50)
+        if isinstance(cs, (int, float)):
+            prediction["confidenceScore"] = round(cs * 100 if cs <= 1 else cs)
+        else:
+            prediction["confidenceScore"] = 50
 
         cs = prediction.get("confidenceScore", 50)
         prediction["confidenceLevel"] = "Very High" if cs >= 75 else "High" if cs >= 65 else "Medium" if cs >= 50 else "Low"
@@ -1011,7 +930,7 @@ Analyze the statistical verdict, per-minute projection, and over-rate FIRST. The
         try:
             from calibration import apply_calibration_guards
             prediction = await apply_calibration_guards(
-                prediction, req.propType, req.line, match_odds, player_venue
+                prediction, req.propType, req.line, None, player_venue
             )
         except Exception as e:
             print(f"[BBALL CALIBRATION] Guard error: {e}")
@@ -1128,17 +1047,15 @@ Analyze the statistical verdict, per-minute projection, and over-rate FIRST. The
         consensus_note = prediction.get('consensusNote', '')
 
         all_texts = []
-        for p in valid_preds:
-            src = p.get("_source", "AI")
-            bits = []
-            for field in ["tacticalBreakdown", "reasoning", "scenarioAnalysis", "keyEvidence", "sharpSummary", "gameFlowDynamics"]:
-                val = p.get(field, "")
-                if isinstance(val, dict):
-                    val = json.dumps(val)
-                if val and len(str(val)) > 10:
-                    bits.append(f"{field}: {val}")
-            if bits:
-                all_texts.append(f"[{src}]\n" + "\n".join(bits))
+        bits = []
+        for field in ["tacticalBreakdown", "reasoning", "scenarioAnalysis", "keyEvidence", "sharpSummary", "gameFlowDynamics"]:
+            val = prediction.get(field, "")
+            if isinstance(val, dict):
+                val = json.dumps(val)
+            if val and len(str(val)) > 10:
+                bits.append(f"{field}: {val}")
+        if bits:
+            all_texts.append("[gpt52]\n" + "\n".join(bits))
 
         synthesis_input = "\n\n".join(all_texts)
 

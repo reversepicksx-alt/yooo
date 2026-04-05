@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Loader2, ArrowUpDown, ArrowUp, ArrowDown, ChevronDown, ChevronUp } from 'lucide-react';
+import { Loader2, ArrowUpDown, ArrowUp, ArrowDown, Search, X } from 'lucide-react';
 import { getIntelSheet, backfillPositions } from '../../api';
 import { toast } from 'sonner';
 
@@ -10,10 +10,17 @@ export function IntelTab({ auth }) {
   const [sport, setSport] = useState('soccer');
   const [sortCol, setSortCol] = useState('');
   const [sortDir, setSortDir] = useState('asc');
-  const [filterResult, setFilterResult] = useState('all');
-  const [filterRec, setFilterRec] = useState('all');
-  const [showCal, setShowCal] = useState(true);
   const [backfilling, setBackfilling] = useState(false);
+
+  // Smart filters
+  const [fResult, setFResult] = useState('all');
+  const [fRec, setFRec] = useState('all');
+  const [fPosition, setFPosition] = useState('all');
+  const [fLeague, setFLeague] = useState('all');
+  const [fVenue, setFVenue] = useState('all');
+  const [fGameType, setFGameType] = useState('all');
+  const [fProp, setFProp] = useState('all');
+  const [fOpponent, setFOpponent] = useState('');
 
   function fetchData(s) {
     setLoading(true);
@@ -31,11 +38,9 @@ export function IntelTab({ auth }) {
     setBackfilling(true);
     try {
       const res = await backfillPositions(auth.email, auth.token);
-      if (res.success) {
-        toast.success(`Backfilled ${res.picksUpdated} picks`);
-        fetchData(sport);
-      } else toast.error(res.error || 'Backfill failed');
-    } catch { toast.error('Backfill failed'); }
+      if (res.success) { toast.success(`Backfilled ${res.picksUpdated} picks`); fetchData(sport); }
+      else toast.error(res.error || 'Failed');
+    } catch { toast.error('Failed'); }
     finally { setBackfilling(false); }
   }
 
@@ -46,10 +51,29 @@ export function IntelTab({ auth }) {
     else { setSortCol(col); setSortDir('asc'); }
   }
 
+  // Extract unique values for filter dropdowns
+  const opts = useMemo(() => {
+    const u = (k) => [...new Set(rows.map(r => r[k]).filter(Boolean))].sort();
+    return {
+      positions: u('position'),
+      leagues: u('league'),
+      venues: u('venue'),
+      gameTypes: u('gameType'),
+      props: u('prop'),
+    };
+  }, [rows]);
+
+  // Apply all filters + sorting
   const filtered = useMemo(() => {
     let r = rows;
-    if (filterResult !== 'all') r = r.filter(x => x.result === filterResult);
-    if (filterRec !== 'all') r = r.filter(x => x.rec === filterRec);
+    if (fResult !== 'all') r = r.filter(x => x.result === fResult);
+    if (fRec !== 'all') r = r.filter(x => x.rec === fRec);
+    if (fPosition !== 'all') r = r.filter(x => x.position === fPosition);
+    if (fLeague !== 'all') r = r.filter(x => x.league === fLeague);
+    if (fVenue !== 'all') r = r.filter(x => x.venue === fVenue);
+    if (fGameType !== 'all') r = r.filter(x => x.gameType === fGameType);
+    if (fProp !== 'all') r = r.filter(x => x.prop === fProp);
+    if (fOpponent) r = r.filter(x => (x.opponent || '').toLowerCase().includes(fOpponent.toLowerCase()));
     if (sortCol) {
       r = [...r].sort((a, b) => {
         let va = a[sortCol], vb = b[sortCol];
@@ -59,59 +83,22 @@ export function IntelTab({ auth }) {
       });
     }
     return r;
-  }, [rows, sortCol, sortDir, filterResult, filterRec]);
+  }, [rows, sortCol, sortDir, fResult, fRec, fPosition, fLeague, fVenue, fGameType, fProp, fOpponent]);
 
-  // Compute calibration aggregates from rows
-  const cal = useMemo(() => {
-    if (!rows.length) return null;
-    const agg = (key) => {
-      const map = {};
-      rows.forEach(r => {
-        const v = r[key] || '';
-        if (!v) return;
-        if (!map[v]) map[v] = { hit: 0, miss: 0, push: 0, errSum: 0 };
-        map[v][r.result] = (map[v][r.result] || 0) + 1;
-        map[v].errSum += r.error || 0;
-      });
-      return Object.entries(map)
-        .map(([k, v]) => {
-          const t = v.hit + v.miss + v.push;
-          return { label: k, hits: v.hit, total: t, rate: t > 0 ? Math.round(v.hit / t * 1000) / 10 : 0, avgErr: t > 0 ? Math.round(v.errSum / t * 10) / 10 : 0 };
-        })
-        .filter(x => x.total >= 2)
-        .sort((a, b) => a.rate - b.rate);
-    };
+  // Filtered stats
+  const fStats = useMemo(() => {
+    const h = filtered.filter(r => r.result === 'hit').length;
+    const m = filtered.filter(r => r.result === 'miss').length;
+    const t = h + m;
+    return { hits: h, misses: m, total: t, rate: t > 0 ? Math.round(h / t * 1000) / 10 : 0 };
+  }, [filtered]);
 
-    // Prop + Rec combo
-    const propRec = {};
-    rows.forEach(r => {
-      const k = `${(r.prop || '').replace(/_/g, ' ')} ${(r.rec || '').toUpperCase()}`;
-      if (!propRec[k]) propRec[k] = { hit: 0, miss: 0, push: 0, errSum: 0 };
-      propRec[k][r.result] = (propRec[k][r.result] || 0) + 1;
-      propRec[k].errSum += r.error || 0;
-    });
-    const propRecArr = Object.entries(propRec)
-      .map(([k, v]) => {
-        const t = v.hit + v.miss + v.push;
-        return { label: k, hits: v.hit, total: t, rate: t > 0 ? Math.round(v.hit / t * 1000) / 10 : 0, avgErr: t > 0 ? Math.round(v.errSum / t * 10) / 10 : 0 };
-      })
-      .filter(x => x.total >= 3)
-      .sort((a, b) => a.rate - b.rate);
+  const hasFilters = fResult !== 'all' || fRec !== 'all' || fPosition !== 'all' || fLeague !== 'all' || fVenue !== 'all' || fGameType !== 'all' || fProp !== 'all' || fOpponent;
 
-    const missingPos = rows.filter(r => !r.position).length;
-
-    return {
-      byPosition: agg('position'),
-      byLeague: agg('league'),
-      byVenue: agg('venue'),
-      byGameType: agg('gameType'),
-      byRec: agg('rec'),
-      byProp: agg('prop').map(x => ({ ...x, label: x.label.replace(/_/g, ' ') })),
-      byMatchResult: agg('matchResult'),
-      propRec: propRecArr,
-      missingPos,
-    };
-  }, [rows]);
+  function clearAll() {
+    setFResult('all'); setFRec('all'); setFPosition('all'); setFLeague('all');
+    setFVenue('all'); setFGameType('all'); setFProp('all'); setFOpponent('');
+  }
 
   const COLS = [
     { key: 'player', label: 'Player', w: 100 },
@@ -145,7 +132,7 @@ export function IntelTab({ auth }) {
   return (
     <div data-testid="intel-tab" style={{ padding: '0 0 80px' }}>
       {/* Sport Toggle */}
-      <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
         {['soccer', 'basketball'].map(s => (
           <button key={s} data-testid={`intel-sport-${s}`} onClick={() => setSport(s)} style={{
             flex: 1, padding: '8px 0', borderRadius: 8, fontWeight: 800, fontSize: 11,
@@ -157,75 +144,80 @@ export function IntelTab({ auth }) {
         ))}
       </div>
 
-      {/* Summary Bar */}
+      {/* Overall Stats */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
-        <StatBox label="Rate" value={`${meta.rate}%`} color={meta.rate >= 65 ? 'var(--accent)' : meta.rate >= 50 ? '#f59e0b' : '#f43f5e'} sub={`${meta.total} picks`} />
+        <StatBox label="Rate" value={`${meta.rate}%`} color={meta.rate >= 65 ? 'var(--accent)' : meta.rate >= 50 ? '#f59e0b' : '#f43f5e'} sub={`${meta.total} total`} />
         <StatBox label="Hits" value={meta.hits} color="var(--accent)" />
-        <StatBox label="Misses" value={meta.misses} color="#f43f5e" />
+        <StatBox label="Miss" value={meta.misses} color="#f43f5e" />
       </div>
 
-      {/* Calibration Summary Toggle */}
-      {cal && (
-        <div style={{ marginBottom: 8 }}>
-          <button data-testid="toggle-calibration" onClick={() => setShowCal(!showCal)} style={{
-            width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            padding: '7px 10px', borderRadius: 8, cursor: 'pointer',
-            background: 'rgba(16,185,129,0.04)', border: '1px solid rgba(16,185,129,0.15)',
-            color: 'var(--accent)', fontSize: 9, fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase',
-          }}>
-            <span>CALIBRATION BREAKDOWN</span>
-            {showCal ? <ChevronUp style={{ width: 12, height: 12 }} /> : <ChevronDown style={{ width: 12, height: 12 }} />}
-          </button>
-
-          {showCal && (
-            <div data-testid="calibration-section" style={{ padding: '8px 0 4px' }}>
-              {/* Backfill button if positions missing */}
-              {cal.missingPos > 0 && (
-                <button onClick={runBackfill} disabled={backfilling} data-testid="backfill-btn" style={{
-                  width: '100%', padding: '6px 0', marginBottom: 8, borderRadius: 6,
-                  border: '1px solid rgba(245,158,11,0.3)', background: 'rgba(245,158,11,0.06)',
-                  color: '#f59e0b', fontSize: 8, fontWeight: 800, cursor: backfilling ? 'wait' : 'pointer',
-                  letterSpacing: '0.04em', textTransform: 'uppercase',
-                }}>
-                  {backfilling ? 'BACKFILLING...' : `BACKFILL ${cal.missingPos} PICKS MISSING POSITIONS`}
-                </button>
-              )}
-
-              {/* By Position */}
-              <CalRow title="BY POSITION" data={cal.byPosition} />
-
-              {/* By League */}
-              <CalRow title="BY LEAGUE" data={cal.byLeague} />
-
-              {/* By Venue */}
-              <CalRow title="BY VENUE" data={cal.byVenue} fmtLabel={v => v.toUpperCase()} />
-
-              {/* By Game Type */}
-              <CalRow title="BY GAME TYPE" data={cal.byGameType} />
-
-              {/* By Match Result */}
-              <CalRow title="BY MATCH RESULT" data={cal.byMatchResult} />
-
-              {/* By Rec */}
-              <CalRow title="BY DIRECTION" data={cal.byRec} fmtLabel={v => v.toUpperCase()} />
-
-              {/* Prop + Rec combos */}
-              <CalRow title="PROP + DIRECTION (FLIP CANDIDATES)" data={cal.propRec} showErr />
-            </div>
-          )}
-        </div>
+      {/* Backfill */}
+      {rows.filter(r => !r.position).length > 10 && (
+        <button onClick={runBackfill} disabled={backfilling} data-testid="backfill-btn" style={{
+          width: '100%', padding: '6px 0', marginBottom: 8, borderRadius: 6,
+          border: '1px solid rgba(245,158,11,0.3)', background: 'rgba(245,158,11,0.06)',
+          color: '#f59e0b', fontSize: 8, fontWeight: 800, cursor: backfilling ? 'wait' : 'pointer',
+          letterSpacing: '0.04em', textTransform: 'uppercase',
+        }}>
+          {backfilling ? 'BACKFILLING...' : `BACKFILL ${rows.filter(r => !r.position).length} PICKS MISSING POSITIONS`}
+        </button>
       )}
 
-      {/* Filters */}
-      <div style={{ display: 'flex', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
-        <FilterPill label="All" active={filterResult === 'all'} onClick={() => setFilterResult('all')} />
-        <FilterPill label="Hits" active={filterResult === 'hit'} onClick={() => setFilterResult('hit')} color="#10b981" />
-        <FilterPill label="Misses" active={filterResult === 'miss'} onClick={() => setFilterResult('miss')} color="#f43f5e" />
-        <FilterPill label="Push" active={filterResult === 'push'} onClick={() => setFilterResult('push')} color="#f59e0b" />
-        <div style={{ width: 1, background: 'rgba(255,255,255,0.08)', margin: '2px 2px' }} />
-        <FilterPill label="Over" active={filterRec === 'over'} onClick={() => setFilterRec(filterRec === 'over' ? 'all' : 'over')} color="#10b981" />
-        <FilterPill label="Under" active={filterRec === 'under'} onClick={() => setFilterRec(filterRec === 'under' ? 'all' : 'under')} color="#818cf8" />
+      {/* Smart Filters */}
+      <div data-testid="smart-filters" style={{
+        padding: '8px', borderRadius: 10,
+        background: 'rgba(255,255,255,0.015)', border: '1px solid rgba(255,255,255,0.06)',
+        marginBottom: 8,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <Search style={{ width: 10, height: 10, color: 'var(--accent)' }} />
+            <span style={{ fontSize: 8, fontWeight: 800, color: 'var(--accent)', letterSpacing: '0.06em' }}>SEARCH & FILTER</span>
+          </div>
+          {hasFilters && (
+            <button onClick={clearAll} data-testid="clear-filters" style={{
+              display: 'flex', alignItems: 'center', gap: 2, padding: '2px 6px', borderRadius: 4,
+              background: 'rgba(244,63,94,0.1)', border: '1px solid rgba(244,63,94,0.2)',
+              color: '#f43f5e', fontSize: 7, fontWeight: 800, cursor: 'pointer',
+            }}><X style={{ width: 8, height: 8 }} /> CLEAR</button>
+          )}
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 4, marginBottom: 4 }}>
+          <FilterSelect label="Position" value={fPosition} onChange={setFPosition} options={opts.positions} testId="filter-position" />
+          <FilterSelect label="League" value={fLeague} onChange={setFLeague} options={opts.leagues} testId="filter-league" />
+          <FilterSelect label="Venue" value={fVenue} onChange={setFVenue} options={opts.venues} fmtOpt={v => v.toUpperCase()} testId="filter-venue" />
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 4, marginBottom: 4 }}>
+          <FilterSelect label="Game Type" value={fGameType} onChange={setFGameType} options={opts.gameTypes} testId="filter-gametype" />
+          <FilterSelect label="Prop" value={fProp} onChange={setFProp} options={opts.props} fmtOpt={v => v.replace(/_/g, ' ')} testId="filter-prop" />
+          <FilterSelect label="Direction" value={fRec} onChange={setFRec} options={['over', 'under']} fmtOpt={v => v.toUpperCase()} testId="filter-rec" />
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
+          <FilterSelect label="Result" value={fResult} onChange={setFResult} options={['hit', 'miss', 'push']} fmtOpt={v => v.toUpperCase()} testId="filter-result" />
+          <div>
+            <div style={{ fontSize: 7, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 2, textTransform: 'uppercase' }}>Opponent</div>
+            <input
+              type="text" placeholder="Search..." value={fOpponent} onChange={e => setFOpponent(e.target.value)}
+              data-testid="filter-opponent"
+              style={{
+                width: '100%', padding: '4px 6px', borderRadius: 4, fontSize: 9, fontWeight: 700,
+                background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)',
+                color: '#fff', outline: 'none', boxSizing: 'border-box',
+              }}
+            />
+          </div>
+        </div>
       </div>
+
+      {/* Filtered Stats (when filters active) */}
+      {hasFilters && (
+        <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+          <StatBox label="Filtered Rate" value={`${fStats.rate}%`} color={fStats.rate >= 65 ? 'var(--accent)' : fStats.rate >= 50 ? '#f59e0b' : '#f43f5e'} sub={`${fStats.total} picks`} />
+          <StatBox label="Hits" value={fStats.hits} color="var(--accent)" />
+          <StatBox label="Miss" value={fStats.misses} color="#f43f5e" />
+        </div>
+      )}
 
       <div style={{ fontSize: 8, color: 'var(--text-muted)', marginBottom: 6, fontWeight: 600 }}>
         {filtered.length} of {rows.length} picks  |  Tap header to sort
@@ -235,7 +227,7 @@ export function IntelTab({ auth }) {
       <div data-testid="intel-sheet" style={{
         overflowX: 'auto', overflowY: 'auto',
         borderRadius: 10, border: '1px solid rgba(255,255,255,0.08)',
-        maxHeight: 'calc(100vh - 360px)',
+        maxHeight: 'calc(100vh - 420px)',
         WebkitOverflowScrolling: 'touch',
       }}>
         <table style={{ borderCollapse: 'collapse', width: 'max-content', minWidth: '100%', fontFamily: "'JetBrains Mono', monospace", fontSize: 9 }}>
@@ -292,39 +284,26 @@ export function IntelTab({ auth }) {
   );
 }
 
-/* Calibration Row — compact horizontal bar for each dimension */
-function CalRow({ title, data, showErr, fmtLabel }) {
-  if (!data || data.length === 0) return null;
+function FilterSelect({ label, value, onChange, options, fmtOpt, testId }) {
   return (
-    <div style={{ marginBottom: 8 }}>
-      <div style={{ fontSize: 7, fontWeight: 900, color: 'var(--accent)', letterSpacing: '0.06em', marginBottom: 3, opacity: 0.7 }}>{title}</div>
-      {data.map((d, i) => {
-        const label = fmtLabel ? fmtLabel(d.label) : d.label;
-        const rateColor = d.rate >= 65 ? '#10b981' : d.rate >= 50 ? '#f59e0b' : '#f43f5e';
-        const isWeak = d.rate < 50 && d.total >= 10;
-        return (
-          <div key={i} data-testid={`cal-${title.toLowerCase().replace(/\s+/g, '-')}-${i}`} style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            padding: '4px 8px', borderRadius: 6, marginBottom: 2,
-            background: isWeak ? 'rgba(244,63,94,0.04)' : 'rgba(255,255,255,0.015)',
-            border: isWeak ? '1px solid rgba(244,63,94,0.1)' : '1px solid rgba(255,255,255,0.03)',
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 }}>
-              <span style={{ fontSize: 9, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 160 }}>{label}</span>
-              {isWeak && <span style={{ fontSize: 6, fontWeight: 900, padding: '1px 4px', borderRadius: 3, background: 'rgba(244,63,94,0.15)', color: '#f43f5e', whiteSpace: 'nowrap' }}>WEAK</span>}
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-              {showErr && d.avgErr !== 0 && (
-                <span style={{ fontSize: 8, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: d.avgErr < 0 ? '#f43f5e' : '#10b981' }}>
-                  {d.avgErr > 0 ? '+' : ''}{d.avgErr}
-                </span>
-              )}
-              <span style={{ fontSize: 11, fontWeight: 900, color: rateColor, fontFamily: "'JetBrains Mono', monospace" }}>{d.rate}%</span>
-              <span style={{ fontSize: 7, color: 'var(--text-muted)', fontWeight: 600 }}>({d.hits}/{d.total})</span>
-            </div>
-          </div>
-        );
-      })}
+    <div>
+      <div style={{ fontSize: 7, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 2, textTransform: 'uppercase' }}>{label}</div>
+      <select
+        value={value} onChange={e => onChange(e.target.value)}
+        data-testid={testId}
+        style={{
+          width: '100%', padding: '4px 4px', borderRadius: 4, fontSize: 9, fontWeight: 700,
+          background: value !== 'all' ? 'rgba(16,185,129,0.08)' : 'rgba(255,255,255,0.04)',
+          border: value !== 'all' ? '1px solid rgba(16,185,129,0.25)' : '1px solid rgba(255,255,255,0.1)',
+          color: value !== 'all' ? 'var(--accent)' : '#fff',
+          outline: 'none', appearance: 'auto', cursor: 'pointer',
+        }}
+      >
+        <option value="all">All</option>
+        {options.map(o => (
+          <option key={o} value={o}>{fmtOpt ? fmtOpt(o) : o}</option>
+        ))}
+      </select>
     </div>
   );
 }
@@ -336,18 +315,6 @@ function StatBox({ label, value, color, sub }) {
       <div style={{ fontSize: 18, fontWeight: 900, color }}>{value}</div>
       {sub && <div style={{ fontSize: 7, color: 'var(--text-muted)' }}>{sub}</div>}
     </div>
-  );
-}
-
-function FilterPill({ label, active, onClick, color }) {
-  return (
-    <button onClick={onClick} data-testid={`filter-${label.toLowerCase()}`} style={{
-      padding: '4px 10px', borderRadius: 6, fontSize: 8, fontWeight: 800,
-      letterSpacing: '0.04em', cursor: 'pointer', textTransform: 'uppercase',
-      background: active ? (color || 'var(--accent)') + '18' : 'rgba(255,255,255,0.03)',
-      color: active ? (color || 'var(--accent)') : 'rgba(255,255,255,0.35)',
-      border: `1px solid ${active ? (color || 'var(--accent)') + '40' : 'rgba(255,255,255,0.06)'}`,
-    }}>{label}</button>
   );
 }
 

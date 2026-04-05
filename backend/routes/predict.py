@@ -646,7 +646,6 @@ async def predict(req: PredictionRequest):
         team_fixture_stats = results[0] if not isinstance(results[0], (Exception, type(None))) else []
         opponent_fixture_stats = results[1] if not isinstance(results[1], (Exception, type(None))) else []
         player_game_logs = results[2] if not isinstance(results[2], (Exception, type(None))) else []
-        grok_analysis = None
 
         # =============================================
         # MATCH DOMINANCE: Opponent-aware possession + context multiplier
@@ -1778,152 +1777,49 @@ Analyze ALL data thoroughly. Return JSON only."""
                 print(f"[MULTI-AI] {label} failed: {e}")
                 return None
 
-        ai_tasks = [
-            aio.ensure_future(call_ai("gemini-2.0-flash", "gemini", "gemini")),
-            aio.ensure_future(call_ai("gpt-5.2", "gpt52")),
-            aio.ensure_future(call_grok("grok", "grok-4-1-fast-non-reasoning")),
-        ]
+        # =============================================
+        # GPT-5.2 SOLO — Elite Calibration replaces consensus
+        # =============================================
+        gpt52_result = await aio.wait_for(
+            call_ai("gpt-5.2", "gpt52"),
+            timeout=45
+        )
 
-        # FORCE-3-MODELS: Wait for ALL 3 AIs, retry failures once
-        ai_results = []
-        deadline = _t0 + 48  # absolute cap: 48s from route start
+        if not gpt52_result or not isinstance(gpt52_result, dict) or not gpt52_result.get("projectedValue"):
+            # One retry
+            print("[SOLO-AI] GPT-5.2 first attempt failed, retrying...")
+            gpt52_result = await aio.wait_for(
+                call_ai("gpt-5.2", "gpt52"),
+                timeout=40
+            )
 
-        # First pass: wait for all 3 to complete
-        done, pending = await aio.wait(ai_tasks, timeout=max(0.1, deadline - _t.time()))
-        for t in done:
-            try:
-                r = t.result()
-                if r and isinstance(r, dict) and r.get("projectedValue") is not None:
-                    pv = r.get("projectedValue", 0)
-                    if isinstance(pv, (int, float)) and pv > 0:
-                        ai_results.append(r)
-            except Exception:
-                pass
-        for t in pending:
-            t.cancel()
+        if not gpt52_result or not isinstance(gpt52_result, dict):
+            raise ValueError("GPT-5.2 failed to produce a prediction")
 
-        # Retry any failed models (one retry each, only if time allows)
-        responded_sources = {r.get("_source") for r in ai_results}
-        if len(ai_results) < 3 and _t.time() < deadline - 10:
-            retry_tasks = []
-            if "gemini" not in responded_sources:
-                retry_tasks.append(aio.ensure_future(call_ai("gemini-2.0-flash", "gemini", "gemini")))
-                print("[MULTI-AI] Retrying gemini...")
-            if "gpt52" not in responded_sources:
-                retry_tasks.append(aio.ensure_future(call_ai("gpt-5.2", "gpt52")))
-                print("[MULTI-AI] Retrying gpt52...")
-            if "grok" not in responded_sources:
-                retry_tasks.append(aio.ensure_future(call_grok("grok", "grok-4-1-fast-non-reasoning")))
-                print("[MULTI-AI] Retrying grok...")
+        pv = gpt52_result.get("projectedValue", 0)
+        if not isinstance(pv, (int, float)) or pv <= 0:
+            raise ValueError(f"GPT-5.2 returned invalid projection: {pv}")
 
-            if retry_tasks:
-                done_retry, pending_retry = await aio.wait(retry_tasks, timeout=max(0.1, deadline - _t.time()))
-                for t in done_retry:
-                    try:
-                        r = t.result()
-                        if r and isinstance(r, dict) and r.get("projectedValue") is not None:
-                            pv = r.get("projectedValue", 0)
-                            if isinstance(pv, (int, float)) and pv > 0:
-                                ai_results.append(r)
-                    except Exception:
-                        pass
-                for t in pending_retry:
-                    t.cancel()
+        print(f"[TIMING] GPT-5.2 done: {_t.time()-_t0:.1f}s, proj={pv}")
 
-        print(f"[TIMING] AIs done: {_t.time()-_t0:.1f}s total, {len(ai_results)}/3 succeeded ({', '.join(r.get('_source','?') for r in ai_results)})")
-
-        # Collect valid predictions
-        valid_preds = []
-        for i, r in enumerate(ai_results):
-            if isinstance(r, dict) and r.get("projectedValue") is not None:
-                pv = r.get("projectedValue", 0)
-                # Filter out obviously bad predictions (0 or negative)
-                if isinstance(pv, (int, float)) and pv > 0:
-                    # ENFORCE: each model's recommendation MUST match its projected value vs line
-                    r["recommendation"] = "over" if pv > req.line else "under"
-                    valid_preds.append(r)
-                    print(f"[MULTI-AI] {r.get('_source','AI'+str(i))}: proj={pv} rec={r.get('recommendation')} conf={r.get('confidenceScore')}")
-                else:
-                    print(f"[MULTI-AI] {r.get('_source','AI'+str(i))}: REJECTED proj={pv}")
-
-        if not valid_preds:
-            raise ValueError("All AI models failed to produce predictions")
-
-        # MERGE: Weighted consensus
-        # Use first valid as base, merge numbers from all
-        prediction = valid_preds[0].copy()
-
-        if len(valid_preds) > 1:
-            # Average projectedValue across all models
-            proj_values = [p.get("projectedValue", 0) for p in valid_preds if p.get("projectedValue")]
-            avg_proj = round(sum(proj_values) / len(proj_values), 1)
-            prediction["projectedValue"] = avg_proj
-
-            # ENFORCE: recommendation must match projectedValue vs line (eliminates contradiction)
-            prediction["recommendation"] = "over" if avg_proj > req.line else "under"
-
-            # Average confidence (normalize 0-1 to 0-100)
-            conf_values = []
-            for p in valid_preds:
-                c = p.get("confidenceScore", 50)
-                if isinstance(c, (int, float)):
-                    conf_values.append(c * 100 if c <= 1 else c)
-            prediction["confidenceScore"] = round(sum(conf_values) / len(conf_values)) if conf_values else 50
-
-            # TEXT FIELDS: Prioritize Grok, fall back to longest
-            grok_pred = next((p for p in valid_preds if p.get("_source") == "grok"), None)
-
-            for field in ["tacticalBreakdown", "reasoning", "sharpSummary", "scenarioAnalysis", "keyEvidence"]:
-                # Try Grok first
-                if grok_pred and len(str(grok_pred.get(field, ""))) > 50:
-                    prediction[field] = grok_pred[field]
-                else:
-                    # Fall back to longest text from any AI
-                    best = max(valid_preds, key=lambda p, f=field: len(str(p.get(f, ""))))
-                    prediction[field] = best.get(field, "")
-
-            # Consensus note
-            recs = [p.get("recommendation", "over") for p in valid_preds]
-            over_count = sum(1 for r in recs if r == "over")
-            under_count = len(recs) - over_count
-            if all(r == prediction["recommendation"] for r in recs):
-                consensus = f"Unanimous {prediction['recommendation'].upper()} — {len(valid_preds)}/{len(valid_preds)} AI models agree."
-            else:
-                majority_rec = prediction["recommendation"]
-                dissenters = [p for p in valid_preds if p.get("recommendation") != majority_rec]
-                dissent_reasons = []
-                for d in dissenters:
-                    reason = d.get("sharpSummary") or d.get("reasoning") or ""
-                    if reason:
-                        dissent_reasons.append(reason[:200])
-                dissent_text = " Dissent: " + " | ".join(dissent_reasons) if dissent_reasons else ""
-                consensus = f"Split: {over_count}/{len(valid_preds)} OVER, {under_count}/{len(valid_preds)} UNDER. Consensus → {prediction['recommendation'].upper()}.{dissent_text}"
-            prediction["consensusNote"] = consensus
-
-        else:
-            # Single AI result — still enforce recommendation consistency
-            pv = prediction.get("projectedValue", req.line)
-            prediction["recommendation"] = "over" if pv > req.line else "under"
-
-        # Clean up internal source tags AFTER building model breakdown
-        model_breakdown = []
-        for p in valid_preds:
-            src = p.get("_source", "AI")
-            model_breakdown.append({
-                "model": src,
-                "recommendation": p.get("recommendation", ""),
-                "projectedValue": p.get("projectedValue", 0),
-                "confidenceScore": p.get("confidenceScore", 50),
-            })
-        prediction["modelBreakdown"] = model_breakdown
-
-        for p in valid_preds:
-            p.pop("_source", None)
+        prediction = gpt52_result.copy()
         prediction.pop("_source", None)
+        prediction["recommendation"] = "over" if pv > req.line else "under"
 
-        # Always set consensusNote even for single AI
-        if not prediction.get("consensusNote"):
-            prediction["consensusNote"] = f"Single AI analysis — {prediction.get('recommendation', 'over').upper()} recommendation."
+        # Confidence normalization
+        cs = prediction.get("confidenceScore", 50)
+        if isinstance(cs, (int, float)):
+            prediction["confidenceScore"] = round(cs * 100 if cs <= 1 else cs)
+        else:
+            prediction["confidenceScore"] = 50
+
+        prediction["consensusNote"] = "Solo GPT-5.2 analysis with elite calibration corrections."
+        prediction["modelBreakdown"] = [{
+            "model": "gpt52",
+            "recommendation": prediction["recommendation"],
+            "projectedValue": pv,
+            "confidenceScore": prediction["confidenceScore"],
+        }]
 
         # Set confidence level
         cs = prediction.get("confidenceScore", 50)
@@ -2014,8 +1910,6 @@ Analyze ALL data thoroughly. Return JSON only."""
         # HARD GUARD: recommendation MUST match the FINAL projected value vs line
         final_proj_cal = prediction.get("projectedValue", req.line)
         prediction["recommendation"] = "over" if final_proj_cal > req.line else "under"
-
-        response_text = json.dumps(prediction)
 
         # Force-set identity fields from REQUEST data — never trust AI output for these
         player_team_display = req.teamName or (player_stats.get("statistics", [{}])[0].get("team", {}).get("name", "") if player_stats else "")
@@ -2179,19 +2073,17 @@ Analyze ALL data thoroughly. Return JSON only."""
         pl = prop_map.get(req.propType, req.propType)
         consensus_note = prediction.get('consensusNote', '')
 
-        # Gather ALL text from every AI that responded (not just 3 — use everything available)
+        # Gather text from GPT-5.2 response for synthesis
         all_texts = []
-        for p in valid_preds:
-            src = p.get("_source", "AI")
-            bits = []
-            for field in ["tacticalBreakdown", "reasoning", "scenarioAnalysis", "keyEvidence", "sharpSummary", "gameFlowDynamics", "sensitivityTests", "subRisk", "uncertaintyNote"]:
-                val = p.get(field, "")
-                if isinstance(val, dict):
-                    val = json.dumps(val)
-                if val and len(str(val)) > 10:
-                    bits.append(f"{field}: {val}")
-            if bits:
-                all_texts.append(f"[{src}]\n" + "\n".join(bits))
+        bits = []
+        for field in ["tacticalBreakdown", "reasoning", "scenarioAnalysis", "keyEvidence", "sharpSummary", "gameFlowDynamics", "sensitivityTests", "subRisk", "uncertaintyNote"]:
+            val = prediction.get(field, "")
+            if isinstance(val, dict):
+                val = json.dumps(val)
+            if val and len(str(val)) > 10:
+                bits.append(f"{field}: {val}")
+        if bits:
+            all_texts.append("[gpt52]\n" + "\n".join(bits))
 
         synthesis_input = "\n\n".join(all_texts)
 
