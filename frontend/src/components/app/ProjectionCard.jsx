@@ -8,6 +8,13 @@ import { ProbabilityChart } from './ProbabilityChart';
 import { MatchStatZones } from './MatchStatZones';
 import { H2HSection } from './H2HSection';
 
+// Convert decimal odds (3.05) to American format (+205)
+function toAmerican(dec) {
+  if (!dec || dec <= 1) return '';
+  if (dec >= 2) return `+${Math.round((dec - 1) * 100)}`;
+  return `${Math.round(-100 / (dec - 1))}`;
+}
+
 export function ProjectionCard({ projection, onSave, excludedIndices, onToggleSample, hideSave }) {
   const rec = projection.recommendation;
   const [venueFilter, setVenueFilter] = React.useState('all');
@@ -223,7 +230,7 @@ export function ProjectionCard({ projection, onSave, excludedIndices, onToggleSa
                 <div style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.05em' }}>HOME</div>
                 {projection.matchupOverview.moneyline?.home && (
                   <div style={{ fontSize: 16, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: projection.matchupOverview.favorite === 'home' ? 'var(--accent)' : 'var(--text-primary)', marginTop: 4 }}>
-                    {projection.matchupOverview.moneyline.home}
+                    {toAmerican(projection.matchupOverview.moneyline.home)}
                   </div>
                 )}
               </div>
@@ -231,7 +238,7 @@ export function ProjectionCard({ projection, onSave, excludedIndices, onToggleSa
                 <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)' }}>VS</div>
                 {projection.matchupOverview.moneyline?.draw && (
                   <div style={{ fontSize: 12, fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-muted)', marginTop: 2 }}>
-                    Draw: {projection.matchupOverview.moneyline.draw}
+                    X: {toAmerican(projection.matchupOverview.moneyline.draw)}
                   </div>
                 )}
               </div>
@@ -240,7 +247,7 @@ export function ProjectionCard({ projection, onSave, excludedIndices, onToggleSa
                 <div style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.05em' }}>AWAY</div>
                 {projection.matchupOverview.moneyline?.away && (
                   <div style={{ fontSize: 16, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: projection.matchupOverview.favorite === 'away' ? 'var(--accent)' : 'var(--text-primary)', marginTop: 4 }}>
-                    {projection.matchupOverview.moneyline.away}
+                    {toAmerican(projection.matchupOverview.moneyline.away)}
                   </div>
                 )}
               </div>

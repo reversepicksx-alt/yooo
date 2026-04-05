@@ -418,6 +418,13 @@ function AnalysisPanel({ analysis }) {
   const a = analysis;
   const matchup = a.matchupOverview || {};
 
+  // Convert decimal odds to American format
+  const toAmerican = (dec) => {
+    if (!dec || dec <= 1) return '';
+    if (dec >= 2) return `+${Math.round((dec - 1) * 100)}`;
+    return `${Math.round(-100 / (dec - 1))}`;
+  };
+
   return (
     <div data-testid="analysis-panel" style={{
       borderTop: '1px solid rgba(16,185,129,0.15)',
@@ -479,7 +486,7 @@ function AnalysisPanel({ analysis }) {
           {matchup.favorite && (
             <div style={{ fontSize: 8, color: 'rgba(255,255,255,0.5)', marginTop: 2 }}>
               Favorite: {matchup.favorite}
-              {matchup.moneyline && ` (${matchup.moneyline.home}/${matchup.moneyline.draw}/${matchup.moneyline.away})`}
+              {matchup.moneyline && ` (1: ${toAmerican(matchup.moneyline.home)} | X: ${toAmerican(matchup.moneyline.draw)} | 2: ${toAmerican(matchup.moneyline.away)})`}
             </div>
           )}
           {matchup.expectedGameType && (
