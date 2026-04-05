@@ -243,6 +243,21 @@ export async function basketballPredict(request) {
 
 
 // Square Subscription APIs
+
+// Manual Search APIs
+export async function getManualLeagues() {
+  return apiCall('/api/manual/leagues');
+}
+export async function getManualTeams(leagueId) {
+  return apiCall(`/api/manual/teams/${leagueId}`);
+}
+export async function searchManualPlayer(teamId, leagueId, playerName) {
+  return apiCall('/api/manual/search-player', {
+    method: 'POST',
+    body: JSON.stringify({ team_id: teamId, league_id: leagueId, player_name: playerName }),
+  });
+}
+
 export async function getSquarePlans() {
   return apiCall('/api/square/plans');
 }

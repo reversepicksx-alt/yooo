@@ -24,6 +24,7 @@ import { Header } from './components/app/Header';
 import { GuideTab } from './components/app/GuideTab';
 import { ProfileTab } from './components/app/ProfileTab';
 import { TrackingTab } from './components/app/TrackingTab';
+import { ManualSearch } from './components/app/ManualSearch';
 
 export default function App() {
   const [auth, setAuth] = useState(null);
@@ -97,6 +98,10 @@ export default function App() {
   const [scanVenueOverrides, setScanVenueOverrides] = useState({});
   const [scanEditMode, setScanEditMode] = useState({});
   const [scanEditValues, setScanEditValues] = useState({});
+
+  // Manual search state
+  const [manualPrediction, setManualPrediction] = useState(null);
+  const [manualPredicting, setManualPredicting] = useState(false);
   const [scanResolving, setScanResolving] = useState({});
   const scanFileRef = useRef(null);
 
@@ -638,6 +643,33 @@ export default function App() {
       if (scanExcludedIndices.includes(i)) continue;
       if (scanPrediction[i]) continue; // already predicted
       await handleScanPredict(scanResults[i], i);
+    }
+  };
+
+  // Manual Search → Predict
+  const handleManualPredict = async (data) => {
+    setManualPredicting(true);
+    setManualPrediction(null);
+    try {
+      const result = await predict({
+        playerId: data.playerId || 0,
+        playerName: data.playerName,
+        teamId: data.teamId,
+        teamName: data.teamName,
+        opponentId: data.opponentId || 0,
+        opponentName: data.opponentName || '',
+        leagueId: data.leagueId || 39,
+        venue: data.venue || 'home',
+        propType: data.propType,
+        line: data.line,
+        positionOverride: data.position || '',
+      });
+      setManualPrediction(result);
+      toast.success('Analysis complete!');
+    } catch (err) {
+      toast.error(err.message || 'Prediction failed');
+    } finally {
+      setManualPredicting(false);
     }
   };
 
@@ -1507,6 +1539,55 @@ export default function App() {
                         if (file) handleScanUpload(file);
                       }}
                     />
+                  </div>
+                )}
+
+                {/* Manual Search Fallback */}
+                {!scanImage && !isScanning && activeSport === 'soccer' && (
+                  <ManualSearch onResult={handleManualPredict} activeSport={activeSport} />
+                )}
+
+                {/* Manual Prediction Loading */}
+                {manualPredicting && (
+                  <div style={{ textAlign: 'center', padding: '48px 0' }} data-testid="manual-prediction-loading">
+                    <div className="spinner-ring"><Search className="inner-icon" style={{ width: 24, height: 24 }} /></div>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: '#fff', marginTop: 20 }}>Running prediction...</div>
+                    <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)', marginTop: 6 }}>3 AI models analyzing data</div>
+                  </div>
+                )}
+
+                {/* Manual Prediction Result */}
+                {manualPrediction && !manualPredicting && (
+                  <div style={{ marginTop: 16 }} data-testid="manual-prediction-result">
+                    <ProjectionCard
+                      projection={manualPrediction}
+                      onSave={async () => {
+                        if (!auth) return;
+                        const newPick = {
+                          ...manualPrediction,
+                          id: Math.random().toString(36).substring(2, 9),
+                          timestamp: new Date().toISOString(),
+                        };
+                        try {
+                          await savePick({ email: auth.email, token: auth.token, pick: newPick });
+                          toast.success('Pick saved!');
+                        } catch (err) {
+                          toast.error('Failed to save pick');
+                        }
+                      }}
+                    />
+                    <button
+                      onClick={() => setManualPrediction(null)}
+                      data-testid="manual-clear-result"
+                      style={{
+                        width: '100%', marginTop: 8, padding: '10px 0', borderRadius: 8,
+                        border: '1px solid rgba(255,255,255,0.06)', background: 'transparent',
+                        color: 'var(--text-muted)', fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                        letterSpacing: '0.04em',
+                      }}
+                    >
+                      SEARCH ANOTHER
+                    </button>
                   </div>
                 )}
 
