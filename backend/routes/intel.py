@@ -156,14 +156,14 @@ async def intel_dashboard(email: str, token: str, sport: str = "soccer"):
         score = p.get("matchScore", "")
         sport = p.get("sport", "soccer")
 
-        # Use stored exact position if available, otherwise fall back to generic label
+        # Use stored exact position if available, validate strictly
         stored_pos = (p.get("position") or "").strip()
         if stored_pos and stored_pos.upper() in EXACT_POSITIONS:
             position = stored_pos.upper()
-        elif stored_pos and stored_pos in ("Goalkeeper", "Defender", "Midfielder", "Attacker"):
-            position = GENERIC_POSITION_LABELS.get(stored_pos.lower(), stored_pos)
-        elif stored_pos:
-            position = stored_pos  # Non-standard but keep as-is
+        elif stored_pos and stored_pos.lower() in GENERIC_POSITION_LABELS:
+            position = GENERIC_POSITION_LABELS[stored_pos.lower()]
+        elif stored_pos and not stored_pos.isdigit() and stored_pos not in LEAGUE_NAMES.values():
+            position = stored_pos
         else:
             position = "Unknown"
 
@@ -414,16 +414,21 @@ async def intel_sheet(email: str, token: str, sport: str = "soccer"):
                 except (TypeError, ValueError, IndexError):
                     pass
 
-            # Position
+            # Position — validate strictly, reject league IDs/names that leaked in
             stored_pos = (p.get("position") or "").strip()
-            if stored_pos and stored_pos.upper() in EXACT_POSITIONS:
-                position = stored_pos.upper()
-            elif stored_pos and stored_pos in ("Goalkeeper", "Defender", "Midfielder", "Attacker"):
-                position = GENERIC_POSITION_LABELS.get(stored_pos.lower(), stored_pos)
-            elif stored_pos:
-                position = stored_pos
-            else:
-                position = ""
+            position = ""
+            if stored_pos:
+                upper_pos = stored_pos.upper()
+                if upper_pos in EXACT_POSITIONS:
+                    position = upper_pos
+                elif stored_pos.lower() in GENERIC_POSITION_LABELS:
+                    position = GENERIC_POSITION_LABELS[stored_pos.lower()]
+                elif stored_pos.isdigit():
+                    position = ""  # league ID leaked into position — discard
+                elif stored_pos in LEAGUE_NAMES.values():
+                    position = ""  # league name leaked into position — discard
+                else:
+                    position = ""  # unknown value — discard to keep filter clean
 
             role = (p.get("role") or "").strip()
             edge = p.get("edgeStrength", "") or ""

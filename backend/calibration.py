@@ -34,14 +34,19 @@ LEAGUE_NAMES = {
     "71": "Brasileirão", "72": "Série B (Brazil)",
     # Americas
     "253": "MLS", "262": "Liga MX", "254": "Serie A (Brazil)",
-    # Other
+    # Argentina
+    "128": "Liga Profesional",
+    # Other Europe
     "307": "Saudi Pro", "203": "Süper Lig", "94": "Primeira Liga",
     "88": "Eredivisie", "144": "Belgian Pro", "218": "Austrian Bundesliga",
     "179": "Scottish Premiership", "197": "Turkish 1. Lig",
+    # International
+    "10": "Friendlies", "32": "World Cup Qualifiers",
     # Cups / Continental
     "2": "Champions League", "3": "Europa League", "4": "Euro",
     "848": "NWSL", "1": "World Cup", "5": "Nations League",
     "15": "FIFA Club World Cup", "16": "AFCON",
+    "188": "Liga 1 (Peru)", "960": "Copa de la Liga",
     # Basketball
     "12": "NBA", "13": "WNBA",
 }
