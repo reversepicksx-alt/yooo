@@ -83,6 +83,14 @@ function SubscriptionManager({ email }) {
 
   const currentPlanKey = subStatus.planKey || '';
   const otherPlans = PLAN_OPTIONS.filter(p => p.key !== currentPlanKey);
+  const isCanceled = subStatus.status === 'CANCELED';
+
+  // Calculate days remaining
+  let daysLeft = null;
+  if (subStatus.expiresAt) {
+    const diff = new Date(subStatus.expiresAt) - new Date();
+    daysLeft = Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)));
+  }
 
   return (
     <div className="profile-section" data-testid="subscription-section">
@@ -100,29 +108,47 @@ function SubscriptionManager({ email }) {
 
         {subStatus.status && (
           <div className="profile-field">
-            <div className="profile-field-icon"><Activity style={{ width: 16, height: 16, color: subStatus.status === 'ACTIVE' ? 'var(--accent)' : '#f59e0b' }} /></div>
+            <div className="profile-field-icon"><Activity style={{ width: 16, height: 16, color: isCanceled ? '#f43f5e' : subStatus.status === 'ACTIVE' ? 'var(--accent)' : '#f59e0b' }} /></div>
             <div className="profile-field-content">
               <div className="profile-field-label">Status</div>
-              <div className="profile-field-value" style={{ color: subStatus.status === 'ACTIVE' ? 'var(--accent)' : '#f59e0b' }} data-testid="sub-status">
-                {subStatus.status}
+              <div className="profile-field-value" style={{ color: isCanceled ? '#f43f5e' : subStatus.status === 'ACTIVE' ? 'var(--accent)' : '#f59e0b' }} data-testid="sub-status">
+                {isCanceled ? 'CANCELING' : subStatus.status}
               </div>
             </div>
           </div>
         )}
 
+        {/* Days remaining / billing info */}
         {subStatus.expiresAt && (
           <div className="profile-field">
             <div className="profile-field-icon"><Calendar style={{ width: 16, height: 16 }} /></div>
             <div className="profile-field-content">
-              <div className="profile-field-label">Next Billing</div>
+              <div className="profile-field-label">{isCanceled ? 'Access Ends' : 'Next Billing'}</div>
               <div className="profile-field-value" data-testid="sub-next-billing">
                 {new Date(subStatus.expiresAt).toLocaleDateString()}
+                {daysLeft !== null && (
+                  <span style={{ marginLeft: 8, fontSize: 11, color: isCanceled ? '#f43f5e' : 'var(--text-muted)', fontWeight: 700 }}>
+                    ({daysLeft} {daysLeft === 1 ? 'day' : 'days'} left)
+                  </span>
+                )}
               </div>
             </div>
           </div>
         )}
 
-        {subStatus.cardLast4 && (
+        {/* Canceled notice */}
+        {isCanceled && (
+          <div data-testid="cancel-notice" style={{
+            padding: 12, borderRadius: 10, fontSize: 11, lineHeight: 1.5,
+            background: 'rgba(244, 63, 94, 0.06)', border: '1.5px solid rgba(244, 63, 94, 0.15)',
+            color: 'var(--text-secondary)',
+          }}>
+            Your subscription has been canceled. You still have full access until <strong style={{ color: '#f43f5e' }}>{new Date(subStatus.expiresAt).toLocaleDateString()}</strong>.
+            You can resubscribe anytime below.
+          </div>
+        )}
+
+        {subStatus.cardLast4 && !isCanceled && (
           <div className="profile-field">
             <div className="profile-field-icon"><CreditCard style={{ width: 16, height: 16 }} /></div>
             <div className="profile-field-content">
@@ -134,7 +160,7 @@ function SubscriptionManager({ email }) {
           </div>
         )}
 
-        {/* Change Plan Toggle */}
+        {/* Change Plan Toggle — available for active and canceled (to resubscribe) */}
         <button
           className="btn-secondary"
           onClick={() => setShowPlans(!showPlans)}
@@ -142,7 +168,7 @@ function SubscriptionManager({ email }) {
           style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%', fontSize: 13 }}
         >
           <ArrowRightLeft style={{ width: 15, height: 15 }} />
-          {showPlans ? 'Close' : 'Change Plan'}
+          {isCanceled ? (showPlans ? 'Close' : 'Resubscribe') : (showPlans ? 'Close' : 'Change Plan')}
         </button>
 
         {/* Plan Options */}
@@ -173,8 +199,8 @@ function SubscriptionManager({ email }) {
           </div>
         )}
 
-        {/* Cancel Subscription */}
-        {!showCancelConfirm ? (
+        {/* Cancel Subscription — only show when active (not already canceled) */}
+        {!isCanceled && !showCancelConfirm && (
           <button
             onClick={() => setShowCancelConfirm(true)}
             data-testid="cancel-sub-btn"
@@ -189,7 +215,8 @@ function SubscriptionManager({ email }) {
             <X style={{ width: 14, height: 14 }} />
             Cancel Subscription
           </button>
-        ) : (
+        )}
+        {!isCanceled && showCancelConfirm && (
           <div data-testid="cancel-confirm-box" style={{
             marginTop: 8, padding: 14, borderRadius: 10,
             background: 'rgba(244, 63, 94, 0.06)',

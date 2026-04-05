@@ -479,13 +479,27 @@ async def get_subscription_status(email: str):
         try:
             client = get_square_client()
             resp = client.subscriptions.get(subscription_id=sub["squareSubscriptionId"])
-            new_status = resp.subscription.status or sub["status"]
-            if new_status != sub["status"]:
+            sq_sub = resp.subscription
+            new_status = sq_sub.status or sub["status"]
+
+            # Check if Square has a pending cancellation
+            canceled_date = getattr(sq_sub, 'canceled_date', None)
+            updates = {}
+            if canceled_date:
+                # Square says there's a pending cancel — mark as CANCELED in our DB
+                new_status = "CANCELED"
+                updates["canceledAt"] = canceled_date
+                updates["status"] = "CANCELED"
+            elif new_status != sub["status"]:
+                updates["status"] = new_status
+
+            if updates:
+                updates["updatedAt"] = datetime.now(timezone.utc).isoformat()
                 await db.square_subscriptions.update_one(
                     {"email": email_lower},
-                    {"$set": {"status": new_status, "updatedAt": datetime.now(timezone.utc).isoformat()}}
+                    {"$set": updates}
                 )
-                sub["status"] = new_status
+                sub.update(updates)
         except Exception:
             pass
 
@@ -495,17 +509,31 @@ async def get_subscription_status(email: str):
     plan_label = sub.get("planLabel") or plan_ref.get("label", "")
     cadence = sub.get("cadence") or plan_ref.get("cadence", "")
 
+    # Determine if subscription is still usable (active OR canceled but within billing period)
+    status = sub.get("status", "")
+    is_active = status in ("ACTIVE", "PENDING")
+    is_canceled_but_valid = False
+    if status == "CANCELED":
+        expires_at = sub.get("expiresAt")
+        if expires_at:
+            try:
+                exp_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+                is_canceled_but_valid = datetime.now(timezone.utc) < exp_dt
+            except Exception:
+                is_canceled_but_valid = True  # Can't parse, give benefit of doubt
+
     return {
-        "active": sub.get("status") in ("ACTIVE", "PENDING"),
+        "active": is_active or is_canceled_but_valid,
         "plan": sub.get("planName"),
         "planKey": plan_key,
         "planLabel": plan_label,
         "cadence": cadence,
-        "status": sub.get("status"),
+        "status": status,
         "cardLast4": sub.get("cardLast4"),
         "cardBrand": sub.get("cardBrand"),
         "subscribedAt": sub.get("subscribedAt"),
         "expiresAt": sub.get("expiresAt"),
+        "canceledAt": sub.get("canceledAt"),
     }
 
 
