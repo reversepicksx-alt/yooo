@@ -349,6 +349,116 @@ async def verify_checkout(body: dict):
         raise HTTPException(status_code=500, detail=f"Verification error: {str(e)}")
 
 
+
+class ResubscribeRequest(BaseModel):
+    email: str
+    planKey: str
+    redirectUrl: str
+
+@router.post("/resubscribe-checkout")
+async def resubscribe_checkout(req: ResubscribeRequest):
+    """Create a Square Checkout link for a canceled user to resubscribe with new payment."""
+    email_lower = req.email.lower().strip()
+    plan_key = req.planKey.lower()
+
+    if plan_key not in PLANS:
+        raise HTTPException(status_code=400, detail="Invalid plan.")
+
+    # Must have an existing canceled subscription
+    sub = await db.square_subscriptions.find_one(
+        {"email": email_lower, "status": "CANCELED"},
+        {"_id": 0}
+    )
+    if not sub:
+        raise HTTPException(status_code=404, detail="No canceled subscription found.")
+
+    plans = await _ensure_plans_exist()
+    plan_doc = plans.get(plan_key)
+    if not plan_doc:
+        raise HTTPException(status_code=500, detail="Plan not configured in Square.")
+
+    client = get_square_client()
+    location_id = get_dynamic_setting("SQUARE_LOCATION_ID")
+
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        checkout_token = str(uuid.uuid4())
+
+        # Calculate start_date: billing starts after current period ends
+        from datetime import timedelta
+        expires_at = sub.get("expiresAt")
+        start_date = None
+        if expires_at:
+            try:
+                exp_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+                if exp_dt > datetime.now(timezone.utc):
+                    start_date = (exp_dt + timedelta(days=1)).strftime("%Y-%m-%d")
+            except Exception:
+                pass
+
+        cadence_days = {"weekly": 7, "monthly": 30, "quarterly": 90}
+        new_expires = expires_at if start_date else (datetime.now(timezone.utc) + timedelta(days=cadence_days.get(plan_key, 30))).isoformat()
+
+        # Store pending resubscribe
+        await db.pending_checkouts.update_one(
+            {"email": email_lower},
+            {"$set": {
+                "email": email_lower,
+                "planKey": plan_key,
+                "checkoutToken": checkout_token,
+                "expiresAt": new_expires,
+                "createdAt": now,
+                "status": "pending",
+                "type": "resubscribe",
+                "startDate": start_date,
+            }},
+            upsert=True,
+        )
+
+        redirect_url = f"{req.redirectUrl.rstrip('/')}?checkout_token={checkout_token}"
+
+        checkout_body = {
+            "idempotency_key": str(uuid.uuid4()),
+            "quick_pay": {
+                "name": f"ReversePicks {PLANS[plan_key]['name']} Subscription",
+                "price_money": {
+                    "amount": PLANS[plan_key]["amount"],
+                    "currency": "USD",
+                },
+                "location_id": location_id,
+            },
+            "checkout_options": {
+                "redirect_url": redirect_url,
+            },
+            "pre_populated_data": {
+                "buyer_email": email_lower,
+            },
+        }
+
+        if plan_doc and plan_doc.get("variation_id"):
+            checkout_body["checkout_options"]["subscription_plan_id"] = plan_doc["variation_id"]
+
+        result = client.checkout.payment_links.create(**checkout_body)
+        checkout_url = result.payment_link.url
+
+        await db.pending_checkouts.update_one(
+            {"email": email_lower},
+            {"$set": {
+                "squareLinkId": result.payment_link.id,
+                "squareOrderId": result.payment_link.order_id,
+            }}
+        )
+
+        print(f"[SQUARE RESUBSCRIBE] Created checkout for {email_lower}: {checkout_url}")
+        return {"checkoutUrl": checkout_url, "checkoutToken": checkout_token}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[SQUARE RESUBSCRIBE] Error: {e}")
+        raise HTTPException(status_code=500, detail=f"Checkout error: {str(e)}")
+
+
 @router.post("/subscribe")
 async def subscribe(req: SubscribeRequest):
     email_lower = req.email.lower().strip()

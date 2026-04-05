@@ -296,6 +296,14 @@ export async function cancelSquareSubscription(email) {
   });
 }
 
+export async function squareResubscribeCheckout(email, planKey, redirectUrl) {
+  return apiCall('/api/square/resubscribe-checkout', {
+    method: 'POST',
+    body: JSON.stringify({ email, planKey, redirectUrl }),
+  });
+}
+
+
 export async function changeSquarePlan(email, newPlanKey) {
   return apiCall('/api/square/change-plan', {
     method: 'POST',

@@ -4,7 +4,7 @@ import {
   LogOut, Settings, Edit3, Eye, EyeOff, Check, X,
   CreditCard, ArrowRightLeft, Calendar, AlertCircle
 } from 'lucide-react';
-import { getSquareSubscriptionStatus, changeSquarePlan, cancelSquareSubscription } from '../../api';
+import { getSquareSubscriptionStatus, changeSquarePlan, cancelSquareSubscription, squareResubscribeCheckout } from '../../api';
 import { toast } from 'sonner';
 
 const PLAN_OPTIONS = [
@@ -42,10 +42,21 @@ function SubscriptionManager({ email }) {
     if (changingPlan) return;
     setChangingPlan(true);
     try {
-      const result = await changeSquarePlan(email, newKey);
-      toast.success(result.message || `Switched to ${result.new_plan}`);
-      setShowPlans(false);
-      await fetchStatus();
+      if (isCanceled) {
+        // Resubscribe: redirect to Square checkout for new payment
+        const redirectUrl = window.location.origin;
+        const result = await squareResubscribeCheckout(email, newKey, redirectUrl);
+        if (result.checkoutUrl) {
+          window.location.href = result.checkoutUrl;
+          return; // Redirecting — don't reset state
+        }
+        toast.error('Failed to create checkout link.');
+      } else {
+        const result = await changeSquarePlan(email, newKey);
+        toast.success(result.message || `Switched to ${result.new_plan}`);
+        setShowPlans(false);
+        await fetchStatus();
+      }
     } catch (err) {
       toast.error(err.message || 'Failed to change plan');
     } finally {
