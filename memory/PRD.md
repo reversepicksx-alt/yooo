@@ -257,6 +257,18 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
   5. **Prop+Direction Breakdown**: Full hit rates for every prop type + over/under combo
 - **Testing**: 11/11 backend tests passed (iteration 58), frontend screenshot verified
 
+### INTEL Tab Rebuilt as Flat Spreadsheet (April 5, 2026) — Major Redesign
+- **Problem**: User wanted ONE sheet with all dimensions per pick, not separate tab charts
+- **Solution**: Rebuilt INTEL as a horizontally scrollable spreadsheet table
+  - Every settled pick = one row
+  - Columns: Player, Position, Prop, Rec, Line, Projected, Actual, Error, Result, League, Venue, Game Type, Match Result, Score, Confidence, Bias Direction, Role, Opponent
+  - Sortable headers (click to toggle asc/desc)
+  - Filter pills: All/Hits/Misses/Push + Over/Under
+  - Sticky player column on horizontal scroll
+  - Sport toggle (Soccer/Basketball)
+- **Backend**: New `GET /api/intel/sheet` returns flat rows with all 19 dimensions
+- **Testing**: 16/16 backend + all frontend tests passed (iteration 59)
+
 ## Upcoming Tasks (P1)
 - Slip correlation analysis
 - Route Prediction API calls through MongoDB Cache (P2)
