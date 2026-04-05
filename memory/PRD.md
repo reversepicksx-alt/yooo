@@ -180,9 +180,27 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 - Basketball: calibration_context injected into prompt + calibration guards applied post-consensus
 
 ## AI Engine Configuration
-- **AI Lineup**: GPT-5.2 (anchor) + Gemini 2.0 Flash + Grok 4.1 Fast
+- **AI Lineup**: GPT-5.2 (anchor) + Gemini 2.5 Pro + Grok 4.1 Fast Reasoning
 - **Temperature**: 0 (deterministic)
 - **Key sources**: GPT-5.2 + Gemini via Emergent LLM Key, Grok via xAI API Key
+- **Cost per prediction**: ~$0.035 (3 models combined)
+- **Previous lineup**: GPT-4.1-mini + Gemini 2.0 Flash + Grok 4.1 Fast Non-Reasoning (~$0.005/prediction)
+
+### Model Upgrades (April 5, 2026) — User Requested
+- GPT-4.1-mini → **GPT-5.2**: Premium anchor brain, best math/reasoning (100% AIME)
+- Gemini 2.0 Flash → **Gemini 2.5 Pro**: Google's strongest reasoning model, 1M context
+- Grok 4.1 Fast Non-Reasoning → **Grok 4.1 Fast Reasoning**: Same speed tier, adds chain-of-thought reasoning
+- All 3 models now have reasoning capabilities — **3 reasoners** instead of **1 reasoner + 2 speed bots**
+- Updated across: predict.py, basketball_predict.py, miss_analysis.py (all model references)
+
+### Calibration Dashboard v2 (April 5, 2026) — Enhancement
+- 5 tabbed sections: Overview, Position, Context, League, Details
+- Position: GK/DEF/MID/ATK (soccer), Guard/Big (basketball) hit rates + prop+position combos
+- Context: Blowout/close/normal game hit rates + prop+context combos + blowout miss details
+- League: Human-readable league names with hit rates
+- Details: Venue, prop+venue, confidence band, line range breakdowns
+- Error direction shown on rate bars (over/under-projecting amounts)
+
 
 
 ## Upcoming Tasks (P1)
