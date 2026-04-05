@@ -269,6 +269,16 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 - **Backend**: New `GET /api/intel/sheet` returns flat rows with all 19 dimensions
 - **Testing**: 16/16 backend + all frontend tests passed (iteration 59)
 
+### GPT-5.2 Solo + Smart Filters (April 5, 2026)
+- **Prediction Engine**: Switched from 3-AI consensus (GPT-5.2 + Gemini + Grok) to GPT-5.2 solo
+  - Elite calibration engine replaces the validators (error correction, market blend, flip guard, confidence recal)
+  - 66% credit savings, 3x faster predictions
+- **INTEL Smart Filters**: 8 searchable dropdowns — Position, League, Venue, Game Type, Prop, Direction, Result, Opponent text search
+  - Filtered stats update dynamically (rate/hits/misses recalculated for the filtered set)
+  - Clear button resets all filters
+- **Removed**: Calibration breakdown section (per user request)
+- **Testing**: 14/14 backend + all frontend tests passed (iteration 60)
+
 ## Upcoming Tasks (P1)
 - Slip correlation analysis
 - Route Prediction API calls through MongoDB Cache (P2)
