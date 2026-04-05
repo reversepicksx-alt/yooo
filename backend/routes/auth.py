@@ -59,7 +59,7 @@ async def check_access(email_lower: str):
 
     # Check Square subscription
     square_sub = await db.square_subscriptions.find_one(
-        {"email": email_lower, "status": {"$in": ["ACTIVE", "PENDING"]}},
+        {"email": email_lower, "status": {"$in": ["ACTIVE", "PENDING", "CANCELED"]}},
         {"_id": 0}
     )
     if square_sub:
@@ -76,7 +76,10 @@ async def check_access(email_lower: str):
                     )
                     print(f"[AUTH] Subscription expired for {email_lower} (expired {expires_at})")
                 else:
-                    return "Premium (Square)"
+                    # Still within billing period — allow access even if canceled
+                    sub_status = square_sub.get("status", "ACTIVE")
+                    label = "Premium (Square)" if sub_status != "CANCELED" else "Premium (Square) — Cancels soon"
+                    return label
             except Exception:
                 return "Premium (Square)"  # Can't parse date, allow access
         else:
