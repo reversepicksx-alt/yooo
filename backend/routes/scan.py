@@ -533,7 +533,7 @@ async def _resolve_opponent(opponent_name: str, is_international: bool, league_i
 
 
 def _build_soccer_scan_prompt(leagues_list: str) -> str:
-    return f"""Analyze this screenshot of a player prop card. Extract ALL props shown.
+    return f"""Analyze this screenshot of a player prop card.
 
 LAYOUT GUIDE:
 - The player's FIRST NAME is on the top line, LAST NAME is on the second line (larger/bolder text)
@@ -542,17 +542,21 @@ LAYOUT GUIDE:
 - The prop line number (e.g., 48.5) is shown prominently with the stat type below it (e.g., "Passes Attempted")
 - "Less" and "More" buttons are just selection options — IGNORE them.
 
+CRITICAL EXTRACTION RULES:
+1. If the screenshot shows ONE player with MULTIPLE stat types listed (e.g., Passes Attempted, Saves, Goals Allowed all on the same page) → ONLY extract the PRIMARY prop. The primary prop is the one that is EXPANDED (has a bar chart, detailed stats, or is visually the largest/most prominent). Ignore collapsed/minimized stat rows.
+2. If the screenshot shows MULTIPLE DIFFERENT PLAYERS (a grid/board of player cards) → Extract ALL of them. This is a multi-player board.
+3. NEVER return multiple entries for the same player with different stat types. One player = one prop.
+
 COMBO PROPS (TWO players combined):
 - The card shows TWO player names joined by " + "
 - Teams shown as "Team1/Team2"
 - The stat label includes "(Combo)"
 - The line number is the COMBINED total for both players
 
-CRITICAL RULES:
+ADDITIONAL RULES:
 - Read player names EXACTLY as shown. Do NOT confuse with opponent/team names.
 - If you see " + " between two names, this is a COMBO prop — set isCombo to true.
 - IGNORE any "Less"/"More" buttons.
-- Extract EVERY prop visible in the screenshot.
 
 Extract for EACH prop:
 1. playerName — Full name as displayed. For combos: "Player A + Player B"
@@ -597,7 +601,7 @@ If unknown, use null. Return JSON array of ALL props found."""
 
 
 def _build_basketball_scan_prompt() -> str:
-    return """Analyze this screenshot of an NBA player prop card. Extract ALL props shown.
+    return """Analyze this screenshot of an NBA player prop card.
 
 LAYOUT GUIDE:
 - Player's name (first + last), usually first name smaller above last name
@@ -606,11 +610,15 @@ LAYOUT GUIDE:
 - The prop line number is shown prominently with the stat type below it
 - "Less" and "More" buttons are selection options — IGNORE them.
 
-CRITICAL RULES:
+CRITICAL EXTRACTION RULES:
+1. If the screenshot shows ONE player with MULTIPLE stat types listed (e.g., Points, Rebounds, Assists all on the same page) → ONLY extract the PRIMARY prop. The primary prop is the one that is EXPANDED (has a bar chart, detailed stats, or is visually the largest/most prominent). Ignore collapsed/minimized stat rows.
+2. If the screenshot shows MULTIPLE DIFFERENT PLAYERS (a grid/board of player cards) → Extract ALL of them.
+3. NEVER return multiple entries for the same player with different stat types. One player = one prop.
+
+ADDITIONAL RULES:
 - Read player names EXACTLY as shown
 - IGNORE "Less"/"More" buttons
 - This is BASKETBALL / NBA only
-- Extract EVERY prop visible in the screenshot.
 
 Extract for EACH prop:
 1. playerName — Full name as displayed
@@ -811,6 +819,24 @@ async def scan_prop(req: ScanPropRequest):
         # Support both single object and array from AI
         if not isinstance(extracted, list):
             extracted = [extracted]
+
+        # DEDUP: If same player appears with different stat types, keep only the first
+        seen_players = {}
+        deduped = []
+        for entry in extracted:
+            pname = (entry.get("playerName") or "").strip().lower()
+            if not pname:
+                deduped.append(entry)
+                continue
+            if pname in seen_players:
+                existing_prop = seen_players[pname]
+                current_prop = (entry.get("propType") or "").lower()
+                if existing_prop != current_prop:
+                    print(f"[SCAN DEDUP] Skipping duplicate prop for {pname}: {current_prop} (already have {existing_prop})")
+                    continue
+            seen_players[pname] = (entry.get("propType") or "").lower()
+            deduped.append(entry)
+        extracted = deduped
 
         # ── Step 2: Route based on sport ──
         if is_basketball:
