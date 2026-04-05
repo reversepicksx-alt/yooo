@@ -13,7 +13,7 @@ from config import (
     db, EMERGENT_LLM_KEY, XAI_API_KEY, CURRENT_SEASON,
     WOMENS_LEAGUE_IDS, STAT_FIELD_MAP, STAT_LAMBDA_MAP,
 )
-from calibration import get_calibration_stats, generate_calibration_prompt, apply_calibration_guards
+from calibration import get_calibration_stats, generate_calibration_prompt, apply_calibration_guards, apply_elite_calibration
 from models import PredictionRequest
 from utils import api_football_request, get_recent_fixtures_fast, strip_accents, get_soccer_odds, decimal_to_american
 
@@ -1997,6 +1997,23 @@ Analyze ALL data thoroughly. Return JSON only."""
             )
         except Exception as e:
             print(f"[CALIBRATION] Guard error: {e}")
+
+        # =============================================
+        # ELITE CALIBRATION ENGINE v3
+        # Post-consensus hard corrections: error correction,
+        # market blending, flip guard, confidence recal, edge threshold
+        # =============================================
+        try:
+            prediction = await apply_elite_calibration(
+                prediction, req.propType, req.line,
+                venue=player_venue, sport="soccer"
+            )
+        except Exception as e:
+            print(f"[ELITE CAL] Error: {e}")
+
+        # HARD GUARD: recommendation MUST match the FINAL projected value vs line
+        final_proj_cal = prediction.get("projectedValue", req.line)
+        prediction["recommendation"] = "over" if final_proj_cal > req.line else "under"
 
         response_text = json.dumps(prediction)
 

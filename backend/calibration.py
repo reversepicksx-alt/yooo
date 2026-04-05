@@ -488,3 +488,266 @@ async def apply_calibration_guards(prediction: dict, prop_type: str, line: float
         print(f"[CALIBRATION] Total: -{total_penalty}% ({conf} → {new_conf})")
 
     return prediction
+
+
+# =====================================================================
+# ELITE CALIBRATION ENGINE v3 — Post-Consensus Hard Corrections
+# Research-backed: Market regression, error correction, isotonic
+# confidence mapping, recommendation flip guards, edge thresholds.
+# =====================================================================
+
+MIN_SAMPLES_FOR_CORRECTION = 10
+MIN_SAMPLES_FOR_FLIP = 15
+MARKET_WEIGHT = 0.65  # 65% market line, 35% AI projection (nfelo research optimal)
+FLIP_THRESHOLD = 0.45  # Flip recommendation if hit rate below 45%
+EDGE_STRONG_PCT = 0.05  # 5% edge for STRONG recommendation
+EDGE_LEAN_PCT = 0.02   # 2% edge for LEAN
+
+
+def _correct_projected_value(stats: dict, prop_type: str, recommendation: str, venue: str, projected: float) -> tuple:
+    """
+    Correction 1: Historical Error Correction.
+    If we historically over-project pass_attempts|away by 7.2, subtract 7.2.
+    Uses the most specific combo available, falling back to broader buckets.
+    Returns (corrected_value, correction_applied, correction_note).
+    """
+    # Try most specific first: prop + venue + rec direction
+    combos = [
+        (f"{prop_type}|{venue}", stats.get("by_prop_venue", {})),
+        (f"{prop_type}|{recommendation}", stats.get("by_prop_rec", {})),
+        (prop_type, stats.get("by_prop", {})),
+    ]
+
+    for key, bucket in combos:
+        data = bucket.get(key)
+        if not data:
+            continue
+        errors = data.get("errors", [])
+        count = data.get("count", 0)
+        if count < MIN_SAMPLES_FOR_CORRECTION or len(errors) < MIN_SAMPLES_FOR_CORRECTION:
+            continue
+
+        avg_error = sum(errors) / len(errors)
+        # avg_error = actual - projected. If negative, we over-project.
+        # To correct: new_proj = old_proj + avg_error (adds negative = subtracts)
+        if abs(avg_error) < 0.2:
+            return projected, False, "well-calibrated"
+
+        corrected = round(projected + avg_error, 1)
+        direction = "down" if avg_error < 0 else "up"
+        note = f"Error correction: {direction} by {abs(avg_error):.1f} (from {key}, n={count})"
+        print(f"[ELITE CAL] {note}: {projected} → {corrected}")
+        return corrected, True, note
+
+    return projected, False, ""
+
+
+def _blend_with_market_line(projected: float, line: float) -> tuple:
+    """
+    Correction 2: Market Line Blending.
+    Blend AI projection with the sportsbook line.
+    Research: 65% market / 35% model minimizes Brier score.
+    Returns (blended_value, blend_note).
+    """
+    if line <= 0:
+        return projected, ""
+
+    blended = round((1 - MARKET_WEIGHT) * projected + MARKET_WEIGHT * line, 1)
+    if blended == projected:
+        return projected, ""
+
+    note = f"Market blend: {projected} × 0.35 + {line} × 0.65 = {blended}"
+    print(f"[ELITE CAL] {note}")
+    return blended, note
+
+
+def _check_recommendation_flip(stats: dict, prop_type: str, recommendation: str) -> tuple:
+    """
+    Correction 3: Recommendation Flip Guard.
+    If prop+rec has < 45% hit rate with 15+ samples, flip direction.
+    Returns (should_flip: bool, flip_note: str).
+    """
+    key = f"{prop_type}|{recommendation}"
+    combo = stats.get("by_prop_rec", {}).get(key)
+    if not combo:
+        return False, ""
+
+    h, m = combo.get("hit", 0), combo.get("miss", 0)
+    total = h + m
+    if total < MIN_SAMPLES_FOR_FLIP:
+        return False, ""
+
+    rate = h / total
+    if rate < FLIP_THRESHOLD:
+        opposite = "under" if recommendation == "over" else "over"
+        # Check if the opposite direction is actually better
+        opp_key = f"{prop_type}|{opposite}"
+        opp_combo = stats.get("by_prop_rec", {}).get(opp_key)
+        opp_rate = 0
+        if opp_combo:
+            oh, om = opp_combo.get("hit", 0), opp_combo.get("miss", 0)
+            ot = oh + om
+            if ot >= 5:
+                opp_rate = oh / ot
+
+        # Only flip if opposite direction is meaningfully better
+        if opp_rate > rate + 0.10:
+            note = f"FLIP: {prop_type} {recommendation.upper()} only {rate*100:.1f}% ({h}/{total}), {opposite.upper()} is {opp_rate*100:.1f}%"
+            print(f"[ELITE CAL] {note}")
+            return True, note
+
+    return False, ""
+
+
+def _recalibrate_confidence(stats: dict, confidence: int) -> tuple:
+    """
+    Correction 4: Confidence Recalibration.
+    Map AI's confidence score to actual historical accuracy for that band.
+    If 70%+ confidence picks historically only hit 55%, set confidence to 55%.
+    Returns (recalibrated_confidence, recal_note).
+    """
+    bands = stats.get("by_confidence_band", {})
+
+    # Determine which band this confidence falls into
+    if confidence >= 70:
+        band_key = "high_70+"
+    elif confidence >= 55:
+        band_key = "medium_55-69"
+    else:
+        band_key = "low_<55"
+
+    band_data = bands.get(band_key)
+    if not band_data:
+        return confidence, ""
+
+    h, m = band_data.get("hit", 0), band_data.get("miss", 0)
+    total = h + m
+    if total < 10:
+        return confidence, ""
+
+    actual_rate = round(h / total * 100)
+
+    # If AI is overconfident by more than 8 points, pull down
+    if confidence > actual_rate + 8:
+        # Don't slam it all the way — use 60% of the gap
+        gap = confidence - actual_rate
+        adjustment = int(gap * 0.6)
+        new_conf = max(45, confidence - adjustment)
+        note = f"Confidence recal: {band_key} historically hits {actual_rate}%, AI said {confidence}% → {new_conf}%"
+        print(f"[ELITE CAL] {note}")
+        return new_conf, note
+
+    # If AI is underconfident, nudge up slightly
+    if actual_rate > confidence + 10 and total >= 20:
+        bump = min(5, int((actual_rate - confidence) * 0.3))
+        new_conf = min(85, confidence + bump)
+        note = f"Confidence bump: {band_key} historically hits {actual_rate}%, AI said {confidence}% → {new_conf}%"
+        print(f"[ELITE CAL] {note}")
+        return new_conf, note
+
+    return confidence, ""
+
+
+def _apply_edge_threshold(projected: float, line: float, confidence: int) -> tuple:
+    """
+    Correction 5: Minimum Edge Threshold.
+    Only show STRONG if corrected projection differs from line by > 5%.
+    Below 2% → LOW conviction. 2-5% → LEAN.
+    Returns (edge_label, edge_note).
+    """
+    if line <= 0:
+        return "STRONG", ""
+
+    edge_pct = abs(projected - line) / line
+
+    if edge_pct >= EDGE_STRONG_PCT:
+        return "STRONG", ""
+    elif edge_pct >= EDGE_LEAN_PCT:
+        note = f"Edge {edge_pct*100:.1f}% < 5% threshold → LEAN"
+        return "LEAN", note
+    else:
+        note = f"Edge {edge_pct*100:.1f}% < 2% → LOW conviction (near coin flip)"
+        return "LOW", note
+
+
+async def apply_elite_calibration(
+    prediction: dict, prop_type: str, line: float,
+    venue: str = "home", sport: str = "soccer"
+) -> dict:
+    """
+    Master function: Apply all 5 elite calibration corrections post-consensus.
+    Call this AFTER all existing guards and BEFORE final response.
+    """
+    cal_stats = await get_calibration_stats(sport)
+    if not cal_stats or cal_stats.get("total", 0) < MIN_SAMPLES_FOR_CORRECTION:
+        return prediction
+
+    original_proj = prediction.get("projectedValue", line)
+    original_rec = prediction.get("recommendation", "over")
+    original_conf = prediction.get("confidenceScore", 50)
+    corrections = []
+
+    # --- Correction 1: Historical Error Correction ---
+    corrected_proj, was_corrected, corr_note = _correct_projected_value(
+        cal_stats, prop_type, original_rec, venue, original_proj
+    )
+    if was_corrected:
+        corrections.append(corr_note)
+
+    # --- Correction 2: Market Line Blending ---
+    blended_proj, blend_note = _blend_with_market_line(corrected_proj, line)
+    if blend_note:
+        corrections.append(blend_note)
+    final_proj = blended_proj
+
+    # Update recommendation based on corrected projection
+    new_rec = "over" if final_proj > line else "under"
+
+    # --- Correction 3: Recommendation Flip Guard ---
+    should_flip, flip_note = _check_recommendation_flip(cal_stats, prop_type, new_rec)
+    if should_flip:
+        new_rec = "under" if new_rec == "over" else "over"
+        corrections.append(flip_note)
+
+    # --- Correction 4: Confidence Recalibration ---
+    new_conf, recal_note = _recalibrate_confidence(cal_stats, original_conf)
+    if recal_note:
+        corrections.append(recal_note)
+
+    # --- Correction 5: Edge Threshold ---
+    edge_label, edge_note = _apply_edge_threshold(final_proj, line, new_conf)
+    if edge_note:
+        corrections.append(edge_note)
+
+    # Apply corrections to prediction
+    prediction["projectedValue"] = final_proj
+    prediction["recommendation"] = new_rec
+    prediction["confidenceScore"] = new_conf
+    prediction["confidenceLevel"] = (
+        "Very High" if new_conf >= 75 else
+        "High" if new_conf >= 65 else
+        "Medium" if new_conf >= 50 else
+        "Low"
+    )
+    prediction["edgeStrength"] = edge_label
+
+    # Store correction metadata for transparency
+    if corrections:
+        prediction["calibrationApplied"] = {
+            "originalProjection": original_proj,
+            "correctedProjection": final_proj,
+            "originalRecommendation": original_rec,
+            "finalRecommendation": new_rec,
+            "originalConfidence": original_conf,
+            "calibratedConfidence": new_conf,
+            "edgeStrength": edge_label,
+            "corrections": corrections,
+            "sampleSize": cal_stats.get("total", 0),
+        }
+        alerts = prediction.get("tacticalAlerts", [])
+        for c in corrections:
+            alerts.append(f"[ELITE_CAL] {c}")
+        prediction["tacticalAlerts"] = alerts
+        print(f"[ELITE CAL] Applied {len(corrections)} corrections: proj {original_proj}→{final_proj}, rec {original_rec}→{new_rec}, conf {original_conf}→{new_conf}, edge={edge_label}")
+
+    return prediction

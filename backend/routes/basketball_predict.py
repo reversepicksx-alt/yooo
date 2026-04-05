@@ -1016,6 +1016,23 @@ Analyze the statistical verdict, per-minute projection, and over-rate FIRST. The
         except Exception as e:
             print(f"[BBALL CALIBRATION] Guard error: {e}")
 
+        # =============================================
+        # ELITE CALIBRATION ENGINE v3
+        # Post-consensus hard corrections for basketball
+        # =============================================
+        try:
+            from calibration import apply_elite_calibration
+            prediction = await apply_elite_calibration(
+                prediction, req.propType, req.line,
+                venue=player_venue, sport="basketball"
+            )
+        except Exception as e:
+            print(f"[BBALL ELITE CAL] Error: {e}")
+
+        # HARD GUARD: recommendation MUST match the FINAL projected value vs line
+        final_proj_cal = prediction.get("projectedValue", req.line)
+        prediction["recommendation"] = "over" if final_proj_cal > req.line else "under"
+
         # Force-set identity fields from REQUEST data — never trust AI output for these
         player_pos = player_info.get("position", "") if player_info else ""
         prediction["player"] = {"id": player_id or 0, "name": req.playerName, "team": req.teamName, "position": player_pos}

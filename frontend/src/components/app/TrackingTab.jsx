@@ -434,6 +434,41 @@ function AnalysisPanel({ analysis }) {
           color={a.recommendation === 'over' ? 'var(--accent)' : '#818cf8'} />
       </div>
 
+      {/* Edge Strength Badge */}
+      {a.edgeStrength && (
+        <div style={{
+          textAlign: 'center', marginBottom: 8, padding: '3px 0',
+          borderRadius: 6, fontSize: 9, fontWeight: 900, letterSpacing: '0.08em',
+          background: a.edgeStrength === 'STRONG' ? 'rgba(16,185,129,0.12)' : a.edgeStrength === 'LEAN' ? 'rgba(245,158,11,0.12)' : 'rgba(244,63,94,0.12)',
+          color: a.edgeStrength === 'STRONG' ? 'var(--accent)' : a.edgeStrength === 'LEAN' ? '#f59e0b' : '#f43f5e',
+          border: `1px solid ${a.edgeStrength === 'STRONG' ? 'rgba(16,185,129,0.25)' : a.edgeStrength === 'LEAN' ? 'rgba(245,158,11,0.25)' : 'rgba(244,63,94,0.25)'}`,
+        }}>
+          {a.edgeStrength} EDGE
+        </div>
+      )}
+
+      {/* Calibration Corrections Applied */}
+      {a.calibrationApplied?.corrections?.length > 0 && (
+        <div style={{ marginBottom: 8, padding: '6px 8px', borderRadius: 8, background: 'rgba(129,140,248,0.06)', border: '1px solid rgba(129,140,248,0.15)' }}>
+          <div style={{ fontSize: 8, fontWeight: 800, color: '#818cf8', letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 3 }}>
+            Calibration Applied ({a.calibrationApplied.sampleSize} samples)
+          </div>
+          {a.calibrationApplied.originalProjection !== a.calibrationApplied.correctedProjection && (
+            <div style={{ fontSize: 8, color: 'rgba(255,255,255,0.5)' }}>
+              Projection: {a.calibrationApplied.originalProjection} → {a.calibrationApplied.correctedProjection}
+            </div>
+          )}
+          {a.calibrationApplied.originalRecommendation !== a.calibrationApplied.finalRecommendation && (
+            <div style={{ fontSize: 8, color: '#f59e0b', fontWeight: 700 }}>
+              Flipped: {a.calibrationApplied.originalRecommendation.toUpperCase()} → {a.calibrationApplied.finalRecommendation.toUpperCase()}
+            </div>
+          )}
+          {a.calibrationApplied.corrections.map((c, i) => (
+            <div key={i} style={{ fontSize: 7, color: 'rgba(255,255,255,0.35)', lineHeight: 1.4 }}>• {c}</div>
+          ))}
+        </div>
+      )}
+
       {/* Matchup Overview */}
       {matchup.homeTeam && (
         <div style={{ marginBottom: 10, padding: '6px 8px', borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
