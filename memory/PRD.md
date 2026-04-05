@@ -228,6 +228,14 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 - **Backfill results**: 25/26 picks now have exact positions. 4 older soccer picks retain generic labels (DEF, MID) from early predictions that lacked specific position data
 - **Testing**: 14/14 backend tests passed (iteration 55)
 
+### Click-to-Expand Analysis on Tracking Cards (April 5, 2026) — User Requested
+- Tap any tracking card (Won/Lost/Live) to see the original stored prediction analysis
+- Backend: `GET /api/picks/analysis?pickId=...` fetches from `predictions` or `basketball_predictions` by player ID + prop type
+- AnalysisPanel shows: projected value, confidence, recommendation, matchup overview, sharp summary, key evidence, reasoning, scenarios, game flow, sub risk, and full tactical breakdown
+- No AI cost — pulls from stored data only
+- Action buttons (trash/edit/reanalyze) isolated with stopPropagation
+- Testing: 9/9 backend + all frontend tests passed (iteration 56)
+
 ## Upcoming Tasks (P1)
 - Slip correlation analysis
 - Route Prediction API calls through MongoDB Cache (P2)
