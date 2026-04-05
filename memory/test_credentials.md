@@ -26,6 +26,8 @@
 
 ## Manual Access Grants (manual_access_grants collection)
 - rgquan3@icloud.com — Premium
+- 3ddyh09@gmail.com — Lifetime (added by owner request, April 2026)
+- ferrerfroy@gmail.com — Lifetime (added by owner request)
 
 ## Square Customers (square_subscriptions collection — all 17 activated)
 - rgquan3@icloud.com, babyscar100@icloud.com, luismartinez.lm878@gmail.com

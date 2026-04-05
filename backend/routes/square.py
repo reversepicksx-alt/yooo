@@ -1012,6 +1012,17 @@ async def verify_payment(req: VerifyPaymentRequest):
         user = await db.users.find_one({"email": email_lower}, {"_id": 0})
         if user and user.get("passwordHash"):
             return {"found": True, "status": "active", "message": "Your subscription is active. Please log in with your password."}
+        # User has active sub but no password — set it now if provided
+        if req.password and len(req.password) >= 6:
+            import bcrypt
+            salt = bcrypt.gensalt()
+            pw_hash = bcrypt.hashpw(req.password.encode("utf-8"), salt).decode("utf-8")
+            await db.users.update_one(
+                {"email": email_lower},
+                {"$set": {"passwordHash": pw_hash}},
+                upsert=True
+            )
+            return {"found": True, "status": "activated", "message": "Password set! You can now log in."}
         return {"found": True, "status": "needs_password", "message": "Subscription found! Please set a password to continue."}
 
     # Step 1: Search Square payment history directly for this email
