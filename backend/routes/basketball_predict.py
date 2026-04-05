@@ -657,7 +657,7 @@ async def basketball_predict(req: BasketballPredictionRequest):
 
         # ═══════════════════════════════════════
         # MULTI-AI CONSENSUS ENGINE (3 AIs)
-        # Gemini Flash (GE) + Grok (GK) + GPT-4.1-mini (GP)
+        # Gemini Flash (GE) + Grok (GK) + GPT-5.2 (GP)
         # ═══════════════════════════════════════
 
         # Pre-compute the statistical lean guidance for the AI
@@ -680,6 +680,21 @@ DECISION RULES (FOLLOW STRICTLY):
 5. If the line is 2+ standard deviations from the mean, this is a STRONG edge — confidence should be 70%+.
 6. Factor blowout risk: if a team is expected to win big, starters on the winning team play fewer minutes.
 """
+
+        # Inject calibration from settled basketball picks (feedback loop)
+        calibration_context = ""
+        try:
+            from calibration import get_calibration_stats, generate_calibration_prompt
+            cal_stats = await get_calibration_stats("basketball")
+            if cal_stats:
+                calibration_context = generate_calibration_prompt(
+                    cal_stats, req.propType, "over",
+                    req.line, match_odds,
+                    league_id=12, venue=player_venue,
+                    position=None, sport="basketball"
+                )
+        except Exception as e:
+            print(f"[BBALL CALIBRATION] Error: {e}")
 
         PREDICTION_SYSTEM = f"""You are an elite NBA/WNBA player prop analyst. You are given pre-computed statistical analysis. Your job is to synthesize this data into a calibrated prediction.
 
@@ -716,7 +731,7 @@ RULES: recentSamples=[]. No AI model names in output."""
         prompt = f"""{req.playerName} — plays for {req.teamName} ({player_venue.upper()}) | OPPONENT: {req.opponentName} | {prop_label} line {req.line}
 Sport: NBA/WNBA Basketball
 recentSamples=[]
-
+{calibration_context}
 {data_digest[:7000]}
 
 Analyze the statistical verdict, per-minute projection, and over-rate FIRST. Then factor in matchup context. Return JSON only."""
@@ -832,7 +847,7 @@ Analyze the statistical verdict, per-minute projection, and over-rate FIRST. The
 
         ai_tasks = [
             aio.ensure_future(call_ai("gemini-2.0-flash", "gemini", "gemini")),
-            aio.ensure_future(call_ai("gpt-4.1-mini", "gpt41mini")),
+            aio.ensure_future(call_ai("gpt-5.2", "gpt52")),
             aio.ensure_future(call_grok("grok", "grok-4-1-fast-non-reasoning")),
         ]
 
@@ -861,9 +876,9 @@ Analyze the statistical verdict, per-minute projection, and over-rate FIRST. The
             if "gemini" not in responded_sources:
                 retry_tasks.append(aio.ensure_future(call_ai("gemini-2.0-flash", "gemini", "gemini")))
                 print("[BBALL MULTI-AI] Retrying gemini...")
-            if "gpt41mini" not in responded_sources:
-                retry_tasks.append(aio.ensure_future(call_ai("gpt-4.1-mini", "gpt41mini")))
-                print("[BBALL MULTI-AI] Retrying gpt41mini...")
+            if "gpt52" not in responded_sources:
+                retry_tasks.append(aio.ensure_future(call_ai("gpt-5.2", "gpt52")))
+                print("[BBALL MULTI-AI] Retrying gpt52...")
             if "grok" not in responded_sources:
                 retry_tasks.append(aio.ensure_future(call_grok("grok", "grok-4-1-fast-non-reasoning")))
                 print("[BBALL MULTI-AI] Retrying grok...")
@@ -991,6 +1006,15 @@ Analyze the statistical verdict, per-minute projection, and over-rate FIRST. The
 
             # Re-determine recommendation after all overrides
             prediction["recommendation"] = "over" if prediction["projectedValue"] > req.line else "under"
+
+        # Apply calibration guards (blowout detection, rebound floors, etc.)
+        try:
+            from calibration import apply_calibration_guards
+            prediction = await apply_calibration_guards(
+                prediction, req.propType, req.line, match_odds, player_venue
+            )
+        except Exception as e:
+            print(f"[BBALL CALIBRATION] Guard error: {e}")
 
         # Force-set identity fields from REQUEST data — never trust AI output for these
         player_pos = player_info.get("position", "") if player_info else ""

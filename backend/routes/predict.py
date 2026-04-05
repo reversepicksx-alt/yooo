@@ -1289,7 +1289,7 @@ POSITION CLUES: CB=high tackles/blocks/aerial duels, low crosses/key passes/drib
 
         # =============================================
         # MULTI-AI CONSENSUS ENGINE (3 AIs)
-        # Gemini Flash (GE) + Grok (GK) + GPT-4.1-mini (GP)
+        # Gemini Flash (GE) + Grok (GK) + GPT-5.2 (GP)
         # =============================================
         PREDICTION_SYSTEM = """Elite soccer prop prediction engine. Analyze data thoroughly, return calibrated JSON.
 
@@ -1619,7 +1619,8 @@ Expected possession for {req.opponentName}: {match_dominance['oppExpectedPoss']}
                 calibration_context = generate_calibration_prompt(
                     cal_stats, req.propType, "over",
                     req.line, match_odds,
-                    league_id=league_id, venue=player_venue
+                    league_id=league_id, venue=player_venue,
+                    position=display_position, sport="soccer"
                 )
         except Exception as e:
             print(f"[CALIBRATION] Error generating prompt: {e}")
@@ -1750,7 +1751,7 @@ Analyze ALL data thoroughly. Return JSON only."""
 
         ai_tasks = [
             aio.ensure_future(call_ai("gemini-2.0-flash", "gemini", "gemini")),
-            aio.ensure_future(call_ai("gpt-4.1-mini", "gpt41mini")),
+            aio.ensure_future(call_ai("gpt-5.2", "gpt52")),
             aio.ensure_future(call_grok("grok", "grok-4-1-fast-non-reasoning")),
         ]
 
@@ -1779,9 +1780,9 @@ Analyze ALL data thoroughly. Return JSON only."""
             if "gemini" not in responded_sources:
                 retry_tasks.append(aio.ensure_future(call_ai("gemini-2.0-flash", "gemini", "gemini")))
                 print("[MULTI-AI] Retrying gemini...")
-            if "gpt41mini" not in responded_sources:
-                retry_tasks.append(aio.ensure_future(call_ai("gpt-4.1-mini", "gpt41mini")))
-                print("[MULTI-AI] Retrying gpt41mini...")
+            if "gpt52" not in responded_sources:
+                retry_tasks.append(aio.ensure_future(call_ai("gpt-5.2", "gpt52")))
+                print("[MULTI-AI] Retrying gpt52...")
             if "grok" not in responded_sources:
                 retry_tasks.append(aio.ensure_future(call_grok("grok", "grok-4-1-fast-non-reasoning")))
                 print("[MULTI-AI] Retrying grok...")

@@ -12,7 +12,7 @@ from models import (
 )
 from utils import api_football_request
 from basketball_utils import _api_get as bball_api_get, parse_player_stat, get_current_nba_season
-from routes.miss_analysis import auto_analyze_miss_background
+# auto_analyze_miss_background REMOVED — was draining AI tokens on every miss settlement
 
 router = APIRouter(prefix="/api", tags=["picks"])
 
@@ -160,9 +160,6 @@ async def correct_pick(req: CorrectPickRequest):
         {"pickId": req.pickId, "email": req.email.lower()},
         {"$set": {"actualValue": req.actualValue, "result": result_str, "correctedManually": True}}
     )
-    # AUTO-CALIBRATE: If manual correction results in a miss, trigger analysis
-    if result_str == "miss":
-        aio.create_task(auto_analyze_miss_background(req.pickId, req.email.lower()))
     return {"success": True, "result": result_str, "actualValue": req.actualValue}
 
 
@@ -470,10 +467,6 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str) -> dict:
                       "matchScore": match_score, "minutesPlayed": minutes_played,
                       "settledAt": datetime.now(timezone.utc).isoformat()}}
         )
-        # AUTO-CALIBRATE: Trigger miss analysis if result is a miss
-        if result_str == "miss":
-            aio.create_task(auto_analyze_miss_background(pick["pickId"], email))
-
     return update
 
 
@@ -685,10 +678,6 @@ async def _build_basketball_update(pick: dict, game: dict, team_id: int, email: 
                       "matchScore": match_score, "minutesPlayed": minutes_played,
                       "settledAt": datetime.now(timezone.utc).isoformat()}}
         )
-        # AUTO-CALIBRATE: Trigger miss analysis if result is a miss
-        if result_str == "miss":
-            aio.create_task(auto_analyze_miss_background(pick["pickId"], email))
-
     return update
 
 

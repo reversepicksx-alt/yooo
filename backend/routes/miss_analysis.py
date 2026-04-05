@@ -89,7 +89,7 @@ Return ONLY valid JSON, no markdown or explanation."""
     models = [
         ("gemini/gemini-2.0-flash", "GE"),
         ("grok-4-1-fast-non-reasoning", "GK"),
-        ("gpt-4.1-mini", "GP"),
+        ("gpt-5.2", "GP"),
     ]
 
     EMERGENT_PROXY = "https://integrations.emergentagent.com/llm"
@@ -131,7 +131,7 @@ Return ONLY valid JSON, no markdown or explanation."""
                     loop.run_in_executor(
                         None,
                         lambda: gpt_client.chat.completions.create(
-                            model="gpt-4.1-mini",
+                            model="gpt-5.2",
                             messages=[{"role": "user", "content": prompt}],
                             temperature=0,
                             max_tokens=500,
@@ -393,16 +393,9 @@ async def get_misses(req: GetMissesRequest):
         ):
             analyses[a["pickId"]] = a
 
-    # Merge analyses into picks + auto-trigger for unanalyzed misses
-    unanalyzed = []
+    # Merge analyses into picks (no auto-trigger — removed to save AI tokens)
     for m in misses:
         m["missAnalysis"] = analyses.get(m["pickId"])
-        if not m["missAnalysis"]:
-            unanalyzed.append(m)
-
-    # Auto-trigger analysis for unanalyzed misses (background, non-blocking)
-    for m in unanalyzed[:5]:  # Cap at 5 to avoid overloading
-        asyncio.create_task(auto_analyze_miss_background(m["pickId"], req.email.lower()))
 
     # Get calibration stats
     stats = await db.calibration_stats.find({}, {"_id": 0}).to_list(20)

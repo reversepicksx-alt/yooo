@@ -151,7 +151,7 @@ export function ProjectionCard({ projection, onSave, excludedIndices, onToggleSa
                     textAlign: 'center',
                   }}>
                     <div style={{ fontSize: 9, fontWeight: 700, color: '#a855f7', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>
-                      {m.model === 'gemini' ? 'GE' : m.model === 'grok' ? 'GK' : m.model === 'gpt41mini' || m.model === 'gpt' ? 'GP' : m.model}
+                      {m.model === 'gemini' ? 'GE' : m.model === 'grok' ? 'GK' : m.model === 'gpt52' || m.model === 'gpt41mini' || m.model === 'gpt' ? 'GP' : m.model}
                     </div>
                     <div style={{
                       fontSize: 13, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace",

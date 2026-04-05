@@ -52,7 +52,7 @@ class TestAIEngineClaudeRemoval:
         
         # Verify expected models present
         assert 'gemini-2.0-flash' in ai_tasks_block, "gemini-2.0-flash not found"
-        assert 'gpt-4.1-mini' in ai_tasks_block, "gpt-4.1-mini not found"
+        assert 'gpt-5.2' in ai_tasks_block, "gpt-5.2 not found"
         assert 'grok' in ai_tasks_block, "grok not found"
         
         print("✅ predict.py has exactly 3 AI models (no claude/haiku)")
