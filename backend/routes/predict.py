@@ -1150,7 +1150,7 @@ POSITION CLUES: CB=high tackles/blocks/aerial duels, low crosses/key passes/drib
                         return await aio.wait_for(
                             aio.to_thread(
                                 pos_client.chat.completions.create,
-                                model="grok-4-1-fast-reasoning",
+                                model="grok-4-1-fast-non-reasoning",
                                 messages=[
                                     {"role": "system", "content": "You are a football/soccer tactical analyst. Reply in EXACTLY this format on one line:\nPOSITION|ROLE\nNothing else."},
                                     {"role": "user", "content": pos_prompt},
@@ -1166,7 +1166,7 @@ POSITION CLUES: CB=high tackles/blocks/aerial duels, low crosses/key passes/drib
                         litellm.drop_params = True
                         return await aio.wait_for(
                             litellm.acompletion(
-                                model="gemini/gemini-2.5-pro",
+                                model="gemini/gemini-2.0-flash",
                                 messages=[
                                     {"role": "system", "content": "You are a football/soccer tactical analyst. Reply in EXACTLY this format on one line:\nPOSITION|ROLE\nNothing else."},
                                     {"role": "user", "content": pos_prompt},
@@ -1289,7 +1289,7 @@ POSITION CLUES: CB=high tackles/blocks/aerial duels, low crosses/key passes/drib
 
         # =============================================
         # MULTI-AI CONSENSUS ENGINE (3 AIs)
-        # Gemini 2.5 Pro (GE) + Grok (GK) + GPT-5.2 (GP)
+        # Gemini 2.0 Flash (GE) + Grok (GK) + GPT-5.2 (GP)
         # =============================================
         PREDICTION_SYSTEM = """Elite soccer prop prediction engine. Analyze data thoroughly, return calibrated JSON.
 
@@ -1714,7 +1714,7 @@ Analyze ALL data thoroughly. Return JSON only."""
                 print(f"[MULTI-AI] {label} failed: {e}")
                 return None
 
-        async def call_grok(label="grok", model="grok-4-1-fast-reasoning"):
+        async def call_grok(label="grok", model="grok-4-1-fast-non-reasoning"):
             try:
                 grok_client = OpenAI(api_key=XAI_API_KEY, base_url="https://api.x.ai/v1")
                 grok_messages = [
@@ -1750,9 +1750,9 @@ Analyze ALL data thoroughly. Return JSON only."""
                 return None
 
         ai_tasks = [
-            aio.ensure_future(call_ai("gemini-2.5-pro", "gemini", "gemini")),
+            aio.ensure_future(call_ai("gemini-2.0-flash", "gemini", "gemini")),
             aio.ensure_future(call_ai("gpt-5.2", "gpt52")),
-            aio.ensure_future(call_grok("grok", "grok-4-1-fast-reasoning")),
+            aio.ensure_future(call_grok("grok", "grok-4-1-fast-non-reasoning")),
         ]
 
         # FORCE-3-MODELS: Wait for ALL 3 AIs, retry failures once
@@ -1778,13 +1778,13 @@ Analyze ALL data thoroughly. Return JSON only."""
         if len(ai_results) < 3 and _t.time() < deadline - 10:
             retry_tasks = []
             if "gemini" not in responded_sources:
-                retry_tasks.append(aio.ensure_future(call_ai("gemini-2.5-pro", "gemini", "gemini")))
+                retry_tasks.append(aio.ensure_future(call_ai("gemini-2.0-flash", "gemini", "gemini")))
                 print("[MULTI-AI] Retrying gemini...")
             if "gpt52" not in responded_sources:
                 retry_tasks.append(aio.ensure_future(call_ai("gpt-5.2", "gpt52")))
                 print("[MULTI-AI] Retrying gpt52...")
             if "grok" not in responded_sources:
-                retry_tasks.append(aio.ensure_future(call_grok("grok", "grok-4-1-fast-reasoning")))
+                retry_tasks.append(aio.ensure_future(call_grok("grok", "grok-4-1-fast-non-reasoning")))
                 print("[MULTI-AI] Retrying grok...")
 
             if retry_tasks:
@@ -2193,7 +2193,7 @@ Rules: No AI model names. Be specific with numbers. Be decisive. ALWAYS referenc
 
             synth_resp = await aio.wait_for(
                 litellm.acompletion(
-                    model="gemini/gemini-2.5-pro",
+                    model="gemini/gemini-2.0-flash",
                     messages=[{"role": "user", "content": synth_prompt}],
                     api_key=EMERGENT_LLM_KEY,
                     api_base=EMERGENT_PROXY,

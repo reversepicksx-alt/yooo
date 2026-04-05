@@ -180,18 +180,16 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 - Basketball: calibration_context injected into prompt + calibration guards applied post-consensus
 
 ## AI Engine Configuration
-- **AI Lineup**: GPT-5.2 (anchor) + Gemini 2.5 Pro + Grok 4.1 Fast Reasoning
+- **AI Lineup**: GPT-5.2 (premium anchor) + Gemini 2.0 Flash (fast) + Grok 4.1 Fast Non-Reasoning (fast)
 - **Temperature**: 0 (deterministic)
 - **Key sources**: GPT-5.2 + Gemini via Emergent LLM Key, Grok via xAI API Key
-- **Cost per prediction**: ~$0.035 (3 models combined)
-- **Previous lineup**: GPT-4.1-mini + Gemini 2.0 Flash + Grok 4.1 Fast Non-Reasoning (~$0.005/prediction)
+- **Cost per prediction**: ~$0.012 (1 premium + 2 cheap)
+- **Previous attempt**: All 3 premium models caused Gemini 2.5 Pro timeouts and no meaningful reasoning improvement
 
 ### Model Upgrades (April 5, 2026) — User Requested
 - GPT-4.1-mini → **GPT-5.2**: Premium anchor brain, best math/reasoning (100% AIME)
-- Gemini 2.0 Flash → **Gemini 2.5 Pro**: Google's strongest reasoning model, 1M context
-- Grok 4.1 Fast Non-Reasoning → **Grok 4.1 Fast Reasoning**: Same speed tier, adds chain-of-thought reasoning
-- All 3 models now have reasoning capabilities — **3 reasoners** instead of **1 reasoner + 2 speed bots**
-- Updated across: predict.py, basketball_predict.py, miss_analysis.py (all model references)
+- Gemini 2.5 Pro tested → **reverted to Gemini 2.0 Flash**: 2.5 Pro timed out (reasoning overhead)
+- Grok 4.1 Fast Reasoning tested → **reverted to Non-Reasoning**: No meaningful output difference in constrained JSON format
 
 ### Calibration Dashboard v2 (April 5, 2026) — Enhancement
 - 5 tabbed sections: Overview, Position, Context, League, Details
