@@ -662,15 +662,21 @@ async def change_plan(req: ChangePlanRequest):
     if new_plan_key not in PLANS:
         raise HTTPException(status_code=400, detail="Invalid plan. Choose weekly, monthly, or quarterly.")
 
-    # Look for active OR canceled (resubscribe) subscriptions
+    # Look for active subscriptions only — canceled users must use resubscribe-checkout
     sub = await db.square_subscriptions.find_one(
-        {"email": email_lower, "status": {"$in": ["ACTIVE", "PENDING", "CANCELED"]}},
+        {"email": email_lower, "status": {"$in": ["ACTIVE", "PENDING"]}},
         {"_id": 0}
     )
     if not sub:
+        # Check if they have a canceled sub — direct them to resubscribe
+        canceled = await db.square_subscriptions.find_one(
+            {"email": email_lower, "status": "CANCELED"}, {"_id": 0}
+        )
+        if canceled:
+            raise HTTPException(status_code=400, detail="Your subscription is canceled. Please use the Resubscribe option to sign up with a new payment method.")
         raise HTTPException(status_code=404, detail="No active subscription found.")
 
-    is_resubscribe = sub.get("status") == "CANCELED"
+    is_resubscribe = False
     sq_sub_id = sub.get("squareSubscriptionId")
     if not sq_sub_id:
         raise HTTPException(status_code=400, detail="Subscription ID not found. Please contact support.")
@@ -691,7 +697,7 @@ async def change_plan(req: ChangePlanRequest):
         customer_id = sq_sub_obj.customer_id
         location_id = sq_sub_obj.location_id
 
-        if not is_resubscribe and current_variation == new_plan_doc["variation_id"]:
+        if current_variation == new_plan_doc["variation_id"]:
             for pk, pv in plans.items():
                 if pv.get("variation_id") == current_variation:
                     await db.square_subscriptions.update_one(
@@ -724,22 +730,14 @@ async def change_plan(req: ChangePlanRequest):
             "card_id": card_id,
         }
 
-        if is_resubscribe:
-            # Calculate start_date = day after current expiresAt
-            expires_at = sub.get("expiresAt")
-            if expires_at:
-                try:
-                    exp_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
-                    from datetime import timedelta
-                    start_date = (exp_dt + timedelta(days=1)).strftime("%Y-%m-%d")
-                    create_params["start_date"] = start_date
-                    print(f"[SQUARE RESUBSCRIBE] {email_lower}: new billing starts {start_date}")
-                except Exception:
-                    pass  # If we can't parse, let Square start immediately
-        else:
-            # Step 1: Cancel the current subscription
+        # Cancel the current subscription, then create new
+        try:
             client.subscriptions.cancel(subscription_id=sq_sub_id)
-            print(f"[SQUARE CHANGE-PLAN] Cancelled {sq_sub_id} for {email_lower}")
+        except Exception as ce:
+            # Already canceled or pending — that's fine
+            if "pending cancel" not in str(ce).lower():
+                raise
+        print(f"[SQUARE CHANGE-PLAN] Cancelled {sq_sub_id} for {email_lower}")
 
         # Step 2: Create new subscription
         new_sub_result = client.subscriptions.create(**create_params)
@@ -766,9 +764,9 @@ async def change_plan(req: ChangePlanRequest):
             }}
         )
 
-        action = "Resubscribed" if is_resubscribe else "Plan changed"
-        msg = f"Resubscribed to {new_plan_info['name']} ({new_plan_info['label']}). New billing starts after your current period ends." if is_resubscribe else f"Plan changed to {new_plan_info['name']} ({new_plan_info['label']}). Your new plan is now active."
-        print(f"[SQUARE {action.upper()}] {email_lower}: {sub.get('planKey')} -> {new_plan_key} (new sub: {new_sub.id})")
+        action = "Plan changed"
+        msg = f"Plan changed to {new_plan_info['name']} ({new_plan_info['label']}). Your new plan is now active."
+        print(f"[SQUARE CHANGE-PLAN] {email_lower}: {sub.get('planKey')} -> {new_plan_key} (new sub: {new_sub.id})")
         return {
             "success": True,
             "previous_plan": PLANS.get(sub.get("planKey", ""), {}).get("name", sub.get("planKey", "")),
