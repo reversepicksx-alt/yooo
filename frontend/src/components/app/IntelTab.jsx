@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { BarChart3, TrendingUp, TrendingDown, AlertTriangle, Target, MapPin, Shield, Loader2, Zap, DollarSign } from 'lucide-react';
-import { getIntelDashboard } from '../../api';
+import { getIntelDashboard, backfillPositions } from '../../api';
 import { toast } from 'sonner';
 
 export function IntelTab({ auth }) {
@@ -8,6 +8,7 @@ export function IntelTab({ auth }) {
   const [loading, setLoading] = useState(true);
   const [sport, setSport] = useState('soccer');
   const [section, setSection] = useState('lines');
+  const [backfilling, setBackfilling] = useState(false);
 
   function fetchData(s) {
     setLoading(true);
@@ -15,6 +16,20 @@ export function IntelTab({ auth }) {
       .then(d => { if (!d.error) setData(d); else toast.error(d.error); })
       .catch(() => toast.error('Failed to load intel'))
       .finally(() => setLoading(false));
+  }
+
+  async function runBackfill() {
+    setBackfilling(true);
+    try {
+      const res = await backfillPositions(auth.email, auth.token);
+      if (res.success) {
+        toast.success(`Backfilled ${res.picksUpdated} picks with exact positions`);
+        fetchData(sport);
+      } else {
+        toast.error(res.error || 'Backfill failed');
+      }
+    } catch { toast.error('Backfill failed'); }
+    finally { setBackfilling(false); }
   }
 
   useEffect(() => { if (auth?.email) fetchData(sport); }, [sport]);
@@ -116,10 +131,20 @@ export function IntelTab({ auth }) {
           {/* === POSITION === */}
           {section === 'position' && (
             <div>
-              <SectionHeader title={`By Position (${sport === 'soccer' ? 'GK / DEF / MID / FWD' : 'Guard / Big'})`} />
+              <SectionHeader title="By Exact Position" subtitle="CB, LB, CM, CAM, LW, ST, etc." />
+              {data.byPosition?.['Unknown'] && data.byPosition['Unknown'].total > 0 && (
+                <button onClick={runBackfill} disabled={backfilling} data-testid="backfill-positions-btn" style={{
+                  width: '100%', padding: '8px 0', marginBottom: 10, borderRadius: 8, border: '1.5px solid var(--accent)',
+                  background: 'var(--accent-dim)', color: 'var(--accent)', fontSize: 10, fontWeight: 800,
+                  cursor: backfilling ? 'wait' : 'pointer', opacity: backfilling ? 0.6 : 1,
+                  letterSpacing: '0.04em', textTransform: 'uppercase',
+                }}>
+                  {backfilling ? 'Backfilling...' : `Backfill ${data.byPosition['Unknown'].total} picks missing positions`}
+                </button>
+              )}
               <SortedBars data={data.byPosition} />
 
-              <SectionHeader title="Position + Prop Breakdown" subtitle="How each position performs per stat" />
+              <SectionHeader title="Position + Prop Breakdown" subtitle="How each exact position performs per stat" />
               <SortedBars data={data.byPositionProp} splitLabel showError />
             </div>
           )}
@@ -290,7 +315,7 @@ function MissCard({ miss, rank }) {
         <Tag color="#f43f5e">Actual: {miss.actual}</Tag>
       </div>
       <div style={{ fontSize: 8, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-        {miss.team} vs {miss.opponent} | {miss.venue?.toUpperCase()} | {miss.context} | Score: {miss.score} | {miss.position} | Conf: {miss.confidence}%
+        {miss.team} vs {miss.opponent} | {miss.venue?.toUpperCase()} | {miss.context} | Score: {miss.score} | {miss.position}{miss.role ? ` (${miss.role})` : ''} | Conf: {miss.confidence}%
       </div>
     </div>
   );

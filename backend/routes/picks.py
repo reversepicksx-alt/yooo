@@ -71,6 +71,8 @@ async def save_pick(req: SavePickRequest):
         "confidenceLevel": pick.get("confidenceLevel", "Medium"),
         "confidenceInterval": pick.get("confidenceInterval", []),
         "venue": pick.get("_request", {}).get("venue", "home"),
+        "position": pick.get("player", {}).get("position", ""),
+        "role": pick.get("player", {}).get("role", ""),
         "status": "live",
         "result": "pending",
         "actualValue": None,

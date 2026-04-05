@@ -1,7 +1,7 @@
 """INTEL Dashboard — Owner-only analytics on prediction accuracy patterns."""
 from fastapi import APIRouter
 from config import db, OWNER_EMAIL
-from calibration import _infer_position, _game_context, LEAGUE_NAMES
+from calibration import _game_context, LEAGUE_NAMES
 
 router = APIRouter(prefix="/api/intel", tags=["intel"])
 
@@ -30,9 +30,19 @@ def _bucket_line(line):
     return "40+"
 
 
-POSITION_LABELS = {
+GENERIC_POSITION_LABELS = {
     "goalkeeper": "GK", "defender": "DEF", "midfielder": "MID",
     "attacker": "FWD", "guard": "Guard", "big": "Big", "any": "Unknown",
+}
+
+# Specific positions that are already exact (no mapping needed)
+EXACT_POSITIONS = {
+    "GK", "CB", "LB", "RB", "LWB", "RWB",
+    "CDM", "CM", "CAM", "LM", "RM", "LW", "RW",
+    "CF", "ST", "SS",
+    "PG", "SG", "SF", "PF", "C",  # Basketball specific
+    "G", "F",  # Basketball short
+    "Guard", "Forward", "Center",  # Basketball generic
 }
 
 
@@ -141,7 +151,19 @@ async def intel_dashboard(email: str, token: str, sport: str = "soccer"):
         actual = p.get("actualValue", 0)
         score = p.get("matchScore", "")
         sport = p.get("sport", "soccer")
-        position = POSITION_LABELS.get(_infer_position(pt, sport), "Unknown")
+
+        # Use stored exact position if available, otherwise fall back to generic label
+        stored_pos = (p.get("position") or "").strip()
+        if stored_pos and stored_pos.upper() in EXACT_POSITIONS:
+            position = stored_pos.upper()
+        elif stored_pos and stored_pos in ("Goalkeeper", "Defender", "Midfielder", "Attacker"):
+            position = GENERIC_POSITION_LABELS.get(stored_pos.lower(), stored_pos)
+        elif stored_pos:
+            position = stored_pos  # Non-standard but keep as-is
+        else:
+            position = "Unknown"
+
+        stored_role = (p.get("role") or "").strip()
         context = _game_context(score, sport)
         result_type = _infer_favorite(venue, score)
         moneyline = _moneyline_bucket(venue, score, sport)
@@ -196,6 +218,7 @@ async def intel_dashboard(email: str, token: str, sport: str = "soccer"):
                 "venue": venue,
                 "context": context,
                 "position": position,
+                "role": stored_role,
                 "confidence": conf,
             })
 
@@ -235,3 +258,71 @@ async def intel_dashboard(email: str, token: str, sport: str = "soccer"):
         "worstMisses": sorted(worst_lines, key=lambda x: abs(x.get("actual", 0) - x.get("projected", 0)), reverse=True)[:20],
         "leagueNames": LEAGUE_NAMES,
     }
+
+
+@router.post("/backfill-positions")
+async def backfill_positions(email: str, token: str):
+    """One-time migration: populate position/role for existing picks from player_positions cache."""
+    if email.lower() != OWNER_EMAIL:
+        return {"error": "Owner only"}
+    session = await db.sessions.find_one(
+        {"email": email.lower(), "session_token": token}, {"_id": 0}
+    )
+    if not session:
+        return {"error": "Invalid session"}
+
+    # Find picks missing position data
+    picks = await db.picks.find(
+        {"$or": [{"position": {"$exists": False}}, {"position": ""}, {"position": None}]},
+        {"_id": 0, "pickId": 1, "playerId": 1, "playerName": 1}
+    ).to_list(5000)
+
+    updated = 0
+    for p in picks:
+        pid = p.get("playerId")
+        pname = p.get("playerName", "")
+        pos_found, role_found = "", ""
+
+        # Source 1: player_positions cache (most reliable — AI-resolved)
+        if pid:
+            cached = await db.player_positions.find_one(
+                {"playerId": pid}, {"_id": 0, "specificPosition": 1, "role": 1}
+            )
+            if cached and cached.get("specificPosition"):
+                pos_found = cached["specificPosition"]
+                role_found = cached.get("role", "")
+
+        # Source 2: predictions collection (soccer — has player.position from predict.py)
+        if not pos_found and pid:
+            pred = await db.predictions.find_one(
+                {"player.id": pid, "player.position": {"$nin": ["Unknown", "", None]}},
+                {"_id": 0, "player.position": 1, "player.role": 1}
+            )
+            if pred:
+                pos_found = pred.get("player", {}).get("position", "")
+                role_found = pred.get("player", {}).get("role", "")
+
+        # Source 3: basketball_predictions (by player ID or name)
+        if not pos_found:
+            bq = {"player.name": pname} if not pid or pid == 0 else {"player.id": pid}
+            bpred = await db.basketball_predictions.find_one(
+                {**bq, "player.position": {"$nin": ["", None]}},
+                {"_id": 0, "player.position": 1}
+            )
+            if bpred:
+                pos_found = bpred.get("player", {}).get("position", "")
+
+        if pos_found:
+            await db.picks.update_many(
+                {"playerId": pid, "$or": [{"position": {"$exists": False}}, {"position": ""}, {"position": None}]},
+                {"$set": {"position": pos_found, "role": role_found or ""}}
+            )
+            # Also update by name for picks with id=0/None
+            if not pid or pid == 0:
+                await db.picks.update_many(
+                    {"playerName": pname, "$or": [{"position": {"$exists": False}}, {"position": ""}, {"position": None}]},
+                    {"$set": {"position": pos_found, "role": role_found or ""}}
+                )
+            updated += 1
+
+    return {"success": True, "picksUpdated": updated, "totalChecked": len(picks)}
