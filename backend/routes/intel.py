@@ -30,6 +30,12 @@ def _bucket_line(line):
     return "40+"
 
 
+POSITION_LABELS = {
+    "goalkeeper": "GK", "defender": "DEF", "midfielder": "MID",
+    "attacker": "FWD", "guard": "Guard", "big": "Big", "any": "Unknown",
+}
+
+
 def _infer_favorite(venue, score_str):
     """Infer if player's team was favorite based on result + venue."""
     if not score_str:
@@ -37,29 +43,57 @@ def _infer_favorite(venue, score_str):
     try:
         parts = score_str.replace(" ", "").split("-")
         home_goals, away_goals = int(parts[0]), int(parts[1])
-        if venue == "home":
-            if home_goals > away_goals:
-                return "favorite_won"
-            if home_goals < away_goals:
-                return "underdog_lost"
+        player_goals = home_goals if venue == "home" else away_goals
+        opp_goals = away_goals if venue == "home" else home_goals
+        if player_goals > opp_goals:
+            return "team_won"
+        if player_goals < opp_goals:
+            return "team_lost"
+        return "draw"
+    except Exception:
+        return "unknown"
+
+
+def _moneyline_bucket(venue, score_str, sport):
+    """Classify the game by margin to approximate moneyline outcome."""
+    if not score_str:
+        return "unknown"
+    try:
+        parts = score_str.replace(" ", "").split("-")
+        home_goals, away_goals = int(parts[0]), int(parts[1])
+        player_goals = home_goals if venue == "home" else away_goals
+        opp_goals = away_goals if venue == "home" else home_goals
+        diff = player_goals - opp_goals
+        if sport == "basketball":
+            if diff >= 15:
+                return "blowout_win"
+            if diff > 0:
+                return "close_win"
+            if diff <= -15:
+                return "blowout_loss"
+            if diff < 0:
+                return "close_loss"
             return "draw"
-        else:
-            if away_goals > home_goals:
-                return "favorite_won"
-            if away_goals < home_goals:
-                return "underdog_lost"
-            return "draw"
+        # Soccer
+        if diff >= 3:
+            return "blowout_win"
+        if diff > 0:
+            return "win"
+        if diff <= -3:
+            return "blowout_loss"
+        if diff < 0:
+            return "loss"
+        return "draw"
     except Exception:
         return "unknown"
 
 
 @router.get("/dashboard")
-async def intel_dashboard(email: str, token: str):
-    """Full analytics dashboard — owner only."""
+async def intel_dashboard(email: str, token: str, sport: str = "soccer"):
+    """Full analytics dashboard — owner only, filtered by sport."""
     if email.lower() != OWNER_EMAIL:
         return {"error": "Owner only"}
 
-    # Verify session
     session = await db.sessions.find_one(
         {"email": email.lower(), "session_token": token}, {"_id": 0}
     )
@@ -67,7 +101,7 @@ async def intel_dashboard(email: str, token: str):
         return {"error": "Invalid session"}
 
     picks = await db.picks.find(
-        {"status": "settled", "result": {"$in": ["hit", "miss", "push"]}},
+        {"status": "settled", "result": {"$in": ["hit", "miss", "push"]}, "sport": sport},
         {"_id": 0}
     ).to_list(5000)
 
@@ -88,8 +122,10 @@ async def intel_dashboard(email: str, token: str):
     by_league = {}          # "39" → {hit, miss}
     by_rec = {}             # "over" → {hit, miss}
     by_prop = {}            # "saves" → {hit, miss, errors}
-    by_result_type = {}     # "favorite_won" → {hit, miss}
-    by_result_prop = {}     # "favorite_won|saves" → {hit, miss}
+    by_result_type = {}     # "team_won" → {hit, miss}
+    by_result_prop = {}     # "team_won|saves" → {hit, miss}
+    by_moneyline = {}       # "blowout_win" → {hit, miss}
+    by_moneyline_prop = {}  # "blowout_win|saves" → {hit, miss}
     by_conf_band = {}       # "high_70+" → {hit, miss}
     worst_lines = []        # individual miss details
 
@@ -105,9 +141,10 @@ async def intel_dashboard(email: str, token: str):
         actual = p.get("actualValue", 0)
         score = p.get("matchScore", "")
         sport = p.get("sport", "soccer")
-        position = _infer_position(pt, sport)
+        position = POSITION_LABELS.get(_infer_position(pt, sport), "Unknown")
         context = _game_context(score, sport)
         result_type = _infer_favorite(venue, score)
+        moneyline = _moneyline_bucket(venue, score, sport)
         error = round(actual - proj, 1) if actual is not None and proj else None
 
         if res == "hit":
@@ -138,6 +175,8 @@ async def intel_dashboard(email: str, token: str):
         _add(by_rec, rec)
         _add(by_result_type, result_type)
         _add(by_result_prop, f"{result_type}|{pt}")
+        _add(by_moneyline, moneyline)
+        _add(by_moneyline_prop, f"{moneyline}|{pt}")
 
         band = "high_70+" if conf >= 70 else "mid_55-69" if conf >= 55 else "low_<55"
         _add(by_conf_band, band)
@@ -190,6 +229,8 @@ async def intel_dashboard(email: str, token: str):
         "byRec": _summarize(by_rec),
         "byResultType": _summarize(by_result_type),
         "byResultProp": _summarize(by_result_prop),
+        "byMoneyline": _summarize(by_moneyline),
+        "byMoneylineProp": _summarize(by_moneyline_prop),
         "byConfBand": _summarize(by_conf_band),
         "worstMisses": sorted(worst_lines, key=lambda x: abs(x.get("actual", 0) - x.get("projected", 0)), reverse=True)[:20],
         "leagueNames": LEAGUE_NAMES,

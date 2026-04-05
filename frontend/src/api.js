@@ -258,8 +258,8 @@ export async function searchManualPlayer(teamId, leagueId, playerName) {
   });
 }
 
-export async function getIntelDashboard(email, token) {
-  return apiCall(`/api/intel/dashboard?email=${encodeURIComponent(email)}&token=${encodeURIComponent(token)}`);
+export async function getIntelDashboard(email, token, sport = 'soccer') {
+  return apiCall(`/api/intel/dashboard?email=${encodeURIComponent(email)}&token=${encodeURIComponent(token)}&sport=${sport}`);
 }
 
 export async function getSquarePlans() {

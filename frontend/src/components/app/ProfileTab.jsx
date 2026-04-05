@@ -707,10 +707,6 @@ export function ProfileTab({
         <LogOut style={{ width: 16, height: 16 }} /> Log Out
       </button>
 
-      {/* Owner-only Calibration Dashboard */}
-      {isOwner && (
-        <CalibrationDashboard email={auth.email} token={auth.token} />
-      )}
     </div>
   );
 }
