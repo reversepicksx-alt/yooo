@@ -343,6 +343,119 @@ async def intel_dashboard(email: str, token: str, sport: str = "soccer"):
     }
 
 
+
+@router.get("/sheet")
+async def intel_sheet(email: str, token: str, sport: str = "soccer"):
+    """Flat spreadsheet view — every settled pick as a row with all dimensions."""
+    if email.lower() != OWNER_EMAIL:
+        return {"error": "Owner only"}
+
+    session = await db.sessions.find_one(
+        {"email": email.lower(), "session_token": token}, {"_id": 0}
+    )
+    if not session:
+        return {"error": "Invalid session"}
+
+    picks = await db.picks.find(
+        {"status": "settled", "result": {"$in": ["hit", "miss", "push"]}, "sport": sport},
+        {"_id": 0}
+    ).to_list(5000)
+
+    if not picks:
+        return {"total": 0, "rows": []}
+
+    rows = []
+    total_h, total_m = 0, 0
+    for p in picks:
+        res = p.get("result", "miss")
+        if res == "hit":
+            total_h += 1
+        else:
+            total_m += 1
+
+        proj = p.get("projectedValue", 0) or 0
+        actual = p.get("actualValue", 0) or 0
+        line = p.get("line", 0) or 0
+        error = round(actual - proj, 1) if proj else 0
+        rec = p.get("recommendation", "")
+        conf = p.get("confidenceScore", 0) or 0
+        pt = p.get("propType", "")
+        venue = p.get("venue", "")
+        context = _game_context(p.get("matchScore"), sport)
+        league_id = str(p.get("leagueId", ""))
+        league_name = LEAGUE_NAMES.get(league_id, league_id)
+
+        # Match result
+        score = p.get("matchScore", "")
+        match_result = ""
+        if score and "-" in str(score):
+            try:
+                parts = str(score).split("-")
+                gh, ga = int(parts[0].strip()), int(parts[1].strip())
+                if venue == "home":
+                    match_result = "win" if gh > ga else "loss" if gh < ga else "draw"
+                elif venue == "away":
+                    match_result = "win" if ga > gh else "loss" if ga < gh else "draw"
+            except (ValueError, IndexError):
+                pass
+
+        # Position
+        stored_pos = (p.get("position") or "").strip()
+        if stored_pos and stored_pos.upper() in EXACT_POSITIONS:
+            position = stored_pos.upper()
+        elif stored_pos and stored_pos in ("Goalkeeper", "Defender", "Midfielder", "Attacker"):
+            position = GENERIC_POSITION_LABELS.get(stored_pos.lower(), stored_pos)
+        elif stored_pos:
+            position = stored_pos
+        else:
+            position = ""
+
+        role = (p.get("role") or "").strip()
+        edge = p.get("edgeStrength", "")
+
+        # Error direction
+        err_dir = ""
+        if error < -0.5:
+            err_dir = "over"
+        elif error > 0.5:
+            err_dir = "under"
+
+        rows.append({
+            "player": p.get("playerName", ""),
+            "team": p.get("teamName", ""),
+            "opponent": p.get("opponentName", ""),
+            "prop": pt,
+            "line": line,
+            "proj": proj,
+            "actual": actual,
+            "error": error,
+            "errDir": err_dir,
+            "result": res,
+            "rec": rec,
+            "position": position,
+            "role": role,
+            "league": league_name,
+            "venue": venue,
+            "gameType": context,
+            "matchResult": match_result,
+            "score": score,
+            "confidence": conf,
+            "edge": edge,
+            "timestamp": p.get("timestamp", ""),
+        })
+
+    # Sort by timestamp descending (newest first)
+    rows.sort(key=lambda r: r.get("timestamp", ""), reverse=True)
+
+    return {
+        "total": total_h + total_m,
+        "hits": total_h,
+        "misses": total_m,
+        "rate": round(total_h / (total_h + total_m) * 100, 1) if (total_h + total_m) > 0 else 0,
+        "rows": rows,
+    }
+
+
 @router.post("/backfill-positions")
 async def backfill_positions(email: str, token: str):
     """One-time migration: populate position/role for existing picks from player_positions cache."""

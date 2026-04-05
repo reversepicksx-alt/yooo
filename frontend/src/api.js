@@ -267,6 +267,11 @@ export async function getIntelDashboard(email, token, sport = 'soccer') {
   return apiCall(`/api/intel/dashboard?email=${encodeURIComponent(email)}&token=${encodeURIComponent(token)}&sport=${sport}`);
 }
 
+export async function getIntelSheet(email, token, sport = 'soccer') {
+  return apiCall(`/api/intel/sheet?email=${encodeURIComponent(email)}&token=${encodeURIComponent(token)}&sport=${sport}`);
+}
+
+
 export async function backfillPositions(email, token) {
   return apiCall(`/api/intel/backfill-positions?email=${encodeURIComponent(email)}&token=${encodeURIComponent(token)}`, { method: 'POST' });
 }
