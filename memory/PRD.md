@@ -219,7 +219,14 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 - Details: Venue, prop+venue, confidence band, line range breakdowns
 - Error direction shown on rate bars (over/under-projecting amounts)
 
-
+### INTEL Tab Exact Position Fix (April 5, 2026) — P0
+- **Problem**: INTEL tab was inferring generic positions (GK/DEF/MID/FWD) from prop type instead of showing exact tactical roles
+- **Fix 1 — Store positions on save**: `picks.py` now stores `position` and `role` from the prediction response's `player.position` and `player.role` fields
+- **Fix 2 — Backfill migration**: Added `POST /api/intel/backfill-positions` endpoint that pulls exact positions from `player_positions` cache, `predictions`, and `basketball_predictions` collections
+- **Fix 3 — INTEL backend**: `intel.py` now uses stored positions (CB, LB, CM, LW, GK, G, SF, Forward) instead of inferring from prop type
+- **Fix 4 — Frontend**: IntelTab Position section shows "By Exact Position" with backfill button for any Unknown entries
+- **Backfill results**: 25/26 picks now have exact positions. 4 older soccer picks retain generic labels (DEF, MID) from early predictions that lacked specific position data
+- **Testing**: 14/14 backend tests passed (iteration 55)
 
 ## Upcoming Tasks (P1)
 - Slip correlation analysis
