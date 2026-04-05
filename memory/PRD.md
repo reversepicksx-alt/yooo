@@ -248,6 +248,15 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 - **Frontend**: AnalysisPanel shows edge strength badge + calibration correction details
 - **Testing**: 23/23 unit tests passed (iteration 57), both prediction endpoints verified
 
+### Calibration Stats Panel in INTEL Tab (April 5, 2026)
+- Added "Calibration" section to INTEL tab showing how each of the 5 corrections performs:
+  1. **Confidence Accuracy**: What AI says (70%+) vs what actually hits — flags OVERCONFIDENT bands
+  2. **Edge Strength Performance**: STRONG vs LEAN vs LOW conviction hit rates
+  3. **Flip Candidates**: Prop+direction combos below 50% with AUTO-FLIP ACTIVE badge when criteria met
+  4. **Projection Error Map**: Over-projecting (−) vs under-projecting (+) per prop+venue with correction amounts
+  5. **Prop+Direction Breakdown**: Full hit rates for every prop type + over/under combo
+- **Testing**: 11/11 backend tests passed (iteration 58), frontend screenshot verified
+
 ## Upcoming Tasks (P1)
 - Slip correlation analysis
 - Route Prediction API calls through MongoDB Cache (P2)
