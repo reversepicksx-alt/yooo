@@ -236,6 +236,18 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 - Action buttons (trash/edit/reanalyze) isolated with stopPropagation
 - Testing: 9/9 backend + all frontend tests passed (iteration 56)
 
+### Elite Calibration Engine v3 (April 5, 2026) — Major Upgrade
+- **Problem**: Calibration was text-only hints to AI (ignored). Soccer OVER only 50.5%, Basketball overall 49.6%.
+- **5 Hard Post-Consensus Corrections Implemented:**
+  1. **Historical Error Correction**: Adjusts projected value by avg error per prop+venue combo (needs 10+ samples)
+  2. **Market Line Blending**: `0.35 × AI_projection + 0.65 × sportsbook_line` (research-optimal)
+  3. **Recommendation Flip Guard**: Flips if prop+rec < 45% hit rate with 15+ samples and opposite is 10%+ better
+  4. **Confidence Recalibration**: Maps AI confidence to historical band accuracy, reduces overconfidence by 60% of gap
+  5. **Edge Threshold**: STRONG (>5% edge), LEAN (2-5%), LOW (<2% = near coin flip)
+- **Integration**: Applied in both `predict.py` and `basketball_predict.py` after existing guards
+- **Frontend**: AnalysisPanel shows edge strength badge + calibration correction details
+- **Testing**: 23/23 unit tests passed (iteration 57), both prediction endpoints verified
+
 ## Upcoming Tasks (P1)
 - Slip correlation analysis
 - Route Prediction API calls through MongoDB Cache (P2)
