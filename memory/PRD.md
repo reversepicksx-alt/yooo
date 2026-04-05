@@ -173,6 +173,26 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
   - **Position inference**: GK/DEF/MID/ATK (soccer), Guard/Big (basketball) from prop type
   - **Game context**: Blowout/close/normal classification from final scores
   - **Prop+Position combos**: e.g., "saves for goalkeepers" accuracy
+
+### Manual Search Feature (April 5, 2026) — User Requested
+- Fallback when image scan fails: League → Team → Player → Prop → Predict
+- 12 leagues: NWSL, MLS, Saudi Pro, Argentine, Championship, La Liga, Serie A, Ligue 1, Bundesliga, PL, UCL, Europa
+- Backend: /api/manual/leagues, /api/manual/teams/{id}, /api/manual/search-player
+- No logos or player images (legal compliance)
+- Soccer only (appears below scan upload zone)
+
+### Scan Credit Protection (April 5, 2026) — P0
+- 3-layer protection against multi-stat single-player credit drain:
+  1. AI prompt: "ONE player = ONE prop, only extract expanded/primary stat"
+  2. Server-side dedup: Strips duplicate props for same player after AI response
+  3. Frontend guard: Auto-excludes + blocks prediction for duplicate player stats
+- Multi-scan ONLY activates for different players (e.g., a board of multiple player cards)
+
+### Bug Fixes (April 5, 2026)
+- Fixed `avg_proj` crash when <2 AI models respond (predict.py line 1925)
+- Fixed verify-payment flow not setting password for users with active sub but no password
+- Added customer 3ddyh09@gmail.com as lifetime member
+
   - **Prop+Context combos**: e.g., "saves in blowout games" patterns
   - **League names**: Human-readable league labels in prompts
 - Generates actionable "reasons WHY" explanations, not just numbers
@@ -203,9 +223,9 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 
 ## Upcoming Tasks (P1)
 - Slip correlation analysis
+- Route Prediction API calls through MongoDB Cache (P2)
 
 ## Future Backlog
-- Route Prediction API calls through MongoDB Cache (P2)
 - ScanTab extraction from App.js (P3)
 - Backend function refactoring (P3)
 - Auth cookie migration (P3)
