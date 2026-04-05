@@ -544,20 +544,23 @@ class ChangePlanRequest(BaseModel):
 
 @router.post("/change-plan")
 async def change_plan(req: ChangePlanRequest):
-    """Change a user's subscription plan via cancel + recreate (more reliable than swap_plan)."""
+    """Change a user's subscription plan via cancel + recreate (more reliable than swap_plan).
+    Also handles resubscription for canceled users — starts billing after current period ends."""
     email_lower = req.email.lower().strip()
     new_plan_key = req.new_plan_key.lower()
 
     if new_plan_key not in PLANS:
         raise HTTPException(status_code=400, detail="Invalid plan. Choose weekly, monthly, or quarterly.")
 
+    # Look for active OR canceled (resubscribe) subscriptions
     sub = await db.square_subscriptions.find_one(
-        {"email": email_lower, "status": {"$in": ["ACTIVE", "PENDING"]}},
+        {"email": email_lower, "status": {"$in": ["ACTIVE", "PENDING", "CANCELED"]}},
         {"_id": 0}
     )
     if not sub:
         raise HTTPException(status_code=404, detail="No active subscription found.")
 
+    is_resubscribe = sub.get("status") == "CANCELED"
     sq_sub_id = sub.get("squareSubscriptionId")
     if not sq_sub_id:
         raise HTTPException(status_code=400, detail="Subscription ID not found. Please contact support.")
@@ -578,8 +581,7 @@ async def change_plan(req: ChangePlanRequest):
         customer_id = sq_sub_obj.customer_id
         location_id = sq_sub_obj.location_id
 
-        if current_variation == new_plan_doc["variation_id"]:
-            # Sync DB to match reality
+        if not is_resubscribe and current_variation == new_plan_doc["variation_id"]:
             for pk, pv in plans.items():
                 if pv.get("variation_id") == current_variation:
                     await db.square_subscriptions.update_one(
@@ -602,19 +604,35 @@ async def change_plan(req: ChangePlanRequest):
         raise HTTPException(status_code=500, detail="Could not verify subscription. Please try again.")
 
     try:
-        # Step 1: Cancel the current subscription
-        client.subscriptions.cancel(subscription_id=sq_sub_id)
-        print(f"[SQUARE CHANGE-PLAN] Cancelled {sq_sub_id} for {email_lower}")
+        # For resubscribe: don't cancel again (already canceled), set start_date after current period
+        # For plan change: cancel current, create new immediately
+        create_params = {
+            "idempotency_key": str(uuid.uuid4()),
+            "location_id": location_id,
+            "plan_variation_id": new_plan_doc["variation_id"],
+            "customer_id": customer_id,
+            "card_id": card_id,
+        }
 
-        # Step 2: Create new subscription with the new plan
-        import uuid
-        new_sub_result = client.subscriptions.create(
-            idempotency_key=str(uuid.uuid4()),
-            location_id=location_id,
-            plan_variation_id=new_plan_doc["variation_id"],
-            customer_id=customer_id,
-            card_id=card_id,
-        )
+        if is_resubscribe:
+            # Calculate start_date = day after current expiresAt
+            expires_at = sub.get("expiresAt")
+            if expires_at:
+                try:
+                    exp_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+                    from datetime import timedelta
+                    start_date = (exp_dt + timedelta(days=1)).strftime("%Y-%m-%d")
+                    create_params["start_date"] = start_date
+                    print(f"[SQUARE RESUBSCRIBE] {email_lower}: new billing starts {start_date}")
+                except Exception:
+                    pass  # If we can't parse, let Square start immediately
+        else:
+            # Step 1: Cancel the current subscription
+            client.subscriptions.cancel(subscription_id=sq_sub_id)
+            print(f"[SQUARE CHANGE-PLAN] Cancelled {sq_sub_id} for {email_lower}")
+
+        # Step 2: Create new subscription
+        new_sub_result = client.subscriptions.create(**create_params)
 
         new_sub = new_sub_result.subscription
         new_plan_info = PLANS[new_plan_key]
@@ -634,16 +652,19 @@ async def change_plan(req: ChangePlanRequest):
                 "updatedAt": now,
                 "planChangedAt": now,
                 "previousPlanKey": sub.get("planKey", ""),
+                "canceledAt": None,
             }}
         )
 
-        print(f"[SQUARE CHANGE-PLAN] {email_lower}: {sub.get('planKey')} -> {new_plan_key} (new sub: {new_sub.id})")
+        action = "Resubscribed" if is_resubscribe else "Plan changed"
+        msg = f"Resubscribed to {new_plan_info['name']} ({new_plan_info['label']}). New billing starts after your current period ends." if is_resubscribe else f"Plan changed to {new_plan_info['name']} ({new_plan_info['label']}). Your new plan is now active."
+        print(f"[SQUARE {action.upper()}] {email_lower}: {sub.get('planKey')} -> {new_plan_key} (new sub: {new_sub.id})")
         return {
             "success": True,
             "previous_plan": PLANS.get(sub.get("planKey", ""), {}).get("name", sub.get("planKey", "")),
             "new_plan": new_plan_info["name"],
             "new_label": new_plan_info["label"],
-            "message": f"Plan changed to {new_plan_info['name']} ({new_plan_info['label']}). Your new plan is now active.",
+            "message": msg,
         }
 
     except HTTPException:
