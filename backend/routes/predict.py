@@ -1922,7 +1922,7 @@ Analyze ALL data thoroughly. Return JSON only."""
             prediction["matchDominance"] = {"applied": False}
 
         # HARD GUARD: recommendation MUST match the FINAL projected value vs line
-        final_proj = prediction.get("projectedValue", avg_proj)
+        final_proj = prediction.get("projectedValue", req.line)
         prediction["recommendation"] = "over" if final_proj > req.line else "under"
 
         # =============================================
