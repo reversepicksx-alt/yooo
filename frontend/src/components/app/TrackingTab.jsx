@@ -317,33 +317,7 @@ function PickCard({ pick, liveData, missAnalyses, reanalyzePick, reanalyzingPick
         </div>
       )}
 
-      {/* AUTO MISS ANALYSIS */}
-      {isMiss && missAnalyses[pick.pickId] && (
-        <div data-testid={`miss-analysis-${pick.pickId}`} style={{
-          margin: '0 8px 6px', padding: '6px 8px', background: 'rgba(244,63,94,0.06)',
-          border: '1px solid rgba(244,63,94,0.15)', borderRadius: 6,
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
-            <Brain style={{ width: 9, height: 9, color: '#f43f5e' }} />
-            <span style={{ fontSize: 7, fontWeight: 800, color: '#f43f5e', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Auto-Analysis</span>
-            <span style={{ fontSize: 6, color: 'rgba(255,255,255,0.25)', marginLeft: 'auto' }}>{missAnalyses[pick.pickId].modelsResponded?.join(' + ') || ''}</span>
-          </div>
-          <p style={{ fontSize: 8, color: 'rgba(255,255,255,0.7)', margin: 0, lineHeight: 1.4 }}>{missAnalyses[pick.pickId].primaryReason}</p>
-          {missAnalyses[pick.pickId].factors?.length > 0 && (
-            <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-              {missAnalyses[pick.pickId].factors.slice(0, 3).map((f) => (
-                <span key={f} style={{ fontSize: 6, padding: '1px 4px', borderRadius: 3, background: 'rgba(244,63,94,0.1)', color: 'rgba(244,63,94,0.7)', border: '1px solid rgba(244,63,94,0.15)' }}>{f}</span>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-      {isMiss && !missAnalyses[pick.pickId] && pick.actualValue != null && (
-        <div style={{ margin: '0 8px 6px', padding: '4px 8px', display: 'flex', alignItems: 'center', gap: 4, background: 'rgba(244,63,94,0.04)', borderRadius: 6 }}>
-          <Loader2 style={{ width: 8, height: 8, color: 'rgba(244,63,94,0.4)', animation: 'spin 1s linear infinite' }} />
-          <span style={{ fontSize: 7, color: 'rgba(255,255,255,0.3)' }}>Learning from this miss...</span>
-        </div>
-      )}
+      {/* AUTO MISS ANALYSIS — REMOVED (useless for unpredictable scenarios, drains AI credits) */}
     </div>
   );
 }

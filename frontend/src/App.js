@@ -404,20 +404,7 @@ export default function App() {
     }
   };
 
-  // Load miss analyses when switching to missed tab
-  React.useEffect(() => {
-    if (trackingView === 'lost' && auth) {
-      getMisses(auth.email, auth.token).then(data => {
-        if (data?.misses) {
-          const analyses = {};
-          data.misses.forEach(m => {
-            if (m.missAnalysis) analyses[m.pickId] = m.missAnalysis;
-          });
-          setMissAnalyses(prev => ({ ...prev, ...analyses }));
-        }
-      }).catch(err => console.error('[MISS ANALYSES] Load error:', err));
-    }
-  }, [trackingView, auth]);
+  // Miss analyses loading removed — auto-analysis disabled to save AI credits
 
   const savePickFn = async () => {
     if (!projection || !auth) return;
