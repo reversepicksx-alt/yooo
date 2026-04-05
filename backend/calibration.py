@@ -20,10 +20,29 @@ BBALL_BIG_PROPS = {"rebounds", "blocks"}
 BBALL_GUARD_PROPS = {"three_pointers", "assists", "steals"}
 
 LEAGUE_NAMES = {
-    "39": "Premier League", "140": "La Liga", "135": "Serie A",
-    "78": "Bundesliga", "61": "Ligue 1", "253": "MLS",
-    "262": "Liga MX", "254": "Serie A (Brazil)", "307": "Saudi Pro",
-    "2": "Champions League", "3": "Europa League", "848": "NWSL",
+    # England
+    "39": "Premier League", "40": "Championship", "41": "League One", "42": "League Two",
+    # Spain
+    "140": "La Liga", "141": "La Liga 2",
+    # Italy
+    "135": "Serie A", "136": "Serie B",
+    # Germany
+    "78": "Bundesliga", "79": "Bundesliga 2",
+    # France
+    "61": "Ligue 1", "62": "Ligue 2",
+    # Brazil
+    "71": "Brasileirão", "72": "Série B (Brazil)",
+    # Americas
+    "253": "MLS", "262": "Liga MX", "254": "Serie A (Brazil)",
+    # Other
+    "307": "Saudi Pro", "203": "Süper Lig", "94": "Primeira Liga",
+    "88": "Eredivisie", "144": "Belgian Pro", "218": "Austrian Bundesliga",
+    "179": "Scottish Premiership", "197": "Turkish 1. Lig",
+    # Cups / Continental
+    "2": "Champions League", "3": "Europa League", "4": "Euro",
+    "848": "NWSL", "1": "World Cup", "5": "Nations League",
+    "15": "FIFA Club World Cup", "16": "AFCON",
+    # Basketball
     "12": "NBA", "13": "WNBA",
 }
 
