@@ -119,10 +119,15 @@ async def get_calibration(email: str, token: str):
             "byProp": {},
             "byVenue": {},
             "byLeague": {},
+            "byPosition": {},
+            "byGameContext": {},
+            "byPropPosition": {},
+            "byPropContext": {},
             "byConfidence": {},
             "byLineRange": {},
             "byPropVenue": {},
             "blowoutMisses": len(stats.get("blowout_misses", [])),
+            "blowoutDetails": stats.get("blowout_misses", [])[:10],
             "closeGameHitRate": 0,
         }
         for k, v in stats.get("by_prop", {}).items():
@@ -134,13 +139,21 @@ async def get_calibration(email: str, token: str):
                 "rate": round(h/t*100, 1) if t else 0,
                 "avgError": round(sum(errs)/len(errs), 1) if errs else 0,
             }
-        for section, src_key in [("byVenue", "by_venue"), ("byLeague", "by_league"),
-                                  ("byConfidence", "by_confidence_band"), ("byLineRange", "by_line_range"),
-                                  ("byPropVenue", "by_prop_venue")]:
+        for section, src_key in [
+            ("byVenue", "by_venue"), ("byLeague", "by_league"),
+            ("byPosition", "by_position"), ("byGameContext", "by_game_context"),
+            ("byPropPosition", "by_prop_position"), ("byPropContext", "by_prop_context"),
+            ("byConfidence", "by_confidence_band"), ("byLineRange", "by_line_range"),
+            ("byPropVenue", "by_prop_venue"),
+        ]:
             for k, v in stats.get(src_key, {}).items():
                 h, m = v.get("hit", 0), v.get("miss", 0)
                 t = h + m
-                result[section][k] = {"hits": h, "misses": m, "total": t, "rate": round(h/t*100, 1) if t else 0}
+                errs = v.get("errors", [])
+                entry = {"hits": h, "misses": m, "total": t, "rate": round(h/t*100, 1) if t else 0}
+                if errs:
+                    entry["avgError"] = round(sum(errs)/len(errs), 1)
+                result[section][k] = entry
         cg = stats.get("close_game_results", {})
         cg_h, cg_m = cg.get("hit", 0), cg.get("miss", 0)
         cg_t = cg_h + cg_m

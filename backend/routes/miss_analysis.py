@@ -87,8 +87,8 @@ Respond in EXACTLY this JSON format:
 Return ONLY valid JSON, no markdown or explanation."""
 
     models = [
-        ("gemini/gemini-2.0-flash", "GE"),
-        ("grok-4-1-fast-non-reasoning", "GK"),
+        ("gemini/gemini-2.5-pro", "GE"),
+        ("grok-4-1-fast-reasoning", "GK"),
         ("gpt-5.2", "GP"),
     ]
 
@@ -113,7 +113,7 @@ Return ONLY valid JSON, no markdown or explanation."""
                     loop.run_in_executor(
                         None,
                         lambda: grok_client.chat.completions.create(
-                            model="grok-4-1-fast-non-reasoning",
+                            model="grok-4-1-fast-reasoning",
                             messages=[{"role": "user", "content": prompt}],
                             temperature=0,
                             max_tokens=500,

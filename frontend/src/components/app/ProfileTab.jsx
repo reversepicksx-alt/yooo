@@ -278,6 +278,7 @@ function CalibrationDashboard({ email, token }) {
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [sportTab, setSportTab] = useState('soccer');
+  const [activeSection, setActiveSection] = useState('overview');
 
   async function fetchCalibration() {
     setLoading(true);
@@ -295,31 +296,54 @@ function CalibrationDashboard({ email, token }) {
 
   const stats = data?.[sportTab];
 
-  function RateBar({ label, hits, total, rate }) {
+  const LEAGUE_NAMES = {
+    '39': 'Premier League', '140': 'La Liga', '135': 'Serie A',
+    '78': 'Bundesliga', '61': 'Ligue 1', '253': 'MLS',
+    '262': 'Liga MX', '254': 'Serie A (BR)', '307': 'Saudi Pro',
+    '2': 'UCL', '3': 'Europa', '848': 'NWSL',
+    '12': 'NBA', '13': 'WNBA',
+  };
+
+  function RateBar({ label, hits, total, rate, avgError, compact }) {
     const color = rate >= 70 ? 'var(--accent)' : rate >= 50 ? '#f59e0b' : '#f43f5e';
     return (
-      <div style={{ marginBottom: 6 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, fontWeight: 700, marginBottom: 2 }}>
-          <span style={{ color: 'var(--text-secondary)' }}>{label}</span>
-          <span style={{ color }}>{rate}% <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>({hits}/{total})</span></span>
+      <div style={{ marginBottom: compact ? 4 : 6 }} data-testid={`rate-bar-${label}`}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: compact ? 9 : 10, fontWeight: 700, marginBottom: 2 }}>
+          <span style={{ color: 'var(--text-secondary)', maxWidth: '55%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+          <span style={{ color, whiteSpace: 'nowrap' }}>
+            {rate}% <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>({hits}/{total})</span>
+            {avgError !== undefined && avgError !== 0 && (
+              <span style={{ color: avgError > 0 ? '#f59e0b' : '#818cf8', marginLeft: 4, fontSize: 8 }}>
+                {avgError > 0 ? '+' : ''}{avgError}
+              </span>
+            )}
+          </span>
         </div>
-        <div style={{ height: 4, borderRadius: 2, background: 'rgba(255,255,255,0.06)' }}>
+        <div style={{ height: compact ? 3 : 4, borderRadius: 2, background: 'rgba(255,255,255,0.06)' }}>
           <div style={{ height: '100%', borderRadius: 2, width: `${Math.min(rate, 100)}%`, background: color, transition: 'width 0.5s ease' }} />
         </div>
       </div>
     );
   }
 
+  const sections = [
+    { key: 'overview', label: 'Overview' },
+    { key: 'position', label: 'Position' },
+    { key: 'context', label: 'Context' },
+    { key: 'league', label: 'League' },
+    { key: 'details', label: 'Details' },
+  ];
+
   return (
     <div className="profile-section" data-testid="calibration-dashboard">
       <button onClick={() => setExpanded(!expanded)} style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%',
         background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--text-primary)',
-      }}>
+      }} data-testid="calibration-toggle">
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <BarChart3 style={{ width: 16, height: 16, color: 'var(--accent)' }} />
           <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
-            Calibration Engine
+            Calibration Engine v2
           </span>
         </div>
         {expanded ? <X style={{ width: 14, height: 14, color: 'var(--text-muted)' }} /> : <Settings style={{ width: 14, height: 14, color: 'var(--text-muted)' }} />}
@@ -334,9 +358,9 @@ function CalibrationDashboard({ email, token }) {
           ) : (
             <>
               {/* Sport toggle */}
-              <div style={{ display: 'flex', gap: 4, marginBottom: 12 }}>
+              <div style={{ display: 'flex', gap: 4, marginBottom: 10 }}>
                 {['soccer', 'basketball'].map(s => (
-                  <button key={s} onClick={() => setSportTab(s)} style={{
+                  <button key={s} onClick={() => setSportTab(s)} data-testid={`cal-sport-${s}`} style={{
                     flex: 1, padding: '5px 0', borderRadius: 8, border: '1.5px solid',
                     borderColor: sportTab === s ? 'var(--accent)' : 'rgba(255,255,255,0.06)',
                     background: sportTab === s ? 'var(--accent-dim)' : 'transparent',
@@ -346,59 +370,139 @@ function CalibrationDashboard({ email, token }) {
                 ))}
               </div>
 
-              {/* Overall */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6, marginBottom: 12 }}>
-                {[
-                  { label: 'Overall', value: `${stats.overallHitRate}%`, sub: `${stats.total} picks` },
-                  { label: 'OVER', value: `${stats.overHitRate}%`, icon: <TrendingUp style={{ width: 10, height: 10 }} /> },
-                  { label: 'UNDER', value: `${stats.underHitRate}%`, icon: <TrendingDown style={{ width: 10, height: 10 }} /> },
-                ].map((item, i) => (
-                  <div key={i} style={{
-                    padding: '8px 6px', borderRadius: 8, textAlign: 'center',
-                    background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)',
-                  }}>
-                    <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>{item.label}</div>
-                    <div style={{ fontSize: 16, fontWeight: 900, color: parseFloat(item.value) >= 70 ? 'var(--accent)' : parseFloat(item.value) >= 50 ? '#f59e0b' : '#f43f5e' }}>
-                      {item.icon} {item.value}
-                    </div>
-                    {item.sub && <div style={{ fontSize: 8, color: 'var(--text-muted)', marginTop: 1 }}>{item.sub}</div>}
-                  </div>
+              {/* Section tabs */}
+              <div style={{ display: 'flex', gap: 2, marginBottom: 12, overflowX: 'auto' }}>
+                {sections.map(s => (
+                  <button key={s.key} onClick={() => setActiveSection(s.key)} data-testid={`cal-tab-${s.key}`} style={{
+                    padding: '4px 8px', borderRadius: 6, border: 'none',
+                    background: activeSection === s.key ? 'var(--accent-dim)' : 'transparent',
+                    color: activeSection === s.key ? 'var(--accent)' : 'var(--text-muted)',
+                    fontSize: 9, fontWeight: 800, cursor: 'pointer', whiteSpace: 'nowrap',
+                    letterSpacing: '0.04em', textTransform: 'uppercase',
+                  }}>{s.label}</button>
                 ))}
               </div>
 
-              {/* By Prop Type */}
-              <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>By Prop Type</div>
-              {Object.entries(stats.byProp).map(([k, v]) => (
-                <RateBar key={k} label={k.replace(/_/g, ' ')} hits={v.hits} total={v.total} rate={v.rate} />
-              ))}
+              {/* === OVERVIEW === */}
+              {activeSection === 'overview' && (
+                <>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6, marginBottom: 12 }}>
+                    {[
+                      { label: 'Overall', value: `${stats.overallHitRate}%`, sub: `${stats.total} picks` },
+                      { label: 'OVER', value: `${stats.overHitRate}%`, icon: <TrendingUp style={{ width: 10, height: 10 }} /> },
+                      { label: 'UNDER', value: `${stats.underHitRate}%`, icon: <TrendingDown style={{ width: 10, height: 10 }} /> },
+                    ].map((item, i) => (
+                      <div key={i} data-testid={`cal-stat-${item.label}`} style={{
+                        padding: '8px 6px', borderRadius: 8, textAlign: 'center',
+                        background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)',
+                      }}>
+                        <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>{item.label}</div>
+                        <div style={{ fontSize: 16, fontWeight: 900, color: parseFloat(item.value) >= 70 ? 'var(--accent)' : parseFloat(item.value) >= 50 ? '#f59e0b' : '#f43f5e' }}>
+                          {item.icon} {item.value}
+                        </div>
+                        {item.sub && <div style={{ fontSize: 8, color: 'var(--text-muted)', marginTop: 1 }}>{item.sub}</div>}
+                      </div>
+                    ))}
+                  </div>
 
-              {/* By Venue */}
-              <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 10, marginBottom: 6 }}>By Venue</div>
-              {Object.entries(stats.byVenue).map(([k, v]) => (
-                <RateBar key={k} label={k.toUpperCase()} hits={v.hits} total={v.total} rate={v.rate} />
-              ))}
+                  <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>By Prop Type</div>
+                  {Object.entries(stats.byProp || {}).sort((a, b) => b[1].total - a[1].total).map(([k, v]) => (
+                    <RateBar key={k} label={k.replace(/_/g, ' ')} hits={v.hits} total={v.total} rate={v.rate} avgError={v.avgError} />
+                  ))}
+                </>
+              )}
 
-              {/* By Confidence Band */}
-              <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 10, marginBottom: 6 }}>By Confidence</div>
-              {Object.entries(stats.byConfidence).map(([k, v]) => (
-                <RateBar key={k} label={k.replace(/_/g, ' ')} hits={v.hits} total={v.total} rate={v.rate} />
-              ))}
+              {/* === POSITION === */}
+              {activeSection === 'position' && (
+                <>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>By Position Group</div>
+                  {Object.entries(stats.byPosition || {}).sort((a, b) => b[1].total - a[1].total).map(([k, v]) => (
+                    <RateBar key={k} label={k.toUpperCase()} hits={v.hits} total={v.total} rate={v.rate} />
+                  ))}
 
-              {/* By Line Range */}
-              <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 10, marginBottom: 6 }}>By Line Range</div>
-              {Object.entries(stats.byLineRange).map(([k, v]) => (
-                <RateBar key={k} label={k.replace(/_/g, ' ')} hits={v.hits} total={v.total} rate={v.rate} />
-              ))}
+                  <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 12, marginBottom: 6 }}>Prop + Position Combos</div>
+                  {Object.entries(stats.byPropPosition || {}).sort((a, b) => b[1].total - a[1].total).map(([k, v]) => {
+                    const [prop, pos] = k.split('|');
+                    return <RateBar key={k} label={`${prop.replace(/_/g, ' ')} (${pos})`} hits={v.hits} total={v.total} rate={v.rate} avgError={v.avgError} compact />;
+                  })}
+                </>
+              )}
 
-              {/* Context Alerts */}
-              <div style={{ marginTop: 12, padding: 10, borderRadius: 8, background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', fontSize: 10, lineHeight: 1.6 }}>
-                <div style={{ fontWeight: 800, marginBottom: 4, fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)' }}>Context Alerts</div>
-                <div style={{ color: 'var(--text-secondary)' }}>Blowout misses: <span style={{ fontWeight: 800, color: stats.blowoutMisses > 0 ? '#f43f5e' : 'var(--accent)' }}>{stats.blowoutMisses}</span></div>
-                <div style={{ color: 'var(--text-secondary)' }}>Close game hit rate: <span style={{ fontWeight: 800, color: stats.closeGameHitRate >= 70 ? 'var(--accent)' : '#f59e0b' }}>{stats.closeGameHitRate}%</span></div>
-              </div>
+              {/* === CONTEXT === */}
+              {activeSection === 'context' && (
+                <>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>By Game Context</div>
+                  {Object.entries(stats.byGameContext || {}).map(([k, v]) => (
+                    <RateBar key={k} label={k.charAt(0).toUpperCase() + k.slice(1)} hits={v.hits} total={v.total} rate={v.rate} />
+                  ))}
+
+                  <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 12, marginBottom: 6 }}>Prop in Game Context</div>
+                  {Object.entries(stats.byPropContext || {}).sort((a, b) => b[1].total - a[1].total).map(([k, v]) => {
+                    const [prop, ctx] = k.split('|');
+                    return <RateBar key={k} label={`${prop.replace(/_/g, ' ')} (${ctx})`} hits={v.hits} total={v.total} rate={v.rate} avgError={v.avgError} compact />;
+                  })}
+
+                  {/* Blowout details */}
+                  {stats.blowoutDetails && stats.blowoutDetails.length > 0 && (
+                    <div style={{ marginTop: 12, padding: 10, borderRadius: 8, background: 'rgba(244,63,94,0.04)', border: '1px solid rgba(244,63,94,0.12)' }}>
+                      <div style={{ fontSize: 9, fontWeight: 800, color: '#f43f5e', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>
+                        Blowout Misses ({stats.blowoutMisses})
+                      </div>
+                      {stats.blowoutDetails.map((b, i) => (
+                        <div key={i} style={{ fontSize: 9, color: 'var(--text-secondary)', lineHeight: 1.6, borderBottom: i < stats.blowoutDetails.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none', paddingBottom: 4, marginBottom: 4 }}>
+                          <strong>{b.player}</strong> — {b.prop} {b.rec} {b.line} | Proj: {b.proj} | Actual: {b.actual} | Score: {b.score}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div style={{ marginTop: 10, padding: 10, borderRadius: 8, background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                    <div style={{ fontSize: 9, fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 4 }}>Close Games (1-goal margin)</div>
+                    <div style={{ fontSize: 14, fontWeight: 900, color: stats.closeGameHitRate >= 70 ? 'var(--accent)' : stats.closeGameHitRate >= 50 ? '#f59e0b' : '#f43f5e' }}>
+                      {stats.closeGameHitRate}%
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* === LEAGUE === */}
+              {activeSection === 'league' && (
+                <>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>By League</div>
+                  {Object.entries(stats.byLeague || {}).sort((a, b) => b[1].total - a[1].total).map(([k, v]) => (
+                    <RateBar key={k} label={LEAGUE_NAMES[k] || `League ${k}`} hits={v.hits} total={v.total} rate={v.rate} />
+                  ))}
+                </>
+              )}
+
+              {/* === DETAILS === */}
+              {activeSection === 'details' && (
+                <>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>By Venue</div>
+                  {Object.entries(stats.byVenue || {}).map(([k, v]) => (
+                    <RateBar key={k} label={k.toUpperCase()} hits={v.hits} total={v.total} rate={v.rate} />
+                  ))}
+
+                  <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 12, marginBottom: 6 }}>Prop + Venue</div>
+                  {Object.entries(stats.byPropVenue || {}).sort((a, b) => b[1].total - a[1].total).map(([k, v]) => {
+                    const [prop, venue] = k.split('|');
+                    return <RateBar key={k} label={`${prop.replace(/_/g, ' ')} (${venue})`} hits={v.hits} total={v.total} rate={v.rate} avgError={v.avgError} compact />;
+                  })}
+
+                  <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 12, marginBottom: 6 }}>By Confidence Band</div>
+                  {Object.entries(stats.byConfidence || {}).map(([k, v]) => (
+                    <RateBar key={k} label={k.replace(/_/g, ' ')} hits={v.hits} total={v.total} rate={v.rate} />
+                  ))}
+
+                  <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 12, marginBottom: 6 }}>By Line Range</div>
+                  {Object.entries(stats.byLineRange || {}).map(([k, v]) => (
+                    <RateBar key={k} label={k.replace(/_/g, ' ')} hits={v.hits} total={v.total} rate={v.rate} />
+                  ))}
+                </>
+              )}
 
               {/* Refresh */}
-              <button onClick={fetchCalibration} disabled={loading} style={{
+              <button onClick={fetchCalibration} disabled={loading} data-testid="calibration-refresh" style={{
                 width: '100%', marginTop: 10, padding: '7px 0', borderRadius: 8,
                 border: '1.5px solid rgba(16,185,129,0.15)', background: 'transparent',
                 color: 'var(--accent)', fontSize: 10, fontWeight: 800, cursor: 'pointer',
