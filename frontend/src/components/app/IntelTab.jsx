@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { BarChart3, TrendingUp, TrendingDown, AlertTriangle, Target, MapPin, Shield, Loader2, Zap, DollarSign } from 'lucide-react';
+import { BarChart3, TrendingUp, TrendingDown, AlertTriangle, Target, MapPin, Shield, Loader2, Zap, DollarSign, Activity } from 'lucide-react';
 import { getIntelDashboard, backfillPositions } from '../../api';
 import { toast } from 'sonner';
 
@@ -39,6 +39,7 @@ export function IntelTab({ auth }) {
     { key: 'position', label: 'Position', icon: Shield },
     { key: 'gametype', label: 'Game Type', icon: Zap },
     { key: 'moneyline', label: 'Moneyline', icon: DollarSign },
+    { key: 'calibration', label: 'Calibration', icon: Activity },
     { key: 'matchup', label: 'Venue & League', icon: MapPin },
     { key: 'misses', label: 'Worst Misses', icon: AlertTriangle },
   ];
@@ -175,6 +176,11 @@ export function IntelTab({ auth }) {
               <SectionHeader title="Margin + Prop" subtitle="Which props fail in blowouts vs close games" />
               <SortedBars data={data.byMoneylineProp} splitLabel showError onlyWeak />
             </div>
+          )}
+
+          {/* === CALIBRATION ENGINE === */}
+          {section === 'calibration' && data.calibration && (
+            <CalibrationSection cal={data.calibration} />
           )}
 
           {/* === VENUE & LEAGUE === */}
@@ -329,5 +335,157 @@ function Tag({ children, color }) {
       color: color || 'var(--text-secondary)',
       border: `1px solid ${color ? `${color}25` : 'rgba(255,255,255,0.08)'}`,
     }}>{children}</span>
+  );
+}
+
+
+function CalibrationSection({ cal }) {
+  const { confidenceAccuracy, flipCandidates, edgePerformance, errorMap, propRecBreakdown } = cal;
+
+  return (
+    <div>
+      {/* Confidence Accuracy — AI says X but historically hits Y */}
+      <SectionHeader title="Confidence Accuracy" subtitle="What AI says vs. what actually hits" />
+      {Object.keys(confidenceAccuracy || {}).length > 0 ? (
+        <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
+          {Object.entries(confidenceAccuracy).sort((a, b) => b[0].localeCompare(a[0])).map(([key, v]) => {
+            const isOverconf = key.startsWith('high') && v.rate < 65;
+            return (
+              <div key={key} style={{
+                flex: 1, padding: '10px 8px', borderRadius: 10, textAlign: 'center',
+                background: isOverconf ? 'rgba(244,63,94,0.04)' : 'rgba(255,255,255,0.02)',
+                border: `1px solid ${isOverconf ? 'rgba(244,63,94,0.15)' : 'rgba(255,255,255,0.06)'}`,
+              }}>
+                <div style={{ fontSize: 8, fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 4 }}>
+                  {v.label || key}
+                </div>
+                <div style={{ fontSize: 20, fontWeight: 900, color: v.rate >= 65 ? 'var(--accent)' : v.rate >= 50 ? '#f59e0b' : '#f43f5e' }}>
+                  {v.rate}%
+                </div>
+                <div style={{ fontSize: 8, color: 'var(--text-muted)', fontWeight: 700 }}>{v.hits}/{v.total}</div>
+                {isOverconf && (
+                  <div style={{ fontSize: 7, color: '#f43f5e', fontWeight: 700, marginTop: 3 }}>OVERCONFIDENT</div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ) : <NoData />}
+
+      {/* Edge Strength Performance */}
+      {Object.keys(edgePerformance || {}).length > 0 && (
+        <>
+          <SectionHeader title="Edge Strength Performance" subtitle="STRONG vs LEAN vs LOW conviction picks" />
+          <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
+            {['STRONG', 'LEAN', 'LOW'].map(label => {
+              const v = edgePerformance[label];
+              if (!v || v.total === 0) return null;
+              return (
+                <div key={label} style={{
+                  flex: 1, padding: '10px 8px', borderRadius: 10, textAlign: 'center',
+                  background: label === 'STRONG' ? 'rgba(16,185,129,0.04)' : label === 'LEAN' ? 'rgba(245,158,11,0.04)' : 'rgba(244,63,94,0.04)',
+                  border: `1px solid ${label === 'STRONG' ? 'rgba(16,185,129,0.15)' : label === 'LEAN' ? 'rgba(245,158,11,0.15)' : 'rgba(244,63,94,0.15)'}`,
+                }}>
+                  <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: '0.06em', marginBottom: 4,
+                    color: label === 'STRONG' ? 'var(--accent)' : label === 'LEAN' ? '#f59e0b' : '#f43f5e' }}>
+                    {label}
+                  </div>
+                  <div style={{ fontSize: 20, fontWeight: 900, color: v.rate >= 65 ? 'var(--accent)' : v.rate >= 50 ? '#f59e0b' : '#f43f5e' }}>
+                    {v.rate}%
+                  </div>
+                  <div style={{ fontSize: 8, color: 'var(--text-muted)', fontWeight: 700 }}>{v.hits}/{v.total}</div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {/* Flip Candidates — prop+rec combos with < 50% hit rate */}
+      <SectionHeader title="Flip Candidates" subtitle="Prop + direction combos below 50% (auto-flipped at &lt;45% with 15+ samples)" />
+      {(flipCandidates || []).length > 0 ? (
+        <div style={{ marginBottom: 14 }}>
+          {flipCandidates.map((fc, i) => (
+            <div key={i} data-testid={`flip-candidate-${i}`} style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '8px 10px', borderRadius: 8, marginBottom: 4,
+              background: fc.rate < 45 ? 'rgba(244,63,94,0.06)' : 'rgba(245,158,11,0.04)',
+              border: `1px solid ${fc.rate < 45 ? 'rgba(244,63,94,0.12)' : 'rgba(245,158,11,0.08)'}`,
+            }}>
+              <div>
+                <span style={{ fontSize: 10, fontWeight: 800, color: '#fff' }}>
+                  {fc.prop.replace(/_/g, ' ')}
+                </span>
+                <span style={{
+                  fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 4, marginLeft: 6,
+                  background: fc.rec === 'over' ? 'rgba(16,185,129,0.1)' : 'rgba(129,140,248,0.1)',
+                  color: fc.rec === 'over' ? 'var(--accent)' : '#818cf8',
+                }}>{fc.rec.toUpperCase()}</span>
+                {fc.rate < 45 && fc.total >= 15 && (
+                  <span style={{
+                    fontSize: 7, fontWeight: 900, padding: '1px 5px', borderRadius: 4, marginLeft: 4,
+                    background: 'rgba(244,63,94,0.15)', color: '#f43f5e',
+                  }}>AUTO-FLIP ACTIVE</span>
+                )}
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <span style={{ fontSize: 13, fontWeight: 900, color: fc.rate < 45 ? '#f43f5e' : '#f59e0b' }}>
+                  {fc.rate}%
+                </span>
+                <span style={{ fontSize: 8, color: 'var(--text-muted)', marginLeft: 4 }}>({fc.hits}/{fc.total})</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : <NoData text="No weak combos detected" />}
+
+      {/* Error Direction Map — over-projecting vs under-projecting per prop+venue */}
+      <SectionHeader title="Projection Error Map" subtitle="Over-projecting (−) vs Under-projecting (+) per prop + venue" />
+      {Object.keys(errorMap || {}).length > 0 ? (
+        <div style={{ marginBottom: 14 }}>
+          {Object.entries(errorMap)
+            .sort((a, b) => Math.abs(b[1].avgError) - Math.abs(a[1].avgError))
+            .map(([key, v]) => (
+              <div key={key} style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '6px 10px', borderRadius: 8, marginBottom: 3,
+                background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: '#fff' }}>
+                    {v.prop.replace(/_/g, ' ')}
+                  </span>
+                  <span style={{ fontSize: 8, color: 'var(--text-muted)', fontWeight: 700 }}>
+                    {v.venue.toUpperCase()}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{
+                    fontSize: 9, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace",
+                    color: v.avgError < 0 ? '#f43f5e' : 'var(--accent)',
+                  }}>
+                    {v.avgError > 0 ? '+' : ''}{v.avgError}
+                  </span>
+                  <span style={{ fontSize: 7, color: 'var(--text-muted)', fontWeight: 600 }}>
+                    {v.direction} (n={v.total})
+                  </span>
+                </div>
+              </div>
+            ))}
+        </div>
+      ) : <NoData />}
+
+      {/* Prop + Rec Full Breakdown */}
+      <SectionHeader title="Prop + Direction Breakdown" subtitle="Full hit rates for every prop type + over/under combo" />
+      <SortedBars data={propRecBreakdown} splitLabel showError />
+    </div>
+  );
+}
+
+function NoData({ text }) {
+  return (
+    <div style={{ textAlign: 'center', padding: 20, color: 'var(--text-muted)', fontSize: 10, marginBottom: 14 }}>
+      {text || 'Not enough data yet'}
+    </div>
   );
 }

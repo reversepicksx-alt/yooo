@@ -138,6 +138,10 @@ async def intel_dashboard(email: str, token: str, sport: str = "soccer"):
     by_moneyline_prop = {}  # "blowout_win|saves" → {hit, miss}
     by_conf_band = {}       # "high_70+" → {hit, miss}
     worst_lines = []        # individual miss details
+    # Calibration-specific accumulators
+    by_prop_rec = {}        # "saves|over" → {hit, miss, errors}
+    by_prop_venue = {}      # "saves|home" → {hit, miss, errors}
+    edge_buckets = {"strong": {"hit": 0, "miss": 0}, "lean": {"hit": 0, "miss": 0}, "low": {"hit": 0, "miss": 0}, "unknown": {"hit": 0, "miss": 0}}
 
     for p in picks:
         pt = p.get("propType", "unknown")
@@ -203,6 +207,18 @@ async def intel_dashboard(email: str, token: str, sport: str = "soccer"):
         band = "high_70+" if conf >= 70 else "mid_55-69" if conf >= 55 else "low_<55"
         _add(by_conf_band, band)
 
+        # Calibration-specific tracking
+        _add(by_prop_rec, f"{pt}|{rec}")
+        if venue != "unknown":
+            _add(by_prop_venue, f"{pt}|{venue}")
+
+        # Edge strength bucket (from stored prediction)
+        edge_str = p.get("edgeStrength", "").lower()
+        if edge_str in edge_buckets:
+            edge_buckets[edge_str][res] = edge_buckets[edge_str].get(res, 0) + 1
+        else:
+            edge_buckets["unknown"][res] = edge_buckets["unknown"].get(res, 0) + 1
+
         # Track individual misses for worst lines
         if res == "miss":
             worst_lines.append({
@@ -234,6 +250,65 @@ async def intel_dashboard(email: str, token: str, sport: str = "soccer"):
             result[k] = entry
         return result
 
+    # Build calibration stats
+    def _cal_summarize(d):
+        result = {}
+        for k, v in d.items():
+            h, m = v.get("hit", 0), v.get("miss", 0)
+            t = h + m
+            if t == 0:
+                continue
+            errs = v.get("errors", [])
+            entry = {"hits": h, "misses": m, "total": t, "rate": _rate(h, m)}
+            if errs:
+                entry["avgError"] = round(sum(errs) / len(errs), 1)
+            result[k] = entry
+        return result
+
+    # Confidence band accuracy (for recalibration insight)
+    conf_accuracy = {}
+    for band_key, band_data in by_conf_band.items():
+        h, m = band_data.get("hit", 0), band_data.get("miss", 0)
+        t = h + m
+        if t > 0:
+            conf_accuracy[band_key] = {
+                "hits": h, "misses": m, "total": t, "rate": _rate(h, m),
+                "label": band_key.replace("_", " ").replace("high ", "High ").replace("mid ", "Med ").replace("low ", "Low "),
+            }
+
+    # Flip candidates (prop+rec combos with < 50% and 5+ samples)
+    flip_candidates = []
+    prop_rec_summary = _cal_summarize(by_prop_rec)
+    for key, v in prop_rec_summary.items():
+        if v["total"] >= 5 and v["rate"] < 50:
+            parts = key.split("|")
+            flip_candidates.append({
+                "prop": parts[0], "rec": parts[1] if len(parts) > 1 else "?",
+                "rate": v["rate"], "total": v["total"], "hits": v["hits"],
+                "avgError": v.get("avgError"),
+            })
+    flip_candidates.sort(key=lambda x: x["rate"])
+
+    # Edge strength performance
+    edge_perf = {}
+    for ek, ev in edge_buckets.items():
+        h, m = ev.get("hit", 0), ev.get("miss", 0)
+        t = h + m
+        if t > 0:
+            edge_perf[ek.upper()] = {"hits": h, "misses": m, "total": t, "rate": _rate(h, m)}
+
+    # Error direction per prop+venue
+    error_map = {}
+    prop_venue_summary = _cal_summarize(by_prop_venue)
+    for key, v in prop_venue_summary.items():
+        if v.get("avgError") is not None and v["total"] >= 3:
+            parts = key.split("|")
+            error_map[key] = {
+                "prop": parts[0], "venue": parts[1] if len(parts) > 1 else "?",
+                "avgError": v["avgError"], "total": v["total"], "rate": v["rate"],
+                "direction": "over-projecting" if v["avgError"] < 0 else "under-projecting",
+            }
+
     return {
         "total": total_h + total_m,
         "totalHits": total_h,
@@ -257,6 +332,14 @@ async def intel_dashboard(email: str, token: str, sport: str = "soccer"):
         "byConfBand": _summarize(by_conf_band),
         "worstMisses": sorted(worst_lines, key=lambda x: abs(x.get("actual", 0) - x.get("projected", 0)), reverse=True)[:20],
         "leagueNames": LEAGUE_NAMES,
+        # Calibration engine insights
+        "calibration": {
+            "confidenceAccuracy": conf_accuracy,
+            "flipCandidates": flip_candidates,
+            "edgePerformance": edge_perf,
+            "errorMap": error_map,
+            "propRecBreakdown": prop_rec_summary,
+        },
     }
 
 

@@ -1,0 +1,60 @@
+{
+  "summary": "Iteration 58: Verified Calibration Stats Panel in INTEL tab. All 11 tests passed. The /api/intel/dashboard endpoint correctly returns calibration object with all 5 required fields: confidenceAccuracy, flipCandidates, edgePerformance, errorMap, and propRecBreakdown.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration_58_calibration_stats.py",
+    "/app/test_reports/pytest/iteration_58_calibration_stats_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [
+    "/app/backend/tests/test_iteration_58_calibration_stats.py"
+  ],
+  "success_rate": {
+    "backend": "100% (11/11 passed)"
+  },
+  "seed_data_creation": "None - used existing settled picks in preview DB",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 58 verified calibration stats panel. Key findings: (1) Soccer calibration data: 15 picks, 80% hit rate, 2 confidence bands (mid_55-69: 72.7%, high_70+: 100%), 0 flip candidates, edge performance all UNKNOWN (picks predate calibration engine), 3 errorMap entries (pass_attempts|home, saves|away, pass_attempts|away all over-projecting), 4 propRecBreakdown entries. (2) Basketball calibration data: 11 picks, 54.5% hit rate, 3 confidence bands, 0 flip candidates, edge performance all UNKNOWN, 1 errorMap entry (points|home under-projecting), 2 propRecBreakdown entries. (3) All calibration fields have correct structure and data types. (4) Non-owner access correctly denied.",
+  "verified_features": {
+    "calibration_object_structure": {
+      "confidenceAccuracy": "Maps confidence bands (high_70+, mid_55-69, low_<55) to actual hit rates with hits, misses, total, rate, label fields",
+      "flipCandidates": "List of prop+rec combos with < 50% hit rate and 5+ samples, sorted by rate ascending. Empty in preview DB (all combos > 50%)",
+      "edgePerformance": "Shows STRONG/LEAN/LOW/UNKNOWN performance. All UNKNOWN in preview DB (picks predate calibration engine)",
+      "errorMap": "Contains avgError, direction (over-projecting/under-projecting), sample counts per prop+venue. Minimum 3 samples required",
+      "propRecBreakdown": "Full hit rates for every prop+direction combo with hits, misses, total, rate, avgError fields"
+    },
+    "soccer_calibration_data": {
+      "total_picks": 15,
+      "hit_rate": "80%",
+      "confidence_bands": ["mid_55-69 (72.7%)", "high_70+ (100%)"],
+      "flip_candidates": 0,
+      "edge_performance": "All UNKNOWN",
+      "error_map_entries": 3,
+      "prop_rec_entries": 4
+    },
+    "basketball_calibration_data": {
+      "total_picks": 11,
+      "hit_rate": "54.5%",
+      "confidence_bands": ["mid_55-69 (50%)", "low_<55 (100%)", "high_70+ (0%)"],
+      "flip_candidates": 0,
+      "edge_performance": "All UNKNOWN",
+      "error_map_entries": 1,
+      "prop_rec_entries": 2
+    },
+    "auto_flip_badge_criteria": "rate < 45% AND total >= 15 (no candidates meet criteria in preview DB)"
+  },
+  "test_credentials": {
+    "owner_email": "josselj001@gmail.com",
+    "session_token_endpoint": "POST /api/auth/verify-whop"
+  }
+}
