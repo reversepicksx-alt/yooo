@@ -1617,8 +1617,9 @@ Expected possession for {req.opponentName}: {match_dominance['oppExpectedPoss']}
             cal_stats = await get_calibration_stats("soccer")
             if cal_stats:
                 calibration_context = generate_calibration_prompt(
-                    cal_stats, req.propType, "over",  # direction TBD by AI
-                    req.line, match_odds
+                    cal_stats, req.propType, "over",
+                    req.line, match_odds,
+                    league_id=league_id, venue=player_venue
                 )
         except Exception as e:
             print(f"[CALIBRATION] Error generating prompt: {e}")
