@@ -132,6 +132,66 @@ async def list_picks(req: GetPicksRequest):
 
     return {"picks": picks}
 
+
+@router.get("/picks/analysis")
+async def get_pick_analysis(email: str, token: str, pickId: str):
+    """Fetch the original prediction analysis for a saved pick."""
+    session = await db.sessions.find_one({"email": email.lower(), "session_token": token}, {"_id": 0})
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid session")
+
+    pick = await db.picks.find_one({"pickId": pickId, "email": email.lower()}, {"_id": 0})
+    if not pick:
+        raise HTTPException(status_code=404, detail="Pick not found")
+
+    player_id = pick.get("playerId")
+    prop_type = pick.get("propType", "")
+    sport = pick.get("sport", "soccer")
+
+    # Fields to return from the prediction
+    proj_fields = {
+        "_id": 0, "reasoning": 1, "tacticalBreakdown": 1, "explanation": 1,
+        "sharpSummary": 1, "scenarioAnalysis": 1, "keyEvidence": 1,
+        "matchupOverview": 1, "gameFlowDynamics": 1, "sensitivityTests": 1,
+        "subRisk": 1, "uncertaintyNote": 1, "consensusNote": 1,
+        "projectedValue": 1, "recommendation": 1, "confidenceScore": 1,
+        "confidenceLevel": 1, "confidenceInterval": 1,
+        "player": 1, "opponent": 1, "propType": 1, "line": 1,
+        "recentSamples": 1, "bayesianMetrics": 1,
+        "playerGameLogs": 1, "tacticalAlerts": 1,
+        "positionComparison": 1, "h2hPlayerStats": 1,
+        "_created": 1,
+    }
+
+    prediction = None
+    collection = db.basketball_predictions if sport == "basketball" else db.predictions
+
+    # Strategy 1: Match by player ID + prop type (most recent)
+    if player_id and player_id != 0:
+        prediction = await collection.find_one(
+            {"player.id": player_id, "propType": prop_type},
+            proj_fields,
+            sort=[("_created", -1)]
+        )
+
+    # Strategy 2: Match by player name + prop type
+    if not prediction:
+        player_name = pick.get("playerName", "")
+        if player_name:
+            prediction = await collection.find_one(
+                {"player.name": player_name, "propType": prop_type},
+                proj_fields,
+                sort=[("_created", -1)]
+            )
+
+    if not prediction:
+        return {"found": False}
+
+    prediction.pop("_id", None)
+    return {"found": True, "analysis": prediction}
+
+
+
 @router.post("/picks/delete")
 async def delete_pick(req: DeletePickRequest):
     session = await db.sessions.find_one({"email": req.email.lower(), "session_token": req.token}, {"_id": 0})

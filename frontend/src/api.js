@@ -155,6 +155,11 @@ export async function correctPick(email, token, pickId, actualValue) {
   return apiCall('/api/picks/correct', { method: 'POST', body: JSON.stringify({ email, token, pickId, actualValue }) });
 }
 
+export async function getPickAnalysis(email, token, pickId) {
+  return apiCall(`/api/picks/analysis?email=${encodeURIComponent(email)}&token=${encodeURIComponent(token)}&pickId=${encodeURIComponent(pickId)}`);
+}
+
+
 
 export async function liveUpdatePicks(email, token) {
   return apiCall('/api/picks/live-update', { method: 'POST', body: JSON.stringify({ email, token }) });

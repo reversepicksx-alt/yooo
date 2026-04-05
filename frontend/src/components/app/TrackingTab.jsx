@@ -1,9 +1,10 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Loader2, Clock, BarChart3, Edit3, Trash2, RotateCcw,
-  ArrowLeft, TrendingUp, TrendingDown, Brain
+  ArrowLeft, TrendingUp, TrendingDown, Brain, ChevronDown, ChevronUp
 } from 'lucide-react';
 import { PROP_TYPES, BASKETBALL_PROP_TYPES, getPropLabel } from '../../constants';
+import { getPickAnalysis } from '../../api';
 
 export function TrackingTab({
   auth, savedPicks, liveData, livePickCount,
@@ -57,6 +58,7 @@ export function TrackingTab({
             correctValue={correctValue}
             setCorrectValue={setCorrectValue}
             submitCorrection={submitCorrection}
+            auth={auth}
           />
       </div>
 
@@ -157,7 +159,24 @@ function RecordTracker({ savedPicks }) {
   );
 }
 
-function PickCard({ pick, liveData, missAnalyses, reanalyzePick, reanalyzingPick, removePickFn, correctingPick, setCorrectingPick, correctValue, setCorrectValue, submitCorrection }) {
+function PickCard({ pick, liveData, missAnalyses, reanalyzePick, reanalyzingPick, removePickFn, correctingPick, setCorrectingPick, correctValue, setCorrectValue, submitCorrection, auth }) {
+  const [expanded, setExpanded] = useState(false);
+  const [analysis, setAnalysis] = useState(null);
+  const [loadingAnalysis, setLoadingAnalysis] = useState(false);
+
+  const toggleAnalysis = async (e) => {
+    e.stopPropagation();
+    if (expanded) { setExpanded(false); return; }
+    if (analysis) { setExpanded(true); return; }
+    setLoadingAnalysis(true);
+    try {
+      const res = await getPickAnalysis(auth.email, auth.token, pick.pickId);
+      if (res.found) { setAnalysis(res.analysis); setExpanded(true); }
+      else { setAnalysis({ notFound: true }); setExpanded(true); }
+    } catch { setAnalysis({ notFound: true }); setExpanded(true); }
+    finally { setLoadingAnalysis(false); }
+  };
+
   const live = liveData[pick.pickId];
   const isMatchLive = live?.matchStatus === 'live';
   const isMatchFinal = live?.matchStatus === 'final' || pick.status === 'settled';
@@ -187,7 +206,8 @@ function PickCard({ pick, liveData, missAnalyses, reanalyzePick, reanalyzingPick
       background: '#0a0a0f', borderRadius: 14, padding: 0, overflow: 'hidden',
       border: `2px solid ${isMatchLive ? 'rgba(16,185,129,0.4)' : isHit ? 'rgba(16,185,129,0.35)' : isMiss ? 'rgba(244,63,94,0.3)' : isPush ? 'rgba(245,158,11,0.35)' : 'rgba(16,185,129,0.1)'}`,
       boxShadow: isMatchLive ? '0 0 16px rgba(16,185,129,0.1)' : isHit ? '0 0 12px rgba(16,185,129,0.08)' : isMiss ? '0 0 12px rgba(244,63,94,0.06)' : '0 0 8px rgba(16,185,129,0.04)',
-    }}>
+      cursor: 'pointer',
+    }} onClick={toggleAnalysis}>
       {/* HEADER */}
       <div style={{ padding: '5px 8px 2px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -209,7 +229,7 @@ function PickCard({ pick, liveData, missAnalyses, reanalyzePick, reanalyzingPick
           {isMatchFinal && !isMatchLive && <div style={{ fontSize: 7, fontWeight: 800, color: 'rgba(255,255,255,0.35)' }}>FINAL</div>}
           {!isMatchLive && !isMatchFinal && <div style={{ fontSize: 7, fontWeight: 700, color: 'rgba(255,255,255,0.25)' }}>SCHED</div>}
           {pick.status === 'live' && (
-            <button className="reanalyze-btn" onClick={e => reanalyzePick(pick, e)} disabled={reanalyzingPick === pick.pickId}
+            <button className="reanalyze-btn" onClick={e => { e.stopPropagation(); reanalyzePick(pick, e); }} disabled={reanalyzingPick === pick.pickId}
               data-testid={`reanalyze-pick-${pick.pickId}`} title="Re-analyze" style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 1 }}>
               {reanalyzingPick === pick.pickId
                 ? <Loader2 style={{ width: 9, height: 9, color: 'var(--accent)', animation: 'spin 1s linear infinite' }} />
@@ -217,7 +237,7 @@ function PickCard({ pick, liveData, missAnalyses, reanalyzePick, reanalyzingPick
             </button>
           )}
           <button style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 1 }}
-            onClick={e => removePickFn(pick.pickId, e)} data-testid={`remove-pick-${pick.pickId}`}>
+            onClick={e => { e.stopPropagation(); removePickFn(pick.pickId, e); }} data-testid={`remove-pick-${pick.pickId}`}>
             <Trash2 style={{ width: 9, height: 9, color: 'rgba(255,255,255,0.25)' }} />
           </button>
         </div>
@@ -292,7 +312,7 @@ function PickCard({ pick, liveData, missAnalyses, reanalyzePick, reanalyzingPick
           )}
           {pick.correctedManually && <span style={{ fontSize: 6, color: 'rgba(255,255,255,0.2)', fontStyle: 'italic' }}>corrected</span>}
           {pick.status === 'settled' && correctingPick !== pick.pickId && (
-            <button onClick={() => { setCorrectingPick(pick.pickId); setCorrectValue(String(pick.actualValue || '')); }}
+            <button onClick={(e) => { e.stopPropagation(); setCorrectingPick(pick.pickId); setCorrectValue(String(pick.actualValue || '')); }}
               data-testid={`correct-pick-${pick.pickId}`} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 1, display: 'flex' }}>
               <Edit3 style={{ width: 8, height: 8, color: 'rgba(255,255,255,0.25)' }} />
             </button>
@@ -305,7 +325,7 @@ function PickCard({ pick, liveData, missAnalyses, reanalyzePick, reanalyzingPick
 
       {/* CORRECTION INPUT */}
       {correctingPick === pick.pickId && (
-        <div style={{ padding: '0 8px 4px', display: 'flex', alignItems: 'center', gap: 4 }}>
+        <div style={{ padding: '0 8px 4px', display: 'flex', alignItems: 'center', gap: 4 }} onClick={e => e.stopPropagation()}>
           <span style={{ fontSize: 7, color: 'rgba(255,255,255,0.4)', whiteSpace: 'nowrap' }}>Actual:</span>
           <input type="number" step="1" value={correctValue} onChange={e => setCorrectValue(e.target.value)}
             data-testid="correct-value-input" autoFocus
@@ -317,12 +337,40 @@ function PickCard({ pick, liveData, missAnalyses, reanalyzePick, reanalyzingPick
         </div>
       )}
 
+      {/* TAP HINT + LOADING */}
+      <div style={{ 
+        padding: '3px 8px', textAlign: 'center', 
+        borderTop: '1px solid rgba(255,255,255,0.04)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
+      }}>
+        {loadingAnalysis ? (
+          <Loader2 style={{ width: 10, height: 10, color: 'var(--accent)', animation: 'spin 1s linear infinite' }} />
+        ) : expanded ? (
+          <ChevronUp style={{ width: 10, height: 10, color: 'var(--accent)' }} />
+        ) : (
+          <ChevronDown style={{ width: 10, height: 10, color: 'rgba(255,255,255,0.2)' }} />
+        )}
+        <span style={{ fontSize: 7, color: expanded ? 'var(--accent)' : 'rgba(255,255,255,0.2)', fontWeight: 700, letterSpacing: '0.04em' }}>
+          {loadingAnalysis ? 'LOADING ANALYSIS...' : expanded ? 'HIDE ANALYSIS' : 'TAP FOR ANALYSIS'}
+        </span>
+      </div>
+
+      {/* EXPANDED ANALYSIS */}
+      {expanded && analysis && !analysis.notFound && (
+        <AnalysisPanel analysis={analysis} />
+      )}
+      {expanded && analysis?.notFound && (
+        <div style={{ padding: '12px 8px', textAlign: 'center', color: 'rgba(255,255,255,0.4)', fontSize: 10, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+          No stored analysis found for this pick.
+        </div>
+      )}
+
       {/* AUTO MISS ANALYSIS — REMOVED (useless for unpredictable scenarios, drains AI credits) */}
     </div>
   );
 }
 
-function PicksList({ savedPicks, trackingView, liveData, missAnalyses, reanalyzePick, reanalyzingPick, removePickFn, correctingPick, setCorrectingPick, correctValue, setCorrectValue, submitCorrection }) {
+function PicksList({ savedPicks, trackingView, liveData, missAnalyses, reanalyzePick, reanalyzingPick, removePickFn, correctingPick, setCorrectingPick, correctValue, setCorrectValue, submitCorrection, auth }) {
   const filtered = savedPicks.filter(p => {
     if (trackingView === 'live') return p.status === 'live';
     if (trackingView === 'won') return p.status === 'settled' && p.result === 'hit';
@@ -358,8 +406,126 @@ function PicksList({ savedPicks, trackingView, liveData, missAnalyses, reanalyze
           correctValue={correctValue}
           setCorrectValue={setCorrectValue}
           submitCorrection={submitCorrection}
+          auth={auth}
         />
       ))}
+    </div>
+  );
+}
+
+
+function AnalysisPanel({ analysis }) {
+  const a = analysis;
+  const matchup = a.matchupOverview || {};
+
+  return (
+    <div data-testid="analysis-panel" style={{
+      borderTop: '1px solid rgba(16,185,129,0.15)',
+      background: 'rgba(16,185,129,0.02)',
+      padding: '10px 10px 12px',
+      animation: 'fadeIn 0.2s ease',
+    }} onClick={e => e.stopPropagation()}>
+      {/* Projection Summary */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6, marginBottom: 10 }}>
+        <AnalysisStat label="Projected" value={a.projectedValue} color="var(--accent)" />
+        <AnalysisStat label="Confidence" value={`${a.confidenceScore}%`}
+          color={a.confidenceScore >= 70 ? 'var(--accent)' : a.confidenceScore >= 55 ? '#f59e0b' : '#f43f5e'} />
+        <AnalysisStat label="Rec" value={a.recommendation?.toUpperCase()}
+          color={a.recommendation === 'over' ? 'var(--accent)' : '#818cf8'} />
+      </div>
+
+      {/* Matchup Overview */}
+      {matchup.homeTeam && (
+        <div style={{ marginBottom: 10, padding: '6px 8px', borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+          <div style={{ fontSize: 8, fontWeight: 800, color: 'var(--accent)', letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 4 }}>Matchup</div>
+          <div style={{ fontSize: 10, fontWeight: 700, color: '#fff' }}>
+            {matchup.homeTeam} vs {matchup.awayTeam}
+          </div>
+          {matchup.favorite && (
+            <div style={{ fontSize: 8, color: 'rgba(255,255,255,0.5)', marginTop: 2 }}>
+              Favorite: {matchup.favorite}
+              {matchup.moneyline && ` (${matchup.moneyline.home}/${matchup.moneyline.draw}/${matchup.moneyline.away})`}
+            </div>
+          )}
+          {matchup.expectedGameType && (
+            <div style={{ fontSize: 8, color: 'rgba(255,255,255,0.4)', marginTop: 1 }}>
+              Expected: {matchup.expectedGameType}{matchup.keyMatchupFactor ? ` — ${matchup.keyMatchupFactor}` : ''}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Sharp Summary */}
+      {a.sharpSummary && (
+        <AnalysisSection title="Sharp Summary" text={a.sharpSummary} />
+      )}
+
+      {/* Key Evidence */}
+      {a.keyEvidence && (
+        <AnalysisSection title="Key Evidence" text={a.keyEvidence} />
+      )}
+
+      {/* Reasoning */}
+      {a.reasoning && (
+        <AnalysisSection title="Reasoning" text={a.reasoning} />
+      )}
+
+      {/* Scenario Analysis */}
+      {a.scenarioAnalysis && (
+        <AnalysisSection title="Scenarios" text={a.scenarioAnalysis} />
+      )}
+
+      {/* Game Flow */}
+      {a.gameFlowDynamics && (
+        <AnalysisSection title="Game Flow" text={a.gameFlowDynamics} />
+      )}
+
+      {/* Sub Risk */}
+      {a.subRisk && (
+        <AnalysisSection title="Sub Risk" text={a.subRisk} />
+      )}
+
+      {/* Tactical Breakdown (markdown-ish) */}
+      {a.tacticalBreakdown && (
+        <div style={{ marginTop: 8 }}>
+          <div style={{ fontSize: 8, fontWeight: 800, color: 'var(--accent)', letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 4 }}>
+            Tactical Breakdown
+          </div>
+          <div style={{
+            fontSize: 9, color: 'rgba(255,255,255,0.7)', lineHeight: 1.6,
+            whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+            padding: '6px 8px', borderRadius: 8,
+            background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)',
+          }}>
+            {a.tacticalBreakdown.replace(/\*\*/g, '').replace(/##/g, '')}
+          </div>
+        </div>
+      )}
+
+      {/* Consensus Note */}
+      {a.consensusNote && (
+        <div style={{ marginTop: 6, fontSize: 8, color: 'rgba(16,185,129,0.7)', fontWeight: 700, fontStyle: 'italic' }}>
+          {a.consensusNote}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AnalysisStat({ label, value, color }) {
+  return (
+    <div style={{ textAlign: 'center', padding: '5px 0', borderRadius: 6, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+      <div style={{ fontSize: 7, fontWeight: 700, color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>{label}</div>
+      <div style={{ fontSize: 13, fontWeight: 900, color, fontFamily: "'JetBrains Mono', monospace" }}>{value}</div>
+    </div>
+  );
+}
+
+function AnalysisSection({ title, text }) {
+  return (
+    <div style={{ marginBottom: 6 }}>
+      <div style={{ fontSize: 8, fontWeight: 800, color: 'var(--text-secondary)', letterSpacing: '0.04em', textTransform: 'uppercase', marginBottom: 2 }}>{title}</div>
+      <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.6)', lineHeight: 1.5 }}>{text}</div>
     </div>
   );
 }
