@@ -38,9 +38,12 @@ export function IntelTab({ auth }) {
     setBackfilling(true);
     try {
       const res = await backfillPositions(auth.email, auth.token);
-      if (res.success) { toast.success(`Backfilled ${res.picksUpdated} picks`); fetchData(sport); }
+      if (res.success) {
+        toast.success(res.message || `Backfill started. Refresh in 30s.`);
+        setTimeout(() => fetchData(sport), 30000);
+      }
       else toast.error(res.error || 'Failed');
-    } catch { toast.error('Failed'); }
+    } catch { toast.error('Backfill request failed — try again'); }
     finally { setBackfilling(false); }
   }
 
@@ -54,14 +57,20 @@ export function IntelTab({ auth }) {
   // Extract unique values for filter dropdowns
   const opts = useMemo(() => {
     const u = (k) => [...new Set(rows.map(r => r[k]).filter(Boolean))].sort();
+    // Hardcode positions so filter always works even before backfill
+    const soccerPositions = ['GK','CB','LB','RB','LWB','RWB','CDM','CM','CAM','LM','RM','LW','RW','CF','ST','DEF','MID','FWD'];
+    const basketballPositions = ['PG','SG','SF','PF','C','Guard','Forward','Center'];
+    const dataPositions = u('position');
+    const hardcoded = sport === 'basketball' ? basketballPositions : soccerPositions;
+    const merged = [...new Set([...hardcoded, ...dataPositions])].sort();
     return {
-      positions: u('position'),
+      positions: merged,
       leagues: u('league'),
       venues: u('venue'),
       gameTypes: u('gameType'),
       props: u('prop'),
     };
-  }, [rows]);
+  }, [rows, sport]);
 
   // Apply all filters + sorting
   const filtered = useMemo(() => {
