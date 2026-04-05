@@ -13,6 +13,7 @@ from config import (
     db, EMERGENT_LLM_KEY, XAI_API_KEY, CURRENT_SEASON,
     WOMENS_LEAGUE_IDS, STAT_FIELD_MAP, STAT_LAMBDA_MAP,
 )
+from calibration import get_calibration_stats, generate_calibration_prompt, apply_calibration_guards
 from models import PredictionRequest
 from utils import api_football_request, get_recent_fixtures_fast, strip_accents, get_soccer_odds, decimal_to_american
 
@@ -1610,11 +1611,24 @@ Expected possession for {req.opponentName}: {match_dominance['oppExpectedPoss']}
 {hit_rates['summary']}
 >>> If over-rate >= 65%, strongly lean OVER. If under-rate >= 65%, lean UNDER. If neither exceeds 60%, treat as close call — lower confidence. <<<"""
 
+        # Inject calibration from settled picks (feedback loop)
+        calibration_context = ""
+        try:
+            cal_stats = await get_calibration_stats("soccer")
+            if cal_stats:
+                calibration_context = generate_calibration_prompt(
+                    cal_stats, req.propType, "over",  # direction TBD by AI
+                    req.line, match_odds
+                )
+        except Exception as e:
+            print(f"[CALIBRATION] Error generating prompt: {e}")
+
         prompt = f"""{req.playerName} ({display_position}) — plays for {req.teamName} ({player_venue.upper()}) | OPPONENT: {req.opponentName} | {req.propType} line {req.line}
 Odds: {json.dumps(match_odds.get('bookmakerOdds',{}), default=str) if match_odds else 'N/A'}{match_context}
 {pronoun_note}
 recentSamples=[]
 {hit_rate_context}
+{calibration_context}
 {final_data[:6000]}
 
 Analyze ALL data thoroughly. Return JSON only."""
@@ -1944,6 +1958,14 @@ Analyze ALL data thoroughly. Return JSON only."""
         # Recalculate confidence level after guards
         cs = prediction.get("confidenceScore", 50)
         prediction["confidenceLevel"] = "Very High" if cs >= 75 else "High" if cs >= 65 else "Medium" if cs >= 50 else "Low"
+
+        # Apply calibration guards (blowout detection, possession context, venue bias)
+        try:
+            prediction = await apply_calibration_guards(
+                prediction, req.propType, req.line, match_odds, player_venue
+            )
+        except Exception as e:
+            print(f"[CALIBRATION] Guard error: {e}")
 
         response_text = json.dumps(prediction)
 

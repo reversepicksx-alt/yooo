@@ -107,6 +107,15 @@ Web app remake of a sports analytics platform focusing on Sports Player Props (p
 - Reduced icon-btn size from 36px to 32px, logo-icon from 36px to 30px
 - Desktop still shows full text labels
 
+### CalibrationEngine — Prediction Feedback Loop (April 5, 2026) — P0 Feature
+- Created `/app/backend/calibration.py` — queries settled picks, computes hit rates by prop type/recommendation/venue
+- **Historical calibration prompt**: Injected into AI prompt before each prediction with accuracy data (e.g., "saves 60% accuracy, under-projecting by 0.7")
+- **Blowout detection**: Flags GK saves misses in blowout games (3+ goal diff or 6+ total goals)
+- **Score context rules**: Favored GK OVER saves gets -5% conf penalty (fewer shots faced). Underdog GK OVER saves gets -4% penalty (blowout risk — goals not saves)
+- **Possession risk**: OVER pass props for teams facing favored opponents get -3% penalty
+- **UNDER skew**: All UNDER recommendations get -3% built-in penalty (positive stat skew)
+- **Cached 30 min** to avoid DB queries on every prediction
+
 ### Cancel Subscription Button (April 5, 2026) — Feature
 - Added "Cancel Subscription" button to ProfileTab's SubscriptionManager
 - Two-step confirmation: "Cancel Subscription" → "Are you sure?" with "Yes, Cancel" / "Keep Plan" buttons
