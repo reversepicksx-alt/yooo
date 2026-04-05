@@ -708,6 +708,15 @@ async def change_plan(req: ChangePlanRequest):
                     break
             raise HTTPException(status_code=400, detail=f"You're already on the {PLANS[new_plan_key]['name']} plan.")
 
+        # GUARD: Check if Square has a pending cancel — block plan change, force resubscribe
+        canceled_date = getattr(sq_sub_obj, 'canceled_date', None)
+        if canceled_date:
+            await db.square_subscriptions.update_one(
+                {"email": email_lower},
+                {"$set": {"status": "CANCELED", "canceledAt": canceled_date}}
+            )
+            raise HTTPException(status_code=400, detail="Your subscription is canceled. Please use the Resubscribe option to sign up with a new payment method.")
+
         if not card_id:
             raise HTTPException(
                 status_code=400,
