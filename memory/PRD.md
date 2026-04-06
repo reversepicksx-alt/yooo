@@ -1,7 +1,7 @@
 # ReversePicks — Product Requirements Document
 
 ## Core Product
-Sports player prop prediction platform. Users scan prop screenshots, AI extracts details, resolves player/team, and runs a prediction pipeline.
+Soccer-only player prop prediction platform. Users scan prop screenshots, AI extracts details, resolves player/team, and runs a prediction pipeline.
 
 ## Legal Compliance
 - NO 3rd-party app names or player/team images
@@ -24,7 +24,7 @@ Grok OCR → Data Fetch → BAYESIAN MATH (anchor) → Grok AI (math-informed) �
 8. **Slip Correlation** — Same-game pick warnings at save time
 
 ### Key Safety Systems
-- **Coin Flip Guard**: projection within ±3 of line + Bayesian <60% → cap confidence at 52%, badge
+- **Coin Flip Guard**: projection within +/-3 of line + Bayesian <60% -> cap confidence at 52%, badge
 - **Possession Scaling**: pass props scaled by match dominance multiplier post-fusion
 - **Slip Correlation**: CORRELATED_RISK, OPPOSING_TEAMS_SAME_DIR, CONFLICTING, BOOSTING warnings
 
@@ -33,7 +33,7 @@ Grok OCR → Data Fetch → BAYESIAN MATH (anchor) → Grok AI (math-informed) �
 
 ## Key Features
 - Image scanning with OCR validation
-- Soccer + Basketball unified prediction pipelines
+- Soccer-only prediction pipeline (basketball fully removed Feb 2026)
 - True unified engine (Bayesian anchors AI)
 - Post-fusion possession scaling for pass-related props
 - Coin-flip zone detection with badge
@@ -48,10 +48,42 @@ Grok OCR → Data Fetch → BAYESIAN MATH (anchor) → Grok AI (math-informed) �
 - Frontend: React.js, Shadcn/UI
 - Backend: FastAPI, Python asyncio, MongoDB
 - AI: Grok 4.20 (xAI key), GPT-5.2 (Emergent LLM Key)
-- Data: API-Sports (Football + Basketball)
+- Data: API-Sports (Soccer)
+- Auth: Whop + Square subscriptions
+- Caching: MongoDB with TTL
 
-## Backlog
-- P2: Prediction self-correction feedback loop
-- P2: Batch scan predictions
-- P3: Frontend/Backend refactoring
-- P3: Auth migration to httpOnly cookies
+## Completed Work
+- Full prediction pipeline with Bayesian anchor injection
+- OCR validation gate
+- Bayesian Engine v2 (25% covariate cap)
+- Duplicate tactical breakdown fix
+- Calibration system removed
+- Post-fusion possession scaling
+- Slip correlation & coin-flip guard
+- Intel tab redesign (informational aggregate stats)
+- **Basketball complete removal (Feb 2026)** — All backend routes, utils, cache, frontend toggles, API functions removed
+
+## Upcoming Tasks
+- Route prediction API calls through MongoDB cache (P2)
+
+## Future/Backlog
+- Frontend refactoring: Extract components from App.js (P3) — file is 2200+ lines
+- Backend refactoring: Break down monolithic predict.py (P3)
+- Auth architecture migration to httpOnly cookies (P3)
+- Prediction self-correction feedback loop (P2)
+- Batch scan predictions (P2)
+
+## Key API Endpoints
+- POST /api/scan-prop — Vision extraction (soccer only)
+- POST /api/predict — Soccer prediction pipeline
+- POST /api/picks/save — Save pick with slip correlation
+- POST /api/picks/list — List user picks
+- POST /api/picks/live-update — Real-time live tracking
+- GET /api/intel/sheet — Aggregate hit-rate data
+- GET /api/health — Health check
+
+## 3rd Party Integrations
+- API-Sports (Soccer Data) — User API Key
+- Square (Payments/Subs) — User API Key
+- xAI Grok (Grok 4.20) — User API Key
+- OpenAI GPT-5.2 — Emergent LLM Key
