@@ -1844,32 +1844,88 @@ Analyze ALL data thoroughly. Return JSON only."""
                 return None
 
         # =============================================
-        # GPT-5.2 SOLO — Elite Calibration replaces consensus
+        # HYBRID: Grok 4.20 PRIMARY + GPT-5.2 VERIFICATION
+        # Grok does the heavy prediction (user's xAI key)
+        # GPT-5.2 does a lightweight sanity check (Emergent key — minimal tokens)
         # =============================================
-        gpt52_result = await aio.wait_for(
-            call_ai("gpt-5.2", "gpt52"),
+        grok_result = await aio.wait_for(
+            call_grok(label="grok420", model="grok-4.20-reasoning"),
             timeout=45
         )
 
-        if not gpt52_result or not isinstance(gpt52_result, dict) or not gpt52_result.get("projectedValue"):
-            # One retry
-            print("[SOLO-AI] GPT-5.2 first attempt failed, retrying...")
-            gpt52_result = await aio.wait_for(
+        if not grok_result or not isinstance(grok_result, dict) or not grok_result.get("projectedValue"):
+            # Grok failed — fallback to GPT-5.2 full prediction
+            print("[HYBRID] Grok 4.20 failed, falling back to GPT-5.2")
+            grok_result = await aio.wait_for(
+                call_ai("gpt-5.2", "gpt52"),
+                timeout=45
+            )
+            if not grok_result or not isinstance(grok_result, dict):
+                raise ValueError("Both Grok 4.20 and GPT-5.2 failed to produce a prediction")
+
+        pv = grok_result.get("projectedValue", 0)
+        if not isinstance(pv, (int, float)) or pv <= 0:
+            # Invalid projection from Grok — fallback to GPT-5.2
+            print(f"[HYBRID] Grok returned invalid projection: {pv}, falling back to GPT-5.2")
+            grok_result = await aio.wait_for(
                 call_ai("gpt-5.2", "gpt52"),
                 timeout=40
             )
+            if not grok_result or not isinstance(grok_result, dict):
+                raise ValueError("GPT-5.2 fallback also failed")
+            pv = grok_result.get("projectedValue", 0)
+            if not isinstance(pv, (int, float)) or pv <= 0:
+                raise ValueError(f"GPT-5.2 returned invalid projection: {pv}")
 
-        if not gpt52_result or not isinstance(gpt52_result, dict):
-            raise ValueError("GPT-5.2 failed to produce a prediction")
+        source_model = grok_result.get("_source", "grok420")
+        print(f"[TIMING] {source_model} done: {_t.time()-_t0:.1f}s, proj={pv}")
 
-        pv = gpt52_result.get("projectedValue", 0)
-        if not isinstance(pv, (int, float)) or pv <= 0:
-            raise ValueError(f"GPT-5.2 returned invalid projection: {pv}")
+        # GPT-5.2 lightweight verification (minimal Emergent credits)
+        verify_text = f"""Quick sanity check. A model projected {pv} for {req.playerName} {req.propType} (line {req.line}) vs {req.opponentName} ({player_venue}).
+Key stats: {grok_digest[:400] if grok_digest else data_digest[:400]}
 
-        print(f"[TIMING] GPT-5.2 done: {_t.time()-_t0:.1f}s, proj={pv}")
+Is this projection reasonable? Return ONLY JSON:
+{{"verified": true/false, "adjustedValue": <number if unreasonable, else same as projection>, "flag": "<one sentence reason if flagged>"}}"""
 
-        prediction = gpt52_result.copy()
+        verified = True
+        try:
+            verify_resp = await aio.wait_for(
+                litellm.acompletion(
+                    model="gpt-5.2",
+                    messages=[{"role": "user", "content": verify_text}],
+                    api_key=EMERGENT_LLM_KEY,
+                    api_base=EMERGENT_PROXY,
+                    custom_llm_provider="openai",
+                    max_tokens=200,
+                    temperature=0.0,
+                ),
+                timeout=15
+            )
+            vtext = verify_resp.choices[0].message.content.strip()
+            if vtext.startswith("```"):
+                vtext = "\n".join(ln for ln in vtext.split("\n") if not ln.strip().startswith("```"))
+            vstart = vtext.find("{")
+            if vstart >= 0:
+                for vend in range(len(vtext), vstart, -1):
+                    if vtext[vend - 1] == "}":
+                        try:
+                            verify_result = json.loads(vtext[vstart:vend])
+                            if not verify_result.get("verified", True):
+                                adj = verify_result.get("adjustedValue")
+                                flag = verify_result.get("flag", "")
+                                if adj and isinstance(adj, (int, float)) and adj > 0:
+                                    print(f"[HYBRID] GPT-5.2 flagged: {pv} -> {adj} ({flag})")
+                                    pv = adj
+                                    verified = False
+                            break
+                        except json.JSONDecodeError:
+                            continue
+        except Exception as e:
+            print(f"[HYBRID] GPT-5.2 verification skipped: {e}")
+
+        prediction = grok_result.copy()
         prediction.pop("_source", None)
+        prediction["projectedValue"] = pv
         prediction["recommendation"] = "over" if pv > req.line else "under"
 
         # Confidence normalization
@@ -1879,12 +1935,13 @@ Analyze ALL data thoroughly. Return JSON only."""
         else:
             prediction["confidenceScore"] = 50
 
-        prediction["consensusNote"] = "Solo GPT-5.2 analysis with elite calibration corrections."
+        prediction["consensusNote"] = f"{'Grok 4.20' if source_model == 'grok420' else 'GPT-5.2'} analysis{' (GPT-5.2 verified)' if verified else ' (GPT-5.2 adjusted)'} with elite calibration."
         prediction["modelBreakdown"] = [{
-            "model": "gpt52",
+            "model": source_model,
             "recommendation": prediction["recommendation"],
             "projectedValue": pv,
             "confidenceScore": prediction["confidenceScore"],
+            "verified": verified,
         }]
 
         # Set confidence level
