@@ -88,40 +88,47 @@ async def seed_grants():
 
 
 async def _auto_backfill_positions():
-    """Auto-backfill missing positions on startup. Runs in background."""
+    """Auto-backfill missing positions on startup using cache + Grok AI fallback."""
     import asyncio
     await asyncio.sleep(15)  # Wait for caches to load first
     try:
         from calibration import LEAGUE_NAMES
+        from config import XAI_API_KEY
+        import httpx
         all_league_names = set(LEAGUE_NAMES.values())
 
-        # Step 1: Clean invalid positions (league IDs/names that leaked in)
+        # Step 1: Clean invalid positions (league IDs/names, cross-sport contamination)
+        from routes.intel import SOCCER_POSITIONS, BASKETBALL_POSITIONS
         bad_picks = await db.picks.find(
             {"position": {"$exists": True, "$ne": "", "$ne": None}},
-            {"_id": 0, "pickId": 1, "position": 1}
+            {"_id": 0, "pickId": 1, "position": 1, "sport": 1}
         ).to_list(5000)
         cleaned = 0
         for p in bad_picks:
             pos = (p.get("position") or "").strip()
-            if pos.isdigit() or pos in all_league_names:
+            sport = p.get("sport", "soccer")
+            valid_set = SOCCER_POSITIONS if sport == "soccer" else BASKETBALL_POSITIONS
+            if pos.isdigit() or pos in all_league_names or pos not in valid_set:
                 await db.picks.update_one(
                     {"pickId": p["pickId"]},
                     {"$set": {"position": "", "role": ""}}
                 )
                 cleaned += 1
         if cleaned:
-            print(f"[AUTO-BACKFILL] Cleaned {cleaned} picks with invalid positions")
+            print(f"[AUTO-BACKFILL] Cleaned {cleaned} picks with invalid/cross-sport positions")
 
-        # Step 2: Backfill missing positions
+        # Step 2: Find picks still missing positions
         picks = await db.picks.find(
             {"$or": [{"position": {"$exists": False}}, {"position": ""}, {"position": None}]},
-            {"_id": 0, "pickId": 1, "playerId": 1, "playerName": 1}
+            {"_id": 0, "pickId": 1, "playerId": 1, "playerName": 1, "sport": 1}
         ).to_list(5000)
 
         if not picks:
             print("[AUTO-BACKFILL] No picks need position backfill")
             return
 
+        # Step 2a: Try cache first
+        unresolved = []
         updated = 0
         for p in picks:
             pid = p.get("playerId")
@@ -159,14 +166,90 @@ async def _auto_backfill_positions():
                     {"playerId": pid, "$or": [{"position": {"$exists": False}}, {"position": ""}, {"position": None}]},
                     {"$set": {"position": pos_found, "role": role_found or ""}}
                 )
-                if not pid or pid == 0:
-                    await db.picks.update_many(
-                        {"playerName": pname, "$or": [{"position": {"$exists": False}}, {"position": ""}, {"position": None}]},
-                        {"$set": {"position": pos_found, "role": role_found or ""}}
-                    )
                 updated += 1
+            else:
+                unresolved.append({"pickId": p["pickId"], "playerId": pid, "playerName": pname, "sport": p.get("sport", "soccer")})
 
-        print(f"[AUTO-BACKFILL] Complete: {updated} players updated out of {len(picks)} checked")
+        print(f"[AUTO-BACKFILL] Cache resolved: {updated}/{len(picks)}. Unresolved: {len(unresolved)}")
+
+        # Step 3: Use Grok to batch-resolve remaining positions
+        if unresolved and XAI_API_KEY:
+            # Deduplicate by player name+sport
+            unique_players = {}
+            for u in unresolved:
+                key = f"{u['playerName']}|{u['sport']}"
+                if key not in unique_players:
+                    unique_players[key] = u
+
+            # Batch into chunks of 30
+            player_list = list(unique_players.values())
+            for i in range(0, len(player_list), 30):
+                batch = player_list[i:i+30]
+                player_lines = []
+                for idx, pl in enumerate(batch):
+                    player_lines.append(f"{idx+1}. {pl['playerName']} ({pl['sport']})")
+
+                prompt = f"""For each player below, return ONLY their primary position abbreviation.
+
+Soccer positions: GK, CB, LB, RB, LWB, RWB, CDM, CM, CAM, LM, RM, LW, RW, CF, ST
+Basketball positions: PG, SG, SF, PF, C
+
+Also return a short role description (e.g., "Inverted Winger", "Stretch Big", "Box-to-Box").
+
+Players:
+{chr(10).join(player_lines)}
+
+Return JSON array: [{{"name":"...","position":"XX","role":"..."}}]
+Only the JSON array, no markdown."""
+
+                try:
+                    async with httpx.AsyncClient(timeout=20) as client:
+                        resp = await client.post(
+                            "https://api.x.ai/v1/chat/completions",
+                            headers={"Authorization": f"Bearer {XAI_API_KEY}", "Content-Type": "application/json"},
+                            json={
+                                "model": "grok-3-mini-fast",
+                                "messages": [{"role": "user", "content": prompt}],
+                                "temperature": 0,
+                            }
+                        )
+                        if resp.status_code == 200:
+                            import json
+                            content = resp.json()["choices"][0]["message"]["content"]
+                            # Clean markdown wrapping if present
+                            content = content.strip()
+                            if content.startswith("```"):
+                                content = content.split("\n", 1)[1] if "\n" in content else content[3:]
+                                content = content.rsplit("```", 1)[0]
+                            resolved = json.loads(content.strip())
+                            grok_updated = 0
+                            for r in resolved:
+                                rname = r.get("name", "")
+                                rpos = r.get("position", "")
+                                rrole = r.get("role", "")
+                                if rname and rpos:
+                                    # Update all picks for this player
+                                    await db.picks.update_many(
+                                        {"playerName": rname, "$or": [{"position": {"$exists": False}}, {"position": ""}, {"position": None}]},
+                                        {"$set": {"position": rpos, "role": rrole or ""}}
+                                    )
+                                    # Cache for future lookups
+                                    matching = [u for u in batch if u["playerName"] == rname]
+                                    for m in matching:
+                                        if m.get("playerId"):
+                                            await db.player_positions.update_one(
+                                                {"playerId": m["playerId"]},
+                                                {"$set": {"playerId": m["playerId"], "specificPosition": rpos, "role": rrole or ""}},
+                                                upsert=True
+                                            )
+                                    grok_updated += 1
+                            print(f"[AUTO-BACKFILL] Grok resolved: {grok_updated} players (batch {i//30+1})")
+                        else:
+                            print(f"[AUTO-BACKFILL] Grok API error: {resp.status_code}")
+                except Exception as e:
+                    print(f"[AUTO-BACKFILL] Grok batch error: {e}")
+
+        print(f"[AUTO-BACKFILL] Done. Total cache-resolved: {updated}, Grok batches sent: {(len(unresolved)+29)//30 if unresolved else 0}")
     except Exception as e:
         print(f"[AUTO-BACKFILL] Error: {e}")
 
