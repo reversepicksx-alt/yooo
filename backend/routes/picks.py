@@ -80,6 +80,21 @@ async def save_pick(req: SavePickRequest):
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "settledAt": None,
     }
+
+    # Grok-powered position resolution if position is missing
+    if not doc["position"] or doc["position"] in ("Unknown", "unknown"):
+        try:
+            from grok_positions import resolve_position_grok
+            sport = pick.get("_request", {}).get("sport", "soccer")
+            if pick.get("_request", {}).get("leagueId", 0) in (12, 13):
+                sport = "basketball"
+            resolved = await resolve_position_grok(doc["playerName"], sport)
+            if resolved.get("position"):
+                doc["position"] = resolved["position"]
+                doc["role"] = resolved.get("role", doc["role"])
+        except Exception:
+            pass
+
     await db.picks.update_one({"pickId": pick_id, "email": req.email.lower()}, {"$set": doc}, upsert=True)
     return {"success": True, "pickId": pick_id, "trackingId": tracking_id}
 

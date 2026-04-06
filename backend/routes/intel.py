@@ -491,6 +491,33 @@ async def intel_sheet(email: str, token: str, sport: str = "soccer"):
     # Sort by timestamp descending (newest first)
     rows.sort(key=lambda r: str(r.get("timestamp", "")), reverse=True)
 
+    # Grok on-the-fly resolution for any remaining empty positions
+    unresolved = [r for r in rows if not r.get("position")]
+    if unresolved:
+        try:
+            from grok_positions import resolve_positions_grok_batch
+            # Deduplicate by player name
+            seen = set()
+            batch = []
+            for r in unresolved:
+                if r["player"] not in seen:
+                    seen.add(r["player"])
+                    batch.append({"playerName": r["player"], "sport": sport})
+            if batch:
+                resolved = await resolve_positions_grok_batch(batch)
+                for r in rows:
+                    if not r["position"] and r["player"] in resolved:
+                        r["position"] = resolved[r["player"]].get("position", "")
+                        r["role"] = resolved[r["player"]].get("role", r.get("role", ""))
+                        # Also update the DB pick in background
+                        import asyncio
+                        asyncio.create_task(db.picks.update_many(
+                            {"playerName": r["player"], "$or": [{"position": {"$exists": False}}, {"position": ""}, {"position": None}]},
+                            {"$set": {"position": r["position"], "role": r["role"]}}
+                        ))
+        except Exception as e:
+            print(f"[INTEL SHEET] Grok position resolve error: {e}")
+
     return {
         "total": total_h + total_m,
         "hits": total_h,
