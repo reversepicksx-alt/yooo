@@ -639,6 +639,32 @@ async def basketball_predict(req: BasketballPredictionRequest):
             print(f"[BBALL ANALYTICS] Over-rate: {analytics['over_pct']}% | Lean: {analytics['stat_lean']} | Edge: {analytics['edge_signal']} | Role: {analytics['role']} | Min: {analytics['avg_minutes']} | Rate-proj: {analytics['projected_from_rate']}")
 
         # =============================================
+        # EARLY BAYESIAN — Compute math BEFORE AI prompt
+        # =============================================
+        early_bayes = None
+        bayesian_prompt_anchor = ""
+        try:
+            from bayesian_engine import compute_bayesian_projection
+            early_bayes = compute_bayesian_projection(
+                game_logs=player_game_logs,
+                prop_type=req.propType,
+                line=req.line,
+                venue=player_venue,
+                stat_field="targetStat",
+            )
+            if early_bayes and early_bayes.get("priorSamples", 0) >= 3:
+                bdir = early_bayes['recommendation'].upper()
+                bprob = early_bayes['pOver'] if bdir == 'OVER' else early_bayes['pUnder']
+                bayesian_prompt_anchor = f"""
+[MATHEMATICAL ENGINE — DO NOT IGNORE]
+3-Layer Bayesian analysis ({early_bayes['priorSamples']} games): projects {early_bayes['posteriorMean']} {bdir} (P={bprob}%).
+Season avg: {early_bayes['priorMean']} | Recent form: {early_bayes['momentumMean']} ({early_bayes['momentumLabel']}) | Streak: {early_bayes['streakFlag']}
+>>> Your projectedValue MUST be within 20% of {early_bayes['posteriorMean']}. If you disagree, explain why. <<<"""
+                print(f"[BBALL BAYESIAN ANCHOR] {req.playerName}: math={early_bayes['posteriorMean']} {bdir} ({bprob}%)")
+        except Exception as e:
+            print(f"[BBALL BAYESIAN ANCHOR] Error: {e}")
+
+        # =============================================
         # ═══════════════════════════════════════
         # REAL RECENT SAMPLES for frontend
         # ═══════════════════════════════════════
@@ -732,6 +758,7 @@ RULES: recentSamples=[]. No AI model names in output."""
 Sport: NBA/WNBA Basketball
 recentSamples=[]
 {calibration_context}
+{bayesian_prompt_anchor}
 {data_digest[:7000]}
 
 Analyze the statistical verdict, per-minute projection, and over-rate FIRST. Then factor in matchup context. Return JSON only."""
@@ -927,22 +954,12 @@ Analyze the statistical verdict, per-minute projection, and over-rate FIRST. The
             prediction["recommendation"] = "over" if prediction["projectedValue"] > req.line else "under"
 
         # =============================================
-        # BAYESIAN ENGINE — Compute BEFORE fusion
+        # BAYESIAN — Reuse early computation
         # =============================================
-        real_bayes = None
-        try:
-            from bayesian_engine import compute_bayesian_projection
-            real_bayes = compute_bayesian_projection(
-                game_logs=player_game_logs,
-                prop_type=req.propType,
-                line=req.line,
-                venue=player_venue,
-                stat_field="targetStat",
-            )
+        real_bayes = early_bayes
+        if real_bayes:
             prediction["bayesianMetrics"] = real_bayes
             prediction["confidenceInterval"] = real_bayes.get("confidenceInterval", prediction.get("confidenceInterval"))
-        except Exception as e:
-            print(f"[BAYESIAN] Basketball error: {e}")
 
         # =============================================
         # BAYESIAN-AI FUSION — One Unified Engine

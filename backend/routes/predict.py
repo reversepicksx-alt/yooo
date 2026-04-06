@@ -904,6 +904,49 @@ async def predict(req: PredictionRequest):
             historical_data["playerGameLogs"] = game_log_summary
 
         # =============================================
+        # EARLY BAYESIAN — Compute math BEFORE AI prompt
+        # This anchors the AI's reasoning so it doesn't
+        # contradict the mathematical evidence.
+        # =============================================
+        early_bayes = None
+        bayesian_prompt_anchor = ""
+        try:
+            from bayesian_engine import compute_bayesian_projection
+            _sfm = {
+                "goals": "goals_total", "assists": "goals_assists",
+                "shots_assisted": "passes_key",
+                "pass_attempts": "passes_total", "shots": "shots_total",
+                "shots_on_target": "shots_on", "tackles": "tackles_total",
+                "key_passes": "passes_key", "saves": "goals_saves",
+                "interceptions": "tackles_interceptions", "blocks": "tackles_blocks",
+                "dribbles": "dribbles_attempts", "dribbles_success": "dribbles_success",
+                "fouls_drawn": "fouls_drawn", "fouls_committed": "fouls_committed",
+                "crosses": "passes_crosses", "clearances": "tackles_clearances",
+                "duels_won": "duels_won", "yellow_cards": "cards_yellow",
+            }
+            early_bayes = compute_bayesian_projection(
+                game_logs=player_game_logs,
+                prop_type=req.propType,
+                line=req.line,
+                venue=player_venue,
+                stat_field=_sfm.get(req.propType, "passes_total"),
+                opponent_fixture_stats=opponent_fixture_stats,
+                match_dominance=match_dominance,
+            )
+            if early_bayes and early_bayes.get("priorSamples", 0) >= 3:
+                bdir = early_bayes['recommendation'].upper()
+                bprob = early_bayes['pOver'] if bdir == 'OVER' else early_bayes['pUnder']
+                bayesian_prompt_anchor = f"""
+[MATHEMATICAL ENGINE — DO NOT IGNORE]
+3-Layer Bayesian analysis ({early_bayes['priorSamples']} games): projects {early_bayes['posteriorMean']} {bdir} (P={bprob}%).
+Season avg: {early_bayes['priorMean']} | Recent form (decay-weighted): {early_bayes['momentumMean']} ({early_bayes['momentumLabel']}) | Context adj: {early_bayes['covariateAdjustment']:+.1f}
+Streak: {early_bayes['streakFlag']} | Volatility: {early_bayes['volatility']} (CV={early_bayes['cv']}) | Reversal: {early_bayes['reversalFlag']}
+>>> Your projectedValue MUST be within 20% of {early_bayes['posteriorMean']}. If you disagree, explain specifically why in your reasoning. <<<"""
+                print(f"[BAYESIAN ANCHOR] {req.playerName}: math={early_bayes['posteriorMean']} {bdir} ({bprob}%), momentum={early_bayes['momentumLabel']}, streak={early_bayes['streakFlag']}")
+        except Exception as e:
+            print(f"[BAYESIAN ANCHOR] Error: {e}")
+
+        # =============================================
         # BUILD REAL RECENT SAMPLES FROM GAME LOGS
         # =============================================
         # These replace Gemini-generated samples with actual API-Sports data
@@ -1725,6 +1768,7 @@ Odds: {json.dumps(match_odds.get('bookmakerOdds',{}), default=str) if match_odds
 recentSamples=[]
 {hit_rate_context}
 {calibration_context}
+{bayesian_prompt_anchor}
 {final_data[:6000]}
 
 Analyze ALL data thoroughly. Return JSON only."""
@@ -1970,36 +2014,12 @@ Is this projection reasonable? Return ONLY JSON:
             prediction["matchDominance"] = {"applied": False}
 
         # =============================================
-        # BAYESIAN ENGINE — Compute BEFORE fusion
+        # BAYESIAN — Reuse early computation (already done before AI prompt)
         # =============================================
-        real_bayes = None
-        try:
-            from bayesian_engine import compute_bayesian_projection
-            _sfm = {
-                "goals": "goals_total", "assists": "goals_assists",
-                "shots_assisted": "passes_key",
-                "pass_attempts": "passes_total", "shots": "shots_total",
-                "shots_on_target": "shots_on", "tackles": "tackles_total",
-                "key_passes": "passes_key", "saves": "goals_saves",
-                "interceptions": "tackles_interceptions", "blocks": "tackles_blocks",
-                "dribbles": "dribbles_attempts", "dribbles_success": "dribbles_success",
-                "fouls_drawn": "fouls_drawn", "fouls_committed": "fouls_committed",
-                "crosses": "passes_crosses", "clearances": "tackles_clearances",
-                "duels_won": "duels_won", "yellow_cards": "cards_yellow",
-            }
-            real_bayes = compute_bayesian_projection(
-                game_logs=player_game_logs,
-                prop_type=req.propType,
-                line=req.line,
-                venue=player_venue,
-                stat_field=_sfm.get(req.propType, "passes_total"),
-                opponent_fixture_stats=opponent_fixture_stats,
-                match_dominance=match_dominance,
-            )
+        real_bayes = early_bayes
+        if real_bayes:
             prediction["bayesianMetrics"] = real_bayes
             prediction["confidenceInterval"] = real_bayes.get("confidenceInterval", prediction.get("confidenceInterval"))
-        except Exception as e:
-            print(f"[BAYESIAN] Error computing metrics: {e}")
 
         # =============================================
         # BAYESIAN-AI FUSION — One Unified Engine
