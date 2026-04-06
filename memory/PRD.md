@@ -17,7 +17,7 @@ Sports player prop prediction platform. Users scan prop screenshots, AI extracts
 1. **Grok 4.20** → Primary AI prediction (data digest + reasoning)
 2. **Bayesian Engine v2** → Deterministic 3-layer math (Prior + Momentum + Covariate)
 3. **GPT-5.2** → Lightweight sanity verification
-4. **Elite Calibration Engine** → 5 post-consensus hard corrections
+4. **Elite Calibration Engine v3** → 5 post-consensus hard corrections (now with auto-tuning)
 
 ### Bayesian Engine v2 (bayesian_engine.py)
 - **Layer 1: PRIOR** — Season average baseline with sample-size floor precision (n^0.6)
@@ -26,12 +26,25 @@ Sports player prop prediction platform. Users scan prop screenshots, AI extracts
 - Features: streak detection (OVER_N/UNDER_N), volatility scoring (CV-based), trend consistency bonus, reversal flags
 - Guarantees: Prior + Momentum always >= 74% of total weight
 
+### OCR Validation (scan.py)
+- Validates Grok Vision extractions before proceeding
+- Checks: player name sanity, line validity, prop type mapping
+- Auto-falls to GPT-4o re-extraction if validation fails
+- Catches: UI element misreads, impossible lines, unknown props
+
+### Elite Calibration Engine v3 (calibration.py)
+1. **Historical Error Correction** — Adjusts projections based on historical over/under-projection
+2. **Market Line Blending** — NOW AUTO-TUNED from settled picks (grid search MAE minimization, 2h cache)
+3. **Recommendation Flip Guard** — Flips direction if historically losing
+4. **Confidence Recalibration** — Maps AI confidence to actual hit rates
+5. **Edge Threshold** — STRONG/LEAN/LOW classification
+
 ### Grok Engine Phases
 1. **Pre-Prediction Data Digest**: Grok crunches raw API data into focused intel brief
 2. **Auto-Settlement Bot**: Background loop (every 2 min) checks live scores, auto-settles finished picks
 3. **Pre-Game Auto-Scout**: Background loop (every 6 hours) pre-fetches fixture data
 4. **INTEL Pattern Mining**: Daily analysis of settled picks → calibration patterns
-5. **Smart Scan Processing**: Grok Vision handles OCR first, GPT-4o fallback
+5. **Smart Scan Processing**: Grok Vision OCR → validation → GPT-4o fallback
 
 ### Background Tasks (server startup)
 - Cache seeding (API-Football, basketball)
@@ -42,10 +55,10 @@ Sports player prop prediction platform. Users scan prop screenshots, AI extracts
 - Pattern mining loop
 
 ## Key Features Implemented
-- Image scanning (Grok primary + GPT-4o fallback)
+- Image scanning with OCR validation (Grok primary → GPT-4o fallback)
 - Soccer + Basketball prediction pipelines
 - Bayesian Engine v2 with visual layer breakdown on ProjectionCard
-- Elite Calibration Engine v3 (5 mathematical rules)
+- Elite Calibration Engine v3 with auto-tuning market blend
 - INTEL Tab (spreadsheet + calibration breakdown + smart filters)
 - Tracking Tab (expandable analysis cards)
 - American odds display
@@ -62,7 +75,7 @@ Sports player prop prediction platform. Users scan prop screenshots, AI extracts
 - Data: API-Sports (Football + Basketball)
 
 ## Key Endpoints
-- `POST /api/scan-prop` — Vision extraction (Grok → GPT-4o fallback)
+- `POST /api/scan-prop` — Vision extraction with OCR validation (Grok → GPT-4o fallback)
 - `POST /api/predict` — Soccer prediction (Grok digest → Bayesian → GPT-5.2 verify → Calibration)
 - `POST /api/basketball/predict` — Basketball prediction
 - `GET /api/intel/sheet` — INTEL spreadsheet data
