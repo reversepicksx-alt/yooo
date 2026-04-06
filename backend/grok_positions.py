@@ -81,7 +81,7 @@ Only the JSON array, no markdown, no explanation."""
                 "https://api.x.ai/v1/chat/completions",
                 headers={"Authorization": f"Bearer {XAI_API_KEY}", "Content-Type": "application/json"},
                 json={
-                    "model": "grok-3-mini-fast",
+                    "model": "grok-4.1-fast-non-reasoning",
                     "messages": [{"role": "user", "content": prompt}],
                     "temperature": 0,
                 }

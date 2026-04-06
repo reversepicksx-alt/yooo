@@ -10,21 +10,23 @@ import traceback
 from datetime import datetime, timezone, timedelta
 from config import db, XAI_API_KEY
 
-GROK_MODEL = "grok-3-mini-fast"
+GROK_MODEL = "grok-4.1-fast-non-reasoning"
+GROK_REASONING_MODEL = "grok-4.1-fast-reasoning"
 GROK_URL = "https://api.x.ai/v1/chat/completions"
 
 
-async def _grok_call(prompt: str, temperature: float = 0, max_tokens: int = 2000, timeout: int = 15) -> str:
-    """Core Grok API call. Returns raw content string."""
+async def _grok_call(prompt: str, temperature: float = 0, max_tokens: int = 2000, timeout: int = 15, reasoning: bool = False) -> str:
+    """Core Grok API call. Uses reasoning model for analytical tasks, non-reasoning for structured tasks."""
     if not XAI_API_KEY:
         return ""
+    model = GROK_REASONING_MODEL if reasoning else GROK_MODEL
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(
                 GROK_URL,
                 headers={"Authorization": f"Bearer {XAI_API_KEY}", "Content-Type": "application/json"},
                 json={
-                    "model": GROK_MODEL,
+                    "model": model,
                     "messages": [{"role": "user", "content": prompt}],
                     "temperature": temperature,
                     "max_tokens": max_tokens,
@@ -33,9 +35,9 @@ async def _grok_call(prompt: str, temperature: float = 0, max_tokens: int = 2000
             if resp.status_code == 200:
                 return resp.json()["choices"][0]["message"]["content"].strip()
             else:
-                print(f"[GROK] API error {resp.status_code}: {resp.text[:200]}")
+                print(f"[GROK] API error {resp.status_code} ({model}): {resp.text[:200]}")
     except Exception as e:
-        print(f"[GROK] Call error: {e}")
+        print(f"[GROK] Call error ({model}): {e}")
     return ""
 
 
@@ -148,7 +150,7 @@ Produce a brief with EXACTLY these sections (keep each to 1-2 sentences max):
 
 Be direct. No hedging. Use numbers, not words like "good" or "bad"."""
 
-    result = await _grok_call(prompt, temperature=0, max_tokens=600, timeout=8)
+    result = await _grok_call(prompt, temperature=0, max_tokens=600, timeout=8, reasoning=True)
     return result if result else raw_data  # Fallback to raw data if Grok fails
 
 
@@ -533,7 +535,7 @@ For each pattern, give:
 Return JSON: [{{"pattern":"...","adjustment":"...","impact":"..."}}]
 Only JSON, no markdown."""
 
-    result = await _grok_call(prompt, temperature=0, max_tokens=1000, timeout=15)
+    result = await _grok_call(prompt, temperature=0, max_tokens=1000, timeout=15, reasoning=True)
     insights = _parse_json(result)
 
     if insights:
