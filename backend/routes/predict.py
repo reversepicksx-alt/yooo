@@ -1935,7 +1935,7 @@ Is this projection reasonable? Return ONLY JSON:
         else:
             prediction["confidenceScore"] = 50
 
-        prediction["consensusNote"] = f"{'Grok 4.20' if source_model == 'grok420' else 'GPT-5.2'} analysis{' (GPT-5.2 verified)' if verified else ' (GPT-5.2 adjusted)'} with elite calibration."
+        prediction["consensusNote"] = f"Unified engine: {'Grok 4.20' if source_model == 'grok420' else 'GPT-5.2'}{' (GPT-5.2 verified)' if verified else ' (GPT-5.2 adjusted)'} + Bayesian math + elite calibration."
         prediction["modelBreakdown"] = [{
             "model": source_model,
             "recommendation": prediction["recommendation"],
@@ -1968,6 +1968,80 @@ Is this projection reasonable? Return ONLY JSON:
             print(f"[DOMINANCE] Adjusted projection: {old_proj} -> {new_proj} (x{match_dominance['multiplier']}, poss={match_dominance['expectedPoss']}%)")
         else:
             prediction["matchDominance"] = {"applied": False}
+
+        # =============================================
+        # BAYESIAN ENGINE — Compute BEFORE fusion
+        # =============================================
+        real_bayes = None
+        try:
+            from bayesian_engine import compute_bayesian_projection
+            _sfm = {
+                "goals": "goals_total", "assists": "goals_assists",
+                "shots_assisted": "passes_key",
+                "pass_attempts": "passes_total", "shots": "shots_total",
+                "shots_on_target": "shots_on", "tackles": "tackles_total",
+                "key_passes": "passes_key", "saves": "goals_saves",
+                "interceptions": "tackles_interceptions", "blocks": "tackles_blocks",
+                "dribbles": "dribbles_attempts", "dribbles_success": "dribbles_success",
+                "fouls_drawn": "fouls_drawn", "fouls_committed": "fouls_committed",
+                "crosses": "passes_crosses", "clearances": "tackles_clearances",
+                "duels_won": "duels_won", "yellow_cards": "cards_yellow",
+            }
+            real_bayes = compute_bayesian_projection(
+                game_logs=player_game_logs,
+                prop_type=req.propType,
+                line=req.line,
+                venue=player_venue,
+                stat_field=_sfm.get(req.propType, "passes_total"),
+                opponent_fixture_stats=opponent_fixture_stats,
+                match_dominance=match_dominance,
+            )
+            prediction["bayesianMetrics"] = real_bayes
+            prediction["confidenceInterval"] = real_bayes.get("confidenceInterval", prediction.get("confidenceInterval"))
+        except Exception as e:
+            print(f"[BAYESIAN] Error computing metrics: {e}")
+
+        # =============================================
+        # BAYESIAN-AI FUSION — One Unified Engine
+        # Merges Grok's AI projection with Bayesian math
+        # BEFORE calibration so they speak as one voice.
+        # =============================================
+        if real_bayes and real_bayes.get("priorSamples", 0) >= 3:
+            bayesian_posterior = real_bayes["posteriorMean"]
+            bayesian_prob = max(real_bayes.get("pOver", 50), real_bayes.get("pUnder", 50)) / 100
+            bayesian_rec = real_bayes.get("recommendation", "over")
+            ai_proj = prediction.get("projectedValue", req.line)
+            ai_rec = prediction.get("recommendation", "over")
+
+            # Adaptive fusion weights
+            if bayesian_rec == ai_rec:
+                bayes_weight = 0.40
+            else:
+                if bayesian_prob >= 0.70:
+                    bayes_weight = 0.50
+                elif bayesian_prob >= 0.55:
+                    bayes_weight = 0.40
+                else:
+                    bayes_weight = 0.30
+
+            ai_weight = round(1.0 - bayes_weight, 2)
+            fused_proj = round(ai_weight * ai_proj + bayes_weight * bayesian_posterior, 1)
+
+            print(f"[FUSION] AI={ai_proj}({ai_rec}) + Bayesian={bayesian_posterior}({bayesian_rec}, {bayesian_prob:.0%}) → Fused={fused_proj} (weights: AI {ai_weight}/{bayes_weight} Bayes)")
+
+            prediction["projectedValue"] = fused_proj
+            prediction["recommendation"] = "over" if fused_proj > req.line else "under"
+            prediction["fusionApplied"] = {
+                "aiProjection": ai_proj,
+                "aiRecommendation": ai_rec,
+                "bayesianPosterior": bayesian_posterior,
+                "bayesianRecommendation": bayesian_rec,
+                "bayesianConfidence": round(bayesian_prob * 100, 1),
+                "fusedProjection": fused_proj,
+                "fusedRecommendation": prediction["recommendation"],
+                "weights": {"ai": ai_weight, "bayesian": bayes_weight},
+                "agreement": bayesian_rec == ai_rec,
+            }
 
         # HARD GUARD: recommendation MUST match the FINAL projected value vs line
         final_proj = prediction.get("projectedValue", req.line)
@@ -2057,34 +2131,6 @@ Is this projection reasonable? Return ONLY JSON:
             prediction["recentSamples"] = real_recent_samples
         prediction.setdefault("bayesianMetrics", {"priorMean": req.line, "momentumEffect": 0, "covariateAdjustment": 0, "reversalFlag": "stable"})
 
-        # OVERRIDE: Replace AI-guessed Bayesian metrics with REAL computed values
-        try:
-            from bayesian_engine import compute_bayesian_projection
-            _sfm = {
-                "goals": "goals_total", "assists": "goals_assists",
-                "shots_assisted": "passes_key",
-                "pass_attempts": "passes_total", "shots": "shots_total",
-                "shots_on_target": "shots_on", "tackles": "tackles_total",
-                "key_passes": "passes_key", "saves": "goals_saves",
-                "interceptions": "tackles_interceptions", "blocks": "tackles_blocks",
-                "dribbles": "dribbles_attempts", "dribbles_success": "dribbles_success",
-                "fouls_drawn": "fouls_drawn", "fouls_committed": "fouls_committed",
-                "crosses": "passes_crosses", "clearances": "tackles_clearances",
-                "duels_won": "duels_won", "yellow_cards": "cards_yellow",
-            }
-            real_bayes = compute_bayesian_projection(
-                game_logs=player_game_logs,
-                prop_type=req.propType,
-                line=req.line,
-                venue=player_venue,
-                stat_field=_sfm.get(req.propType, "passes_total"),
-                opponent_fixture_stats=opponent_fixture_stats,
-                match_dominance=match_dominance,
-            )
-            prediction["bayesianMetrics"] = real_bayes
-            prediction["confidenceInterval"] = real_bayes.get("confidenceInterval", prediction.get("confidenceInterval"))
-        except Exception as e:
-            print(f"[BAYESIAN] Error computing metrics: {e}")
         prediction.setdefault("probabilityCurve", [])
         prediction.setdefault("reasoning", "Analysis based on available data.")
         prediction.setdefault("tacticalInsights", "")

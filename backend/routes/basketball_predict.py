@@ -926,6 +926,60 @@ Analyze the statistical verdict, per-minute projection, and over-rate FIRST. The
             # Re-determine recommendation after all overrides
             prediction["recommendation"] = "over" if prediction["projectedValue"] > req.line else "under"
 
+        # =============================================
+        # BAYESIAN ENGINE — Compute BEFORE fusion
+        # =============================================
+        real_bayes = None
+        try:
+            from bayesian_engine import compute_bayesian_projection
+            real_bayes = compute_bayesian_projection(
+                game_logs=player_game_logs,
+                prop_type=req.propType,
+                line=req.line,
+                venue=player_venue,
+                stat_field="targetStat",
+            )
+            prediction["bayesianMetrics"] = real_bayes
+            prediction["confidenceInterval"] = real_bayes.get("confidenceInterval", prediction.get("confidenceInterval"))
+        except Exception as e:
+            print(f"[BAYESIAN] Basketball error: {e}")
+
+        # =============================================
+        # BAYESIAN-AI FUSION — One Unified Engine
+        # =============================================
+        if real_bayes and real_bayes.get("priorSamples", 0) >= 3:
+            bayesian_posterior = real_bayes["posteriorMean"]
+            bayesian_prob = max(real_bayes.get("pOver", 50), real_bayes.get("pUnder", 50)) / 100
+            bayesian_rec = real_bayes.get("recommendation", "over")
+            ai_proj = prediction.get("projectedValue", req.line)
+            ai_rec = prediction.get("recommendation", "over")
+
+            if bayesian_rec == ai_rec:
+                bayes_weight = 0.40
+            else:
+                if bayesian_prob >= 0.70:
+                    bayes_weight = 0.50
+                elif bayesian_prob >= 0.55:
+                    bayes_weight = 0.40
+                else:
+                    bayes_weight = 0.30
+
+            ai_weight = round(1.0 - bayes_weight, 2)
+            fused_proj = round(ai_weight * ai_proj + bayes_weight * bayesian_posterior, 1)
+
+            print(f"[BBALL FUSION] AI={ai_proj}({ai_rec}) + Bayesian={bayesian_posterior}({bayesian_rec}, {bayesian_prob:.0%}) → Fused={fused_proj}")
+
+            prediction["projectedValue"] = fused_proj
+            prediction["recommendation"] = "over" if fused_proj > req.line else "under"
+            prediction["fusionApplied"] = {
+                "aiProjection": ai_proj, "aiRecommendation": ai_rec,
+                "bayesianPosterior": bayesian_posterior, "bayesianRecommendation": bayesian_rec,
+                "bayesianConfidence": round(bayesian_prob * 100, 1),
+                "fusedProjection": fused_proj, "fusedRecommendation": prediction["recommendation"],
+                "weights": {"ai": ai_weight, "bayesian": bayes_weight},
+                "agreement": bayesian_rec == ai_rec,
+            }
+
         # Apply calibration guards (blowout detection, rebound floors, etc.)
         try:
             from calibration import apply_calibration_guards
@@ -966,20 +1020,6 @@ Analyze the statistical verdict, per-minute projection, and over-rate FIRST. The
         prediction.setdefault("recentSamples", [])
         prediction.setdefault("bayesianMetrics", {"priorMean": req.line, "momentumEffect": 0, "covariateAdjustment": 0, "reversalFlag": "stable"})
 
-        # OVERRIDE: Replace AI-guessed Bayesian metrics with REAL computed values
-        try:
-            from bayesian_engine import compute_bayesian_projection
-            real_bayes = compute_bayesian_projection(
-                game_logs=player_game_logs,
-                prop_type=req.propType,
-                line=req.line,
-                venue=player_venue,
-                stat_field="targetStat",
-            )
-            prediction["bayesianMetrics"] = real_bayes
-            prediction["confidenceInterval"] = real_bayes.get("confidenceInterval", prediction.get("confidenceInterval"))
-        except Exception as e:
-            print(f"[BAYESIAN] Basketball error: {e}")
         prediction.setdefault("probabilityCurve", [])
 
         if real_recent_samples:
