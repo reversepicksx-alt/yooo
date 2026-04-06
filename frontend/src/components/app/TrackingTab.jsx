@@ -497,37 +497,7 @@ function AnalysisPanel({ analysis }) {
         </div>
       )}
 
-      {/* Sharp Summary */}
-      {a.sharpSummary && (
-        <AnalysisSection title="Sharp Summary" text={a.sharpSummary} />
-      )}
-
-      {/* Key Evidence */}
-      {a.keyEvidence && (
-        <AnalysisSection title="Key Evidence" text={a.keyEvidence} />
-      )}
-
-      {/* Reasoning */}
-      {a.reasoning && (
-        <AnalysisSection title="Reasoning" text={a.reasoning} />
-      )}
-
-      {/* Scenario Analysis */}
-      {a.scenarioAnalysis && (
-        <AnalysisSection title="Scenarios" text={a.scenarioAnalysis} />
-      )}
-
-      {/* Game Flow */}
-      {a.gameFlowDynamics && (
-        <AnalysisSection title="Game Flow" text={a.gameFlowDynamics} />
-      )}
-
-      {/* Sub Risk */}
-      {a.subRisk && (
-        <AnalysisSection title="Sub Risk" text={a.subRisk} />
-      )}
-
-      {/* Tactical Breakdown (markdown-ish) */}
+      {/* Tactical Breakdown — single comprehensive analysis */}
       {a.tacticalBreakdown && (
         <div style={{ marginTop: 8 }}>
           <div style={{ fontSize: 8, fontWeight: 800, color: 'var(--accent)', letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 4 }}>
