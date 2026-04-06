@@ -155,6 +155,14 @@ async def save_pick(req: SavePickRequest):
                         names = ", ".join(p["playerName"] for p in same_dir_opp)
                         dir_label = doc["recommendation"].upper()
                         correlation_warnings.append({
+                            "type": "POSSESSION_CONTRADICTION",
+                            "severity": "CRITICAL",
+                            "message": f"ZERO-SUM ALERT: You have {dir_label} on passes for BOTH teams ({names} + {doc['playerName']}). "
+                                       f"Possession is zero-sum — if one team passes less, the other passes MORE. "
+                                       f"These picks CANNOT both hit unless the game is extremely low-tempo. "
+                                       f"Consider flipping the direction on one team's player.",
+                        })
+                        correlation_warnings.append({
                             "type": "OPPOSING_TEAMS_SAME_DIR",
                             "severity": "HIGH",
                             "message": f"Both teams' players {dir_label} on passes ({names}). In open games, one team's passes rise as the other's falls. High correlation risk.",
@@ -208,7 +216,6 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
 
     player_id = pick.get("playerId")
     prop_type = pick.get("propType", "")
-    sport = pick.get("sport", "soccer")
 
     # Fields to return from the prediction
     proj_fields = {

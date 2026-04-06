@@ -838,6 +838,109 @@ async def predict(req: PredictionRequest):
         )
         if match_dominance.get("notes"):
             print(f"[MATCH DOMINANCE] {req.playerName}: poss={match_dominance['expectedPoss']}%, mult={match_dominance['multiplier']}, {' | '.join(match_dominance['notes'])}")
+
+        # =============================================
+        # GAME TEMPO ESTIMATION — Expected match intensity
+        # A 2-2 draw = high tempo → both teams pass MORE.
+        # A 0-0 grind = low tempo → both teams pass LESS.
+        # This adjusts the dominance multiplier based on expected total game activity.
+        # =============================================
+        game_tempo = {"expectedTempo": "normal", "tempoMultiplier": 1.0, "notes": []}
+        try:
+            # Signal 1: Both teams' goals-per-game from team stats
+            team_gpg = 0.0
+            opp_gpg = 0.0
+            team_ga_pg = 0.0
+            opp_ga_pg = 0.0
+            if team_stats:
+                fixtures_played = team_stats.get("fixtures", {})
+                total_played = (fixtures_played.get("played", {}).get("total") or 0)
+                goals_for = team_stats.get("goals", {}).get("for", {}).get("total", {}).get("total", 0) or 0
+                goals_against = team_stats.get("goals", {}).get("against", {}).get("total", {}).get("total", 0) or 0
+                if total_played > 0:
+                    team_gpg = goals_for / total_played
+                    team_ga_pg = goals_against / total_played
+            if opponent_stats:
+                opp_played = (opponent_stats.get("fixtures", {}).get("played", {}).get("total") or 0)
+                opp_gf = opponent_stats.get("goals", {}).get("for", {}).get("total", {}).get("total", 0) or 0
+                opp_ga = opponent_stats.get("goals", {}).get("against", {}).get("total", {}).get("total", 0) or 0
+                if opp_played > 0:
+                    opp_gpg = opp_gf / opp_played
+                    opp_ga_pg = opp_ga / opp_played
+
+            # Expected total goals in match = (team_gpg + opp_ga_pg)/2 + (opp_gpg + team_ga_pg)/2
+            if team_gpg > 0 or opp_gpg > 0:
+                expected_team_goals = (team_gpg + opp_ga_pg) / 2.0
+                expected_opp_goals = (opp_gpg + team_ga_pg) / 2.0
+                expected_total = expected_team_goals + expected_opp_goals
+
+                # Signal 2: Odds-implied over/under (if available)
+                if match_odds and match_odds.get("bookmakerOdds"):
+                    try:
+                        home_odds = float(match_odds["bookmakerOdds"].get("homeWin", 3.0))
+                        away_odds = float(match_odds["bookmakerOdds"].get("awayWin", 3.0))
+                        # Low home+away odds = both teams expected to score
+                        total_implied = 1.0/max(home_odds, 1.01) + 1.0/max(away_odds, 1.01)
+                        if total_implied > 0.65:  # Both teams strong favorites to score
+                            expected_total += 0.3
+                            game_tempo["notes"].append("Odds suggest competitive match")
+                    except Exception:
+                        pass
+
+                # Classify tempo
+                if expected_total >= 3.2:
+                    game_tempo["expectedTempo"] = "high"
+                    # High-tempo: scale up pass volume by 4-8%
+                    tempo_boost = min(0.08, (expected_total - 2.5) * 0.04)
+                    game_tempo["tempoMultiplier"] = round(1.0 + tempo_boost, 3)
+                    game_tempo["notes"].append(f"High-tempo expected ({expected_total:.1f} total goals) → +{tempo_boost*100:.0f}% pass boost")
+                elif expected_total <= 1.8:
+                    game_tempo["expectedTempo"] = "low"
+                    # Low-tempo: dampen pass volume by 3-6%
+                    tempo_drop = max(-0.06, -(2.5 - expected_total) * 0.03)
+                    game_tempo["tempoMultiplier"] = round(1.0 + tempo_drop, 3)
+                    game_tempo["notes"].append(f"Low-tempo expected ({expected_total:.1f} total goals) → {tempo_drop*100:.0f}% pass reduction")
+                else:
+                    game_tempo["expectedTempo"] = "normal"
+                    game_tempo["tempoMultiplier"] = 1.0
+
+                game_tempo["expectedTotalGoals"] = round(expected_total, 2)
+                game_tempo["teamGPG"] = round(team_gpg, 2)
+                game_tempo["oppGPG"] = round(opp_gpg, 2)
+
+            if game_tempo["notes"]:
+                print(f"[GAME TEMPO] {req.playerName}: tempo={game_tempo['expectedTempo']}, mult={game_tempo['tempoMultiplier']}, goals={game_tempo.get('expectedTotalGoals', '?')}")
+        except Exception as e:
+            print(f"[GAME TEMPO] Error: {e}")
+
+        # =============================================
+        # HEAVY FAVORITE DAMPENING — for OVER pass props
+        # When a team is a heavy favorite (odds < 1.6), they're likely
+        # to score early and then reduce passing tempo (game management).
+        # This creates a "leading-team tempo drop" effect.
+        # =============================================
+        favorite_dampening = {"applied": False}
+        try:
+            poss_sensitive_for_fav = {"pass_attempts", "passes", "key_passes", "crosses"}
+            if req.propType in poss_sensitive_for_fav and match_odds and match_odds.get("bookmakerOdds"):
+                home_odds = float(match_odds["bookmakerOdds"].get("homeWin", 3.0))
+                away_odds = float(match_odds["bookmakerOdds"].get("awayWin", 3.0))
+                team_odds = home_odds if player_venue == "home" else away_odds
+
+                if team_odds < 1.60:
+                    # Heavy favorite — game management likely in 2nd half
+                    # The heavier the favorite, the stronger the dampening
+                    fav_dampen = round(min(0.06, (1.60 - team_odds) * 0.10), 3)
+                    favorite_dampening = {
+                        "applied": True,
+                        "teamOdds": team_odds,
+                        "dampeningFactor": fav_dampen,
+                        "note": f"Heavy favorite ({team_odds:.2f}): leading teams reduce tempo → -{fav_dampen*100:.0f}% pass dampening"
+                    }
+                    print(f"[FAVORITE DAMPENING] {req.playerName}: odds={team_odds:.2f}, dampen={fav_dampen*100:.0f}%")
+        except Exception as e:
+            print(f"[FAVORITE DAMPENING] Error: {e}")
+
         print(f"[TIMING] Wave 2: {_t.time()-_t0:.1f}s total")
 
         historical_data = {
@@ -941,6 +1044,22 @@ async def predict(req: PredictionRequest):
 Season avg: {early_bayes['priorMean']} | Recent form (decay-weighted): {early_bayes['momentumMean']} ({early_bayes['momentumLabel']}) | Context adj: {early_bayes['covariateAdjustment']:+.1f}
 Streak: {early_bayes['streakFlag']} | Volatility: {early_bayes['volatility']} (CV={early_bayes['cv']}) | Reversal: {early_bayes['reversalFlag']}
 >>> Your projectedValue MUST be within 20% of {early_bayes['posteriorMean']}. If you disagree, explain specifically why in your reasoning. <<<"""
+                # Inject game tempo context into the AI prompt
+                if game_tempo.get("expectedTempo") != "normal" and req.propType in {"pass_attempts", "passes", "key_passes", "crosses", "dribbles"}:
+                    tempo_label = game_tempo["expectedTempo"].upper()
+                    exp_goals = game_tempo.get("expectedTotalGoals", "?")
+                    bayesian_prompt_anchor += f"""
+[GAME TEMPO WARNING]
+Expected match tempo: {tempo_label} ({exp_goals} expected total goals).
+{"HIGH tempo = more open play, more touches, higher pass volumes for ALL players." if tempo_label == "HIGH" else "LOW tempo = defensive, fewer passes, compressed stat lines."}
+Factor this into your projection — do NOT ignore game flow."""
+                # Inject favorite dampening context
+                if favorite_dampening.get("applied") and req.propType in {"pass_attempts", "passes", "key_passes", "crosses"}:
+                    bayesian_prompt_anchor += f"""
+[HEAVY FAVORITE ALERT]
+This player's team is a heavy favorite (odds: {favorite_dampening['teamOdds']:.2f}).
+CRITICAL: Teams leading early often shift to game management mode — fewer passes, direct play, time-wasting.
+If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                 print(f"[BAYESIAN ANCHOR] {req.playerName}: math={early_bayes['posteriorMean']} {bdir} ({bprob}%), momentum={early_bayes['momentumLabel']}, streak={early_bayes['streakFlag']}")
         except Exception as e:
             print(f"[BAYESIAN ANCHOR] Error: {e}")
@@ -2067,6 +2186,52 @@ Is this projection reasonable? Return ONLY JSON:
                     "expectedPossession": poss_pct,
                 }
                 print(f"[POSSESSION] {req.propType}: {pre_poss} × {dom_mult:.2f} ({poss_pct:.0f}% poss) → {post_poss}")
+
+        # =============================================
+        # POST-FUSION GAME TEMPO SCALING
+        # High-tempo games (expected 3+ goals) boost ALL players' pass counts.
+        # Low-tempo games suppress them. This is independent of possession share.
+        # =============================================
+        if req.propType in poss_sensitive and game_tempo.get("tempoMultiplier", 1.0) != 1.0:
+            tempo_mult = game_tempo["tempoMultiplier"]
+            pre_tempo = prediction.get("projectedValue", req.line)
+            post_tempo = round(pre_tempo * tempo_mult, 1)
+            prediction["projectedValue"] = post_tempo
+            prediction["recommendation"] = "over" if post_tempo > req.line else "under"
+            prediction["tempoScaling"] = {
+                "preTempoValue": pre_tempo,
+                "postTempoValue": post_tempo,
+                "tempoMultiplier": tempo_mult,
+                "expectedTempo": game_tempo["expectedTempo"],
+                "expectedTotalGoals": game_tempo.get("expectedTotalGoals"),
+            }
+            print(f"[TEMPO] {req.propType}: {pre_tempo} × {tempo_mult:.3f} ({game_tempo['expectedTempo']} tempo) → {post_tempo}")
+
+        # =============================================
+        # POST-FUSION FAVORITE DAMPENING
+        # Heavy favorites (odds < 1.60) who score early tend to
+        # manage the game — fewer passes, more direct play, time-wasting.
+        # This applies ONLY to OVER pass props for heavy favorites.
+        # =============================================
+        if favorite_dampening.get("applied") and req.propType in poss_sensitive:
+            current_rec = prediction.get("recommendation", "over")
+            if current_rec == "over":
+                fav_factor = favorite_dampening["dampeningFactor"]
+                pre_fav = prediction.get("projectedValue", req.line)
+                post_fav = round(pre_fav * (1.0 - fav_factor), 1)
+                prediction["projectedValue"] = post_fav
+                prediction["recommendation"] = "over" if post_fav > req.line else "under"
+                prediction["favoriteDampening"] = {
+                    "preDampenValue": pre_fav,
+                    "postDampenValue": post_fav,
+                    "dampeningFactor": fav_factor,
+                    "teamOdds": favorite_dampening["teamOdds"],
+                    "note": favorite_dampening["note"],
+                }
+                prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [
+                    f"Heavy favorite ({favorite_dampening['teamOdds']:.2f} odds): teams leading early often reduce passing tempo in the 2nd half."
+                ]
+                print(f"[FAV DAMPEN] {req.propType}: {pre_fav} × {1.0-fav_factor:.3f} (odds={favorite_dampening['teamOdds']:.2f}) → {post_fav}")
 
         # HARD GUARD: recommendation MUST match the FINAL projected value vs line
         final_proj = prediction.get("projectedValue", req.line)
