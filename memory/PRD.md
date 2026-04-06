@@ -11,56 +11,36 @@ Sports player prop prediction platform. Users scan prop screenshots, AI extracts
 
 ### Prediction Pipeline — True Unified Engine
 ```
-Grok OCR → Data Fetch → BAYESIAN MATH (anchor) → Grok AI (math-informed) → FUSION → Guards → Final
+Grok OCR → Data Fetch → BAYESIAN MATH (anchor) → Grok AI (math-informed) → FUSION → Possession Scaling → Guards → Final
 ```
 
-1. **Grok Vision OCR** — Extracts player/prop/line from screenshot (with validation gate)
+1. **Grok Vision OCR** — Extracts player/prop/line (with validation gate)
 2. **Data Fetch** — Player game logs, match dominance, opponent stats, odds
-3. **Bayesian Engine v2** — Computes 3-layer math projection FIRST
-4. **Bayesian Anchor** — Math result injected INTO Grok's prompt so AI reasoning aligns
-5. **Grok 4.20 + GPT-5.2** — AI projection now math-informed
-6. **Bayesian-AI Fusion** — Merges AI + Math into one number
-7. **Post-Fusion Guards** — Coin-flip zone detection, tight edge guards
+3. **Bayesian Engine v2** — 3-layer math projection FIRST (anchor for AI)
+4. **Grok 4.20 + GPT-5.2** — AI projection (math-informed via anchor injection)
+5. **Bayesian-AI Fusion** — Merges AI + Math (adaptive weights)
+6. **Post-Fusion Possession Scaling** — For pass props, scales by expected possession
+7. **Guards** — Coin-flip zone detection, tight edge caps
+8. **Slip Correlation** — Same-game pick warnings at save time
 
-### Bayesian-AI Fusion Weights
-- AGREE: 60% AI / 40% Bayesian
-- DISAGREE + strong (>70%): 50/50
-- DISAGREE + moderate (55-70%): 60/40
-- DISAGREE + weak (<55%): 70/30
-
-### Post-Fusion Guards
-- **Tight Edge**: projection within ±1 of line → cap confidence at 58%
-- **Coin Flip Zone**: projection within ±3 of line AND Bayesian confidence <60% → cap at 52%, badge "COIN FLIP"
-
-### Slip Correlation System (picks.py)
-- Detects same-game picks when saving
-- Warning types:
-  - CORRELATED_RISK (HIGH): All picks same direction in same game
-  - OPPOSING_TEAMS_SAME_DIR (HIGH): Both teams' players same direction on pass props
-  - CONFLICTING (MEDIUM): Same team, opposite directions
-  - BOOSTING (INFO): Same team, same direction
-
-### Bayesian Engine v2 (bayesian_engine.py)
-- Layer 1: PRIOR — Season baseline (n^0.6 floor precision)
-- Layer 2: MOMENTUM — Exponentially-weighted recent form
-- Layer 3: COVARIATE — Match context (CAPPED at 25%)
-- Features: streak detection, volatility scoring, trend bonus, reversal flags
-
-### OCR Validation (scan.py)
-- Validates extractions before proceeding
-- Catches: misread names, impossible lines, unknown prop types
+### Key Safety Systems
+- **Coin Flip Guard**: projection within ±3 of line + Bayesian <60% → cap confidence at 52%, badge
+- **Possession Scaling**: pass props scaled by match dominance multiplier post-fusion
+- **Slip Correlation**: CORRELATED_RISK, OPPOSING_TEAMS_SAME_DIR, CONFLICTING, BOOSTING warnings
 
 ### Calibration System
-- **REMOVED** per user request. Market blend was dragging projections too close to the line.
+- **REMOVED** per user request. Was dragging projections toward the line.
 
 ## Key Features
 - Image scanning with OCR validation
 - Soccer + Basketball unified prediction pipelines
-- True unified engine (Bayesian anchors AI, no contradictions)
-- Coin-flip zone detection with visual badge
+- True unified engine (Bayesian anchors AI)
+- Post-fusion possession scaling for pass-related props
+- Coin-flip zone detection with badge
 - Slip correlation warnings for same-game picks
-- Visual Bayesian Engine breakdown on ProjectionCard
-- INTEL Tab, Tracking Tab, Live game tracking
+- INTEL Tab (aggregate dashboard: hit rates by prop/position/direction)
+- Tracking Tab with expandable analysis
+- Live game tracking, auto-settlement
 - MongoDB fixture caching, Position tracking
 - Square/Whop subscription management
 
@@ -69,13 +49,6 @@ Grok OCR → Data Fetch → BAYESIAN MATH (anchor) → Grok AI (math-informed) �
 - Backend: FastAPI, Python asyncio, MongoDB
 - AI: Grok 4.20 (xAI key), GPT-5.2 (Emergent LLM Key)
 - Data: API-Sports (Football + Basketball)
-
-## Key Endpoints
-- `POST /api/scan-prop` — Vision extraction with validation
-- `POST /api/predict` — Soccer unified pipeline
-- `POST /api/basketball/predict` — Basketball unified pipeline
-- `POST /api/picks/save` — Save pick + correlation analysis
-- `GET /api/intel/sheet` — INTEL spreadsheet
 
 ## Backlog
 - P2: Prediction self-correction feedback loop
