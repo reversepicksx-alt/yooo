@@ -149,7 +149,10 @@ export function ProjectionCard({ projection, onSave, excludedIndices, onToggleSa
           {projection.modelBreakdown && projection.modelBreakdown.length > 0 && (
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               {projection.modelBreakdown.map((m) => {
-                const isOver = m.recommendation === 'over';
+                // Show final calibrated value, not raw model output
+                const finalProj = projection.calibrationApplied?.correctedProjection ?? projection.projectedValue ?? m.projectedValue;
+                const finalRec = projection.recommendation || m.recommendation;
+                const isOver = finalRec === 'over';
                 return (
                   <div key={m.model} style={{
                     flex: 1, minWidth: 80, padding: '8px 10px', borderRadius: 8,
@@ -158,19 +161,19 @@ export function ProjectionCard({ projection, onSave, excludedIndices, onToggleSa
                     textAlign: 'center',
                   }}>
                     <div style={{ fontSize: 9, fontWeight: 700, color: '#a855f7', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>
-                      {m.model === 'gemini' ? 'GE' : m.model === 'grok' ? 'GK' : m.model === 'gpt52' || m.model === 'gpt41mini' || m.model === 'gpt' ? 'GP' : m.model}
+                      {m.model === 'grok420' ? 'GK' : m.model === 'gemini' ? 'GE' : m.model === 'grok' ? 'GK' : m.model === 'gpt52' || m.model === 'gpt41mini' || m.model === 'gpt' ? 'GP' : m.model}
                     </div>
                     <div style={{
                       fontSize: 13, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace",
                       color: isOver ? 'var(--accent)' : '#f43f5e',
                     }}>
-                      {m.projectedValue}
+                      {finalProj}
                     </div>
                     <div style={{
                       fontSize: 9, fontWeight: 700, textTransform: 'uppercase', marginTop: 2,
                       color: isOver ? 'var(--accent)' : '#f43f5e',
                     }}>
-                      {m.recommendation}
+                      {finalRec}
                     </div>
                   </div>
                 );
