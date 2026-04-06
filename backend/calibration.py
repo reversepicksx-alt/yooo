@@ -700,7 +700,7 @@ async def apply_elite_calibration(
 ) -> dict:
     """
     Master function: Apply all 5 elite calibration corrections post-consensus.
-    Call this AFTER all existing guards and BEFORE final response.
+    Also incorporates Grok pattern mining insights when available.
     """
     cal_stats = await get_calibration_stats(sport)
     if not cal_stats or cal_stats.get("total", 0) < MIN_SAMPLES_FOR_CORRECTION:
@@ -710,6 +710,32 @@ async def apply_elite_calibration(
     original_rec = prediction.get("recommendation", "over")
     original_conf = prediction.get("confidenceScore", 50)
     corrections = []
+
+    # --- Grok Pattern Mining Insights ---
+    try:
+        grok_insights = await db.calibration_insights.find_one(
+            {"type": "pattern_mining"}, {"_id": 0, "insights": 1, "raw_stats": 1}
+        )
+        if grok_insights and grok_insights.get("raw_stats"):
+            rs = grok_insights["raw_stats"]
+            # Check if this prop type has a notably bad hit rate
+            prop_stats = rs.get("by_prop", {}).get(prop_type)
+            if prop_stats:
+                total = prop_stats.get("hit", 0) + prop_stats.get("miss", 0)
+                if total >= 10:
+                    rate = prop_stats["hit"] / total
+                    if rate < 0.40:
+                        corrections.append(f"GROK PATTERN: {prop_type} hit rate only {rate*100:.0f}% — extra caution")
+            # Check venue bias from patterns
+            venue_stats = rs.get("by_venue", {}).get(venue)
+            if venue_stats:
+                vt = venue_stats.get("hit", 0) + venue_stats.get("miss", 0)
+                if vt >= 15:
+                    vrate = venue_stats["hit"] / vt
+                    if vrate < 0.45:
+                        corrections.append(f"GROK PATTERN: {venue} picks hit only {vrate*100:.0f}%")
+    except Exception:
+        pass
 
     # --- Correction 1: Historical Error Correction ---
     corrected_proj, was_corrected, corr_note = _correct_projected_value(

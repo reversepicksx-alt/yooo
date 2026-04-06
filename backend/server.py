@@ -85,6 +85,11 @@ async def seed_grants():
     asyncio.create_task(_auto_sync_square_payments())
     # Auto-backfill positions for picks missing them (runs once at startup)
     asyncio.create_task(_auto_backfill_positions())
+    # Grok Engine background tasks
+    from grok_engine import auto_settlement_loop, auto_scout_loop, pattern_mining_loop
+    asyncio.create_task(auto_settlement_loop())
+    asyncio.create_task(auto_scout_loop())
+    asyncio.create_task(pattern_mining_loop())
 
 
 async def _auto_backfill_positions():

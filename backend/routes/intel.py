@@ -496,7 +496,6 @@ async def intel_sheet(email: str, token: str, sport: str = "soccer"):
     if unresolved:
         try:
             from grok_positions import resolve_positions_grok_batch
-            # Deduplicate by player name
             seen = set()
             batch = []
             for r in unresolved:
@@ -509,12 +508,11 @@ async def intel_sheet(email: str, token: str, sport: str = "soccer"):
                     if not r["position"] and r["player"] in resolved:
                         r["position"] = resolved[r["player"]].get("position", "")
                         r["role"] = resolved[r["player"]].get("role", r.get("role", ""))
-                        # Also update the DB pick in background
-                        import asyncio
-                        asyncio.create_task(db.picks.update_many(
+                        # Update DB directly (awaited)
+                        await db.picks.update_many(
                             {"playerName": r["player"], "$or": [{"position": {"$exists": False}}, {"position": ""}, {"position": None}]},
                             {"$set": {"position": r["position"], "role": r["role"]}}
-                        ))
+                        )
         except Exception as e:
             print(f"[INTEL SHEET] Grok position resolve error: {e}")
 

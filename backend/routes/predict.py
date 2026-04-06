@@ -683,20 +683,33 @@ async def predict(req: PredictionRequest):
         # =============================================
         match_dominance = {"expectedPoss": 50.0, "oppExpectedPoss": 50.0, "multiplier": 1.0, "notes": []}
 
-        # Wave 2: Fetch deep fixture data in parallel (NO Grok — too slow for proxy timeout)
-        # Grok stays in follow-up chat (tactical.py) where it's user-initiated
+        # Wave 2: Fetch deep fixture data + Grok digest in parallel
+        from grok_engine import build_grok_digest
+        grok_digest_task = build_grok_digest(
+            player_name=req.playerName, team_name=req.teamName or "",
+            opponent_name=req.opponentName, prop_type=req.propType,
+            line=req.line, venue=player_venue,
+            player_stats=player_stats, team_stats=team_stats,
+            opponent_stats=opponent_stats, h2h_data=h2h_data,
+            match_odds=match_odds, standings=standings,
+            player_game_logs=[], team_fixture_stats=[],
+            opponent_fixture_stats=[], match_dominance={},
+            sport="soccer"
+        )
         all_wave2 = aio.gather(
             team_fixture_stats_task, opponent_fixture_stats_task, player_game_logs_task,
+            grok_digest_task,
             return_exceptions=True
         )
         try:
             results = await aio.wait_for(all_wave2, timeout=15)
         except aio.TimeoutError:
-            results = [None, None, None]
+            results = [None, None, None, None]
 
         team_fixture_stats = results[0] if not isinstance(results[0], (Exception, type(None))) else []
         opponent_fixture_stats = results[1] if not isinstance(results[1], (Exception, type(None))) else []
         player_game_logs = results[2] if not isinstance(results[2], (Exception, type(None))) else []
+        grok_digest = results[3] if len(results) > 3 and not isinstance(results[3], (Exception, type(None))) else ""
 
         # =============================================
         # MATCH DOMINANCE: Opponent-aware possession + context multiplier
@@ -1634,8 +1647,10 @@ Average {req.propType}: {comp_avg} | Per-90 avg: {comp_per90_avg} | Sample: {len
                     "venue": player_venue,
                 }
 
-        # Compose data for Gemini
+        # Compose data for GPT-5.2
         final_data_parts = []
+        if grok_digest:
+            final_data_parts.append(f"[GROK INTEL BRIEF]\n{grok_digest}")
         if data_digest:
             final_data_parts.append(f"[DATA DIGEST]\n{data_digest}")
         if wave2_supplement:

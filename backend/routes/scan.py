@@ -790,35 +790,42 @@ async def scan_prop(req: ScanPropRequest):
     try:
         is_basketball = req.sport == "basketball"
 
-        # ── Step 1: Vision AI extraction ──
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=f"scan-{uuid.uuid4().hex[:8]}",
-            system_message="You are an expert at reading player prop screenshots. Extract structured data precisely."
-        ).with_model("openai", "gpt-4o")
+        # ── Step 1: Try Grok Vision first (faster + cheaper), GPT-4o fallback ──
+        extracted = None
+        from grok_engine import grok_scan_prop
+        grok_result = await grok_scan_prop(req.image_base64)
+        if grok_result and grok_result.get("playerName"):
+            print(f"[SCAN] Grok extracted: {grok_result.get('playerName')}")
+            extracted = [grok_result]
 
-        image_content = ImageContent(image_base64=req.image_base64)
+        # Fallback to GPT-4o if Grok didn't extract
+        if not extracted:
+            chat = LlmChat(
+                api_key=EMERGENT_LLM_KEY,
+                session_id=f"scan-{uuid.uuid4().hex[:8]}",
+                system_message="You are an expert at reading player prop screenshots. Extract structured data precisely."
+            ).with_model("openai", "gpt-4o")
 
-        if is_basketball:
-            prompt = _build_basketball_scan_prompt()
-        else:
-            leagues_list = ", ".join([f"{lg['name']} (ID:{lg['id']})" for lg in SUPPORTED_LEAGUES])
-            prompt = _build_soccer_scan_prompt(leagues_list)
+            image_content = ImageContent(image_base64=req.image_base64)
 
-        msg = UserMessage(text=prompt, file_contents=[image_content])
-        response = await chat.send_message(msg)
-        response_text = response.strip()
+            if is_basketball:
+                prompt = _build_basketball_scan_prompt()
+            else:
+                leagues_list = ", ".join([f"{lg['name']} (ID:{lg['id']})" for lg in SUPPORTED_LEAGUES])
+                prompt = _build_soccer_scan_prompt(leagues_list)
 
-        # Clean markdown fences
-        if response_text.startswith("```"):
-            lines = response_text.split("\n")
-            lines = [ln for ln in lines if not ln.strip().startswith("```")]
-            response_text = "\n".join(lines)
+            msg = UserMessage(text=prompt, file_contents=[image_content])
+            response = await chat.send_message(msg)
+            response_text = response.strip()
 
-        extracted = json.loads(response_text)
-        # Support both single object and array from AI
-        if not isinstance(extracted, list):
-            extracted = [extracted]
+            if response_text.startswith("```"):
+                lines = response_text.split("\n")
+                lines = [ln for ln in lines if not ln.strip().startswith("```")]
+                response_text = "\n".join(lines)
+
+            extracted = json.loads(response_text)
+            if not isinstance(extracted, list):
+                extracted = [extracted]
 
         # DEDUP: If same player appears with different stat types, keep only the first
         seen_players = {}
