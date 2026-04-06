@@ -13,7 +13,6 @@ from config import (
     db, EMERGENT_LLM_KEY, XAI_API_KEY, CURRENT_SEASON,
     WOMENS_LEAGUE_IDS, STAT_FIELD_MAP, STAT_LAMBDA_MAP,
 )
-from calibration import get_calibration_stats, generate_calibration_prompt, apply_calibration_guards, apply_elite_calibration
 from models import PredictionRequest
 from utils import api_football_request, get_recent_fixtures_fast, strip_accents, get_soccer_odds, decimal_to_american
 
@@ -1439,11 +1438,9 @@ CRITICAL RULES:
 
 CALIBRATION RULES (MUST FOLLOW):
 - UNDER SKEW: Stats have positive skew — a player can have a monster game but can't go below 0. UNDER bets are inherently riskier. If recommending UNDER, your confidence should be 3-5% LOWER than you'd give for an equivalent OVER edge.
-- BINARY LINES: If the line is 0.5 (e.g., UNDER 0.5 means ZERO of that stat), be EXTREMELY cautious recommending UNDER. One event loses the bet. Any defender can record 1 key pass, any midfielder can get 1 shot assisted. UNDER 0.5 confidence should NEVER exceed 55% unless data overwhelmingly supports it.
-- TIGHT EDGE: If your projected value is within ±1.0 of the line, this is a MARGINAL edge. Confidence should NOT exceed 60% regardless of how much data you have. Variance swings will determine outcome.
+- BINARY LINES: If the line is 0.5 (e.g., UNDER 0.5 means ZERO of that stat), be EXTREMELY cautious recommending UNDER. One event loses the bet. UNDER 0.5 confidence should NEVER exceed 55% unless data overwhelmingly supports it.
+- TIGHT EDGE: If your projected value is within ±1.0 of the line, this is a MARGINAL edge. Confidence should NOT exceed 60% regardless of how much data you have.
 - DEFENDER PASSES: Ball-playing center-backs (CB, LB, RB) in possession-dominant teams (55%+ possession) routinely hit 60-85+ passes per game. Do NOT assume defenders have low pass counts — check their actual per-game averages carefully.
-
-- GK saves: heavily driven by opponent's attacking quality and shots on target volume. An underdog GK facing a top-attacking team will often EXCEED their seasonal average. Do NOT under-project saves when the opponent is expected to dominate possession and shoot frequently. Formula gives a floor, not a ceiling — if game context suggests high offensive output from opponent, bias OVER. |proj-line|<0.3 → max 52% conf. Knockout = tactical conservatism + possible ET. recentSamples=[]. No AI model names.
 
 JSON: {"projectedValue":0,"recommendation":"over|under","confidenceScore":0,"confidenceLevel":"","sharpSummary":"","reasoning":"","scenarioAnalysis":"","keyEvidence":"","sensitivityTests":"","subRisk":"","gameFlowDynamics":"","uncertaintyNote":"","tacticalBreakdown":"","matchupOverview":{"homeTeam":"","awayTeam":"","favorite":"","moneyline":{"home":"","draw":"","away":""},"expectedPossession":{"home":0,"away":0},"expectedGameType":"","keyMatchupFactor":""},"bayesianMetrics":{"priorMean":0,"momentumEffect":0,"covariateAdjustment":0,"reversalFlag":"stable"},"probabilityCurve":[],"recentSamples":[],"player":{"id":0,"name":"","team":"","position":""},"opponent":"","propType":"","line":0,"confidenceInterval":[0,0],"tacticalAlerts":[]}"""
 
@@ -1748,26 +1745,11 @@ Expected possession for {req.opponentName}: {match_dominance['oppExpectedPoss']}
 {hit_rates['summary']}
 >>> If over-rate >= 65%, strongly lean OVER. If under-rate >= 65%, lean UNDER. If neither exceeds 60%, treat as close call — lower confidence. <<<"""
 
-        # Inject calibration from settled picks (feedback loop)
-        calibration_context = ""
-        try:
-            cal_stats = await get_calibration_stats("soccer")
-            if cal_stats:
-                calibration_context = generate_calibration_prompt(
-                    cal_stats, req.propType, "over",
-                    req.line, match_odds,
-                    league_id=league_id, venue=player_venue,
-                    position=display_position, sport="soccer"
-                )
-        except Exception as e:
-            print(f"[CALIBRATION] Error generating prompt: {e}")
-
         prompt = f"""{req.playerName} ({display_position}) — plays for {req.teamName} ({player_venue.upper()}) | OPPONENT: {req.opponentName} | {req.propType} line {req.line}
 Odds: {json.dumps(match_odds.get('bookmakerOdds',{}), default=str) if match_odds else 'N/A'}{match_context}
 {pronoun_note}
 recentSamples=[]
 {hit_rate_context}
-{calibration_context}
 {bayesian_prompt_anchor}
 {final_data[:6000]}
 
@@ -1979,7 +1961,7 @@ Is this projection reasonable? Return ONLY JSON:
         else:
             prediction["confidenceScore"] = 50
 
-        prediction["consensusNote"] = f"Unified engine: {'Grok 4.20' if source_model == 'grok420' else 'GPT-5.2'}{' (GPT-5.2 verified)' if verified else ' (GPT-5.2 adjusted)'} + Bayesian math + elite calibration."
+        prediction["consensusNote"] = f"Unified engine: {'Grok 4.20' if source_model == 'grok420' else 'GPT-5.2'}{' (GPT-5.2 verified)' if verified else ' (GPT-5.2 adjusted)'} + Bayesian math."
         prediction["modelBreakdown"] = [{
             "model": source_model,
             "recommendation": prediction["recommendation"],
@@ -2102,27 +2084,6 @@ Is this projection reasonable? Return ONLY JSON:
         # Recalculate confidence level after guards
         cs = prediction.get("confidenceScore", 50)
         prediction["confidenceLevel"] = "Very High" if cs >= 75 else "High" if cs >= 65 else "Medium" if cs >= 50 else "Low"
-
-        # Apply calibration guards (blowout detection, possession context, venue bias)
-        try:
-            prediction = await apply_calibration_guards(
-                prediction, req.propType, req.line, match_odds, player_venue
-            )
-        except Exception as e:
-            print(f"[CALIBRATION] Guard error: {e}")
-
-        # =============================================
-        # ELITE CALIBRATION ENGINE v3
-        # Post-consensus hard corrections: error correction,
-        # market blending, flip guard, confidence recal, edge threshold
-        # =============================================
-        try:
-            prediction = await apply_elite_calibration(
-                prediction, req.propType, req.line,
-                venue=player_venue, sport="soccer"
-            )
-        except Exception as e:
-            print(f"[ELITE CAL] Error: {e}")
 
         # HARD GUARD: recommendation MUST match the FINAL projected value vs line
         final_proj_cal = prediction.get("projectedValue", req.line)

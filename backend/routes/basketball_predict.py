@@ -707,21 +707,6 @@ DECISION RULES (FOLLOW STRICTLY):
 6. Factor blowout risk: if a team is expected to win big, starters on the winning team play fewer minutes.
 """
 
-        # Inject calibration from settled basketball picks (feedback loop)
-        calibration_context = ""
-        try:
-            from calibration import get_calibration_stats, generate_calibration_prompt
-            cal_stats = await get_calibration_stats("basketball")
-            if cal_stats:
-                calibration_context = generate_calibration_prompt(
-                    cal_stats, req.propType, "over",
-                    req.line, None,
-                    league_id=12, venue=player_venue,
-                    position=None, sport="basketball"
-                )
-        except Exception as e:
-            print(f"[BBALL CALIBRATION] Error: {e}")
-
         PREDICTION_SYSTEM = f"""You are an elite NBA/WNBA player prop analyst. You are given pre-computed statistical analysis. Your job is to synthesize this data into a calibrated prediction.
 
 CRITICAL: You MUST respect the pre-computed over/under rates and per-minute projections. These are computed from REAL game logs. Do NOT override them with generic basketball knowledge.
@@ -757,7 +742,6 @@ RULES: recentSamples=[]. No AI model names in output."""
         prompt = f"""{req.playerName} — plays for {req.teamName} ({player_venue.upper()}) | OPPONENT: {req.opponentName} | {prop_label} line {req.line}
 Sport: NBA/WNBA Basketball
 recentSamples=[]
-{calibration_context}
 {bayesian_prompt_anchor}
 {data_digest[:7000]}
 
@@ -998,27 +982,6 @@ Analyze the statistical verdict, per-minute projection, and over-rate FIRST. The
             }
 
         # Apply calibration guards (blowout detection, rebound floors, etc.)
-        try:
-            from calibration import apply_calibration_guards
-            prediction = await apply_calibration_guards(
-                prediction, req.propType, req.line, None, player_venue
-            )
-        except Exception as e:
-            print(f"[BBALL CALIBRATION] Guard error: {e}")
-
-        # =============================================
-        # ELITE CALIBRATION ENGINE v3
-        # Post-consensus hard corrections for basketball
-        # =============================================
-        try:
-            from calibration import apply_elite_calibration
-            prediction = await apply_elite_calibration(
-                prediction, req.propType, req.line,
-                venue=player_venue, sport="basketball"
-            )
-        except Exception as e:
-            print(f"[BBALL ELITE CAL] Error: {e}")
-
         # HARD GUARD: recommendation MUST match the FINAL projected value vs line
         final_proj_cal = prediction.get("projectedValue", req.line)
         prediction["recommendation"] = "over" if final_proj_cal > req.line else "under"
