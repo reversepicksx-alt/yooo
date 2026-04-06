@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Loader2, ArrowUpDown, ArrowUp, ArrowDown, Search, X } from 'lucide-react';
-import { getIntelSheet, backfillPositions } from '../../api';
+import { getIntelSheet } from '../../api';
 import { toast } from 'sonner';
 
 export function IntelTab({ auth }) {
@@ -10,7 +10,6 @@ export function IntelTab({ auth }) {
   const [sport, setSport] = useState('soccer');
   const [sortCol, setSortCol] = useState('');
   const [sortDir, setSortDir] = useState('asc');
-  const [backfilling, setBackfilling] = useState(false);
 
   // Smart filters
   const [fResult, setFResult] = useState('all');
@@ -32,19 +31,6 @@ export function IntelTab({ auth }) {
       })
       .catch(() => toast.error('Failed to load intel'))
       .finally(() => setLoading(false));
-  }
-
-  async function runBackfill() {
-    setBackfilling(true);
-    try {
-      const res = await backfillPositions(auth.email, auth.token);
-      if (res.success) {
-        toast.success(res.message || `Backfill started. Refresh in 30s.`);
-        setTimeout(() => fetchData(sport), 30000);
-      }
-      else toast.error(res.error || 'Failed');
-    } catch { toast.error('Backfill request failed — try again'); }
-    finally { setBackfilling(false); }
   }
 
   useEffect(() => { fetchData(sport); }, [sport]);
@@ -159,18 +145,6 @@ export function IntelTab({ auth }) {
         <StatBox label="Hits" value={meta.hits} color="var(--accent)" />
         <StatBox label="Miss" value={meta.misses} color="#f43f5e" />
       </div>
-
-      {/* Backfill */}
-      {rows.filter(r => !r.position).length > 10 && (
-        <button onClick={runBackfill} disabled={backfilling} data-testid="backfill-btn" style={{
-          width: '100%', padding: '6px 0', marginBottom: 8, borderRadius: 6,
-          border: '1px solid rgba(245,158,11,0.3)', background: 'rgba(245,158,11,0.06)',
-          color: '#f59e0b', fontSize: 8, fontWeight: 800, cursor: backfilling ? 'wait' : 'pointer',
-          letterSpacing: '0.04em', textTransform: 'uppercase',
-        }}>
-          {backfilling ? 'BACKFILLING...' : `BACKFILL ${rows.filter(r => !r.position).length} PICKS MISSING POSITIONS`}
-        </button>
-      )}
 
       {/* Smart Filters */}
       <div data-testid="smart-filters" style={{

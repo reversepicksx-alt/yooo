@@ -83,6 +83,93 @@ async def seed_grants():
     asyncio.create_task(bball_background_refresh())
     # Auto-sync Square payments → subscriptions (non-blocking)
     asyncio.create_task(_auto_sync_square_payments())
+    # Auto-backfill positions for picks missing them (runs once at startup)
+    asyncio.create_task(_auto_backfill_positions())
+
+
+async def _auto_backfill_positions():
+    """Auto-backfill missing positions on startup. Runs in background."""
+    import asyncio
+    await asyncio.sleep(15)  # Wait for caches to load first
+    try:
+        from calibration import LEAGUE_NAMES
+        all_league_names = set(LEAGUE_NAMES.values())
+
+        # Step 1: Clean invalid positions (league IDs/names that leaked in)
+        bad_picks = await db.picks.find(
+            {"position": {"$exists": True, "$ne": "", "$ne": None}},
+            {"_id": 0, "pickId": 1, "position": 1}
+        ).to_list(5000)
+        cleaned = 0
+        for p in bad_picks:
+            pos = (p.get("position") or "").strip()
+            if pos.isdigit() or pos in all_league_names:
+                await db.picks.update_one(
+                    {"pickId": p["pickId"]},
+                    {"$set": {"position": "", "role": ""}}
+                )
+                cleaned += 1
+        if cleaned:
+            print(f"[AUTO-BACKFILL] Cleaned {cleaned} picks with invalid positions")
+
+        # Step 2: Backfill missing positions
+        picks = await db.picks.find(
+            {"$or": [{"position": {"$exists": False}}, {"position": ""}, {"position": None}]},
+            {"_id": 0, "pickId": 1, "playerId": 1, "playerName": 1}
+        ).to_list(5000)
+
+        if not picks:
+            print("[AUTO-BACKFILL] No picks need position backfill")
+            return
+
+        updated = 0
+        for p in picks:
+            pid = p.get("playerId")
+            pname = p.get("playerName", "")
+            pos_found, role_found = "", ""
+
+            if pid:
+                cached = await db.player_positions.find_one(
+                    {"playerId": pid}, {"_id": 0, "specificPosition": 1, "role": 1}
+                )
+                if cached and cached.get("specificPosition"):
+                    pos_found = cached["specificPosition"]
+                    role_found = cached.get("role", "")
+
+            if not pos_found and pid:
+                pred = await db.predictions.find_one(
+                    {"player.id": pid, "player.position": {"$nin": ["Unknown", "", None]}},
+                    {"_id": 0, "player.position": 1, "player.role": 1}
+                )
+                if pred:
+                    pos_found = pred.get("player", {}).get("position", "")
+                    role_found = pred.get("player", {}).get("role", "")
+
+            if not pos_found:
+                bq = {"player.name": pname} if not pid or pid == 0 else {"player.id": pid}
+                bpred = await db.basketball_predictions.find_one(
+                    {**bq, "player.position": {"$nin": ["", None]}},
+                    {"_id": 0, "player.position": 1}
+                )
+                if bpred:
+                    pos_found = bpred.get("player", {}).get("position", "")
+
+            if pos_found:
+                await db.picks.update_many(
+                    {"playerId": pid, "$or": [{"position": {"$exists": False}}, {"position": ""}, {"position": None}]},
+                    {"$set": {"position": pos_found, "role": role_found or ""}}
+                )
+                if not pid or pid == 0:
+                    await db.picks.update_many(
+                        {"playerName": pname, "$or": [{"position": {"$exists": False}}, {"position": ""}, {"position": None}]},
+                        {"$set": {"position": pos_found, "role": role_found or ""}}
+                    )
+                updated += 1
+
+        print(f"[AUTO-BACKFILL] Complete: {updated} players updated out of {len(picks)} checked")
+    except Exception as e:
+        print(f"[AUTO-BACKFILL] Error: {e}")
+
 
 
 async def _auto_sync_square_payments():
