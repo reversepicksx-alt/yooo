@@ -1,7 +1,7 @@
 import React from 'react';
 import {
   Zap, Clock, Activity, Shield, ShieldAlert, Target,
-  TrendingUp, TrendingDown, BarChart3, RotateCcw
+  TrendingUp, TrendingDown, BarChart3, RotateCcw, Flame, Snowflake, AlertTriangle
 } from 'lucide-react';
 import { getPropLabel } from '../../constants';
 import { ProbabilityChart } from './ProbabilityChart';
@@ -181,6 +181,120 @@ export function ProjectionCard({ projection, onSave, excludedIndices, onToggleSa
             </div>
           )}
         </div>
+
+        {/* Bayesian Engine — 3-Layer Math Breakdown */}
+        {projection.bayesianMetrics && projection.bayesianMetrics.priorSamples > 0 && (() => {
+          const b = projection.bayesianMetrics;
+          const momColor = b.momentumLabel === 'HOT' ? '#f97316' : b.momentumLabel === 'WARMING' ? '#fbbf24'
+            : b.momentumLabel === 'COLD' ? '#3b82f6' : b.momentumLabel === 'COOLING' ? '#60a5fa' : '#6b7280';
+          const volColor = b.volatility === 'LOW' ? '#10b981' : b.volatility === 'NORMAL' ? '#6b7280'
+            : b.volatility === 'HIGH' ? '#f59e0b' : b.volatility === 'EXTREME' ? '#ef4444' : '#6b7280';
+          const hasStreak = b.streakFlag && b.streakFlag !== 'NONE';
+          const streakOver = hasStreak && b.streakFlag.startsWith('OVER');
+          const hasReversal = b.reversalFlag && b.reversalFlag !== 'STABLE' && b.reversalFlag !== 'NO DATA';
+          return (
+            <div className="stat-box mt-4" data-testid="bayesian-engine" style={{
+              borderColor: 'rgba(14,165,233,0.2)', background: 'rgba(14,165,233,0.03)',
+            }}>
+              <div className="stat-label flex items-center gap-2 mb-3">
+                <Activity style={{ width: 12, height: 12, color: '#0ea5e9' }} />
+                <span style={{ color: '#0ea5e9' }}>Bayesian Engine</span>
+                <span style={{ fontSize: 8, color: 'rgba(255,255,255,0.3)', marginLeft: 'auto', fontWeight: 600 }}>
+                  {b.priorSamples} games analyzed
+                </span>
+              </div>
+              {/* Layer Weight Bars */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
+                {[
+                  { label: 'Season', weight: b.priorWeight, value: b.priorMean, color: '#0ea5e9' },
+                  { label: 'Momentum', weight: b.momentumWeight, value: b.momentumMean, color: momColor },
+                  { label: 'Context', weight: b.covariateWeight, value: b.covariateAdjustment > 0 ? `+${b.covariateAdjustment}` : b.covariateAdjustment, color: '#8b5cf6' },
+                ].map(layer => (
+                  <div key={layer.label} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 9, fontWeight: 700, color: 'rgba(255,255,255,0.5)', width: 62, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      {layer.label}
+                    </span>
+                    <div style={{ flex: 1, height: 6, borderRadius: 3, background: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}>
+                      <div style={{
+                        width: `${layer.weight}%`, height: '100%', borderRadius: 3,
+                        background: layer.color, transition: 'width 0.4s ease',
+                      }} />
+                    </div>
+                    <span style={{ fontSize: 10, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: layer.color, width: 30, textAlign: 'right' }}>
+                      {layer.weight}%
+                    </span>
+                    <span style={{ fontSize: 9, fontWeight: 600, fontFamily: "'JetBrains Mono', monospace", color: 'rgba(255,255,255,0.35)', width: 36, textAlign: 'right' }}>
+                      {layer.value}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              {/* Intelligence Flags */}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                {/* Momentum Badge */}
+                <span data-testid="momentum-badge" style={{
+                  fontSize: 9, fontWeight: 800, padding: '2px 8px', borderRadius: 4,
+                  background: `${momColor}15`, color: momColor,
+                  border: `1px solid ${momColor}30`, letterSpacing: '0.05em',
+                  display: 'flex', alignItems: 'center', gap: 3,
+                }}>
+                  {(b.momentumLabel === 'HOT' || b.momentumLabel === 'WARMING') && <Flame style={{ width: 9, height: 9 }} />}
+                  {(b.momentumLabel === 'COLD' || b.momentumLabel === 'COOLING') && <Snowflake style={{ width: 9, height: 9 }} />}
+                  {b.momentumLabel} {b.momentumEffect > 0 ? '+' : ''}{b.momentumEffect}
+                </span>
+                {/* Streak Badge */}
+                {hasStreak && (
+                  <span data-testid="streak-badge" style={{
+                    fontSize: 9, fontWeight: 800, padding: '2px 8px', borderRadius: 4,
+                    background: streakOver ? 'rgba(0,255,136,0.08)' : 'rgba(239,68,68,0.08)',
+                    color: streakOver ? 'var(--accent)' : '#f43f5e',
+                    border: `1px solid ${streakOver ? 'rgba(0,255,136,0.2)' : 'rgba(239,68,68,0.2)'}`,
+                    letterSpacing: '0.05em',
+                  }}>
+                    {b.streakFlag.replace('_', ' ')}
+                  </span>
+                )}
+                {/* Volatility Badge */}
+                {b.volatility && b.volatility !== 'UNKNOWN' && (
+                  <span data-testid="volatility-badge" style={{
+                    fontSize: 9, fontWeight: 800, padding: '2px 8px', borderRadius: 4,
+                    background: `${volColor}12`, color: volColor,
+                    border: `1px solid ${volColor}25`, letterSpacing: '0.05em',
+                  }}>
+                    {b.volatility} VOL
+                  </span>
+                )}
+                {/* Reversal Warning */}
+                {hasReversal && (
+                  <span data-testid="reversal-badge" style={{
+                    fontSize: 9, fontWeight: 800, padding: '2px 8px', borderRadius: 4,
+                    background: 'rgba(245,158,11,0.08)', color: '#f59e0b',
+                    border: '1px solid rgba(245,158,11,0.2)', letterSpacing: '0.05em',
+                    display: 'flex', alignItems: 'center', gap: 3,
+                  }}>
+                    <AlertTriangle style={{ width: 9, height: 9 }} />
+                    {b.reversalFlag}
+                  </span>
+                )}
+              </div>
+              {/* Posterior Summary */}
+              <div style={{
+                marginTop: 8, padding: '6px 10px', borderRadius: 6,
+                background: 'rgba(14,165,233,0.06)', display: 'flex',
+                justifyContent: 'space-between', alignItems: 'center',
+              }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.5)' }}>
+                  Math Projection
+                </span>
+                <span style={{ fontSize: 12, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: '#0ea5e9' }}>
+                  {b.posteriorMean} <span style={{ fontSize: 9, fontWeight: 600, color: 'rgba(255,255,255,0.3)' }}>
+                    P({b.recommendation?.toUpperCase()}) {b.recommendation === 'over' ? b.pOver : b.pUnder}%
+                  </span>
+                </span>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Match Dominance Multiplier */}
         {projection.matchDominance?.applied && (
