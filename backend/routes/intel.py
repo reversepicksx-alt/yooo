@@ -45,6 +45,17 @@ EXACT_POSITIONS = {
     "Guard", "Forward", "Center",  # Basketball generic
 }
 
+# Sport-specific position sets to prevent cross-contamination
+SOCCER_POSITIONS = {
+    "GK", "CB", "LB", "RB", "LWB", "RWB",
+    "CDM", "CM", "CAM", "LM", "RM", "LW", "RW",
+    "CF", "ST", "SS", "DEF", "MID", "FWD",
+}
+BASKETBALL_POSITIONS = {
+    "PG", "SG", "SF", "PF", "C", "G", "F",
+    "Guard", "Forward", "Center", "Big",
+}
+
 
 def _infer_favorite(venue, score_str):
     """Infer if player's team was favorite based on result + venue."""
@@ -165,6 +176,11 @@ async def intel_dashboard(email: str, token: str, sport: str = "soccer"):
         elif stored_pos and not stored_pos.isdigit() and stored_pos not in LEAGUE_NAMES.values():
             position = stored_pos
         else:
+            position = "Unknown"
+
+        # Sport cross-contamination guard
+        valid_for_sport = SOCCER_POSITIONS if sport == "soccer" else BASKETBALL_POSITIONS
+        if position != "Unknown" and position not in valid_for_sport:
             position = "Unknown"
 
         stored_role = (p.get("role") or "").strip()
@@ -429,6 +445,11 @@ async def intel_sheet(email: str, token: str, sport: str = "soccer"):
                     position = ""  # league name leaked into position — discard
                 else:
                     position = ""  # unknown value — discard to keep filter clean
+
+            # Sport cross-contamination guard: reject positions from wrong sport
+            valid_for_sport = SOCCER_POSITIONS if sport == "soccer" else BASKETBALL_POSITIONS
+            if position and position not in valid_for_sport:
+                position = ""
 
             role = (p.get("role") or "").strip()
             edge = p.get("edgeStrength", "") or ""
