@@ -1,0 +1,66 @@
+{
+  "summary": "Iteration 62: Verified two NEW features - OCR Validation and Auto-tuning Market Blend Ratio. All 31 pytest tests passed (100%). OCR validation correctly catches: missing names, UI elements as names (Less/More/vs), zero/negative lines, impossibly high lines (>500), unknown prop types. Valid extractions pass for both soccer and basketball. Auto-tune market blend returns valid weight in 0.35-0.80 range, cache works correctly, _blend_with_market_line accepts dynamic weight parameter, and apply_elite_calibration includes marketBlendWeight and blendSamples in calibrationApplied metadata. Health endpoint returns ok. Frontend loads without console errors.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_ocr_validation_and_autotune.py",
+    "/app/test_reports/pytest/iteration_62_ocr_autotune_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [
+    "/app/backend/tests/test_ocr_validation_and_autotune.py"
+  ],
+  "success_rate": {
+    "backend": "100% (31/31 pytest tests passed)",
+    "frontend": "100% (app loads without console errors)"
+  },
+  "seed_data_creation": "None - used unit tests with synthetic data",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 62 verified two new features: (1) OCR Validation in scan.py (_validate_extraction function, lines 787-833) catches bad OCR extractions before GPT-4o fallback, (2) Auto-tuning Market Blend in calibration.py (_compute_dynamic_market_weight, lines 535-592) dynamically computes optimal market/model blend weight from historical settled picks. Key constants: MIN_BLEND_SAMPLES=20 (minimum picks for auto-tune), DEFAULT_MARKET_WEIGHT=0.65 (fallback), grid search range 0.30-0.85, safety clamp 0.35-0.80. Currently returns default 65/35 because only 15 soccer / 11 basketball settled picks exist (needs 20+). The calibrationApplied metadata now includes marketBlendWeight and blendSamples fields.",
+  "verified_features": {
+    "ocr_validation": {
+      "function": "_validate_extraction in /app/backend/routes/scan.py (lines 787-833)",
+      "catches": [
+        "MISSING_NAME - empty player name",
+        "NAME_TOO_SHORT - less than 2 characters",
+        "NAME_NO_LETTERS - no alphabetic characters",
+        "NAME_IS_UI_ELEMENT - 'Less', 'More', 'vs', 'at', 'home', 'away'",
+        "MISSING_LINE - null line value",
+        "LINE_ZERO_OR_NEGATIVE - line <= 0",
+        "LINE_IMPOSSIBLY_HIGH - line > 500",
+        "LINE_NOT_A_NUMBER - non-numeric line",
+        "MISSING_PROP_TYPE - empty prop type",
+        "UNKNOWN_PROP_TYPE - prop not in valid set"
+      ],
+      "valid_soccer_props": "goals, assists, pass_attempts, shots, shots_on_target, tackles, key_passes, saves, interceptions, blocks, dribbles, fouls_drawn, fouls_committed, shots_assisted, crosses, clearances, duels_won, yellow_cards, dribbles_success",
+      "valid_basketball_props": "points, rebounds, assists, pts_reb_ast, pts_reb, pts_ast, reb_ast, blk_stl, three_pointers, fgm, ftm, fga, fta, tpa, steals, blocks, turnovers",
+      "integration": "Called in scan_prop endpoint before GPT-4o fallback (line 849)"
+    },
+    "auto_tune_market_blend": {
+      "function": "_compute_dynamic_market_weight in /app/backend/calibration.py (lines 535-592)",
+      "constants": {
+        "MIN_BLEND_SAMPLES": 20,
+        "DEFAULT_MARKET_WEIGHT": 0.65,
+        "grid_search_range": "0.30-0.85 in 0.05 steps",
+        "safety_clamp": "0.35-0.80"
+      },
+      "cache": "2-hour TTL, key format: blend_{sport}",
+      "metadata_fields": ["marketBlendWeight", "blendSamples"],
+      "current_status": "Returns default 65/35 due to insufficient settled picks (<20)"
+    },
+    "health_endpoint": "/api/health returns {status: ok}"
+  },
+  "test_credentials": {
+    "owner_email": "josselj001@gmail.com",
+    "test_user": "xaviersteverson@gmail.com / test123456"
+  }
+}

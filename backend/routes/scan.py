@@ -292,7 +292,7 @@ async def _resolve_player_via_api(player_name: str, player_team_hint: str,
         for d in data_list[:20]:
             pname = strip_accents(d["player"]["name"].lower())
             team_name = (d.get("statistics", [{}])[0].get("team", {}).get("name") or "").lower()
-            league_name = (d.get("statistics", [{}])[0].get("league", {}).get("name") or "").lower()
+            _league_name = (d.get("statistics", [{}])[0].get("league", {}).get("name") or "").lower()
             name_match = query_lower in pname or pname in query_lower or last_name in pname
             team_match = any(th in team_name or team_name in th for th in team_hints) if team_hints else False
             # Check if this player's league matches the opponent's league (disambiguation)
@@ -784,6 +784,55 @@ async def _resolve_basketball_picks(extracted: list) -> dict:
 
 
 
+def _validate_extraction(entry: dict, is_basketball: bool = False) -> tuple:
+    """
+    Validate OCR extraction quality. Returns (is_valid, issues_list).
+    Catches misread player names, impossible lines, and unmapped prop types.
+    """
+    issues = []
+    valid_props = VALID_BASKETBALL_PROPS if is_basketball else VALID_SOCCER_PROPS
+    prop_aliases = BASKETBALL_PROP_ALIASES if is_basketball else PROP_TYPE_ALIASES
+
+    # 1. Player name sanity
+    name = (entry.get("playerName") or "").strip()
+    if not name:
+        issues.append("MISSING_NAME")
+    elif len(name) < 2:
+        issues.append("NAME_TOO_SHORT")
+    elif not any(c.isalpha() for c in name):
+        issues.append("NAME_NO_LETTERS")
+    elif name.lower() in {"less", "more", "vs", "at", "home", "away"}:
+        issues.append("NAME_IS_UI_ELEMENT")
+
+    # 2. Line sanity
+    line = entry.get("line")
+    if line is None:
+        issues.append("MISSING_LINE")
+    else:
+        try:
+            line_val = float(line)
+            if line_val <= 0:
+                issues.append("LINE_ZERO_OR_NEGATIVE")
+            elif line_val > 500:
+                issues.append("LINE_IMPOSSIBLY_HIGH")
+        except (ValueError, TypeError):
+            issues.append("LINE_NOT_A_NUMBER")
+
+    # 3. Prop type sanity
+    raw_prop = (entry.get("propType") or "").lower().strip()
+    normalized = prop_aliases.get(raw_prop, raw_prop)
+    if not raw_prop:
+        issues.append("MISSING_PROP_TYPE")
+    elif normalized not in valid_props:
+        issues.append(f"UNKNOWN_PROP_TYPE:{raw_prop}")
+
+    is_valid = len(issues) == 0
+    if issues:
+        print(f"[OCR VALIDATE] Issues for '{name}': {', '.join(issues)}")
+
+    return is_valid, issues
+
+
 @router.post("/scan-prop")
 async def scan_prop(req: ScanPropRequest):
     """Use AI vision to extract player prop data from a screenshot."""
@@ -795,10 +844,15 @@ async def scan_prop(req: ScanPropRequest):
         from grok_engine import grok_scan_prop
         grok_result = await grok_scan_prop(req.image_base64)
         if grok_result and grok_result.get("playerName"):
-            print(f"[SCAN] Grok extracted: {grok_result.get('playerName')}")
-            extracted = [grok_result]
+            # Validate Grok's extraction before accepting
+            is_valid, issues = _validate_extraction(grok_result, is_basketball)
+            if is_valid:
+                print(f"[SCAN] Grok extracted (validated): {grok_result.get('playerName')}")
+                extracted = [grok_result]
+            else:
+                print(f"[SCAN] Grok extraction FAILED validation ({issues}), falling to GPT-4o")
 
-        # Fallback to GPT-4o if Grok didn't extract
+        # Fallback to GPT-4o if Grok didn't extract or failed validation
         if not extracted:
             chat = LlmChat(
                 api_key=EMERGENT_LLM_KEY,

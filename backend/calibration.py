@@ -522,10 +522,74 @@ async def apply_calibration_guards(prediction: dict, prop_type: str, line: float
 
 MIN_SAMPLES_FOR_CORRECTION = 10
 MIN_SAMPLES_FOR_FLIP = 15
-MARKET_WEIGHT = 0.65  # 65% market line, 35% AI projection (nfelo research optimal)
+DEFAULT_MARKET_WEIGHT = 0.65  # Default 65% market / 35% model (nfelo baseline)
+MIN_BLEND_SAMPLES = 20  # Minimum settled picks before auto-tuning kicks in
 FLIP_THRESHOLD = 0.45  # Flip recommendation if hit rate below 45%
 EDGE_STRONG_PCT = 0.05  # 5% edge for STRONG recommendation
 EDGE_LEAN_PCT = 0.02   # 2% edge for LEAN
+
+# Cache for the dynamic market weight
+_blend_cache = {"weight": None, "updated": None}
+
+
+async def _compute_dynamic_market_weight(sport: str = "soccer") -> tuple:
+    """
+    Auto-tune the market blend ratio from settled pick data.
+    Grid-searches weights 0.30-0.85 and picks the one that minimizes MAE.
+    Returns (optimal_weight, sample_count, note).
+    """
+    now = datetime.now(timezone.utc)
+    # Check cache (refresh every 2 hours)
+    cache_key = f"blend_{sport}"
+    cached = _blend_cache.get(cache_key)
+    if cached and cached.get("updated") and (now - cached["updated"]).total_seconds() < 7200:
+        return cached["weight"], cached.get("n", 0), cached.get("note", "")
+
+    # Pull settled picks that have BOTH projectedValue and line
+    query = {
+        "status": "settled",
+        "result": {"$in": ["hit", "miss"]},
+        "projectedValue": {"$exists": True, "$ne": None},
+        "line": {"$exists": True, "$gt": 0},
+        "actualValue": {"$exists": True, "$ne": None},
+    }
+    if sport:
+        query["sport"] = sport
+
+    picks = await db.picks.find(query, {
+        "_id": 0, "projectedValue": 1, "line": 1, "actualValue": 1
+    }).to_list(5000)
+
+    if len(picks) < MIN_BLEND_SAMPLES:
+        _blend_cache[cache_key] = {"weight": DEFAULT_MARKET_WEIGHT, "updated": now, "n": len(picks), "note": "insufficient data"}
+        return DEFAULT_MARKET_WEIGHT, len(picks), "insufficient data — using default 65/35"
+
+    # Grid search: test weights from 0.30 to 0.85 in 0.05 steps
+    best_weight = DEFAULT_MARKET_WEIGHT
+    best_mae = float('inf')
+
+    for w_int in range(30, 86, 5):
+        w = w_int / 100.0
+        total_err = 0
+        for p in picks:
+            proj = float(p["projectedValue"])
+            line = float(p["line"])
+            actual = float(p["actualValue"])
+            blended = (1 - w) * proj + w * line
+            total_err += abs(actual - blended)
+        mae = total_err / len(picks)
+        if mae < best_mae:
+            best_mae = mae
+            best_weight = w
+
+    # Safety rails: clamp between 0.35 and 0.80
+    best_weight = max(0.35, min(0.80, best_weight))
+
+    note = f"auto-tuned from {len(picks)} picks (MAE={best_mae:.2f})"
+    print(f"[ELITE CAL] Dynamic market weight: {best_weight:.0%} market / {1-best_weight:.0%} model ({note})")
+
+    _blend_cache[cache_key] = {"weight": best_weight, "updated": now, "n": len(picks), "note": note}
+    return best_weight, len(picks), note
 
 
 def _correct_projected_value(stats: dict, prop_type: str, recommendation: str, venue: str, projected: float) -> tuple:
@@ -566,21 +630,21 @@ def _correct_projected_value(stats: dict, prop_type: str, recommendation: str, v
     return projected, False, ""
 
 
-def _blend_with_market_line(projected: float, line: float) -> tuple:
+def _blend_with_market_line(projected: float, line: float, market_weight: float = DEFAULT_MARKET_WEIGHT) -> tuple:
     """
     Correction 2: Market Line Blending.
-    Blend AI projection with the sportsbook line.
-    Research: 65% market / 35% model minimizes Brier score.
+    Blend AI projection with the sportsbook line using auto-tuned weight.
     Returns (blended_value, blend_note).
     """
     if line <= 0:
         return projected, ""
 
-    blended = round((1 - MARKET_WEIGHT) * projected + MARKET_WEIGHT * line, 1)
+    model_weight = round(1 - market_weight, 2)
+    blended = round(model_weight * projected + market_weight * line, 1)
     if blended == projected:
         return projected, ""
 
-    note = f"Market blend: {projected} × 0.35 + {line} × 0.65 = {blended}"
+    note = f"Market blend: {projected} x {model_weight} + {line} x {market_weight} = {blended}"
     print(f"[ELITE CAL] {note}")
     return blended, note
 
@@ -744,10 +808,13 @@ async def apply_elite_calibration(
     if was_corrected:
         corrections.append(corr_note)
 
-    # --- Correction 2: Market Line Blending ---
-    blended_proj, blend_note = _blend_with_market_line(corrected_proj, line)
+    # --- Correction 2: Market Line Blending (AUTO-TUNED) ---
+    dynamic_weight, blend_n, blend_note_detail = await _compute_dynamic_market_weight(sport)
+    blended_proj, blend_note = _blend_with_market_line(corrected_proj, line, dynamic_weight)
     if blend_note:
         corrections.append(blend_note)
+        if blend_n >= MIN_BLEND_SAMPLES:
+            corrections.append(f"Blend ratio auto-tuned: {dynamic_weight:.0%} market / {1-dynamic_weight:.0%} model ({blend_note_detail})")
     final_proj = blended_proj
 
     # Update recommendation based on corrected projection
@@ -793,6 +860,8 @@ async def apply_elite_calibration(
             "edgeStrength": edge_label,
             "corrections": corrections,
             "sampleSize": cal_stats.get("total", 0),
+            "marketBlendWeight": round(dynamic_weight, 2),
+            "blendSamples": blend_n,
         }
         alerts = prediction.get("tacticalAlerts", [])
         for c in corrections:
