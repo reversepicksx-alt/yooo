@@ -25,14 +25,12 @@ from routes.picks import router as picks_router
 from routes.chat import router as chat_router
 from routes.misc import router as misc_router
 from routes.tactical import router as tactical_router
-from routes.basketball_predict import router as basketball_router
 from routes.square import router as square_router
 from routes.admin import router as admin_router
 from routes.miss_analysis import router as miss_router
 from routes.manual_search import router as manual_router
 from routes.intel import router as intel_router
 from cache import seed_cache, background_refresh_loop
-from basketball_cache import seed_bball_cache, bball_background_refresh, get_bball_cache_status
 
 app.include_router(auth_router)
 app.include_router(leagues_router)
@@ -44,7 +42,6 @@ app.include_router(picks_router)
 app.include_router(chat_router)
 app.include_router(misc_router)
 app.include_router(tactical_router)
-app.include_router(basketball_router)
 app.include_router(square_router)
 app.include_router(admin_router)
 app.include_router(miss_router)
@@ -78,9 +75,6 @@ async def seed_grants():
     asyncio.create_task(build_teams_cache())
     # Start 24h auto-refresh loop for transfers + data freshness
     asyncio.create_task(background_refresh_loop())
-    # Seed basketball (NBA + WNBA) cache
-    asyncio.create_task(seed_bball_cache())
-    asyncio.create_task(bball_background_refresh())
     # Auto-sync Square payments → subscriptions (non-blocking)
     asyncio.create_task(_auto_sync_square_payments())
     # Auto-backfill positions for picks missing them (runs once at startup)
@@ -156,15 +150,6 @@ async def _auto_backfill_positions():
                 if pred:
                     pos_found = pred.get("player", {}).get("position", "")
                     role_found = pred.get("player", {}).get("role", "")
-
-            if not pos_found:
-                bq = {"player.name": pname} if not pid or pid == 0 else {"player.id": pid}
-                bpred = await db.basketball_predictions.find_one(
-                    {**bq, "player.position": {"$nin": ["", None]}},
-                    {"_id": 0, "player.position": 1}
-                )
-                if bpred:
-                    pos_found = bpred.get("player", {}).get("position", "")
 
             if pos_found:
                 await db.picks.update_many(

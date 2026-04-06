@@ -11,7 +11,6 @@ from models import (
     CorrectPickRequest, LiveUpdateRequest, SettlePicksRequest,
 )
 from utils import api_football_request
-from basketball_utils import _api_get as bball_api_get, parse_player_stat, get_current_nba_season
 # auto_analyze_miss_background REMOVED — was draining AI tokens on every miss settlement
 
 router = APIRouter(prefix="/api", tags=["picks"])
@@ -44,12 +43,8 @@ async def save_pick(req: SavePickRequest):
     }
     normalized_prop = prop_label_map.get(normalized_prop, normalized_prop)
 
-    # Detect sport from prediction data
-    sport = pick.get("sport", "soccer")
-    if not sport or sport == "soccer":
-        bball_props = {"points", "rebounds", "assists", "pts_reb_ast", "pts_reb", "pts_ast", "reb_ast", "blk_stl", "steals", "blocks", "turnovers", "three_pointers", "fgm", "ftm", "fga", "fta", "tpa"}
-        if normalized_prop in bball_props:
-            sport = "basketball"
+    # Sport is soccer-only
+    sport = "soccer"
 
     doc = {
         "pickId": pick_id,
@@ -347,62 +342,10 @@ SOCCER_STAT_MAP = {
     "yellow_cards": lambda s: s.get("cards", {}).get("yellow"),
 }
 
-# Basketball stat extraction (from parsed player stat)
-BBALL_STAT_MAP = {
-    "points": "points",
-    "rebounds": "rebounds",
-    "assists": "assists",
-    "steals": "steals",
-    "blocks": "blocks",
-    "turnovers": "turnovers",
-    "three_pointers": "tpm",
-    "fgm": "fgm",
-    "ftm": "ftm",
-    "fga": "fga",
-    "fta": "fta",
-    "tpa": "tpa",
-}
-
-
-def get_bball_stat_value(parsed: dict, prop_type: str):
-    """Extract basketball stat value from parsed player stat."""
-    # Normalize: "Pts+Reb+Ast" → "pts_reb_ast", "Points" → "points"
-    pt = prop_type.lower().replace("+", "_").replace(" ", "_").replace("-", "_")
-    # Also handle display labels
-    label_map = {
-        "pts_reb_ast": "pts_reb_ast",
-        "pts_reb": "pts_reb",
-        "pts_ast": "pts_ast",
-        "reb_ast": "reb_ast",
-        "blk_stl": "blk_stl",
-        "3_pointers_made": "three_pointers",
-        "3_point_fg_made": "three_pointers",
-        "fg_made": "fgm",
-        "ft_made": "ftm",
-        "fg_attempted": "fga",
-        "ft_attempted": "fta",
-        "3pt_attempted": "tpa",
-    }
-    pt = label_map.get(pt, pt)
-
-    if pt == "pts_reb_ast":
-        return (parsed.get("points", 0) or 0) + (parsed.get("rebounds", 0) or 0) + (parsed.get("assists", 0) or 0)
-    if pt == "reb_ast":
-        return (parsed.get("rebounds", 0) or 0) + (parsed.get("assists", 0) or 0)
-    if pt == "pts_reb":
-        return (parsed.get("points", 0) or 0) + (parsed.get("rebounds", 0) or 0)
-    if pt == "pts_ast":
-        return (parsed.get("points", 0) or 0) + (parsed.get("assists", 0) or 0)
-    if pt == "blk_stl":
-        return (parsed.get("blocks", 0) or 0) + (parsed.get("steals", 0) or 0)
-    field = BBALL_STAT_MAP.get(pt, pt)
-    return parsed.get(field, 0) or 0
-
-
 @router.post("/picks/live-update")
 async def live_update_picks(req: LiveUpdateRequest):
     """For each live pick, check if match is live or finished. Return current stats.
-    Handles BOTH soccer and basketball picks."""
+    Handles soccer picks only."""
     session = await db.sessions.find_one({"email": req.email.lower(), "session_token": req.token}, {"_id": 0})
     if not session:
         raise HTTPException(status_code=401, detail="Invalid session")
@@ -411,28 +354,7 @@ async def live_update_picks(req: LiveUpdateRequest):
     if not live_picks:
         return {"updates": []}
 
-    # Split picks by sport
-    soccer_picks = []
-    basketball_picks = []
-    for pick in live_picks:
-        sport = pick.get("sport", "soccer")
-        if sport == "basketball":
-            basketball_picks.append(pick)
-        else:
-            soccer_picks.append(pick)
-
-    updates = []
-
-    # ── SOCCER LIVE TRACKING ──
-    if soccer_picks:
-        soccer_updates = await _process_soccer_live(soccer_picks, req.email.lower())
-        updates.extend(soccer_updates)
-
-    # ── BASKETBALL LIVE TRACKING ──
-    if basketball_picks:
-        bball_updates = await _process_basketball_live(basketball_picks, req.email.lower())
-        updates.extend(bball_updates)
-
+    updates = await _process_soccer_live(live_picks, req.email.lower())
     return {"updates": updates}
 
 
