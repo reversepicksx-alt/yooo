@@ -1,0 +1,86 @@
+{
+  "summary": "Iteration 64: Verified three new features - (1) Post-fusion possession scaling for pass-related props, (2) Basketball stat parser includes steals/blocks/turnovers, (3) INTEL tab completely redesigned with aggregate stats dashboard. All 43 pytest tests passed (15 new + 17 Bayesian + 11 Fusion). Frontend INTEL tab shows: overall performance stats (hit rate, hits, misses, avg error), Over vs Under direction split, hit rate by prop type with over/under breakdown, hit rate by position. Sport toggle (soccer/basketball) works correctly. Tracking tab shows record tracker and pick cards. COIN FLIP badge code exists but no picks have coinFlip=true currently. Health endpoint returns ok. No console errors.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration_64.py",
+    "/app/backend/tests/test_bayesian_engine.py",
+    "/app/backend/tests/test_fusion.py",
+    "/app/test_reports/pytest/iteration_64_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [
+    "/app/backend/tests/test_iteration_64.py"
+  ],
+  "success_rate": {
+    "backend": "100% (43/43 pytest tests passed: 15 iteration 64 + 17 Bayesian + 11 Fusion)",
+    "frontend": "100% (app loads without console errors, INTEL tab renders correctly)"
+  },
+  "seed_data_creation": "None - used existing settled picks for INTEL tab testing",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 64 verified three features: (1) Post-fusion possession scaling in predict.py lines 2048-2069 applies match dominance multiplier DIRECTLY to final projection for pass-related props (pass_attempts, passes, key_passes, crosses, dribbles) when multiplier differs >3% from 1.0. (2) Basketball stat parser in basketball_utils.py parse_player_stat() now includes steals, blocks, turnovers at lines 238-240. BBALL_STAT_MAP in picks.py also updated at lines 355-357. (3) INTEL tab in IntelTab.jsx completely rewritten from spreadsheet to aggregate dashboard - uses getIntelSheet API and computes aggregates client-side via useMemo. Shows overall performance, over/under split, prop type breakdown with over/under per prop, position breakdown. Sport toggle works. COIN FLIP badge exists in TrackingTab.jsx line 251-256 but requires picks with coinFlip=true field.",
+  "verified_features": {
+    "post_fusion_possession_scaling": {
+      "location": "/app/backend/routes/predict.py lines 2048-2069",
+      "poss_sensitive_props": ["pass_attempts", "passes", "key_passes", "crosses", "dribbles"],
+      "threshold": ">3% dominance shift (abs(multiplier - 1.0) > 0.03)",
+      "formula": "post_poss = pre_poss * dom_mult",
+      "metadata_field": "possessionScaling with prePossession, postPossession, multiplier, expectedPossession"
+    },
+    "basketball_stat_parser": {
+      "location": "/app/backend/basketball_utils.py lines 238-240",
+      "new_fields": ["steals", "blocks", "turnovers"],
+      "bball_stat_map_location": "/app/backend/routes/picks.py lines 355-357"
+    },
+    "intel_tab_redesign": {
+      "location": "/app/frontend/src/components/app/IntelTab.jsx",
+      "sections": [
+        "Overall Performance (hit rate, hits, misses, avg error)",
+        "Over vs Under direction split (with HOME/AWAY)",
+        "Hit Rate by Prop Type (with over/under breakdown per prop)",
+        "Hit Rate by Position"
+      ],
+      "sport_toggle": "Soccer/Basketball buttons with data-testid intel-sport-soccer/basketball",
+      "data_source": "getIntelSheet API, aggregates computed client-side via useMemo"
+    },
+    "coin_flip_badge": {
+      "location": "/app/frontend/src/components/app/TrackingTab.jsx lines 251-256",
+      "data_testid": "coin-flip-badge",
+      "condition": "pick.coinFlip === true",
+      "status": "Code exists, no picks currently have coinFlip=true"
+    },
+    "slip_correlation_warnings": {
+      "location": "/app/backend/routes/picks.py lines 101-177",
+      "warning_types": ["CORRELATED_RISK", "BOOSTING", "CONFLICTING", "OPPOSING_TEAMS_SAME_DIR"],
+      "returned_in": "save_pick response as correlationWarnings array"
+    },
+    "health_endpoint": "/api/health returns {status: ok}"
+  },
+  "test_credentials": {
+    "owner_email": "josselj001@gmail.com",
+    "test_user": "xaviersteverson@gmail.com / test123456"
+  },
+  "intel_tab_data_observed": {
+    "soccer": {
+      "overall": "69.6% hit rate, 16 hits, 7 misses, 12.1 avg error",
+      "over_under": "OVER 62.5%, UNDER 73.3%, HOME 83.3%, AWAY 54.5%",
+      "prop_types": "Pass Attempts 70.6%, Saves 60%, Tackles 100%",
+      "positions": "MID 100%, CB 83.3%, CM 50%, CDM 50%, GK 50%"
+    },
+    "basketball": {
+      "overall": "54.5% hit rate, 6 hits, 5 misses, 5.0 avg error",
+      "over_under": "OVER 0%, UNDER 54.5%, HOME 37.5%, AWAY 100%",
+      "prop_types": "Points 62.5%, Rebounds 33.3%",
+      "positions": "C 100%, SF 66.7%, G 40%"
+    }
+  }
+}

@@ -235,6 +235,9 @@ def parse_player_stat(stat: dict) -> dict:
         "points": stat.get("points", 0) or 0,
         "rebounds": reb.get("total", 0) if isinstance(reb, dict) else (reb or 0),
         "assists": stat.get("assists", 0) or 0,
+        "steals": stat.get("steals", 0) or 0,
+        "blocks": stat.get("blocks", 0) or 0,
+        "turnovers": stat.get("turnovers", 0) or 0,
         # FGA/FGM = 2pt + 3pt combined (API splits them separately)
         "fgm": (fg.get("total", 0) or 0) + (tp.get("total", 0) or 0),
         "fga": (fg.get("attempts", 0) or 0) + (tp.get("attempts", 0) or 0),

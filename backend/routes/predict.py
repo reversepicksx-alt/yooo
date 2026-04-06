@@ -2045,6 +2045,29 @@ Is this projection reasonable? Return ONLY JSON:
                 "agreement": bayesian_rec == ai_rec,
             }
 
+        # =============================================
+        # POST-FUSION POSSESSION SCALING — for pass-related props
+        # Match dominance multiplier applied DIRECTLY to the final
+        # projection, not buried in the 25%-capped Covariate layer.
+        # A team with 58% expected possession = 16% more passes.
+        # =============================================
+        poss_sensitive = {"pass_attempts", "passes", "key_passes", "crosses", "dribbles"}
+        if req.propType in poss_sensitive and match_dominance and match_dominance.get("multiplier"):
+            dom_mult = match_dominance["multiplier"]
+            if abs(dom_mult - 1.0) > 0.03:  # Only apply if >3% dominance shift
+                pre_poss = prediction.get("projectedValue", req.line)
+                post_poss = round(pre_poss * dom_mult, 1)
+                poss_pct = match_dominance.get("expectedPoss", 50)
+                prediction["projectedValue"] = post_poss
+                prediction["recommendation"] = "over" if post_poss > req.line else "under"
+                prediction["possessionScaling"] = {
+                    "prePossession": pre_poss,
+                    "postPossession": post_poss,
+                    "multiplier": dom_mult,
+                    "expectedPossession": poss_pct,
+                }
+                print(f"[POSSESSION] {req.propType}: {pre_poss} × {dom_mult:.2f} ({poss_pct:.0f}% poss) → {post_poss}")
+
         # HARD GUARD: recommendation MUST match the FINAL projected value vs line
         final_proj = prediction.get("projectedValue", req.line)
         prediction["recommendation"] = "over" if final_proj > req.line else "under"

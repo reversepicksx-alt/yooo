@@ -1,25 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Loader2, ArrowUpDown, ArrowUp, ArrowDown, Search, X } from 'lucide-react';
+import { Loader2, TrendingUp, TrendingDown, BarChart3 } from 'lucide-react';
 import { getIntelSheet } from '../../api';
 import { toast } from 'sonner';
 
 export function IntelTab({ auth }) {
   const [rows, setRows] = useState([]);
-  const [meta, setMeta] = useState({});
   const [loading, setLoading] = useState(true);
   const [sport, setSport] = useState('soccer');
-  const [sortCol, setSortCol] = useState('');
-  const [sortDir, setSortDir] = useState('asc');
-
-  // Smart filters
-  const [fResult, setFResult] = useState('all');
-  const [fRec, setFRec] = useState('all');
-  const [fPosition, setFPosition] = useState('all');
-  const [fLeague, setFLeague] = useState('all');
-  const [fVenue, setFVenue] = useState('all');
-  const [fGameType, setFGameType] = useState('all');
-  const [fProp, setFProp] = useState('all');
-  const [fOpponent, setFOpponent] = useState('');
 
   function fetchData(s) {
     setLoading(true);
@@ -27,7 +14,6 @@ export function IntelTab({ auth }) {
       .then(d => {
         if (d.error) { toast.error(d.error); return; }
         setRows(d.rows || []);
-        setMeta({ total: d.total || 0, hits: d.hits || 0, misses: d.misses || 0, rate: d.rate || 0 });
       })
       .catch(() => toast.error('Failed to load intel'))
       .finally(() => setLoading(false));
@@ -35,86 +21,86 @@ export function IntelTab({ auth }) {
 
   useEffect(() => { fetchData(sport); }, [sport]);
 
-  function toggleSort(col) {
-    if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
-    else { setSortCol(col); setSortDir('asc'); }
-  }
+  // Compute aggregate stats
+  const stats = useMemo(() => {
+    if (!rows.length) return null;
 
-  // Extract unique values for filter dropdowns
-  const opts = useMemo(() => {
-    const u = (k) => [...new Set(rows.map(r => r[k]).filter(Boolean))].sort();
-    // Hardcode positions so filter always works even before backfill
-    const soccerPositions = ['GK','CB','LB','RB','LWB','RWB','CDM','CM','CAM','LM','RM','LW','RW','CF','ST','DEF','MID','FWD'];
-    const basketballPositions = ['PG','SG','SF','PF','C','Guard','Forward','Center'];
-    const dataPositions = u('position');
-    const hardcoded = sport === 'basketball' ? basketballPositions : soccerPositions;
-    const merged = [...new Set([...hardcoded, ...dataPositions])].sort();
+    const settled = rows.filter(r => r.result === 'hit' || r.result === 'miss');
+    const totalHits = settled.filter(r => r.result === 'hit').length;
+    const totalMisses = settled.filter(r => r.result === 'miss').length;
+    const total = totalHits + totalMisses;
+    const overallRate = total > 0 ? Math.round(totalHits / total * 1000) / 10 : 0;
+
+    // By direction
+    const overPicks = settled.filter(r => r.rec === 'over');
+    const underPicks = settled.filter(r => r.rec === 'under');
+    const overHits = overPicks.filter(r => r.result === 'hit').length;
+    const underHits = underPicks.filter(r => r.result === 'hit').length;
+    const overRate = overPicks.length > 0 ? Math.round(overHits / overPicks.length * 1000) / 10 : 0;
+    const underRate = underPicks.length > 0 ? Math.round(underHits / underPicks.length * 1000) / 10 : 0;
+
+    // By prop type
+    const propMap = {};
+    settled.forEach(r => {
+      const key = r.prop || 'unknown';
+      if (!propMap[key]) propMap[key] = { prop: key, hits: 0, misses: 0, overHits: 0, overTotal: 0, underHits: 0, underTotal: 0 };
+      if (r.result === 'hit') propMap[key].hits++;
+      else propMap[key].misses++;
+      if (r.rec === 'over') {
+        propMap[key].overTotal++;
+        if (r.result === 'hit') propMap[key].overHits++;
+      } else {
+        propMap[key].underTotal++;
+        if (r.result === 'hit') propMap[key].underHits++;
+      }
+    });
+    const propStats = Object.values(propMap)
+      .map(p => ({
+        ...p,
+        total: p.hits + p.misses,
+        rate: p.hits + p.misses > 0 ? Math.round(p.hits / (p.hits + p.misses) * 1000) / 10 : 0,
+        overRate: p.overTotal > 0 ? Math.round(p.overHits / p.overTotal * 1000) / 10 : 0,
+        underRate: p.underTotal > 0 ? Math.round(p.underHits / p.underTotal * 1000) / 10 : 0,
+        bestDir: p.overTotal > 0 && p.underTotal > 0
+          ? (p.overHits / p.overTotal > p.underHits / p.underTotal ? 'OVER' : 'UNDER')
+          : p.overTotal > 0 ? 'OVER' : 'UNDER',
+      }))
+      .sort((a, b) => b.total - a.total);
+
+    // By position
+    const posMap = {};
+    settled.forEach(r => {
+      const key = r.position || 'Unknown';
+      if (!posMap[key]) posMap[key] = { pos: key, hits: 0, misses: 0 };
+      if (r.result === 'hit') posMap[key].hits++;
+      else posMap[key].misses++;
+    });
+    const posStats = Object.values(posMap)
+      .map(p => ({ ...p, total: p.hits + p.misses, rate: p.hits + p.misses > 0 ? Math.round(p.hits / (p.hits + p.misses) * 1000) / 10 : 0 }))
+      .filter(p => p.total >= 2)
+      .sort((a, b) => b.rate - a.rate);
+
+    // By venue
+    const homeH = settled.filter(r => r.venue === 'home' && r.result === 'hit').length;
+    const homeT = settled.filter(r => r.venue === 'home').length;
+    const awayH = settled.filter(r => r.venue === 'away' && r.result === 'hit').length;
+    const awayT = settled.filter(r => r.venue === 'away').length;
+
+    // Average error
+    const errors = settled.filter(r => typeof r.error === 'number').map(r => r.error);
+    const avgError = errors.length > 0 ? (errors.reduce((a, b) => a + b, 0) / errors.length).toFixed(1) : '—';
+    const avgAbsError = errors.length > 0 ? (errors.reduce((a, b) => a + Math.abs(b), 0) / errors.length).toFixed(1) : '—';
+
     return {
-      positions: merged,
-      leagues: u('league'),
-      venues: u('venue'),
-      gameTypes: u('gameType'),
-      props: u('prop'),
+      total, totalHits, totalMisses, overallRate,
+      overRate, underRate, overTotal: overPicks.length, underTotal: underPicks.length,
+      propStats, posStats,
+      homeRate: homeT > 0 ? Math.round(homeH / homeT * 1000) / 10 : 0,
+      awayRate: awayT > 0 ? Math.round(awayH / awayT * 1000) / 10 : 0,
+      homeTotal: homeT, awayTotal: awayT,
+      avgError, avgAbsError,
     };
-  }, [rows, sport]);
-
-  // Apply all filters + sorting
-  const filtered = useMemo(() => {
-    let r = rows;
-    if (fResult !== 'all') r = r.filter(x => x.result === fResult);
-    if (fRec !== 'all') r = r.filter(x => x.rec === fRec);
-    if (fPosition !== 'all') r = r.filter(x => x.position === fPosition);
-    if (fLeague !== 'all') r = r.filter(x => x.league === fLeague);
-    if (fVenue !== 'all') r = r.filter(x => x.venue === fVenue);
-    if (fGameType !== 'all') r = r.filter(x => x.gameType === fGameType);
-    if (fProp !== 'all') r = r.filter(x => x.prop === fProp);
-    if (fOpponent) r = r.filter(x => (x.opponent || '').toLowerCase().includes(fOpponent.toLowerCase()));
-    if (sortCol) {
-      r = [...r].sort((a, b) => {
-        let va = a[sortCol], vb = b[sortCol];
-        if (typeof va === 'number' && typeof vb === 'number') return sortDir === 'asc' ? va - vb : vb - va;
-        va = String(va || '').toLowerCase(); vb = String(vb || '').toLowerCase();
-        return sortDir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
-      });
-    }
-    return r;
-  }, [rows, sortCol, sortDir, fResult, fRec, fPosition, fLeague, fVenue, fGameType, fProp, fOpponent]);
-
-  // Filtered stats
-  const fStats = useMemo(() => {
-    const h = filtered.filter(r => r.result === 'hit').length;
-    const m = filtered.filter(r => r.result === 'miss').length;
-    const t = h + m;
-    return { hits: h, misses: m, total: t, rate: t > 0 ? Math.round(h / t * 1000) / 10 : 0 };
-  }, [filtered]);
-
-  const hasFilters = fResult !== 'all' || fRec !== 'all' || fPosition !== 'all' || fLeague !== 'all' || fVenue !== 'all' || fGameType !== 'all' || fProp !== 'all' || fOpponent;
-
-  function clearAll() {
-    setFResult('all'); setFRec('all'); setFPosition('all'); setFLeague('all');
-    setFVenue('all'); setFGameType('all'); setFProp('all'); setFOpponent('');
-  }
-
-  const COLS = [
-    { key: 'player', label: 'Player', w: 100 },
-    { key: 'position', label: 'Pos', w: 42 },
-    { key: 'prop', label: 'Prop', w: 90, fmt: v => (v || '').replace(/_/g, ' ') },
-    { key: 'rec', label: 'Rec', w: 48, color: v => v === 'over' ? '#10b981' : '#818cf8' },
-    { key: 'line', label: 'Line', w: 44, num: true },
-    { key: 'proj', label: 'Proj', w: 44, num: true },
-    { key: 'actual', label: 'Act', w: 40, num: true },
-    { key: 'error', label: 'Err', w: 44, num: true, color: v => v < 0 ? '#f43f5e' : v > 0 ? '#10b981' : '#fff', fmt: v => v > 0 ? `+${v}` : v },
-    { key: 'result', label: 'Result', w: 42, color: v => v === 'hit' ? '#10b981' : v === 'miss' ? '#f43f5e' : '#f59e0b' },
-    { key: 'league', label: 'League', w: 100 },
-    { key: 'venue', label: 'Venue', w: 46, fmt: v => (v || '').toUpperCase() },
-    { key: 'gameType', label: 'Game', w: 54 },
-    { key: 'matchResult', label: 'Match', w: 42, color: v => v === 'win' ? '#10b981' : v === 'loss' ? '#f43f5e' : '#f59e0b' },
-    { key: 'score', label: 'Score', w: 46 },
-    { key: 'confidence', label: 'Conf', w: 40, num: true, fmt: v => `${v}%` },
-    { key: 'errDir', label: 'Bias', w: 42, color: v => v === 'over' ? '#f43f5e' : v === 'under' ? '#10b981' : 'var(--text-muted)', fmt: v => v === 'over' ? 'OVER' : v === 'under' ? 'UNDER' : '-' },
-    { key: 'role', label: 'Role', w: 90 },
-    { key: 'opponent', label: 'Opp', w: 90 },
-  ];
+  }, [rows]);
 
   if (loading) {
     return (
@@ -124,10 +110,12 @@ export function IntelTab({ auth }) {
     );
   }
 
+  const rateColor = (r) => r >= 65 ? 'var(--accent)' : r >= 50 ? '#f59e0b' : '#f43f5e';
+
   return (
     <div data-testid="intel-tab" style={{ padding: '0 0 80px' }}>
       {/* Sport Toggle */}
-      <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
         {['soccer', 'basketball'].map(s => (
           <button key={s} data-testid={`intel-sport-${s}`} onClick={() => setSport(s)} style={{
             flex: 1, padding: '8px 0', borderRadius: 8, fontWeight: 800, fontSize: 11,
@@ -139,166 +127,181 @@ export function IntelTab({ auth }) {
         ))}
       </div>
 
-      {/* Overall Stats */}
-      <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
-        <StatBox label="Rate" value={`${meta.rate}%`} color={meta.rate >= 65 ? 'var(--accent)' : meta.rate >= 50 ? '#f59e0b' : '#f43f5e'} sub={`${meta.total} total`} />
-        <StatBox label="Hits" value={meta.hits} color="var(--accent)" />
-        <StatBox label="Miss" value={meta.misses} color="#f43f5e" />
-      </div>
-
-      {/* Smart Filters */}
-      <div data-testid="smart-filters" style={{
-        padding: '8px', borderRadius: 10,
-        background: 'rgba(255,255,255,0.015)', border: '1px solid rgba(255,255,255,0.06)',
-        marginBottom: 8,
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <Search style={{ width: 10, height: 10, color: 'var(--accent)' }} />
-            <span style={{ fontSize: 8, fontWeight: 800, color: 'var(--accent)', letterSpacing: '0.06em' }}>SEARCH & FILTER</span>
+      {!stats || stats.total === 0 ? (
+        <div style={{ textAlign: 'center', padding: 40, color: 'rgba(255,255,255,0.3)', fontSize: 12 }}>
+          No settled picks yet. Make predictions to see your intel.
+        </div>
+      ) : (
+        <>
+          {/* Overall Performance */}
+          <div data-testid="overall-stats" style={{
+            padding: 12, borderRadius: 10, marginBottom: 10,
+            background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+              <BarChart3 style={{ width: 12, height: 12, color: 'var(--accent)' }} />
+              <span style={{ fontSize: 9, fontWeight: 800, color: 'var(--accent)', letterSpacing: '0.06em' }}>OVERALL PERFORMANCE</span>
+            </div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <MiniStat label="Hit Rate" value={`${stats.overallRate}%`} color={rateColor(stats.overallRate)} sub={`${stats.total} picks`} />
+              <MiniStat label="Hits" value={stats.totalHits} color="var(--accent)" />
+              <MiniStat label="Misses" value={stats.totalMisses} color="#f43f5e" />
+              <MiniStat label="Avg Error" value={stats.avgAbsError} color="rgba(255,255,255,0.5)" sub="abs" />
+            </div>
           </div>
-          {hasFilters && (
-            <button onClick={clearAll} data-testid="clear-filters" style={{
-              display: 'flex', alignItems: 'center', gap: 2, padding: '2px 6px', borderRadius: 4,
-              background: 'rgba(244,63,94,0.1)', border: '1px solid rgba(244,63,94,0.2)',
-              color: '#f43f5e', fontSize: 7, fontWeight: 800, cursor: 'pointer',
-            }}><X style={{ width: 8, height: 8 }} /> CLEAR</button>
-          )}
-        </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 4, marginBottom: 4 }}>
-          <FilterSelect label="Position" value={fPosition} onChange={setFPosition} options={opts.positions} testId="filter-position" />
-          <FilterSelect label="League" value={fLeague} onChange={setFLeague} options={opts.leagues} testId="filter-league" />
-          <FilterSelect label="Venue" value={fVenue} onChange={setFVenue} options={opts.venues} fmtOpt={v => v.toUpperCase()} testId="filter-venue" />
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 4, marginBottom: 4 }}>
-          <FilterSelect label="Game Type" value={fGameType} onChange={setFGameType} options={opts.gameTypes} testId="filter-gametype" />
-          <FilterSelect label="Prop" value={fProp} onChange={setFProp} options={opts.props} fmtOpt={v => v.replace(/_/g, ' ')} testId="filter-prop" />
-          <FilterSelect label="Direction" value={fRec} onChange={setFRec} options={['over', 'under']} fmtOpt={v => v.toUpperCase()} testId="filter-rec" />
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
-          <FilterSelect label="Result" value={fResult} onChange={setFResult} options={['hit', 'miss', 'push']} fmtOpt={v => v.toUpperCase()} testId="filter-result" />
-          <div>
-            <div style={{ fontSize: 7, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 2, textTransform: 'uppercase' }}>Opponent</div>
-            <input
-              type="text" placeholder="Search..." value={fOpponent} onChange={e => setFOpponent(e.target.value)}
-              data-testid="filter-opponent"
-              style={{
-                width: '100%', padding: '4px 6px', borderRadius: 4, fontSize: 9, fontWeight: 700,
-                background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)',
-                color: '#fff', outline: 'none', boxSizing: 'border-box',
-              }}
-            />
+          {/* Direction Split */}
+          <div data-testid="direction-stats" style={{
+            padding: 12, borderRadius: 10, marginBottom: 10,
+            background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)',
+          }}>
+            <div style={{ fontSize: 9, fontWeight: 800, color: 'rgba(255,255,255,0.4)', letterSpacing: '0.06em', marginBottom: 8 }}>
+              OVER vs UNDER
+            </div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <DirectionCard dir="OVER" rate={stats.overRate} total={stats.overTotal} />
+              <DirectionCard dir="UNDER" rate={stats.underRate} total={stats.underTotal} />
+            </div>
+            <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+              <DirectionCard dir="HOME" rate={stats.homeRate} total={stats.homeTotal} />
+              <DirectionCard dir="AWAY" rate={stats.awayRate} total={stats.awayTotal} />
+            </div>
           </div>
-        </div>
-      </div>
 
-      {/* Filtered Stats (when filters active) */}
-      {hasFilters && (
-        <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
-          <StatBox label="Filtered Rate" value={`${fStats.rate}%`} color={fStats.rate >= 65 ? 'var(--accent)' : fStats.rate >= 50 ? '#f59e0b' : '#f43f5e'} sub={`${fStats.total} picks`} />
-          <StatBox label="Hits" value={fStats.hits} color="var(--accent)" />
-          <StatBox label="Miss" value={fStats.misses} color="#f43f5e" />
-        </div>
-      )}
-
-      <div style={{ fontSize: 8, color: 'var(--text-muted)', marginBottom: 6, fontWeight: 600 }}>
-        {filtered.length} of {rows.length} picks  |  Tap header to sort
-      </div>
-
-      {/* Spreadsheet */}
-      <div data-testid="intel-sheet" style={{
-        overflowX: 'auto', overflowY: 'auto',
-        borderRadius: 10, border: '1px solid rgba(255,255,255,0.08)',
-        maxHeight: 'calc(100vh - 420px)',
-        WebkitOverflowScrolling: 'touch',
-      }}>
-        <table style={{ borderCollapse: 'collapse', width: 'max-content', minWidth: '100%', fontFamily: "'JetBrains Mono', monospace", fontSize: 9 }}>
-          <thead>
-            <tr>
-              {COLS.map(col => (
-                <th key={col.key} data-testid={`col-${col.key}`} onClick={() => toggleSort(col.key)} style={{
-                  position: 'sticky', top: 0, zIndex: col.key === 'player' ? 3 : 2,
-                  ...(col.key === 'player' ? { left: 0, zIndex: 3 } : {}),
-                  background: '#0d0d14', padding: '7px 6px', textAlign: 'left',
-                  fontWeight: 900, fontSize: 7, letterSpacing: '0.06em', textTransform: 'uppercase',
-                  color: sortCol === col.key ? 'var(--accent)' : 'rgba(255,255,255,0.45)',
-                  borderBottom: '2px solid rgba(16,185,129,0.15)',
-                  cursor: 'pointer', whiteSpace: 'nowrap', userSelect: 'none', minWidth: col.w,
-                }}>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
-                    {col.label}
-                    {sortCol === col.key ? (sortDir === 'asc' ? <ArrowUp style={{ width: 8, height: 8 }} /> : <ArrowDown style={{ width: 8, height: 8 }} />) : <ArrowUpDown style={{ width: 7, height: 7, opacity: 0.3 }} />}
-                  </span>
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((row, i) => (
-              <tr key={i} data-testid={`row-${i}`} style={{
-                background: i % 2 === 0 ? 'rgba(255,255,255,0.01)' : 'transparent',
-                borderBottom: '1px solid rgba(255,255,255,0.03)',
-              }}>
-                {COLS.map(col => {
-                  const raw = row[col.key];
-                  const display = col.fmt ? col.fmt(raw) : raw;
-                  const clr = typeof col.color === 'function' ? col.color(raw) : '#fff';
-                  return (
-                    <td key={col.key} style={{
-                      padding: '6px 6px', whiteSpace: 'nowrap',
-                      color: clr, fontWeight: col.key === 'result' || col.key === 'error' ? 800 : 600,
-                      ...(col.key === 'player' ? { position: 'sticky', left: 0, zIndex: 1, background: i % 2 === 0 ? '#0b0b12' : '#0a0a0f', fontWeight: 800 } : {}),
-                      textTransform: col.key === 'result' || col.key === 'rec' || col.key === 'venue' ? 'uppercase' : 'none',
-                    }}>
-                      {display ?? '-'}
-                    </td>
-                  );
-                })}
-              </tr>
+          {/* Prop Type Breakdown */}
+          <div data-testid="prop-breakdown" style={{
+            padding: 12, borderRadius: 10, marginBottom: 10,
+            background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)',
+          }}>
+            <div style={{ fontSize: 9, fontWeight: 800, color: 'rgba(255,255,255,0.4)', letterSpacing: '0.06em', marginBottom: 8 }}>
+              HIT RATE BY PROP TYPE
+            </div>
+            {stats.propStats.map(p => (
+              <PropRow key={p.prop} {...p} />
             ))}
-            {filtered.length === 0 && (
-              <tr><td colSpan={COLS.length} style={{ textAlign: 'center', padding: 30, color: 'var(--text-muted)', fontSize: 11 }}>No picks match filters</td></tr>
-            )}
-          </tbody>
-        </table>
+          </div>
+
+          {/* Position Breakdown */}
+          {stats.posStats.length > 0 && (
+            <div data-testid="position-breakdown" style={{
+              padding: 12, borderRadius: 10, marginBottom: 10,
+              background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)',
+            }}>
+              <div style={{ fontSize: 9, fontWeight: 800, color: 'rgba(255,255,255,0.4)', letterSpacing: '0.06em', marginBottom: 8 }}>
+                HIT RATE BY POSITION
+              </div>
+              {stats.posStats.map(p => (
+                <div key={p.pos} style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  padding: '5px 0', borderBottom: '1px solid rgba(255,255,255,0.03)',
+                }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.6)', width: 50 }}>{p.pos}</span>
+                  <div style={{ flex: 1, height: 4, borderRadius: 2, background: 'rgba(255,255,255,0.06)', margin: '0 8px', overflow: 'hidden' }}>
+                    <div style={{ width: `${p.rate}%`, height: '100%', borderRadius: 2, background: rateColor(p.rate) }} />
+                  </div>
+                  <span style={{ fontSize: 10, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: rateColor(p.rate), width: 35, textAlign: 'right' }}>
+                    {p.rate}%
+                  </span>
+                  <span style={{ fontSize: 8, color: 'rgba(255,255,255,0.3)', width: 25, textAlign: 'right' }}>
+                    {p.total}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function MiniStat({ label, value, color, sub }) {
+  return (
+    <div style={{
+      flex: 1, padding: '8px 6px', borderRadius: 8,
+      background: 'rgba(255,255,255,0.03)', textAlign: 'center',
+    }}>
+      <div style={{ fontSize: 8, fontWeight: 700, color: 'rgba(255,255,255,0.4)', letterSpacing: '0.05em', marginBottom: 3 }}>{label}</div>
+      <div style={{ fontSize: 16, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color }}>{value}</div>
+      {sub && <div style={{ fontSize: 7, color: 'rgba(255,255,255,0.25)', marginTop: 1 }}>{sub}</div>}
+    </div>
+  );
+}
+
+function DirectionCard({ dir, rate, total }) {
+  const isOver = dir === 'OVER';
+  const isHome = dir === 'HOME';
+  const color = rate >= 65 ? 'var(--accent)' : rate >= 50 ? '#f59e0b' : '#f43f5e';
+  const icon = isOver || isHome
+    ? <TrendingUp style={{ width: 10, height: 10, color }} />
+    : <TrendingDown style={{ width: 10, height: 10, color }} />;
+
+  return (
+    <div style={{
+      flex: 1, padding: '8px 10px', borderRadius: 8,
+      background: 'rgba(255,255,255,0.03)', display: 'flex',
+      alignItems: 'center', justifyContent: 'space-between',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+        {icon}
+        <span style={{ fontSize: 10, fontWeight: 800, color: 'rgba(255,255,255,0.6)' }}>{dir}</span>
+      </div>
+      <div style={{ textAlign: 'right' }}>
+        <span style={{ fontSize: 14, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color }}>{rate}%</span>
+        <span style={{ fontSize: 8, color: 'rgba(255,255,255,0.25)', marginLeft: 4 }}>{total}</span>
       </div>
     </div>
   );
 }
 
-function FilterSelect({ label, value, onChange, options, fmtOpt, testId }) {
+function PropRow({ prop, rate, total, hits, misses, overRate, underRate, overTotal, underTotal, bestDir }) {
+  const rateColor = rate >= 65 ? 'var(--accent)' : rate >= 50 ? '#f59e0b' : '#f43f5e';
+  const label = (prop || '').replace(/_/g, ' ');
+
   return (
-    <div>
-      <div style={{ fontSize: 7, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 2, textTransform: 'uppercase' }}>{label}</div>
-      <select
-        value={value} onChange={e => onChange(e.target.value)}
-        data-testid={testId}
-        style={{
-          width: '100%', padding: '4px 4px', borderRadius: 4, fontSize: 9, fontWeight: 700,
-          background: value !== 'all' ? 'rgba(16,185,129,0.08)' : 'rgba(255,255,255,0.04)',
-          border: value !== 'all' ? '1px solid rgba(16,185,129,0.25)' : '1px solid rgba(255,255,255,0.1)',
-          color: value !== 'all' ? 'var(--accent)' : '#fff',
-          outline: 'none', appearance: 'auto', cursor: 'pointer',
-        }}
-      >
-        <option value="all">All</option>
-        {options.map(o => (
-          <option key={o} value={o}>{fmtOpt ? fmtOpt(o) : o}</option>
-        ))}
-      </select>
+    <div style={{
+      padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.03)',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+        <span style={{ fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.7)', textTransform: 'capitalize' }}>{label}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontSize: 12, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", color: rateColor }}>
+            {rate}%
+          </span>
+          <span style={{ fontSize: 8, color: 'rgba(255,255,255,0.3)' }}>
+            {hits}/{total}
+          </span>
+        </div>
+      </div>
+      {/* Over/Under split for this prop */}
+      <div style={{ display: 'flex', gap: 4 }}>
+        {overTotal > 0 && (
+          <div style={{
+            flex: 1, padding: '3px 6px', borderRadius: 4,
+            background: bestDir === 'OVER' ? 'rgba(0,255,136,0.06)' : 'rgba(255,255,255,0.02)',
+            border: bestDir === 'OVER' ? '1px solid rgba(0,255,136,0.15)' : '1px solid transparent',
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          }}>
+            <span style={{ fontSize: 8, fontWeight: 800, color: 'rgba(255,255,255,0.4)' }}>OVER</span>
+            <span style={{ fontSize: 9, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: overRate >= 65 ? 'var(--accent)' : overRate >= 50 ? '#f59e0b' : '#f43f5e' }}>
+              {overRate}% <span style={{ fontSize: 7, color: 'rgba(255,255,255,0.25)' }}>({overTotal})</span>
+            </span>
+          </div>
+        )}
+        {underTotal > 0 && (
+          <div style={{
+            flex: 1, padding: '3px 6px', borderRadius: 4,
+            background: bestDir === 'UNDER' ? 'rgba(129,140,248,0.06)' : 'rgba(255,255,255,0.02)',
+            border: bestDir === 'UNDER' ? '1px solid rgba(129,140,248,0.15)' : '1px solid transparent',
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          }}>
+            <span style={{ fontSize: 8, fontWeight: 800, color: 'rgba(255,255,255,0.4)' }}>UNDER</span>
+            <span style={{ fontSize: 9, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: underRate >= 65 ? 'var(--accent)' : underRate >= 50 ? '#f59e0b' : '#f43f5e' }}>
+              {underRate}% <span style={{ fontSize: 7, color: 'rgba(255,255,255,0.25)' }}>({underTotal})</span>
+            </span>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
-
-function StatBox({ label, value, color, sub }) {
-  return (
-    <div style={{ flex: 1, padding: '8px 0', borderRadius: 8, textAlign: 'center', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}>
-      <div style={{ fontSize: 7, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 2 }}>{label}</div>
-      <div style={{ fontSize: 18, fontWeight: 900, color }}>{value}</div>
-      {sub && <div style={{ fontSize: 7, color: 'var(--text-muted)' }}>{sub}</div>}
-    </div>
-  );
-}
-
-export default IntelTab;
