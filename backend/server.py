@@ -70,6 +70,8 @@ async def seed_grants():
     )
     # Seed the API-Football lookup cache (non-blocking)
     import asyncio
+    # Create index for fixture stat cache (speeds up prediction pipeline)
+    await db.fixture_player_cache.create_index("_k", unique=True)
     asyncio.create_task(seed_cache())
     # Build master team cache for smart opponent resolution
     from team_resolver import build_teams_cache

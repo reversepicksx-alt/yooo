@@ -198,7 +198,7 @@ async def predict(req: PredictionRequest):
                 return None
 
             standings_task = get_standings_multi_season()
-            fixtures_task = get_recent_fixtures_fast(actual_team_id, 50)
+            fixtures_task = get_recent_fixtures_fast(actual_team_id, 25)
             odds_task = get_match_odds()
 
         import time as _t
@@ -231,12 +231,22 @@ async def predict(req: PredictionRequest):
 
         # 1. Per-fixture team stats (possession, shots, passes per match)
         async def fetch_fixture_team_stats(fixture_list, team_id, limit=5):
-            """Fetch per-match team stats — ALL fixtures fetched in parallel"""
+            """Fetch per-match team stats — cached in MongoDB for finished fixtures."""
             async def fetch_one(fix):
                 fid = fix.get("fixtureId")
                 if not fid:
                     return None
                 try:
+                    cache_key = f"fxt_{fid}_{team_id}"
+                    cached = await db.fixture_player_cache.find_one({"_k": cache_key}, {"_id": 0, "d": 1})
+                    if cached and cached.get("d"):
+                        r = cached["d"]
+                        r["date"] = fix.get("date", "")[:10]
+                        r["opponent"] = fix.get("opponent", "")
+                        r["venue"] = fix.get("venue", "")
+                        r["score"] = f"{fix.get('homeGoals',0)}-{fix.get('awayGoals',0)}"
+                        return r
+
                     data = await api_football_request("fixtures/statistics", {"fixture": fid})
                     if not data:
                         return None
@@ -245,11 +255,7 @@ async def predict(req: PredictionRequest):
                             raw_stats = {}
                             for s in team_data.get("statistics", []):
                                 raw_stats[s.get("type", "")] = s.get("value")
-                            return {
-                                "date": fix.get("date", "")[:10],
-                                "opponent": fix.get("opponent", ""),
-                                "venue": fix.get("venue", ""),
-                                "score": f"{fix.get('homeGoals',0)}-{fix.get('awayGoals',0)}",
+                            result = {
                                 "possession": raw_stats.get("Ball Possession", ""),
                                 "totalShots": raw_stats.get("Total Shots"),
                                 "shotsOnTarget": raw_stats.get("Shots on Goal"),
@@ -264,6 +270,14 @@ async def predict(req: PredictionRequest):
                                 "corners": raw_stats.get("Corner Kicks"),
                                 "expectedGoals": raw_stats.get("expected_goals"),
                             }
+                            await db.fixture_player_cache.update_one(
+                                {"_k": cache_key}, {"$set": {"_k": cache_key, "d": result}}, upsert=True
+                            )
+                            result["date"] = fix.get("date", "")[:10]
+                            result["opponent"] = fix.get("opponent", "")
+                            result["venue"] = fix.get("venue", "")
+                            result["score"] = f"{fix.get('homeGoals',0)}-{fix.get('awayGoals',0)}"
+                            return result
                 except Exception:
                     return None
 
@@ -273,7 +287,7 @@ async def predict(req: PredictionRequest):
 
         # 2. Player game-by-game box scores from recent fixtures
         async def fetch_player_game_logs(fixture_list, player_id, limit=8):
-            """Fetch player's individual stats — ALL fixtures fetched in parallel"""
+            """Fetch player's individual stats — uses MongoDB cache for finished fixtures."""
             player_name_lower = strip_accents(req.playerName.lower().split()[-1]) if req.playerName else ""
 
             async def fetch_one_log(fix):
@@ -281,6 +295,35 @@ async def predict(req: PredictionRequest):
                 if not fid:
                     return None
                 try:
+                    # Check MongoDB cache first
+                    cache_key = f"fxp_{fid}_{player_id}"
+                    cached = await db.fixture_player_cache.find_one({"_k": cache_key}, {"_id": 0, "d": 1})
+                    if cached and cached.get("d"):
+                        gl = cached["d"]
+                        gl["date"] = fix.get("date", "")[:10]
+                        gl["opponent"] = fix.get("opponent", "")
+                        gl["venue"] = fix.get("venue", "")
+                        gl["score"] = f"{fix.get('homeGoals',0)}-{fix.get('awayGoals',0)}"
+                        gl["league"] = fix.get("league", "")
+                        gl["round"] = fix.get("round", "")
+                        stat_field_map = {
+                            "goals": "goals_total", "assists": "goals_assists",
+                            "shots_assisted": "passes_key",
+                            "pass_attempts": "passes_total", "shots": "shots_total",
+                            "shots_on_target": "shots_on", "tackles": "tackles_total",
+                            "key_passes": "passes_key", "saves": "goals_saves",
+                            "interceptions": "tackles_interceptions", "blocks": "tackles_blocks",
+                            "dribbles": "dribbles_attempts", "dribbles_success": "dribbles_success",
+                            "fouls_drawn": "fouls_drawn", "fouls_committed": "fouls_committed",
+                            "crosses": "passes_crosses", "clearances": "tackles_clearances",
+                            "duels_won": "duels_won", "yellow_cards": "cards_yellow",
+                        }
+                        raw_val = gl.get(stat_field_map.get(req.propType, ""), None)
+                        minutes = gl.get("minutes", 0)
+                        if raw_val is not None and minutes > 0:
+                            gl["targetStatPer90"] = round((raw_val / minutes) * 90, 2)
+                        return gl
+
                     data = await api_football_request("fixtures/players", {"fixture": fid})
                     if not data:
                         return None
@@ -298,19 +341,17 @@ async def predict(req: PredictionRequest):
                         if matched_stats:
                             break
                     if not matched_stats:
+                        # Cache miss (player not found) to avoid re-fetching
+                        await db.fixture_player_cache.update_one(
+                            {"_k": cache_key}, {"$set": {"_k": cache_key, "d": None}}, upsert=True
+                        )
                         return None
                     stats = matched_stats
                     minutes = stats.get("games", {}).get("minutes") or 0
                     rating = stats.get("games", {}).get("rating")
                     game_log = {
-                        "date": fix.get("date", "")[:10],
-                        "opponent": fix.get("opponent", ""),
-                        "venue": fix.get("venue", ""),
-                        "score": f"{fix.get('homeGoals',0)}-{fix.get('awayGoals',0)}",
                         "minutes": minutes,
                         "rating": float(rating) if rating else None,
-                        "league": fix.get("league", ""),
-                        "round": fix.get("round", ""),
                         "passes_total": stats.get("passes", {}).get("total"),
                         "passes_key": stats.get("passes", {}).get("key"),
                         "passes_accuracy": stats.get("passes", {}).get("accuracy"),
@@ -332,6 +373,17 @@ async def predict(req: PredictionRequest):
                         "tackles_clearances": stats.get("tackles", {}).get("clearances"),
                         "cards_yellow": stats.get("cards", {}).get("yellow"),
                     }
+                    # Cache the player stat data
+                    await db.fixture_player_cache.update_one(
+                        {"_k": cache_key}, {"$set": {"_k": cache_key, "d": game_log}}, upsert=True
+                    )
+                    # Add contextual fields for return
+                    game_log["date"] = fix.get("date", "")[:10]
+                    game_log["opponent"] = fix.get("opponent", "")
+                    game_log["venue"] = fix.get("venue", "")
+                    game_log["score"] = f"{fix.get('homeGoals',0)}-{fix.get('awayGoals',0)}"
+                    game_log["league"] = fix.get("league", "")
+                    game_log["round"] = fix.get("round", "")
                     stat_field_map = {
                         "goals": "goals_total", "assists": "goals_assists",
                         "shots_assisted": "passes_key",
@@ -354,7 +406,6 @@ async def predict(req: PredictionRequest):
             tasks = [fetch_one_log(fix) for fix in fixture_list[:limit]]
             results_raw = await aio.gather(*tasks, return_exceptions=True)
             return [r for r in results_raw if r and not isinstance(r, Exception)]
-            return results
 
         # =============================================
         # POSITION COMPARISON: Same-position players vs opponent
@@ -544,7 +595,7 @@ async def predict(req: PredictionRequest):
         # Search venue-matching fixtures first (away if away prop, home if home prop)
         # so we maximize relevant venue samples (target: 15-20 venue-matched games)
         venue_first_fixtures = venue_filtered_team_fixtures + [f for f in all_team_fixtures if f.get("venue") != player_venue]
-        player_game_logs_task = fetch_player_game_logs(venue_first_fixtures, req.playerId, 30)
+        player_game_logs_task = fetch_player_game_logs(venue_first_fixtures, req.playerId, 12)
 
         # Position comparison task — same-position players vs this opponent
         # (started later after player_position is resolved)
@@ -639,7 +690,7 @@ async def predict(req: PredictionRequest):
             return_exceptions=True
         )
         try:
-            results = await aio.wait_for(all_wave2, timeout=12)
+            results = await aio.wait_for(all_wave2, timeout=15)
         except aio.TimeoutError:
             results = [None, None, None]
 
