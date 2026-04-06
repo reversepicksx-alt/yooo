@@ -22,26 +22,8 @@ export const PROP_TYPES = [
   { key: 'yellow_cards', label: 'Yellow Cards', stat: 'cards.yellow', desc: 'Yellow cards received' },
 ];
 
-export const BASKETBALL_PROP_TYPES = [
-  { key: 'points', label: 'Points', desc: 'Total points scored' },
-  { key: 'rebounds', label: 'Rebounds', desc: 'Total rebounds' },
-  { key: 'assists', label: 'Assists', desc: 'Total assists' },
-  { key: 'pts_reb_ast', label: 'Pts+Reb+Ast', desc: 'Points + Rebounds + Assists combined' },
-  { key: 'pts_reb', label: 'Pts+Reb', desc: 'Points + Rebounds combined' },
-  { key: 'pts_ast', label: 'Pts+Ast', desc: 'Points + Assists combined' },
-  { key: 'reb_ast', label: 'Reb+Ast', desc: 'Rebounds + Assists combined' },
-  { key: 'blk_stl', label: 'Blk+Stl', desc: 'Blocks + Steals combined' },
-  { key: 'steals', label: 'Steals', desc: 'Steals' },
-  { key: 'blocks', label: 'Blocks', desc: 'Blocks' },
-  { key: 'turnovers', label: 'Turnovers', desc: 'Turnovers' },
-  { key: 'three_pointers', label: '3-Pointers Made', desc: '3-point field goals made' },
-  { key: 'fgm', label: 'FG Made', desc: 'Field goals made' },
-  { key: 'ftm', label: 'FT Made', desc: 'Free throws made' },
-];
-
 export function getPropLabel(key) {
-  const all = [...PROP_TYPES, ...BASKETBALL_PROP_TYPES];
-  const p = all.find(pt => pt.key === key);
+  const p = PROP_TYPES.find(pt => pt.key === key);
   return p ? p.label : key.replace(/_/g, ' ');
 }
 

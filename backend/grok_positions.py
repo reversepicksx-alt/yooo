@@ -24,7 +24,7 @@ async def resolve_position_grok(player_name: str, sport: str = "soccer") -> dict
 
 async def resolve_positions_grok_batch(players: list) -> dict:
     """Batch-resolve positions for multiple players.
-    Input: [{"playerName": "...", "sport": "soccer|basketball", "playerId": optional}]
+    Input: [{"playerName": "...", "sport": "soccer", "playerId": optional}]
     Returns: {"PlayerName": {"position": "XX", "role": "..."}, ...}
     """
     if not players:

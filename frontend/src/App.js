@@ -11,12 +11,12 @@ import {
   checkApiStatus, SUPPORTED_LEAGUES,
   verifyWhop, authLogin, setPassword as apiSetPassword, resetPassword, verifySession, authLogout,
   getPickOfTheDay, savePick, listPicks, deletePick, correctPick, liveUpdatePicks,
-  scanProp, reResolvePick, analyzeMiss, getMisses, basketballSearchTeams, basketballPredict,
+  scanProp, reResolvePick, analyzeMiss, getMisses,
   getAdminSettings, updateAdminSetting, testApiKey
 } from './api';
 import { toast, Toaster } from 'sonner';
 import './App.css';
-import { PROP_TYPES, BASKETBALL_PROP_TYPES, OWNER_EMAIL, getPropLabel } from './constants';
+import { PROP_TYPES, OWNER_EMAIL, getPropLabel } from './constants';
 import { ProjectionCard } from './components/app/ProjectionCard';
 import { LoginPage } from './components/app/LoginPage';
 import { PickOfTheDayCard } from './components/app/PickOfTheDayCard';
@@ -194,7 +194,7 @@ export default function App() {
               // Find the pick to get player name
               const pick = savedPicksRef.current.find(p => p.pickId === u.pickId);
               if (pick) {
-                const propLabel = [...PROP_TYPES, ...BASKETBALL_PROP_TYPES].find(pt => pt.key === pick.propType)?.label || pick.propType;
+                const propLabel = PROP_TYPES.find(pt => pt.key === pick.propType)?.label || pick.propType;
                 const isHit = u.result === 'hit';
                 const isPush = u.result === 'push';
                 const notif = {
@@ -519,7 +519,7 @@ export default function App() {
 
       setIsScanning(true);
       try {
-        const result = await scanProp(base64Data, activeSport);
+        const result = await scanProp(base64Data, 'soccer');
         if (result.picks && result.picks.length > 0) {
           let picks = result.picks;
           
@@ -612,31 +612,6 @@ export default function App() {
         setScanPredictingIdx(prev => ({ ...prev, [idx]: false }));
       }
     } else {
-      const isBasketballPick = pickData.sport === 'basketball' || pickData.extracted?.sport === 'basketball';
-
-      if (isBasketballPick) {
-        setScanPredictingIdx(prev => ({ ...prev, [idx]: true }));
-        try {
-          const teamId = pickData.resolved?.teamId || 0;
-          const teamName = pickData.resolved?.teamName || pickData.extracted?.playerTeam || 'Unknown';
-          const opponentId = pickData.resolvedOpponent?.teamId || 0;
-          const opponentName = pickData.resolvedOpponent?.teamName || pickData.extracted?.opponentName || 'Unknown';
-          const venue = scanVenueOverrides[idx] || pickData.extracted?.venue || 'home';
-          const result = await basketballPredict({
-            teamId, teamName, opponentId, opponentName,
-            playerName: pickData.extracted?.playerName || 'Unknown',
-            venue,
-            propType: pickData.extracted?.propType || 'points',
-            line: pickData.extracted?.line || 0,
-          });
-          setScanPrediction(prev => ({ ...prev, [idx]: result }));
-          toast.success('Basketball analysis complete!');
-        } catch (err) {
-          toast.error(err.message || 'Basketball prediction failed');
-        } finally {
-          setScanPredictingIdx(prev => ({ ...prev, [idx]: false }));
-        }
-      } else {
       // SOCCER prediction flow
       const resolved = pickData.resolved;
       setScanPredictingIdx(prev => ({ ...prev, [idx]: true }));
@@ -664,7 +639,6 @@ export default function App() {
         toast.error(err.message || 'Prediction failed');
       } finally {
         setScanPredictingIdx(prev => ({ ...prev, [idx]: false }));
-      }
       }
     }
   };
@@ -715,7 +689,7 @@ export default function App() {
       timestamp: Date.now(),
       status: 'live',
       result: 'pending',
-      sport: pred.sport || activeSport || 'soccer',
+      sport: pred.sport || 'soccer',
       excludedSampleIndices: scanExcludedIndices,
       _request: pred._request || {},
     };
@@ -964,11 +938,10 @@ export default function App() {
     <div className="app">
       {/* Header */}
       <Header
-        activeSport={activeSport} setActiveSport={setActiveSport} apiStatus={apiStatus}
+        apiStatus={apiStatus}
         notifications={notifications} showNotifications={showNotifications}
         setShowNotifications={setShowNotifications} setNotifications={setNotifications}
         setActiveTab={setActiveTab} setTrackingView={setTrackingView}
-        setScanPrediction={setScanPrediction} setScanResults={setScanResults}
         handleLogout={handleLogout}
       />
 
@@ -1512,7 +1485,7 @@ export default function App() {
                     Scan a Prop
                   </div>
                   <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)', marginTop: 6, fontWeight: 500 }}>
-                    Upload a {activeSport === 'basketball' ? 'NBA' : 'soccer'} prop screenshot for instant AI analysis
+                    Upload a soccer prop screenshot for instant AI analysis
                   </div>
                 </div>
 
@@ -1576,8 +1549,8 @@ export default function App() {
                 )}
 
                 {/* Manual Search Fallback */}
-                {!scanImage && !isScanning && activeSport === 'soccer' && (
-                  <ManualSearch onResult={handleManualPredict} activeSport={activeSport} />
+                {!scanImage && !isScanning && (
+                  <ManualSearch onResult={handleManualPredict} activeSport={'soccer'} />
                 )}
 
                 {/* Manual Prediction Loading */}

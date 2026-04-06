@@ -97,7 +97,7 @@ async def _auto_backfill_positions():
         all_league_names = set(LEAGUE_NAMES.values())
 
         # Step 1: Clean invalid positions (league IDs/names, cross-sport contamination)
-        from routes.intel import SOCCER_POSITIONS, BASKETBALL_POSITIONS
+        from routes.intel import SOCCER_POSITIONS
         bad_picks = await db.picks.find(
             {"position": {"$exists": True, "$ne": "", "$ne": None}},
             {"_id": 0, "pickId": 1, "position": 1, "sport": 1}
@@ -105,8 +105,7 @@ async def _auto_backfill_positions():
         cleaned = 0
         for p in bad_picks:
             pos = (p.get("position") or "").strip()
-            sport = p.get("sport", "soccer")
-            valid_set = SOCCER_POSITIONS if sport == "soccer" else BASKETBALL_POSITIONS
+            valid_set = SOCCER_POSITIONS
             if pos.isdigit() or pos in all_league_names or pos not in valid_set:
                 await db.picks.update_one(
                     {"pickId": p["pickId"]},

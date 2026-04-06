@@ -3,7 +3,7 @@ import {
   Loader2, Clock, BarChart3, Edit3, Trash2, RotateCcw,
   ArrowLeft, TrendingUp, TrendingDown, Brain, ChevronDown, ChevronUp
 } from 'lucide-react';
-import { PROP_TYPES, BASKETBALL_PROP_TYPES, getPropLabel } from '../../constants';
+import { PROP_TYPES, getPropLabel } from '../../constants';
 import { getPickAnalysis } from '../../api';
 
 export function TrackingTab({
@@ -186,7 +186,7 @@ function PickCard({ pick, liveData, missAnalyses, reanalyzePick, reanalyzingPick
   const elapsed = live?.elapsed ?? 0;
   const minutesPlayed = live?.minutesPlayed || 0;
   const matchScore = live?.matchScore || pick.matchScore || '';
-  const propLabel = [...PROP_TYPES, ...BASKETBALL_PROP_TYPES].find(pt => pt.key === pick.propType)?.label || pick.propType;
+  const propLabel = PROP_TYPES.find(pt => pt.key === pick.propType)?.label || pick.propType;
   const isOver = pick.recommendation === 'over';
   const lineNum = pick.line || 1;
   const nowNum = typeof nowVal === 'number' ? nowVal : 0;
@@ -215,7 +215,7 @@ function PickCard({ pick, liveData, missAnalyses, reanalyzePick, reanalyzingPick
             {pick.playerName}
           </div>
           <div style={{ fontSize: 7, fontWeight: 600, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-            {pick.teamName || 'Team'} &middot; {(pick.venue || 'home').toUpperCase()} &middot; {pick.sport === 'basketball' ? 'NBA' : 'Soccer'}
+            {pick.teamName || 'Team'} &middot; {(pick.venue || 'home').toUpperCase()} &middot; Soccer
             {pick.trackingId && <span style={{ marginLeft: 4, color: 'rgba(255,255,255,0.2)', fontFamily: 'var(--font-mono)' }}>{pick.trackingId}</span>}
           </div>
         </div>

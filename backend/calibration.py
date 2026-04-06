@@ -16,9 +16,6 @@ SOCCER_DEF_PROPS = {"tackles", "interceptions", "clearances", "blocks", "duels_w
 SOCCER_ATK_PROPS = {"goals", "shots", "shots_on_target", "dribbles", "dribbles_success"}
 SOCCER_MID_PROPS = {"pass_attempts", "key_passes", "crosses", "shots_assisted", "assists"}
 
-BBALL_BIG_PROPS = {"rebounds", "blocks"}
-BBALL_GUARD_PROPS = {"three_pointers", "assists", "steals"}
-
 LEAGUE_NAMES = {
     # England
     "39": "Premier League", "40": "Championship", "41": "League One", "42": "League Two",
@@ -69,12 +66,6 @@ def _bucket(d, key, res, error=None):
 def _infer_position(prop_type, sport):
     """Infer position group from prop type."""
     pt = (prop_type or "").lower()
-    if sport == "basketball":
-        if pt in BBALL_BIG_PROPS:
-            return "big"
-        if pt in BBALL_GUARD_PROPS:
-            return "guard"
-        return "any"
     # Soccer
     if pt in SOCCER_GK_PROPS:
         return "goalkeeper"
@@ -96,12 +87,6 @@ def _game_context(score_str, sport):
         s1, s2 = int(parts[0]), int(parts[1])
         diff = abs(s1 - s2)
         total = s1 + s2
-        if sport == "basketball":
-            if diff >= 20:
-                return "blowout"
-            if diff <= 5:
-                return "close"
-            return "normal"
         # Soccer
         if diff >= 3 or total >= 6:
             return "blowout"

@@ -359,7 +359,7 @@ function CalibrationDashboard({ email, token }) {
             <>
               {/* Sport toggle */}
               <div style={{ display: 'flex', gap: 4, marginBottom: 10 }}>
-                {['soccer', 'basketball'].map(s => (
+                {['soccer'].map(s => (
                   <button key={s} onClick={() => setSportTab(s)} data-testid={`cal-sport-${s}`} style={{
                     flex: 1, padding: '5px 0', borderRadius: 8, border: '1.5px solid',
                     borderColor: sportTab === s ? 'var(--accent)' : 'rgba(255,255,255,0.06)',

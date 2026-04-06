@@ -116,7 +116,7 @@ export function IntelTab({ auth }) {
     <div data-testid="intel-tab" style={{ padding: '0 0 80px' }}>
       {/* Sport Toggle */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
-        {['soccer', 'basketball'].map(s => (
+        {['soccer'].map(s => (
           <button key={s} data-testid={`intel-sport-${s}`} onClick={() => setSport(s)} style={{
             flex: 1, padding: '8px 0', borderRadius: 8, fontWeight: 800, fontSize: 11,
             letterSpacing: '0.06em', textTransform: 'uppercase', cursor: 'pointer',

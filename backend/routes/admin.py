@@ -106,7 +106,6 @@ async def get_calibration(email: str, token: str):
 
     from calibration import get_calibration_stats
     soccer_stats = await get_calibration_stats("soccer", force_refresh=True)
-    basketball_stats = await get_calibration_stats("basketball", force_refresh=True)
 
     def summarize(stats):
         if not stats:
@@ -162,5 +161,4 @@ async def get_calibration(email: str, token: str):
 
     return {
         "soccer": summarize(soccer_stats),
-        "basketball": summarize(basketball_stats),
     }

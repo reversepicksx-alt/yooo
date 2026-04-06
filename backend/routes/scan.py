@@ -12,8 +12,6 @@ from config import (
 from models import ScanPropRequest
 from utils import api_football_request, strip_accents
 from cache import get_national_team_id, get_player_by_name, get_team_by_name, get_team_info
-from basketball_utils import search_nba_teams as search_basketball_teams_live
-from basketball_cache import get_bball_team_by_name, search_bball_teams
 
 router = APIRouter(prefix="/api", tags=["scan"])
 
@@ -23,49 +21,6 @@ VALID_SOCCER_PROPS = {
     "key_passes", "saves", "interceptions", "blocks", "dribbles", "fouls_drawn",
     "fouls_committed", "shots_assisted", "crosses", "clearances", "duels_won",
     "yellow_cards", "dribbles_success",
-}
-
-VALID_BASKETBALL_PROPS = {
-    "points", "rebounds", "assists", "pts_reb_ast", "pts_reb", "pts_ast",
-    "reb_ast", "blk_stl", "three_pointers",
-    "fgm", "ftm", "fga", "fta", "tpa",
-    "steals", "blocks", "turnovers",
-}
-
-BASKETBALL_PROP_ALIASES = {
-    "point": "points", "pts": "points", "pt": "points",
-    "rebound": "rebounds", "reb": "rebounds", "total rebounds": "rebounds",
-    "assist": "assists", "ast": "assists",
-    # Compound: PRA
-    "pts+reb+ast": "pts_reb_ast", "pra": "pts_reb_ast", "points+rebounds+assists": "pts_reb_ast",
-    "pts + reb + ast": "pts_reb_ast", "pts_reb_ast": "pts_reb_ast",
-    # Compound: Reb+Ast
-    "rebs+asts": "reb_ast", "reb+ast": "reb_ast", "rebounds+assists": "reb_ast",
-    "reb + ast": "reb_ast", "rebs + asts": "reb_ast", "ra": "reb_ast",
-    "rebounds + assists": "reb_ast", "reb_ast": "reb_ast",
-    # Compound: Pts+Reb
-    "pts+reb": "pts_reb", "points+rebounds": "pts_reb", "pts + reb": "pts_reb",
-    "pts_reb": "pts_reb", "points + rebounds": "pts_reb", "pr": "pts_reb",
-    # Compound: Pts+Ast
-    "pts+ast": "pts_ast", "points+assists": "pts_ast", "pts + ast": "pts_ast",
-    "pts_ast": "pts_ast", "points + assists": "pts_ast", "pa": "pts_ast",
-    # Compound: Blk+Stl
-    "blks+stls": "blk_stl", "blk+stl": "blk_stl", "blocks+steals": "blk_stl",
-    "blk + stl": "blk_stl", "blks + stls": "blk_stl", "blocks + steals": "blk_stl",
-    "blk_stl": "blk_stl",
-    # Singles
-    "steal": "steals", "stl": "steals",
-    "block": "blocks", "blk": "blocks",
-    "turnover": "turnovers", "to": "turnovers", "tov": "turnovers",
-    "three pointer": "three_pointers", "3pt": "three_pointers", "3pm": "three_pointers",
-    "3-point fg": "three_pointers", "threes": "three_pointers", "3-pointers made": "three_pointers",
-    "three pointers made": "three_pointers", "3 pointers": "three_pointers", "threes made": "three_pointers",
-    "3ptm": "three_pointers", "three pointers": "three_pointers",
-    "field goals made": "fgm", "fg made": "fgm", "field goal": "fgm",
-    "free throws made": "ftm", "ft made": "ftm", "free throw": "ftm",
-    "field goals attempted": "fga", "fg attempted": "fga",
-    "free throws attempted": "fta", "ft attempted": "fta",
-    "three point attempts": "tpa", "3pt attempts": "tpa", "3pa": "tpa",
 }
 
 # Hardcoded team→league fallback (used when cache misses)
@@ -600,198 +555,16 @@ VENUE: "@ [Team]" → away, "vs [Team]" → home
 If unknown, use null. Return JSON array of ALL props found."""
 
 
-def _build_basketball_scan_prompt() -> str:
-    return """Analyze this screenshot of an NBA player prop card.
-
-LAYOUT GUIDE:
-- Player's name (first + last), usually first name smaller above last name
-- Below name: "BASKETBALL • [Team Name] • [Position]"
-- Below that: "vs [Opponent]" or "@ [Opponent]" with date/time
-- The prop line number is shown prominently with the stat type below it
-- "Less" and "More" buttons are selection options — IGNORE them.
-
-CRITICAL EXTRACTION RULES:
-1. If the screenshot shows ONE player with MULTIPLE stat types listed (e.g., Points, Rebounds, Assists all on the same page) → ONLY extract the PRIMARY prop. The primary prop is the one that is EXPANDED (has a bar chart, detailed stats, or is visually the largest/most prominent). Ignore collapsed/minimized stat rows.
-2. If the screenshot shows MULTIPLE DIFFERENT PLAYERS (a grid/board of player cards) → Extract ALL of them.
-3. NEVER return multiple entries for the same player with different stat types. One player = one prop.
-
-ADDITIONAL RULES:
-- Read player names EXACTLY as shown
-- IGNORE "Less"/"More" buttons
-- This is BASKETBALL / NBA only
-
-Extract for EACH prop:
-1. playerName — Full name as displayed
-2. propType — Map to one of: points, rebounds, assists, pts_reb_ast, pts_reb, pts_ast, reb_ast, blk_stl, steals, blocks, turnovers, three_pointers, fgm, ftm, fga, fta, tpa
-3. line — The numerical line (e.g., 24.5, 7.5, 5.5)
-4. opponentName — The opposing team
-5. playerTeam — The player's team
-6. venue — "home" or "away" ("@ Team" = away, "vs Team" = home)
-
-PROP TYPE MAPPING:
-- "Points" / "Pts" / "PTS" → points
-- "Rebounds" / "Reb" / "Total Rebounds" → rebounds
-- "Assists" / "Ast" / "AST" → assists
-- "Pts+Reb+Ast" / "PRA" / "Points+Rebounds+Assists" → pts_reb_ast
-- "Rebs+Asts" / "Reb+Ast" / "Rebounds+Assists" → reb_ast
-- "Pts+Reb" / "Points+Rebounds" → pts_reb
-- "Pts+Ast" / "Points+Assists" → pts_ast
-- "Blks+Stls" / "Blocks+Steals" → blk_stl
-- "Steals" / "Stl" → steals
-- "Blocks" / "Blk" → blocks
-- "Turnovers" / "TO" / "TOV" → turnovers
-- "3-Point FG" / "3PM" / "Threes" / "Three Pointers Made" / "3-Pointers Made" / "3PTM" → three_pointers
-- "FG Made" / "FGM" / "Field Goals Made" → fgm
-- "FT Made" / "FTM" / "Free Throws Made" → ftm
-- "FG Attempted" / "FGA" → fga
-- "FT Attempted" / "FTA" → fta
-- "3PT Attempts" / "3PA" → tpa
-
-CRITICAL: "Rebs+Asts" is reb_ast (NOT pts_reb_ast). Only include Points in the combo if "Pts" appears in the label.
-
-RETURN FORMAT (JSON array):
-[{"playerName":"...","propType":"...","line":0.0,"opponentName":"...","playerTeam":"...","venue":"home or away","sport":"basketball"}]
-
-If unknown, use null. Return JSON array of ALL props found."""
 
 
-async def _resolve_basketball_picks(extracted: list) -> dict:
-    """Resolve basketball picks: find team IDs via basketball API."""
-    results = []
-    for entry in extracted:
-        player_name = entry.get("playerName")
-        if not player_name:
-            continue
-
-        # Normalize prop type
-        raw_prop = (entry.get("propType") or "").lower().strip()
-        prop_type = BASKETBALL_PROP_ALIASES.get(raw_prop, raw_prop)
-        if prop_type not in VALID_BASKETBALL_PROPS:
-            prop_type = "points"
-
-        line_val = entry.get("line") or 0
-        venue = (entry.get("venue") or "home").lower().strip()
-        if venue not in ("home", "away"):
-            venue = "home"
-
-        team_hint = (entry.get("playerTeam") or "").strip()
-        opp_hint = (entry.get("opponentName") or "").strip()
-
-        # Track league info from resolved teams
-        league_id = None
-        league_name = None
-
-        # Resolve team via CACHE first, then live API fallback
-        resolved_team = None
-        if team_hint:
-            cached = await get_bball_team_by_name(team_hint)
-            if cached:
-                resolved_team = {"teamId": cached["teamId"], "teamName": cached.get("name", team_hint)}
-                league_id = cached.get("leagueId")
-                league_name = cached.get("leagueName")
-            else:
-                teams = await search_bball_teams(team_hint)
-                if teams:
-                    best = teams[0]
-                    resolved_team = {"teamId": best["teamId"], "teamName": best.get("name", team_hint)}
-                    league_id = best.get("leagueId")
-                    league_name = best.get("leagueName")
-                else:
-                    # Live API fallback
-                    live_teams = await search_basketball_teams_live(team_hint)
-                    if live_teams:
-                        best = live_teams[0]
-                        resolved_team = {"teamId": best["id"], "teamName": best.get("name", team_hint)}
-
-        # Resolve opponent via CACHE first — MUST filter by same league as player's team
-        resolved_opp = None
-        if opp_hint:
-            # First try: same league as player's team (prevents NBA vs WNBA cross-match)
-            if league_id:
-                cached = await get_bball_team_by_name(opp_hint, league_id=league_id)
-            else:
-                cached = await get_bball_team_by_name(opp_hint)
-            if cached:
-                resolved_opp = {"teamId": cached["teamId"], "teamName": cached.get("name", opp_hint)}
-                if not league_id:
-                    league_id = cached.get("leagueId")
-                    league_name = cached.get("leagueName")
-            else:
-                opps = await search_bball_teams(opp_hint, league_id=league_id)
-                if not opps and league_id:
-                    # Fallback: broader search, but REJECT cross-league matches
-                    all_opps = await search_bball_teams(opp_hint)
-                    opps = [t for t in all_opps if t.get("leagueId") == league_id] if league_id else all_opps
-                if opps:
-                    best = opps[0]
-                    resolved_opp = {"teamId": best["teamId"], "teamName": best.get("name", opp_hint)}
-                    if not league_id:
-                        league_id = best.get("leagueId")
-                        league_name = best.get("leagueName")
-                else:
-                    live_opps = await search_basketball_teams_live(opp_hint)
-                    if live_opps:
-                        best = live_opps[0]
-                        resolved_opp = {"teamId": best["id"], "teamName": best.get("name", opp_hint)}
-
-        # VENUE VERIFICATION: Cross-check against actual basketball fixture data
-        if resolved_team and resolved_team.get("teamId") and resolved_opp and resolved_opp.get("teamId"):
-            try:
-                from basketball_utils import _api_get as bball_api_get
-                import datetime
-                games = await bball_api_get("games", {"team": resolved_team["teamId"], "season": "2024-2025"})
-                if games:
-                    today = datetime.date.today().isoformat()
-                    for g in games[-20:]:
-                        home = g.get("teams", {}).get("home", {})
-                        away = g.get("teams", {}).get("visitors", {})
-                        home_id = home.get("id")
-                        away_id = away.get("id")
-                        game_date = g.get("date", "")[:10]
-                        if game_date >= today:
-                            if home_id == resolved_team["teamId"] and away_id == resolved_opp["teamId"]:
-                                if venue != "home":
-                                    print(f"[BBALL VENUE FIX] {resolved_team['teamName']} is HOME (was: {venue})")
-                                venue = "home"
-                                break
-                            elif away_id == resolved_team["teamId"] and home_id == resolved_opp["teamId"]:
-                                if venue != "away":
-                                    print(f"[BBALL VENUE FIX] {resolved_team['teamName']} is AWAY (was: {venue})")
-                                venue = "away"
-                                break
-            except Exception as e:
-                print(f"[BBALL VENUE VERIFY] Error: {e}")
-
-        results.append({
-            "extracted": {
-                "playerName": player_name,
-                "propType": prop_type,
-                "line": line_val,
-                "venue": venue,
-                "opponentName": opp_hint,
-                "playerTeam": team_hint,
-                "sport": "basketball",
-                "league": league_name or "NBA",
-                "leagueId": league_id or 12,
-                "isCombo": False,
-            },
-            "resolved": resolved_team,
-            "resolvedOpponent": resolved_opp,
-            "sport": "basketball",
-        })
-
-    return {"picks": results}
-
-
-
-def _validate_extraction(entry: dict, is_basketball: bool = False) -> tuple:
+def _validate_extraction(entry: dict) -> tuple:
     """
     Validate OCR extraction quality. Returns (is_valid, issues_list).
     Catches misread player names, impossible lines, and unmapped prop types.
     """
     issues = []
-    valid_props = VALID_BASKETBALL_PROPS if is_basketball else VALID_SOCCER_PROPS
-    prop_aliases = BASKETBALL_PROP_ALIASES if is_basketball else PROP_TYPE_ALIASES
+    valid_props = VALID_SOCCER_PROPS
+    prop_aliases = PROP_TYPE_ALIASES
 
     # 1. Player name sanity
     name = (entry.get("playerName") or "").strip()
@@ -837,15 +610,13 @@ def _validate_extraction(entry: dict, is_basketball: bool = False) -> tuple:
 async def scan_prop(req: ScanPropRequest):
     """Use AI vision to extract player prop data from a screenshot."""
     try:
-        is_basketball = req.sport == "basketball"
-
         # ── Step 1: Try Grok Vision first (faster + cheaper), GPT-4o fallback ──
         extracted = None
         from grok_engine import grok_scan_prop
         grok_result = await grok_scan_prop(req.image_base64)
         if grok_result and grok_result.get("playerName"):
             # Validate Grok's extraction before accepting
-            is_valid, issues = _validate_extraction(grok_result, is_basketball)
+            is_valid, issues = _validate_extraction(grok_result)
             if is_valid:
                 print(f"[SCAN] Grok extracted (validated): {grok_result.get('playerName')}")
                 extracted = [grok_result]
@@ -862,11 +633,8 @@ async def scan_prop(req: ScanPropRequest):
 
             image_content = ImageContent(image_base64=req.image_base64)
 
-            if is_basketball:
-                prompt = _build_basketball_scan_prompt()
-            else:
-                leagues_list = ", ".join([f"{lg['name']} (ID:{lg['id']})" for lg in SUPPORTED_LEAGUES])
-                prompt = _build_soccer_scan_prompt(leagues_list)
+            leagues_list = ", ".join([f"{lg['name']} (ID:{lg['id']})" for lg in SUPPORTED_LEAGUES])
+            prompt = _build_soccer_scan_prompt(leagues_list)
 
             msg = UserMessage(text=prompt, file_contents=[image_content])
             response = await chat.send_message(msg)
@@ -898,10 +666,6 @@ async def scan_prop(req: ScanPropRequest):
             seen_players[pname] = (entry.get("propType") or "").lower()
             deduped.append(entry)
         extracted = deduped
-
-        # ── Step 2: Route based on sport ──
-        if is_basketball:
-            return await _resolve_basketball_picks(extracted)
 
         # ── Step 2 (Soccer): Resolve each extracted entry ──
         results = []
@@ -1229,40 +993,6 @@ async def re_resolve(req: ReResolveRequest):
 
         if not player_name or not player_team:
             raise HTTPException(status_code=400, detail="Player name and team are required")
-
-        if sport == "basketball":
-            # Basketball re-resolution
-            team_data = await get_bball_team_by_name(player_team)
-            resolved_player = None
-            resolved_opponent = None
-
-            if team_data:
-                team_id = team_data.get("teamId")
-                from basketball_cache import get_bball_player_by_name
-                cached = await get_bball_player_by_name(player_name, team_id)
-                if cached:
-                    resolved_player = {
-                        "playerId": cached["playerId"],
-                        "playerName": cached["name"],
-                        "photo": "",
-                        "teamId": team_id,
-                        "teamName": team_data.get("name", player_team),
-                    }
-
-            if opponent_hint:
-                opp_data = await get_bball_team_by_name(opponent_hint)
-                if opp_data:
-                    resolved_opponent = {
-                        "teamId": opp_data["teamId"],
-                        "teamName": opp_data.get("name", opponent_hint),
-                    }
-
-            return {
-                "resolved": resolved_player,
-                "resolvedOpponent": resolved_opponent,
-                "leagueId": None,
-                "leagueName": "NBA",
-            }
 
         # Soccer re-resolution
         player_team_lower = player_team.lower().strip()

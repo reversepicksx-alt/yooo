@@ -230,20 +230,7 @@ export const SUPPORTED_LEAGUES = [
   { id: 10, name: "International Friendlies", type: "International Team" },
 ];
 
-// Basketball APIs
-export async function basketballSearchTeams(query) {
-  return apiCall('/api/basketball/search-teams', {
-    method: 'POST',
-    body: JSON.stringify({ query }),
-  });
-}
-
-export async function basketballPredict(request) {
-  return apiCall('/api/basketball/predict', {
-    method: 'POST',
-    body: JSON.stringify(request),
-  });
-}
+// Basketball APIs removed — Soccer only
 
 
 

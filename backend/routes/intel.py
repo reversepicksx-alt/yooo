@@ -51,10 +51,6 @@ SOCCER_POSITIONS = {
     "CDM", "CM", "CAM", "LM", "RM", "LW", "RW",
     "CF", "ST", "SS", "DEF", "MID", "FWD",
 }
-BASKETBALL_POSITIONS = {
-    "PG", "SG", "SF", "PF", "C", "G", "F",
-    "Guard", "Forward", "Center", "Big",
-}
 
 
 def _infer_favorite(venue, score_str):
@@ -85,16 +81,6 @@ def _moneyline_bucket(venue, score_str, sport):
         player_goals = home_goals if venue == "home" else away_goals
         opp_goals = away_goals if venue == "home" else home_goals
         diff = player_goals - opp_goals
-        if sport == "basketball":
-            if diff >= 15:
-                return "blowout_win"
-            if diff > 0:
-                return "close_win"
-            if diff <= -15:
-                return "blowout_loss"
-            if diff < 0:
-                return "close_loss"
-            return "draw"
         # Soccer
         if diff >= 3:
             return "blowout_win"
@@ -179,7 +165,7 @@ async def intel_dashboard(email: str, token: str, sport: str = "soccer"):
             position = "Unknown"
 
         # Sport cross-contamination guard
-        valid_for_sport = SOCCER_POSITIONS if sport == "soccer" else BASKETBALL_POSITIONS
+        valid_for_sport = SOCCER_POSITIONS
         if position != "Unknown" and position not in valid_for_sport:
             position = "Unknown"
 
@@ -447,7 +433,7 @@ async def intel_sheet(email: str, token: str, sport: str = "soccer"):
                     position = ""  # unknown value — discard to keep filter clean
 
             # Sport cross-contamination guard: reject positions from wrong sport
-            valid_for_sport = SOCCER_POSITIONS if sport == "soccer" else BASKETBALL_POSITIONS
+            valid_for_sport = SOCCER_POSITIONS
             if position and position not in valid_for_sport:
                 position = ""
 
@@ -585,15 +571,6 @@ async def backfill_positions(email: str, token: str):
                     if pred:
                         pos_found = pred.get("player", {}).get("position", "")
                         role_found = pred.get("player", {}).get("role", "")
-
-                if not pos_found:
-                    bq = {"player.name": pname} if not pid or pid == 0 else {"player.id": pid}
-                    bpred = await db.basketball_predictions.find_one(
-                        {**bq, "player.position": {"$nin": ["", None]}},
-                        {"_id": 0, "player.position": 1}
-                    )
-                    if bpred:
-                        pos_found = bpred.get("player", {}).get("position", "")
 
                 if pos_found:
                     await db.picks.update_many(

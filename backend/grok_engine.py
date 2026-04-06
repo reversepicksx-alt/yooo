@@ -181,13 +181,10 @@ async def _run_auto_settlement():
     if not live_picks:
         return
 
-    # Group by sport
-    soccer_picks = [p for p in live_picks if p.get("sport", "soccer") == "soccer"]
-    basketball_picks = [p for p in live_picks if p.get("sport") == "basketball"]
-
     settled_count = 0
 
     # Process soccer picks
+    soccer_picks = live_picks
     if soccer_picks:
         team_ids = list(set(p.get("teamId", 0) for p in soccer_picks if p.get("teamId")))
         for tid in team_ids:
@@ -220,27 +217,6 @@ async def _run_auto_settlement():
                         settled_count += 1
             except Exception:
                 continue
-
-    # Process basketball picks
-    if basketball_picks:
-        try:
-            from basketball_cache import get_bball_cache_status
-            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
-            games_data = None
-            try:
-                from utils import api_football_request as api_req
-                games_data = await api_req("games", {"date": today}, base_url="https://v1.basketball.api-sports.io")
-            except Exception:
-                pass
-
-            if games_data:
-                for pick in basketball_picks:
-                    result = await _try_settle_basketball(pick, games_data)
-                    if result:
-                        settled_count += 1
-        except Exception:
-            pass
 
     if settled_count > 0:
         print(f"[AUTO-SETTLE] Settled {settled_count} picks")
@@ -343,13 +319,6 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
         return True
     except Exception:
         return False
-
-
-async def _try_settle_basketball(pick: dict, games_data: list) -> bool:
-    """Try to settle a basketball pick."""
-    # Basketball settlement uses the same logic as _settle_basketball_pick in picks.py
-    # Simplified version for auto-settlement
-    return False  # TODO: implement when basketball API structure is confirmed
 
 
 # ═══════════════════════════════════════════════════════════════

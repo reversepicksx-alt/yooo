@@ -17,26 +17,10 @@ function CartoonSoccer({ active }) {
   );
 }
 
-function CartoonBasketball({ active }) {
-  return (
-    <svg width="20" height="20" viewBox="0 0 100 100" style={{ transition: 'transform 0.3s cubic-bezier(0.34,1.56,0.64,1)', transform: active ? 'scale(1.15)' : 'scale(0.9)' }}>
-      <circle cx="50" cy="50" r="46" fill={active ? '#f97316' : '#886040'} stroke={active ? '#c2410c' : '#664830'} strokeWidth="4" />
-      <ellipse cx="50" cy="50" rx="1.5" ry="46" fill="none" stroke={active ? '#9a3412' : '#553020'} strokeWidth="3" />
-      <ellipse cx="50" cy="50" rx="46" ry="1.5" fill="none" stroke={active ? '#9a3412' : '#553020'} strokeWidth="3" />
-      <path d="M 10 25 Q 30 40 50 35 Q 70 30 90 25" fill="none" stroke={active ? '#9a3412' : '#553020'} strokeWidth="2.5" />
-      <path d="M 10 75 Q 30 60 50 65 Q 70 70 90 75" fill="none" stroke={active ? '#9a3412' : '#553020'} strokeWidth="2.5" />
-      {active && <circle cx="50" cy="50" r="46" fill="none" stroke="rgba(16,185,129,0.4)" strokeWidth="3">
-        <animate attributeName="r" values="46;48;46" dur="2s" repeatCount="indefinite" />
-        <animate attributeName="opacity" values="0.4;0;0.4" dur="2s" repeatCount="indefinite" />
-      </circle>}
-    </svg>
-  );
-}
-
 export function Header({
-  activeSport, setActiveSport, apiStatus,
+  apiStatus,
   notifications, showNotifications, setShowNotifications, setNotifications,
-  setActiveTab, setTrackingView, setScanPrediction, setScanResults,
+  setActiveTab, setTrackingView,
   handleLogout,
 }) {
   return (
@@ -51,25 +35,9 @@ export function Header({
           </div>
         </div>
         <div className="header-actions">
-          <div className="sport-selector" data-testid="sport-selector">
-            <button
-              className={`sport-btn ${activeSport === 'soccer' ? 'active' : ''}`}
-              onClick={() => { setActiveSport('soccer'); setScanPrediction({}); setScanResults([]); }}
-              data-testid="sport-soccer-btn"
-              style={{ display: 'flex', alignItems: 'center', gap: 4 }}
-            >
-              <CartoonSoccer active={activeSport === 'soccer'} />
-              <span className="sport-label">Soccer</span>
-            </button>
-            <button
-              className={`sport-btn ${activeSport === 'basketball' ? 'active' : ''}`}
-              onClick={() => { setActiveSport('basketball'); setScanPrediction({}); setScanResults([]); }}
-              data-testid="sport-basketball-btn"
-              style={{ display: 'flex', alignItems: 'center', gap: 4 }}
-            >
-              <CartoonBasketball active={activeSport === 'basketball'} />
-              <span className="sport-label">Basketball</span>
-            </button>
+          <div className="sport-selector" data-testid="sport-selector" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <CartoonSoccer active={true} />
+            <span className="sport-label" style={{ fontWeight: 800, fontSize: 11, color: 'var(--accent)' }}>Soccer</span>
           </div>
           <div style={{ position: 'relative' }}>
             <button className="icon-btn" onClick={() => setShowNotifications(!showNotifications)} data-testid="notification-bell">
