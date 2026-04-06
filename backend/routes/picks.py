@@ -57,11 +57,11 @@ async def save_pick(req: SavePickRequest):
         "email": req.email.lower(),
         "sport": sport,
         "playerId": pick.get("player", {}).get("id"),
-        "playerName": pick.get("player", {}).get("name", ""),
-        "teamName": pick.get("player", {}).get("team", ""),
+        "playerName": pick.get("player", {}).get("name") or pick.get("playerName", ""),
+        "teamName": pick.get("player", {}).get("team") or pick.get("teamName", ""),
         "teamId": pick.get("_request", {}).get("teamId", 0),
         "opponentId": pick.get("_request", {}).get("opponentId", 0),
-        "opponentName": pick.get("opponent", ""),
+        "opponentName": pick.get("opponent") or pick.get("opponentName", ""),
         "leagueId": pick.get("_request", {}).get("leagueId", 0),
         "propType": normalized_prop,
         "line": pick.get("line", 0),
@@ -77,6 +77,7 @@ async def save_pick(req: SavePickRequest):
         "result": "pending",
         "actualValue": None,
         "matchScore": None,
+        "coinFlip": pick.get("coinFlip", False),
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "settledAt": None,
     }
@@ -96,7 +97,85 @@ async def save_pick(req: SavePickRequest):
             pass
 
     await db.picks.update_one({"pickId": pick_id, "email": req.email.lower()}, {"$set": doc}, upsert=True)
-    return {"success": True, "pickId": pick_id, "trackingId": tracking_id}
+
+    # =============================================
+    # SLIP CORRELATION ANALYSIS — Same-game risk detection
+    # =============================================
+    correlation_warnings = []
+    try:
+        # Find other active picks from the same game (by team/opponent overlap)
+        same_game_picks = await db.picks.find({
+            "email": req.email.lower(),
+            "pickId": {"$ne": pick_id},
+            "status": {"$in": ["live", "pending"]},
+            "$or": [
+                # Same team's player
+                {"teamName": doc["teamName"], "opponentName": doc["opponentName"]},
+                # Opposing team's player
+                {"teamName": doc["opponentName"], "opponentName": doc["teamName"]},
+            ]
+        }, {"_id": 0, "playerName": 1, "teamName": 1, "recommendation": 1, "propType": 1, "line": 1}).to_list(20)
+
+        if same_game_picks:
+            same_team = [p for p in same_game_picks if p.get("teamName") == doc["teamName"]]
+            opp_team = [p for p in same_game_picks if p.get("teamName") == doc["opponentName"]]
+            total_in_game = len(same_game_picks) + 1  # +1 for this pick
+
+            # Check directional correlation
+            all_recs = [p.get("recommendation") for p in same_game_picks] + [doc["recommendation"]]
+            all_under = all(r == "under" for r in all_recs)
+            all_over = all(r == "over" for r in all_recs)
+
+            pass_props = {"pass_attempts", "passes", "key_passes", "crosses"}
+            is_pass_prop = doc["propType"] in pass_props
+
+            if total_in_game >= 3 and (all_under or all_over):
+                direction = "UNDER" if all_under else "OVER"
+                correlation_warnings.append({
+                    "type": "CORRELATED_RISK",
+                    "severity": "HIGH",
+                    "message": f"You have {total_in_game} picks ALL {direction} in the same game. If game flow goes against you, ALL picks lose together.",
+                })
+
+            if same_team:
+                same_dir = [p for p in same_team if p.get("recommendation") == doc["recommendation"]]
+                opp_dir = [p for p in same_team if p.get("recommendation") != doc["recommendation"]]
+                if same_dir:
+                    names = ", ".join(p["playerName"] for p in same_dir)
+                    correlation_warnings.append({
+                        "type": "BOOSTING",
+                        "severity": "INFO",
+                        "message": f"Same team, same direction as {names}. These picks are positively correlated.",
+                    })
+                if opp_dir:
+                    names = ", ".join(p["playerName"] for p in opp_dir)
+                    correlation_warnings.append({
+                        "type": "CONFLICTING",
+                        "severity": "MEDIUM",
+                        "message": f"Same team but OPPOSITE direction to {names}. These picks may conflict.",
+                    })
+
+            if opp_team and is_pass_prop:
+                opp_pass = [p for p in opp_team if p.get("propType") in pass_props]
+                if opp_pass:
+                    same_dir_opp = [p for p in opp_pass if p.get("recommendation") == doc["recommendation"]]
+                    if same_dir_opp:
+                        names = ", ".join(p["playerName"] for p in same_dir_opp)
+                        dir_label = doc["recommendation"].upper()
+                        correlation_warnings.append({
+                            "type": "OPPOSING_TEAMS_SAME_DIR",
+                            "severity": "HIGH",
+                            "message": f"Both teams' players {dir_label} on passes ({names}). In open games, one team's passes rise as the other's falls. High correlation risk.",
+                        })
+    except Exception as e:
+        print(f"[CORRELATION] Error: {e}")
+
+    return {
+        "success": True,
+        "pickId": pick_id,
+        "trackingId": tracking_id,
+        "correlationWarnings": correlation_warnings,
+    }
 
 @router.post("/picks/list")
 async def list_picks(req: GetPicksRequest):

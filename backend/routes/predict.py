@@ -2073,6 +2073,18 @@ Is this projection reasonable? Return ONLY JSON:
             ]
             print(f"[GUARD] Tight edge ({edge:.1f}): confidence capped at 58% (was {conf})")
 
+        # Guard 3: Coin-flip zone — projection within ±3 of line AND Bayesian confidence < 60%
+        if edge < 3.0 and real_bayes:
+            bayes_conf = max(real_bayes.get("pOver", 50), real_bayes.get("pUnder", 50))
+            if bayes_conf < 60:
+                old_conf = prediction.get("confidenceScore", 50)
+                prediction["confidenceScore"] = min(old_conf, 52)
+                prediction["coinFlip"] = True
+                prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [
+                    f"COIN FLIP: Math projects {real_bayes.get('posteriorMean')} vs line {req.line} (edge {edge:.1f}). Bayesian P={bayes_conf}%. This is a variance-driven outcome."
+                ]
+                print(f"[GUARD] Coin-flip zone: edge={edge:.1f}, Bayesian P={bayes_conf}% → capped at 52% (was {old_conf})")
+
         # Guard 3: UNDER skew penalty — stats have positive skew
         if rec == "under":
             adj_conf = prediction.get("confidenceScore", 50)

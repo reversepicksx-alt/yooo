@@ -248,6 +248,13 @@ function PickCard({ pick, liveData, missAnalyses, reanalyzePick, reanalyzingPick
         <span style={{ color: 'rgba(255,255,255,0.4)' }}>PICK: </span>
         <span style={{ color: isOver ? 'var(--accent)' : '#f43f5e' }}>{isOver ? 'OVER' : 'UNDER'} {pick.line}</span>
         <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: 7, marginLeft: 3 }}>{propLabel}</span>
+        {pick.coinFlip && (
+          <span data-testid="coin-flip-badge" style={{
+            marginLeft: 6, fontSize: 7, fontWeight: 900, padding: '1px 5px', borderRadius: 3,
+            background: 'rgba(245,158,11,0.12)', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.25)',
+            letterSpacing: '0.05em',
+          }}>COIN FLIP</span>
+        )}
         {matchScore && (isMatchLive || isMatchFinal) && (
           <span style={{ color: 'rgba(255,255,255,0.35)', marginLeft: 6 }}>
             vs {pick.opponentName} <span style={{ color: isMatchLive ? '#f43f5e' : 'rgba(255,255,255,0.5)', fontWeight: 800 }}>{matchScore}</span>

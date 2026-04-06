@@ -424,7 +424,12 @@ export default function App() {
       },
     };
     try {
-      await savePick(auth.email, auth.token, newPick);
+      const saveResult = await savePick(auth.email, auth.token, newPick);
+      if (saveResult?.correlationWarnings?.length > 0) {
+        saveResult.correlationWarnings.forEach(w => {
+          console.warn(`[CORRELATION ${w.type}] ${w.message}`);
+        });
+      }
       const refreshed = await listPicks(auth.email, auth.token);
       setSavedPicks(refreshed.picks || []);
     } catch (err) {

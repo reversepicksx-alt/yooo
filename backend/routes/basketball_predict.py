@@ -986,6 +986,18 @@ Analyze the statistical verdict, per-minute projection, and over-rate FIRST. The
         final_proj_cal = prediction.get("projectedValue", req.line)
         prediction["recommendation"] = "over" if final_proj_cal > req.line else "under"
 
+        # Coin-flip zone guard for basketball
+        bball_edge = abs(final_proj_cal - req.line)
+        if bball_edge < 3.0 and early_bayes:
+            bayes_conf = max(early_bayes.get("pOver", 50), early_bayes.get("pUnder", 50))
+            if bayes_conf < 60:
+                old_conf = prediction.get("confidenceScore", 50)
+                prediction["confidenceScore"] = min(old_conf, 52)
+                prediction["coinFlip"] = True
+                prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [
+                    f"COIN FLIP: Math projects {early_bayes.get('posteriorMean')} vs line {req.line} (edge {bball_edge:.1f}). Bayesian P={bayes_conf}%. Variance-driven outcome."
+                ]
+
         # Force-set identity fields from REQUEST data — never trust AI output for these
         player_pos = player_info.get("position", "") if player_info else ""
         prediction["player"] = {"id": player_id or 0, "name": req.playerName, "team": req.teamName, "position": player_pos}
