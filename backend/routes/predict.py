@@ -2056,6 +2056,35 @@ Is this projection reasonable? Return ONLY JSON:
         if real_recent_samples:
             prediction["recentSamples"] = real_recent_samples
         prediction.setdefault("bayesianMetrics", {"priorMean": req.line, "momentumEffect": 0, "covariateAdjustment": 0, "reversalFlag": "stable"})
+
+        # OVERRIDE: Replace AI-guessed Bayesian metrics with REAL computed values
+        try:
+            from bayesian_engine import compute_bayesian_projection
+            _sfm = {
+                "goals": "goals_total", "assists": "goals_assists",
+                "shots_assisted": "passes_key",
+                "pass_attempts": "passes_total", "shots": "shots_total",
+                "shots_on_target": "shots_on", "tackles": "tackles_total",
+                "key_passes": "passes_key", "saves": "goals_saves",
+                "interceptions": "tackles_interceptions", "blocks": "tackles_blocks",
+                "dribbles": "dribbles_attempts", "dribbles_success": "dribbles_success",
+                "fouls_drawn": "fouls_drawn", "fouls_committed": "fouls_committed",
+                "crosses": "passes_crosses", "clearances": "tackles_clearances",
+                "duels_won": "duels_won", "yellow_cards": "cards_yellow",
+            }
+            real_bayes = compute_bayesian_projection(
+                game_logs=player_game_logs,
+                prop_type=req.propType,
+                line=req.line,
+                venue=player_venue,
+                stat_field=_sfm.get(req.propType, "passes_total"),
+                opponent_fixture_stats=opponent_fixture_stats,
+                match_dominance=match_dominance,
+            )
+            prediction["bayesianMetrics"] = real_bayes
+            prediction["confidenceInterval"] = real_bayes.get("confidenceInterval", prediction.get("confidenceInterval"))
+        except Exception as e:
+            print(f"[BAYESIAN] Error computing metrics: {e}")
         prediction.setdefault("probabilityCurve", [])
         prediction.setdefault("reasoning", "Analysis based on available data.")
         prediction.setdefault("tacticalInsights", "")

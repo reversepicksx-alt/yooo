@@ -965,6 +965,21 @@ Analyze the statistical verdict, per-minute projection, and over-rate FIRST. The
         prediction.setdefault("confidenceInterval", [req.line * 0.8, req.line * 1.2])
         prediction.setdefault("recentSamples", [])
         prediction.setdefault("bayesianMetrics", {"priorMean": req.line, "momentumEffect": 0, "covariateAdjustment": 0, "reversalFlag": "stable"})
+
+        # OVERRIDE: Replace AI-guessed Bayesian metrics with REAL computed values
+        try:
+            from bayesian_engine import compute_bayesian_projection
+            real_bayes = compute_bayesian_projection(
+                game_logs=player_game_logs,
+                prop_type=req.propType,
+                line=req.line,
+                venue=player_venue,
+                stat_field="targetStat",
+            )
+            prediction["bayesianMetrics"] = real_bayes
+            prediction["confidenceInterval"] = real_bayes.get("confidenceInterval", prediction.get("confidenceInterval"))
+        except Exception as e:
+            print(f"[BAYESIAN] Basketball error: {e}")
         prediction.setdefault("probabilityCurve", [])
 
         if real_recent_samples:
