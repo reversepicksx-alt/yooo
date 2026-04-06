@@ -4,22 +4,8 @@ dist/
 coverage/
 .DS_Store
 *.log
+.env.example
+*.env
+*.env.*
 !backend/.env
 !frontend/.env
-.env.example
--e 
-# Environment files
-*.env
-*.env.*
--e 
-# Environment files
-*.env
-*.env.*
--e 
-# Environment files
-*.env
-*.env.*
--e 
-# Environment files
-*.env
-*.env.*
