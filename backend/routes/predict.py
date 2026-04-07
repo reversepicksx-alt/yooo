@@ -755,7 +755,10 @@ async def predict(req: PredictionRequest):
                         if abs(quality_adj) > 1:
                             dom["notes"].append(f"Standings gap (#{team_rank} vs #{opp_rank}): {quality_adj:+.1f}% poss adj")
 
-                # Odds-based dominance adjustment (most powerful signal)
+                # Odds-based dominance adjustment
+                # IMPORTANT: Odds predict WHO WINS, not WHO HAS POSSESSION.
+                # A possession-dominant team like Barcelona can have 65% possession even as underdogs.
+                # So we REDUCE the odds impact when the opponent is a known possession team.
                 if odds and odds.get("bookmakerOdds"):
                     try:
                         home_odds = float(odds["bookmakerOdds"].get("homeWin", 3.0))
@@ -763,15 +766,21 @@ async def predict(req: PredictionRequest):
                         team_odds = home_odds if is_home else away_odds
                         opp_odds = away_odds if is_home else home_odds
 
-                        # Implied probability from odds: 1/odds
                         team_prob = 1.0 / max(team_odds, 1.01)
                         opp_prob = 1.0 / max(opp_odds, 1.01)
+                        prob_diff = team_prob - opp_prob
 
-                        # Odds gap → possession boost
-                        prob_diff = team_prob - opp_prob  # positive = team is favorite
-                        # Scale: heavy favorite (prob_diff > 0.4) → +5-7% extra possession
-                        odds_adj = round(prob_diff * 12, 1)  # ~12% per unit probability gap
-                        odds_adj = min(7.0, max(-7.0, odds_adj))  # Cap at ±7%
+                        # Dampen odds signal when opponent is a possession-heavy team (55%+ avg)
+                        # Barcelona/Man City averaging 63% possession should override "team is favorite"
+                        odds_dampener = 1.0
+                        if opp_avg and opp_avg >= 57:
+                            odds_dampener = 0.3  # 70% reduction — opponent style dominates
+                            dom["notes"].append(f"Opponent possession-dominant ({opp_avg:.0f}% avg): odds signal dampened")
+                        elif opp_avg and opp_avg >= 53:
+                            odds_dampener = 0.6  # 40% reduction
+
+                        odds_adj = round(prob_diff * 12 * odds_dampener, 1)
+                        odds_adj = min(7.0, max(-7.0, odds_adj))
                         base_poss += odds_adj
                         if abs(odds_adj) > 1:
                             dom["notes"].append(f"Odds signal (team={team_odds:.2f}, opp={opp_odds:.2f}): {odds_adj:+.1f}% poss adj")
@@ -788,35 +797,38 @@ async def predict(req: PredictionRequest):
                 dom["oppSeasonAvg"] = opp_avg
 
                 # Match dominance multiplier for prop adjustments
+                # RATIO-BASED: Pass attempts scale proportionally with possession share.
+                # If a team normally has 50% possession but expects 35% in this match,
+                # their players will have ~30% fewer passes (35/50 = 0.70).
+                poss_ratio = base_poss / team_avg if team_avg > 0 else 1.0
                 poss_diff = base_poss - team_avg
-                PASS_PROPS = {"pass_attempts", "key_passes", "crosses"}
+                PASS_PROPS = {"pass_attempts", "key_passes", "crosses", "passes"}
                 DEF_PROPS = {"tackles", "interceptions", "blocks", "clearances"}
 
                 if req.propType in PASS_PROPS:
-                    # Pass props: capped at ±12%
-                    if poss_diff > 2:
-                        adj = min(0.12, poss_diff * 0.008)
-                        dom["multiplier"] = round(1.0 + adj, 3)
-                        dom["notes"].append(f"Pass volume boost: expected {base_poss:.0f}% poss vs {team_avg:.0f}% avg → +{adj*100:.0f}% uplift")
-                    elif poss_diff < -2:
-                        adj = max(-0.12, poss_diff * 0.006)
-                        dom["multiplier"] = round(1.0 + adj, 3)
-                        dom["notes"].append(f"Pass volume drop: expected {base_poss:.0f}% poss vs {team_avg:.0f}% avg → {adj*100:.0f}% reduction")
+                    # Ratio-based scaling — capped at ±35% to prevent extreme outliers
+                    raw_adj = poss_ratio - 1.0  # e.g., 0.70 - 1.0 = -0.30 (30% reduction)
+                    capped_adj = max(-0.35, min(0.35, raw_adj))
+                    dom["multiplier"] = round(1.0 + capped_adj, 3)
+                    if abs(capped_adj) > 0.03:
+                        direction = "boost" if capped_adj > 0 else "drop"
+                        dom["notes"].append(f"Pass volume {direction}: expected {base_poss:.0f}% poss vs {team_avg:.0f}% avg (ratio={poss_ratio:.2f}) → {capped_adj*100:+.0f}%")
                 elif req.propType in DEF_PROPS:
-                    # Defensive props: capped at ±10%
-                    if poss_diff > 2:
-                        adj = max(-0.10, -poss_diff * 0.005)
-                        dom["multiplier"] = round(1.0 + adj, 3)
-                        dom["notes"].append(f"Def action drop: high expected poss → {adj*100:.0f}% fewer def actions")
-                    elif poss_diff < -2:
-                        adj = min(0.10, -poss_diff * 0.005)
-                        dom["multiplier"] = round(1.0 + adj, 3)
-                        dom["notes"].append(f"Def action boost: low expected poss → +{adj*100:.0f}% more def actions")
+                    # Defensive props scale INVERSELY with possession — less ball = more defending
+                    inverse_ratio = (100.0 - base_poss) / (100.0 - team_avg) if team_avg < 100 else 1.0
+                    raw_adj = inverse_ratio - 1.0
+                    capped_adj = max(-0.25, min(0.25, raw_adj))
+                    dom["multiplier"] = round(1.0 + capped_adj, 3)
+                    if abs(capped_adj) > 0.03:
+                        direction = "boost" if capped_adj > 0 else "drop"
+                        dom["notes"].append(f"Def action {direction}: expected {100-base_poss:.0f}% without ball vs {100-team_avg:.0f}% avg → {capped_adj*100:+.0f}%")
                 elif req.propType in {"shots", "shots_on_target"}:
-                    if poss_diff > 3:
-                        adj = min(0.08, poss_diff * 0.004)
-                        dom["multiplier"] = round(1.0 + adj, 3)
-                        dom["notes"].append("Shot volume boost from expected dominance")
+                    # Shot props scale with possession but less aggressively
+                    raw_adj = (poss_ratio - 1.0) * 0.6  # 60% of possession ratio
+                    capped_adj = max(-0.20, min(0.20, raw_adj))
+                    dom["multiplier"] = round(1.0 + capped_adj, 3)
+                    if abs(capped_adj) > 0.03:
+                        dom["notes"].append(f"Shot volume adj from possession ratio → {capped_adj*100:+.0f}%")
 
             return dom
 
@@ -2093,26 +2105,15 @@ Is this projection reasonable? Return ONLY JSON:
         cs = prediction.get("confidenceScore", 50)
         prediction["confidenceLevel"] = "Very High" if cs >= 75 else "High" if cs >= 65 else "Medium" if cs >= 50 else "Low"
 
-        # =============================================
-        # APPLY MATCH DOMINANCE MULTIPLIER
-        # =============================================
-        if match_dominance["multiplier"] != 1.0:
-            old_proj = prediction.get("projectedValue", req.line)
-            new_proj = round(old_proj * match_dominance["multiplier"], 1)
-            prediction["projectedValue"] = new_proj
-            # Dominance adjusts projected value but NEVER flips the recommendation
-            prediction["matchDominance"] = {
-                "applied": True,
-                "multiplier": match_dominance["multiplier"],
-                "expectedPoss": match_dominance["expectedPoss"],
-                "teamSeasonAvg": match_dominance.get("teamSeasonAvg"),
-                "oldProjection": old_proj,
-                "newProjection": new_proj,
-                "notes": match_dominance["notes"],
-            }
-            print(f"[DOMINANCE] Adjusted projection: {old_proj} -> {new_proj} (x{match_dominance['multiplier']}, poss={match_dominance['expectedPoss']}%)")
-        else:
-            prediction["matchDominance"] = {"applied": False}
+        # Store dominance info — will be applied POST-FUSION to the final number
+        prediction["matchDominance"] = {
+            "applied": match_dominance["multiplier"] != 1.0,
+            "multiplier": match_dominance["multiplier"],
+            "expectedPoss": match_dominance["expectedPoss"],
+            "teamSeasonAvg": match_dominance.get("teamSeasonAvg"),
+            "oppSeasonAvg": match_dominance.get("oppSeasonAvg"),
+            "notes": match_dominance["notes"],
+        }
 
         # =============================================
         # BAYESIAN — Reuse early computation (already done before AI prompt)
@@ -2208,6 +2209,21 @@ Is this projection reasonable? Return ONLY JSON:
         # Dominance already applied pre-fusion — skip post-fusion possession scaling
 
         # =============================================
+        # POST-FUSION DOMINANCE SCALING
+        # Applied to the FUSED number so it affects BOTH AI and Bayesian contributions.
+        # This is the correct approach: if expected possession drops 15%,
+        # ALL pass projections should drop 15%, regardless of source.
+        # =============================================
+        poss_sensitive = {"pass_attempts", "passes", "key_passes", "crosses", "dribbles"}
+        if req.propType in poss_sensitive and match_dominance.get("multiplier", 1.0) != 1.0:
+            dom_mult = match_dominance["multiplier"]
+            pre_dom = prediction.get("projectedValue", req.line)
+            post_dom = round(pre_dom * dom_mult, 1)
+            prediction["projectedValue"] = post_dom
+            prediction["recommendation"] = "over" if post_dom > req.line else "under"
+            prediction["matchDominance"]["preDominanceValue"] = pre_dom
+            prediction["matchDominance"]["postDominanceValue"] = post_dom
+            print(f"[DOMINANCE POST-FUSION] {req.propType}: {pre_dom} × {dom_mult:.3f} → {post_dom}")
         # POST-FUSION GAME TEMPO SCALING
         # High-tempo games (expected 3+ goals) boost ALL players' pass counts.
         # Low-tempo games suppress them. This is independent of possession share.
