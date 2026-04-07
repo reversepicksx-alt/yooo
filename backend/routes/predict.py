@@ -2061,7 +2061,7 @@ Analyze ALL data thoroughly. Return JSON only."""
         else:
             prediction["confidenceScore"] = 50
 
-        prediction["consensusNote"] = f"Grok 3 Mini + Bayesian math anchor."
+        prediction["consensusNote"] = f"Bayesian math projection. Grok provides tactical analysis only."
         prediction["modelBreakdown"] = [{
             "model": source_model,
             "recommendation": prediction["recommendation"],
@@ -2092,9 +2092,12 @@ Analyze ALL data thoroughly. Return JSON only."""
             prediction["confidenceInterval"] = real_bayes.get("confidenceInterval", prediction.get("confidenceInterval"))
 
         # =============================================
-        # BAYESIAN-AI FUSION — One Unified Engine
-        # Merges Grok's AI projection with Bayesian math
-        # BEFORE calibration so they speak as one voice.
+        # =============================================
+        # BAYESIAN-ONLY PROJECTION
+        #
+        # The math OWNS the number. Period.
+        # Grok provides tactical reasoning text only — no numeric influence.
+        # The Bayesian posterior IS the projected value.
         # =============================================
         if real_bayes and real_bayes.get("priorSamples", 0) >= 3:
             bayesian_posterior = real_bayes["posteriorMean"]
@@ -2103,139 +2106,64 @@ Analyze ALL data thoroughly. Return JSON only."""
             ai_proj = prediction.get("projectedValue", req.line)
             ai_rec = prediction.get("recommendation", "over")
 
-            # ═══════════════════════════════════════════════════
-            # BAYESIAN-FIRST FUSION v3
-            #
-            # Core principle: The math OWNS the number.
-            # The AI provides tactical context and small adjustments.
-            #
-            # The more the AI disagrees with the math, the LESS
-            # the AI matters — because divergence almost always
-            # means the AI hallucinated based on narrative bias.
-            #
-            # Smooth gradient:
-            #   Agreement        → 55% Bayes, 45% AI (AI adds tactical nuance)
-            #   Disagree <15%    → 70% Bayes, 30% AI (math leads)
-            #   Disagree 15-25%  → 80% Bayes, 20% AI (AI losing credibility)
-            #   Disagree 25-35%  → 90% Bayes, 10% AI (AI is wrong)
-            #   Disagree >35%    → 95% Bayes,  5% AI (AI hallucinating)
-            # ═══════════════════════════════════════════════════
-
             divergence_pct = abs(ai_proj - bayesian_posterior) / max(bayesian_posterior, 1) * 100
 
-            if bayesian_rec == ai_rec:
-                # Agreement: Bayesian leads, AI adds tactical color
-                bayes_weight = 0.55
-            else:
-                # Disagreement: smooth gradient — more divergence = less AI
-                if divergence_pct > 35:
-                    bayes_weight = 0.95
-                elif divergence_pct > 25:
-                    bayes_weight = 0.90
-                elif divergence_pct > 15:
-                    bayes_weight = 0.80
-                else:
-                    bayes_weight = 0.70
-
-            ai_weight = round(1.0 - bayes_weight, 2)
-
-            # Log divergence alerts for significant gaps
-            if divergence_pct > 15 and bayesian_rec != ai_rec:
+            # Log when AI disagrees (for transparency in the UI)
+            if divergence_pct > 10 and bayesian_rec != ai_rec:
                 prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [
-                    f"DIVERGENCE ALERT: AI projects {ai_proj} but math engine projects {bayesian_posterior} ({divergence_pct:.0f}% gap). "
-                    f"Bayesian override: {bayes_weight:.0%} math / {ai_weight:.0%} AI."
+                    f"AI reasoning suggested {ai_proj:.1f} ({ai_rec.upper()}) but math projects {bayesian_posterior:.1f} ({bayesian_rec.upper()}). Math prevails."
                 ]
-                print(f"[DIVERGENCE GUARD] {divergence_pct:.0f}% gap — AI={ai_proj} vs Bayes={bayesian_posterior}. Weights: {bayes_weight:.0%} Bayes / {ai_weight:.0%} AI")
+                print(f"[MATH OVERRIDE] AI={ai_proj}({ai_rec}) vs Bayes={bayesian_posterior}({bayesian_rec}) — {divergence_pct:.0f}% gap. Using math.")
 
-            fused_proj = round(ai_weight * ai_proj + bayes_weight * bayesian_posterior, 1)
+            print(f"[PROJECTION] Bayesian={bayesian_posterior}({bayesian_rec}, {bayesian_prob:.0%}) | AI opinion={ai_proj}({ai_rec}) — MATH IS FINAL")
 
-            print(f"[FUSION] AI={ai_proj}({ai_rec}) + Bayesian={bayesian_posterior}({bayesian_rec}, {bayesian_prob:.0%}) → Fused={fused_proj} (weights: AI {ai_weight}/{bayes_weight} Bayes)")
-
-            prediction["projectedValue"] = fused_proj
-            prediction["recommendation"] = "over" if fused_proj > req.line else "under"
+            prediction["projectedValue"] = bayesian_posterior
+            prediction["recommendation"] = bayesian_rec
             prediction["fusionApplied"] = {
                 "aiProjection": ai_proj,
                 "aiRecommendation": ai_rec,
                 "bayesianPosterior": bayesian_posterior,
                 "bayesianRecommendation": bayesian_rec,
                 "bayesianConfidence": round(bayesian_prob * 100, 1),
-                "fusedProjection": fused_proj,
-                "fusedRecommendation": prediction["recommendation"],
-                "weights": {"ai": ai_weight, "bayesian": bayes_weight},
+                "fusedProjection": bayesian_posterior,
+                "fusedRecommendation": bayesian_rec,
+                "weights": {"ai": 0, "bayesian": 1.0},
                 "agreement": bayesian_rec == ai_rec,
                 "divergencePct": round(divergence_pct, 1),
             }
 
         # =============================================
-        # POST-FUSION POSSESSION SCALING — for pass-related props
-        # Match dominance multiplier applied DIRECTLY to the final
-        # projection, not buried in the 25%-capped Covariate layer.
-        # NOTE: Dominance was already applied pre-fusion (lines ~2099).
-        # Post-fusion scaling is SKIPPED to prevent double-dipping.
+        # POST-PROJECTION DOMINANCE SCALING — SELECTIVE
+        # Applied ONLY when a low-possession team faces a possession monster.
+        # High-possession teams (>52% avg) keep their Bayesian projection as-is
+        # because their pass counts remain high regardless of matchup.
         # =============================================
         poss_sensitive = {"pass_attempts", "passes", "key_passes", "crosses", "dribbles"}
-        # Dominance already applied pre-fusion — skip post-fusion possession scaling
 
-        # =============================================
-        # POST-FUSION DOMINANCE SCALING
-        # Applied to the FUSED number so it affects BOTH AI and Bayesian contributions.
-        # This is the correct approach: if expected possession drops 15%,
-        # ALL pass projections should drop 15%, regardless of source.
-        # =============================================
-        poss_sensitive = {"pass_attempts", "passes", "key_passes", "crosses", "dribbles"}
         if req.propType in poss_sensitive and match_dominance.get("multiplier", 1.0) != 1.0:
             dom_mult = match_dominance["multiplier"]
-            pre_dom = prediction.get("projectedValue", req.line)
-            post_dom = round(pre_dom * dom_mult, 1)
-            prediction["projectedValue"] = post_dom
-            prediction["recommendation"] = "over" if post_dom > req.line else "under"
-            prediction["matchDominance"]["preDominanceValue"] = pre_dom
-            prediction["matchDominance"]["postDominanceValue"] = post_dom
-            print(f"[DOMINANCE POST-FUSION] {req.propType}: {pre_dom} × {dom_mult:.3f} → {post_dom}")
-        # POST-FUSION GAME TEMPO SCALING
-        # High-tempo games (expected 3+ goals) boost ALL players' pass counts.
-        # Low-tempo games suppress them. This is independent of possession share.
-        # =============================================
+            team_avg_poss = match_dominance.get("teamSeasonAvg", 50)
+            current = prediction.get("projectedValue", req.line)
+
+            if team_avg_poss < 52 and dom_mult < 0.92:
+                # Low-possession team facing a dominant opponent — scale down
+                post_dom = round(current * dom_mult, 1)
+                prediction["projectedValue"] = post_dom
+                prediction["recommendation"] = "over" if post_dom > req.line else "under"
+                print(f"[DOMINANCE] APPLIED: {current} × {dom_mult:.3f} → {post_dom} (team avg {team_avg_poss:.0f}% < 52% threshold)")
+            else:
+                would_be = round(current * dom_mult, 1)
+                print(f"[DOMINANCE] SKIPPED: {current} × {dom_mult:.3f} would be {would_be} (team avg {team_avg_poss:.0f}% — Bayesian covers this)")
+
         if req.propType in poss_sensitive and game_tempo.get("tempoMultiplier", 1.0) != 1.0:
             tempo_mult = game_tempo["tempoMultiplier"]
-            pre_tempo = prediction.get("projectedValue", req.line)
-            post_tempo = round(pre_tempo * tempo_mult, 1)
-            prediction["projectedValue"] = post_tempo
-            prediction["recommendation"] = "over" if post_tempo > req.line else "under"
-            prediction["tempoScaling"] = {
-                "preTempoValue": pre_tempo,
-                "postTempoValue": post_tempo,
-                "tempoMultiplier": tempo_mult,
-                "expectedTempo": game_tempo["expectedTempo"],
-                "expectedTotalGoals": game_tempo.get("expectedTotalGoals"),
-            }
-            print(f"[TEMPO] {req.propType}: {pre_tempo} × {tempo_mult:.3f} ({game_tempo['expectedTempo']} tempo) → {post_tempo}")
+            current = prediction.get("projectedValue", req.line)
+            print(f"[TEMPO] LOGGED ONLY: {current} × {tempo_mult:.3f} (NOT applied)")
 
-        # =============================================
-        # POST-FUSION FAVORITE DAMPENING
-        # Heavy favorites (odds < 1.60) who score early tend to
-        # manage the game — fewer passes, more direct play, time-wasting.
-        # This applies ONLY to OVER pass props for heavy favorites.
-        # =============================================
         if favorite_dampening.get("applied") and req.propType in poss_sensitive:
-            current_rec = prediction.get("recommendation", "over")
-            if current_rec == "over":
-                fav_factor = favorite_dampening["dampeningFactor"]
-                pre_fav = prediction.get("projectedValue", req.line)
-                post_fav = round(pre_fav * (1.0 - fav_factor), 1)
-                prediction["projectedValue"] = post_fav
-                prediction["recommendation"] = "over" if post_fav > req.line else "under"
-                prediction["favoriteDampening"] = {
-                    "preDampenValue": pre_fav,
-                    "postDampenValue": post_fav,
-                    "dampeningFactor": fav_factor,
-                    "teamOdds": favorite_dampening["teamOdds"],
-                    "note": favorite_dampening["note"],
-                }
-                prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [
-                    f"Heavy favorite ({favorite_dampening['teamOdds']:.2f} odds): teams leading early often reduce passing tempo in the 2nd half."
-                ]
-                print(f"[FAV DAMPEN] {req.propType}: {pre_fav} × {1.0-fav_factor:.3f} (odds={favorite_dampening['teamOdds']:.2f}) → {post_fav}")
+            fav_factor = favorite_dampening["dampeningFactor"]
+            current = prediction.get("projectedValue", req.line)
+            print(f"[FAV DAMPEN] LOGGED ONLY: {current} × {1.0-fav_factor:.3f} (NOT applied)")
 
         # HARD GUARD: recommendation MUST match the FINAL projected value vs line
         final_proj = prediction.get("projectedValue", req.line)
