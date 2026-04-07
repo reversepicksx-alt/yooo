@@ -200,16 +200,17 @@ async def _infer_league_id(team_name: str, opponent_name: str, ai_league_id: int
 
 
 async def _resolve_player_via_cache(player_name: str, team_id: int = None, league_id: int = None) -> dict:
-    """Try to find a player in the MongoDB cache. Returns player doc or None."""
+    """Try to find a player in the MongoDB cache. Returns player doc or None.
+    Uses league_id to disambiguate when multiple players share the same name."""
     if team_id:
         # Search with team filter first (most precise)
-        player = await get_player_by_name(player_name, team_id)
+        player = await get_player_by_name(player_name, team_id, league_id=league_id)
         if player:
             return player
         # Team filter failed — fall through to unfiltered below
 
-    # Unfiltered search by name only
-    player = await get_player_by_name(player_name)
+    # Unfiltered search by name — league_id helps disambiguate duplicates (e.g., Vitinha PSG vs Genoa)
+    player = await get_player_by_name(player_name, league_id=league_id)
     if not player:
         return None
 
@@ -220,21 +221,18 @@ async def _resolve_player_via_cache(player_name: str, team_id: int = None, leagu
     player_league = player.get("leagueId")
 
     if player_league in international_leagues and (not league_id or league_id not in international_leagues):
-        # Found national team entry but we want a club — search for club version
         from cache import db, COL_PLAYERS
         from utils import strip_accents
         import re
         name_clean = strip_accents(player_name.lower().strip())
         parts = name_clean.split()
         last_name = parts[-1] if parts else name_clean
-        # Find a club entry for this player (same playerId, different team)
         club_doc = await db[COL_PLAYERS].find_one(
             {"playerId": player["playerId"], "leagueId": {"$nin": list(international_leagues)}},
             {"_id": 0}
         )
         if club_doc:
             return club_doc
-        # Try by last name in a club league
         club_doc = await db[COL_PLAYERS].find_one(
             {"nameClean": {"$regex": rf"\b{re.escape(last_name)}$"}, "leagueId": {"$nin": list(international_leagues)}},
             {"_id": 0}
@@ -245,11 +243,11 @@ async def _resolve_player_via_cache(player_name: str, team_id: int = None, leagu
     # League validation for non-continental requests
     if league_id and player_league:
         if league_id in continental_cups:
-            return player  # UCL/Europa — domestic league entry is fine
+            return player
         if player_league == league_id:
             return player
         if not team_id:
-            return None  # Different non-continental league with no team hint — reject
+            return None
 
     return player
 

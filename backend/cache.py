@@ -411,8 +411,11 @@ async def get_team_info(team_name: str) -> dict:
     return None
 
 
-async def get_player_by_name(player_name: str, team_id: int = None) -> dict:
-    """Look up a player by name, optionally filtered by team. Returns player doc or None.
+async def get_player_by_name(player_name: str, team_id: int = None, league_id: int = None) -> dict:
+    """Look up a player by name, optionally filtered by team/league. Returns player doc or None.
+    
+    When multiple players share a name (e.g., Vitinha at PSG vs Genoa),
+    uses league_id to disambiguate. Prefers club entries over national teams.
     
     Search strategy (most precise → least):
     1. Exact nameClean match
@@ -422,6 +425,7 @@ async def get_player_by_name(player_name: str, team_id: int = None) -> dict:
     """
     from utils import strip_accents
     name_clean = strip_accents(player_name.lower().strip())
+    international_leagues = {1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 29, 30, 31, 32, 33, 34, 115, 960}
 
     def _q(extra: dict) -> dict:
         q = dict(extra)
@@ -429,40 +433,57 @@ async def get_player_by_name(player_name: str, team_id: int = None) -> dict:
             q["teamId"] = team_id
         return q
 
+    async def _best_match(query: dict) -> dict:
+        """Find all matches and pick the best one based on league context."""
+        docs = await db[COL_PLAYERS].find(query, {"_id": 0}).to_list(10)
+        if not docs:
+            return None
+        if len(docs) == 1:
+            return docs[0]
+        # Multiple matches — disambiguate
+        # 1. Prefer exact league match
+        if league_id:
+            continental = {2, 3, 848, 531, 480}
+            for d in docs:
+                if d.get("leagueId") == league_id:
+                    return d
+            # For continental cups, prefer club entries
+            if league_id in continental:
+                club_docs = [d for d in docs if d.get("leagueId") not in international_leagues]
+                if club_docs:
+                    return club_docs[0]
+        # 2. Prefer club entry over national team
+        club_docs = [d for d in docs if d.get("leagueId") not in international_leagues]
+        if club_docs:
+            return club_docs[0]
+        return docs[0]
+
     # 1. Exact match on full cleaned name
-    doc = await db[COL_PLAYERS].find_one(_q({"nameClean": name_clean}), {"_id": 0})
+    doc = await _best_match(_q({"nameClean": name_clean}))
     if doc:
         return doc
 
     parts = name_clean.split()
     last_name = parts[-1] if parts else name_clean
 
-    # 2. Last name at end of string with word boundary (catches "Mohamed Salah" for "salah")
-    doc = await db[COL_PLAYERS].find_one(
-        _q({"nameClean": {"$regex": rf"\b{re.escape(last_name)}$"}}), {"_id": 0}
-    )
+    # 2. Last name at end of string with word boundary
+    doc = await _best_match(_q({"nameClean": {"$regex": rf"\b{re.escape(last_name)}$"}}))
     if doc:
         return doc
 
-    # 3. Full input as word boundary match (catches "B. Saka" for "saka")
+    # 3. Full input as word boundary match
     if name_clean != last_name:
-        doc = await db[COL_PLAYERS].find_one(
-            _q({"nameClean": {"$regex": rf"\b{re.escape(name_clean)}\b"}}), {"_id": 0}
-        )
+        doc = await _best_match(_q({"nameClean": {"$regex": rf"\b{re.escape(name_clean)}\b"}}))
         if doc:
             return doc
 
     # 4. Last name as word boundary anywhere (broader)
-    doc = await db[COL_PLAYERS].find_one(
-        _q({"nameClean": {"$regex": rf"\b{re.escape(last_name)}\b"}}), {"_id": 0}
-    )
+    doc = await _best_match(_q({"nameClean": {"$regex": rf"\b{re.escape(last_name)}\b"}}))
     if doc:
         return doc
 
-    # 5. Name contains (last resort — only if all word-boundary matches fail)
-    doc = await db[COL_PLAYERS].find_one(
-        _q({"nameClean": {"$regex": re.escape(last_name)}}), {"_id": 0}
-    )
+    # 5. Name contains (last resort)
+    doc = await _best_match(_q({"nameClean": {"$regex": re.escape(last_name)}}))
     return doc
 
 
