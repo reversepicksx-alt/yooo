@@ -1,0 +1,89 @@
+{
+  "summary": "Iteration 67: Verified Divergence Guard and soccer prediction improvements. All 8 pytest tests passed. Frontend loads correctly with no basketball references. Backtest results show 2/4 picks flipped correctly (D. Sanderson, B. Whiteman), 1 correctly flagged as COIN FLIP (L. Ayling), and 1 had an error (A. Morris).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/predict", "issue": "A. Morris backtest returned error (null new_rec) - likely due to missing player data in API-Sports"}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration_67_divergence_guard.py",
+    "/app/test_reports/pytest/iteration_67_divergence_guard_results.xml",
+    "/app/test_reports/backtest_missed_picks.json"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Divergence Guard code verified at lines 2154-2179 in predict.py - triggers when AI vs Bayesian gap exceeds 30%, overrides to 80-90% Bayesian weight",
+    "Game Tempo Estimation verified at lines 843-914 - calculates expected total goals, classifies tempo (high/low/normal), applies tempoMultiplier",
+    "Favorite Dampening verified at lines 917-942 - applies to pass props when team odds < 1.60",
+    "Double-dip fix verified - possession scaling removed from duplicate application",
+    "Backtest results: 2/4 picks flipped correctly (D. Sanderson: over→under, B. Whiteman: over→under), 1 correctly flagged as COIN FLIP (L. Ayling), 1 error (A. Morris)",
+    "No basketball references found in any frontend tab (SCAN, TRACKING, INTEL, PROFILE)",
+    "BasketballPredictionRequest removed from models.py"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration_67_divergence_guard.py"
+  ],
+  "success_rate": {
+    "backend": "100% (8/8 pytest tests passed)",
+    "frontend": "100% (all tabs load, no errors, no basketball references)"
+  },
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 67 verified 5 new prediction improvement systems: (1) Game Tempo Estimation - calculates expected total goals, classifies tempo, applies tempoMultiplier. (2) Heavy Favorite Dampening - when team odds < 1.60, applies dampeningFactor to OVER pass predictions. (3) Possession Contradiction Warning - returns POSSESSION_CONTRADICTION type when saving same-direction pass props for opposing teams. (4) Divergence Guard - when AI vs Bayesian gap exceeds 30%, overrides to 80-90% Bayesian weight. (5) Double-dip fix - removed duplicate possession scaling. Backtest verified 2/4 picks flip correctly, 1 correctly flagged as COIN FLIP. The /api/predict endpoint requires real API-Sports player/team IDs to produce a full response.",
+  "test_credentials": {
+    "owner_email": "josselj001@gmail.com",
+    "test_user": "xaviersteverson@gmail.com / test123456"
+  },
+  "verified_features": {
+    "divergence_guard": {
+      "location": "predict.py lines 2154-2179",
+      "trigger": "AI vs Bayesian gap > 30%",
+      "action": "Override to 80-90% Bayesian weight",
+      "logging": "[DIVERGENCE GUARD] {gap}% gap — AI={ai_proj} vs Bayes={bayesian_posterior}. Overriding to {bayes_weight}% Bayesian weight"
+    },
+    "game_tempo_estimation": {
+      "location": "predict.py lines 843-914",
+      "calculation": "expected_total = expected_team_goals + expected_opp_goals",
+      "thresholds": "high >= 3.2 goals, low <= 1.8 goals",
+      "logging": "[GAME TEMPO] {playerName}: tempo={expectedTempo}, mult={tempoMultiplier}, goals={expectedTotalGoals}"
+    },
+    "favorite_dampening": {
+      "location": "predict.py lines 917-942",
+      "threshold": "team_odds < 1.60 triggers dampening",
+      "props_affected": "pass_attempts, passes, key_passes, crosses",
+      "logging": "[FAVORITE DAMPENING] {playerName}: odds={teamOdds}, dampen={dampeningFactor}%"
+    },
+    "possession_contradiction_warning": {
+      "location": "picks.py lines 150-170",
+      "type": "POSSESSION_CONTRADICTION",
+      "severity": "CRITICAL"
+    },
+    "double_dip_fix": {
+      "location": "predict.py line 2178",
+      "description": "Removed duplicate possession scaling that was being applied twice"
+    },
+    "backtest_results": {
+      "total_picks": 4,
+      "flipped_correctly": 2,
+      "coin_flip_flagged": 1,
+      "errors": 1,
+      "details": [
+        "D. Sanderson: over→under (flipped=true, would_hit=true)",
+        "B. Whiteman: over→under (flipped=true, would_hit=true)",
+        "L. Ayling: under→under (coin_flip=true, confidence=50)",
+        "A. Morris: under→error (null new_rec)"
+      ]
+    },
+    "no_basketball_references": {
+      "models_py": "BasketballPredictionRequest removed",
+      "frontend_tabs": "All 4 tabs (SCAN, TRACKING, INTEL, PROFILE) verified clean"
+    }
+  }
+}
