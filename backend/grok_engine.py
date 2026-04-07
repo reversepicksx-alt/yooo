@@ -532,15 +532,18 @@ async def grok_scan_prop(image_base64: str) -> dict:
     Returns: {"playerName": "...", "propType": "...", "line": 0, "teamName": "...", "opponentName": "...", "leagueName": "..."}
     Falls back to empty dict on failure."""
 
-    prompt = """Extract the sports prop bet details from this image. Look for:
-- Player name
-- Prop type (e.g., pass attempts, shots, points, rebounds, assists, tackles, saves, etc.)
-- Line/number (the over/under value)
-- Team name
-- Opponent name (if visible)
-- League (if visible)
+    prompt = """Extract the FIRST player prop bet from this image. Focus on the top-left or most prominent player card.
 
-Return JSON: {"playerName":"","propType":"","line":0,"teamName":"","opponentName":"","leagueName":""}
+Extract:
+- Player name (exact spelling from image)
+- Team name (the team shown on the player's card/badge, NOT the opponent)
+- Prop type (e.g., Passes Attempted → pass_attempts, Shots → shots, etc.)
+- Line/number (the over/under value)
+- Opponent name (the "vs" team)
+- League name (if visible, e.g., Champions League, La Liga, Premier League)
+
+IMPORTANT: Return a SINGLE JSON object (not an array):
+{"playerName":"","propType":"","line":0,"teamName":"","opponentName":"","leagueName":""}
 Only JSON, no markdown."""
 
     if not XAI_API_KEY:
@@ -568,8 +571,12 @@ Only JSON, no markdown."""
                 content = resp.json()["choices"][0]["message"]["content"]
                 result = _parse_json(content)
                 if result:
-                    print(f"[GROK SCAN] Extracted: {result.get('playerName','')} {result.get('propType','')} {result.get('line','')}")
-                    return result
+                    # Handle array response (model may return multiple players)
+                    if isinstance(result, list) and len(result) > 0:
+                        result = result[0]
+                    if isinstance(result, dict):
+                        print(f"[GROK SCAN] Extracted: {result.get('playerName','')} {result.get('propType','')} {result.get('line','')}")
+                        return result
             else:
                 print(f"[GROK SCAN] API error: {resp.status_code} — {resp.text[:300]}")
     except Exception as e:
