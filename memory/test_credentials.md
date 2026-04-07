@@ -22,6 +22,7 @@
 - jaredlee0414@gmail.com
 - michael1069_6910@yahoo.com
 - cristiang5815@gmail.com
+- 817dusty@gmail.com
 - mendezvincent17@gmail.com
 
 ## Manual Access Grants (manual_access_grants collection)
