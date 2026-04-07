@@ -19,7 +19,7 @@ Grok OCR → Data Fetch → BAYESIAN MATH (anchor) → Grok AI (math-informed) �
 3. **Game Tempo Estimation** — Expected total goals → high/normal/low tempo classification
 4. **Heavy Favorite Detection** — Teams with odds < 1.60 flagged for pass dampening
 5. **Bayesian Engine v2** — 3-layer math projection (Prior + Momentum + Covariate)
-6. **Grok 4.20 + GPT-5.2** — AI projection (math-informed via anchor injection, tempo-aware, favorite-aware)
+6. **Grok 3 Mini** — AI projection (math-informed via anchor injection, tempo-aware, favorite-aware)
 7. **Bayesian-First Fusion v3** — Math OWNS the number, AI provides tactical adjustments:
    - Agreement: 55% Bayes, 45% AI
    - Disagree <15%: 70% Bayes, 30% AI
@@ -54,7 +54,8 @@ Regression check: 0 previously-correct picks broken
 ## Tech Stack
 - Frontend: React.js, Shadcn/UI
 - Backend: FastAPI, Python asyncio, MongoDB
-- AI: Grok 4.20 (xAI key), GPT-5.2 (Emergent LLM Key)
+- AI: Grok 3 Mini (xAI key), Grok 2 Vision (OCR)
+- No GPT/OpenAI models used
 - Data: API-Sports (Soccer)
 - Auth: Whop + Square subscriptions
 - Caching: MongoDB with TTL
@@ -99,5 +100,4 @@ Regression check: 0 previously-correct picks broken
 ## 3rd Party Integrations
 - API-Sports (Soccer Data) — User API Key
 - Square (Payments/Subs) — User API Key
-- xAI Grok (Grok 4.20) — User API Key
-- OpenAI GPT-5.2 — Emergent LLM Key
+- xAI Grok 3 Mini + Grok 2 Vision — User API Key

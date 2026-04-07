@@ -1,7 +1,6 @@
 """
 GROK ENGINE — The data backbone powering the ReversePicks prediction system.
-Grok handles: data digestion, auto-settlement, pre-game scouting, pattern mining, and scan processing.
-GPT-5.2 stays as the prediction brain.
+Grok handles: data digestion, predictions, auto-settlement, pre-game scouting, pattern mining, and scan processing.
 """
 import json
 import httpx
@@ -11,7 +10,7 @@ from datetime import datetime, timezone, timedelta
 from config import db, XAI_API_KEY
 
 GROK_MODEL = "grok-4-1-fast-non-reasoning"
-GROK_REASONING_MODEL = "grok-4.20-reasoning"
+GROK_REASONING_MODEL = "grok-3-mini"
 GROK_URL = "https://api.x.ai/v1/chat/completions"
 
 

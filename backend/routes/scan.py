@@ -610,7 +610,7 @@ def _validate_extraction(entry: dict) -> tuple:
 async def scan_prop(req: ScanPropRequest):
     """Use AI vision to extract player prop data from a screenshot."""
     try:
-        # ── Step 1: Try Grok Vision first (faster + cheaper), GPT-4o fallback ──
+        # ── Step 1: Grok Vision OCR ──
         extracted = None
         from grok_engine import grok_scan_prop
         grok_result = await grok_scan_prop(req.image_base64)
@@ -621,33 +621,11 @@ async def scan_prop(req: ScanPropRequest):
                 print(f"[SCAN] Grok extracted (validated): {grok_result.get('playerName')}")
                 extracted = [grok_result]
             else:
-                print(f"[SCAN] Grok extraction FAILED validation ({issues}), falling to GPT-4o")
+                print(f"[SCAN] Grok extraction FAILED validation ({issues}), retrying not available")
 
-        # Fallback to GPT-4o if Grok didn't extract or failed validation
+        # Fallback: return error if Grok Vision didn't extract
         if not extracted:
-            chat = LlmChat(
-                api_key=EMERGENT_LLM_KEY,
-                session_id=f"scan-{uuid.uuid4().hex[:8]}",
-                system_message="You are an expert at reading player prop screenshots. Extract structured data precisely."
-            ).with_model("openai", "gpt-4o")
-
-            image_content = ImageContent(image_base64=req.image_base64)
-
-            leagues_list = ", ".join([f"{lg['name']} (ID:{lg['id']})" for lg in SUPPORTED_LEAGUES])
-            prompt = _build_soccer_scan_prompt(leagues_list)
-
-            msg = UserMessage(text=prompt, file_contents=[image_content])
-            response = await chat.send_message(msg)
-            response_text = response.strip()
-
-            if response_text.startswith("```"):
-                lines = response_text.split("\n")
-                lines = [ln for ln in lines if not ln.strip().startswith("```")]
-                response_text = "\n".join(lines)
-
-            extracted = json.loads(response_text)
-            if not isinstance(extracted, list):
-                extracted = [extracted]
+            return {"success": False, "error": "Could not extract prop details from this image. Please try a clearer screenshot."}
 
         # DEDUP: If same player appears with different stat types, keep only the first
         seen_players = {}
