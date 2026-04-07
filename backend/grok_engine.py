@@ -552,7 +552,7 @@ Only JSON, no markdown."""
                 GROK_URL,
                 headers={"Authorization": f"Bearer {XAI_API_KEY}", "Content-Type": "application/json"},
                 json={
-                    "model": "grok-2-vision-latest",
+                    "model": "grok-4-1-fast-non-reasoning",
                     "messages": [{
                         "role": "user",
                         "content": [
@@ -571,7 +571,7 @@ Only JSON, no markdown."""
                     print(f"[GROK SCAN] Extracted: {result.get('playerName','')} {result.get('propType','')} {result.get('line','')}")
                     return result
             else:
-                print(f"[GROK SCAN] API error: {resp.status_code}")
+                print(f"[GROK SCAN] API error: {resp.status_code} — {resp.text[:300]}")
     except Exception as e:
         print(f"[GROK SCAN] Error: {e}")
 
