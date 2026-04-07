@@ -183,6 +183,9 @@ PROP_TYPE_ALIASES = {
     # Saves
     "saves": "saves",
     "goalkeeper saves": "saves",
+    "goalie saves": "saves",
+    "goalie_saves": "saves",
+    "gk saves": "saves",
     # Interceptions
     "interceptions": "interceptions",
     # Blocks

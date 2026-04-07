@@ -537,7 +537,7 @@ async def grok_scan_prop(image_base64: str) -> dict:
 Extract:
 - Player name (exact spelling from image)
 - Team name (the team shown on the player's card/badge, NOT the opponent)
-- Prop type (e.g., Passes Attempted → pass_attempts, Shots → shots, etc.)
+- Prop type (use EXACTLY one of: pass_attempts, shots, shots_on_target, tackles, key_passes, saves, interceptions, blocks, dribbles, goals, assists, fouls_drawn, crosses, clearances)
 - Line/number (the over/under value)
 - Opponent name (the "vs" team)
 - League name (if visible, e.g., Champions League, La Liga, Premier League)
