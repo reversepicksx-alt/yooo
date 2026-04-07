@@ -2,12 +2,12 @@
   {
     "player": "L. Ayling",
     "old_rec": "under",
-    "new_rec": "under",
-    "new_proj": 56.6,
+    "new_rec": "over",
+    "new_proj": 60.4,
     "line": 59.5,
     "actual": 76,
-    "flipped": false,
-    "would_hit": false,
+    "flipped": true,
+    "would_hit": true,
     "tempo": null,
     "fav_dampening": null,
     "poss_scaling": null,
@@ -16,8 +16,8 @@
       "multiplier": 0.935,
       "expectedPoss": 52.5,
       "teamSeasonAvg": 63.4,
-      "oldProjection": 55.5,
-      "newProjection": 51.9,
+      "oldProjection": 56,
+      "newProjection": 52.4,
       "notes": [
         "Standings gap (#3 vs #15): +4.0% poss adj",
         "Odds signal (team=6.25, opp=1.52): -6.0% poss adj",
@@ -25,33 +25,51 @@
       ]
     },
     "coin_flip": true,
-    "confidence": 50,
+    "confidence": 52,
     "alerts": [
-      "COIN FLIP: Math projects 62.4 vs line 59.5 (edge 2.9). Bayesian P=59.0%. This is a variance-driven outcome."
+      "DIVERGENCE ALERT: AI projects 52.4 but math engine projects 62.4 (16% gap). Bayesian override: 80% math / 20% AI.",
+      "COIN FLIP: Math projects 62.4 vs line 59.5 (edge 0.9). Bayesian P=59.0%. This is a variance-driven outcome."
     ]
   },
   {
     "player": "A. Morris",
     "old_rec": "under",
-    "new_rec": "error",
-    "new_proj": null,
+    "new_rec": "over",
+    "new_proj": 63.1,
     "line": 58.5,
     "actual": 78,
-    "flipped": false,
-    "would_hit": false,
+    "flipped": true,
+    "would_hit": true,
     "tempo": null,
     "fav_dampening": null,
     "poss_scaling": null,
-    "match_dominance": null,
+    "match_dominance": {
+      "applied": true,
+      "multiplier": 0.935,
+      "expectedPoss": 52.5,
+      "teamSeasonAvg": 63.4,
+      "oldProjection": 42.0,
+      "newProjection": 39.3,
+      "notes": [
+        "Standings gap (#3 vs #15): +4.0% poss adj",
+        "Odds signal (team=6.25, opp=1.52): -6.0% poss adj",
+        "Pass volume drop: expected 52% poss vs 63% avg \u2192 -7% reduction"
+      ]
+    },
     "coin_flip": false,
-    "confidence": null,
-    "alerts": []
+    "confidence": 58,
+    "alerts": [
+      "Low-minute sub risk vs this opponent",
+      "High output variance in low-possession scripts",
+      "Middlesbrough likely to cede control to home favorite",
+      "DIVERGENCE ALERT: AI projects 39.3 but math engine projects 64.4 (39% gap). Bayesian override: 95% math / 5% AI."
+    ]
   },
   {
     "player": "D. Sanderson",
     "old_rec": "over",
     "new_rec": "under",
-    "new_proj": 34.0,
+    "new_proj": 32.3,
     "line": 35.5,
     "actual": 30,
     "flipped": true,
@@ -64,25 +82,22 @@
       "multiplier": 1.06,
       "expectedPoss": 55.3,
       "teamSeasonAvg": 47.8,
-      "oldProjection": 33.8,
-      "newProjection": 35.8,
+      "oldProjection": 31.4,
+      "newProjection": 33.3,
       "notes": [
         "Standings gap (#8 vs #13): +2.0% poss adj",
         "Pass volume boost: expected 55% poss vs 48% avg \u2192 +6% uplift"
       ]
     },
     "coin_flip": false,
-    "confidence": 61,
-    "alerts": [
-      "potential minute restriction vs Stoke",
-      "high game-state sensitivity"
-    ]
+    "confidence": 63,
+    "alerts": []
   },
   {
     "player": "B. Whiteman",
     "old_rec": "over",
     "new_rec": "under",
-    "new_proj": 44.9,
+    "new_proj": 45.5,
     "line": 50.5,
     "actual": 44,
     "flipped": true,
@@ -95,15 +110,15 @@
       "multiplier": 1.041,
       "expectedPoss": 61.7,
       "teamSeasonAvg": 56.6,
-      "oldProjection": 44,
-      "newProjection": 45.8,
+      "oldProjection": 46.0,
+      "newProjection": 47.9,
       "notes": [
         "Odds signal (team=2.12, opp=3.40): +2.1% poss adj",
         "Pass volume boost: expected 62% poss vs 57% avg \u2192 +4% uplift"
       ]
     },
     "coin_flip": false,
-    "confidence": 61,
+    "confidence": 62,
     "alerts": [
       "Notable early-sub risk vs QPR (52 min last meeting)",
       "Late regular season rotation possible on MD42"

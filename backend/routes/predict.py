@@ -2134,49 +2134,49 @@ Is this projection reasonable? Return ONLY JSON:
             ai_proj = prediction.get("projectedValue", req.line)
             ai_rec = prediction.get("recommendation", "over")
 
-            # Adaptive fusion weights — Bayesian gets more weight when it has stronger conviction
+            # ═══════════════════════════════════════════════════
+            # BAYESIAN-FIRST FUSION v3
+            #
+            # Core principle: The math OWNS the number.
+            # The AI provides tactical context and small adjustments.
+            #
+            # The more the AI disagrees with the math, the LESS
+            # the AI matters — because divergence almost always
+            # means the AI hallucinated based on narrative bias.
+            #
+            # Smooth gradient:
+            #   Agreement        → 55% Bayes, 45% AI (AI adds tactical nuance)
+            #   Disagree <15%    → 70% Bayes, 30% AI (math leads)
+            #   Disagree 15-25%  → 80% Bayes, 20% AI (AI losing credibility)
+            #   Disagree 25-35%  → 90% Bayes, 10% AI (AI is wrong)
+            #   Disagree >35%    → 95% Bayes,  5% AI (AI hallucinating)
+            # ═══════════════════════════════════════════════════
+
+            divergence_pct = abs(ai_proj - bayesian_posterior) / max(bayesian_posterior, 1) * 100
+
             if bayesian_rec == ai_rec:
-                # Agreement: trust AI slightly more (it has tactical context)
-                bayes_weight = 0.40
+                # Agreement: Bayesian leads, AI adds tactical color
+                bayes_weight = 0.55
             else:
-                # Disagreement: Bayesian weight scales with its confidence
-                if bayesian_prob >= 0.75:
-                    bayes_weight = 0.60  # Strong math signal overrides AI
-                elif bayesian_prob >= 0.65:
-                    bayes_weight = 0.55  # Math has clear edge
-                elif bayesian_prob >= 0.55:
-                    bayes_weight = 0.45  # Split but lean math
+                # Disagreement: smooth gradient — more divergence = less AI
+                if divergence_pct > 35:
+                    bayes_weight = 0.95
+                elif divergence_pct > 25:
+                    bayes_weight = 0.90
+                elif divergence_pct > 15:
+                    bayes_weight = 0.80
                 else:
-                    bayes_weight = 0.35  # Weak math, trust AI more
+                    bayes_weight = 0.70
 
             ai_weight = round(1.0 - bayes_weight, 2)
 
-            # ── DIVERGENCE GUARD ──
-            # When AI and Bayesian projections diverge significantly, the AI has
-            # likely over-weighted contextual bias (e.g., "away underdog") and lost
-            # the statistical anchor. Trust the Bayesian math more heavily.
-            # Pass props are especially Bayesian-reliable (directly tied to minutes played).
-            divergence_pct = abs(ai_proj - bayesian_posterior) / max(bayesian_posterior, 1) * 100
-            is_pass_prop = req.propType in {"pass_attempts", "passes", "key_passes", "crosses"}
-            divergence_threshold = 18 if is_pass_prop else 25  # Pass props use tighter threshold
-
-            if divergence_pct > divergence_threshold and bayesian_rec != ai_rec:
-                old_bayes_weight = bayes_weight
-                if divergence_pct > 40:
-                    # Extreme divergence — AI has no useful signal, near-full Bayesian
-                    bayes_weight = max(bayes_weight, 0.90)
-                elif divergence_pct > 30:
-                    bayes_weight = max(bayes_weight, 0.80)
-                elif divergence_pct > 25:
-                    bayes_weight = max(bayes_weight, 0.75)
-                else:
-                    bayes_weight = max(bayes_weight, 0.70)
-                ai_weight = round(1.0 - bayes_weight, 2)
+            # Log divergence alerts for significant gaps
+            if divergence_pct > 15 and bayesian_rec != ai_rec:
                 prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [
                     f"DIVERGENCE ALERT: AI projects {ai_proj} but math engine projects {bayesian_posterior} ({divergence_pct:.0f}% gap). "
-                    f"Bayesian override engaged (weight {old_bayes_weight:.0%} → {bayes_weight:.0%})."
+                    f"Bayesian override: {bayes_weight:.0%} math / {ai_weight:.0%} AI."
                 ]
-                print(f"[DIVERGENCE GUARD] {divergence_pct:.0f}% gap — AI={ai_proj} vs Bayes={bayesian_posterior}. Overriding to {bayes_weight:.0%} Bayesian weight")
+                print(f"[DIVERGENCE GUARD] {divergence_pct:.0f}% gap — AI={ai_proj} vs Bayes={bayesian_posterior}. Weights: {bayes_weight:.0%} Bayes / {ai_weight:.0%} AI")
 
             fused_proj = round(ai_weight * ai_proj + bayes_weight * bayesian_posterior, 1)
 
@@ -2194,6 +2194,7 @@ Is this projection reasonable? Return ONLY JSON:
                 "fusedRecommendation": prediction["recommendation"],
                 "weights": {"ai": ai_weight, "bayesian": bayes_weight},
                 "agreement": bayesian_rec == ai_rec,
+                "divergencePct": round(divergence_pct, 1),
             }
 
         # =============================================
