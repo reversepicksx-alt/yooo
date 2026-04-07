@@ -733,14 +733,28 @@ async def predict(req: PredictionRequest):
             opp_avg = avg_poss(opp_stats_list)
 
             if team_avg is not None and opp_avg is not None:
-                # Opponent-aware baseline: (team_avg + (100 - opp_avg)) / 2
-                # If team_avg=58, opp_avg=45 → base = (58 + 55) / 2 = 56.5
-                # If team_avg=58, opp_avg=60 → base = (58 + 40) / 2 = 49 (harder matchup)
-                base_poss = (team_avg + (100.0 - opp_avg)) / 2.0
+                opp_concedes = 100.0 - opp_avg
 
-                # Home advantage: +2.5% for home
+                if opp_avg > 57:
+                    # Possession-dominant opponent: their style DICTATES the match
+                    # At 57%: 60/40 opponent-weighted → At 68%+: 90/10 opponent-weighted
+                    extremity = min((opp_avg - 57) / 11.0, 1.0)
+                    opp_weight = 0.60 + extremity * 0.30
+                    team_weight = 1.0 - opp_weight
+                    base_poss = team_weight * team_avg + opp_weight * opp_concedes
+                    dom["notes"].append(f"Possession monster: opp avg {opp_avg:.0f}% → weight {opp_weight*100:.0f}% opp-driven (raw base {base_poss:.1f}%)")
+                else:
+                    # Normal matchup: symmetric 50/50 blend
+                    base_poss = (team_avg + opp_concedes) / 2.0
+
+                # Home advantage — dampened against possession monsters
                 if is_home:
-                    base_poss += 2.5
+                    home_boost = 2.5
+                    if opp_avg > 60:
+                        dampen = min((opp_avg - 60) / 10.0, 0.7)
+                        home_boost *= (1.0 - dampen)
+                        dom["notes"].append(f"Home poss boost dampened: {home_boost:.1f}% (vs {opp_avg:.0f}% opp)")
+                    base_poss += home_boost
                 else:
                     base_poss -= 1.0
 

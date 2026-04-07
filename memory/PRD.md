@@ -38,6 +38,7 @@ Grok OCR → Data Fetch → BAYESIAN MATH (anchor) → Grok AI (math-informed) �
 - **Possession Contradiction**: CRITICAL warning when picking same direction on pass props for both teams
 - **Slip Correlation**: CORRELATED_RISK, OPPOSING_TEAMS_SAME_DIR, CONFLICTING, BOOSTING warnings
 - **Double-Dip Prevention**: Dominance multiplier applied once pre-fusion (not duplicated post-fusion)
+- **Possession Monster Guard**: When opponent avg possession >57%, their concession rate overrides the 50/50 blend (60→90% weight). Home advantage dampened up to 70% vs extreme possession teams.
 
 ### Calibration System
 - **REMOVED** per user request
@@ -74,6 +75,7 @@ Regression check: 0 previously-correct picks broken
 - **Divergence Guard (Feb 2026)** — catches AI hallucination, overrides to math
 - **Double-dip fix (Feb 2026)** — removed duplicate possession scaling post-fusion
 - **Grok model name fix (Feb 2026)** — grok_engine.py updated to match predict.py
+- **Possession Monster Formula (Feb 2026)** — Dynamic opponent-weighted possession for extreme matchups (opp avg >57%): scales from 60/40 to 90/10 opponent-driven. Home advantage dampened against possession monsters. Fixes over-projection of pass attempts vs teams like Barcelona.
 
 ## Upcoming Tasks
 - Route prediction API calls through MongoDB cache (P2)

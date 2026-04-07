@@ -2,8 +2,8 @@
   "summary": {
     "total_picks": 14,
     "old_correct": 5,
-    "new_correct": 8,
-    "improvement": 3,
+    "new_correct": 9,
+    "improvement": 4,
     "regressions": 2,
     "errors": 0
   },
@@ -22,17 +22,17 @@
       "old_rec": "over",
       "actual": 18,
       "old_result": "miss",
-      "new_rec": "over",
-      "new_proj": 33.7,
-      "would_hit": false,
-      "flipped": false,
+      "new_rec": "under",
+      "new_proj": 24.2,
+      "would_hit": true,
+      "flipped": true,
       "coin_flip": false,
-      "divergence": 56.9,
+      "divergence": 16.4,
       "weights": {
-        "ai": 0.05,
-        "bayesian": 0.95
+        "ai": 0.2,
+        "bayesian": 0.8
       },
-      "status": "STILL MISS \u274c"
+      "status": "FIXED \u2705"
     },
     {
       "name": "Leo Rom\u00e1n",
@@ -75,11 +75,11 @@
       "actual": 3,
       "old_result": "miss",
       "new_rec": "under",
-      "new_proj": 3.1,
+      "new_proj": 3.3,
       "would_hit": true,
       "flipped": true,
       "coin_flip": false,
-      "divergence": 15.2,
+      "divergence": 3.0,
       "weights": {
         "ai": 0.45,
         "bayesian": 0.55
@@ -101,14 +101,14 @@
       "actual": 44,
       "old_result": "miss",
       "new_rec": "under",
-      "new_proj": 45.9,
+      "new_proj": 45.4,
       "would_hit": true,
       "flipped": true,
       "coin_flip": true,
-      "divergence": 14.6,
+      "divergence": 26.8,
       "weights": {
-        "ai": 0.3,
-        "bayesian": 0.7
+        "ai": 0.1,
+        "bayesian": 0.9
       },
       "status": "FIXED \u2705"
     },
@@ -127,14 +127,14 @@
       "actual": 42,
       "old_result": "miss",
       "new_rec": "over",
-      "new_proj": 56.5,
+      "new_proj": 56.7,
       "would_hit": false,
       "flipped": false,
       "coin_flip": false,
-      "divergence": 16.1,
+      "divergence": 4.6,
       "weights": {
-        "ai": 0.2,
-        "bayesian": 0.8
+        "ai": 0.3,
+        "bayesian": 0.7
       },
       "status": "STILL MISS \u274c"
     },
@@ -157,7 +157,7 @@
       "would_hit": false,
       "flipped": false,
       "coin_flip": false,
-      "divergence": 29.0,
+      "divergence": 25.8,
       "weights": {
         "ai": 0.1,
         "bayesian": 0.9
@@ -183,7 +183,7 @@
       "would_hit": true,
       "flipped": true,
       "coin_flip": false,
-      "divergence": 41.2,
+      "divergence": 55.9,
       "weights": {
         "ai": 0.05,
         "bayesian": 0.95
@@ -205,14 +205,14 @@
       "actual": 26,
       "old_result": "miss",
       "new_rec": "over",
-      "new_proj": 19.8,
+      "new_proj": 23.3,
       "would_hit": true,
       "flipped": true,
       "coin_flip": false,
-      "divergence": 8.3,
+      "divergence": 16.7,
       "weights": {
-        "ai": 0.45,
-        "bayesian": 0.55
+        "ai": 0.2,
+        "bayesian": 0.8
       },
       "status": "FIXED \u2705"
     },
@@ -235,10 +235,10 @@
       "would_hit": false,
       "flipped": false,
       "coin_flip": false,
-      "divergence": 47.4,
+      "divergence": 7.9,
       "weights": {
-        "ai": 0.05,
-        "bayesian": 0.95
+        "ai": 0.45,
+        "bayesian": 0.55
       },
       "status": "STILL MISS \u274c"
     },
@@ -257,11 +257,11 @@
       "actual": 64,
       "old_result": "hit",
       "new_rec": "under",
-      "new_proj": 72.2,
+      "new_proj": 80.9,
       "would_hit": true,
       "flipped": false,
       "coin_flip": false,
-      "divergence": 0.8,
+      "divergence": 11.7,
       "weights": {
         "ai": 0.45,
         "bayesian": 0.55
@@ -283,11 +283,11 @@
       "actual": 25,
       "old_result": "hit",
       "new_rec": "over",
-      "new_proj": 34.3,
+      "new_proj": 40.7,
       "would_hit": false,
       "flipped": true,
       "coin_flip": false,
-      "divergence": 14.0,
+      "divergence": 13.2,
       "weights": {
         "ai": 0.3,
         "bayesian": 0.7
@@ -309,14 +309,14 @@
       "actual": 24,
       "old_result": "hit",
       "new_rec": "over",
-      "new_proj": 24.6,
+      "new_proj": 27.8,
       "would_hit": true,
       "flipped": false,
       "coin_flip": false,
-      "divergence": 13.4,
+      "divergence": 19.2,
       "weights": {
-        "ai": 0.45,
-        "bayesian": 0.55
+        "ai": 0.2,
+        "bayesian": 0.8
       },
       "status": "STILL HIT \u2705"
     },
@@ -335,11 +335,11 @@
       "actual": 23,
       "old_result": "hit",
       "new_rec": "over",
-      "new_proj": 28.3,
+      "new_proj": 31.0,
       "would_hit": false,
       "flipped": true,
       "coin_flip": false,
-      "divergence": 15.4,
+      "divergence": 18.9,
       "weights": {
         "ai": 0.2,
         "bayesian": 0.8
@@ -361,11 +361,11 @@
       "actual": 58,
       "old_result": "hit",
       "new_rec": "under",
-      "new_proj": 50.2,
+      "new_proj": 43.2,
       "would_hit": true,
       "flipped": false,
       "coin_flip": false,
-      "divergence": 24.2,
+      "divergence": 27.5,
       "weights": {
         "ai": 0.45,
         "bayesian": 0.55
