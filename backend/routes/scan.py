@@ -795,6 +795,19 @@ async def scan_prop(req: ScanPropRequest):
                     cache_team_id = club_id
 
             cached_player = await _resolve_player_via_cache(player_name, cache_team_id, league_id=league_id)
+
+            # SMART SWAP: If player not found on extracted team, try the opponent's team
+            # (OCR models sometimes confuse team/opponent)
+            if not cached_player and cache_team_id and opponent_hint:
+                opp_club_id, opp_club_name = await get_team_by_name(opponent_hint)
+                if opp_club_id:
+                    cached_player = await _resolve_player_via_cache(player_name, opp_club_id, league_id=league_id)
+                    if cached_player:
+                        print(f"[SCAN] TEAM SWAP: {player_name} found on opponent '{opponent_hint}' (not '{player_team_hint}') — swapping")
+                        player_team_hint, opponent_hint = opponent_hint.lower().strip(), player_team_hint
+                        cache_team_id = opp_club_id
+                        original_team_name = opp_club_name or opponent_hint.title()
+
             if cached_player:
                 # Guard: If we have a team hint but couldn't find the team in cache,
                 # validate the cached player's team doesn't belong to a completely different league

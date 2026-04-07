@@ -575,6 +575,9 @@ Only JSON, no markdown."""
                     if isinstance(result, list) and len(result) > 0:
                         result = result[0]
                     if isinstance(result, dict):
+                        # Map Grok fields to scan pipeline expected fields
+                        if "teamName" in result and "playerTeam" not in result:
+                            result["playerTeam"] = result.pop("teamName")
                         print(f"[GROK SCAN] Extracted: {result.get('playerName','')} {result.get('propType','')} {result.get('line','')}")
                         return result
             else:
