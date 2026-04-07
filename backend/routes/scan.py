@@ -202,20 +202,55 @@ async def _infer_league_id(team_name: str, opponent_name: str, ai_league_id: int
 async def _resolve_player_via_cache(player_name: str, team_id: int = None, league_id: int = None) -> dict:
     """Try to find a player in the MongoDB cache. Returns player doc or None."""
     if team_id:
-        # Search with team filter
+        # Search with team filter first (most precise)
         player = await get_player_by_name(player_name, team_id)
         if player:
             return player
-        # Team filter failed — do NOT fall back to unfiltered search.
-        # This prevents matching random players from wrong teams/leagues.
+        # Team filter failed — fall through to unfiltered below
+
+    # Unfiltered search by name only
+    player = await get_player_by_name(player_name)
+    if not player:
         return None
 
-    # No team_id — unfiltered search, but validate league if provided
-    player = await get_player_by_name(player_name)
-    if player and league_id:
-        cached_league = player.get("leagueId")
-        if cached_league and cached_league != league_id:
-            return None  # Wrong league — reject
+    # If this player is from a national team but we're looking for a club match,
+    # search again excluding international teams
+    international_leagues = {1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 29, 30, 31, 32, 33, 34, 115, 960}
+    continental_cups = {2, 3, 848, 531, 480}
+    player_league = player.get("leagueId")
+
+    if player_league in international_leagues and (not league_id or league_id not in international_leagues):
+        # Found national team entry but we want a club — search for club version
+        from cache import db, COL_PLAYERS
+        from utils import strip_accents
+        import re
+        name_clean = strip_accents(player_name.lower().strip())
+        parts = name_clean.split()
+        last_name = parts[-1] if parts else name_clean
+        # Find a club entry for this player (same playerId, different team)
+        club_doc = await db[COL_PLAYERS].find_one(
+            {"playerId": player["playerId"], "leagueId": {"$nin": list(international_leagues)}},
+            {"_id": 0}
+        )
+        if club_doc:
+            return club_doc
+        # Try by last name in a club league
+        club_doc = await db[COL_PLAYERS].find_one(
+            {"nameClean": {"$regex": rf"\b{re.escape(last_name)}$"}, "leagueId": {"$nin": list(international_leagues)}},
+            {"_id": 0}
+        )
+        if club_doc:
+            return club_doc
+
+    # League validation for non-continental requests
+    if league_id and player_league:
+        if league_id in continental_cups:
+            return player  # UCL/Europa — domestic league entry is fine
+        if player_league == league_id:
+            return player
+        if not team_id:
+            return None  # Different non-continental league with no team hint — reject
+
     return player
 
 
@@ -557,10 +592,42 @@ If unknown, use null. Return JSON array of ALL props found."""
 
 
 
+def _fuzzy_prop_match(raw_prop: str) -> str:
+    """Fuzzy match unknown prop types to valid ones using keyword detection."""
+    raw = raw_prop.lower().replace("_", " ").replace("-", " ")
+    # Keyword → valid prop type (ordered by specificity)
+    keyword_map = [
+        (["shots on target", "shot on target", "sot", "shots on goal"], "shots_on_target"),
+        (["shots assisted", "shot assist"], "shots_assisted"),
+        (["shot", "shots"], "shots"),
+        (["pass attempt", "passes attempted", "passes att", "total pass", "pass att"], "pass_attempts"),
+        (["key pass", "chance creat", "chances"], "key_passes"),
+        (["pass"], "pass_attempts"),
+        (["save", "goalkeeper", "goalie", "gk save"], "saves"),
+        (["tackle"], "tackles"),
+        (["intercept"], "interceptions"),
+        (["block"], "blocks"),
+        (["dribble success", "dribbles completed", "successful dribble"], "dribbles_success"),
+        (["dribble"], "dribbles"),
+        (["cross"], "crosses"),
+        (["clearance"], "clearances"),
+        (["foul drawn", "fouls drawn"], "fouls_drawn"),
+        (["foul"], "fouls_committed"),
+        (["goal", "scorer", "anytime"], "goals"),
+        (["assist"], "assists"),
+        (["duel"], "duels_won"),
+        (["yellow", "card"], "yellow_cards"),
+    ]
+    for keywords, prop_type in keyword_map:
+        if any(kw in raw for kw in keywords):
+            return prop_type
+    return None
+
+
 def _validate_extraction(entry: dict) -> tuple:
     """
     Validate OCR extraction quality. Returns (is_valid, issues_list).
-    Catches misread player names, impossible lines, and unmapped prop types.
+    Auto-corrects prop types instead of rejecting. Only fails on truly invalid data.
     """
     issues = []
     valid_props = VALID_SOCCER_PROPS
@@ -591,13 +658,20 @@ def _validate_extraction(entry: dict) -> tuple:
         except (ValueError, TypeError):
             issues.append("LINE_NOT_A_NUMBER")
 
-    # 3. Prop type sanity
+    # 3. Prop type — auto-correct unknown types instead of rejecting
     raw_prop = (entry.get("propType") or "").lower().strip()
-    normalized = prop_aliases.get(raw_prop, raw_prop)
     if not raw_prop:
         issues.append("MISSING_PROP_TYPE")
-    elif normalized not in valid_props:
-        issues.append(f"UNKNOWN_PROP_TYPE:{raw_prop}")
+    else:
+        normalized = prop_aliases.get(raw_prop, raw_prop)
+        if normalized not in valid_props:
+            # Try fuzzy match before giving up
+            fuzzy = _fuzzy_prop_match(raw_prop)
+            if fuzzy:
+                entry["propType"] = fuzzy
+                print(f"[OCR VALIDATE] Auto-corrected prop: '{raw_prop}' → '{fuzzy}'")
+            else:
+                issues.append(f"UNKNOWN_PROP_TYPE:{raw_prop}")
 
     is_valid = len(issues) == 0
     if issues:
@@ -808,23 +882,26 @@ async def scan_prop(req: ScanPropRequest):
                         cache_team_id = opp_club_id
                         original_team_name = opp_club_name or opponent_hint.title()
 
-            if cached_player:
-                # Guard: If we have a team hint but couldn't find the team in cache,
-                # validate the cached player's team doesn't belong to a completely different league
-                if not cache_team_id and player_team_hint and not is_international:
-                    cached_league = cached_player.get("leagueId")
-                    expected_league = TEAM_LEAGUE_MAP.get(player_team_hint)
-                    if expected_league and cached_league and cached_league != expected_league:
-                        print(f"[SCAN] Cache REJECTED: {player_name} found as {cached_player['name']} in league {cached_league}, but expected league {expected_league} for team '{player_team_hint}'")
-                        cached_player = None
-                    elif not expected_league and cached_league:
-                        # If the team hint isn't in map at all, check if cached player's team name
-                        # is at least loosely related to the team hint
-                        cached_team_lower = (cached_player.get("teamName") or "").lower()
-                        hint_words = player_team_hint.split()
-                        if hint_words and not any(w in cached_team_lower for w in hint_words):
-                            print(f"[SCAN] Cache REJECTED: {player_name} found as {cached_player['name']} on '{cached_player.get('teamName')}', doesn't match team hint '{player_team_hint}'")
-                            cached_player = None
+            # UNFILTERED FALLBACK: If team-filtered searches failed, try by name only
+            if not cached_player:
+                cached_player = await _resolve_player_via_cache(player_name, None, league_id=league_id)
+                if cached_player:
+                    resolved_team = cached_player.get("teamName", "")
+                    resolved_team_id = cached_player.get("teamId")
+                    cache_team_id = resolved_team_id
+                    original_team_name = resolved_team
+                    print(f"[SCAN] UNFILTERED HIT: {player_name} → {cached_player.get('name')} on {resolved_team} (ID: {resolved_team_id})")
+                    # If the resolved team matches what OCR called the "opponent", swap
+                    if opponent_hint and resolved_team.lower().replace(" ", "") in opponent_hint.lower().replace(" ", "") or opponent_hint.lower().replace(" ", "") in resolved_team.lower().replace(" ", ""):
+                        old_opp = opponent_hint
+                        opponent_hint = player_team_hint  # OCR's "team" is actually the opponent
+                        player_team_hint = resolved_team.lower()
+                        print(f"[SCAN] UNFILTERED SWAP: opponent '{old_opp}' → '{opponent_hint}'")
+                    elif player_team_hint and resolved_team.lower().replace(" ", "") not in player_team_hint.lower().replace(" ", ""):
+                        # Player's real team doesn't match OCR team — swap
+                        opponent_hint = player_team_hint
+                        player_team_hint = resolved_team.lower()
+                        print(f"[SCAN] UNFILTERED SWAP: corrected team to '{resolved_team}', opponent to '{opponent_hint}'")
 
             if cached_player:
                 if is_international and nat_team_id:
@@ -854,6 +931,30 @@ async def scan_prop(req: ScanPropRequest):
                                     league_name = sl["name"]
                                     break
                 print(f"[SCAN] Cache HIT: {player_name} -> {resolved_player['playerName']} (ID {resolved_player['playerId']})")
+
+                # POST-RESOLUTION SWAP: If resolved team matches what OCR called the "opponent", swap
+                from utils import strip_accents
+                def _team_matches(name_a: str, name_b: str) -> bool:
+                    """Fuzzy team name match using word overlap."""
+                    a_words = set(strip_accents(name_a.lower()).replace("-", " ").split())
+                    b_words = set(strip_accents(name_b.lower()).replace("-", " ").split())
+                    # Remove tiny common words
+                    stopwords = {"fc", "cf", "sc", "ac", "as", "ss", "de", "la", "le", "al", "cd", "ud", "rc"}
+                    a_words -= stopwords
+                    b_words -= stopwords
+                    if not a_words or not b_words:
+                        return False
+                    overlap = a_words & b_words
+                    return len(overlap) >= 1
+
+                resolved_team_name = resolved_player.get("teamName") or ""
+                if opponent_hint and resolved_team_name and player_team_hint:
+                    matches_opp = _team_matches(resolved_team_name, opponent_hint)
+                    matches_team = _team_matches(resolved_team_name, player_team_hint)
+                    if matches_opp and not matches_team:
+                        print(f"[SCAN] POST-RESOLVE SWAP: '{resolved_team_name}' matches OCR opponent '{opponent_hint}' — swapping to opponent='{player_team_hint}'")
+                        opponent_hint = player_team_hint
+                        player_team_hint = resolved_team_name.lower()
 
             # FALLBACK: API-Sports search
             if not resolved_player:
