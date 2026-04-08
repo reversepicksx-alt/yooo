@@ -373,26 +373,89 @@ async def get_national_team_id(country_name: str) -> tuple:
 
 
 async def get_team_by_name(team_name: str, league_id: int = None) -> tuple:
-    """Look up a club team by name. Returns (team_id, canonical_name) or (None, None)."""
-    query = {"nameLower": team_name.lower().strip()}
+    """Look up a club team by name. Returns (team_id, canonical_name) or (None, None).
+    
+    Search order:
+    1. Exact nameLower match in cache_teams
+    2. Substring regex in cache_teams
+    3. Alias match in teams_master
+    4. Fuzzy word-overlap match in cache_teams
+    """
+    from utils import strip_accents
+    name_lower = strip_accents(team_name.lower().strip())
+
+    # 1. Exact match
+    query = {"nameLower": name_lower}
     if league_id:
         query["leagueId"] = league_id
     doc = await db[COL_TEAMS].find_one(query, {"_id": 0})
     if doc:
         return doc["teamId"], doc["name"]
 
-    # Fuzzy: substring match (with league filter if provided)
-    name_lower = team_name.lower().strip()
-    fuzzy_query = {"nameLower": {"$regex": name_lower}}
+    # 2. Substring regex
+    fuzzy_query = {"nameLower": {"$regex": re.escape(name_lower)}}
     if league_id:
         fuzzy_query["leagueId"] = league_id
     async for doc in db[COL_TEAMS].find(fuzzy_query, {"_id": 0}).limit(1):
         return doc["teamId"], doc["name"]
 
-    # If league-filtered fuzzy found nothing, try without league filter
+    # Without league filter
     if league_id:
-        async for doc in db[COL_TEAMS].find({"nameLower": {"$regex": name_lower}}, {"_id": 0}).limit(1):
+        async for doc in db[COL_TEAMS].find({"nameLower": {"$regex": re.escape(name_lower)}}, {"_id": 0}).limit(1):
             return doc["teamId"], doc["name"]
+
+    # 3. Alias match in teams_master
+    name_normalized = name_lower.replace("-", "").replace(" ", "")
+    alias_query = {"$or": [
+        {"nameNormalized": {"$regex": re.escape(name_normalized)}},
+        {"aliases": {"$regex": re.escape(name_lower)}},
+        {"aliases": {"$regex": re.escape(name_normalized)}},
+    ]}
+    if league_id:
+        alias_query["leagueId"] = league_id
+    master_doc = await db["teams_master"].find_one(alias_query, {"_id": 0})
+    if not master_doc and league_id:
+        master_doc = await db["teams_master"].find_one(
+            {"$or": [
+                {"nameNormalized": {"$regex": re.escape(name_normalized)}},
+                {"aliases": {"$regex": re.escape(name_lower)}},
+                {"aliases": {"$regex": re.escape(name_normalized)}},
+            ]}, {"_id": 0}
+        )
+    if master_doc:
+        return master_doc["teamId"], master_doc["name"]
+
+    # 4. Fuzzy word-overlap: split into words and match teams sharing key words
+    words = set(name_lower.replace("-", " ").split()) - {"fc", "cf", "sc", "ac", "al", "as", "ss", "de", "la"}
+    if words:
+        for word in sorted(words, key=len, reverse=True):
+            if len(word) >= 4:  # Only match on meaningful words
+                wq = {"nameLower": {"$regex": rf"\b{re.escape(word)}\b"}}
+                if league_id:
+                    wq["leagueId"] = league_id
+                async for doc in db[COL_TEAMS].find(wq, {"_id": 0}).limit(1):
+                    return doc["teamId"], doc["name"]
+
+    # 5. Consonant-skeleton match: strips vowels to handle transliteration variants
+    # "al khlood" → "l khld", "al kholood" → "l khld" → MATCH
+    import re as _re
+    consonants = _re.sub(r'[aeiou\s\-]', '', name_lower)
+    if len(consonants) >= 4:
+        # Build regex that allows optional vowels between consonants
+        flex_pattern = ".*".join(re.escape(c) for c in consonants[:8])
+        try:
+            cq = {"nameLower": {"$regex": flex_pattern}}
+            if league_id:
+                cq["leagueId"] = league_id
+            candidates = await db[COL_TEAMS].find(cq, {"_id": 0}).to_list(5)
+            if not candidates and league_id:
+                candidates = await db[COL_TEAMS].find({"nameLower": {"$regex": flex_pattern}}, {"_id": 0}).to_list(5)
+            if candidates:
+                # Pick the one with the shortest name (most likely match)
+                best = min(candidates, key=lambda d: len(d.get("name", "")))
+                return best["teamId"], best["name"]
+        except Exception:
+            pass
 
     return None, None
 

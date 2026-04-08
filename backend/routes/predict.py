@@ -48,6 +48,10 @@ async def predict(req: PredictionRequest):
         league_id = req.leagueId or 39
         ai_only_mode = (not actual_team_id or actual_team_id == 0 or not req.opponentId or req.opponentId == 0)
 
+        # Guard: skip team/opponent API calls when IDs are missing
+        safe_team_id = actual_team_id if actual_team_id and actual_team_id != 0 else None
+        safe_opp_id = req.opponentId if req.opponentId and req.opponentId != 0 else None
+
         # Fire ALL API calls at once (optimized — kept odds for game context)
         player_data_task = get_player_data()
         async def get_team_stats_multi_season(team_id, lid):
@@ -561,7 +565,9 @@ async def predict(req: PredictionRequest):
         all_team_fixtures = recent_fixtures
 
         # Get opponent's recent fixtures (need fixture IDs)
-        opponent_recent_raw = await api_football_request("fixtures", {"team": req.opponentId, "last": 15})
+        opponent_recent_raw = None
+        if safe_opp_id:
+            opponent_recent_raw = await api_football_request("fixtures", {"team": safe_opp_id, "last": 15})
         opponent_fixture_list = []
         if opponent_recent_raw:
             for f in opponent_recent_raw[:15]:
