@@ -84,6 +84,7 @@ export async function verifySession(email: string, session_token: string) {
 export interface ScanResult {
   playerName?: string;
   playerTeam?: string;
+  teamName?: string;
   opponentName?: string;
   propType?: string;
   line?: number;
@@ -91,14 +92,18 @@ export interface ScanResult {
   teamId?: number;
   opponentId?: number;
   leagueId?: number;
+  venue?: string;
   error?: string;
 }
 
 export async function scanProp(imageBase64: string, sport = 'soccer'): Promise<ScanResult> {
-  return apiCall<ScanResult>('/api/scan-prop', {
-    method: 'POST',
-    body: JSON.stringify({ image_base64: imageBase64, sport }),
-  });
+  const resp = await apiCall<{ picks?: ScanResult[]; success?: boolean; error?: string }>(
+    '/api/scan-prop',
+    { method: 'POST', body: JSON.stringify({ image_base64: imageBase64, sport }) }
+  );
+  if (resp.error) return { error: resp.error };
+  if (resp.picks && resp.picks.length > 0) return resp.picks[0];
+  return { error: 'No prop data detected. Try a clearer image.' };
 }
 
 export interface PredictionResult {

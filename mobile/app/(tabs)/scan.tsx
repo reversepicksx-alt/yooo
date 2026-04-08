@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
+import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import { scanProp, predict, savePick, PROP_TYPES, LEAGUES, PredictionResult, ScanResult } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
@@ -102,12 +103,15 @@ export default function ScanScreen() {
     try {
       const req = {
         playerName: data.playerName,
-        playerId: data.playerId,
-        teamId: data.teamId,
-        opponentId: data.opponentId,
+        playerId: data.playerId || 0,
+        teamId: data.teamId || 0,
+        teamName: data.teamName || data.playerTeam || '',
+        opponentId: data.opponentId || 0,
+        opponentName: data.opponentName || '',
+        venue: data.venue || 'home',
         leagueId: data.leagueId || leagueId,
         propType: data.propType || propType,
-        line: data.line,
+        line: data.line || 0,
       };
       const result = await predict(req);
       setPrediction(result);
@@ -139,8 +143,8 @@ export default function ScanScreen() {
     try {
       await savePick(session.email, session.token, {
         playerName: prediction.playerName || scanResult?.playerName || playerQuery,
-        teamName: prediction.teamName,
-        opponentName: prediction.opponentName,
+        teamName: prediction.teamName || scanResult?.teamName || scanResult?.playerTeam,
+        opponentName: prediction.opponentName || scanResult?.opponentName,
         propType: prediction.propType || propType,
         line: prediction.line ?? scanResult?.line ?? parseFloat(line),
         projection: prediction.projection ?? prediction.bayesianProjection,
@@ -155,6 +159,12 @@ export default function ScanScreen() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleNewPick = () => {
+    resetResults();
+    setPlayerQuery('');
+    setLine('');
   };
 
   return (
@@ -189,104 +199,129 @@ export default function ScanScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
-        {mode === 'scan' ? (
+        {!saved ? (
           <>
-            <View style={styles.uploadBox}>
-              <Ionicons name="image-outline" size={40} color={Colors.textTertiary} />
-              <Text style={styles.uploadTitle}>Scan a Prop Slip</Text>
-              <Text style={styles.uploadSub}>Upload or take a photo of any soccer prop slip</Text>
-              <View style={styles.uploadBtns}>
-                <TouchableOpacity style={styles.uploadBtn} onPress={handleCamera} activeOpacity={0.8}>
-                  <Ionicons name="camera-outline" size={16} color={Colors.primary} />
-                  <Text style={styles.uploadBtnText}>Camera</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[styles.uploadBtn, styles.uploadBtnSecondary]} onPress={handlePickImage} activeOpacity={0.8}>
-                  <Ionicons name="images-outline" size={16} color={Colors.textSecondary} />
-                  <Text style={[styles.uploadBtnText, { color: Colors.textSecondary }]}>Gallery</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
+            {mode === 'scan' ? (
+              <>
+                <View style={styles.uploadBox}>
+                  <Ionicons name="image-outline" size={40} color={Colors.textTertiary} />
+                  <Text style={styles.uploadTitle}>Scan a Prop Slip</Text>
+                  <Text style={styles.uploadSub}>Upload or take a photo of any soccer prop slip</Text>
+                  <View style={styles.uploadBtns}>
+                    <TouchableOpacity style={styles.uploadBtn} onPress={handleCamera} activeOpacity={0.8}>
+                      <Ionicons name="camera-outline" size={16} color={Colors.primary} />
+                      <Text style={styles.uploadBtnText}>Camera</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={[styles.uploadBtn, styles.uploadBtnSecondary]} onPress={handlePickImage} activeOpacity={0.8}>
+                      <Ionicons name="images-outline" size={16} color={Colors.textSecondary} />
+                      <Text style={[styles.uploadBtnText, { color: Colors.textSecondary }]}>Gallery</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
 
-            {(scanning || predicting) && (
-              <View style={styles.loadingBox}>
-                <ActivityIndicator color={Colors.primary} />
-                <Text style={styles.loadingText}>{scanning ? 'Reading prop slip…' : 'Analyzing with AI…'}</Text>
+                {(scanning || predicting) && (
+                  <View style={styles.loadingBox}>
+                    <ActivityIndicator color={Colors.primary} />
+                    <Text style={styles.loadingText}>
+                      {scanning ? 'Grok Vision reading slip…' : 'AI analyzing prop…'}
+                    </Text>
+                  </View>
+                )}
+
+                {scanResult && !scanResult.error && !scanning && !predicting && (
+                  <View style={styles.scanResultBox}>
+                    <Ionicons name="checkmark-circle" size={16} color={Colors.success} />
+                    <Text style={styles.scanResultText}>
+                      {scanResult.playerName}
+                      {scanResult.propType ? ` · ${scanResult.propType.replace(/_/g, ' ')}` : ''}
+                      {scanResult.line ? ` ${scanResult.line}` : ''}
+                    </Text>
+                  </View>
+                )}
+              </>
+            ) : (
+              <View style={styles.manualForm}>
+                <Text style={styles.label}>Player Name</Text>
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="e.g. Kevin De Bruyne"
+                  placeholderTextColor={Colors.textSecondary}
+                  value={playerQuery}
+                  onChangeText={setPlayerQuery}
+                  autoCorrect={false}
+                />
+
+                <Text style={styles.label}>League</Text>
+                <TouchableOpacity style={styles.pickerBtn} onPress={() => setShowLeaguePicker(true)}>
+                  <Text style={styles.pickerBtnText}>{LEAGUES.find(l => l.id === leagueId)?.name || 'Select'}</Text>
+                  <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
+                </TouchableOpacity>
+
+                <Text style={styles.label}>Prop Type</Text>
+                <TouchableOpacity style={styles.pickerBtn} onPress={() => setShowPropPicker(true)}>
+                  <Text style={styles.pickerBtnText}>{PROP_TYPES.find(p => p.value === propType)?.label || 'Select'}</Text>
+                  <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
+                </TouchableOpacity>
+
+                <Text style={styles.label}>Line Value</Text>
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="e.g. 2.5"
+                  placeholderTextColor={Colors.textSecondary}
+                  value={line}
+                  onChangeText={setLine}
+                  keyboardType="decimal-pad"
+                />
+
+                <TouchableOpacity
+                  style={[styles.analyzeBtn, predicting && styles.analyzeBtnDisabled]}
+                  onPress={handleManualPredict}
+                  disabled={predicting}
+                  activeOpacity={0.8}
+                >
+                  {predicting
+                    ? <ActivityIndicator color="#000" />
+                    : <>
+                        <Ionicons name="analytics-outline" size={18} color="#000" />
+                        <Text style={styles.analyzeBtnText}>Analyze</Text>
+                      </>
+                  }
+                </TouchableOpacity>
               </View>
             )}
 
-            {scanResult && !scanning && !predicting && (
-              <View style={styles.scanResultBox}>
-                <Ionicons name="checkmark-circle" size={16} color={Colors.success} />
-                <Text style={styles.scanResultText}>
-                  Detected: {scanResult.playerName} · {scanResult.propType} {scanResult.line}
-                </Text>
-              </View>
+            {prediction && !predicting && (
+              <PredictionCard
+                result={prediction}
+                onSave={handleSavePick}
+                saving={saving}
+              />
             )}
           </>
         ) : (
-          <View style={styles.manualForm}>
-            <View style={styles.fieldLabel}>
-              <Text style={styles.label}>Player Name</Text>
+          <View style={styles.savedState}>
+            <View style={styles.savedCheck}>
+              <Ionicons name="checkmark" size={36} color="#000" />
             </View>
-            <TextInput
-              style={styles.textInput}
-              placeholder="e.g. Kevin De Bruyne"
-              placeholderTextColor={Colors.textSecondary}
-              value={playerQuery}
-              onChangeText={setPlayerQuery}
-            />
-
-            <Text style={styles.label}>League</Text>
-            <TouchableOpacity style={styles.pickerBtn} onPress={() => setShowLeaguePicker(true)}>
-              <Text style={styles.pickerBtnText}>{LEAGUES.find(l => l.id === leagueId)?.name || 'Select'}</Text>
-              <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
-            </TouchableOpacity>
-
-            <Text style={styles.label}>Prop Type</Text>
-            <TouchableOpacity style={styles.pickerBtn} onPress={() => setShowPropPicker(true)}>
-              <Text style={styles.pickerBtnText}>{PROP_TYPES.find(p => p.value === propType)?.label || 'Select'}</Text>
-              <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
-            </TouchableOpacity>
-
-            <Text style={styles.label}>Line Value</Text>
-            <TextInput
-              style={styles.textInput}
-              placeholder="e.g. 2.5"
-              placeholderTextColor={Colors.textSecondary}
-              value={line}
-              onChangeText={setLine}
-              keyboardType="decimal-pad"
-            />
+            <Text style={styles.savedTitle}>Pick Saved!</Text>
+            <Text style={styles.savedSub}>
+              {prediction?.recommendation} {prediction?.playerName || scanResult?.playerName || playerQuery}
+              {'\n'}
+              {prediction?.propType?.replace(/_/g, ' ')} · Line {prediction?.line ?? scanResult?.line}
+            </Text>
 
             <TouchableOpacity
-              style={[styles.analyzeBtn, predicting && styles.analyzeBtnDisabled]}
-              onPress={handleManualPredict}
-              disabled={predicting}
-              activeOpacity={0.8}
+              style={styles.viewPicksBtn}
+              onPress={() => router.push('/(tabs)/picks')}
+              activeOpacity={0.85}
             >
-              {predicting
-                ? <ActivityIndicator color="#000" />
-                : <>
-                    <Ionicons name="analytics-outline" size={18} color="#000" />
-                    <Text style={styles.analyzeBtnText}>Analyze</Text>
-                  </>
-              }
+              <Ionicons name="bookmark" size={16} color="#000" />
+              <Text style={styles.viewPicksBtnText}>View in My Picks</Text>
             </TouchableOpacity>
-          </View>
-        )}
 
-        {prediction && !predicting && (
-          <PredictionCard
-            result={prediction}
-            onSave={saved ? undefined : handleSavePick}
-            saving={saving}
-          />
-        )}
-
-        {saved && (
-          <View style={styles.savedBanner}>
-            <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
-            <Text style={styles.savedText}>Pick saved!</Text>
+            <TouchableOpacity style={styles.newPickBtn} onPress={handleNewPick} activeOpacity={0.8}>
+              <Text style={styles.newPickBtnText}>Analyze Another Pick</Text>
+            </TouchableOpacity>
           </View>
         )}
       </ScrollView>
@@ -295,16 +330,18 @@ export default function ScanScreen() {
         <TouchableOpacity style={styles.modalOverlay} onPress={() => setShowPropPicker(false)}>
           <View style={styles.modalSheet}>
             <Text style={styles.modalTitle}>Prop Type</Text>
-            {PROP_TYPES.map(p => (
-              <TouchableOpacity
-                key={p.value}
-                style={[styles.modalItem, p.value === propType && styles.modalItemActive]}
-                onPress={() => { setPropType(p.value); setShowPropPicker(false); }}
-              >
-                <Text style={[styles.modalItemText, p.value === propType && styles.modalItemTextActive]}>{p.label}</Text>
-                {p.value === propType && <Ionicons name="checkmark" size={16} color={Colors.primary} />}
-              </TouchableOpacity>
-            ))}
+            <ScrollView>
+              {PROP_TYPES.map(p => (
+                <TouchableOpacity
+                  key={p.value}
+                  style={[styles.modalItem, p.value === propType && styles.modalItemActive]}
+                  onPress={() => { setPropType(p.value); setShowPropPicker(false); }}
+                >
+                  <Text style={[styles.modalItemText, p.value === propType && styles.modalItemTextActive]}>{p.label}</Text>
+                  {p.value === propType && <Ionicons name="checkmark" size={16} color={Colors.primary} />}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
           </View>
         </TouchableOpacity>
       </Modal>
@@ -313,16 +350,18 @@ export default function ScanScreen() {
         <TouchableOpacity style={styles.modalOverlay} onPress={() => setShowLeaguePicker(false)}>
           <View style={styles.modalSheet}>
             <Text style={styles.modalTitle}>League</Text>
-            {LEAGUES.map(l => (
-              <TouchableOpacity
-                key={l.id}
-                style={[styles.modalItem, l.id === leagueId && styles.modalItemActive]}
-                onPress={() => { setLeagueId(l.id); setShowLeaguePicker(false); }}
-              >
-                <Text style={[styles.modalItemText, l.id === leagueId && styles.modalItemTextActive]}>{l.name}</Text>
-                {l.id === leagueId && <Ionicons name="checkmark" size={16} color={Colors.primary} />}
-              </TouchableOpacity>
-            ))}
+            <ScrollView>
+              {LEAGUES.map(l => (
+                <TouchableOpacity
+                  key={l.id}
+                  style={[styles.modalItem, l.id === leagueId && styles.modalItemActive]}
+                  onPress={() => { setLeagueId(l.id); setShowLeaguePicker(false); }}
+                >
+                  <Text style={[styles.modalItemText, l.id === leagueId && styles.modalItemTextActive]}>{l.name}</Text>
+                  {l.id === leagueId && <Ionicons name="checkmark" size={16} color={Colors.primary} />}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
           </View>
         </TouchableOpacity>
       </Modal>
@@ -409,10 +448,9 @@ const styles = StyleSheet.create({
     borderRadius: Colors.radius,
     marginBottom: 12,
   },
-  scanResultText: { color: Colors.success, fontSize: 13, flex: 1 },
+  scanResultText: { color: Colors.success, fontSize: 13, flex: 1, textTransform: 'capitalize' },
   manualForm: { gap: 8, marginBottom: 16 },
-  fieldLabel: { flexDirection: 'row', justifyContent: 'space-between' },
-  label: { fontSize: 12, color: Colors.textSecondary, fontWeight: '600', letterSpacing: 0.5, marginBottom: 4, marginTop: 8 },
+  label: { fontSize: 12, color: Colors.textSecondary, fontWeight: '600', letterSpacing: 0.5, marginBottom: 4, marginTop: 8, textTransform: 'uppercase' },
   textInput: {
     backgroundColor: Colors.card,
     borderRadius: Colors.radius,
@@ -444,19 +482,62 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
     marginTop: 8,
+    shadowColor: Colors.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+    elevation: 6,
   },
   analyzeBtnDisabled: { opacity: 0.6 },
   analyzeBtnText: { color: '#000', fontWeight: '700', fontSize: 16 },
-  savedBanner: {
+  savedState: {
+    flex: 1,
+    alignItems: 'center',
+    paddingTop: 40,
+    gap: 14,
+  },
+  savedCheck: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: Colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: Colors.primary,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.4,
+    shadowRadius: 16,
+    elevation: 10,
+  },
+  savedTitle: { fontSize: 24, fontWeight: '800', color: Colors.text },
+  savedSub: {
+    fontSize: 14,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 22,
+    textTransform: 'capitalize',
+  },
+  viewPicksBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: Colors.successDim,
-    padding: 14,
+    backgroundColor: Colors.primary,
     borderRadius: Colors.radius,
-    marginTop: 4,
+    paddingVertical: 14,
+    paddingHorizontal: 32,
+    marginTop: 8,
+    shadowColor: Colors.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+    elevation: 6,
   },
-  savedText: { color: Colors.success, fontWeight: '700', fontSize: 15 },
+  viewPicksBtnText: { color: '#000', fontWeight: '800', fontSize: 15 },
+  newPickBtn: {
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+  },
+  newPickBtnText: { color: Colors.textSecondary, fontSize: 14, fontWeight: '600' },
   modalOverlay: { flex: 1, backgroundColor: Colors.overlay, justifyContent: 'flex-end' },
   modalSheet: {
     backgroundColor: Colors.card,
