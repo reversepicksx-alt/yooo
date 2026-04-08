@@ -3,7 +3,6 @@ import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   TextInput, ActivityIndicator, Alert, Platform, Modal, Image,
 } from 'react-native';
-
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
@@ -12,23 +11,31 @@ import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import { scanProp, predict, savePick, PROP_TYPES, LEAGUES, PredictionResult, ScanResult } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
-import PredictionCard from '@/components/PredictionCard';
 
 const INPUT_STYLE = Platform.OS === 'web' ? { outlineWidth: 0 } as object : {};
 
+const PROP_LABELS: Record<string, string> = {
+  pass_attempts: 'Pass Attempts', shots: 'Shots', shots_on_target: 'Shots on Target',
+  goals: 'Goals', assists: 'Assists', key_passes: 'Key Passes',
+  tackles: 'Tackles', saves: 'Saves', dribbles: 'Dribbles', crosses: 'Crosses',
+  interceptions: 'Interceptions', blocks: 'Blocks', fouls_drawn: 'Fouls Drawn',
+  fouls_committed: 'Fouls', clearances: 'Clearances', yellow_cards: 'Yellow Cards',
+  shots_assisted: 'Shot Assists', duels_won: 'Duels Won',
+};
+
 type Mode = 'scan' | 'manual';
+type Phase = 'idle' | 'scanning' | 'detected' | 'analyzing' | 'result' | 'saved';
 
 export default function ScanScreen() {
   const insets = useSafeAreaInsets();
   const { session } = useAuth();
   const [mode, setMode] = useState<Mode>('scan');
+  const [phase, setPhase] = useState<Phase>('idle');
 
-  const [scanning, setScanning] = useState(false);
-  const [predicting, setPredicting] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
+  const [scannedImageUri, setScannedImageUri] = useState<string | null>(null);
   const [prediction, setPrediction] = useState<PredictionResult | null>(null);
-  const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const [playerQuery, setPlayerQuery] = useState('');
   const [propType, setPropType] = useState(PROP_TYPES[0].value);
@@ -39,17 +46,49 @@ export default function ScanScreen() {
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
 
-  const resetResults = () => {
+  const reset = () => {
+    setPhase('idle');
     setScanResult(null);
+    setScannedImageUri(null);
     setPrediction(null);
-    setSaved(false);
+    setPlayerQuery('');
+    setLine('');
   };
 
-  const handlePickImage = async () => {
-    resetResults();
+  const processImage = async (base64: string, uri: string) => {
+    setScannedImageUri(uri);
+    setPhase('scanning');
+    try {
+      const scanned = await scanProp(base64, 'soccer');
+      if (scanned.error || !scanned.playerName) {
+        Alert.alert('Scan failed', scanned.error || 'Could not detect player. Try a clearer image.');
+        setPhase('idle');
+        return;
+      }
+      setScanResult(scanned);
+      setPhase('detected');
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e: unknown) {
+      Alert.alert('Scan error', e instanceof Error ? e.message : 'Failed to scan image');
+      setPhase('idle');
+    }
+  };
+
+  const handleCamera = async () => {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission needed', 'Allow camera access to scan prop slips.');
+      return;
+    }
+    const result = await ImagePicker.launchCameraAsync({ quality: 0.85, base64: true });
+    if (result.canceled || !result.assets[0].base64) return;
+    await processImage(result.assets[0].base64, result.assets[0].uri);
+  };
+
+  const handleGallery = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
-      Alert.alert('Permission needed', 'Please allow photo library access to scan prop slips.');
+      Alert.alert('Permission needed', 'Allow photo library access to scan prop slips.');
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -58,51 +97,11 @@ export default function ScanScreen() {
       base64: true,
     });
     if (result.canceled || !result.assets[0].base64) return;
-    const base64 = result.assets[0].base64;
-    setScanning(true);
-    try {
-      const scanned = await scanProp(base64, 'soccer');
-      setScanResult(scanned);
-      if (scanned.error) {
-        Alert.alert('Scan failed', scanned.error);
-        return;
-      }
-      await runPredict(scanned);
-    } catch (e: unknown) {
-      Alert.alert('Scan error', e instanceof Error ? e.message : 'Failed to scan image');
-    } finally {
-      setScanning(false);
-    }
-  };
-
-  const handleCamera = async () => {
-    resetResults();
-    const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission needed', 'Please allow camera access to scan prop slips.');
-      return;
-    }
-    const result = await ImagePicker.launchCameraAsync({
-      quality: 0.85,
-      base64: true,
-    });
-    if (result.canceled || !result.assets[0].base64) return;
-    const base64 = result.assets[0].base64;
-    setScanning(true);
-    try {
-      const scanned = await scanProp(base64, 'soccer');
-      setScanResult(scanned);
-      if (scanned.error) { Alert.alert('Scan failed', scanned.error); return; }
-      await runPredict(scanned);
-    } catch (e: unknown) {
-      Alert.alert('Scan error', e instanceof Error ? e.message : 'Failed');
-    } finally {
-      setScanning(false);
-    }
+    await processImage(result.assets[0].base64, result.assets[0].uri);
   };
 
   const runPredict = async (data: ScanResult) => {
-    setPredicting(true);
+    setPhase('analyzing');
     try {
       const req = {
         playerName: data.playerName,
@@ -117,21 +116,25 @@ export default function ScanScreen() {
         line: data.line || 0,
       };
       const result = await predict(req);
+      if (!result.playerName && !result.recommendation) {
+        Alert.alert('Analysis failed', 'Could not generate prediction. Try again.');
+        setPhase('detected');
+        return;
+      }
       setPrediction(result);
+      setPhase('result');
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e: unknown) {
-      Alert.alert('Prediction error', e instanceof Error ? e.message : 'Failed');
-    } finally {
-      setPredicting(false);
+      Alert.alert('Prediction error', e instanceof Error ? e.message : 'Failed to analyze');
+      setPhase('detected');
     }
   };
 
-  const handleManualPredict = async () => {
+  const handleManualAnalyze = async () => {
     if (!playerQuery.trim()) { Alert.alert('Enter player name'); return; }
     if (!line.trim() || isNaN(parseFloat(line))) { Alert.alert('Enter valid line value'); return; }
-    resetResults();
     const data: ScanResult = {
-      playerName: playerQuery,
+      playerName: playerQuery.trim(),
       propType,
       line: parseFloat(line),
       leagueId,
@@ -141,21 +144,21 @@ export default function ScanScreen() {
   };
 
   const handleSavePick = async () => {
-    if (!session || !prediction) return;
+    if (!session || !prediction || !scanResult) return;
     setSaving(true);
     try {
       await savePick(session.email, session.token, {
-        playerName: prediction.playerName || scanResult?.playerName || playerQuery,
-        teamName: prediction.teamName || scanResult?.teamName || scanResult?.playerTeam,
-        opponentName: prediction.opponentName || scanResult?.opponentName,
-        propType: prediction.propType || propType,
-        line: prediction.line ?? scanResult?.line ?? parseFloat(line),
+        playerName: prediction.playerName || scanResult.playerName || playerQuery,
+        teamName: prediction.teamName || scanResult.teamName || scanResult.playerTeam,
+        opponentName: prediction.opponentName || scanResult.opponentName,
+        propType: prediction.propType || scanResult.propType || propType,
+        line: prediction.line ?? scanResult.line ?? parseFloat(line),
         projection: prediction.projection ?? prediction.bayesianProjection,
         recommendation: prediction.recommendation,
         confidence: prediction.confidence,
         sport: 'soccer',
       });
-      setSaved(true);
+      setPhase('saved');
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e: unknown) {
       Alert.alert('Save failed', e instanceof Error ? e.message : 'Try again');
@@ -164,11 +167,13 @@ export default function ScanScreen() {
     }
   };
 
-  const handleNewPick = () => {
-    resetResults();
-    setPlayerQuery('');
-    setLine('');
-  };
+  const recColor = prediction?.recommendation === 'OVER' ? Colors.success
+    : prediction?.recommendation === 'UNDER' ? Colors.error
+    : Colors.textSecondary;
+
+  const confPct = prediction?.confidence != null
+    ? (prediction.confidence > 1 ? Math.round(prediction.confidence) : Math.round(prediction.confidence * 100))
+    : null;
 
   return (
     <View style={[styles.root, { paddingTop: topPad }]}>
@@ -182,153 +187,318 @@ export default function ScanScreen() {
         </View>
       </View>
 
-      <View style={styles.tabRow}>
+      <View style={styles.modeRow}>
         {(['scan', 'manual'] as Mode[]).map(m => (
           <TouchableOpacity
             key={m}
-            style={[styles.tab, mode === m && styles.tabActive]}
-            onPress={() => { setMode(m); resetResults(); Haptics.selectionAsync(); }}
+            style={[styles.modeTab, mode === m && styles.modeTabActive]}
+            onPress={() => { setMode(m); reset(); Haptics.selectionAsync(); }}
           >
             <Ionicons
               name={m === 'scan' ? 'scan-outline' : 'search-outline'}
               size={14}
               color={mode === m ? Colors.primary : Colors.textSecondary}
             />
-            <Text style={[styles.tabText, mode === m && styles.tabTextActive]}>
+            <Text style={[styles.modeTabText, mode === m && styles.modeTabTextActive]}>
               {m === 'scan' ? 'Scan Slip' : 'Manual Search'}
             </Text>
           </TouchableOpacity>
         ))}
       </View>
 
-      <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
-        {!saved ? (
+      <ScrollView
+        contentContainerStyle={styles.body}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        {/* ─── SCAN MODE ─── */}
+        {mode === 'scan' && (
           <>
-            {mode === 'scan' ? (
-              <>
-                <View style={styles.uploadBox}>
-                  <Ionicons name="image-outline" size={40} color={Colors.textTertiary} />
-                  <Text style={styles.uploadTitle}>Scan a Prop Slip</Text>
-                  <Text style={styles.uploadSub}>Upload or take a photo of any soccer prop slip</Text>
-                  <View style={styles.uploadBtns}>
-                    <TouchableOpacity style={styles.uploadBtn} onPress={handleCamera} activeOpacity={0.8}>
-                      <Ionicons name="camera-outline" size={16} color={Colors.primary} />
-                      <Text style={styles.uploadBtnText}>Camera</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={[styles.uploadBtn, styles.uploadBtnSecondary]} onPress={handlePickImage} activeOpacity={0.8}>
-                      <Ionicons name="images-outline" size={16} color={Colors.textSecondary} />
-                      <Text style={[styles.uploadBtnText, { color: Colors.textSecondary }]}>Gallery</Text>
-                    </TouchableOpacity>
-                  </View>
+            {/* Idle: upload box */}
+            {phase === 'idle' && (
+              <View style={styles.uploadBox}>
+                <Ionicons name="image-outline" size={40} color={Colors.textTertiary} />
+                <Text style={styles.uploadTitle}>Scan a Prop Slip</Text>
+                <Text style={styles.uploadSub}>Upload or take a photo of any soccer prop slip</Text>
+                <View style={styles.uploadBtns}>
+                  <TouchableOpacity style={styles.cameraBtn} onPress={handleCamera} activeOpacity={0.8}>
+                    <Ionicons name="camera-outline" size={16} color={Colors.primary} />
+                    <Text style={styles.cameraBtnText}>Camera</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.galleryBtn} onPress={handleGallery} activeOpacity={0.8}>
+                    <Ionicons name="images-outline" size={16} color={Colors.textSecondary} />
+                    <Text style={styles.galleryBtnText}>Gallery</Text>
+                  </TouchableOpacity>
                 </View>
-
-                {(scanning || predicting) && (
-                  <View style={styles.loadingBox}>
-                    <ActivityIndicator color={Colors.primary} />
-                    <Text style={styles.loadingText}>
-                      {scanning ? 'Grok Vision reading slip…' : 'AI analyzing prop…'}
-                    </Text>
-                  </View>
-                )}
-
-                {scanResult && !scanResult.error && !scanning && !predicting && (
-                  <View style={styles.scanResultBox}>
-                    <Ionicons name="checkmark-circle" size={16} color={Colors.success} />
-                    <Text style={styles.scanResultText}>
-                      {scanResult.playerName}
-                      {scanResult.propType ? ` · ${scanResult.propType.replace(/_/g, ' ')}` : ''}
-                      {scanResult.line ? ` ${scanResult.line}` : ''}
-                    </Text>
-                  </View>
-                )}
-              </>
-            ) : (
-              <View style={styles.manualForm}>
-                <Text style={styles.label}>Player Name</Text>
-                <TextInput
-                  style={[styles.textInput, INPUT_STYLE]}
-                  placeholder="e.g. Kevin De Bruyne"
-                  placeholderTextColor={Colors.textSecondary}
-                  value={playerQuery}
-                  onChangeText={setPlayerQuery}
-                  autoCorrect={false}
-                />
-
-                <Text style={styles.label}>League</Text>
-                <TouchableOpacity style={styles.pickerBtn} onPress={() => setShowLeaguePicker(true)}>
-                  <Text style={styles.pickerBtnText}>{LEAGUES.find(l => l.id === leagueId)?.name || 'Select'}</Text>
-                  <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
-                </TouchableOpacity>
-
-                <Text style={styles.label}>Prop Type</Text>
-                <TouchableOpacity style={styles.pickerBtn} onPress={() => setShowPropPicker(true)}>
-                  <Text style={styles.pickerBtnText}>{PROP_TYPES.find(p => p.value === propType)?.label || 'Select'}</Text>
-                  <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
-                </TouchableOpacity>
-
-                <Text style={styles.label}>Line Value</Text>
-                <TextInput
-                  style={[styles.textInput, INPUT_STYLE]}
-                  placeholder="e.g. 2.5"
-                  placeholderTextColor={Colors.textSecondary}
-                  value={line}
-                  onChangeText={setLine}
-                  keyboardType="decimal-pad"
-                />
-
-                <TouchableOpacity
-                  style={[styles.analyzeBtn, predicting && styles.analyzeBtnDisabled]}
-                  onPress={handleManualPredict}
-                  disabled={predicting}
-                  activeOpacity={0.8}
-                >
-                  {predicting
-                    ? <ActivityIndicator color="#000" />
-                    : <>
-                        <Ionicons name="analytics-outline" size={18} color="#000" />
-                        <Text style={styles.analyzeBtnText}>Analyze</Text>
-                      </>
-                  }
-                </TouchableOpacity>
               </View>
             )}
 
-            {prediction && !predicting && (
-              <PredictionCard
-                result={prediction}
-                onSave={handleSavePick}
-                saving={saving}
-              />
+            {/* Scanning */}
+            {phase === 'scanning' && (
+              <View style={styles.loadingCard}>
+                {scannedImageUri && (
+                  <Image source={{ uri: scannedImageUri }} style={styles.scannedThumb} resizeMode="cover" />
+                )}
+                <View style={styles.loadingRow}>
+                  <ActivityIndicator color={Colors.primary} size="small" />
+                  <Text style={styles.loadingText}>Grok Vision reading prop slip…</Text>
+                </View>
+              </View>
+            )}
+
+            {/* Detected: show player card + RUN PREDICTION button */}
+            {(phase === 'detected' || phase === 'analyzing') && scanResult && (
+              <>
+                {scannedImageUri && (
+                  <Image source={{ uri: scannedImageUri }} style={styles.scannedPreview} resizeMode="cover" />
+                )}
+
+                <Text style={styles.sectionLabel}>PROPS DETECTED</Text>
+
+                <View style={styles.detectedCard}>
+                  <View style={styles.detectedTop}>
+                    <View style={styles.playerAvatarWrap}>
+                      <Ionicons name="person-outline" size={22} color={Colors.textSecondary} />
+                    </View>
+                    <View style={styles.detectedInfo}>
+                      <Text style={styles.detectedName}>{scanResult.playerName}</Text>
+                      <View style={styles.badgeRow}>
+                        {(scanResult.teamName || scanResult.playerTeam) && (
+                          <View style={styles.teamBadge}>
+                            <Text style={styles.teamBadgeText}>
+                              {scanResult.teamName || scanResult.playerTeam}
+                            </Text>
+                          </View>
+                        )}
+                        <View style={styles.matchedBadge}>
+                          <Text style={styles.matchedText}>MATCHED</Text>
+                        </View>
+                      </View>
+                      {scanResult.opponentName && (
+                        <Text style={styles.vsText}>
+                          vs {scanResult.opponentName}
+                          {scanResult.venue ? `  ${scanResult.venue.toUpperCase()}` : ''}
+                        </Text>
+                      )}
+                    </View>
+                  </View>
+
+                  <View style={styles.detectedStats}>
+                    <View style={styles.detectedStat}>
+                      <Text style={styles.detectedStatLabel}>PROP</Text>
+                      <Text style={styles.detectedStatVal}>
+                        {PROP_LABELS[scanResult.propType || ''] || scanResult.propType?.replace(/_/g, ' ') || '—'}
+                      </Text>
+                    </View>
+                    <View style={styles.detectedStatDivider} />
+                    <View style={styles.detectedStat}>
+                      <Text style={styles.detectedStatLabel}>LINE</Text>
+                      <Text style={styles.detectedStatVal}>{scanResult.line ?? '—'}</Text>
+                    </View>
+                    <View style={styles.detectedStatDivider} />
+                    <View style={styles.detectedStat}>
+                      <Text style={styles.detectedStatLabel}>LEAGUE</Text>
+                      <Text style={styles.detectedStatVal} numberOfLines={1}>
+                        {LEAGUES.find(l => l.id === scanResult.leagueId)?.name || 'Auto'}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+
+                <TouchableOpacity
+                  style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnLoading]}
+                  onPress={() => runPredict(scanResult)}
+                  disabled={phase === 'analyzing'}
+                  activeOpacity={0.85}
+                >
+                  {phase === 'analyzing' ? (
+                    <>
+                      <ActivityIndicator color="#000" size="small" />
+                      <Text style={styles.predictBtnText}>Analyzing…</Text>
+                    </>
+                  ) : (
+                    <>
+                      <Ionicons name="flash" size={16} color="#000" />
+                      <Text style={styles.predictBtnText}>RUN PREDICTION</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity onPress={reset} style={styles.rescanBtn}>
+                  <Ionicons name="refresh-outline" size={14} color={Colors.textSecondary} />
+                  <Text style={styles.rescanText}>Scan Different Slip</Text>
+                </TouchableOpacity>
+              </>
             )}
           </>
-        ) : (
+        )}
+
+        {/* ─── MANUAL MODE ─── */}
+        {mode === 'manual' && phase !== 'result' && phase !== 'saved' && (
+          <View style={styles.manualForm}>
+            <Text style={styles.fieldLabel}>Player Name</Text>
+            <TextInput
+              style={[styles.textInput, INPUT_STYLE]}
+              placeholder="e.g. Kevin De Bruyne"
+              placeholderTextColor={Colors.textTertiary}
+              value={playerQuery}
+              onChangeText={setPlayerQuery}
+              autoCorrect={false}
+            />
+
+            <Text style={styles.fieldLabel}>League</Text>
+            <TouchableOpacity style={styles.pickerBtn} onPress={() => setShowLeaguePicker(true)}>
+              <Text style={styles.pickerBtnText}>{LEAGUES.find(l => l.id === leagueId)?.name || 'Select'}</Text>
+              <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
+            </TouchableOpacity>
+
+            <Text style={styles.fieldLabel}>Prop Type</Text>
+            <TouchableOpacity style={styles.pickerBtn} onPress={() => setShowPropPicker(true)}>
+              <Text style={styles.pickerBtnText}>{PROP_TYPES.find(p => p.value === propType)?.label || 'Select'}</Text>
+              <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
+            </TouchableOpacity>
+
+            <Text style={styles.fieldLabel}>Line Value</Text>
+            <TextInput
+              style={[styles.textInput, INPUT_STYLE]}
+              placeholder="e.g. 2.5"
+              placeholderTextColor={Colors.textTertiary}
+              value={line}
+              onChangeText={setLine}
+              keyboardType="decimal-pad"
+            />
+
+            <TouchableOpacity
+              style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnLoading]}
+              onPress={handleManualAnalyze}
+              disabled={phase === 'analyzing'}
+              activeOpacity={0.85}
+            >
+              {phase === 'analyzing' ? (
+                <>
+                  <ActivityIndicator color="#000" size="small" />
+                  <Text style={styles.predictBtnText}>Analyzing…</Text>
+                </>
+              ) : (
+                <>
+                  <Ionicons name="analytics-outline" size={16} color="#000" />
+                  <Text style={styles.predictBtnText}>Analyze</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* ─── RESULT: Full Analysis ─── */}
+        {phase === 'result' && prediction && (
+          <>
+            <View style={styles.analysisCard}>
+              {/* Player + Rec Header */}
+              <View style={styles.analysisHeader}>
+                <View style={styles.analysisPlayerInfo}>
+                  <Text style={styles.analysisPlayer} numberOfLines={1}>
+                    {prediction.playerName || scanResult?.playerName || playerQuery}
+                  </Text>
+                  <Text style={styles.analysisTeam} numberOfLines={1}>
+                    {[prediction.teamName, prediction.opponentName ? `vs ${prediction.opponentName}` : ''].filter(Boolean).join('  ')}
+                  </Text>
+                </View>
+                {prediction.recommendation && prediction.recommendation !== 'PASS' && (
+                  <View style={[styles.recBadge, { backgroundColor: prediction.recommendation === 'OVER' ? Colors.successDim : Colors.errorDim }]}>
+                    <Text style={[styles.recText, { color: recColor }]}>{prediction.recommendation}</Text>
+                  </View>
+                )}
+              </View>
+
+              <View style={styles.analysisDivider} />
+
+              {/* Stats Row */}
+              <View style={styles.analysisStats}>
+                <View style={styles.analysisStat}>
+                  <Text style={styles.analysisStatLabel}>
+                    {PROP_LABELS[prediction.propType || ''] || prediction.propType?.replace(/_/g, ' ') || 'Prop'}
+                  </Text>
+                  <Text style={styles.analysisStatVal}>{prediction.line ?? '—'}</Text>
+                  <Text style={styles.analysisStatSub}>LINE</Text>
+                </View>
+                <View style={styles.analysisStatDivider} />
+                <View style={styles.analysisStat}>
+                  <Text style={styles.analysisStatLabel}>Projection</Text>
+                  <Text style={[styles.analysisStatVal, { color: Colors.primary }]}>
+                    {prediction.projection?.toFixed(1) ?? prediction.bayesianProjection?.toFixed(1) ?? '—'}
+                  </Text>
+                  <Text style={styles.analysisStatSub}>BAYESIAN</Text>
+                </View>
+                <View style={styles.analysisStatDivider} />
+                <View style={styles.analysisStat}>
+                  <Text style={styles.analysisStatLabel}>Confidence</Text>
+                  <Text style={[styles.analysisStatVal, { color: recColor }]}>
+                    {confPct != null ? `${confPct}%` : '—'}
+                  </Text>
+                  <Text style={styles.analysisStatSub}>
+                    {prediction.edgeScore != null ? `EDGE ${Math.abs(prediction.edgeScore).toFixed(1)}` : 'SCORE'}
+                  </Text>
+                </View>
+              </View>
+
+              {/* AI Reasoning */}
+              {prediction.reasoning && (
+                <View style={styles.reasoningBox}>
+                  <View style={styles.reasoningHeader}>
+                    <Ionicons name="bulb-outline" size={13} color={Colors.primary} />
+                    <Text style={styles.reasoningLabel}>AI ANALYSIS</Text>
+                  </View>
+                  <Text style={styles.reasoningText}>{prediction.reasoning}</Text>
+                </View>
+              )}
+            </View>
+
+            {/* Action buttons */}
+            <TouchableOpacity
+              style={[styles.saveBtn, saving && { opacity: 0.6 }]}
+              onPress={handleSavePick}
+              disabled={saving}
+              activeOpacity={0.85}
+            >
+              {saving
+                ? <ActivityIndicator color="#000" size="small" />
+                : <>
+                    <Ionicons name="bookmark" size={16} color="#000" />
+                    <Text style={styles.saveBtnText}>Save Prediction</Text>
+                  </>
+              }
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.newBtn} onPress={reset}>
+              <Text style={styles.newBtnText}>Analyze Another</Text>
+            </TouchableOpacity>
+          </>
+        )}
+
+        {/* ─── SAVED ─── */}
+        {phase === 'saved' && (
           <View style={styles.savedState}>
             <View style={styles.savedCheck}>
               <Ionicons name="checkmark" size={36} color="#000" />
             </View>
             <Text style={styles.savedTitle}>Pick Saved!</Text>
             <Text style={styles.savedSub}>
-              {prediction?.recommendation} {prediction?.playerName || scanResult?.playerName || playerQuery}
+              {prediction?.recommendation} {prediction?.playerName || scanResult?.playerName}
               {'\n'}
-              {prediction?.propType?.replace(/_/g, ' ')} · Line {prediction?.line ?? scanResult?.line}
+              {(PROP_LABELS[prediction?.propType || ''] || prediction?.propType?.replace(/_/g, ' '))} · Line {prediction?.line ?? scanResult?.line}
             </Text>
-
-            <TouchableOpacity
-              style={styles.viewPicksBtn}
-              onPress={() => router.push('/(tabs)/picks')}
-              activeOpacity={0.85}
-            >
+            <TouchableOpacity style={styles.viewPicksBtn} onPress={() => router.push('/(tabs)/picks')} activeOpacity={0.85}>
               <Ionicons name="bookmark" size={16} color="#000" />
               <Text style={styles.viewPicksBtnText}>View in My Picks</Text>
             </TouchableOpacity>
-
-            <TouchableOpacity style={styles.newPickBtn} onPress={handleNewPick} activeOpacity={0.8}>
-              <Text style={styles.newPickBtnText}>Analyze Another Pick</Text>
+            <TouchableOpacity style={styles.newBtn} onPress={reset}>
+              <Text style={styles.newBtnText}>Analyze Another Pick</Text>
             </TouchableOpacity>
           </View>
         )}
       </ScrollView>
 
+      {/* Prop Picker Modal */}
       <Modal visible={showPropPicker} transparent animationType="slide">
         <TouchableOpacity style={styles.modalOverlay} onPress={() => setShowPropPicker(false)}>
           <View style={styles.modalSheet}>
@@ -349,6 +519,7 @@ export default function ScanScreen() {
         </TouchableOpacity>
       </Modal>
 
+      {/* League Picker Modal */}
       <Modal visible={showLeaguePicker} transparent animationType="slide">
         <TouchableOpacity style={styles.modalOverlay} onPress={() => setShowLeaguePicker(false)}>
           <View style={styles.modalSheet}>
@@ -376,10 +547,10 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.background },
   header: { paddingHorizontal: 20, paddingBottom: 12 },
   logoRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  logoImg: { width: 38, height: 38 },
+  logoImg: { width: 36, height: 36 },
   logoText: { fontSize: 20, fontWeight: '800', color: Colors.text, letterSpacing: -0.3 },
   tagline: { fontSize: 11, color: Colors.primary, marginTop: 1, letterSpacing: 0.5, fontWeight: '600' },
-  tabRow: {
+  modeRow: {
     flexDirection: 'row',
     marginHorizontal: 20,
     backgroundColor: Colors.card,
@@ -389,7 +560,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.border,
   },
-  tab: {
+  modeTab: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
@@ -398,10 +569,12 @@ const styles = StyleSheet.create({
     gap: 6,
     borderRadius: 9,
   },
-  tabActive: { backgroundColor: Colors.primaryDim },
-  tabText: { fontSize: 13, color: Colors.textSecondary, fontWeight: '600' },
-  tabTextActive: { color: Colors.primary },
+  modeTabActive: { backgroundColor: Colors.primaryDim },
+  modeTabText: { fontSize: 13, color: Colors.textSecondary, fontWeight: '600' },
+  modeTabTextActive: { color: Colors.primary },
   body: { paddingHorizontal: 20, paddingBottom: 40 },
+
+  /* Upload box */
   uploadBox: {
     backgroundColor: Colors.card,
     borderRadius: Colors.radiusLg,
@@ -410,55 +583,114 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: Colors.border,
     borderStyle: 'dashed',
-    marginBottom: 16,
     gap: 10,
   },
-  uploadTitle: { fontSize: 17, fontWeight: '700', color: Colors.text },
+  uploadTitle: { fontSize: 18, fontWeight: '700', color: Colors.text },
   uploadSub: { fontSize: 13, color: Colors.textSecondary, textAlign: 'center' },
-  uploadBtns: { flexDirection: 'row', gap: 10, marginTop: 8 },
-  uploadBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: Colors.primaryDim,
-    borderWidth: 1,
-    borderColor: Colors.primary,
-    paddingVertical: 10,
-    paddingHorizontal: 18,
-    borderRadius: Colors.radius,
+  uploadBtns: { flexDirection: 'row', gap: 10, marginTop: 6 },
+  cameraBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: Colors.primaryDim, borderWidth: 1, borderColor: Colors.primary,
+    paddingVertical: 10, paddingHorizontal: 20, borderRadius: Colors.radius,
   },
-  uploadBtnSecondary: {
-    backgroundColor: Colors.cardSecondary,
-    borderColor: Colors.border,
+  cameraBtnText: { color: Colors.primary, fontWeight: '700', fontSize: 14 },
+  galleryBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: Colors.cardSecondary, borderWidth: 1, borderColor: Colors.borderSubtle,
+    paddingVertical: 10, paddingHorizontal: 20, borderRadius: Colors.radius,
   },
-  uploadBtnText: { color: Colors.primary, fontWeight: '600', fontSize: 14 },
-  loadingBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
+  galleryBtnText: { color: Colors.textSecondary, fontWeight: '600', fontSize: 14 },
+
+  /* Loading */
+  loadingCard: {
     backgroundColor: Colors.card,
-    padding: 16,
-    borderRadius: Colors.radius,
-    marginBottom: 12,
+    borderRadius: Colors.radiusLg,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
   },
+  scannedThumb: { width: '100%', height: 160 },
+  scannedPreview: { width: '100%', height: 180, borderRadius: Colors.radius, marginBottom: 16 },
+  loadingRow: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 16 },
   loadingText: { color: Colors.textSecondary, fontSize: 14 },
-  scanResultBox: {
+
+  /* Detected card */
+  sectionLabel: {
+    fontSize: 11, fontWeight: '700', color: Colors.primary,
+    letterSpacing: 1.5, marginBottom: 10,
+  },
+  detectedCard: {
+    backgroundColor: Colors.card,
+    borderRadius: Colors.radiusLg,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+    overflow: 'hidden',
+    marginBottom: 14,
+  },
+  detectedTop: { flexDirection: 'row', alignItems: 'flex-start', padding: 16, gap: 12 },
+  playerAvatarWrap: {
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: Colors.cardSecondary,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: Colors.borderSubtle,
+  },
+  detectedInfo: { flex: 1, gap: 6 },
+  detectedName: { fontSize: 18, fontWeight: '800', color: Colors.text },
+  badgeRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap', alignItems: 'center' },
+  teamBadge: {
+    backgroundColor: Colors.cardSecondary,
+    borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4,
+  },
+  teamBadgeText: { fontSize: 12, color: Colors.textSecondary, fontWeight: '600' },
+  matchedBadge: {
+    backgroundColor: Colors.primaryDim,
+    borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4,
+    borderWidth: 1, borderColor: Colors.border,
+  },
+  matchedText: { fontSize: 11, color: Colors.primary, fontWeight: '700', letterSpacing: 0.5 },
+  vsText: { fontSize: 12, color: Colors.textTertiary },
+  detectedStats: {
+    flexDirection: 'row',
+    borderTopWidth: 1,
+    borderTopColor: Colors.borderSubtle,
+  },
+  detectedStat: { flex: 1, padding: 14, alignItems: 'center', gap: 4 },
+  detectedStatLabel: { fontSize: 9, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 1 },
+  detectedStatVal: { fontSize: 14, fontWeight: '700', color: Colors.text, textAlign: 'center' },
+  detectedStatDivider: { width: 1, backgroundColor: Colors.borderSubtle, marginVertical: 10 },
+
+  /* Prediction button */
+  predictBtn: {
+    backgroundColor: Colors.primary,
+    borderRadius: Colors.radius,
+    height: 52,
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: 8,
-    backgroundColor: Colors.successDim,
-    padding: 12,
-    borderRadius: Colors.radius,
-    marginBottom: 12,
+    shadowColor: Colors.primary,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.4,
+    shadowRadius: 14,
+    elevation: 8,
   },
-  scanResultText: { color: Colors.success, fontSize: 13, flex: 1, textTransform: 'capitalize' },
-  manualForm: { gap: 8, marginBottom: 16 },
-  label: { fontSize: 12, color: Colors.textSecondary, fontWeight: '600', letterSpacing: 0.5, marginBottom: 4, marginTop: 8, textTransform: 'uppercase' },
+  predictBtnLoading: { opacity: 0.8 },
+  predictBtnText: { color: '#000', fontWeight: '800', fontSize: 16, letterSpacing: 0.5 },
+
+  rescanBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    justifyContent: 'center', paddingVertical: 14,
+  },
+  rescanText: { color: Colors.textSecondary, fontSize: 13 },
+
+  /* Manual form */
+  manualForm: { gap: 8 },
+  fieldLabel: { fontSize: 11, color: Colors.textSecondary, fontWeight: '700', letterSpacing: 0.8, marginBottom: 4, marginTop: 8, textTransform: 'uppercase' },
   textInput: {
     backgroundColor: Colors.card,
     borderRadius: Colors.radius,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: Colors.borderSubtle,
     color: Colors.text,
     fontSize: 15,
     paddingHorizontal: 14,
@@ -468,7 +700,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.card,
     borderRadius: Colors.radius,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: Colors.borderSubtle,
     paddingHorizontal: 14,
     height: 48,
     flexDirection: 'row',
@@ -476,87 +708,97 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   pickerBtnText: { color: Colors.text, fontSize: 15 },
-  analyzeBtn: {
+
+  /* Analysis card */
+  analysisCard: {
+    backgroundColor: Colors.card,
+    borderRadius: Colors.radiusLg,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+    overflow: 'hidden',
+    marginBottom: 14,
+  },
+  analysisHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    padding: 18,
+  },
+  analysisPlayerInfo: { flex: 1, marginRight: 12 },
+  analysisPlayer: { fontSize: 20, fontWeight: '800', color: Colors.text },
+  analysisTeam: { fontSize: 12, color: Colors.textSecondary, marginTop: 3 },
+  recBadge: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 10 },
+  recText: { fontSize: 14, fontWeight: '800', letterSpacing: 0.5 },
+  analysisDivider: { height: 1, backgroundColor: Colors.borderSubtle },
+  analysisStats: { flexDirection: 'row', paddingVertical: 4 },
+  analysisStat: { flex: 1, alignItems: 'center', padding: 16, gap: 4 },
+  analysisStatLabel: { fontSize: 10, color: Colors.textTertiary, fontWeight: '600' },
+  analysisStatVal: { fontSize: 22, fontWeight: '800', color: Colors.text },
+  analysisStatSub: { fontSize: 9, color: Colors.textTertiary, letterSpacing: 0.8 },
+  analysisStatDivider: { width: 1, backgroundColor: Colors.borderSubtle, marginVertical: 14 },
+  reasoningBox: {
+    borderTopWidth: 1,
+    borderTopColor: Colors.borderSubtle,
+    padding: 16,
+    gap: 8,
+  },
+  reasoningHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  reasoningLabel: { fontSize: 10, color: Colors.primary, fontWeight: '700', letterSpacing: 1.5 },
+  reasoningText: { fontSize: 13, color: Colors.textSecondary, lineHeight: 20 },
+
+  /* Save / New buttons */
+  saveBtn: {
     backgroundColor: Colors.primary,
     borderRadius: Colors.radius,
-    height: 50,
+    height: 52,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    marginTop: 8,
+    marginBottom: 10,
     shadowColor: Colors.primary,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 10,
     elevation: 6,
   },
-  analyzeBtnDisabled: { opacity: 0.6 },
-  analyzeBtnText: { color: '#000', fontWeight: '700', fontSize: 16 },
-  savedState: {
-    flex: 1,
-    alignItems: 'center',
-    paddingTop: 40,
-    gap: 14,
-  },
+  saveBtnText: { color: '#000', fontWeight: '800', fontSize: 16 },
+  newBtn: { alignItems: 'center', paddingVertical: 14 },
+  newBtnText: { color: Colors.textSecondary, fontSize: 14, fontWeight: '600' },
+
+  /* Saved state */
+  savedState: { alignItems: 'center', paddingTop: 30, gap: 14 },
   savedCheck: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: Colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: Colors.primary,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.4,
-    shadowRadius: 16,
-    elevation: 10,
+    width: 72, height: 72, borderRadius: 36,
+    backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center',
+    shadowColor: Colors.primary, shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.4, shadowRadius: 16, elevation: 10,
   },
   savedTitle: { fontSize: 24, fontWeight: '800', color: Colors.text },
   savedSub: {
-    fontSize: 14,
-    color: Colors.textSecondary,
-    textAlign: 'center',
-    lineHeight: 22,
-    textTransform: 'capitalize',
+    fontSize: 14, color: Colors.textSecondary, textAlign: 'center',
+    lineHeight: 22, textTransform: 'capitalize',
   },
   viewPicksBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: Colors.primary,
-    borderRadius: Colors.radius,
-    paddingVertical: 14,
-    paddingHorizontal: 32,
-    marginTop: 8,
-    shadowColor: Colors.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    elevation: 6,
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: Colors.primary, borderRadius: Colors.radius,
+    paddingVertical: 14, paddingHorizontal: 32, marginTop: 8,
+    shadowColor: Colors.primary, shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3, shadowRadius: 10, elevation: 6,
   },
   viewPicksBtnText: { color: '#000', fontWeight: '800', fontSize: 15 },
-  newPickBtn: {
-    paddingVertical: 14,
-    paddingHorizontal: 24,
-  },
-  newPickBtnText: { color: Colors.textSecondary, fontSize: 14, fontWeight: '600' },
+
+  /* Modals */
   modalOverlay: { flex: 1, backgroundColor: Colors.overlay, justifyContent: 'flex-end' },
   modalSheet: {
     backgroundColor: Colors.card,
-    borderTopLeftRadius: Colors.radiusLg,
-    borderTopRightRadius: Colors.radiusLg,
-    padding: 20,
-    maxHeight: '70%',
+    borderTopLeftRadius: Colors.radiusLg, borderTopRightRadius: Colors.radiusLg,
+    padding: 20, maxHeight: '70%',
   },
   modalTitle: { fontSize: 16, fontWeight: '700', color: Colors.text, marginBottom: 14 },
   modalItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: Colors.border,
   },
   modalItemActive: { backgroundColor: Colors.primaryDim, borderRadius: 8, paddingHorizontal: 10 },
   modalItemText: { fontSize: 15, color: Colors.text },
