@@ -96,13 +96,55 @@ export interface ScanResult {
   error?: string;
 }
 
+interface RawPick {
+  extracted?: {
+    playerName?: string;
+    propType?: string;
+    line?: number;
+    venue?: string;
+    opponentName?: string;
+    playerTeam?: string;
+    league?: string;
+    leagueId?: number;
+  };
+  resolved?: {
+    id?: number;
+    playerId?: number;
+    teamId?: number;
+    teamName?: string;
+    name?: string;
+  };
+  resolvedOpponent?: {
+    id?: number;
+    name?: string;
+  };
+}
+
 export async function scanProp(imageBase64: string, sport = 'soccer'): Promise<ScanResult> {
-  const resp = await apiCall<{ picks?: ScanResult[]; success?: boolean; error?: string }>(
+  const resp = await apiCall<{ picks?: RawPick[]; success?: boolean; error?: string }>(
     '/api/scan-prop',
     { method: 'POST', body: JSON.stringify({ image_base64: imageBase64, sport }) }
   );
   if (resp.error) return { error: resp.error };
-  if (resp.picks && resp.picks.length > 0) return resp.picks[0];
+  if (resp.picks && resp.picks.length > 0) {
+    const pick = resp.picks[0];
+    const ext = pick.extracted || {};
+    const res = pick.resolved || {};
+    const opp = pick.resolvedOpponent || {};
+    return {
+      playerName: ext.playerName,
+      propType: ext.propType,
+      line: ext.line,
+      venue: ext.venue,
+      opponentName: ext.opponentName || opp.name,
+      playerTeam: ext.playerTeam,
+      teamName: res.teamName || ext.playerTeam,
+      leagueId: ext.leagueId,
+      playerId: res.id || res.playerId,
+      teamId: res.teamId,
+      opponentId: opp.id,
+    };
+  }
   return { error: 'No prop data detected. Try a clearer image.' };
 }
 

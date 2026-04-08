@@ -74,17 +74,6 @@ export default function ScanScreen() {
     }
   };
 
-  const handleCamera = async () => {
-    const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission needed', 'Allow camera access to scan prop slips.');
-      return;
-    }
-    const result = await ImagePicker.launchCameraAsync({ quality: 0.85, base64: true });
-    if (result.canceled || !result.assets[0].base64) return;
-    await processImage(result.assets[0].base64, result.assets[0].uri);
-  };
-
   const handleGallery = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
@@ -219,17 +208,11 @@ export default function ScanScreen() {
               <View style={styles.uploadBox}>
                 <Ionicons name="image-outline" size={40} color={Colors.textTertiary} />
                 <Text style={styles.uploadTitle}>Scan a Prop Slip</Text>
-                <Text style={styles.uploadSub}>Upload or take a photo of any soccer prop slip</Text>
-                <View style={styles.uploadBtns}>
-                  <TouchableOpacity style={styles.cameraBtn} onPress={handleCamera} activeOpacity={0.8}>
-                    <Ionicons name="camera-outline" size={16} color={Colors.primary} />
-                    <Text style={styles.cameraBtnText}>Camera</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.galleryBtn} onPress={handleGallery} activeOpacity={0.8}>
-                    <Ionicons name="images-outline" size={16} color={Colors.textSecondary} />
-                    <Text style={styles.galleryBtnText}>Gallery</Text>
-                  </TouchableOpacity>
-                </View>
+                <Text style={styles.uploadSub}>Upload a screenshot of any soccer prop slip</Text>
+                <TouchableOpacity style={styles.galleryBtnBig} onPress={handleGallery} activeOpacity={0.8}>
+                  <Ionicons name="images-outline" size={18} color="#000" />
+                  <Text style={styles.galleryBtnBigText}>Choose from Photos</Text>
+                </TouchableOpacity>
               </View>
             )}
 
@@ -587,19 +570,15 @@ const styles = StyleSheet.create({
   },
   uploadTitle: { fontSize: 18, fontWeight: '700', color: Colors.text },
   uploadSub: { fontSize: 13, color: Colors.textSecondary, textAlign: 'center' },
-  uploadBtns: { flexDirection: 'row', gap: 10, marginTop: 6 },
-  cameraBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: Colors.primaryDim, borderWidth: 1, borderColor: Colors.primary,
-    paddingVertical: 10, paddingHorizontal: 20, borderRadius: Colors.radius,
+  galleryBtnBig: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: Colors.primary,
+    paddingVertical: 13, paddingHorizontal: 28, borderRadius: Colors.radius,
+    marginTop: 8,
+    shadowColor: Colors.primary, shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4, shadowRadius: 10, elevation: 6,
   },
-  cameraBtnText: { color: Colors.primary, fontWeight: '700', fontSize: 14 },
-  galleryBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: Colors.cardSecondary, borderWidth: 1, borderColor: Colors.borderSubtle,
-    paddingVertical: 10, paddingHorizontal: 20, borderRadius: Colors.radius,
-  },
-  galleryBtnText: { color: Colors.textSecondary, fontWeight: '600', fontSize: 14 },
+  galleryBtnBigText: { color: '#000', fontWeight: '800', fontSize: 15 },
 
   /* Loading */
   loadingCard: {
