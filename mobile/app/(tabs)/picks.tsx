@@ -48,12 +48,40 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
   const recColor = isOver ? Colors.primary : isUnder ? Colors.error : Colors.textSecondary;
   const statusColor = won ? Colors.success : lost ? Colors.error : Colors.textTertiary;
 
-  const confPct = pick.confidence != null
-    ? (pick.confidence > 1 ? Math.round(pick.confidence) : Math.round(pick.confidence * 100))
-    : null;
-
   const propLabel = PROP_LABELS[pick.propType] || pick.propType?.replace(/_/g, ' ') || '—';
   const venueStr = pick.venue ? pick.venue.toUpperCase() : '';
+
+  // Tracking bar: use actual if settled, else projection if live
+  const trackValue = pick.actualValue != null
+    ? pick.actualValue
+    : (live && pick.projection != null ? pick.projection : null);
+  const isProjected = pick.actualValue == null && trackValue != null;
+
+  const trackWinning = trackValue != null && pick.line != null
+    ? (isOver && trackValue > pick.line) || (isUnder && trackValue < pick.line)
+    : null;
+  const trackColor = won
+    ? Colors.success
+    : lost
+    ? Colors.error
+    : trackWinning === true
+    ? Colors.success
+    : trackWinning === false
+    ? Colors.error
+    : Colors.textTertiary;
+
+  // Fill %: line sits at 50%, value scaled to 0–100% (range: 0 to 2×line)
+  const trackFillPct = trackValue != null && pick.line != null && pick.line > 0
+    ? Math.min(Math.max((trackValue / (pick.line * 2)) * 100, 1), 99)
+    : null;
+
+  // PACE: for settled = actual, for live = projection
+  const paceVal = pick.actualValue != null
+    ? Number(pick.actualValue).toFixed(0)
+    : pick.projection != null
+    ? Number(pick.projection).toFixed(1)
+    : '—';
+  const paceColor = pick.actualValue != null ? statusColor : Colors.primary;
 
   return (
     <View style={[styles.card, won && styles.cardWon, lost && styles.cardLost]}>
@@ -103,13 +131,13 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
         </View>
       )}
 
-      {/* Stats row */}
+      {/* Stats row: NOW | LINE | PACE | HIT% */}
       <View style={styles.statsRow}>
         <View style={styles.statCol}>
-          <Text style={[styles.statVal, { color: Colors.primary }]}>
-            {pick.projection != null ? Number(pick.projection).toFixed(1) : '—'}
+          <Text style={[styles.statVal, { color: pick.actualValue != null ? statusColor : Colors.textSecondary }]}>
+            {pick.actualValue != null ? Number(pick.actualValue).toFixed(0) : '—'}
           </Text>
-          <Text style={styles.statLbl}>PROJ</Text>
+          <Text style={styles.statLbl}>NOW</Text>
         </View>
         <View style={styles.statDivider} />
         <View style={styles.statCol}>
@@ -118,23 +146,32 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
         </View>
         <View style={styles.statDivider} />
         <View style={styles.statCol}>
-          <Text style={[styles.statVal, { color: recColor }]}>
-            {confPct != null ? `${confPct}%` : '—'}
-          </Text>
-          <Text style={styles.statLbl}>CONF</Text>
+          <Text style={[styles.statVal, { color: paceColor }]}>{paceVal}</Text>
+          <Text style={styles.statLbl}>PACE</Text>
         </View>
-        {pick.actualValue != null && (
-          <>
-            <View style={styles.statDivider} />
-            <View style={styles.statCol}>
-              <Text style={[styles.statVal, { color: statusColor }]}>
-                {Number(pick.actualValue).toFixed(0)}
-              </Text>
-              <Text style={styles.statLbl}>ACTUAL</Text>
-            </View>
-          </>
-        )}
+        <View style={styles.statDivider} />
+        <View style={styles.statCol}>
+          <Text style={styles.statVal}>—</Text>
+          <Text style={styles.statLbl}>HIT%</Text>
+        </View>
       </View>
+
+      {/* Tracking bar */}
+      {trackFillPct != null && (
+        <View style={styles.trackBarOuter}>
+          <View
+            style={[
+              styles.trackBarFill,
+              {
+                width: `${trackFillPct}%` as unknown as number,
+                backgroundColor: trackColor,
+                opacity: isProjected ? 0.45 : 0.85,
+              },
+            ]}
+          />
+          <View style={styles.trackBarMarker} />
+        </View>
+      )}
 
       {/* Tracking ID */}
       {pick.trackingId && (
@@ -384,6 +421,30 @@ const styles = StyleSheet.create({
   statVal: { fontSize: 16, fontWeight: '700', color: Colors.text },
   statLbl: { fontSize: 9, color: Colors.textTertiary, fontWeight: '600', letterSpacing: 1 },
   statDivider: { width: 1, height: 32, backgroundColor: Colors.borderSubtle },
+
+  trackBarOuter: {
+    height: 5,
+    backgroundColor: Colors.cardSecondary,
+    borderRadius: 3,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  trackBarFill: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    height: '100%' as unknown as number,
+    borderRadius: 3,
+  },
+  trackBarMarker: {
+    position: 'absolute',
+    left: '50%' as unknown as number,
+    top: 0,
+    width: 2,
+    height: '100%' as unknown as number,
+    backgroundColor: 'rgba(255,255,255,0.35)',
+    transform: [{ translateX: -1 }],
+  },
 
   trackingId: { fontSize: 9, color: Colors.textTertiary, textAlign: 'right', letterSpacing: 0.5 },
 });
