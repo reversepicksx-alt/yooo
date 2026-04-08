@@ -1,107 +1,76 @@
 # ReversePicks — Product Requirements Document
 
-## Core Product
-Soccer-only player prop prediction platform. Users scan prop screenshots, AI extracts details, resolves player/team, and runs a prediction pipeline.
+## Problem Statement
+Web app remake of a sports analytics tool for Soccer Player Props (pass attempts, shots, points, assists, etc.). Users scan prop screenshots, an AI Vision model extracts details, resolves the player/team, and runs a prediction pipeline.
 
-## Legal Compliance
-- NO 3rd-party app names or player/team images
-- NO explicit AI branding in UI
+**Legal**: NO 3rd-party app names, logos, team badges, or player headshots. No explicit AI branding.
 
-## Architecture
+## Core Architecture
+- **Frontend**: React.js + Shadcn/UI
+- **Backend**: FastAPI + Python asyncio + MongoDB
+- **Prediction Engine**: Pure Bayesian math (100% of the projection number). Grok 3 Mini provides textual tactical reasoning only.
+- **OCR**: Grok 4.1 Fast Non-Reasoning (Vision)
+- **Synthesis**: Gemini 2.0 Flash (combines AI analyses into cohesive breakdown)
 
-### Prediction Pipeline — Bayesian-First Unified Engine
-```
-Grok OCR → Data Fetch → BAYESIAN MATH (anchor) → Grok AI (math-informed) → BAYESIAN-FIRST FUSION → Tempo Scaling → Favorite Dampening → Guards → Final
-```
+## Key Integrations
+- API-Sports (Soccer data) — User API Key
+- Square (Payments/Subs) — User API Key
+- xAI Grok (grok-3-mini reasoning, grok-4-1-fast-non-reasoning vision) — User API Key
+- Gemini 2.0 Flash — Emergent LLM Key
 
-1. **Grok Vision OCR** — Extracts player/prop/line (with validation gate)
-2. **Data Fetch** — Player game logs, match dominance, opponent stats, odds
-3. **Game Tempo Estimation** — Expected total goals → high/normal/low tempo classification
-4. **Heavy Favorite Detection** — Teams with odds < 1.60 flagged for pass dampening
-5. **Bayesian Engine v2** — 3-layer math projection (Prior + Momentum + Covariate)
-6. **Grok 3 Mini** — AI projection (math-informed via anchor injection, tempo-aware, favorite-aware)
-7. **Bayesian-First Fusion v3** — Math OWNS the number, AI provides tactical adjustments:
-   - Agreement: 55% Bayes, 45% AI
-   - Disagree <15%: 70% Bayes, 30% AI
-   - Disagree 15-25%: 80% Bayes, 20% AI
-   - Disagree 25-35%: 90% Bayes, 10% AI
-   - Disagree >35%: 95% Bayes, 5% AI (AI hallucinating)
-8. **Post-Fusion Tempo Scaling** — High-tempo games boost pass volumes
-9. **Post-Fusion Favorite Dampening** — Reduces OVER pass projections for heavy favorites
-10. **Guards** — Coin-flip zone detection, tight edge caps
+## What's Implemented
+- Full Bayesian prediction pipeline with 10+ prop types
+- OCR screenshot scanning via Grok Vision
+- MongoDB caching layer (players, teams, leagues, national teams)
+- Accent-stripped nameClean matching for teams (Bayern München ↔ Bayern Munich)
+- First-initial matching for players (Joshua Kimmich → J. Kimmich)
+- Consonant-skeleton matching for Arabic transliterations
+- Word-overlap fuzzy matching for team names
+- Auto-settlement bot (live score checking)
+- Auto-backfill for player positions
+- Calibration pattern mining
+- Square subscription management
+- Venue verification via fixture data
+- Combo predictions (2-player same game)
+- Live game tracking
+- Prediction self-correction guard (coin-flip zone capping)
 
-### Key Safety Systems
-- **Divergence Guard**: Smooth gradient — the more AI disagrees with math, the less it matters
-- **Coin Flip Guard**: projection within thin edge of line + Bayesian <60% → cap confidence, badge
-- **Game Tempo**: expected total goals >= 3.2 = high tempo (+4-8% pass boost)
-- **Favorite Dampening**: team odds < 1.60 → OVER pass projections dampened up to 6%
-- **Possession Contradiction**: CRITICAL warning when picking same direction on pass props for both teams
-- **Slip Correlation**: CORRELATED_RISK, OPPOSING_TEAMS_SAME_DIR, CONFLICTING, BOOSTING warnings
-- **Double-Dip Prevention**: Dominance multiplier applied once pre-fusion (not duplicated post-fusion)
-- **Possession Monster Guard**: When opponent avg possession >57%, their concession rate overrides the 50/50 blend (60→90% weight). Home advantage dampened up to 70% vs extreme possession teams.
+## Recent Fixes (Current Session)
+1. **Grok model timeout**: Increased from 8s→20s in grok_engine.py with retry/fallback between models
+2. **Bayesian fallback**: predict.py now uses Bayesian-only projection when ALL Grok models fail (no more crashes)
+3. **opponentId optional**: PredictionRequest.opponentId defaults to 0 (no more 400 on null)
+4. **nameClean for teams**: Added accent-stripped field to cache_teams with backfill (1230 teams)
+5. **Model name fix**: Standardized grok-4-1-fast-non-reasoning across all files (was grok-4.1-fast in some)
+6. **Removed basketball references**: Cleaned up AUTO-BACKFILL prompt
 
-### Calibration System
-- **REMOVED** per user request
+## Prioritized Backlog
+### P1 - Important
+- Slip correlation analysis: Analyze multiple saved picks for same game to flag conflicting/boosting correlations
 
-## Backtest Results (Feb 2026)
-4/4 previously-missed picks corrected under the new engine:
-- L. Ayling: UNDER→OVER ✅ (Divergence Guard 16%, 80% Bayes)
-- A. Morris: UNDER→OVER ✅ (Divergence Guard 39%, 95% Bayes)
-- D. Sanderson: OVER→UNDER ✅ (AI+Bayes agreement, 55% Bayes fusion)
-- B. Whiteman: OVER→UNDER ✅ (AI+Bayes agreement, 55% Bayes fusion)
-Regression check: 0 previously-correct picks broken
+### P2 - Nice to Have
+- Route remaining API-Sports calls through MongoDB cache with TTL to avoid API rate limits
+- Prediction self-correction feedback loop: Store outcomes and feed calibration patterns back
+- Batch scan predictions: Support scanning multiple props from one image
 
-## Tech Stack
-- Frontend: React.js, Shadcn/UI
-- Backend: FastAPI, Python asyncio, MongoDB
-- AI: Grok 3 Mini (xAI key), Grok 2 Vision (OCR)
-- No GPT/OpenAI models used
-- Data: API-Sports (Soccer)
-- Auth: Whop + Square subscriptions
-- Caching: MongoDB with TTL
-
-## Completed Work
-- Full prediction pipeline with Bayesian anchor injection
-- OCR validation gate
-- Bayesian Engine v2 (25% covariate cap)
-- Calibration system removed
-- Post-fusion possession scaling (single-application, no double-dip)
-- Slip correlation & coin-flip guard
-- Intel tab redesign (informational aggregate stats)
-- Basketball complete removal (Feb 2026)
-- Game Tempo Estimation Layer (Feb 2026)
-- Heavy Favorite Dampening (Feb 2026)
-- Possession Contradiction Detection (Feb 2026)
-- **Bayesian-First Fusion v3 (Feb 2026)** — smooth divergence gradient, math owns the number
-- **Divergence Guard (Feb 2026)** — catches AI hallucination, overrides to math
-- **Double-dip fix (Feb 2026)** — removed duplicate possession scaling post-fusion
-- **Grok model name fix (Feb 2026)** — grok_engine.py updated to match predict.py
-- **Possession Monster Formula (Feb 2026)** — Dynamic opponent-weighted possession for extreme matchups (opp avg >57%): scales from 60/40 to 90/10 opponent-driven. Home advantage dampened against possession monsters. Fixes over-projection of pass attempts vs teams like Barcelona.
-- **AI Cost Optimization (Feb 2026)** — Cut GPT-5.2 entirely. Replaced Grok 4.20 with Grok 3 Mini ($0.30/M tokens). Grok provides tactical analysis text only — no influence on projected numbers.
-- **Bayesian-Only Projection (Feb 2026)** — Math engine is sole decision-maker. AI weight = 0%. Dominance scaling only applied to low-possession teams (<52% avg).
-- **Scan Pipeline Overhaul (Feb 2026)** — First-initial matching (Julian→J.), team/opponent smart swap, fuzzy prop type auto-correction, continental cup awareness, duplicate name disambiguation via league/team context.
-- **Prop-Specific Context Fixes (Feb 2026)** — Saves now uses opponent SOT for context. Tackles dominance inverted (less possession = more tackles). Expanded opponent concession to tackles/key_passes.
-
-## Upcoming Tasks
-- Route prediction API calls through MongoDB cache (P2)
-
-## Future/Backlog
-- Frontend refactoring: Extract components from App.js (P3)
-- Backend refactoring: Break down monolithic predict.py (P3)
-- Auth architecture migration to httpOnly cookies (P3)
-- Prediction self-correction feedback loop (P2)
-- Batch scan predictions (P2)
+### P3 - Future/Refactoring
+- Frontend refactoring: Extract components from App.js (>2200 lines)
+- Backend refactoring: Break down monolithic predict.py and scan.py
+- Auth architecture migration: Move from localStorage to httpOnly cookies
+- Integrate RapidAPI SofaScore for NWSL data
 
 ## Key API Endpoints
-- POST /api/scan-prop — Vision extraction (soccer only)
-- POST /api/predict — Soccer prediction pipeline (Bayesian-first fusion)
-- POST /api/picks/save — Save pick with slip correlation + possession contradiction
-- POST /api/picks/list — List user picks
-- POST /api/picks/live-update — Real-time live tracking
-- GET /api/intel/sheet — Aggregate hit-rate data
-- GET /api/health — Health check
+- `POST /api/scan-prop` — OCR & Resolution
+- `POST /api/predict` — Prediction pipeline
+- `POST /api/predict-combo` — Combo prediction
+- `GET /api/leagues` — Supported leagues
+- `GET /api/leagues/{id}/teams` — Teams by league
+- `POST /api/players/search` — Player search
 
-## 3rd Party Integrations
-- API-Sports (Soccer Data) — User API Key
-- Square (Payments/Subs) — User API Key
-- xAI Grok 3 Mini + Grok 2 Vision — User API Key
+## DB Collections
+- `cache_players`: Player roster (nameClean, teamId, leagueId)
+- `cache_teams`: Team index (nameClean = accent-stripped, nameLower)
+- `cache_leagues`, `cache_national`, `cache_transfers`, `cache_meta`
+- `picks`: User predictions with settlement tracking
+- `predictions`: Full prediction results
+- `player_positions`: Cached position/role data
+- `calibration_insights`: Pattern mining results
