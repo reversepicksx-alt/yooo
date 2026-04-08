@@ -199,18 +199,18 @@ async def _infer_league_id(team_name: str, opponent_name: str, ai_league_id: int
     return ai_league_id or 71
 
 
-async def _resolve_player_via_cache(player_name: str, team_id: int = None, league_id: int = None) -> dict:
+async def _resolve_player_via_cache(player_name: str, team_id: int = None, league_id: int = None, team_name_hint: str = None) -> dict:
     """Try to find a player in the MongoDB cache. Returns player doc or None.
-    Uses league_id to disambiguate when multiple players share the same name."""
+    Uses league_id and team_name_hint to disambiguate duplicates (e.g., J. Alvarez at Atletico vs Honduras)."""
     if team_id:
         # Search with team filter first (most precise)
-        player = await get_player_by_name(player_name, team_id, league_id=league_id)
+        player = await get_player_by_name(player_name, team_id, league_id=league_id, team_name_hint=team_name_hint)
         if player:
             return player
         # Team filter failed — fall through to unfiltered below
 
-    # Unfiltered search by name — league_id helps disambiguate duplicates (e.g., Vitinha PSG vs Genoa)
-    player = await get_player_by_name(player_name, league_id=league_id)
+    # Unfiltered search — league_id + team_name_hint help disambiguate
+    player = await get_player_by_name(player_name, league_id=league_id, team_name_hint=team_name_hint)
     if not player:
         return None
 
@@ -866,14 +866,14 @@ async def scan_prop(req: ScanPropRequest):
                 if club_id:
                     cache_team_id = club_id
 
-            cached_player = await _resolve_player_via_cache(player_name, cache_team_id, league_id=league_id)
+            cached_player = await _resolve_player_via_cache(player_name, cache_team_id, league_id=league_id, team_name_hint=player_team_hint)
 
             # SMART SWAP: If player not found on extracted team, try the opponent's team
             # (OCR models sometimes confuse team/opponent)
             if not cached_player and cache_team_id and opponent_hint:
                 opp_club_id, opp_club_name = await get_team_by_name(opponent_hint)
                 if opp_club_id:
-                    cached_player = await _resolve_player_via_cache(player_name, opp_club_id, league_id=league_id)
+                    cached_player = await _resolve_player_via_cache(player_name, opp_club_id, league_id=league_id, team_name_hint=opponent_hint)
                     if cached_player:
                         print(f"[SCAN] TEAM SWAP: {player_name} found on opponent '{opponent_hint}' (not '{player_team_hint}') — swapping")
                         player_team_hint, opponent_hint = opponent_hint.lower().strip(), player_team_hint
@@ -882,7 +882,7 @@ async def scan_prop(req: ScanPropRequest):
 
             # UNFILTERED FALLBACK: If team-filtered searches failed, try by name only
             if not cached_player:
-                cached_player = await _resolve_player_via_cache(player_name, None, league_id=league_id)
+                cached_player = await _resolve_player_via_cache(player_name, None, league_id=league_id, team_name_hint=player_team_hint)
                 if cached_player:
                     resolved_team = cached_player.get("teamName", "")
                     resolved_team_id = cached_player.get("teamId")

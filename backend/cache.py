@@ -411,21 +411,31 @@ async def get_team_info(team_name: str) -> dict:
     return None
 
 
-async def get_player_by_name(player_name: str, team_id: int = None, league_id: int = None) -> dict:
+async def get_player_by_name(player_name: str, team_id: int = None, league_id: int = None, team_name_hint: str = None) -> dict:
     """Look up a player by name, optionally filtered by team/league. Returns player doc or None.
     
-    When multiple players share a name (e.g., Vitinha at PSG vs Genoa),
-    uses league_id to disambiguate. Prefers club entries over national teams.
+    Handles common OCR patterns:
+    - "Julian Alvarez" → matches "J. Álvarez" (first name → initial)
+    - "Vitinha" with league_id → picks PSG over Genoa
+    - Common last names with team_name_hint → picks the right one
     
     Search strategy (most precise → least):
     1. Exact nameClean match
-    2. Last name as end-of-string word boundary (e.g. "salah" matches "mohamed salah")
-    3. Full name as word-boundary substring (e.g. "saka" matches "b. saka")
+    1b. First-initial pattern (Julian Alvarez → J. Alvarez)
+    2. Last name at end with word boundary
+    3. Full name as word-boundary substring
     4. Last name word-boundary anywhere
     """
     from utils import strip_accents
     name_clean = strip_accents(player_name.lower().strip())
     international_leagues = {1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 29, 30, 31, 32, 33, 34, 115, 960}
+
+    # Precompute the first-initial form: "julian alvarez" → "j. alvarez"
+    parts = name_clean.split()
+    last_name = parts[-1] if parts else name_clean
+    initial_form = None
+    if len(parts) >= 2:
+        initial_form = parts[0][0] + ". " + " ".join(parts[1:])
 
     def _q(extra: dict) -> dict:
         q = dict(extra)
@@ -434,27 +444,43 @@ async def get_player_by_name(player_name: str, team_id: int = None, league_id: i
         return q
 
     async def _best_match(query: dict) -> dict:
-        """Find all matches and pick the best one based on league context."""
-        docs = await db[COL_PLAYERS].find(query, {"_id": 0}).to_list(10)
+        """Find all matches and pick the best one based on league/team context."""
+        docs = await db[COL_PLAYERS].find(query, {"_id": 0}).to_list(30)
         if not docs:
             return None
         if len(docs) == 1:
             return docs[0]
+
         # Multiple matches — disambiguate
-        # 1. Prefer exact league match
+        # 1. If team_name_hint provided, try to match team name
+        if team_name_hint:
+            hint_lower = strip_accents(team_name_hint.lower())
+            hint_words = set(hint_lower.replace("-", " ").split()) - {"fc", "cf", "sc", "ac"}
+            for d in docs:
+                t = strip_accents((d.get("teamName") or "").lower())
+                t_words = set(t.replace("-", " ").split()) - {"fc", "cf", "sc", "ac"}
+                if hint_words & t_words:
+                    return d
+
+        # 2. Prefer exact league match
         if league_id:
             continental = {2, 3, 848, 531, 480}
             for d in docs:
                 if d.get("leagueId") == league_id:
                     return d
-            # For continental cups, prefer club entries
             if league_id in continental:
                 club_docs = [d for d in docs if d.get("leagueId") not in international_leagues]
                 if club_docs:
                     return club_docs[0]
-        # 2. Prefer club entry over national team
+
+        # 3. Prefer club entry over national team
         club_docs = [d for d in docs if d.get("leagueId") not in international_leagues]
         if club_docs:
+            # Among clubs, prefer top-5 leagues (39,140,135,78,61)
+            top5 = {39, 140, 135, 78, 61}
+            top5_docs = [d for d in club_docs if d.get("leagueId") in top5]
+            if top5_docs:
+                return top5_docs[0]
             return club_docs[0]
         return docs[0]
 
@@ -463,13 +489,23 @@ async def get_player_by_name(player_name: str, team_id: int = None, league_id: i
     if doc:
         return doc
 
-    parts = name_clean.split()
-    last_name = parts[-1] if parts else name_clean
+    # 1b. First-initial pattern: "julian alvarez" → "j. alvarez"
+    if initial_form:
+        doc = await _best_match(_q({"nameClean": initial_form}))
+        if doc:
+            return doc
 
     # 2. Last name at end of string with word boundary
     doc = await _best_match(_q({"nameClean": {"$regex": rf"\b{re.escape(last_name)}$"}}))
     if doc:
         return doc
+
+    # 2b. Initial + last name regex: "j." followed by last name
+    if initial_form:
+        first_initial = parts[0][0]
+        doc = await _best_match(_q({"nameClean": {"$regex": rf"^{re.escape(first_initial)}\.\s*{re.escape(last_name)}$"}}))
+        if doc:
+            return doc
 
     # 3. Full input as word boundary match
     if name_clean != last_name:
