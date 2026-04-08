@@ -10,13 +10,13 @@ import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@/contexts/AuthContext';
 import Colors from '@/constants/colors';
-import { verifyAccess, setPassword, authLogin } from '@/lib/api';
+import { verifyAccess, setPassword as apiSetPassword, authLogin } from '@/lib/api';
 
 type Step = 'email' | 'password' | 'setup';
 
 export default function AuthScreen() {
   const insets = useSafeAreaInsets();
-  const { login } = useAuth();
+  const { loginWithResponse } = useAuth();
   const [step, setStep] = useState<Step>('email');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -26,19 +26,24 @@ export default function AuthScreen() {
   const [error, setError] = useState('');
 
   const handleCheckEmail = async () => {
-    if (!email.trim()) { setError('Enter your email address.'); return; }
+    const trimmed = email.trim().toLowerCase();
+    if (!trimmed) { setError('Enter your email address.'); return; }
     setLoading(true);
     setError('');
     try {
-      const result = await verifyAccess(email.trim());
+      const result = await verifyAccess(trimmed);
       if (result.requires_password_setup) {
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         setStep('setup');
       } else if (result.requires_password) {
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         setStep('password');
-      } else if (result.verified && result.session_token) {
-        await login(email.trim(), '');
+      } else if (result.verified && result.session_token && result.email) {
+        await loginWithResponse({
+          email: result.email,
+          session_token: result.session_token,
+          access_type: result.access_type,
+        });
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         router.replace('/(tabs)/scan');
       } else {
@@ -58,7 +63,8 @@ export default function AuthScreen() {
     setLoading(true);
     setError('');
     try {
-      await login(email.trim(), password);
+      const resp = await authLogin(email.trim().toLowerCase(), password);
+      await loginWithResponse(resp);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       router.replace('/(tabs)/scan');
     } catch (e: unknown) {
@@ -75,8 +81,8 @@ export default function AuthScreen() {
     setLoading(true);
     setError('');
     try {
-      await setPassword(email.trim(), password);
-      await login(email.trim(), password);
+      const resp = await apiSetPassword(email.trim().toLowerCase(), password);
+      await loginWithResponse(resp);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       router.replace('/(tabs)/scan');
     } catch (e: unknown) {
@@ -132,6 +138,8 @@ export default function AuthScreen() {
                   keyboardType="email-address"
                   autoCapitalize="none"
                   autoCorrect={false}
+                  autoComplete="email"
+                  textContentType="emailAddress"
                   onSubmitEditing={handleCheckEmail}
                   returnKeyType="next"
                 />
@@ -166,6 +174,8 @@ export default function AuthScreen() {
                   value={password}
                   onChangeText={setPassword}
                   secureTextEntry={!showPassword}
+                  autoComplete="password"
+                  textContentType="password"
                   onSubmitEditing={handleLogin}
                   returnKeyType="done"
                 />
@@ -204,6 +214,8 @@ export default function AuthScreen() {
                   value={password}
                   onChangeText={setPassword}
                   secureTextEntry={!showPassword}
+                  autoComplete="new-password"
+                  textContentType="newPassword"
                   returnKeyType="next"
                 />
                 <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeBtn}>
@@ -220,6 +232,8 @@ export default function AuthScreen() {
                   value={confirmPassword}
                   onChangeText={setConfirmPassword}
                   secureTextEntry={!showPassword}
+                  autoComplete="new-password"
+                  textContentType="newPassword"
                   onSubmitEditing={handleSetPassword}
                   returnKeyType="done"
                 />
