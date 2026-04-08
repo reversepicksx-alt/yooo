@@ -201,7 +201,7 @@ async def predict(req: PredictionRequest):
                 return None
 
             standings_task = get_standings_multi_season()
-            fixtures_task = get_recent_fixtures_fast(actual_team_id, 25)
+            fixtures_task = get_recent_fixtures_fast(actual_team_id, 40)
             odds_task = get_match_odds()
 
         import time as _t
@@ -289,7 +289,7 @@ async def predict(req: PredictionRequest):
             return [r for r in results_raw if r and not isinstance(r, Exception)]
 
         # 2. Player game-by-game box scores from recent fixtures
-        async def fetch_player_game_logs(fixture_list, player_id, limit=8):
+        async def fetch_player_game_logs(fixture_list, player_id, limit=35):
             """Fetch player's individual stats — uses MongoDB cache for finished fixtures."""
             player_name_lower = strip_accents(req.playerName.lower().split()[-1]) if req.playerName else ""
 
@@ -600,7 +600,7 @@ async def predict(req: PredictionRequest):
         # Search venue-matching fixtures first (away if away prop, home if home prop)
         # so we maximize relevant venue samples (target: 15-20 venue-matched games)
         venue_first_fixtures = venue_filtered_team_fixtures + [f for f in all_team_fixtures if f.get("venue") != player_venue]
-        player_game_logs_task = fetch_player_game_logs(venue_first_fixtures, req.playerId, 12)
+        player_game_logs_task = fetch_player_game_logs(venue_first_fixtures, req.playerId, 35)
 
         # Position comparison task — same-position players vs this opponent
         # (started later after player_position is resolved)

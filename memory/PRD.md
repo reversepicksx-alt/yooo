@@ -42,6 +42,7 @@ Web app remake of a sports analytics tool for Soccer Player Props (pass attempts
 4. **nameClean for teams**: Added accent-stripped field to cache_teams with backfill (1230 teams)
 5. **Model name fix**: Standardized grok-4-1-fast-non-reasoning across all files (was grok-4.1-fast in some)
 6. **Removed basketball references**: Cleaned up AUTO-BACKFILL prompt
+7. **Game log coverage 4x increase**: Expanded fixture fetch from 25→40 and game log limit from 12→35. Marcos Leonardo went from 4 game samples to 17 (23 total logs). Bayesian engine now has comprehensive data for all players.
 
 ## Prioritized Backlog
 ### P1 - Important
