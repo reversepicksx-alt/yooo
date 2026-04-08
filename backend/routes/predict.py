@@ -2023,35 +2023,65 @@ Analyze ALL data thoroughly. Return JSON only."""
 
         # =============================================
         # GROK-ONLY: grok-3-mini (cost-efficient, Bayesian does the heavy lifting)
+        # Falls back to Bayesian-only if all AI models fail
         # =============================================
-        grok_result = await aio.wait_for(
-            call_grok(label="grok3mini", model="grok-3-mini"),
-            timeout=45
-        )
+        grok_result = None
+        try:
+            grok_result = await aio.wait_for(
+                call_grok(label="grok3mini", model="grok-3-mini"),
+                timeout=45
+            )
+        except Exception as e:
+            print(f"[HYBRID] grok-3-mini exception: {e}")
 
         if not grok_result or not isinstance(grok_result, dict) or not grok_result.get("projectedValue"):
             # Grok failed — try once more with fast model
             print("[HYBRID] grok-3-mini failed, retrying with grok-4-1-fast")
-            grok_result = await aio.wait_for(
-                call_grok(label="grok41fast", model="grok-4-1-fast-non-reasoning"),
-                timeout=40
-            )
-            if not grok_result or not isinstance(grok_result, dict):
-                raise ValueError("Grok AI failed to produce a prediction")
+            try:
+                grok_result = await aio.wait_for(
+                    call_grok(label="grok41fast", model="grok-4-1-fast-non-reasoning"),
+                    timeout=40
+                )
+            except Exception as e:
+                print(f"[HYBRID] grok-4-1-fast exception: {e}")
 
-        pv = grok_result.get("projectedValue", 0)
+        pv = grok_result.get("projectedValue", 0) if grok_result and isinstance(grok_result, dict) else 0
         if not isinstance(pv, (int, float)) or pv <= 0:
             # Invalid projection — retry with fast model
             print(f"[HYBRID] Grok returned invalid projection: {pv}, retrying with fast model")
-            grok_result = await aio.wait_for(
-                call_grok(label="grok41fast", model="grok-4-1-fast-non-reasoning"),
-                timeout=40
-            )
-            if not grok_result or not isinstance(grok_result, dict):
-                raise ValueError("Grok fallback also failed")
-            pv = grok_result.get("projectedValue", 0)
-            if not isinstance(pv, (int, float)) or pv <= 0:
-                raise ValueError(f"Grok returned invalid projection: {pv}")
+            try:
+                grok_result = await aio.wait_for(
+                    call_grok(label="grok41fast", model="grok-4-1-fast-non-reasoning"),
+                    timeout=40
+                )
+                pv = grok_result.get("projectedValue", 0) if grok_result and isinstance(grok_result, dict) else 0
+            except Exception as e:
+                print(f"[HYBRID] grok-4-1-fast retry exception: {e}")
+                pv = 0
+
+        # BAYESIAN FALLBACK: If ALL Grok models failed, use Bayesian projection directly
+        if not grok_result or not isinstance(grok_result, dict) or not isinstance(pv, (int, float)) or pv <= 0:
+            if early_bayes and early_bayes.get("posteriorMean"):
+                pv = early_bayes["posteriorMean"]
+                grok_result = {
+                    "projectedValue": pv,
+                    "recommendation": early_bayes.get("recommendation", "over"),
+                    "confidenceScore": max(early_bayes.get("pOver", 50), early_bayes.get("pUnder", 50)),
+                    "reasoning": "AI models unavailable — projection based on pure Bayesian mathematical analysis.",
+                    "_source": "bayesian_fallback",
+                }
+                print(f"[BAYESIAN FALLBACK] All Grok models failed — using Bayesian projection: {pv}")
+            else:
+                # No Bayesian data either — use the line as last resort
+                pv = req.line
+                grok_result = {
+                    "projectedValue": pv,
+                    "recommendation": "over",
+                    "confidenceScore": 50,
+                    "reasoning": "Insufficient data for mathematical projection. AI models unavailable.",
+                    "_source": "fallback",
+                }
+                print(f"[FALLBACK] No Bayesian data and all Grok models failed — using line: {pv}")
 
         source_model = grok_result.get("_source", "grok3mini")
         print(f"[TIMING] {source_model} done: {_t.time()-_t0:.1f}s, proj={pv}")

@@ -181,9 +181,8 @@ async def _auto_backfill_positions():
                 prompt = f"""For each player below, return ONLY their primary position abbreviation.
 
 Soccer positions: GK, CB, LB, RB, LWB, RWB, CDM, CM, CAM, LM, RM, LW, RW, CF, ST
-Basketball positions: PG, SG, SF, PF, C
 
-Also return a short role description (e.g., "Inverted Winger", "Stretch Big", "Box-to-Box").
+Also return a short role description (e.g., "Inverted Winger", "Deep-Lying Playmaker", "Box-to-Box").
 
 Players:
 {chr(10).join(player_lines)}
@@ -197,7 +196,7 @@ Only the JSON array, no markdown."""
                             "https://api.x.ai/v1/chat/completions",
                             headers={"Authorization": f"Bearer {XAI_API_KEY}", "Content-Type": "application/json"},
                             json={
-                                "model": "grok-4.1-fast-non-reasoning",
+                                "model": "grok-4-1-fast-non-reasoning",
                                 "messages": [{"role": "user", "content": prompt}],
                                 "temperature": 0,
                             }

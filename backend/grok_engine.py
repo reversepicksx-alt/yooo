@@ -14,29 +14,40 @@ GROK_REASONING_MODEL = "grok-3-mini"
 GROK_URL = "https://api.x.ai/v1/chat/completions"
 
 
-async def _grok_call(prompt: str, temperature: float = 0, max_tokens: int = 2000, timeout: int = 15, reasoning: bool = False) -> str:
-    """Core Grok API call. Uses reasoning model for analytical tasks, non-reasoning for structured tasks."""
+async def _grok_call(prompt: str, temperature: float = 0, max_tokens: int = 2000, timeout: int = 30, reasoning: bool = False) -> str:
+    """Core Grok API call. Uses reasoning model for analytical tasks, non-reasoning for structured tasks.
+    Retries once on failure with the alternate model."""
     if not XAI_API_KEY:
         return ""
     model = GROK_REASONING_MODEL if reasoning else GROK_MODEL
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(
-                GROK_URL,
-                headers={"Authorization": f"Bearer {XAI_API_KEY}", "Content-Type": "application/json"},
-                json={
-                    "model": model,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": temperature,
-                    "max_tokens": max_tokens,
-                }
-            )
-            if resp.status_code == 200:
-                return resp.json()["choices"][0]["message"]["content"].strip()
-            else:
-                print(f"[GROK] API error {resp.status_code} ({model}): {resp.text[:200]}")
-    except Exception as e:
-        print(f"[GROK] Call error ({model}): {e}")
+    models_to_try = [model]
+    # Add fallback model
+    if reasoning:
+        models_to_try.append(GROK_MODEL)  # fall back to fast model for reasoning
+    else:
+        models_to_try.append(GROK_REASONING_MODEL)
+
+    for attempt_model in models_to_try:
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10)) as client:
+                resp = await client.post(
+                    GROK_URL,
+                    headers={"Authorization": f"Bearer {XAI_API_KEY}", "Content-Type": "application/json"},
+                    json={
+                        "model": attempt_model,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": temperature,
+                        "max_tokens": max_tokens,
+                    }
+                )
+                if resp.status_code == 200:
+                    return resp.json()["choices"][0]["message"]["content"].strip()
+                else:
+                    print(f"[GROK] API error {resp.status_code} ({attempt_model}): {resp.text[:200]}")
+        except httpx.TimeoutException:
+            print(f"[GROK] Timeout ({attempt_model}, {timeout}s)")
+        except Exception as e:
+            print(f"[GROK] Call error ({attempt_model}): {type(e).__name__}: {e}")
     return ""
 
 
@@ -149,7 +160,7 @@ Produce a brief with EXACTLY these sections (keep each to 1-2 sentences max):
 
 Be direct. No hedging. Use numbers, not words like "good" or "bad"."""
 
-    result = await _grok_call(prompt, temperature=0, max_tokens=600, timeout=8, reasoning=True)
+    result = await _grok_call(prompt, temperature=0, max_tokens=600, timeout=20, reasoning=True)
     return result if result else raw_data  # Fallback to raw data if Grok fails
 
 

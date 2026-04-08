@@ -33,13 +33,13 @@ class PlayerSearchRequest(BaseModel):
 
 
 class PredictionRequest(BaseModel):
-    leagueId: int
-    playerId: int
+    leagueId: int = 0
+    playerId: int = 0
     playerName: str
-    teamId: int
+    teamId: int = 0
     teamName: str = ""
-    opponentId: int
-    opponentName: str
+    opponentId: int = 0
+    opponentName: str = ""
     venue: str = "home"
     propType: str = "pass_attempts"
     line: float = 0

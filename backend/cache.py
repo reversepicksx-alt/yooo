@@ -106,13 +106,16 @@ async def sync_teams_for_league(league_id: int, season: int = None):
             data = await api_football_request("teams", {"league": league_id, "season": s})
             if data:
                 ops = []
+                from utils import strip_accents
                 for item in data:
                     team = item.get("team", {})
                     venue = item.get("venue", {})
+                    tname = team.get("name", "")
                     doc = {
                         "teamId": team.get("id"),
-                        "name": team.get("name", ""),
-                        "nameLower": team.get("name", "").lower(),
+                        "name": tname,
+                        "nameLower": tname.lower(),
+                        "nameClean": strip_accents(tname.lower()),
                         "code": team.get("code", ""),
                         "country": team.get("country", ""),
                         "national": team.get("national", False),
@@ -139,6 +142,7 @@ async def sync_all_teams():
     await db[COL_TEAMS].create_index("teamId")
     await db[COL_TEAMS].create_index("leagueId")
     await db[COL_TEAMS].create_index("nameLower")
+    await db[COL_TEAMS].create_index("nameClean")
 
     total = 0
     for league in SUPPORTED_LEAGUES:
@@ -384,16 +388,24 @@ async def get_team_by_name(team_name: str, league_id: int = None) -> tuple:
     from utils import strip_accents
     name_lower = strip_accents(team_name.lower().strip())
 
-    # 1. Exact match
-    query = {"nameLower": name_lower}
+    # 1. Exact match on accent-stripped nameClean
+    query = {"nameClean": name_lower}
     if league_id:
         query["leagueId"] = league_id
     doc = await db[COL_TEAMS].find_one(query, {"_id": 0})
     if doc:
         return doc["teamId"], doc["name"]
 
-    # 2. Substring regex
-    fuzzy_query = {"nameLower": {"$regex": re.escape(name_lower)}}
+    # 1b. Exact match on nameLower (handles teams already stored without nameClean)
+    query_lower = {"nameLower": name_lower}
+    if league_id:
+        query_lower["leagueId"] = league_id
+    doc = await db[COL_TEAMS].find_one(query_lower, {"_id": 0})
+    if doc:
+        return doc["teamId"], doc["name"]
+
+    # 2. Substring regex on nameClean
+    fuzzy_query = {"nameClean": {"$regex": re.escape(name_lower)}}
     if league_id:
         fuzzy_query["leagueId"] = league_id
     async for doc in db[COL_TEAMS].find(fuzzy_query, {"_id": 0}).limit(1):
@@ -401,8 +413,15 @@ async def get_team_by_name(team_name: str, league_id: int = None) -> tuple:
 
     # Without league filter
     if league_id:
-        async for doc in db[COL_TEAMS].find({"nameLower": {"$regex": re.escape(name_lower)}}, {"_id": 0}).limit(1):
+        async for doc in db[COL_TEAMS].find({"nameClean": {"$regex": re.escape(name_lower)}}, {"_id": 0}).limit(1):
             return doc["teamId"], doc["name"]
+
+    # 2b. Also try nameLower regex (fallback for teams without nameClean)
+    fuzzy_query_lower = {"nameLower": {"$regex": re.escape(name_lower)}}
+    if league_id:
+        fuzzy_query_lower["leagueId"] = league_id
+    async for doc in db[COL_TEAMS].find(fuzzy_query_lower, {"_id": 0}).limit(1):
+        return doc["teamId"], doc["name"]
 
     # 3. Alias match in teams_master
     name_normalized = name_lower.replace("-", "").replace(" ", "")
@@ -430,11 +449,13 @@ async def get_team_by_name(team_name: str, league_id: int = None) -> tuple:
     if words:
         for word in sorted(words, key=len, reverse=True):
             if len(word) >= 4:  # Only match on meaningful words
-                wq = {"nameLower": {"$regex": rf"\b{re.escape(word)}\b"}}
-                if league_id:
-                    wq["leagueId"] = league_id
-                async for doc in db[COL_TEAMS].find(wq, {"_id": 0}).limit(1):
-                    return doc["teamId"], doc["name"]
+                # Try nameClean first, then nameLower
+                for field in ["nameClean", "nameLower"]:
+                    wq = {field: {"$regex": rf"\b{re.escape(word)}\b"}}
+                    if league_id:
+                        wq["leagueId"] = league_id
+                    async for doc in db[COL_TEAMS].find(wq, {"_id": 0}).limit(1):
+                        return doc["teamId"], doc["name"]
 
     # 5. Consonant-skeleton match: strips vowels to handle transliteration variants
     # "al khlood" → "l khld", "al kholood" → "l khld" → MATCH

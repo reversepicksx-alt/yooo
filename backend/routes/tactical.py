@@ -484,7 +484,7 @@ async def tactical_message(req: TacticalMessageRequest):
         loop = aio.get_event_loop()
         def _call_grok():
             return grok_client.chat.completions.create(
-                model="grok-4.1-fast-non-reasoning",
+                model="grok-4-1-fast-non-reasoning",
                 messages=grok_messages,
                 max_tokens=2000,
                 temperature=0.7,
