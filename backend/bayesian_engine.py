@@ -172,10 +172,20 @@ def compute_bayesian_projection(
     # 3b. Match dominance adjustment
     if match_dominance and match_dominance.get("multiplier"):
         dom_mult = match_dominance.get("multiplier", 1.0)
-        poss_sensitive_props = {"pass_attempts", "passes", "shots", "shots_on_target",
-                                "key_passes", "crosses", "dribbles", "tackles"}
-        if prop_type in poss_sensitive_props and dom_mult != 1.0:
+
+        # Props where MORE possession = MORE stats
+        positive_poss_props = {"pass_attempts", "passes", "shots", "shots_on_target",
+                               "key_passes", "crosses", "dribbles"}
+        # Props where LESS possession = MORE stats (defensive actions)
+        inverse_poss_props = {"tackles", "interceptions", "blocks", "clearances"}
+
+        if prop_type in positive_poss_props and dom_mult != 1.0:
             dom_adj = prior_mean * (dom_mult - 1.0)
+            covariate_adjustment += dom_adj
+        elif prop_type in inverse_poss_props and dom_mult != 1.0:
+            # INVERTED: less possession → more defensive actions
+            # dom_mult=0.76 means 24% less possession → ~12% more tackles (dampened 0.5×)
+            dom_adj = prior_mean * (1.0 - dom_mult) * 0.5
             covariate_adjustment += dom_adj
 
     # 3c. Opponent strength adjustment
@@ -341,24 +351,38 @@ def _normal_cdf(z: float) -> float:
 
 
 def _estimate_opponent_concession(opp_fixture_stats: list, prop_type: str) -> Optional[float]:
-    """Estimate how much of a stat type the opponent typically concedes."""
+    """Estimate how much of a stat type the opponent typically concedes.
+    
+    Each prop has a specific opponent stat and player share:
+    - pass_attempts: uses opponent's total passes → player gets ~18% of team total
+    - shots: uses opponent's total shots → player gets ~18% of team total
+    - shots_on_target: uses opponent's SOT → player gets ~18% of team total
+    - saves: uses opponent's SOT → GK faces ~100% of SOT, saves ~70%
+    - tackles: uses opponent's total passes → more opp passes = more tackles needed → player ~15%
+    - key_passes: uses opponent's total passes → player gets ~12% of team key passes
+    """
     if not opp_fixture_stats:
         return None
 
-    stat_map = {
-        "pass_attempts": "totalPasses",
-        "passes": "totalPasses",
-        "shots": "totalShots",
-        "shots_on_target": "shotsOnTarget",
+    # (stat_field_from_opponent_data, player_share_of_that_stat)
+    prop_config = {
+        "pass_attempts": ("totalPasses", 0.18),
+        "passes":        ("totalPasses", 0.18),
+        "shots":         ("totalShots", 0.18),
+        "shots_on_target": ("shotsOnTarget", 0.18),
+        "saves":         ("shotsOnTarget", 0.70),   # GK saves ~70% of opponent SOT
+        "tackles":       ("totalPasses", 0.015),     # more opp passes = more tackle opportunities
+        "key_passes":    ("totalPasses", 0.012),     # creative output correlates with possession volume
     }
-    field = stat_map.get(prop_type)
-    if not field:
+
+    config = prop_config.get(prop_type)
+    if not config:
         return None
 
+    field, share = config
     values = [s.get(field) for s in opp_fixture_stats if s.get(field) is not None]
     if not values or len(values) < 2:
         return None
 
-    team_avg = sum(values) / len(values)
-    player_share = 0.18
-    return round(team_avg * player_share, 1)
+    avg = sum(values) / len(values)
+    return round(avg * share, 1)

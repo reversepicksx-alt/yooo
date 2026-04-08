@@ -1061,6 +1061,7 @@ async def predict(req: PredictionRequest):
                 opponent_fixture_stats=opponent_fixture_stats,
                 match_dominance=match_dominance,
             )
+            print(f"[BAYESIAN] {req.playerName}/{req.propType}: samples={early_bayes.get('priorSamples') if early_bayes else 0}, logs={len(player_game_logs)}")
             if early_bayes and early_bayes.get("priorSamples", 0) >= 3:
                 bdir = early_bayes['recommendation'].upper()
                 bprob = early_bayes['pOver'] if bdir == 'OVER' else early_bayes['pUnder']

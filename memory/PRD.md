@@ -77,6 +77,10 @@ Regression check: 0 previously-correct picks broken
 - **Double-dip fix (Feb 2026)** — removed duplicate possession scaling post-fusion
 - **Grok model name fix (Feb 2026)** — grok_engine.py updated to match predict.py
 - **Possession Monster Formula (Feb 2026)** — Dynamic opponent-weighted possession for extreme matchups (opp avg >57%): scales from 60/40 to 90/10 opponent-driven. Home advantage dampened against possession monsters. Fixes over-projection of pass attempts vs teams like Barcelona.
+- **AI Cost Optimization (Feb 2026)** — Cut GPT-5.2 entirely. Replaced Grok 4.20 with Grok 3 Mini ($0.30/M tokens). Grok provides tactical analysis text only — no influence on projected numbers.
+- **Bayesian-Only Projection (Feb 2026)** — Math engine is sole decision-maker. AI weight = 0%. Dominance scaling only applied to low-possession teams (<52% avg).
+- **Scan Pipeline Overhaul (Feb 2026)** — First-initial matching (Julian→J.), team/opponent smart swap, fuzzy prop type auto-correction, continental cup awareness, duplicate name disambiguation via league/team context.
+- **Prop-Specific Context Fixes (Feb 2026)** — Saves now uses opponent SOT for context. Tackles dominance inverted (less possession = more tackles). Expanded opponent concession to tackles/key_passes.
 
 ## Upcoming Tasks
 - Route prediction API calls through MongoDB cache (P2)
