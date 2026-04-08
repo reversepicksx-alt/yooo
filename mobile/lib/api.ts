@@ -157,18 +157,73 @@ export interface PredictionResult {
   confidence?: number;
   recommendation?: 'OVER' | 'UNDER' | 'PASS';
   reasoning?: string;
+  tacticalBreakdown?: string;
   bayesianProjection?: number;
   edgeScore?: number;
   fixtureDate?: string;
   opponentName?: string;
+  confidenceLevel?: string;
+  confidenceInterval?: [number, number];
+  priorMean?: number;
+  momentumEffect?: number;
+  momentumLabel?: string;
+  streakFlag?: string;
+  error?: string;
+}
+
+interface RawPrediction {
+  player?: { id?: number; name?: string; team?: string; position?: string };
+  propType?: string;
+  line?: number;
+  projectedValue?: number;
+  recommendation?: string;
+  confidenceScore?: number;
+  confidenceLevel?: string;
+  confidenceInterval?: [number, number];
+  reasoning?: string;
+  tacticalBreakdown?: string;
+  opponent?: string;
+  bayesianMetrics?: {
+    posteriorMean?: number;
+    edgeZ?: number;
+    momentumEffect?: number;
+    momentumLabel?: string;
+    priorMean?: number;
+    streakFlag?: string;
+    pOver?: number;
+    pUnder?: number;
+    reversalFlag?: string;
+  };
   error?: string;
 }
 
 export async function predict(request: Record<string, unknown>): Promise<PredictionResult> {
-  return apiCall<PredictionResult>('/api/predict', {
+  const raw = await apiCall<RawPrediction>('/api/predict', {
     method: 'POST',
     body: JSON.stringify(request),
   });
+  if (raw.error) return { error: raw.error };
+  const rec = raw.recommendation?.toUpperCase() as 'OVER' | 'UNDER' | 'PASS' | undefined;
+  const bm = raw.bayesianMetrics || {};
+  return {
+    playerName: raw.player?.name || (request.playerName as string) || '',
+    teamName: raw.player?.team || (request.teamName as string) || '',
+    opponentName: raw.opponent || (request.opponentName as string) || '',
+    propType: raw.propType || (request.propType as string) || '',
+    line: raw.line ?? (request.line as number) ?? 0,
+    projection: raw.projectedValue,
+    confidence: raw.confidenceScore,
+    recommendation: rec,
+    reasoning: raw.tacticalBreakdown || raw.reasoning,
+    confidenceLevel: raw.confidenceLevel,
+    confidenceInterval: raw.confidenceInterval,
+    bayesianProjection: bm.posteriorMean,
+    edgeScore: bm.edgeZ,
+    priorMean: bm.priorMean,
+    momentumEffect: bm.momentumEffect,
+    momentumLabel: bm.momentumLabel,
+    streakFlag: bm.streakFlag,
+  };
 }
 
 export interface Pick {

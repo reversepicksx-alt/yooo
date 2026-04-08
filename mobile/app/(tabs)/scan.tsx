@@ -20,7 +20,7 @@ const PROP_LABELS: Record<string, string> = {
   tackles: 'Tackles', saves: 'Saves', dribbles: 'Dribbles', crosses: 'Crosses',
   interceptions: 'Interceptions', blocks: 'Blocks', fouls_drawn: 'Fouls Drawn',
   fouls_committed: 'Fouls', clearances: 'Clearances', yellow_cards: 'Yellow Cards',
-  shots_assisted: 'Shot Assists', duels_won: 'Duels Won',
+  shots_assisted: 'Shot Assists', duels_won: 'Duels Won', passes: 'Passes',
 };
 
 type Mode = 'scan' | 'manual';
@@ -35,8 +35,13 @@ export default function ScanScreen() {
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [scannedImageUri, setScannedImageUri] = useState<string | null>(null);
   const [prediction, setPrediction] = useState<PredictionResult | null>(null);
+  const [analyzeError, setAnalyzeError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
+  // User-controlled venue override
+  const [venueOverride, setVenueOverride] = useState<'home' | 'away'>('home');
+
+  // Manual mode fields
   const [playerQuery, setPlayerQuery] = useState('');
   const [propType, setPropType] = useState(PROP_TYPES[0].value);
   const [line, setLine] = useState('');
@@ -51,25 +56,31 @@ export default function ScanScreen() {
     setScanResult(null);
     setScannedImageUri(null);
     setPrediction(null);
+    setAnalyzeError(null);
     setPlayerQuery('');
     setLine('');
+    setVenueOverride('home');
   };
 
   const processImage = async (base64: string, uri: string) => {
     setScannedImageUri(uri);
     setPhase('scanning');
+    setAnalyzeError(null);
     try {
       const scanned = await scanProp(base64, 'soccer');
       if (scanned.error || !scanned.playerName) {
-        Alert.alert('Scan failed', scanned.error || 'Could not detect player. Try a clearer image.');
+        setAnalyzeError(scanned.error || 'Could not read prop slip. Try a clearer screenshot.');
         setPhase('idle');
         return;
       }
+      // Set venue override from scan result, defaulting to 'home'
+      const detectedVenue = (scanned.venue || 'home').toLowerCase();
+      setVenueOverride(detectedVenue === 'away' ? 'away' : 'home');
       setScanResult(scanned);
       setPhase('detected');
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e: unknown) {
-      Alert.alert('Scan error', e instanceof Error ? e.message : 'Failed to scan image');
+      setAnalyzeError(e instanceof Error ? e.message : 'Failed to scan image');
       setPhase('idle');
     }
   };
@@ -91,6 +102,7 @@ export default function ScanScreen() {
 
   const runPredict = async (data: ScanResult) => {
     setPhase('analyzing');
+    setAnalyzeError(null);
     try {
       const req = {
         playerName: data.playerName,
@@ -99,22 +111,22 @@ export default function ScanScreen() {
         teamName: data.teamName || data.playerTeam || '',
         opponentId: data.opponentId || 0,
         opponentName: data.opponentName || '',
-        venue: data.venue || 'home',
+        venue: venueOverride,
         leagueId: data.leagueId || leagueId,
         propType: data.propType || propType,
         line: data.line || 0,
       };
       const result = await predict(req);
-      if (!result.playerName && !result.recommendation) {
-        Alert.alert('Analysis failed', 'Could not generate prediction. Try again.');
+      if (result.error) {
+        setAnalyzeError(result.error);
         setPhase('detected');
         return;
       }
       setPrediction(result);
       setPhase('result');
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e: unknown) {
-      Alert.alert('Prediction error', e instanceof Error ? e.message : 'Failed to analyze');
+      setAnalyzeError(e instanceof Error ? e.message : 'Analysis failed — try again');
       setPhase('detected');
     }
   };
@@ -148,7 +160,7 @@ export default function ScanScreen() {
         sport: 'soccer',
       });
       setPhase('saved');
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e: unknown) {
       Alert.alert('Save failed', e instanceof Error ? e.message : 'Try again');
     } finally {
@@ -206,13 +218,19 @@ export default function ScanScreen() {
             {/* Idle: upload box */}
             {phase === 'idle' && (
               <View style={styles.uploadBox}>
-                <Ionicons name="image-outline" size={40} color={Colors.textTertiary} />
+                <Ionicons name="image-outline" size={44} color={Colors.textTertiary} />
                 <Text style={styles.uploadTitle}>Scan a Prop Slip</Text>
                 <Text style={styles.uploadSub}>Upload a screenshot of any soccer prop slip</Text>
                 <TouchableOpacity style={styles.galleryBtnBig} onPress={handleGallery} activeOpacity={0.8}>
                   <Ionicons name="images-outline" size={18} color="#000" />
                   <Text style={styles.galleryBtnBigText}>Choose from Photos</Text>
                 </TouchableOpacity>
+                {analyzeError && (
+                  <View style={styles.inlineError}>
+                    <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />
+                    <Text style={styles.inlineErrorText}>{analyzeError}</Text>
+                  </View>
+                )}
               </View>
             )}
 
@@ -229,7 +247,7 @@ export default function ScanScreen() {
               </View>
             )}
 
-            {/* Detected: show player card + RUN PREDICTION button */}
+            {/* Detected: player card + venue toggle + RUN PREDICTION */}
             {(phase === 'detected' || phase === 'analyzing') && scanResult && (
               <>
                 {scannedImageUri && (
@@ -258,11 +276,41 @@ export default function ScanScreen() {
                         </View>
                       </View>
                       {scanResult.opponentName && (
-                        <Text style={styles.vsText}>
-                          vs {scanResult.opponentName}
-                          {scanResult.venue ? `  ${scanResult.venue.toUpperCase()}` : ''}
-                        </Text>
+                        <Text style={styles.vsText}>vs {scanResult.opponentName}</Text>
                       )}
+                    </View>
+                  </View>
+
+                  {/* VENUE TOGGLE */}
+                  <View style={styles.venueRow}>
+                    <Text style={styles.venueLabel}>VENUE</Text>
+                    <View style={styles.venueToggle}>
+                      <TouchableOpacity
+                        style={[styles.venueOption, venueOverride === 'home' && styles.venueOptionActive]}
+                        onPress={() => { setVenueOverride('home'); Haptics.selectionAsync(); }}
+                      >
+                        <Ionicons
+                          name="home-outline"
+                          size={13}
+                          color={venueOverride === 'home' ? Colors.primary : Colors.textSecondary}
+                        />
+                        <Text style={[styles.venueOptionText, venueOverride === 'home' && styles.venueOptionTextActive]}>
+                          HOME
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.venueOption, venueOverride === 'away' && styles.venueOptionActive]}
+                        onPress={() => { setVenueOverride('away'); Haptics.selectionAsync(); }}
+                      >
+                        <Ionicons
+                          name="airplane-outline"
+                          size={13}
+                          color={venueOverride === 'away' ? Colors.primary : Colors.textSecondary}
+                        />
+                        <Text style={[styles.venueOptionText, venueOverride === 'away' && styles.venueOptionTextActive]}>
+                          AWAY
+                        </Text>
+                      </TouchableOpacity>
                     </View>
                   </View>
 
@@ -287,6 +335,14 @@ export default function ScanScreen() {
                     </View>
                   </View>
                 </View>
+
+                {/* Inline error */}
+                {analyzeError && (
+                  <View style={styles.inlineError}>
+                    <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />
+                    <Text style={styles.inlineErrorText}>{analyzeError}</Text>
+                  </View>
+                )}
 
                 <TouchableOpacity
                   style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnLoading]}
@@ -351,6 +407,31 @@ export default function ScanScreen() {
               keyboardType="decimal-pad"
             />
 
+            <Text style={styles.fieldLabel}>Venue</Text>
+            <View style={styles.venueToggle}>
+              <TouchableOpacity
+                style={[styles.venueOption, venueOverride === 'home' && styles.venueOptionActive]}
+                onPress={() => { setVenueOverride('home'); Haptics.selectionAsync(); }}
+              >
+                <Ionicons name="home-outline" size={13} color={venueOverride === 'home' ? Colors.primary : Colors.textSecondary} />
+                <Text style={[styles.venueOptionText, venueOverride === 'home' && styles.venueOptionTextActive]}>HOME</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.venueOption, venueOverride === 'away' && styles.venueOptionActive]}
+                onPress={() => { setVenueOverride('away'); Haptics.selectionAsync(); }}
+              >
+                <Ionicons name="airplane-outline" size={13} color={venueOverride === 'away' ? Colors.primary : Colors.textSecondary} />
+                <Text style={[styles.venueOptionText, venueOverride === 'away' && styles.venueOptionTextActive]}>AWAY</Text>
+              </TouchableOpacity>
+            </View>
+
+            {analyzeError && (
+              <View style={styles.inlineError}>
+                <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />
+                <Text style={styles.inlineErrorText}>{analyzeError}</Text>
+              </View>
+            )}
+
             <TouchableOpacity
               style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnLoading]}
               onPress={handleManualAnalyze}
@@ -376,18 +457,23 @@ export default function ScanScreen() {
         {phase === 'result' && prediction && (
           <>
             <View style={styles.analysisCard}>
-              {/* Player + Rec Header */}
+              {/* Header */}
               <View style={styles.analysisHeader}>
                 <View style={styles.analysisPlayerInfo}>
                   <Text style={styles.analysisPlayer} numberOfLines={1}>
-                    {prediction.playerName || scanResult?.playerName || playerQuery}
+                    {prediction.playerName}
                   </Text>
                   <Text style={styles.analysisTeam} numberOfLines={1}>
-                    {[prediction.teamName, prediction.opponentName ? `vs ${prediction.opponentName}` : ''].filter(Boolean).join('  ')}
+                    {[prediction.teamName, prediction.opponentName ? `vs ${prediction.opponentName}` : ''].filter(Boolean).join('  ·  ')}
+                  </Text>
+                  <Text style={styles.analysisVenue}>
+                    {venueOverride.toUpperCase()} · {PROP_LABELS[prediction.propType || ''] || prediction.propType}
                   </Text>
                 </View>
-                {prediction.recommendation && prediction.recommendation !== 'PASS' && (
-                  <View style={[styles.recBadge, { backgroundColor: prediction.recommendation === 'OVER' ? Colors.successDim : Colors.errorDim }]}>
+                {prediction.recommendation && (
+                  <View style={[styles.recBadge, {
+                    backgroundColor: prediction.recommendation === 'OVER' ? Colors.successDim : Colors.errorDim
+                  }]}>
                     <Text style={[styles.recText, { color: recColor }]}>{prediction.recommendation}</Text>
                   </View>
                 )}
@@ -398,11 +484,9 @@ export default function ScanScreen() {
               {/* Stats Row */}
               <View style={styles.analysisStats}>
                 <View style={styles.analysisStat}>
-                  <Text style={styles.analysisStatLabel}>
-                    {PROP_LABELS[prediction.propType || ''] || prediction.propType?.replace(/_/g, ' ') || 'Prop'}
-                  </Text>
+                  <Text style={styles.analysisStatLabel}>Line</Text>
                   <Text style={styles.analysisStatVal}>{prediction.line ?? '—'}</Text>
-                  <Text style={styles.analysisStatSub}>LINE</Text>
+                  <Text style={styles.analysisStatSub}>SET</Text>
                 </View>
                 <View style={styles.analysisStatDivider} />
                 <View style={styles.analysisStat}>
@@ -418,25 +502,79 @@ export default function ScanScreen() {
                   <Text style={[styles.analysisStatVal, { color: recColor }]}>
                     {confPct != null ? `${confPct}%` : '—'}
                   </Text>
-                  <Text style={styles.analysisStatSub}>
-                    {prediction.edgeScore != null ? `EDGE ${Math.abs(prediction.edgeScore).toFixed(1)}` : 'SCORE'}
-                  </Text>
+                  <Text style={styles.analysisStatSub}>{prediction.confidenceLevel?.toUpperCase() || 'SCORE'}</Text>
                 </View>
               </View>
 
+              {/* Bayesian breakdown */}
+              {(prediction.priorMean != null || prediction.momentumEffect != null) && (
+                <>
+                  <View style={styles.analysisDivider} />
+                  <View style={styles.bayesRow}>
+                    {prediction.priorMean != null && (
+                      <View style={styles.bayesStat}>
+                        <Text style={styles.bayesLabel}>SEASON AVG</Text>
+                        <Text style={styles.bayesVal}>{prediction.priorMean.toFixed(1)}</Text>
+                      </View>
+                    )}
+                    {prediction.momentumEffect != null && (
+                      <View style={styles.bayesStat}>
+                        <Text style={styles.bayesLabel}>MOMENTUM</Text>
+                        <Text style={[styles.bayesVal, {
+                          color: prediction.momentumEffect > 0 ? Colors.success : prediction.momentumEffect < 0 ? Colors.error : Colors.text
+                        }]}>
+                          {prediction.momentumEffect > 0 ? '+' : ''}{prediction.momentumEffect.toFixed(1)}
+                        </Text>
+                      </View>
+                    )}
+                    {prediction.momentumLabel && (
+                      <View style={styles.bayesStat}>
+                        <Text style={styles.bayesLabel}>FORM</Text>
+                        <Text style={[styles.bayesVal, {
+                          color: prediction.momentumLabel === 'HOT' ? Colors.success
+                            : prediction.momentumLabel === 'COLD' ? Colors.error
+                            : Colors.textSecondary
+                        }]}>{prediction.momentumLabel}</Text>
+                      </View>
+                    )}
+                    {prediction.streakFlag && prediction.streakFlag !== 'NONE' && (
+                      <View style={styles.bayesStat}>
+                        <Text style={styles.bayesLabel}>STREAK</Text>
+                        <Text style={[styles.bayesVal, { color: Colors.primary }]}>{prediction.streakFlag.replace('_', ' ')}</Text>
+                      </View>
+                    )}
+                  </View>
+                </>
+              )}
+
+              {/* Confidence Interval */}
+              {prediction.confidenceInterval && (
+                <>
+                  <View style={styles.analysisDivider} />
+                  <View style={styles.ciRow}>
+                    <Text style={styles.ciLabel}>80% RANGE</Text>
+                    <Text style={styles.ciVal}>
+                      {prediction.confidenceInterval[0].toFixed(1)} — {prediction.confidenceInterval[1].toFixed(1)}
+                    </Text>
+                  </View>
+                </>
+              )}
+
               {/* AI Reasoning */}
               {prediction.reasoning && (
-                <View style={styles.reasoningBox}>
-                  <View style={styles.reasoningHeader}>
-                    <Ionicons name="bulb-outline" size={13} color={Colors.primary} />
-                    <Text style={styles.reasoningLabel}>AI ANALYSIS</Text>
+                <>
+                  <View style={styles.analysisDivider} />
+                  <View style={styles.reasoningBox}>
+                    <View style={styles.reasoningHeader}>
+                      <Ionicons name="bulb-outline" size={13} color={Colors.primary} />
+                      <Text style={styles.reasoningLabel}>AI ANALYSIS</Text>
+                    </View>
+                    <Text style={styles.reasoningText}>{prediction.reasoning}</Text>
                   </View>
-                  <Text style={styles.reasoningText}>{prediction.reasoning}</Text>
-                </View>
+                </>
               )}
             </View>
 
-            {/* Action buttons */}
             <TouchableOpacity
               style={[styles.saveBtn, saving && { opacity: 0.6 }]}
               onPress={handleSavePick}
@@ -447,7 +585,7 @@ export default function ScanScreen() {
                 ? <ActivityIndicator color="#000" size="small" />
                 : <>
                     <Ionicons name="bookmark" size={16} color="#000" />
-                    <Text style={styles.saveBtnText}>Save Prediction</Text>
+                    <Text style={styles.saveBtnText}>Save to My Picks</Text>
                   </>
               }
             </TouchableOpacity>
@@ -466,16 +604,15 @@ export default function ScanScreen() {
             </View>
             <Text style={styles.savedTitle}>Pick Saved!</Text>
             <Text style={styles.savedSub}>
-              {prediction?.recommendation} {prediction?.playerName || scanResult?.playerName}
-              {'\n'}
-              {(PROP_LABELS[prediction?.propType || ''] || prediction?.propType?.replace(/_/g, ' '))} · Line {prediction?.line ?? scanResult?.line}
+              {prediction?.recommendation} · {prediction?.playerName}{'\n'}
+              {PROP_LABELS[prediction?.propType || ''] || prediction?.propType} · Line {prediction?.line}
             </Text>
             <TouchableOpacity style={styles.viewPicksBtn} onPress={() => router.push('/(tabs)/picks')} activeOpacity={0.85}>
               <Ionicons name="bookmark" size={16} color="#000" />
               <Text style={styles.viewPicksBtnText}>View in My Picks</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.newBtn} onPress={reset}>
-              <Text style={styles.newBtnText}>Analyze Another Pick</Text>
+              <Text style={styles.newBtnText}>Analyze Another</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -544,13 +681,8 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
   },
   modeTab: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 9,
-    gap: 6,
-    borderRadius: 9,
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    paddingVertical: 9, gap: 6, borderRadius: 9,
   },
   modeTabActive: { backgroundColor: Colors.primaryDim },
   modeTabText: { fontSize: 13, color: Colors.textSecondary, fontWeight: '600' },
@@ -559,34 +691,33 @@ const styles = StyleSheet.create({
 
   /* Upload box */
   uploadBox: {
-    backgroundColor: Colors.card,
-    borderRadius: Colors.radiusLg,
-    padding: 32,
-    alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: Colors.border,
-    borderStyle: 'dashed',
-    gap: 10,
+    backgroundColor: Colors.card, borderRadius: Colors.radiusLg,
+    padding: 32, alignItems: 'center', borderWidth: 1.5,
+    borderColor: Colors.border, borderStyle: 'dashed', gap: 10,
   },
   uploadTitle: { fontSize: 18, fontWeight: '700', color: Colors.text },
   uploadSub: { fontSize: 13, color: Colors.textSecondary, textAlign: 'center' },
   galleryBtnBig: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: Colors.primary,
-    paddingVertical: 13, paddingHorizontal: 28, borderRadius: Colors.radius,
-    marginTop: 8,
+    backgroundColor: Colors.primary, paddingVertical: 13, paddingHorizontal: 28,
+    borderRadius: Colors.radius, marginTop: 8,
     shadowColor: Colors.primary, shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.4, shadowRadius: 10, elevation: 6,
   },
   galleryBtnBigText: { color: '#000', fontWeight: '800', fontSize: 15 },
 
+  /* Inline error */
+  inlineError: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 8,
+    backgroundColor: Colors.errorDim, borderRadius: Colors.radius,
+    padding: 12, marginTop: 10, borderWidth: 1, borderColor: Colors.error + '40',
+  },
+  inlineErrorText: { color: Colors.error, fontSize: 13, flex: 1, lineHeight: 18 },
+
   /* Loading */
   loadingCard: {
-    backgroundColor: Colors.card,
-    borderRadius: Colors.radiusLg,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: Colors.borderSubtle,
+    backgroundColor: Colors.card, borderRadius: Colors.radiusLg,
+    overflow: 'hidden', borderWidth: 1, borderColor: Colors.borderSubtle,
   },
   scannedThumb: { width: '100%', height: 160 },
   scannedPreview: { width: '100%', height: 180, borderRadius: Colors.radius, marginBottom: 16 },
@@ -599,40 +730,46 @@ const styles = StyleSheet.create({
     letterSpacing: 1.5, marginBottom: 10,
   },
   detectedCard: {
-    backgroundColor: Colors.card,
-    borderRadius: Colors.radiusLg,
-    borderWidth: 1,
-    borderColor: Colors.borderSubtle,
-    overflow: 'hidden',
-    marginBottom: 14,
+    backgroundColor: Colors.card, borderRadius: Colors.radiusLg,
+    borderWidth: 1, borderColor: Colors.borderSubtle, overflow: 'hidden', marginBottom: 14,
   },
   detectedTop: { flexDirection: 'row', alignItems: 'flex-start', padding: 16, gap: 12 },
   playerAvatarWrap: {
-    width: 44, height: 44, borderRadius: 22,
-    backgroundColor: Colors.cardSecondary,
-    alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1, borderColor: Colors.borderSubtle,
+    width: 44, height: 44, borderRadius: 22, backgroundColor: Colors.cardSecondary,
+    alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: Colors.borderSubtle,
   },
   detectedInfo: { flex: 1, gap: 6 },
   detectedName: { fontSize: 18, fontWeight: '800', color: Colors.text },
   badgeRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap', alignItems: 'center' },
-  teamBadge: {
-    backgroundColor: Colors.cardSecondary,
-    borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4,
-  },
+  teamBadge: { backgroundColor: Colors.cardSecondary, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4 },
   teamBadgeText: { fontSize: 12, color: Colors.textSecondary, fontWeight: '600' },
   matchedBadge: {
-    backgroundColor: Colors.primaryDim,
-    borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4,
+    backgroundColor: Colors.primaryDim, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4,
     borderWidth: 1, borderColor: Colors.border,
   },
   matchedText: { fontSize: 11, color: Colors.primary, fontWeight: '700', letterSpacing: 0.5 },
   vsText: { fontSize: 12, color: Colors.textTertiary },
-  detectedStats: {
-    flexDirection: 'row',
-    borderTopWidth: 1,
-    borderTopColor: Colors.borderSubtle,
+
+  /* Venue toggle */
+  venueRow: {
+    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16,
+    paddingBottom: 14, gap: 12,
   },
+  venueLabel: { fontSize: 10, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 1 },
+  venueToggle: {
+    flexDirection: 'row', backgroundColor: Colors.cardSecondary,
+    borderRadius: 10, padding: 3, gap: 2, flex: 1,
+    borderWidth: 1, borderColor: Colors.borderSubtle,
+  },
+  venueOption: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    paddingVertical: 8, gap: 5, borderRadius: 8,
+  },
+  venueOptionActive: { backgroundColor: Colors.primaryDim },
+  venueOptionText: { fontSize: 12, color: Colors.textSecondary, fontWeight: '700', letterSpacing: 0.5 },
+  venueOptionTextActive: { color: Colors.primary },
+
+  detectedStats: { flexDirection: 'row', borderTopWidth: 1, borderTopColor: Colors.borderSubtle },
   detectedStat: { flex: 1, padding: 14, alignItems: 'center', gap: 4 },
   detectedStatLabel: { fontSize: 9, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 1 },
   detectedStatVal: { fontSize: 14, fontWeight: '700', color: Colors.text, textAlign: 'center' },
@@ -640,22 +777,13 @@ const styles = StyleSheet.create({
 
   /* Prediction button */
   predictBtn: {
-    backgroundColor: Colors.primary,
-    borderRadius: Colors.radius,
-    height: 52,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    shadowColor: Colors.primary,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.4,
-    shadowRadius: 14,
-    elevation: 8,
+    backgroundColor: Colors.primary, borderRadius: Colors.radius, height: 52,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    shadowColor: Colors.primary, shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.4, shadowRadius: 14, elevation: 8,
   },
   predictBtnLoading: { opacity: 0.8 },
   predictBtnText: { color: '#000', fontWeight: '800', fontSize: 16, letterSpacing: 0.5 },
-
   rescanBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
     justifyContent: 'center', paddingVertical: 14,
@@ -664,48 +792,35 @@ const styles = StyleSheet.create({
 
   /* Manual form */
   manualForm: { gap: 8 },
-  fieldLabel: { fontSize: 11, color: Colors.textSecondary, fontWeight: '700', letterSpacing: 0.8, marginBottom: 4, marginTop: 8, textTransform: 'uppercase' },
+  fieldLabel: {
+    fontSize: 11, color: Colors.textSecondary, fontWeight: '700',
+    letterSpacing: 0.8, marginBottom: 4, marginTop: 8, textTransform: 'uppercase',
+  },
   textInput: {
-    backgroundColor: Colors.card,
-    borderRadius: Colors.radius,
-    borderWidth: 1,
-    borderColor: Colors.borderSubtle,
-    color: Colors.text,
-    fontSize: 15,
-    paddingHorizontal: 14,
-    height: 48,
+    backgroundColor: Colors.card, borderRadius: Colors.radius, borderWidth: 1,
+    borderColor: Colors.borderSubtle, color: Colors.text, fontSize: 15,
+    paddingHorizontal: 14, height: 48,
   },
   pickerBtn: {
-    backgroundColor: Colors.card,
-    borderRadius: Colors.radius,
-    borderWidth: 1,
-    borderColor: Colors.borderSubtle,
-    paddingHorizontal: 14,
-    height: 48,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    backgroundColor: Colors.card, borderRadius: Colors.radius, borderWidth: 1,
+    borderColor: Colors.borderSubtle, paddingHorizontal: 14, height: 48,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
   },
   pickerBtnText: { color: Colors.text, fontSize: 15 },
 
   /* Analysis card */
   analysisCard: {
-    backgroundColor: Colors.card,
-    borderRadius: Colors.radiusLg,
-    borderWidth: 1,
-    borderColor: Colors.borderSubtle,
-    overflow: 'hidden',
-    marginBottom: 14,
+    backgroundColor: Colors.card, borderRadius: Colors.radiusLg,
+    borderWidth: 1, borderColor: Colors.borderSubtle, overflow: 'hidden', marginBottom: 14,
   },
   analysisHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    padding: 18,
+    flexDirection: 'row', justifyContent: 'space-between',
+    alignItems: 'flex-start', padding: 18,
   },
   analysisPlayerInfo: { flex: 1, marginRight: 12 },
   analysisPlayer: { fontSize: 20, fontWeight: '800', color: Colors.text },
   analysisTeam: { fontSize: 12, color: Colors.textSecondary, marginTop: 3 },
+  analysisVenue: { fontSize: 11, color: Colors.textTertiary, marginTop: 3, letterSpacing: 0.5 },
   recBadge: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 10 },
   recText: { fontSize: 14, fontWeight: '800', letterSpacing: 0.5 },
   analysisDivider: { height: 1, backgroundColor: Colors.borderSubtle },
@@ -715,31 +830,34 @@ const styles = StyleSheet.create({
   analysisStatVal: { fontSize: 22, fontWeight: '800', color: Colors.text },
   analysisStatSub: { fontSize: 9, color: Colors.textTertiary, letterSpacing: 0.8 },
   analysisStatDivider: { width: 1, backgroundColor: Colors.borderSubtle, marginVertical: 14 },
-  reasoningBox: {
-    borderTopWidth: 1,
-    borderTopColor: Colors.borderSubtle,
-    padding: 16,
-    gap: 8,
+
+  /* Bayesian breakdown */
+  bayesRow: { flexDirection: 'row', paddingHorizontal: 16, paddingVertical: 12, gap: 0 },
+  bayesStat: { flex: 1, alignItems: 'center', gap: 3 },
+  bayesLabel: { fontSize: 9, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 0.8 },
+  bayesVal: { fontSize: 13, fontWeight: '700', color: Colors.text },
+
+  /* Confidence interval */
+  ciRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 16, paddingVertical: 10,
   },
+  ciLabel: { fontSize: 10, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 0.8 },
+  ciVal: { fontSize: 13, color: Colors.textSecondary, fontWeight: '600' },
+
+  /* Reasoning */
+  reasoningBox: { padding: 16, gap: 8 },
   reasoningHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   reasoningLabel: { fontSize: 10, color: Colors.primary, fontWeight: '700', letterSpacing: 1.5 },
   reasoningText: { fontSize: 13, color: Colors.textSecondary, lineHeight: 20 },
 
-  /* Save / New buttons */
+  /* Save/New buttons */
   saveBtn: {
-    backgroundColor: Colors.primary,
-    borderRadius: Colors.radius,
-    height: 52,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
+    backgroundColor: Colors.primary, borderRadius: Colors.radius, height: 52,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
     marginBottom: 10,
-    shadowColor: Colors.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    elevation: 6,
+    shadowColor: Colors.primary, shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3, shadowRadius: 10, elevation: 6,
   },
   saveBtnText: { color: '#000', fontWeight: '800', fontSize: 16 },
   newBtn: { alignItems: 'center', paddingVertical: 14 },
@@ -748,16 +866,13 @@ const styles = StyleSheet.create({
   /* Saved state */
   savedState: { alignItems: 'center', paddingTop: 30, gap: 14 },
   savedCheck: {
-    width: 72, height: 72, borderRadius: 36,
-    backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center',
+    width: 72, height: 72, borderRadius: 36, backgroundColor: Colors.primary,
+    alignItems: 'center', justifyContent: 'center',
     shadowColor: Colors.primary, shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.4, shadowRadius: 16, elevation: 10,
   },
   savedTitle: { fontSize: 24, fontWeight: '800', color: Colors.text },
-  savedSub: {
-    fontSize: 14, color: Colors.textSecondary, textAlign: 'center',
-    lineHeight: 22, textTransform: 'capitalize',
-  },
+  savedSub: { fontSize: 14, color: Colors.textSecondary, textAlign: 'center', lineHeight: 22 },
   viewPicksBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
     backgroundColor: Colors.primary, borderRadius: Colors.radius,
