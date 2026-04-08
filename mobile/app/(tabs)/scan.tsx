@@ -3,6 +3,7 @@ import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   TextInput, ActivityIndicator, Alert, Platform, Modal, Image,
 } from 'react-native';
+
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
@@ -12,6 +13,8 @@ import Colors from '@/constants/colors';
 import { scanProp, predict, savePick, PROP_TYPES, LEAGUES, PredictionResult, ScanResult } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import PredictionCard from '@/components/PredictionCard';
+
+const INPUT_STYLE = Platform.OS === 'web' ? { outlineWidth: 0 } as object : {};
 
 type Mode = 'scan' | 'manual';
 
@@ -243,7 +246,7 @@ export default function ScanScreen() {
               <View style={styles.manualForm}>
                 <Text style={styles.label}>Player Name</Text>
                 <TextInput
-                  style={styles.textInput}
+                  style={[styles.textInput, INPUT_STYLE]}
                   placeholder="e.g. Kevin De Bruyne"
                   placeholderTextColor={Colors.textSecondary}
                   value={playerQuery}
@@ -265,7 +268,7 @@ export default function ScanScreen() {
 
                 <Text style={styles.label}>Line Value</Text>
                 <TextInput
-                  style={styles.textInput}
+                  style={[styles.textInput, INPUT_STYLE]}
                   placeholder="e.g. 2.5"
                   placeholderTextColor={Colors.textSecondary}
                   value={line}

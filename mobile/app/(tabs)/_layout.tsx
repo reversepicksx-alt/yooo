@@ -44,7 +44,7 @@ export default function TabLayout() {
           letterSpacing: 0.3,
           marginTop: 1,
         },
-        tabBarHideOnKeyboard: true,
+        tabBarHideOnKeyboard: false,
       }}
     >
       <Tabs.Screen

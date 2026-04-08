@@ -1,8 +1,7 @@
 import { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  KeyboardAvoidingView, Platform, ActivityIndicator,
-  ScrollView, Image,
+  Platform, ActivityIndicator, ScrollView, Image,
 } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -13,6 +12,8 @@ import Colors from '@/constants/colors';
 import { verifyAccess, setPassword as apiSetPassword, authLogin } from '@/lib/api';
 
 type Step = 'email' | 'password' | 'setup';
+
+const INPUT_STYLE = Platform.OS === 'web' ? { outlineWidth: 0, outlineStyle: 'none' } : {};
 
 export default function AuthScreen() {
   const insets = useSafeAreaInsets();
@@ -101,36 +102,33 @@ export default function AuthScreen() {
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.root}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+    <View style={[styles.root, { paddingTop: insets.top }]}>
       <ScrollView
-        contentContainerStyle={[styles.container, { paddingTop: insets.top + 40, paddingBottom: insets.bottom + 40 }]}
+        contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 40 }]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
+        bounces={false}
       >
-        <View style={styles.logoWrap}>
+        <View style={styles.hero}>
           <Image
             source={require('../assets/logo.png')}
             style={styles.logo}
             resizeMode="contain"
           />
+          <Text style={styles.title}>ReversePicks</Text>
+          <Text style={styles.subtitle}>Soccer AI Analytics</Text>
+          <View style={styles.divider} />
         </View>
 
-        <Text style={styles.title}>ReversePicks</Text>
-        <Text style={styles.subtitle}>Soccer AI Analytics</Text>
-
-        <View style={styles.divider} />
-
-        <View style={styles.form}>
+        <View style={styles.card}>
           {step === 'email' && (
             <>
               <Text style={styles.stepLabel}>SIGN IN</Text>
-              <View style={styles.inputWrapper}>
-                <Ionicons name="mail-outline" size={17} color={Colors.textSecondary} style={styles.inputIcon} />
+
+              <View style={styles.inputRow}>
+                <Ionicons name="mail-outline" size={17} color={Colors.textSecondary} style={styles.icon} />
                 <TextInput
-                  style={styles.input}
+                  style={[styles.input, INPUT_STYLE]}
                   placeholder="Email address"
                   placeholderTextColor={Colors.textTertiary}
                   value={email}
@@ -148,14 +146,14 @@ export default function AuthScreen() {
               {!!error && <ErrorBox message={error} />}
 
               <TouchableOpacity
-                style={[styles.primaryBtn, loading && styles.btnDisabled]}
+                style={[styles.btn, loading && styles.btnDisabled]}
                 onPress={handleCheckEmail}
                 disabled={loading}
                 activeOpacity={0.85}
               >
                 {loading
                   ? <ActivityIndicator color="#000" size="small" />
-                  : <Text style={styles.primaryBtnText}>Continue</Text>
+                  : <Text style={styles.btnText}>Continue</Text>
                 }
               </TouchableOpacity>
             </>
@@ -165,10 +163,10 @@ export default function AuthScreen() {
             <>
               <EmailBadge email={email} onBack={goBack} />
 
-              <View style={styles.inputWrapper}>
-                <Ionicons name="lock-closed-outline" size={17} color={Colors.textSecondary} style={styles.inputIcon} />
+              <View style={styles.inputRow}>
+                <Ionicons name="lock-closed-outline" size={17} color={Colors.textSecondary} style={styles.icon} />
                 <TextInput
-                  style={styles.input}
+                  style={[styles.input, INPUT_STYLE]}
                   placeholder="Password"
                   placeholderTextColor={Colors.textTertiary}
                   value={password}
@@ -179,7 +177,7 @@ export default function AuthScreen() {
                   onSubmitEditing={handleLogin}
                   returnKeyType="done"
                 />
-                <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeBtn}>
+                <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eye}>
                   <Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={17} color={Colors.textSecondary} />
                 </TouchableOpacity>
               </View>
@@ -187,14 +185,14 @@ export default function AuthScreen() {
               {!!error && <ErrorBox message={error} />}
 
               <TouchableOpacity
-                style={[styles.primaryBtn, loading && styles.btnDisabled]}
+                style={[styles.btn, loading && styles.btnDisabled]}
                 onPress={handleLogin}
                 disabled={loading}
                 activeOpacity={0.85}
               >
                 {loading
                   ? <ActivityIndicator color="#000" size="small" />
-                  : <Text style={styles.primaryBtnText}>Sign In</Text>
+                  : <Text style={styles.btnText}>Sign In</Text>
                 }
               </TouchableOpacity>
             </>
@@ -205,10 +203,10 @@ export default function AuthScreen() {
               <EmailBadge email={email} onBack={goBack} />
               <Text style={styles.setupNote}>Create a password to secure your account</Text>
 
-              <View style={styles.inputWrapper}>
-                <Ionicons name="lock-closed-outline" size={17} color={Colors.textSecondary} style={styles.inputIcon} />
+              <View style={styles.inputRow}>
+                <Ionicons name="lock-closed-outline" size={17} color={Colors.textSecondary} style={styles.icon} />
                 <TextInput
-                  style={styles.input}
+                  style={[styles.input, INPUT_STYLE]}
                   placeholder="Choose a password (min. 6 chars)"
                   placeholderTextColor={Colors.textTertiary}
                   value={password}
@@ -218,15 +216,15 @@ export default function AuthScreen() {
                   textContentType="newPassword"
                   returnKeyType="next"
                 />
-                <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeBtn}>
+                <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eye}>
                   <Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={17} color={Colors.textSecondary} />
                 </TouchableOpacity>
               </View>
 
-              <View style={styles.inputWrapper}>
-                <Ionicons name="lock-closed-outline" size={17} color={Colors.textSecondary} style={styles.inputIcon} />
+              <View style={styles.inputRow}>
+                <Ionicons name="lock-closed-outline" size={17} color={Colors.textSecondary} style={styles.icon} />
                 <TextInput
-                  style={styles.input}
+                  style={[styles.input, INPUT_STYLE]}
                   placeholder="Confirm password"
                   placeholderTextColor={Colors.textTertiary}
                   value={confirmPassword}
@@ -242,25 +240,23 @@ export default function AuthScreen() {
               {!!error && <ErrorBox message={error} />}
 
               <TouchableOpacity
-                style={[styles.primaryBtn, loading && styles.btnDisabled]}
+                style={[styles.btn, loading && styles.btnDisabled]}
                 onPress={handleSetPassword}
                 disabled={loading}
                 activeOpacity={0.85}
               >
                 {loading
                   ? <ActivityIndicator color="#000" size="small" />
-                  : <Text style={styles.primaryBtnText}>Set Password & Enter</Text>
+                  : <Text style={styles.btnText}>Set Password & Enter</Text>
                 }
               </TouchableOpacity>
             </>
           )}
         </View>
 
-        <Text style={styles.footnote}>
-          Members only · Contact admin for access
-        </Text>
+        <Text style={styles.footnote}>Members only · Contact admin for access</Text>
       </ScrollView>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
@@ -268,7 +264,7 @@ function EmailBadge({ email, onBack }: { email: string; onBack: () => void }) {
   return (
     <TouchableOpacity style={styles.emailBadge} onPress={onBack} activeOpacity={0.7}>
       <Ionicons name="arrow-back" size={14} color={Colors.primary} />
-      <Text style={styles.emailBadgeText} numberOfLines={1}>{email}</Text>
+      <Text style={styles.emailText} numberOfLines={1}>{email}</Text>
       <Ionicons name="pencil-outline" size={13} color={Colors.textSecondary} />
     </TouchableOpacity>
   );
@@ -284,19 +280,24 @@ function ErrorBox({ message }: { message: string }) {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: Colors.background },
-  container: {
-    paddingHorizontal: 28,
-    alignItems: 'center',
-    minHeight: '100%',
+  root: {
+    flex: 1,
+    backgroundColor: Colors.background,
   },
-  logoWrap: {
-    marginBottom: 24,
+  scroll: {
+    flexGrow: 1,
     alignItems: 'center',
+    paddingTop: 48,
+    paddingHorizontal: 24,
+  },
+  hero: {
+    alignItems: 'center',
+    marginBottom: 32,
   },
   logo: {
-    width: 140,
-    height: 140,
+    width: 130,
+    height: 130,
+    marginBottom: 20,
   },
   title: {
     fontSize: 30,
@@ -316,17 +317,36 @@ const styles = StyleSheet.create({
     width: 40,
     height: 1,
     backgroundColor: Colors.border,
-    marginVertical: 28,
+    marginTop: 24,
   },
-  form: { width: '100%', gap: 12 },
+  card: {
+    width: '100%',
+    gap: 12,
+  },
   stepLabel: {
     fontSize: 11,
     fontWeight: '700',
     color: Colors.textTertiary,
     letterSpacing: 2,
     textTransform: 'uppercase',
-    marginBottom: 4,
   },
+  inputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.card,
+    borderRadius: Colors.radius,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+    paddingHorizontal: 14,
+    height: 54,
+  },
+  icon: { marginRight: 10 },
+  input: {
+    flex: 1,
+    color: Colors.text,
+    fontSize: 15,
+  },
+  eye: { padding: 4 },
   emailBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -338,7 +358,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
   },
-  emailBadgeText: {
+  emailText: {
     flex: 1,
     color: Colors.text,
     fontSize: 14,
@@ -349,19 +369,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     textAlign: 'center',
   },
-  inputWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.card,
-    borderRadius: Colors.radius,
-    borderWidth: 1,
-    borderColor: Colors.borderSubtle,
-    paddingHorizontal: 14,
-    height: 54,
-  },
-  inputIcon: { marginRight: 10 },
-  input: { flex: 1, color: Colors.text, fontSize: 15 },
-  eyeBtn: { padding: 4 },
   errorBox: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -371,7 +378,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   errorText: { color: Colors.error, fontSize: 13, flex: 1 },
-  primaryBtn: {
+  btn: {
     backgroundColor: Colors.primary,
     borderRadius: Colors.radius,
     height: 54,
@@ -385,7 +392,7 @@ const styles = StyleSheet.create({
     elevation: 8,
   },
   btnDisabled: { opacity: 0.6 },
-  primaryBtnText: { color: '#000', fontWeight: '800', fontSize: 16, letterSpacing: 0.3 },
+  btnText: { color: '#000', fontWeight: '800', fontSize: 16, letterSpacing: 0.3 },
   footnote: {
     color: Colors.textTertiary,
     fontSize: 12,

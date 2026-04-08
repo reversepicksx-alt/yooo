@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no, viewport-fit=cover" />
+    <title>ReversePicks</title>
+    <style id="expo-reset">
+      html, body { height: 100%; }
+      body { overflow: hidden; background: #050505; }
+      #root { display: flex; height: 100%; flex: 1; }
+
+      /* Remove ALL blue focus outlines on inputs — keeps the dark premium feel */
+      input, textarea, select {
+        outline: none !important;
+        -webkit-tap-highlight-color: transparent;
+        caret-color: #39FF14;
+      }
+      input:focus, textarea:focus, select:focus {
+        outline: none !important;
+        box-shadow: none !important;
+      }
+      /* Remove iOS autofill blue tint */
+      input:-webkit-autofill,
+      input:-webkit-autofill:hover,
+      input:-webkit-autofill:focus {
+        -webkit-text-fill-color: #ffffff;
+        -webkit-box-shadow: 0 0 0px 1000px #111111 inset !important;
+        transition: background-color 5000s ease-in-out 0s;
+        caret-color: #39FF14;
+      }
+      /* Prevent layout jump when scrollbars appear */
+      * { box-sizing: border-box; }
+    </style>
+  </head>
+  <body>
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <div id="root"></div>
+  </body>
+</html>
