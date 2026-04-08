@@ -1,0 +1,8 @@
+uploads = []
+outputs = []
+
+[[generated]]
+id = "BL2QWIoKs8CqCcOg12ciT"
+uri = "file://mobile/assets/images/icon.png"
+type = "image"
+title = "reversepicks app icon"

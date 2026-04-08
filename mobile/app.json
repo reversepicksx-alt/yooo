@@ -1,0 +1,43 @@
+{
+  "expo": {
+    "name": "ReversePicks",
+    "slug": "reversepicks",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "scheme": "reversepicks",
+    "splash": {
+      "image": "./assets/images/icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0A0E1A"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.reversepicks.app"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/icon.png",
+        "backgroundColor": "#0A0E1A"
+      },
+      "package": "com.reversepicks.app",
+      "edgeToEdgeEnabled": true
+    },
+    "web": {
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "ReversePicks needs access to your photos to scan prop slips.",
+          "cameraPermission": "ReversePicks needs camera access to scan prop slips."
+        }
+      ]
+    ]
+  }
+}
