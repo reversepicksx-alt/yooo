@@ -1034,6 +1034,16 @@ async def predict(req: PredictionRequest):
                 game_log_summary["per90Avg"] = round(sum(per90_values) / len(per90_values), 2)
             if minutes_list:
                 game_log_summary["avgMinutes"] = round(sum(minutes_list) / len(minutes_list), 1)
+            if values and req.line:
+                over_hits = sum(1 for v in values if v > req.line)
+                under_hits = sum(1 for v in values if v < req.line)
+                game_log_summary["hitRates"] = {
+                    "overHits": over_hits,
+                    "underHits": under_hits,
+                    "overPct": round(over_hits / len(values) * 100, 1),
+                    "underPct": round(under_hits / len(values) * 100, 1),
+                    "total": len(values),
+                }
 
             historical_data["playerGameLogs"] = game_log_summary
 

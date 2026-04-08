@@ -4,6 +4,7 @@ import {
   ActivityIndicator, Alert, Platform, RefreshControl,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -208,6 +209,12 @@ export default function PicksScreen() {
     enabled: !!session,
     refetchInterval: 60000,
   });
+
+  useFocusEffect(
+    useCallback(() => {
+      refetch();
+    }, [refetch])
+  );
 
   const deleteMutation = useMutation({
     mutationFn: (pickId: string) => {

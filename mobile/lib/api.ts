@@ -148,6 +148,14 @@ export async function scanProp(imageBase64: string, sport = 'soccer'): Promise<S
   return { error: 'No prop data detected. Try a clearer image.' };
 }
 
+export interface GameLog {
+  date: string;
+  opponent: string;
+  venue: string;
+  value: number | null;
+  minutes: number;
+}
+
 export interface PredictionResult {
   playerName?: string;
   teamName?: string;
@@ -168,6 +176,11 @@ export interface PredictionResult {
   momentumEffect?: number;
   momentumLabel?: string;
   streakFlag?: string;
+  gameLogs?: GameLog[];
+  homeAvg?: number;
+  awayAvg?: number;
+  sampleSize?: number;
+  hitRates?: { overHits: number; underHits: number; overPct: number; underPct: number; total: number };
   error?: string;
 }
 
@@ -194,8 +207,36 @@ interface RawPrediction {
     pUnder?: number;
     reversalFlag?: string;
   };
+  playerGameLogs?: {
+    games?: Record<string, unknown>[];
+    homeAvg?: number;
+    awayAvg?: number;
+    hitRates?: { overHits: number; underHits: number; overPct: number; underPct: number; total: number; summary?: string };
+  };
   error?: string;
 }
+
+const GAME_LOG_FIELD_MAP: Record<string, string> = {
+  pass_attempts: 'passes_total',
+  passes: 'passes_total',
+  shots: 'shots_total',
+  shots_on_target: 'shots_on',
+  goals: 'goals_total',
+  assists: 'goals_assists',
+  key_passes: 'passes_key',
+  shots_assisted: 'passes_key',
+  tackles: 'tackles_total',
+  saves: 'goals_saves',
+  dribbles: 'dribbles_attempts',
+  crosses: 'passes_crosses',
+  interceptions: 'tackles_interceptions',
+  blocks: 'tackles_blocks',
+  fouls_drawn: 'fouls_drawn',
+  fouls_committed: 'fouls_committed',
+  clearances: 'tackles_clearances',
+  yellow_cards: 'cards_yellow',
+  duels_won: 'duels_won',
+};
 
 export async function predict(request: Record<string, unknown>): Promise<PredictionResult> {
   const raw = await apiCall<RawPrediction>('/api/predict', {
@@ -205,6 +246,22 @@ export async function predict(request: Record<string, unknown>): Promise<Predict
   if (raw.error) return { error: raw.error };
   const rec = raw.recommendation?.toUpperCase() as 'OVER' | 'UNDER' | 'PASS' | undefined;
   const bm = raw.bayesianMetrics || {};
+
+  const propTypeStr = (raw.propType || request.propType as string || '');
+  const statField = GAME_LOG_FIELD_MAP[propTypeStr];
+  const rawGames = (raw.playerGameLogs?.games || []) as Record<string, unknown>[];
+  const gameLogs: GameLog[] = statField
+    ? rawGames
+        .map(g => ({
+          date: (g.date as string) || '',
+          opponent: (g.opponent as string) || '',
+          venue: (g.venue as string) || '',
+          value: (g[statField] as number) ?? null,
+          minutes: (g.minutes as number) || 0,
+        }))
+        .filter(g => g.value != null)
+    : [];
+
   return {
     playerName: raw.player?.name || (request.playerName as string) || '',
     teamName: raw.player?.team || (request.teamName as string) || '',
@@ -223,6 +280,19 @@ export async function predict(request: Record<string, unknown>): Promise<Predict
     momentumEffect: bm.momentumEffect,
     momentumLabel: bm.momentumLabel,
     streakFlag: bm.streakFlag,
+    gameLogs: gameLogs.length > 0 ? gameLogs : undefined,
+    homeAvg: raw.playerGameLogs?.homeAvg,
+    awayAvg: raw.playerGameLogs?.awayAvg,
+    sampleSize: rawGames.length || undefined,
+    hitRates: raw.playerGameLogs?.hitRates
+      ? {
+          overHits: raw.playerGameLogs.hitRates.overHits,
+          underHits: raw.playerGameLogs.hitRates.underHits,
+          overPct: raw.playerGameLogs.hitRates.overPct,
+          underPct: raw.playerGameLogs.hitRates.underPct,
+          total: raw.playerGameLogs.hitRates.total,
+        }
+      : undefined,
   };
 }
 

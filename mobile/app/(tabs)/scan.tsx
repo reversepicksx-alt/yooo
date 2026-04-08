@@ -9,6 +9,7 @@ import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import Colors from '@/constants/colors';
+import { useQueryClient } from '@tanstack/react-query';
 import { scanProp, predict, savePick, PROP_TYPES, LEAGUES, PredictionResult, ScanResult } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -29,6 +30,7 @@ type Phase = 'idle' | 'scanning' | 'detected' | 'analyzing' | 'result' | 'saved'
 export default function ScanScreen() {
   const insets = useSafeAreaInsets();
   const { session } = useAuth();
+  const qc = useQueryClient();
   const [mode, setMode] = useState<Mode>('scan');
   const [phase, setPhase] = useState<Phase>('idle');
 
@@ -169,6 +171,7 @@ export default function ScanScreen() {
       });
       setPhase('saved');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      qc.invalidateQueries({ queryKey: ['picks'] });
     } catch (e: unknown) {
       setSaveError(e instanceof Error ? e.message : 'Save failed — try again');
     } finally {
@@ -583,6 +586,62 @@ export default function ScanScreen() {
               )}
             </View>
 
+            {/* ─── GAME LOG TILES ─── */}
+            {prediction.gameLogs && prediction.gameLogs.length > 0 && (
+              <View style={styles.gameLogsCard}>
+                <View style={styles.gameLogsHeader}>
+                  <Text style={styles.gameLogsTitle}>GAME LOG</Text>
+                  {prediction.sampleSize != null && (
+                    <View style={styles.gameLogsBadge}>
+                      <Text style={styles.gameLogsBadgeText}>{prediction.sampleSize} games</Text>
+                    </View>
+                  )}
+                  {prediction.hitRates && (
+                    <Text style={styles.hitRateText}>
+                      {prediction.hitRates.overPct}% OVER · {prediction.hitRates.underPct}% UNDER
+                    </Text>
+                  )}
+                </View>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.tilesRow}
+                >
+                  {prediction.gameLogs.map((g, i) => {
+                    const isOver = g.value != null && prediction.line != null && g.value >= prediction.line;
+                    const dateStr = g.date ? g.date.slice(5) : '??-??';
+                    const oppRaw = g.opponent || '?';
+                    const oppShort = oppRaw.length > 7 ? oppRaw.slice(0, 6) + '…' : oppRaw;
+                    return (
+                      <TouchableOpacity
+                        key={i}
+                        style={[styles.gameTile, isOver ? styles.gameTileOver : styles.gameTileUnder]}
+                        onPress={() => Haptics.selectionAsync()}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.gameTileVenue}>{g.venue === 'home' ? 'H' : 'A'}</Text>
+                        <Text style={styles.gameTileDate}>{dateStr}</Text>
+                        <Text style={styles.gameTileOpp} numberOfLines={1}>{oppShort}</Text>
+                        <Text style={[styles.gameTileVal, { color: isOver ? Colors.success : Colors.error }]}>
+                          {g.value != null ? String(g.value) : '—'}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+                {(prediction.homeAvg != null || prediction.awayAvg != null) && (
+                  <View style={styles.avgRow}>
+                    {prediction.homeAvg != null && (
+                      <Text style={styles.avgText}>HOME AVG {prediction.homeAvg.toFixed(1)}</Text>
+                    )}
+                    {prediction.awayAvg != null && (
+                      <Text style={styles.avgText}>AWAY AVG {prediction.awayAvg.toFixed(1)}</Text>
+                    )}
+                  </View>
+                )}
+              </View>
+            )}
+
             {saveError && (
               <View style={styles.inlineError}>
                 <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />
@@ -865,6 +924,50 @@ const styles = StyleSheet.create({
   reasoningHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   reasoningLabel: { fontSize: 10, color: Colors.primary, fontWeight: '700', letterSpacing: 1.5 },
   reasoningText: { fontSize: 13, color: Colors.textSecondary, lineHeight: 20 },
+
+  /* Game Log Tiles */
+  gameLogsCard: {
+    backgroundColor: Colors.card,
+    borderRadius: Colors.radiusLg,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+    marginTop: 12,
+    gap: 12,
+  },
+  gameLogsHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  gameLogsTitle: { fontSize: 10, fontWeight: '700', color: Colors.textTertiary, letterSpacing: 1.5 },
+  gameLogsBadge: {
+    backgroundColor: Colors.cardSecondary,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 20,
+  },
+  gameLogsBadgeText: { fontSize: 10, color: Colors.textSecondary, fontWeight: '600' },
+  hitRateText: { fontSize: 10, color: Colors.textSecondary, marginLeft: 'auto' as unknown as number },
+  tilesRow: { gap: 6, paddingBottom: 2 },
+  gameTile: {
+    width: 70,
+    borderRadius: 10,
+    padding: 8,
+    alignItems: 'center',
+    gap: 3,
+    borderWidth: 1,
+  },
+  gameTileOver: {
+    backgroundColor: 'rgba(57,255,20,0.07)',
+    borderColor: 'rgba(57,255,20,0.25)',
+  },
+  gameTileUnder: {
+    backgroundColor: 'rgba(255,59,48,0.07)',
+    borderColor: 'rgba(255,59,48,0.2)',
+  },
+  gameTileVenue: { fontSize: 8, fontWeight: '800', color: Colors.textTertiary, letterSpacing: 1 },
+  gameTileDate: { fontSize: 9, color: Colors.textSecondary },
+  gameTileOpp: { fontSize: 8, color: Colors.textSecondary, textAlign: 'center' },
+  gameTileVal: { fontSize: 17, fontWeight: '800', lineHeight: 20 },
+  avgRow: { flexDirection: 'row', gap: 16 },
+  avgText: { fontSize: 10, color: Colors.textSecondary, fontWeight: '600', letterSpacing: 0.5 },
 
   /* Save/New buttons */
   saveBtn: {
