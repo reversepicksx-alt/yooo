@@ -36,6 +36,8 @@ export default function ScanScreen() {
   const [scannedImageUri, setScannedImageUri] = useState<string | null>(null);
   const [prediction, setPrediction] = useState<PredictionResult | null>(null);
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
+  const [manualError, setManualError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   // User-controlled venue override
@@ -57,6 +59,8 @@ export default function ScanScreen() {
     setScannedImageUri(null);
     setPrediction(null);
     setAnalyzeError(null);
+    setManualError(null);
+    setSaveError(null);
     setPlayerQuery('');
     setLine('');
     setVenueOverride('home');
@@ -100,9 +104,10 @@ export default function ScanScreen() {
     await processImage(result.assets[0].base64, result.assets[0].uri);
   };
 
-  const runPredict = async (data: ScanResult) => {
+  const runPredict = async (data: ScanResult, inManual = false) => {
     setPhase('analyzing');
     setAnalyzeError(null);
+    setManualError(null);
     try {
       const req = {
         playerName: data.playerName,
@@ -118,22 +123,24 @@ export default function ScanScreen() {
       };
       const result = await predict(req);
       if (result.error) {
-        setAnalyzeError(result.error);
-        setPhase('detected');
+        if (inManual) setManualError(result.error); else setAnalyzeError(result.error);
+        setPhase(inManual ? 'idle' : 'detected');
         return;
       }
       setPrediction(result);
       setPhase('result');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e: unknown) {
-      setAnalyzeError(e instanceof Error ? e.message : 'Analysis failed — try again');
-      setPhase('detected');
+      const msg = e instanceof Error ? e.message : 'Analysis failed — try again';
+      if (inManual) setManualError(msg); else setAnalyzeError(msg);
+      setPhase(inManual ? 'idle' : 'detected');
     }
   };
 
   const handleManualAnalyze = async () => {
-    if (!playerQuery.trim()) { Alert.alert('Enter player name'); return; }
-    if (!line.trim() || isNaN(parseFloat(line))) { Alert.alert('Enter valid line value'); return; }
+    if (!playerQuery.trim()) { setManualError('Enter a player name to analyze.'); return; }
+    if (!line.trim() || isNaN(parseFloat(line))) { setManualError('Enter a valid line value (e.g. 2.5).'); return; }
+    setManualError(null);
     const data: ScanResult = {
       playerName: playerQuery.trim(),
       propType,
@@ -141,12 +148,13 @@ export default function ScanScreen() {
       leagueId,
     };
     setScanResult(data);
-    await runPredict(data);
+    await runPredict(data, true);
   };
 
   const handleSavePick = async () => {
     if (!session || !prediction || !scanResult) return;
     setSaving(true);
+    setSaveError(null);
     try {
       await savePick(session.email, session.token, {
         playerName: prediction.playerName || scanResult.playerName || playerQuery,
@@ -162,7 +170,7 @@ export default function ScanScreen() {
       setPhase('saved');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e: unknown) {
-      Alert.alert('Save failed', e instanceof Error ? e.message : 'Try again');
+      setSaveError(e instanceof Error ? e.message : 'Save failed — try again');
     } finally {
       setSaving(false);
     }
@@ -425,10 +433,10 @@ export default function ScanScreen() {
               </TouchableOpacity>
             </View>
 
-            {analyzeError && (
+            {manualError && (
               <View style={styles.inlineError}>
                 <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />
-                <Text style={styles.inlineErrorText}>{analyzeError}</Text>
+                <Text style={styles.inlineErrorText}>{manualError}</Text>
               </View>
             )}
 
@@ -574,6 +582,13 @@ export default function ScanScreen() {
                 </>
               )}
             </View>
+
+            {saveError && (
+              <View style={styles.inlineError}>
+                <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />
+                <Text style={styles.inlineErrorText}>{saveError}</Text>
+              </View>
+            )}
 
             <TouchableOpacity
               style={[styles.saveBtn, saving && { opacity: 0.6 }]}
