@@ -1,9 +1,13 @@
 import { Platform } from 'react-native';
 
-const getApiBase = () => {
+const getApiBase = (): string => {
+  // On web: use relative URL — the proxy server handles /api → localhost:8000
+  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    return '';
+  }
+  // For native app builds: use EXPO_PUBLIC_API_URL or localhost fallback
   const env = process.env.EXPO_PUBLIC_API_URL;
   if (env) return env;
-  if (Platform.OS === 'web') return 'http://localhost:8000';
   return 'http://localhost:8000';
 };
 
@@ -17,7 +21,7 @@ async function apiCall<T = unknown>(endpoint: string, options: RequestInit = {})
       headers: { 'Content-Type': 'application/json', ...options.headers },
     });
   } catch (e) {
-    throw new Error('Network error — check your connection.');
+    throw new Error('Cannot reach server. Please try again.');
   }
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ detail: resp.statusText }));

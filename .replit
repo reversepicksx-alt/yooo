@@ -39,8 +39,7 @@ outputType = "webview"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "cd mobile && npx expo start --web --port 5000"
-waitForPort = 5000
+args = "cd mobile && (node proxy.js &) && node node_modules/expo/bin/cli start --web --port 5001"
 
 [[workflows.workflow]]
 name = "Start Backend"

@@ -1,7 +1,7 @@
 import React from 'react';
 import {
   View, Text, StyleSheet, ScrollView,
-  TouchableOpacity, Alert, Platform,
+  TouchableOpacity, Alert, Platform, Image,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
@@ -128,8 +128,8 @@ export default function AccountScreen() {
         </View>
 
         <View style={styles.footer}>
-          <Ionicons name="football" size={16} color={Colors.textTertiary} />
-          <Text style={styles.footerText}>ReversePicks — Soccer AI Analytics</Text>
+          <Image source={require('../../assets/logo.png')} style={styles.footerLogo} resizeMode="contain" />
+          <Text style={styles.footerText}>ReversePicks · Soccer AI Analytics</Text>
         </View>
       </ScrollView>
     </View>
@@ -221,5 +221,6 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingTop: 8,
   },
+  footerLogo: { width: 20, height: 20, opacity: 0.5 },
   footerText: { fontSize: 12, color: Colors.textTertiary },
 });

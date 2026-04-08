@@ -5,10 +5,10 @@ import Colors from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
 import { useEffect } from 'react';
 
-function TabIcon({ name, color, focused }: { name: keyof typeof Ionicons.glyphMap; color: string; focused: boolean }) {
+function TabIcon({ name, focused }: { name: keyof typeof Ionicons.glyphMap; focused: boolean }) {
   return (
     <View style={[styles.iconWrap, focused && styles.iconWrapActive]}>
-      <Ionicons name={name} size={22} color={focused ? Colors.primary : color} />
+      <Ionicons name={name} size={22} color={focused ? Colors.primary : Colors.textTertiary} />
     </View>
   );
 }
@@ -29,50 +29,57 @@ export default function TabLayout() {
       screenOptions={{
         headerShown: false,
         tabBarStyle: {
-          backgroundColor: Colors.tabBar,
+          backgroundColor: '#000000',
           borderTopColor: Colors.tabBarBorder,
-          borderTopWidth: 1,
-          height: Platform.OS === 'web' ? 84 : 60,
-          paddingBottom: Platform.OS === 'web' ? 34 : 6,
+          borderTopWidth: 0.5,
+          height: Platform.OS === 'web' ? 78 : 82,
+          paddingBottom: Platform.OS === 'web' ? 18 : 26,
+          paddingTop: 10,
         },
         tabBarActiveTintColor: Colors.primary,
         tabBarInactiveTintColor: Colors.textTertiary,
-        tabBarLabelStyle: { fontSize: 11, fontWeight: '600', marginTop: 2 },
+        tabBarLabelStyle: {
+          fontSize: 10,
+          fontWeight: '600',
+          letterSpacing: 0.3,
+          marginTop: 1,
+        },
+        tabBarHideOnKeyboard: true,
       }}
     >
       <Tabs.Screen
         name="scan"
         options={{
           title: 'Predict',
-          tabBarIcon: ({ color, focused }) => <TabIcon name="scan-outline" color={color} focused={focused} />,
+          tabBarIcon: ({ focused }) => <TabIcon name="scan" focused={focused} />,
         }}
       />
       <Tabs.Screen
         name="picks"
         options={{
-          title: 'Picks',
-          tabBarIcon: ({ color, focused }) => <TabIcon name="bookmark-outline" color={color} focused={focused} />,
+          title: 'My Picks',
+          tabBarIcon: ({ focused }) => <TabIcon name="bookmark" focused={focused} />,
         }}
       />
       <Tabs.Screen
         name="intel"
         options={{
           title: 'Intel',
-          tabBarIcon: ({ color, focused }) => <TabIcon name="pulse-outline" color={color} focused={focused} />,
+          tabBarIcon: ({ focused }) => <TabIcon name="pulse" focused={focused} />,
         }}
       />
       <Tabs.Screen
         name="chat"
         options={{
           title: 'Tactical',
-          tabBarIcon: ({ color, focused }) => <TabIcon name="chatbubble-ellipses-outline" color={color} focused={focused} />,
+          tabBarIcon: ({ focused }) => <TabIcon name="chatbubble-ellipses" focused={focused} />,
         }}
       />
       <Tabs.Screen
         name="account"
         options={{
           title: 'Account',
-          tabBarIcon: ({ color, focused }) => <TabIcon name="person-circle-outline" color={color} focused={focused} />,
+          tabBarIcon: ({ focused }) => <TabIcon name="person-circle" focused={focused} />,
         }}
       />
     </Tabs>
@@ -80,6 +87,14 @@ export default function TabLayout() {
 }
 
 const styles = StyleSheet.create({
-  iconWrap: { width: 36, height: 28, alignItems: 'center', justifyContent: 'center', borderRadius: 8 },
-  iconWrapActive: { backgroundColor: Colors.primaryDim },
+  iconWrap: {
+    width: 44,
+    height: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 10,
+  },
+  iconWrapActive: {
+    backgroundColor: Colors.primaryGlow,
+  },
 });

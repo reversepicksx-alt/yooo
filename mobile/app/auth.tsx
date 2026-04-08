@@ -2,7 +2,7 @@ import { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   KeyboardAvoidingView, Platform, ActivityIndicator,
-  ScrollView,
+  ScrollView, Image,
 } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -26,31 +26,35 @@ export default function AuthScreen() {
   const [error, setError] = useState('');
 
   const handleCheckEmail = async () => {
-    if (!email.trim()) { setError('Please enter your email.'); return; }
+    if (!email.trim()) { setError('Enter your email address.'); return; }
     setLoading(true);
     setError('');
     try {
       const result = await verifyAccess(email.trim());
       if (result.requires_password_setup) {
+        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         setStep('setup');
       } else if (result.requires_password) {
+        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         setStep('password');
       } else if (result.verified && result.session_token) {
         await login(email.trim(), '');
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         router.replace('/(tabs)/scan');
       } else {
-        setError(result.message || 'No active membership found. Contact your administrator.');
+        setError(result.message || 'No active membership found.');
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to verify access.');
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
       setLoading(false);
     }
   };
 
   const handleLogin = async () => {
-    if (!password.trim()) { setError('Please enter your password.'); return; }
+    if (!password.trim()) { setError('Enter your password.'); return; }
     setLoading(true);
     setError('');
     try {
@@ -71,7 +75,7 @@ export default function AuthScreen() {
     setLoading(true);
     setError('');
     try {
-      const result = await setPassword(email.trim(), password);
+      await setPassword(email.trim(), password);
       await login(email.trim(), password);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       router.replace('/(tabs)/scan');
@@ -96,27 +100,33 @@ export default function AuthScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <ScrollView
-        contentContainerStyle={[styles.container, { paddingTop: insets.top + 60, paddingBottom: insets.bottom + 40 }]}
+        contentContainerStyle={[styles.container, { paddingTop: insets.top + 40, paddingBottom: insets.bottom + 40 }]}
         keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
       >
-        <View style={styles.logoRow}>
-          <View style={styles.logoCircle}>
-            <Ionicons name="football" size={36} color={Colors.primary} />
-          </View>
+        <View style={styles.logoWrap}>
+          <Image
+            source={require('../assets/logo.png')}
+            style={styles.logo}
+            resizeMode="contain"
+          />
         </View>
 
         <Text style={styles.title}>ReversePicks</Text>
         <Text style={styles.subtitle}>Soccer AI Analytics</Text>
 
+        <View style={styles.divider} />
+
         <View style={styles.form}>
           {step === 'email' && (
             <>
+              <Text style={styles.stepLabel}>SIGN IN</Text>
               <View style={styles.inputWrapper}>
-                <Ionicons name="mail-outline" size={18} color={Colors.textSecondary} style={styles.inputIcon} />
+                <Ionicons name="mail-outline" size={17} color={Colors.textSecondary} style={styles.inputIcon} />
                 <TextInput
                   style={styles.input}
                   placeholder="Email address"
-                  placeholderTextColor={Colors.textSecondary}
+                  placeholderTextColor={Colors.textTertiary}
                   value={email}
                   onChangeText={setEmail}
                   keyboardType="email-address"
@@ -130,14 +140,14 @@ export default function AuthScreen() {
               {!!error && <ErrorBox message={error} />}
 
               <TouchableOpacity
-                style={[styles.loginBtn, loading && styles.loginBtnDisabled]}
+                style={[styles.primaryBtn, loading && styles.btnDisabled]}
                 onPress={handleCheckEmail}
                 disabled={loading}
-                activeOpacity={0.8}
+                activeOpacity={0.85}
               >
                 {loading
-                  ? <ActivityIndicator color="#000" />
-                  : <Text style={styles.loginBtnText}>Continue</Text>
+                  ? <ActivityIndicator color="#000" size="small" />
+                  : <Text style={styles.primaryBtnText}>Continue</Text>
                 }
               </TouchableOpacity>
             </>
@@ -145,34 +155,36 @@ export default function AuthScreen() {
 
           {step === 'password' && (
             <>
-              <View style={styles.emailBadge}>
-                <Ionicons name="mail" size={14} color={Colors.primary} />
-                <Text style={styles.emailBadgeText}>{email}</Text>
-                <TouchableOpacity onPress={goBack} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                  <Ionicons name="close-circle" size={16} color={Colors.textSecondary} />
+              <EmailBadge email={email} onBack={goBack} />
+
+              <View style={styles.inputWrapper}>
+                <Ionicons name="lock-closed-outline" size={17} color={Colors.textSecondary} style={styles.inputIcon} />
+                <TextInput
+                  style={styles.input}
+                  placeholder="Password"
+                  placeholderTextColor={Colors.textTertiary}
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry={!showPassword}
+                  onSubmitEditing={handleLogin}
+                  returnKeyType="done"
+                />
+                <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeBtn}>
+                  <Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={17} color={Colors.textSecondary} />
                 </TouchableOpacity>
               </View>
-
-              <PasswordInput
-                value={password}
-                onChange={setPassword}
-                placeholder="Password"
-                show={showPassword}
-                onToggle={() => setShowPassword(!showPassword)}
-                onSubmit={handleLogin}
-              />
 
               {!!error && <ErrorBox message={error} />}
 
               <TouchableOpacity
-                style={[styles.loginBtn, loading && styles.loginBtnDisabled]}
+                style={[styles.primaryBtn, loading && styles.btnDisabled]}
                 onPress={handleLogin}
                 disabled={loading}
-                activeOpacity={0.8}
+                activeOpacity={0.85}
               >
                 {loading
-                  ? <ActivityIndicator color="#000" />
-                  : <Text style={styles.loginBtnText}>Sign In</Text>
+                  ? <ActivityIndicator color="#000" size="small" />
+                  : <Text style={styles.primaryBtnText}>Sign In</Text>
                 }
               </TouchableOpacity>
             </>
@@ -180,43 +192,50 @@ export default function AuthScreen() {
 
           {step === 'setup' && (
             <>
-              <View style={styles.emailBadge}>
-                <Ionicons name="mail" size={14} color={Colors.primary} />
-                <Text style={styles.emailBadgeText}>{email}</Text>
-                <TouchableOpacity onPress={goBack} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                  <Ionicons name="close-circle" size={16} color={Colors.textSecondary} />
+              <EmailBadge email={email} onBack={goBack} />
+              <Text style={styles.setupNote}>Create a password to secure your account</Text>
+
+              <View style={styles.inputWrapper}>
+                <Ionicons name="lock-closed-outline" size={17} color={Colors.textSecondary} style={styles.inputIcon} />
+                <TextInput
+                  style={styles.input}
+                  placeholder="Choose a password (min. 6 chars)"
+                  placeholderTextColor={Colors.textTertiary}
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry={!showPassword}
+                  returnKeyType="next"
+                />
+                <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeBtn}>
+                  <Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={17} color={Colors.textSecondary} />
                 </TouchableOpacity>
               </View>
 
-              <Text style={styles.setupLabel}>Create your password to get started</Text>
-
-              <PasswordInput
-                value={password}
-                onChange={setPassword}
-                placeholder="Choose a password"
-                show={showPassword}
-                onToggle={() => setShowPassword(!showPassword)}
-              />
-              <PasswordInput
-                value={confirmPassword}
-                onChange={setConfirmPassword}
-                placeholder="Confirm password"
-                show={showPassword}
-                onToggle={() => setShowPassword(!showPassword)}
-                onSubmit={handleSetPassword}
-              />
+              <View style={styles.inputWrapper}>
+                <Ionicons name="lock-closed-outline" size={17} color={Colors.textSecondary} style={styles.inputIcon} />
+                <TextInput
+                  style={styles.input}
+                  placeholder="Confirm password"
+                  placeholderTextColor={Colors.textTertiary}
+                  value={confirmPassword}
+                  onChangeText={setConfirmPassword}
+                  secureTextEntry={!showPassword}
+                  onSubmitEditing={handleSetPassword}
+                  returnKeyType="done"
+                />
+              </View>
 
               {!!error && <ErrorBox message={error} />}
 
               <TouchableOpacity
-                style={[styles.loginBtn, loading && styles.loginBtnDisabled]}
+                style={[styles.primaryBtn, loading && styles.btnDisabled]}
                 onPress={handleSetPassword}
                 disabled={loading}
-                activeOpacity={0.8}
+                activeOpacity={0.85}
               >
                 {loading
-                  ? <ActivityIndicator color="#000" />
-                  : <Text style={styles.loginBtnText}>Set Password & Sign In</Text>
+                  ? <ActivityIndicator color="#000" size="small" />
+                  : <Text style={styles.primaryBtnText}>Set Password & Enter</Text>
                 }
               </TouchableOpacity>
             </>
@@ -224,69 +243,76 @@ export default function AuthScreen() {
         </View>
 
         <Text style={styles.footnote}>
-          Don't have an account? Contact your administrator to get access.
+          Members only · Contact admin for access
         </Text>
       </ScrollView>
     </KeyboardAvoidingView>
   );
 }
 
-function ErrorBox({ message }: { message: string }) {
+function EmailBadge({ email, onBack }: { email: string; onBack: () => void }) {
   return (
-    <View style={styles.errorBox}>
-      <Ionicons name="alert-circle-outline" size={16} color={Colors.error} />
-      <Text style={styles.errorText}>{message}</Text>
-    </View>
+    <TouchableOpacity style={styles.emailBadge} onPress={onBack} activeOpacity={0.7}>
+      <Ionicons name="arrow-back" size={14} color={Colors.primary} />
+      <Text style={styles.emailBadgeText} numberOfLines={1}>{email}</Text>
+      <Ionicons name="pencil-outline" size={13} color={Colors.textSecondary} />
+    </TouchableOpacity>
   );
 }
 
-function PasswordInput({
-  value, onChange, placeholder, show, onToggle, onSubmit,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  placeholder: string;
-  show: boolean;
-  onToggle: () => void;
-  onSubmit?: () => void;
-}) {
+function ErrorBox({ message }: { message: string }) {
   return (
-    <View style={styles.inputWrapper}>
-      <Ionicons name="lock-closed-outline" size={18} color={Colors.textSecondary} style={styles.inputIcon} />
-      <TextInput
-        style={styles.input}
-        placeholder={placeholder}
-        placeholderTextColor={Colors.textSecondary}
-        value={value}
-        onChangeText={onChange}
-        secureTextEntry={!show}
-        onSubmitEditing={onSubmit}
-        returnKeyType={onSubmit ? 'done' : 'next'}
-      />
-      <TouchableOpacity onPress={onToggle} style={styles.eyeBtn}>
-        <Ionicons name={show ? 'eye-off-outline' : 'eye-outline'} size={18} color={Colors.textSecondary} />
-      </TouchableOpacity>
+    <View style={styles.errorBox}>
+      <Ionicons name="alert-circle-outline" size={15} color={Colors.error} />
+      <Text style={styles.errorText}>{message}</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.background },
-  container: { paddingHorizontal: 28, alignItems: 'center' },
-  logoRow: { marginBottom: 20 },
-  logoCircle: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: Colors.primaryDim,
-    borderWidth: 1,
-    borderColor: Colors.primary,
+  container: {
+    paddingHorizontal: 28,
     alignItems: 'center',
-    justifyContent: 'center',
+    minHeight: '100%',
   },
-  title: { fontSize: 32, fontWeight: '800', color: Colors.text, letterSpacing: -0.5 },
-  subtitle: { fontSize: 15, color: Colors.textSecondary, marginTop: 6, marginBottom: 44 },
+  logoWrap: {
+    marginBottom: 24,
+    alignItems: 'center',
+  },
+  logo: {
+    width: 140,
+    height: 140,
+  },
+  title: {
+    fontSize: 30,
+    fontWeight: '800',
+    color: Colors.text,
+    letterSpacing: -0.5,
+  },
+  subtitle: {
+    fontSize: 13,
+    color: Colors.primary,
+    marginTop: 5,
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+    fontWeight: '600',
+  },
+  divider: {
+    width: 40,
+    height: 1,
+    backgroundColor: Colors.border,
+    marginVertical: 28,
+  },
   form: { width: '100%', gap: 12 },
+  stepLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.textTertiary,
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+    marginBottom: 4,
+  },
   emailBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -296,19 +322,28 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.border,
     paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingVertical: 12,
   },
-  emailBadgeText: { flex: 1, color: Colors.text, fontSize: 14 },
-  setupLabel: { color: Colors.textSecondary, fontSize: 13, textAlign: 'center', marginTop: 4 },
+  emailBadgeText: {
+    flex: 1,
+    color: Colors.text,
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  setupNote: {
+    color: Colors.textSecondary,
+    fontSize: 13,
+    textAlign: 'center',
+  },
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: Colors.card,
     borderRadius: Colors.radius,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: Colors.borderSubtle,
     paddingHorizontal: 14,
-    height: 52,
+    height: 54,
   },
   inputIcon: { marginRight: 10 },
   input: { flex: 1, color: Colors.text, fontSize: 15 },
@@ -322,15 +357,26 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   errorText: { color: Colors.error, fontSize: 13, flex: 1 },
-  loginBtn: {
+  primaryBtn: {
     backgroundColor: Colors.primary,
     borderRadius: Colors.radius,
-    height: 52,
+    height: 54,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 8,
+    marginTop: 4,
+    shadowColor: Colors.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    elevation: 8,
   },
-  loginBtnDisabled: { opacity: 0.6 },
-  loginBtnText: { color: '#000', fontWeight: '700', fontSize: 16 },
-  footnote: { color: Colors.textTertiary, fontSize: 13, textAlign: 'center', marginTop: 36, lineHeight: 20 },
+  btnDisabled: { opacity: 0.6 },
+  primaryBtnText: { color: '#000', fontWeight: '800', fontSize: 16, letterSpacing: 0.3 },
+  footnote: {
+    color: Colors.textTertiary,
+    fontSize: 12,
+    textAlign: 'center',
+    marginTop: 40,
+    letterSpacing: 0.3,
+  },
 });

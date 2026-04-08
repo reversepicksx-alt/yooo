@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  TextInput, ActivityIndicator, Alert, Platform, Modal,
+  TextInput, ActivityIndicator, Alert, Platform, Modal, Image,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
@@ -161,10 +161,12 @@ export default function ScanScreen() {
     <View style={[styles.root, { paddingTop: topPad }]}>
       <View style={styles.header}>
         <View style={styles.logoRow}>
-          <Ionicons name="football" size={20} color={Colors.primary} />
-          <Text style={styles.logoText}>ReversePicks</Text>
+          <Image source={require('../../assets/logo.png')} style={styles.logoImg} resizeMode="contain" />
+          <View>
+            <Text style={styles.logoText}>ReversePicks</Text>
+            <Text style={styles.tagline}>AI Soccer Prop Analytics</Text>
+          </View>
         </View>
-        <Text style={styles.tagline}>AI Soccer Prop Analytics</Text>
       </View>
 
       <View style={styles.tabRow}>
@@ -331,9 +333,10 @@ export default function ScanScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.background },
   header: { paddingHorizontal: 20, paddingBottom: 12 },
-  logoRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  logoText: { fontSize: 22, fontWeight: '800', color: Colors.text },
-  tagline: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
+  logoRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  logoImg: { width: 38, height: 38 },
+  logoText: { fontSize: 20, fontWeight: '800', color: Colors.text, letterSpacing: -0.3 },
+  tagline: { fontSize: 11, color: Colors.primary, marginTop: 1, letterSpacing: 0.5, fontWeight: '600' },
   tabRow: {
     flexDirection: 'row',
     marginHorizontal: 20,
