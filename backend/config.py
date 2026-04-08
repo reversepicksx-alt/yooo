@@ -13,9 +13,7 @@ DB_NAME = os.environ.get("DB_NAME")
 EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY")
 API_FOOTBALL_KEY = os.environ.get("API_FOOTBALL_KEY")
 API_FOOTBALL_BASE = "https://v3.football.api-sports.io"
-WHOP_API_KEY = os.environ.get("WHOP_API_KEY")
-WHOP_COMPANY_ID = os.environ.get("WHOP_COMPANY_ID")
-OWNER_EMAIL = (os.environ.get("OWNER_EMAIL") or "josselj001@gmail.com").lower().strip()
+OWNER_EMAIL = (os.environ.get("OWNER_EMAIL") or "reversepicksx@gmail.com").lower().strip()
 XAI_API_KEY = os.environ.get("XAI_API_KEY")
 SQUARE_ACCESS_TOKEN = os.environ.get("SQUARE_ACCESS_TOKEN")
 SQUARE_APPLICATION_ID = os.environ.get("SQUARE_APPLICATION_ID")
@@ -136,10 +134,6 @@ api_semaphore = aio.Semaphore(10)
 
 # ── Chat sessions (in-memory) ──
 chat_sessions: dict = {}
-
-# ── Whop cache ──
-whop_cache = None
-whop_cache_time = 0
 
 # ── Database ──
 mongo_client = AsyncIOMotorClient(MONGO_URL)

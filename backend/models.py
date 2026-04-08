@@ -2,7 +2,7 @@ from pydantic import BaseModel
 from typing import Optional
 
 
-class VerifyWhopRequest(BaseModel):
+class VerifyAccessRequest(BaseModel):
     email: str
 
 

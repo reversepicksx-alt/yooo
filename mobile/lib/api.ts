@@ -32,6 +32,30 @@ export interface AuthResponse {
   access_type?: string;
 }
 
+export interface AccessCheckResponse {
+  verified?: boolean;
+  email?: string;
+  session_token?: string;
+  access_type?: string;
+  requires_password?: boolean;
+  requires_password_setup?: boolean;
+  message?: string;
+}
+
+export async function verifyAccess(email: string): Promise<AccessCheckResponse> {
+  return apiCall<AccessCheckResponse>('/api/auth/verify-access', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+}
+
+export async function setPassword(email: string, password: string): Promise<AuthResponse> {
+  return apiCall<AuthResponse>('/api/auth/set-password', {
+    method: 'POST',
+    body: JSON.stringify({ email, password }),
+  });
+}
+
 export async function authLogin(email: string, password: string): Promise<AuthResponse> {
   return apiCall<AuthResponse>('/api/auth/login', {
     method: 'POST',
