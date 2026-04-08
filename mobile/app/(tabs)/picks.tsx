@@ -19,69 +19,94 @@ const PROP_LABELS: Record<string, string> = {
   tackles: 'Tackles', saves: 'Saves', dribbles: 'Dribbles', crosses: 'Crosses',
   interceptions: 'Interceptions', blocks: 'Blocks', fouls_drawn: 'Fouls Drawn',
   fouls_committed: 'Fouls', clearances: 'Clearances', duels_won: 'Duels Won',
-  yellow_cards: 'Yellow Cards', shots_assisted: 'Shot Assists',
+  yellow_cards: 'Yellow Cards', shots_assisted: 'Shot Assists', passes: 'Passes',
 };
 
-function abbreviateName(name: string): string {
-  const parts = name.trim().split(' ');
-  if (parts.length < 2) return name;
-  return `${parts[0][0]}. ${parts.slice(1).join(' ')}`;
+// backend: status="live"|"settled", result="pending"|"won"|"lost"
+function isLive(p: Pick) {
+  return p.status === 'live' || p.status === 'pending' || (!p.status && p.result !== 'won' && p.result !== 'lost');
+}
+function isSettled(p: Pick) {
+  return p.status === 'settled' || p.result === 'won' || p.result === 'lost' || p.status === 'won' || p.status === 'lost';
+}
+function pickWon(p: Pick) {
+  return p.result === 'won' || p.status === 'won';
+}
+function pickLost(p: Pick) {
+  return p.result === 'lost' || p.status === 'lost';
 }
 
 function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
+  const won = pickWon(pick);
+  const lost = pickLost(pick);
+  const live = isLive(pick);
+
   const isOver = pick.recommendation === 'OVER';
   const isUnder = pick.recommendation === 'UNDER';
-  const isWon = pick.status === 'won';
-  const isLost = pick.status === 'lost';
-  const isPending = !pick.status || pick.status === 'pending';
 
-  const recColor = isOver ? '#39FF14' : isUnder ? Colors.error : Colors.textSecondary;
-  const statusColor = isWon ? Colors.success : isLost ? Colors.error : Colors.textTertiary;
-
-  const venueStr = (pick as unknown as Record<string, string>).venue?.toUpperCase() === 'HOME' ? 'HOME' : 'AWAY';
+  const recColor = isOver ? Colors.primary : isUnder ? Colors.error : Colors.textSecondary;
+  const statusColor = won ? Colors.success : lost ? Colors.error : Colors.textTertiary;
 
   const confPct = pick.confidence != null
     ? (pick.confidence > 1 ? Math.round(pick.confidence) : Math.round(pick.confidence * 100))
     : null;
 
-  const trackingId = (pick as unknown as Record<string, string>).trackingId;
+  const propLabel = PROP_LABELS[pick.propType] || pick.propType?.replace(/_/g, ' ') || '—';
+  const venueStr = pick.venue ? pick.venue.toUpperCase() : '';
 
   return (
-    <View style={styles.card}>
+    <View style={[styles.card, won && styles.cardWon, lost && styles.cardLost]}>
+      {/* Top row */}
       <View style={styles.cardTopRow}>
         <View style={styles.cardLeft}>
-          <Text style={styles.cardPlayer} numberOfLines={1}>
-            {abbreviateName(pick.playerName)}
-          </Text>
+          <Text style={styles.cardPlayer} numberOfLines={1}>{pick.playerName}</Text>
           <Text style={styles.cardMeta} numberOfLines={1}>
-            {[pick.teamName, venueStr, 'SOCCER'].filter(Boolean).join(' · ')}
-            {trackingId ? `  ${trackingId}` : ''}
+            {[pick.teamName, pick.opponentName ? `vs ${pick.opponentName}` : null, venueStr]
+              .filter(Boolean).join(' · ')}
           </Text>
         </View>
         <View style={styles.cardRight}>
-          {isPending && (
-            <View style={styles.schedBadge}>
-              <Text style={styles.schedText}>SCHED</Text>
+          {live && !won && !lost && (
+            <View style={styles.liveBadge}>
+              <View style={styles.liveDot} />
+              <Text style={styles.liveText}>LIVE</Text>
             </View>
           )}
-          {isWon && <Ionicons name="checkmark-circle" size={18} color={Colors.success} />}
-          {isLost && <Ionicons name="close-circle" size={18} color={Colors.error} />}
-          <TouchableOpacity onPress={onDelete} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          {won && (
+            <View style={styles.wonBadge}>
+              <Ionicons name="checkmark" size={11} color="#000" />
+              <Text style={styles.wonText}>HIT</Text>
+            </View>
+          )}
+          {lost && (
+            <View style={styles.lostBadge}>
+              <Ionicons name="close" size={11} color={Colors.error} />
+              <Text style={styles.lostText}>MISS</Text>
+            </View>
+          )}
+          <TouchableOpacity onPress={onDelete} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
             <Ionicons name="trash-outline" size={16} color="rgba(255,255,255,0.2)" />
           </TouchableOpacity>
         </View>
       </View>
 
+      {/* Pick line */}
       {pick.recommendation && (
-        <Text style={[styles.pickLabel, { color: recColor }]}>
-          PICK: {pick.recommendation} {pick.line} {PROP_LABELS[pick.propType] || pick.propType?.replace(/_/g, ' ')}
-        </Text>
+        <View style={styles.pickRow}>
+          <View style={[styles.recPill, { backgroundColor: isOver ? Colors.successDim : isUnder ? Colors.errorDim : Colors.cardSecondary }]}>
+            <Text style={[styles.recPillText, { color: recColor }]}>{pick.recommendation}</Text>
+          </View>
+          <Text style={styles.pickDetail}>
+            {propLabel} · Line {pick.line}
+          </Text>
+        </View>
       )}
 
+      {/* Stats row */}
       <View style={styles.statsRow}>
         <View style={styles.statCol}>
           <Text style={[styles.statVal, { color: Colors.primary }]}>
-            {pick.projection != null ? pick.projection.toFixed(1) : '—'}
+            {pick.projection != null ? Number(pick.projection).toFixed(1) : '—'}
           </Text>
           <Text style={styles.statLbl}>PROJ</Text>
         </View>
@@ -92,36 +117,46 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
         </View>
         <View style={styles.statDivider} />
         <View style={styles.statCol}>
-          <Text style={[styles.statVal, { color: statusColor }]}>
+          <Text style={[styles.statVal, { color: recColor }]}>
             {confPct != null ? `${confPct}%` : '—'}
           </Text>
           <Text style={styles.statLbl}>CONF</Text>
         </View>
+        {pick.actualValue != null && (
+          <>
+            <View style={styles.statDivider} />
+            <View style={styles.statCol}>
+              <Text style={[styles.statVal, { color: statusColor }]}>
+                {Number(pick.actualValue).toFixed(0)}
+              </Text>
+              <Text style={styles.statLbl}>ACTUAL</Text>
+            </View>
+          </>
+        )}
       </View>
 
-      <View style={styles.propTag}>
-        <Text style={styles.propTagText}>
-          {PROP_LABELS[pick.propType] || pick.propType?.toUpperCase().replace(/_/g, ' ')}
-        </Text>
-      </View>
+      {/* Tracking ID */}
+      {pick.trackingId && (
+        <Text style={styles.trackingId}>{pick.trackingId}</Text>
+      )}
     </View>
   );
 }
 
 function RecordBar({ picks }: { picks: Pick[] }) {
-  const settled = picks.filter(p => p.status === 'won' || p.status === 'lost');
-  const hits = picks.filter(p => p.status === 'won').length;
-  const misses = picks.filter(p => p.status === 'lost').length;
-  const pending = picks.filter(p => !p.status || p.status === 'pending').length;
-  const winPct = settled.length > 0 ? Math.round((hits / settled.length) * 100) : 0;
+  const hits = picks.filter(pickWon).length;
+  const misses = picks.filter(pickLost).length;
+  const pending = picks.filter(isLive).length;
+  const settled = hits + misses;
+  const winPct = settled > 0 ? Math.round((hits / settled) * 100) : null;
 
   let streak = 0;
   const sorted = [...picks].sort((a, b) =>
     new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
   );
   for (const p of sorted) {
-    if (p.status === 'won') streak++;
-    else break;
+    if (pickWon(p)) streak++;
+    else if (pickLost(p)) break;
   }
 
   return (
@@ -137,12 +172,12 @@ function RecordBar({ picks }: { picks: Pick[] }) {
           <Text style={styles.recordKey}>MISS</Text>
         </View>
         <View style={styles.recordStat}>
-          <Text style={styles.recordVal}>{pending}</Text>
+          <Text style={[styles.recordVal, { color: Colors.textSecondary }]}>{pending}</Text>
           <Text style={styles.recordKey}>LIVE</Text>
         </View>
         <View style={styles.recordStat}>
           <Text style={[styles.recordVal, { color: Colors.primary }]}>
-            {settled.length > 0 ? `${winPct}%` : '—'}
+            {winPct != null ? `${winPct}%` : '—'}
           </Text>
           <Text style={styles.recordKey}>WIN%</Text>
         </View>
@@ -171,6 +206,7 @@ export default function PicksScreen() {
       return listPicks(session.email, session.token);
     },
     enabled: !!session,
+    refetchInterval: 60000,
   });
 
   const deleteMutation = useMutation({
@@ -182,28 +218,27 @@ export default function PicksScreen() {
       qc.invalidateQueries({ queryKey: ['picks'] });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     },
+    onError: (e: Error) => Alert.alert('Delete failed', e.message),
   });
 
   const handleDelete = useCallback((pick: Pick) => {
-    const id = pick._id || pick.id;
+    const id = pick.pickId || pick._id || pick.id;
     if (!id) return;
     Alert.alert('Delete Pick', `Remove ${pick.playerName}?`, [
       { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete', style: 'destructive',
-        onPress: () => deleteMutation.mutate(id),
-      },
+      { text: 'Delete', style: 'destructive', onPress: () => deleteMutation.mutate(id) },
     ]);
   }, [deleteMutation]);
 
-  const live = picks.filter(p => !p.status || p.status === 'pending');
-  const history = picks.filter(p => p.status === 'won' || p.status === 'lost');
+  const live = picks.filter(isLive);
+  const history = picks.filter(isSettled);
   const displayed = activeTab === 'live' ? live : history;
 
   return (
     <View style={[styles.root, { paddingTop: topPad }]}>
+      {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Tracking</Text>
+        <Text style={styles.headerTitle}>My Picks</Text>
         <View style={styles.tabToggle}>
           {(['live', 'history'] as Tab[]).map(t => (
             <TouchableOpacity
@@ -211,14 +246,18 @@ export default function PicksScreen() {
               style={[styles.toggle, activeTab === t && styles.toggleActive]}
               onPress={() => { setActiveTab(t); Haptics.selectionAsync(); }}
             >
+              {t === 'live' && live.length > 0 && activeTab !== 'live' && (
+                <View style={styles.tabDot} />
+              )}
               <Text style={[styles.toggleText, activeTab === t && styles.toggleTextActive]}>
-                {t === 'live' ? 'Live' : 'History'}
+                {t === 'live' ? `Live${live.length > 0 ? ` (${live.length})` : ''}` : `History${history.length > 0 ? ` (${history.length})` : ''}`}
               </Text>
             </TouchableOpacity>
           ))}
         </View>
       </View>
 
+      {/* Record bar — always show if any picks exist */}
       {picks.length > 0 && <RecordBar picks={picks} />}
 
       {isLoading ? (
@@ -229,22 +268,22 @@ export default function PicksScreen() {
         <View style={styles.empty}>
           <Ionicons
             name={activeTab === 'live' ? 'timer-outline' : 'archive-outline'}
-            size={48}
+            size={52}
             color={Colors.textTertiary}
           />
           <Text style={styles.emptyTitle}>
-            {activeTab === 'live' ? 'No live picks' : 'No history yet'}
+            {activeTab === 'live' ? 'No live picks' : 'No settled picks yet'}
           </Text>
           <Text style={styles.emptySub}>
             {activeTab === 'live'
-              ? 'Analyze a prop and save it to track it here.'
-              : 'Settled picks will appear here once results are in.'}
+              ? 'Scan a prop slip and save a prediction to track it here.'
+              : 'Picks move here once their game is finished and results are confirmed.'}
           </Text>
         </View>
       ) : (
         <FlatList
           data={displayed}
-          keyExtractor={(item, i) => item._id || item.id || String(i)}
+          keyExtractor={(item, i) => item.pickId || item._id || item.id || String(i)}
           renderItem={({ item }) => <PickCard pick={item} onDelete={() => handleDelete(item)} />}
           contentContainerStyle={styles.list}
           refreshControl={
@@ -254,6 +293,7 @@ export default function PicksScreen() {
               tintColor={Colors.primary}
             />
           }
+          showsVerticalScrollIndicator={false}
         />
       )}
     </View>
@@ -263,105 +303,80 @@ export default function PicksScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.background },
   header: {
-    paddingHorizontal: 20,
-    paddingBottom: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    paddingHorizontal: 20, paddingBottom: 12,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
   },
   headerTitle: { fontSize: 28, fontWeight: '800', color: Colors.text },
   tabToggle: {
-    flexDirection: 'row',
-    backgroundColor: Colors.card,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: 3,
+    flexDirection: 'row', backgroundColor: Colors.card,
+    borderRadius: 10, borderWidth: 1, borderColor: Colors.border, padding: 3,
   },
-  toggle: {
-    paddingVertical: 6,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-  },
+  toggle: { paddingVertical: 7, paddingHorizontal: 14, borderRadius: 8, flexDirection: 'row', alignItems: 'center', gap: 5 },
   toggleActive: { backgroundColor: Colors.primary },
   toggleText: { fontSize: 13, fontWeight: '600', color: Colors.textSecondary },
   toggleTextActive: { color: '#000' },
+  tabDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: Colors.primary },
+
   recordBar: {
-    marginHorizontal: 20,
-    marginBottom: 12,
-    backgroundColor: Colors.card,
-    borderRadius: Colors.radius,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: 14,
-    gap: 8,
+    marginHorizontal: 20, marginBottom: 12, backgroundColor: Colors.card,
+    borderRadius: Colors.radius, borderWidth: 1, borderColor: Colors.border, padding: 14, gap: 8,
   },
-  recordLabel: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: Colors.textTertiary,
-    letterSpacing: 1.5,
-  },
-  recordStats: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
+  recordLabel: { fontSize: 10, fontWeight: '700', color: Colors.textTertiary, letterSpacing: 1.5 },
+  recordStats: { flexDirection: 'row', justifyContent: 'space-between' },
   recordStat: { alignItems: 'center', flex: 1 },
   recordVal: { fontSize: 18, fontWeight: '800', color: Colors.text },
   recordKey: { fontSize: 9, color: Colors.textTertiary, fontWeight: '600', letterSpacing: 0.5, marginTop: 2 },
+
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10, paddingHorizontal: 40 },
+  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, paddingHorizontal: 40 },
   emptyTitle: { fontSize: 18, fontWeight: '700', color: Colors.text },
-  emptySub: { fontSize: 14, color: Colors.textSecondary, textAlign: 'center', lineHeight: 20 },
-  list: { paddingHorizontal: 20, paddingBottom: 40 },
+  emptySub: { fontSize: 14, color: Colors.textSecondary, textAlign: 'center', lineHeight: 21 },
+  list: { paddingHorizontal: 20, paddingBottom: 40, gap: 10 },
+
   card: {
-    backgroundColor: Colors.card,
-    borderRadius: Colors.radius,
-    padding: 14,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: Colors.borderSubtle,
-    gap: 8,
+    backgroundColor: Colors.card, borderRadius: Colors.radiusLg,
+    padding: 16, borderWidth: 1, borderColor: Colors.borderSubtle, gap: 10,
   },
-  cardTopRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-  },
-  cardLeft: { flex: 1, marginRight: 8 },
+  cardWon: { borderColor: 'rgba(57,255,20,0.3)' },
+  cardLost: { borderColor: 'rgba(255,59,48,0.25)' },
+
+  cardTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
+  cardLeft: { flex: 1, marginRight: 10 },
   cardRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  cardPlayer: { fontSize: 16, fontWeight: '700', color: Colors.text },
-  cardMeta: { fontSize: 10, color: Colors.textTertiary, marginTop: 2, letterSpacing: 0.3 },
-  schedBadge: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 6,
-    paddingHorizontal: 7,
-    paddingVertical: 3,
+  cardPlayer: { fontSize: 16, fontWeight: '700', color: Colors.text, marginBottom: 3 },
+  cardMeta: { fontSize: 11, color: Colors.textTertiary, letterSpacing: 0.3 },
+
+  liveBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 6,
+    paddingHorizontal: 8, paddingVertical: 4,
   },
-  schedText: { fontSize: 9, color: Colors.textSecondary, fontWeight: '700', letterSpacing: 0.5 },
-  pickLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0.3,
-    textTransform: 'capitalize',
+  liveDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: Colors.primary },
+  liveText: { fontSize: 9, color: Colors.primary, fontWeight: '700', letterSpacing: 0.5 },
+  wonBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: Colors.primary, borderRadius: 6,
+    paddingHorizontal: 8, paddingVertical: 4,
   },
-  statsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 0,
+  wonText: { fontSize: 9, color: '#000', fontWeight: '800', letterSpacing: 0.5 },
+  lostBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: Colors.errorDim, borderRadius: 6,
+    paddingHorizontal: 8, paddingVertical: 4,
+    borderWidth: 1, borderColor: 'rgba(255,59,48,0.3)',
   },
-  statCol: { flex: 1, alignItems: 'center', gap: 3 },
-  statVal: { fontSize: 17, fontWeight: '700', color: Colors.text },
+  lostText: { fontSize: 9, color: Colors.error, fontWeight: '800', letterSpacing: 0.5 },
+
+  pickRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  recPill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6 },
+  recPillText: { fontSize: 12, fontWeight: '800', letterSpacing: 0.5 },
+  pickDetail: { fontSize: 13, color: Colors.textSecondary, flex: 1 },
+
+  statsRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.cardSecondary, borderRadius: 10, padding: 2 },
+  statCol: { flex: 1, alignItems: 'center', paddingVertical: 10, gap: 3 },
+  statVal: { fontSize: 16, fontWeight: '700', color: Colors.text },
   statLbl: { fontSize: 9, color: Colors.textTertiary, fontWeight: '600', letterSpacing: 1 },
   statDivider: { width: 1, height: 32, backgroundColor: Colors.borderSubtle },
-  propTag: {
-    alignSelf: 'flex-end',
-  },
-  propTagText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: Colors.textTertiary,
-    letterSpacing: 1,
-    textTransform: 'uppercase',
-  },
+
+  trackingId: { fontSize: 9, color: Colors.textTertiary, textAlign: 'right', letterSpacing: 0.5 },
 });

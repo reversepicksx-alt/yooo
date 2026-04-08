@@ -229,6 +229,7 @@ export async function predict(request: Record<string, unknown>): Promise<Predict
 export interface Pick {
   _id?: string;
   id?: string;
+  pickId?: string;
   playerName: string;
   teamName?: string;
   opponentName?: string;
@@ -237,24 +238,66 @@ export interface Pick {
   projection?: number;
   recommendation?: string;
   confidence?: number;
-  status?: 'pending' | 'won' | 'lost';
+  confidenceLevel?: string;
+  // Backend uses status:"live"|"settled" + result:"pending"|"won"|"lost"
+  status?: string;
+  result?: string;
   actualValue?: number;
   createdAt?: string;
   sport?: string;
+  venue?: string;
+  trackingId?: string;
 }
 
 export async function listPicks(email: string, token: string): Promise<Pick[]> {
-  const resp = await apiCall<{ picks: Pick[] }>('/api/picks/list', {
+  const resp = await apiCall<{ picks: Record<string, unknown>[] }>('/api/picks/list', {
     method: 'POST',
     body: JSON.stringify({ email, token }),
   });
-  return resp.picks || [];
+  return (resp.picks || []).map(p => ({
+    pickId: p.pickId as string,
+    _id: (p.pickId as string) || (p._id as string),
+    id: (p.pickId as string) || (p.id as string),
+    playerName: (p.playerName as string) || '',
+    teamName: p.teamName as string,
+    opponentName: p.opponentName as string,
+    propType: (p.propType as string) || '',
+    line: (p.line as number) || 0,
+    // normalize projectedValue → projection
+    projection: (p.projectedValue as number) ?? (p.projection as number),
+    // normalize to uppercase OVER/UNDER
+    recommendation: ((p.recommendation as string) || '').toUpperCase() || undefined,
+    // normalize confidenceScore → confidence
+    confidence: (p.confidenceScore as number) ?? (p.confidence as number),
+    confidenceLevel: p.confidenceLevel as string,
+    status: p.status as string,
+    result: p.result as string,
+    actualValue: p.actualValue as number,
+    createdAt: (p.timestamp as string) || (p.createdAt as string),
+    sport: p.sport as string,
+    venue: p.venue as string,
+    trackingId: p.trackingId as string,
+  }));
 }
 
 export async function savePick(email: string, token: string, pick: Partial<Pick>) {
   return apiCall('/api/picks/save', {
     method: 'POST',
-    body: JSON.stringify({ email, token, pick }),
+    body: JSON.stringify({
+      email,
+      token,
+      pick: {
+        playerName: pick.playerName,
+        teamName: pick.teamName,
+        opponentName: pick.opponentName,
+        propType: pick.propType,
+        line: pick.line,
+        projectedValue: pick.projection,
+        confidenceScore: pick.confidence,
+        recommendation: (pick.recommendation || 'over').toLowerCase(),
+        sport: pick.sport || 'soccer',
+      },
+    }),
   });
 }
 
