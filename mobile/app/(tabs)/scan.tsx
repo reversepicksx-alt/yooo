@@ -516,7 +516,7 @@ export default function ScanScreen() {
                   <Text style={[styles.analysisStatVal, { color: Colors.primary }]}>
                     {prediction.projection?.toFixed(1) ?? prediction.bayesianProjection?.toFixed(1) ?? '—'}
                   </Text>
-                  <Text style={styles.analysisStatSub}>BAYESIAN</Text>
+                  <Text style={styles.analysisStatSub}>REVERSE FORMULA</Text>
                 </View>
                 <View style={styles.analysisStatDivider} />
                 <View style={styles.analysisStat}>

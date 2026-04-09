@@ -67,7 +67,7 @@ export default function PredictionCard({ result, onSave, saving }: Props) {
           <Text style={[styles.statValue, { color: Colors.primary }]}>
             {result.projection?.toFixed(1) ?? result.bayesianProjection?.toFixed(1) ?? '—'}
           </Text>
-          <Text style={styles.statSub}>Bayesian</Text>
+          <Text style={styles.statSub}>Reverse Formula</Text>
         </View>
         <View style={styles.statDivider} />
         <View style={styles.statItem}>

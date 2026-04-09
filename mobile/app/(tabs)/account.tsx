@@ -114,7 +114,7 @@ export default function AccountScreen() {
           <MenuRow
             icon="analytics-outline"
             label="Engine"
-            value="Bayesian AI + LLM Reasoning"
+            value="Reverse Formula + AI"
           />
           <MenuRow
             icon="information-circle-outline"
