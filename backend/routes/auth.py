@@ -163,14 +163,16 @@ async def _verify_whop_live(whop_id: str, email_lower: str) -> bool | None:
                         {"email": email_lower},
                         {"$set": {"status": "expired", "updatedAt": datetime.now(timezone.utc).isoformat()}}
                     )
-                    print(f"[AUTH] Whop live check: {email_lower} membership {whop_id} is no longer valid → access denied")
+                    await db.sessions.delete_many({"email": email_lower})
+                    print(f"[AUTH] Whop live check: {email_lower} membership {whop_id} is no longer valid → access denied, sessions killed")
                     return False
             elif resp.status_code == 404:
                 await db.whop_subscriptions.update_one(
                     {"email": email_lower},
                     {"$set": {"status": "expired", "updatedAt": datetime.now(timezone.utc).isoformat()}}
                 )
-                print(f"[AUTH] Whop live check: {email_lower} membership {whop_id} not found → access denied")
+                await db.sessions.delete_many({"email": email_lower})
+                print(f"[AUTH] Whop live check: {email_lower} membership {whop_id} not found → access denied, sessions killed")
                 return False
             else:
                 print(f"[AUTH] Whop live check: unexpected status {resp.status_code} for {email_lower}")
@@ -235,9 +237,9 @@ async def check_access(email_lower: str):
                 if live_valid:
                     return "Whop Member"
                 elif live_valid is False:
-                    pass
+                    return None
                 else:
-                    return "Whop Member"
+                    return None
 
             async with httpx.AsyncClient(timeout=8.0) as client:
                 page = 1
@@ -297,6 +299,27 @@ async def _get_denial_reason(email_lower: str) -> str | None:
         if reason == "admin_force_expired":
             return "Your subscription has been revoked. Contact support if you believe this is an error."
         return "Your subscription has expired. Please resubscribe to continue."
+
+    whop_sub = await db.whop_subscriptions.find_one(
+        {"email": email_lower, "status": "expired"}, {"_id": 0}
+    )
+    if whop_sub:
+        return "Your membership has expired. Please resubscribe to regain access."
+
+    whop_active = await db.whop_subscriptions.find_one(
+        {"email": email_lower, "status": "active"}, {"_id": 0}
+    )
+    if whop_active and whop_active.get("whop_id") and WHOP_API_KEY:
+        try:
+            live_valid = await _verify_whop_live(whop_active["whop_id"], email_lower)
+            if live_valid is False:
+                await db.sessions.delete_many({"email": email_lower})
+                return "Your membership has expired. Please resubscribe to regain access."
+            elif live_valid is None:
+                await db.sessions.delete_many({"email": email_lower})
+                return "Unable to verify your membership. Please try again or contact support."
+        except Exception as e:
+            print(f"[AUTH] Whop pre-check failed for {email_lower}: {e}")
 
     sq_sub = await db.square_subscriptions.find_one(
         {"email": email_lower, "status": {"$in": ["ACTIVE", "PENDING", "CANCELED"]}},
