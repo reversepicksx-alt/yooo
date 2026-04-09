@@ -228,6 +228,53 @@ async def _run_auto_settlement():
             except Exception:
                 continue
 
+        # Also handle picks saved without teamId — look up team by name
+        orphan_picks = [p for p in soccer_picks if not p.get("teamId") and p.get("teamName")]
+        if orphan_picks:
+            unique_team_names = list(set(p.get("teamName", "") for p in orphan_picks))
+            for team_name in unique_team_names:
+                if not team_name:
+                    continue
+                try:
+                    teams_resp = await api_football_request("teams", {"search": team_name[:30]})
+                    if not teams_resp:
+                        continue
+                    tid = teams_resp[0].get("team", {}).get("id")
+                    if not tid:
+                        continue
+
+                    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                    yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+                    today_fix, yest_fix, last_fix = await asyncio.gather(
+                        api_football_request("fixtures", {"team": tid, "date": today}),
+                        api_football_request("fixtures", {"team": tid, "date": yesterday}),
+                        api_football_request("fixtures", {"team": tid, "last": 3}),
+                        return_exceptions=True
+                    )
+                    all_fixtures = []
+                    seen = set()
+                    for batch in [today_fix, yest_fix, last_fix]:
+                        if isinstance(batch, Exception) or not batch:
+                            continue
+                        for f in batch:
+                            fid = f.get("fixture", {}).get("id")
+                            if fid and fid not in seen:
+                                seen.add(fid)
+                                all_fixtures.append(f)
+
+                    picks_for_team = [p for p in orphan_picks if p.get("teamName") == team_name]
+                    for pick in picks_for_team:
+                        await db.picks.update_one(
+                            {"pickId": pick["pickId"]},
+                            {"$set": {"teamId": tid}}
+                        )
+                        pick["teamId"] = tid
+                        result = await _try_settle_soccer(pick, all_fixtures)
+                        if result:
+                            settled_count += 1
+                except Exception:
+                    continue
+
     if settled_count > 0:
         print(f"[AUTO-SETTLE] Settled {settled_count} picks")
 
@@ -239,6 +286,7 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
     opponent = pick.get("opponentName", "")
     prop_type = pick.get("propType", "")
     player_id = pick.get("playerId", 0)
+    player_name_key = pick.get("playerName", "").lower().strip()
 
     # Find matching finished fixture
     matched = None
@@ -291,10 +339,19 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
         for team_data in players_data:
             for p in team_data.get("players", []):
                 pid = p.get("player", {}).get("id")
-                if pid == player_id:
+                api_name = strip_accents((p.get("player", {}).get("name") or "").lower())
+                name_match = player_name_key and (
+                    player_name_key in api_name or api_name in player_name_key
+                )
+                if pid == player_id or (not player_id and name_match):
                     stats = p.get("statistics", [{}])[0]
                     if stat_fn:
                         actual_value = stat_fn(stats)
+                    if actual_value is not None and not player_id and pid:
+                        await db.picks.update_one(
+                            {"pickId": pick["pickId"]},
+                            {"$set": {"playerId": pid}}
+                        )
                     break
             if actual_value is not None:
                 break

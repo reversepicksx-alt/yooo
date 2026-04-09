@@ -181,6 +181,10 @@ export interface PredictionResult {
   awayAvg?: number;
   sampleSize?: number;
   hitRates?: { overHits: number; underHits: number; overPct: number; underPct: number; total: number };
+  teamId?: number;
+  opponentId?: number;
+  leagueId?: number;
+  playerId?: number;
   error?: string;
 }
 
@@ -196,6 +200,13 @@ interface RawPrediction {
   reasoning?: string;
   tacticalBreakdown?: string;
   opponent?: string;
+  _request?: {
+    teamId?: number;
+    opponentId?: number;
+    leagueId?: number;
+    playerId?: number;
+    venue?: string;
+  };
   bayesianMetrics?: {
     posteriorMean?: number;
     edgeZ?: number;
@@ -293,6 +304,10 @@ export async function predict(request: Record<string, unknown>): Promise<Predict
           total: raw.playerGameLogs.hitRates.total,
         }
       : undefined,
+    teamId: raw._request?.teamId || (request.teamId as number) || undefined,
+    opponentId: raw._request?.opponentId || (request.opponentId as number) || undefined,
+    leagueId: raw._request?.leagueId || (request.leagueId as number) || undefined,
+    playerId: raw._request?.playerId || raw.player?.id || undefined,
   };
 }
 

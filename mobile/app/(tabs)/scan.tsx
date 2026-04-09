@@ -168,6 +168,17 @@ export default function ScanScreen() {
         recommendation: prediction.recommendation,
         confidence: prediction.confidence,
         sport: 'soccer',
+        player: {
+          id: prediction.playerId || 0,
+          name: prediction.playerName || scanResult.playerName || playerQuery,
+          team: prediction.teamName || scanResult.teamName || scanResult.playerTeam || '',
+        },
+        _request: {
+          teamId: prediction.teamId || scanResult.teamId || 0,
+          opponentId: prediction.opponentId || scanResult.opponentId || 0,
+          leagueId: prediction.leagueId || scanResult.leagueId || leagueId || 0,
+          venue: venueOverride || 'home',
+        },
       });
       setPhase('saved');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);

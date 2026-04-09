@@ -1,9 +1,10 @@
 import uuid
 import bcrypt
+import httpx
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 
-from config import db, OWNER_EMAIL, LIFETIME_SUB_EMAILS
+from config import db, OWNER_EMAIL, LIFETIME_SUB_EMAILS, WHOP_API_KEY
 from models import (
     VerifyAccessRequest, LoginRequest, SetPasswordRequest,
     ResetPasswordRequest, VerifySessionRequest,
@@ -44,6 +45,28 @@ async def check_access(email_lower: str):
                 return "Premium (Square)"
         else:
             return "Premium (Square)"
+
+    if WHOP_API_KEY:
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(
+                    "https://api.whop.com/api/v2/memberships",
+                    params={"email": email_lower, "valid": "true", "per_page": 10},
+                    headers={"Authorization": f"Bearer {WHOP_API_KEY}"},
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    memberships = data.get("data", [])
+                    active = [m for m in memberships if m.get("valid") or m.get("status") == "active"]
+                    if active:
+                        await db.whop_subscriptions.update_one(
+                            {"email": email_lower},
+                            {"$set": {"email": email_lower, "status": "active", "memberships": active, "updatedAt": datetime.now(timezone.utc).isoformat()}},
+                            upsert=True,
+                        )
+                        return "Whop Member"
+        except Exception as exc:
+            print(f"[WHOP] Check failed for {email_lower}: {exc}")
 
     return None
 

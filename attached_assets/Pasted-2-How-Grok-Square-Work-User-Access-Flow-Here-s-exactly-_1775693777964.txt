@@ -1,0 +1,54 @@
+2. How Grok & Square Work — User Access Flow
+
+Here's exactly how your current system grants users access to the bot:
+
+### **Access Hierarchy** (checked in order in `auth.py → check_access()`):
+
+1. **Owner** → `josselj001@gmail.com` — Instant access, no password needed, bypasses everything.
+2. **Lifetime** → Any email in the `LIFETIME_SUB_EMAILS` list above — Permanent access, just needs to set a password on first login.
+3. **Manual Grant** → Emails you add to the `manual_access_grants` MongoDB collection (via admin panel).
+4. **Square Subscription** → Users who paid via Square checkout — Access until subscription expires.
+5. **Whop Membership** → Legacy users from Whop platform — Checked via Whop API.
+
+### **How Square Subscriptions Work (the paid path):**
+
+1. **User enters email** → Frontend calls `POST /api/auth/verify-whop`
+2. **No access found** → User sees "Subscribe" option
+3. **User clicks Subscribe** → Frontend calls `POST /api/square/create-checkout` with their email + chosen plan
+4. **Backend creates a Square Checkout link** → Redirects user to Square's hosted payment page
+5. **User pays on Square** → Square sends a `payment.completed` webhook to `POST /api/square/webhook`
+6. **Webhook activates the user** → Creates a `square_subscriptions` record in MongoDB with status `ACTIVE` and an expiration date
+7. **User returns to app** → `verify-whop` now finds their active Square subscription → Access granted
+
+### **What You Need to Set Up for This to Work in Production:**
+
+#### **Grok (xAI) — Powers OCR & AI Reasoning:**
+- **Key location:** `XAI_API_KEY` in `/app/backend/.env`
+- **How to get it:** Go to [console.x.ai](https://console.x.ai) → Create API Key
+- **What it does:** `grok-4-1-fast` scans prop screenshots (OCR), `grok-3-mini` writes tactical reasoning
+- **No user setup needed** — this is your server-side key, users never see it
+
+#### **Square — Powers Paid Subscriptions:**
+- **Keys needed in `.env`:**
+  - `SQUARE_ACCESS_TOKEN` — From [Square Developer Dashboard](https://developer.squareup.com/apps)
+  - `SQUARE_APPLICATION_ID` — Same place
+  - `SQUARE_LOCATION_ID` — From your Square business location
+  - `SQUARE_ENVIRONMENT` — Set to `production` for real payments, `sandbox` for testing
+
+- **Square Webhook Setup (CRITICAL):**
+  - Go to your [Square Developer Dashboard](https://developer.squareup.com/apps) → Webhooks
+  - Add a webhook pointing to: `https://YOUR-PRODUCTION-DOMAIN/api/square/webhook`
+  - Subscribe to these events: `payment.completed`, `order.updated`, `order.completed`, `subscription.updated`
+  - Without this webhook, Square payments will go through but your app won't know about them
+
+- **Subscription Plans:**
+  - Your backend auto-creates catalog plans in Square on first use via `POST /api/square/setup-catalog`
+  - Plans are stored in your MongoDB `square_catalog` collection
+
+### **Quick Summary — What a New Paying User Experiences:**
+```
+Enter email → "No membership" → Click Subscribe → Pay on Square → 
+Webhook fires → Account activated → Set password → Full access to bot
+```
+
+Would you like me to make any changes to this setup, add/remove lifetime emails, or help configure anything for production?

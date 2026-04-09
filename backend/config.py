@@ -19,6 +19,8 @@ SQUARE_ACCESS_TOKEN = os.environ.get("SQUARE_ACCESS_TOKEN")
 SQUARE_APPLICATION_ID = os.environ.get("SQUARE_APPLICATION_ID")
 SQUARE_LOCATION_ID = os.environ.get("SQUARE_LOCATION_ID")
 SQUARE_ENVIRONMENT = os.environ.get("SQUARE_ENVIRONMENT", "sandbox")
+WHOP_API_KEY = os.environ.get("WHOP_API_KEY")
+WHOP_COMPANY_ID = os.environ.get("WHOP_COMPANY_ID")
 
 # ── Dynamic settings (overridable via admin panel, persisted in MongoDB) ──
 _dynamic_settings = {}
