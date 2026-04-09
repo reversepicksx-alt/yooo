@@ -188,8 +188,8 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
       {pick.trackingId && (
         <Text style={styles.trackingId}>{pick.trackingId}</Text>
       )}
-      <TouchableOpacity style={styles.trashBtn} onPress={onDelete} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-        <Ionicons name="trash-outline" size={11} color="rgba(255,255,255,0.2)" />
+      <TouchableOpacity style={styles.trashBtn} onPress={onDelete} hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }} activeOpacity={0.5}>
+        <Ionicons name="trash-outline" size={14} color="rgba(255,255,255,0.35)" />
       </TouchableOpacity>
     </View>
   );
@@ -298,10 +298,16 @@ export default function PicksScreen() {
   const handleDelete = useCallback((pick: Pick) => {
     const id = pick.pickId || pick._id || pick.id;
     if (!id) return;
-    Alert.alert('Delete Pick', `Remove ${pick.playerName}?`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => deleteMutation.mutate(id) },
-    ]);
+    if (Platform.OS === 'web') {
+      if (window.confirm(`Remove ${pick.playerName}?`)) {
+        deleteMutation.mutate(id);
+      }
+    } else {
+      Alert.alert('Delete Pick', `Remove ${pick.playerName}?`, [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: () => deleteMutation.mutate(id) },
+      ]);
+    }
   }, [deleteMutation]);
 
   const live = picks.filter(isLive);
@@ -499,7 +505,8 @@ const styles = StyleSheet.create({
   trackingId: { fontSize: 9, color: Colors.textTertiary, textAlign: 'right', letterSpacing: 0.5 },
   trashBtn: {
     position: 'absolute',
-    right: 12,
-    bottom: 12,
+    right: 8,
+    bottom: 8,
+    padding: 8,
   },
 });
