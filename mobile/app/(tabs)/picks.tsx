@@ -55,7 +55,7 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
   const venueStr = pick.venue ? pick.venue.toUpperCase() : '';
 
   const nowValue = pick.actualValue ?? (pick as { currentValue?: number | null }).currentValue ?? null;
-  const paceValue = (pick as { pace?: number | null }).pace ?? pick.projection ?? (pick as { liveValue?: number | null }).liveValue ?? nowValue;
+  const paceValue = (pick as { pace?: number | null }).pace ?? pick.projection ?? (pick as { projectedValue?: number | null }).projectedValue ?? (pick as { liveValue?: number | null }).liveValue ?? nowValue;
   const hitPct = (pick as { hitPct?: number | null }).hitPct ?? (pick as { hitRate?: number | null }).hitRate ?? (pick as { winRate?: number | null }).winRate;
   const lineValue = typeof pick.line === 'number' ? pick.line : null;
 
@@ -136,13 +136,13 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
         </View>
       )}
 
-      {/* Stats row: NOW | LINE | PACE | HIT% */}
+      {/* Stats row: NOW/FINAL | LINE | PACE/PROJ | HIT% */}
       <View style={styles.statsRow}>
         <View style={styles.statCol}>
           <Text style={[styles.statVal, { color: nowValue != null ? trackColor : Colors.textSecondary }]}>
             {nowValue != null ? Number(nowValue).toFixed(0) : '—'}
           </Text>
-          <Text style={styles.statLbl}>NOW</Text>
+          <Text style={styles.statLbl}>{(won || lost || push) ? 'FINAL' : 'NOW'}</Text>
         </View>
         <View style={styles.statDivider} />
         <View style={styles.statCol}>
@@ -152,7 +152,7 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
         <View style={styles.statDivider} />
         <View style={styles.statCol}>
           <Text style={[styles.statVal, { color: paceColor }]}>{paceValue != null ? Number(paceValue).toFixed(1) : '—'}</Text>
-          <Text style={styles.statLbl}>PACE</Text>
+          <Text style={styles.statLbl}>{(won || lost || push) ? 'PROJ' : 'PACE'}</Text>
         </View>
         <View style={styles.statDivider} />
         <View style={styles.statCol}>
@@ -162,13 +162,15 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
       </View>
 
       {/* Tracking bar */}
-      {progressFillPct != null && lineValue != null && (
+      {lineValue != null && (progressFillPct != null || paceValue != null) && (() => {
+        const fillPct = progressFillPct ?? (paceValue != null ? Math.max(0, Math.min(100, (paceValue / Math.max(lineValue * 2, 1)) * 100)) : 0);
+        return (
         <View style={styles.trackBarOuter}>
           <View
             style={[
               styles.trackBarFill,
               {
-                width: `${progressFillPct}%`,
+                width: `${fillPct}%`,
                 backgroundColor: trackColor,
                 opacity: 0.9,
               },
@@ -176,7 +178,8 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
           />
           <View style={[styles.trackBarMarker, { left: `${trackMarkerPct}%` }]} />
         </View>
-      )}
+        );
+      })()}
 
       {/* Tracking ID */}
       {pick.trackingId && (

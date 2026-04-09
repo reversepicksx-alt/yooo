@@ -76,6 +76,7 @@ export interface PredictionResult {
   propType?: string;
   line?: number;
   projection?: number;
+  projectedValue?: number;
   bayesianProjection?: number;
   confidence?: number;
   recommendation?: 'OVER' | 'UNDER' | 'PASS';
@@ -137,6 +138,7 @@ export interface Pick {
   result?: string;
   trackingId?: string;
   projection?: number;
+  projectedValue?: number;
   actualValue?: number | null;
   currentValue?: number | null;
   pace?: number | null;
