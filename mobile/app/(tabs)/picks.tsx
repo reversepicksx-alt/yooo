@@ -51,11 +51,9 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
   const propLabel = PROP_LABELS[pick.propType] || pick.propType?.replace(/_/g, ' ') || '—';
   const venueStr = pick.venue ? pick.venue.toUpperCase() : '';
 
-  // Tracking bar: use actual if settled, else projection if live
-  const trackValue = pick.actualValue != null
-    ? pick.actualValue
-    : (live && pick.projection != null ? pick.projection : null);
-  const isProjected = pick.actualValue == null && trackValue != null;
+  // Tracking bar: only use actual in-game value — never projection (match not started yet)
+  const trackValue = pick.actualValue != null ? pick.actualValue : null;
+  const isProjected = false;
 
   const trackWinning = trackValue != null && pick.line != null
     ? (isOver && trackValue > pick.line) || (isUnder && trackValue < pick.line)
@@ -95,10 +93,16 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
           </Text>
         </View>
         <View style={styles.cardRight}>
-          {live && !won && !lost && (
+          {live && !won && !lost && pick.actualValue != null && (
             <View style={styles.liveBadge}>
               <View style={styles.liveDot} />
               <Text style={styles.liveText}>LIVE</Text>
+            </View>
+          )}
+          {live && !won && !lost && pick.actualValue == null && (
+            <View style={styles.pendingBadge}>
+              <Ionicons name="time-outline" size={11} color={Colors.textSecondary} />
+              <Text style={styles.pendingText}>PENDING</Text>
             </View>
           )}
           {won && (
@@ -397,6 +401,13 @@ const styles = StyleSheet.create({
   },
   liveDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: Colors.primary },
   liveText: { fontSize: 9, color: Colors.primary, fontWeight: '700', letterSpacing: 0.5 },
+  pendingBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 6,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
+    paddingHorizontal: 8, paddingVertical: 4,
+  },
+  pendingText: { fontSize: 9, color: Colors.textSecondary, fontWeight: '600', letterSpacing: 0.5 },
   wonBadge: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
     backgroundColor: Colors.primary, borderRadius: 6,

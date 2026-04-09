@@ -221,6 +221,15 @@ async def predict(req: PredictionRequest):
             if stats_list:
                 league_id = stats_list[-1].get("league", {}).get("id", 39)
 
+        # Recovery: if ai_only_mode skipped fixture fetching but we now have a real team ID,
+        # fetch recent fixtures retroactively so the Reverse Formula has game log data.
+        if actual_team_id and actual_team_id != 0 and not recent_fixtures:
+            try:
+                print(f"[FIXTURE RECOVERY] Fetching fixtures for recovered teamId={actual_team_id}")
+                recent_fixtures = await get_recent_fixtures_fast(actual_team_id, 40)
+            except Exception as _fre:
+                print(f"[FIXTURE RECOVERY] Error: {_fre}")
+
         standings = []
         if standings_raw:
             try:
@@ -715,6 +724,67 @@ async def predict(req: PredictionRequest):
         opponent_fixture_stats = results[1] if not isinstance(results[1], (Exception, type(None))) else []
         player_game_logs = results[2] if not isinstance(results[2], (Exception, type(None))) else []
         grok_digest = results[3] if len(results) > 3 and not isinstance(results[3], (Exception, type(None))) else ""
+
+        # =============================================
+        # SEASON STATS FALLBACK: When no fixture-level game logs exist,
+        # synthesize approximate per-game logs from the player's season aggregate.
+        # This ensures the Reverse Formula has real data instead of using the line as prior.
+        # =============================================
+        if not player_game_logs and player_stats:
+            try:
+                pstats_list = player_stats.get("statistics", [])
+                if pstats_list:
+                    pstats = pstats_list[0]
+                    games_data = pstats.get("games", {})
+                    appearances = games_data.get("appearences") or 0
+                    minutes_total = games_data.get("minutes") or 0
+                    avg_minutes = round(minutes_total / appearances, 1) if appearances > 0 else 70
+                    stat_field_map_season = {
+                        "pass_attempts": ("passes", "total"),
+                        "shots": ("shots", "total"),
+                        "shots_on_target": ("shots", "on"),
+                        "tackles": ("tackles", "total"),
+                        "key_passes": ("passes", "key"),
+                        "shots_assisted": ("passes", "key"),
+                        "saves": ("goals", "saves"),
+                        "interceptions": ("tackles", "interceptions"),
+                        "blocks": ("tackles", "blocks"),
+                        "dribbles": ("dribbles", "attempts"),
+                        "fouls_drawn": ("fouls", "drawn"),
+                        "fouls_committed": ("fouls", "committed"),
+                        "crosses": ("passes", "crosses"),
+                        "goals": ("goals", "total"),
+                        "assists": ("goals", "assists"),
+                        "yellow_cards": ("cards", "yellow"),
+                        "duels_won": ("duels", "won"),
+                    }
+                    season_stat_keys = stat_field_map_season.get(req.propType)
+                    season_total = None
+                    if season_stat_keys:
+                        section, key = season_stat_keys
+                        season_total = pstats.get(section, {}).get(key)
+                    if season_total is not None and appearances >= 3:
+                        per_game_avg = round(season_total / appearances, 2)
+                        # Create synthetic game log entries (one per appearance for variance simulation)
+                        import random as _rng
+                        synthetic_logs = []
+                        for i in range(min(appearances, 10)):
+                            # Add slight variance around the mean so Bayesian doesn't see zero volatility
+                            jitter = _rng.uniform(-per_game_avg * 0.08, per_game_avg * 0.08)
+                            val = max(0, round(per_game_avg + jitter, 1))
+                            synthetic_logs.append({
+                                "targetStat": val,
+                                "passes_total": val if req.propType in ("pass_attempts", "passes") else None,
+                                "minutes": avg_minutes,
+                                "venue": player_venue,
+                                "date": "",
+                                "opponent": "",
+                                "_synthetic": True,
+                            })
+                        player_game_logs = synthetic_logs
+                        print(f"[SEASON FALLBACK] {req.playerName}/{req.propType}: no fixture logs, synthesized {len(synthetic_logs)} entries from season avg={per_game_avg} ({appearances} apps)")
+            except Exception as _sf_err:
+                print(f"[SEASON FALLBACK] Error: {_sf_err}")
 
         # =============================================
         # MATCH DOMINANCE: Opponent-aware possession + context multiplier
