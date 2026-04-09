@@ -13,6 +13,85 @@ from models import (
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
+async def _verify_square_live(square_sub: dict, email_lower: str) -> str | None:
+    """Verify a Square subscription against the live Square API.
+    Returns access label string if valid, None if expired/invalid."""
+    sub_id = square_sub.get("squareSubscriptionId")
+    if not sub_id:
+        return None
+
+    try:
+        from routes.square import get_square_client
+        client = get_square_client()
+        resp = client.subscriptions.get(subscription_id=sub_id)
+        sq_sub = resp.subscription
+        live_status = sq_sub.status if sq_sub.status else square_sub.get("status", "")
+
+        canceled_date = getattr(sq_sub, 'canceled_date', None)
+        updates = {}
+
+        if live_status in ("DEACTIVATED",):
+            updates["status"] = "EXPIRED"
+            updates["updatedAt"] = datetime.now(timezone.utc).isoformat()
+            await db.square_subscriptions.update_one(
+                {"email": email_lower}, {"$set": updates}
+            )
+            print(f"[AUTH] Square live check: {email_lower} is DEACTIVATED → access denied")
+            return None
+
+        if canceled_date:
+            updates["status"] = "CANCELED"
+            updates["canceledAt"] = canceled_date
+            live_status = "CANCELED"
+
+        if updates:
+            updates["updatedAt"] = datetime.now(timezone.utc).isoformat()
+            await db.square_subscriptions.update_one(
+                {"email": email_lower}, {"$set": updates}
+            )
+
+        if live_status in ("ACTIVE", "PENDING"):
+            return "Premium (Square)"
+
+        if live_status == "CANCELED":
+            expires_at = square_sub.get("expiresAt")
+            if expires_at:
+                try:
+                    exp_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+                    if datetime.now(timezone.utc) < exp_dt:
+                        return "Premium (Square) — Cancels soon"
+                except Exception:
+                    pass
+            return None
+
+        return None
+    except Exception as e:
+        print(f"[AUTH] Square live check failed for {email_lower}: {e}")
+        return _check_square_local(square_sub, email_lower)
+
+
+async def _check_square_local(square_sub: dict, email_lower: str) -> str | None:
+    """Fallback: check Square subscription using only local DB data."""
+    expires_at = square_sub.get("expiresAt")
+    if expires_at:
+        try:
+            exp_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            if datetime.now(timezone.utc) > exp_dt:
+                await db.square_subscriptions.update_one(
+                    {"email": email_lower},
+                    {"$set": {"status": "EXPIRED", "updatedAt": datetime.now(timezone.utc).isoformat()}}
+                )
+                print(f"[AUTH] Subscription expired for {email_lower} (expired {expires_at})")
+                return None
+            else:
+                sub_status = square_sub.get("status", "ACTIVE")
+                return "Premium (Square)" if sub_status != "CANCELED" else "Premium (Square) — Cancels soon"
+        except Exception:
+            return "Premium (Square)"
+    else:
+        return "Premium (Square)"
+
+
 async def check_access(email_lower: str):
     if email_lower == OWNER_EMAIL:
         return "Owner"
@@ -27,24 +106,7 @@ async def check_access(email_lower: str):
         {"_id": 0}
     )
     if square_sub:
-        expires_at = square_sub.get("expiresAt")
-        if expires_at:
-            try:
-                exp_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
-                if datetime.now(timezone.utc) > exp_dt:
-                    await db.square_subscriptions.update_one(
-                        {"email": email_lower},
-                        {"$set": {"status": "EXPIRED", "updatedAt": datetime.now(timezone.utc).isoformat()}}
-                    )
-                    print(f"[AUTH] Subscription expired for {email_lower} (expired {expires_at})")
-                else:
-                    sub_status = square_sub.get("status", "ACTIVE")
-                    label = "Premium (Square)" if sub_status != "CANCELED" else "Premium (Square) — Cancels soon"
-                    return label
-            except Exception:
-                return "Premium (Square)"
-        else:
-            return "Premium (Square)"
+        return await _verify_square_live(square_sub, email_lower)
 
     if WHOP_API_KEY:
         try:
