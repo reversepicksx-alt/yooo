@@ -21,7 +21,20 @@ router = APIRouter(prefix="/api", tags=["predict"])
 @router.post("/predict")
 async def predict(req: PredictionRequest):
     try:
-        # Fetch player stats + recent fixtures + supplementary data ALL IN PARALLEL
+        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        cache_query = {
+            "player.id": req.playerId,
+            "propType": req.propType,
+            "line": req.line,
+            "_request.opponentId": req.opponentId,
+            "_created": {"$gte": today_str},
+        }
+        if req.playerId and req.playerId != 0:
+            cached = await db.predictions.find_one(cache_query, sort=[("_created", -1)])
+            if cached:
+                cached.pop("_id", None)
+                return cached
+
         async def safe_fetch(endpoint, params, fallback=None):
             try:
                 return await api_football_request(endpoint, params)
