@@ -523,6 +523,45 @@ export default function ScanScreen() {
                 </>
               )}
 
+              {/* Expected Possession */}
+              {prediction.expectedPossession
+                && Number.isFinite(prediction.expectedPossession.home)
+                && Number.isFinite(prediction.expectedPossession.away)
+                && (() => {
+                const teamPoss = venueOverride === 'home'
+                  ? prediction.expectedPossession!.home
+                  : prediction.expectedPossession!.away;
+                const oppPoss = venueOverride === 'home'
+                  ? prediction.expectedPossession!.away
+                  : prediction.expectedPossession!.home;
+                const teamShort = (prediction.teamName || 'TEAM').split(' ').pop()?.slice(0, 6).toUpperCase() || 'TEAM';
+                const oppShort = (prediction.opponentName || 'OPP').split(' ').pop()?.slice(0, 6).toUpperCase() || 'OPP';
+                return (
+                  <>
+                    <View style={styles.analysisDivider} />
+                    <View style={styles.possRow}>
+                      <View style={styles.possHeader}>
+                        <Ionicons name="football-outline" size={12} color={Colors.textSecondary} />
+                        <Text style={styles.possLabel}>EXPECTED POSSESSION</Text>
+                      </View>
+                      <View style={styles.possBarWrap}>
+                        <View style={[styles.possBarHome, { flex: teamPoss }]} />
+                        <View style={[styles.possBarAway, { flex: oppPoss }]} />
+                      </View>
+                      <View style={styles.possNumbers}>
+                        <Text style={styles.possHomeText}>{teamShort}  {Math.round(teamPoss)}%</Text>
+                        <Text style={styles.possAwayText}>{Math.round(oppPoss)}%  {oppShort}</Text>
+                      </View>
+                      {(prediction.possessionTeamAvg != null || prediction.possessionOppAvg != null) && (
+                        <Text style={styles.possSub}>
+                          Season avg: {prediction.possessionTeamAvg ?? '—'}% vs {prediction.possessionOppAvg ?? '—'}%
+                        </Text>
+                      )}
+                    </View>
+                  </>
+                );
+              })()}
+
               {/* AI Reasoning */}
               {prediction.reasoning && (
                 <>
@@ -1036,6 +1075,18 @@ const styles = StyleSheet.create({
   },
   ciLabel: { fontSize: 10, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 0.8 },
   ciVal: { fontSize: 13, color: Colors.textSecondary, fontWeight: '600' },
+
+  /* Expected Possession */
+  possRow: { paddingHorizontal: 16, paddingVertical: 12, gap: 6 },
+  possHeader: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 2 },
+  possLabel: { fontSize: 10, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 1.2 },
+  possBarWrap: { flexDirection: 'row', height: 8, borderRadius: 4, overflow: 'hidden' },
+  possBarHome: { backgroundColor: Colors.primary, borderTopLeftRadius: 4, borderBottomLeftRadius: 4 },
+  possBarAway: { backgroundColor: '#f43f5e', borderTopRightRadius: 4, borderBottomRightRadius: 4 },
+  possNumbers: { flexDirection: 'row', justifyContent: 'space-between' },
+  possHomeText: { fontSize: 13, fontWeight: '800', color: Colors.primary, fontVariant: ['tabular-nums'] as any },
+  possAwayText: { fontSize: 13, fontWeight: '800', color: '#f43f5e', fontVariant: ['tabular-nums'] as any },
+  possSub: { fontSize: 10, color: Colors.textTertiary, marginTop: 2 },
 
   /* Reasoning */
   reasoningBox: { padding: 16, gap: 8 },

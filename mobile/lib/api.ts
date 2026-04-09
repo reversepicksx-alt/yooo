@@ -212,6 +212,10 @@ export interface PredictionResult {
   sampleSize?: number;
   hitRates?: { overHits: number; underHits: number; overPct: number; underPct: number; total: number };
   h2hPlayerStats?: { matches: H2HMatch[]; avgVsOpponent?: number; sampleSize: number; targetProp?: string };
+  expectedPossession?: { home: number; away: number };
+  possessionMultiplier?: number;
+  possessionTeamAvg?: number;
+  possessionOppAvg?: number;
   teamId?: number;
   opponentId?: number;
   leagueId?: number;
@@ -272,6 +276,19 @@ interface RawPrediction {
     avgVsOpponent?: number;
     sampleSize?: number;
     targetProp?: string;
+  };
+  matchDominance?: {
+    applied?: boolean;
+    multiplier?: number;
+    expectedPoss?: number;
+    teamSeasonAvg?: number;
+    oppSeasonAvg?: number;
+    notes?: string[];
+  };
+  matchupOverview?: {
+    expectedPossession?: { home: number; away: number };
+    homeTeam?: string;
+    awayTeam?: string;
   };
   error?: string;
 }
@@ -375,6 +392,13 @@ export async function predict(request: Record<string, unknown>): Promise<Predict
           targetProp: raw.h2hPlayerStats.targetProp,
         }
       : undefined,
+    expectedPossession: raw.matchupOverview?.expectedPossession
+      ?? (raw.matchDominance?.expectedPoss != null && raw.matchDominance.expectedPoss !== 50
+        ? { home: raw.matchDominance.expectedPoss, away: 100 - raw.matchDominance.expectedPoss }
+        : undefined),
+    possessionMultiplier: raw.matchDominance?.multiplier,
+    possessionTeamAvg: raw.matchDominance?.teamSeasonAvg ?? undefined,
+    possessionOppAvg: raw.matchDominance?.oppSeasonAvg ?? undefined,
     teamId: raw._request?.teamId || (request.teamId as number) || undefined,
     opponentId: raw._request?.opponentId || (request.opponentId as number) || undefined,
     leagueId: raw._request?.leagueId || (request.leagueId as number) || undefined,
