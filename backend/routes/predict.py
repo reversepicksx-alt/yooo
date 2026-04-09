@@ -2450,6 +2450,7 @@ Analyze ALL data thoroughly. Return JSON only."""
             }
 
         # Compact analysis summary for the UI
+        prop_map = {"pass_attempts":"Pass Attempts","shots":"Shots","shots_on_target":"Shots on Target","tackles":"Tackles","key_passes":"Key Passes","saves":"Saves","interceptions":"Interceptions","blocks":"Blocks","dribbles":"Dribbles","fouls_drawn":"Fouls Drawn"}
         prop_key = req.propType or ""
         if prop_key == "shots_on_target":
             stat_label = "Shots on Target"
@@ -2485,7 +2486,6 @@ Analyze ALL data thoroughly. Return JSON only."""
         line = prediction.get('line', req.line)
         proj = prediction.get('projectedValue', '?')
         conf = prediction.get('confidenceScore', '?')
-        prop_map = {"pass_attempts":"Pass Attempts","shots":"Shots","shots_on_target":"Shots on Target","tackles":"Tackles","key_passes":"Key Passes","saves":"Saves","interceptions":"Interceptions","blocks":"Blocks","dribbles":"Dribbles","fouls_drawn":"Fouls Drawn"}
         pl = prop_map.get(req.propType, req.propType)
         consensus_note = prediction.get('consensusNote', '')
 

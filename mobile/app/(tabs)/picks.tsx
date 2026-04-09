@@ -55,8 +55,8 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
   const venueStr = pick.venue ? pick.venue.toUpperCase() : '';
 
   const nowValue = pick.actualValue;
-  const paceValue = pick.projection ?? pick.pace ?? pick.liveValue ?? pick.actualValue;
-  const hitPct = pick.hitRate ?? pick.hitPct ?? pick.winRate;
+  const paceValue = pick.projection ?? (pick as { pace?: number }).pace ?? (pick as { liveValue?: number }).liveValue ?? pick.actualValue;
+  const hitPct = (pick as { hitRate?: number }).hitRate ?? (pick as { hitPct?: number }).hitPct ?? (pick as { winRate?: number }).winRate;
   const lineValue = typeof pick.line === 'number' ? pick.line : null;
 
   const trackValue = nowValue ?? paceValue ?? null;
