@@ -22,6 +22,7 @@ export default function TabLayout() {
     }
   }, [session, isLoading]);
 
+  if (isLoading) return null;
   if (!session) return null;
 
   return (
