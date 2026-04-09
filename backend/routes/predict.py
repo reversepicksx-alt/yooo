@@ -2450,14 +2450,23 @@ Analyze ALL data thoroughly. Return JSON only."""
             }
 
         # Compact analysis summary for the UI
-        prop_map = {"pass_attempts":"Pass Attempts","shots":"Shots","shots_on_target":"Shots on Target","tackles":"Tackles","key_passes":"Key Passes","saves":"Saves","interceptions":"Interceptions","blocks":"Blocks","dribbles":"Dribbles","fouls_drawn":"Fouls Drawn"}
         prop_key = req.propType or ""
         if prop_key == "shots_on_target":
             stat_label = "Shots on Target"
         elif prop_key == "saves":
             stat_label = "Goalkeeper Saves"
         else:
-            stat_label = prop_map.get(prop_key, prop_key.replace("_", " ").title())
+            stat_label = {
+                "pass_attempts": "Pass Attempts",
+                "shots": "Shots",
+                "tackles": "Tackles",
+                "key_passes": "Key Passes",
+                "saves": "Saves",
+                "interceptions": "Interceptions",
+                "blocks": "Blocks",
+                "dribbles": "Dribbles",
+                "fouls_drawn": "Fouls Drawn",
+            }.get(prop_key, prop_key.replace("_", " ").title())
 
         venue_samples = [g for g in player_game_logs if g.get("venue") == player_venue and g.get(target_check) is not None]
         opp_samples = [g for g in opponent_fixture_stats if g.get("shotsOnTarget") is not None] if req.propType == "saves" else []
@@ -2486,7 +2495,18 @@ Analyze ALL data thoroughly. Return JSON only."""
         line = prediction.get('line', req.line)
         proj = prediction.get('projectedValue', '?')
         conf = prediction.get('confidenceScore', '?')
-        pl = prop_map.get(req.propType, req.propType)
+        pl = {
+            "pass_attempts": "Pass Attempts",
+            "shots": "Shots",
+            "shots_on_target": "Shots on Target",
+            "tackles": "Tackles",
+            "key_passes": "Key Passes",
+            "saves": "Saves",
+            "interceptions": "Interceptions",
+            "blocks": "Blocks",
+            "dribbles": "Dribbles",
+            "fouls_drawn": "Fouls Drawn",
+        }.get(req.propType, req.propType)
         consensus_note = prediction.get('consensusNote', '')
 
         # Gather text from Grok response for synthesis
