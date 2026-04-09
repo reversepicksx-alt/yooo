@@ -60,7 +60,7 @@ async def save_pick(req: SavePickRequest):
         "leagueId": pick.get("_request", {}).get("leagueId", 0),
         "propType": normalized_prop,
         "line": pick.get("line", 0),
-        "recommendation": pick.get("recommendation", "over"),
+        "recommendation": (pick.get("recommendation") or "over").lower(),
         "projectedValue": pick.get("projectedValue", 0),
         "confidenceScore": pick.get("confidenceScore", 50),
         "confidenceLevel": pick.get("confidenceLevel", "Medium"),
@@ -193,11 +193,25 @@ async def list_picks(req: GetPicksRequest):
         if not p.get("sport"):
             p["sport"] = "soccer"
             updates["sport"] = "soccer"
+        rec_raw = p.get("recommendation", "")
+        if rec_raw and rec_raw != rec_raw.lower():
+            p["recommendation"] = rec_raw.lower()
+            updates["recommendation"] = rec_raw.lower()
         if updates:
             await db.picks.update_one(
                 {"pickId": p["pickId"], "email": req.email.lower()},
                 {"$set": updates}
             )
+
+    for p in picks:
+        if p.get("status") == "settled" and p.get("actualValue") is not None:
+            correct = _settle_result(p["actualValue"], p.get("line", 0), p.get("recommendation", "over"))
+            if correct != p.get("result"):
+                p["result"] = correct
+                await db.picks.update_one(
+                    {"pickId": p["pickId"], "email": req.email.lower()},
+                    {"$set": {"result": correct}}
+                )
 
     live_picks = [p for p in picks if p.get("status") == "live"]
     if live_picks:
@@ -332,7 +346,7 @@ SOCCER_STAT_MAP = {
     "shots_on_target": lambda s: s.get("shots", {}).get("on"),
     "tackles": lambda s: s.get("tackles", {}).get("total"),
     "key_passes": lambda s: s.get("passes", {}).get("key"),
-    "saves": lambda s: s.get("goals", {}).get("saves"),
+    "saves": lambda s: (s.get("goals", {}).get("saves") or 0),
     "interceptions": lambda s: s.get("tackles", {}).get("interceptions"),
     "blocks": lambda s: s.get("tackles", {}).get("blocks"),
     "dribbles": lambda s: s.get("dribbles", {}).get("attempts"),
@@ -563,14 +577,15 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str) -> dict:
 
 def _calc_hit_pct(current_value, line, recommendation, elapsed, total_minutes, is_finished, pace):
     """Calculate hit probability percentage."""
+    rec = (recommendation or "").lower()
     if is_finished:
         if current_value == line:
             return 50
-        return 100 if ((recommendation == "over" and current_value > line) or
-                       (recommendation == "under" and current_value < line)) else 0
+        return 100 if ((rec == "over" and current_value > line) or
+                       (rec == "under" and current_value < line)) else 0
 
     progress = elapsed / max(total_minutes, 1)
-    if recommendation == "over":
+    if rec == "over":
         if pace > line * 1.3:
             return min(95, round(60 + progress * 35))
         elif pace > line:
@@ -592,10 +607,11 @@ def _calc_hit_pct(current_value, line, recommendation, elapsed, total_minutes, i
 
 def _settle_result(current_value, line, recommendation):
     """Determine if a pick hit, missed, or pushed."""
+    rec = (recommendation or "").lower()
     if current_value == line:
         return "push"
-    elif (current_value > line and recommendation == "over") or \
-         (current_value < line and recommendation == "under"):
+    elif (current_value > line and rec == "over") or \
+         (current_value < line and rec == "under"):
         return "hit"
     else:
         return "miss"
