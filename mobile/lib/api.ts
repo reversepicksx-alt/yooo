@@ -25,7 +25,11 @@ async function apiCall<T = unknown>(endpoint: string, options: RequestInit = {})
   }
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-    throw new Error((err as { detail?: string }).detail || 'Request failed');
+    const detail = (err as { detail?: string | Array<{ msg?: string }> }).detail;
+    const message = Array.isArray(detail)
+      ? detail.map((d) => d.msg || 'Validation error').join(', ')
+      : (typeof detail === 'string' ? detail : 'Request failed');
+    throw new Error(message);
   }
   return resp.json() as Promise<T>;
 }
@@ -81,7 +85,7 @@ export async function verifySession(email: string, session_token: string) {
   });
 }
 
-export async function createCheckout(email: string, planKey: string): Promise<{ checkout_url?: string; redirect_url?: string; error?: string }> {
+export async function createCheckout(email: string, planKey: string): Promise<{ checkoutUrl?: string; checkout_url?: string; redirect_url?: string; error?: string }> {
   const redirectUrl = typeof window !== 'undefined'
     ? `${window.location.origin}/auth`
     : 'https://reversepicks.com/auth';

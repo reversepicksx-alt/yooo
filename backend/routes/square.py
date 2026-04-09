@@ -121,11 +121,11 @@ class SubscribeRequest(BaseModel):
 
 class CheckoutRequest(BaseModel):
     email: str
-    firstName: str
-    lastName: str
     planKey: str
-    password: str
     redirectUrl: str
+    firstName: str = ""
+    lastName: str = ""
+    password: str = ""
 
 
 @router.post("/create-checkout")
@@ -153,12 +153,9 @@ async def create_checkout(req: CheckoutRequest):
     location_id = get_dynamic_setting("SQUARE_LOCATION_ID")
 
     try:
-        # 1. Store pending user (will be activated after checkout)
-        import bcrypt
+        # 1. Store pending checkout (password set up separately after payment)
         now = datetime.now(timezone.utc).isoformat()
         checkout_token = str(uuid.uuid4())
-        salt = bcrypt.gensalt()
-        password_hash = bcrypt.hashpw(req.password.encode("utf-8"), salt).decode("utf-8")
 
         # Calculate expiration based on plan cadence
         from datetime import timedelta
@@ -171,7 +168,6 @@ async def create_checkout(req: CheckoutRequest):
                 "email": email_lower,
                 "firstName": req.firstName,
                 "lastName": req.lastName,
-                "passwordHash": password_hash,
                 "planKey": plan_key,
                 "checkoutToken": checkout_token,
                 "expiresAt": expires_at,

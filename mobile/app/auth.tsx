@@ -120,7 +120,7 @@ export default function AuthScreen() {
     setError('');
     try {
       const result = await createCheckout(trimmed, planKey);
-      const url = result.checkout_url || result.redirect_url;
+      const url = result.checkoutUrl || result.checkout_url || result.redirect_url;
       if (url) {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
