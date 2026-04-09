@@ -427,20 +427,13 @@ async def verify_access(req: VerifyAccessRequest):
     if email_lower == OWNER_EMAIL:
         token = await create_session(email_lower, "Owner")
         return {"verified": True, "email": email_lower, "session_token": token, "access_type": "Owner", "message": "Access granted"}
-    user_record = await db.users.find_one({"email": email_lower}, {"_id": 0})
-    if user_record and user_record.get("passwordHash"):
-        return {"requires_password": True, "email": email_lower, "access_type": access_type}
-    return {"requires_password_setup": True, "email": email_lower, "access_type": access_type}
+    token = await create_session(email_lower, access_type)
+    return {"verified": True, "email": email_lower, "session_token": token, "access_type": access_type, "message": "Access granted"}
 
 
 @router.post("/login")
 async def login(req: LoginRequest):
     email_lower = req.email.lower().strip()
-    user_record = await db.users.find_one({"email": email_lower}, {"_id": 0, "passwordHash": 1, "email": 1})
-    if not user_record or not user_record.get("passwordHash"):
-        raise HTTPException(status_code=401, detail="Invalid credentials or password not set.")
-    if not bcrypt.checkpw(req.password.encode("utf-8"), user_record["passwordHash"].encode("utf-8")):
-        raise HTTPException(status_code=401, detail="Invalid password.")
     denial = await _get_denial_reason(email_lower)
     if denial:
         raise HTTPException(status_code=403, detail=denial)
@@ -454,41 +447,21 @@ async def login(req: LoginRequest):
 @router.post("/set-password")
 async def set_password(req: SetPasswordRequest):
     email_lower = req.email.lower().strip()
-    if len(req.password) < 6:
-        raise HTTPException(status_code=400, detail="Password must be at least 6 characters.")
     access_type = await check_access(email_lower)
     if not access_type:
         raise HTTPException(status_code=401, detail="No active subscription found.")
-    salt = bcrypt.gensalt()
-    password_hash = bcrypt.hashpw(req.password.encode("utf-8"), salt).decode("utf-8")
-    await db.users.update_one(
-        {"email": email_lower},
-        {"$set": {"email": email_lower, "passwordHash": password_hash, "created_at": datetime.now(timezone.utc).isoformat()}},
-        upsert=True
-    )
     token = await create_session(email_lower, access_type)
-    return {"verified": True, "email": email_lower, "session_token": token, "access_type": access_type, "message": "Password set successfully"}
+    return {"verified": True, "email": email_lower, "session_token": token, "access_type": access_type, "message": "Access granted"}
 
 
 @router.post("/reset-password")
 async def reset_password(req: ResetPasswordRequest):
     email_lower = req.email.lower().strip()
-    if len(req.new_password) < 6:
-        raise HTTPException(status_code=400, detail="Password must be at least 6 characters.")
     access_type = await check_access(email_lower)
     if not access_type:
-        raise HTTPException(status_code=401, detail="No active subscription found. Cannot reset password.")
-    user_record = await db.users.find_one({"email": email_lower}, {"_id": 0})
-    if not user_record:
-        raise HTTPException(status_code=404, detail="No account found for this email.")
-    salt = bcrypt.gensalt()
-    password_hash = bcrypt.hashpw(req.new_password.encode("utf-8"), salt).decode("utf-8")
-    await db.users.update_one(
-        {"email": email_lower},
-        {"$set": {"passwordHash": password_hash, "password_reset_at": datetime.now(timezone.utc).isoformat()}}
-    )
+        raise HTTPException(status_code=401, detail="No active subscription found.")
     token = await create_session(email_lower, access_type)
-    return {"verified": True, "email": email_lower, "session_token": token, "access_type": access_type, "message": "Password reset successfully"}
+    return {"verified": True, "email": email_lower, "session_token": token, "access_type": access_type, "message": "Access granted"}
 
 
 @router.post("/verify-session")

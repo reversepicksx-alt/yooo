@@ -18,3 +18,4 @@ mongodb_data/journal/WiredTigerLog.0000000021 filter=lfs diff=lfs merge=lfs -tex
 mongodb_data/journal/WiredTigerLog.0000000024 filter=lfs diff=lfs merge=lfs -text
 mongodb_data/journal/WiredTigerLog.0000000025 filter=lfs diff=lfs merge=lfs -text
 mongodb_data/journal/WiredTigerLog.0000000027 filter=lfs diff=lfs merge=lfs -text
+mongodb_data/journal/WiredTigerLog.0000000028 filter=lfs diff=lfs merge=lfs -text

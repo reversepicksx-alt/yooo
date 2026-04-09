@@ -13,7 +13,7 @@ import {
   verifyAccess, setPassword as apiSetPassword, authLogin, createCheckout,
 } from '@/lib/api';
 
-type Step = 'email' | 'password' | 'setup' | 'pricing' | 'forgot';
+type Step = 'email' | 'pricing';
 
 const INPUT_STYLE = Platform.OS === 'web' ? { outlineWidth: 0, outlineStyle: 'none' } : {};
 
@@ -28,9 +28,6 @@ export default function AuthScreen() {
   const { loginWithResponse } = useAuth();
   const [step, setStep] = useState<Step>('email');
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
   const [error, setError] = useState('');
@@ -47,12 +44,6 @@ export default function AuthScreen() {
       if (result.denied && result.denial_reason) {
         setError(result.denial_reason);
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      } else if (result.requires_password_setup) {
-        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        setStep('setup');
-      } else if (result.requires_password) {
-        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        setStep('password');
       } else if (result.verified && result.session_token && result.email) {
         await loginWithResponse({
           email: result.email,
@@ -67,59 +58,6 @@ export default function AuthScreen() {
       }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to verify access.');
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleLogin = async () => {
-    if (!password.trim()) { setError('Enter your password.'); return; }
-    setLoading(true);
-    setError('');
-    try {
-      const resp = await authLogin(email.trim().toLowerCase(), password);
-      await loginWithResponse(resp);
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      router.replace('/(tabs)/scan');
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Incorrect password.');
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleSetPassword = async () => {
-    if (password.length < 6) { setError('Password must be at least 6 characters.'); return; }
-    if (password !== confirmPassword) { setError('Passwords do not match.'); return; }
-    setLoading(true);
-    setError('');
-    try {
-      const resp = await apiSetPassword(email.trim().toLowerCase(), password);
-      await loginWithResponse(resp);
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      router.replace('/(tabs)/scan');
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to set password.');
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleForgotPassword = async () => {
-    if (password.length < 6) { setError('Password must be at least 6 characters.'); return; }
-    if (password !== confirmPassword) { setError('Passwords do not match.'); return; }
-    setLoading(true);
-    setError('');
-    try {
-      const resp = await apiSetPassword(email.trim().toLowerCase(), password);
-      await loginWithResponse(resp);
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      router.replace('/(tabs)/scan');
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Could not reset password. Check your email is on file.');
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
       setLoading(false);
@@ -169,11 +107,7 @@ export default function AuthScreen() {
     setInfo('');
     try {
       const result = await verifyAccess(trimmed);
-      if (result.requires_password_setup) {
-        setStep('setup');
-      } else if (result.requires_password) {
-        setStep('password');
-      } else if (result.verified && result.session_token && result.email) {
+      if (result.verified && result.session_token && result.email) {
         await loginWithResponse({
           email: result.email,
           session_token: result.session_token,
@@ -193,18 +127,8 @@ export default function AuthScreen() {
 
   const goBack = () => {
     setStep('email');
-    setPassword('');
-    setConfirmPassword('');
     setError('');
     setInfo('');
-  };
-
-  const goForgot = () => {
-    setPassword('');
-    setConfirmPassword('');
-    setError('');
-    setStep('forgot');
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
   if (step === 'pricing') {
@@ -338,163 +262,6 @@ export default function AuthScreen() {
             </View>
           )}
 
-          {step === 'password' && (
-            <View style={styles.card}>
-              <EmailBadge email={email} onBack={goBack} />
-
-              <View style={styles.inputRow}>
-                <Ionicons name="lock-closed-outline" size={17} color={Colors.textSecondary} style={styles.icon} />
-                <TextInput
-                  style={[styles.input, INPUT_STYLE]}
-                  placeholder="Password"
-                  placeholderTextColor={Colors.textTertiary}
-                  value={password}
-                  onChangeText={setPassword}
-                  secureTextEntry={!showPassword}
-                  autoComplete="password"
-                  textContentType="password"
-                  onSubmitEditing={handleLogin}
-                  returnKeyType="done"
-                />
-                <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eye}>
-                  <Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={17} color={Colors.textSecondary} />
-                </TouchableOpacity>
-              </View>
-
-              {!!error && <ErrorBox message={error} />}
-
-              <TouchableOpacity
-                style={[styles.btn, loading && styles.btnDisabled]}
-                onPress={handleLogin}
-                disabled={loading}
-                activeOpacity={0.85}
-              >
-                {loading
-                  ? <ActivityIndicator color="#000" size="small" />
-                  : <Text style={styles.btnText}>Sign In</Text>
-                }
-              </TouchableOpacity>
-
-              <TouchableOpacity onPress={goForgot} style={styles.forgotRow}>
-                <Text style={styles.forgotText}>Forgot password?</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-
-          {step === 'setup' && (
-            <View style={styles.card}>
-              <EmailBadge email={email} onBack={goBack} />
-              <Text style={styles.setupNote}>Create a password to secure your account</Text>
-
-              <View style={styles.inputRow}>
-                <Ionicons name="lock-closed-outline" size={17} color={Colors.textSecondary} style={styles.icon} />
-                <TextInput
-                  style={[styles.input, INPUT_STYLE]}
-                  placeholder="Choose a password (min. 6 chars)"
-                  placeholderTextColor={Colors.textTertiary}
-                  value={password}
-                  onChangeText={setPassword}
-                  secureTextEntry={!showPassword}
-                  autoComplete="new-password"
-                  textContentType="newPassword"
-                  returnKeyType="next"
-                />
-                <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eye}>
-                  <Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={17} color={Colors.textSecondary} />
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.inputRow}>
-                <Ionicons name="lock-closed-outline" size={17} color={Colors.textSecondary} style={styles.icon} />
-                <TextInput
-                  style={[styles.input, INPUT_STYLE]}
-                  placeholder="Confirm password"
-                  placeholderTextColor={Colors.textTertiary}
-                  value={confirmPassword}
-                  onChangeText={setConfirmPassword}
-                  secureTextEntry={!showPassword}
-                  autoComplete="new-password"
-                  textContentType="newPassword"
-                  onSubmitEditing={handleSetPassword}
-                  returnKeyType="done"
-                />
-              </View>
-
-              {!!error && <ErrorBox message={error} />}
-
-              <TouchableOpacity
-                style={[styles.btn, loading && styles.btnDisabled]}
-                onPress={handleSetPassword}
-                disabled={loading}
-                activeOpacity={0.85}
-              >
-                {loading
-                  ? <ActivityIndicator color="#000" size="small" />
-                  : <Text style={styles.btnText}>Set Password & Enter</Text>
-                }
-              </TouchableOpacity>
-            </View>
-          )}
-
-          {step === 'forgot' && (
-            <View style={styles.card}>
-              <EmailBadge email={email} onBack={() => { setStep('password'); setPassword(''); setConfirmPassword(''); setError(''); }} />
-              <Text style={styles.setupNote}>Reset your password — membership verified by email</Text>
-
-              <View style={styles.inputRow}>
-                <Ionicons name="lock-closed-outline" size={17} color={Colors.textSecondary} style={styles.icon} />
-                <TextInput
-                  style={[styles.input, INPUT_STYLE]}
-                  placeholder="New password (min. 6 chars)"
-                  placeholderTextColor={Colors.textTertiary}
-                  value={password}
-                  onChangeText={setPassword}
-                  secureTextEntry={!showPassword}
-                  autoComplete="new-password"
-                  textContentType="newPassword"
-                  returnKeyType="next"
-                />
-                <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eye}>
-                  <Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={17} color={Colors.textSecondary} />
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.inputRow}>
-                <Ionicons name="lock-closed-outline" size={17} color={Colors.textSecondary} style={styles.icon} />
-                <TextInput
-                  style={[styles.input, INPUT_STYLE]}
-                  placeholder="Confirm new password"
-                  placeholderTextColor={Colors.textTertiary}
-                  value={confirmPassword}
-                  onChangeText={setConfirmPassword}
-                  secureTextEntry={!showPassword}
-                  autoComplete="new-password"
-                  textContentType="newPassword"
-                  onSubmitEditing={handleForgotPassword}
-                  returnKeyType="done"
-                />
-              </View>
-
-              {!!error && <ErrorBox message={error} />}
-
-              <TouchableOpacity
-                style={[styles.btn, loading && styles.btnDisabled]}
-                onPress={handleForgotPassword}
-                disabled={loading}
-                activeOpacity={0.85}
-              >
-                {loading
-                  ? <ActivityIndicator color="#000" size="small" />
-                  : (
-                    <View style={styles.btnInner}>
-                      <Ionicons name="refresh" size={15} color="#000" />
-                      <Text style={styles.btnText}>Reset Password</Text>
-                    </View>
-                  )
-                }
-              </TouchableOpacity>
-            </View>
-          )}
         </View>
       </View>
     </View>
