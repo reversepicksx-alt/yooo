@@ -116,6 +116,37 @@ TEAM_LEAGUE_MAP = {
     "toulouse": 61, "nantes": 61, "reims": 61, "montpellier": 61, "brest": 61,
     "le havre": 61, "clermont": 61, "metz": 61, "lorient": 61, "auxerre": 61,
     "angers": 61, "saint-etienne": 61, "st etienne": 61, "ajaccio": 61,
+    # Saudi Pro League - league 307
+    "al hilal": 307, "al-hilal": 307, "hilal": 307,
+    "al nassr": 307, "al-nassr": 307, "nassr": 307,
+    "al ittihad": 307, "al-ittihad": 307, "ittihad": 307,
+    "al ahli": 307, "al-ahli": 307,
+    "damac": 307, "damac fc": 307,
+    "al qadsiah": 307, "al-qadsiah": 307, "qadsiah": 307, "qadisiyah": 307,
+    "al qadisiyah": 307, "al-qadisiyah": 307, "al qadisiya": 307,
+    "al ettifaq": 307, "al-ettifaq": 307, "ettifaq": 307,
+    "al taawon": 307, "al-taawon": 307, "taawon": 307,
+    "al shabab": 307, "al-shabab": 307, "shabab": 307,
+    "al fateh": 307, "al-fateh": 307, "fateh": 307,
+    "al fayha": 307, "al-fayha": 307, "fayha": 307,
+    "al raed": 307, "al-raed": 307, "raed": 307,
+    "al khaleej": 307, "al-khaleej": 307, "khaleej": 307,
+    "al tai": 307, "al-tai": 307,
+    "al wehda": 307, "al-wehda": 307, "wehda": 307,
+    "al okhdood": 307, "al-okhdood": 307, "okhdood": 307,
+    "al faisaly": 307, "al-faisaly": 307, "faisaly": 307,
+    "hajer": 307, "hajer fc": 307,
+    "al hazem": 307, "al-hazem": 307, "hazem": 307,
+    "al riyadh": 307, "al-riyadh": 307,
+    "al nassr fc": 307, "al hilal fc": 307, "al ittihad fc": 307,
+    # Egyptian Premier League - league 233
+    "al ahly": 233, "al-ahly": 233, "zamalek": 233, "pyramids": 233, "pyramids fc": 233,
+    "future fc": 233, "al masry": 233, "smouha": 233, "enppi": 233, "ceramica": 233,
+    # Turkish Super Lig - league 203
+    "galatasaray": 203, "fenerbahce": 203, "besiktas": 203, "trabzonspor": 203,
+    "basaksehir": 203, "istanbul basaksehir": 203, "sivasspor": 203, "konyaspor": 203,
+    "kasimpasa": 203, "antalyaspor": 203, "kayserispor": 203, "alanyaspor": 203,
+    "gaziantep": 203, "giresunspor": 203, "adana demirspor": 203,
     "portland thorns": 254, "washington spirit": 254, "north carolina courage": 254,
     "orlando pride": 254, "gotham fc": 254, "angel city": 254, "kansas city current": 254,
     "san diego wave": 254, "wave fc": 254, "houston dash": 254, "racing louisville": 254,
@@ -185,6 +216,14 @@ async def _infer_league_id(team_name: str, opponent_name: str, ai_league_id: int
             return 13  # Copa Libertadores
         if team_league in EUROPEAN_TOP_LEAGUES and opp_league in EUROPEAN_TOP_LEAGUES:
             return 2  # Champions League
+        # CRITICAL: When team and opponent leagues conflict (e.g. OCR read "Fulham" but
+        # opponent is "Qadsiah" from Saudi), the opponent's league is more reliable —
+        # on any real prop slip, both teams are always in the same competition.
+        # Trust the OPPONENT's league to correctly place the player.
+        if opp_league:
+            print(f"[LEAGUE INFER] Conflict: team_league={team_league} vs opp_league={opp_league} — trusting opponent league {opp_league}")
+            return opp_league
+        return team_league
 
     # Step 3: Return whichever league we found
     if team_league:
@@ -458,7 +497,7 @@ async def _resolve_opponent(opponent_name: str, is_international: bool, league_i
         39: "england", 40: "england", 61: "france", 71: "brazil", 78: "germany",
         135: "italy", 140: "spain", 188: "australia", 253: "usa",
         254: "usa", 262: "mexico", 128: "argentina", 169: "china",
-        242: "ecuador",
+        242: "ecuador", 203: "turkey", 233: "egypt",
         292: "south-korea", 307: "saudi-arabia", 332: "japan",
     }
     target_country = LEAGUE_COUNTRY.get(league_id, "")
