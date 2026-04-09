@@ -2449,6 +2449,36 @@ Analyze ALL data thoroughly. Return JSON only."""
                 "totalGames": total_game_logs,
             }
 
+        # Compact analysis summary for the UI
+        prop_key = req.propType or ""
+        if prop_key == "shots_on_target":
+            stat_label = "Shots on Target"
+        elif prop_key == "saves":
+            stat_label = "Goalkeeper Saves"
+        else:
+            stat_label = prop_map.get(prop_key, prop_key.replace("_", " ").title())
+
+        venue_samples = [g for g in player_game_logs if g.get("venue") == player_venue and g.get(target_check) is not None]
+        opp_samples = [g for g in opponent_fixture_stats if g.get("shotsOnTarget") is not None] if req.propType == "saves" else []
+        venue_avg = round(sum((g.get(target_check) or 0) for g in venue_samples) / len(venue_samples), 2) if venue_samples else None
+        opp_allowed_avg = None
+        if req.propType in ("shots_on_target", "saves"):
+            if req.propType == "shots_on_target":
+                opp_allowed_avg = round(sum((g.get("shotsOnTarget") or 0) for g in opp_samples) / len(opp_samples), 2) if opp_samples else None
+            else:
+                opp_allowed_avg = round(sum((g.get("shotsOnTarget") or 0) for g in opp_samples) / len(opp_samples), 2) if opp_samples else None
+
+        prediction["analysisSummary"] = {
+            "statLabel": stat_label,
+            "venue": player_venue,
+            "venueSampleSize": len(venue_samples),
+            "venueAverage": venue_avg,
+            "opponentAllowedAverage": opp_allowed_avg,
+            "goalkeeperSaveRate": gk_formula_data.get("gkSaveRate") if gk_formula_data else None,
+            "goalkeeperSaveSample": gk_formula_data.get("gkSampleSize") if gk_formula_data else None,
+            "opponentShotsOnTarget": gk_formula_data.get("opponentAvgSOT") if gk_formula_data else None,
+        }
+
         # SYNTHESIS STEP: Combine all AI analyses into one rich tactical breakdown
         # This recreates the original Grok+Gemini depth — one AI synthesizes all others' insights
         rec = prediction.get('recommendation', 'over').upper()
