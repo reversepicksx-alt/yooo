@@ -1,5 +1,6 @@
 const express = require('express');
 const path = require('path');
+const fs = require('fs');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 
 const app = express();
@@ -70,7 +71,16 @@ if (IS_PRODUCTION) {
 
   console.log('[Proxy] PRODUCTION mode — serving static files from dist/');
 } else {
-  // Development: proxy everything to Expo Metro dev server
+  // Development: serve the Expo web export if available, otherwise proxy to Metro
+  const distPath = path.join(__dirname, 'dist');
+  const hasDist = fs.existsSync(path.join(distPath, 'index.html'));
+  if (hasDist) {
+    app.use(express.static(distPath));
+    app.use((req, res) => {
+      res.sendFile(path.join(distPath, 'index.html'));
+    });
+    console.log('[Proxy] DEVELOPMENT mode — serving static dist/');
+  } else {
   app.use(
     createProxyMiddleware({
       pathFilter: '/**',
@@ -87,6 +97,7 @@ if (IS_PRODUCTION) {
       },
     })
   );
+  }
 }
 
 const PORT = 5000;

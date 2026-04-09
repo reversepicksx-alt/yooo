@@ -122,6 +122,28 @@ export interface PredictionResult {
   error?: string;
 }
 
+export const PROP_TYPES = [
+  { label: 'Pass Attempts', value: 'pass_attempts' },
+  { label: 'Shots', value: 'shots' },
+  { label: 'Shots on Target', value: 'shots_on_target' },
+  { label: 'Goals', value: 'goals' },
+  { label: 'Assists', value: 'assists' },
+  { label: 'Key Passes', value: 'key_passes' },
+  { label: 'Tackles', value: 'tackles' },
+  { label: 'Saves', value: 'saves' },
+  { label: 'Dribbles', value: 'dribbles' },
+  { label: 'Crosses', value: 'crosses' },
+  { label: 'Interceptions', value: 'interceptions' },
+  { label: 'Blocks', value: 'blocks' },
+  { label: 'Fouls Drawn', value: 'fouls_drawn' },
+  { label: 'Fouls Committed', value: 'fouls_committed' },
+  { label: 'Clearances', value: 'clearances' },
+  { label: 'Yellow Cards', value: 'yellow_cards' },
+  { label: 'Duels Won', value: 'duels_won' },
+  { label: 'Shot Assists', value: 'shots_assisted' },
+  { label: 'Passes', value: 'passes' },
+] as const;
+
 const GAME_LOG_FIELD_MAP: Record<string, string> = {
   pass_attempts: 'passes_total',
   passes: 'passes_total',
