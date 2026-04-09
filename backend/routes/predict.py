@@ -765,12 +765,11 @@ async def predict(req: PredictionRequest):
                         season_total = pstats.get(section, {}).get(key)
                     if season_total is not None and appearances >= 3:
                         per_game_avg = round(season_total / appearances, 2)
-                        # Create synthetic game log entries (one per appearance for variance simulation)
                         import random as _rng
+                        _seed_rng = _rng.Random(f"{req.playerId}_{req.propType}_{season_total}_{appearances}")
                         synthetic_logs = []
                         for i in range(min(appearances, 10)):
-                            # Add slight variance around the mean so Bayesian doesn't see zero volatility
-                            jitter = _rng.uniform(-per_game_avg * 0.08, per_game_avg * 0.08)
+                            jitter = _seed_rng.uniform(-per_game_avg * 0.08, per_game_avg * 0.08)
                             val = max(0, round(per_game_avg + jitter, 1))
                             synthetic_logs.append({
                                 "targetStat": val,
