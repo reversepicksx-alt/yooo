@@ -122,6 +122,32 @@ export interface PredictionResult {
   error?: string;
 }
 
+export interface Pick {
+  _id?: string;
+  id?: string;
+  pickId?: string;
+  playerName?: string;
+  teamName?: string;
+  opponentName?: string;
+  propType?: string;
+  line?: number;
+  recommendation?: string;
+  venue?: string;
+  status?: string;
+  result?: string;
+  trackingId?: string;
+  projection?: number;
+  actualValue?: number | null;
+  currentValue?: number | null;
+  pace?: number | null;
+  hitPct?: number | null;
+  elapsed?: number | null;
+  period?: string;
+  fixtureId?: number | null;
+  playerId?: number | null;
+  createdAt?: string;
+}
+
 export const PROP_TYPES = [
   { label: 'Pass Attempts', value: 'pass_attempts' },
   { label: 'Shots', value: 'shots' },

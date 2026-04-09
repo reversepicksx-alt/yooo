@@ -54,9 +54,9 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
   const propLabel = PROP_LABELS[pick.propType] || pick.propType?.replace(/_/g, ' ') || '—';
   const venueStr = pick.venue ? pick.venue.toUpperCase() : '';
 
-  const nowValue = pick.actualValue;
-  const paceValue = pick.projection ?? (pick as { pace?: number }).pace ?? (pick as { liveValue?: number }).liveValue ?? pick.actualValue;
-  const hitPct = (pick as { hitRate?: number }).hitRate ?? (pick as { hitPct?: number }).hitPct ?? (pick as { winRate?: number }).winRate;
+  const nowValue = pick.actualValue ?? (pick as { currentValue?: number | null }).currentValue ?? null;
+  const paceValue = (pick as { pace?: number | null }).pace ?? pick.projection ?? (pick as { liveValue?: number | null }).liveValue ?? nowValue;
+  const hitPct = (pick as { hitPct?: number | null }).hitPct ?? (pick as { hitRate?: number | null }).hitRate ?? (pick as { winRate?: number | null }).winRate;
   const lineValue = typeof pick.line === 'number' ? pick.line : null;
 
   const trackValue = nowValue ?? paceValue ?? null;
@@ -67,6 +67,9 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
     ? Math.max(6, Math.min(94, (trackDistance / 2) * 100))
     : null;
   const trackMarkerPct = 50;
+  const progressFillPct = lineValue != null && trackValue != null
+    ? Math.max(0, Math.min(100, (trackValue / Math.max(lineValue * 2, 1)) * 100))
+    : null;
   const trackColor = won
     ? Colors.success
     : lost
@@ -162,13 +165,13 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
       </View>
 
       {/* Tracking bar */}
-      {trackFillPct != null && lineValue != null && (
+      {progressFillPct != null && lineValue != null && (
         <View style={styles.trackBarOuter}>
           <View
             style={[
               styles.trackBarFill,
               {
-                width: `${trackFillPct}%`,
+                width: `${progressFillPct}%`,
                 backgroundColor: trackColor,
                 opacity: 0.9,
               },
