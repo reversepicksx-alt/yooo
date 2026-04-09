@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  Platform, ActivityIndicator, ScrollView, Image,
+  Platform, ActivityIndicator, ScrollView, Image, Linking,
 } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -9,11 +9,19 @@ import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@/contexts/AuthContext';
 import Colors from '@/constants/colors';
-import { verifyAccess, setPassword as apiSetPassword, authLogin } from '@/lib/api';
+import {
+  verifyAccess, setPassword as apiSetPassword, authLogin, createCheckout,
+} from '@/lib/api';
 
-type Step = 'email' | 'password' | 'setup';
+type Step = 'email' | 'password' | 'setup' | 'pricing';
 
 const INPUT_STYLE = Platform.OS === 'web' ? { outlineWidth: 0, outlineStyle: 'none' } : {};
+
+const PLANS = [
+  { key: 'weekly',    label: 'Weekly',   sub: 'Billed weekly',  price: '$11',    unit: '/week',  popular: false },
+  { key: 'monthly',   label: 'Monthly',  sub: 'Save 9%',        price: '$39.99', unit: '/month', popular: true  },
+  { key: 'quarterly', label: '3 Months', sub: 'Save 24%',       price: '$99.99', unit: '/3mo',   popular: false },
+];
 
 export default function AuthScreen() {
   const insets = useSafeAreaInsets();
@@ -24,13 +32,16 @@ export default function AuthScreen() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
   const [error, setError] = useState('');
+  const [info, setInfo] = useState('');
 
   const handleCheckEmail = async () => {
     const trimmed = email.trim().toLowerCase();
     if (!trimmed) { setError('Enter your email address.'); return; }
     setLoading(true);
     setError('');
+    setInfo('');
     try {
       const result = await verifyAccess(trimmed);
       if (result.requires_password_setup) {
@@ -48,7 +59,7 @@ export default function AuthScreen() {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         router.replace('/(tabs)/scan');
       } else {
-        setError(result.message || 'No active membership found.');
+        setError('No active membership found. Subscribe below to get access.');
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       }
     } catch (e: unknown) {
@@ -69,7 +80,7 @@ export default function AuthScreen() {
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       router.replace('/(tabs)/scan');
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Login failed.');
+      setError(e instanceof Error ? e.message : 'Incorrect password.');
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
       setLoading(false);
@@ -94,11 +105,77 @@ export default function AuthScreen() {
     }
   };
 
+  const handleShowPricing = () => {
+    const trimmed = email.trim().toLowerCase();
+    if (!trimmed) { setError('Enter your email address first.'); return; }
+    setError('');
+    setInfo('');
+    setStep('pricing');
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  };
+
+  const handleSubscribePlan = async (planKey: string) => {
+    const trimmed = email.trim().toLowerCase();
+    setCheckoutLoading(planKey);
+    setError('');
+    try {
+      const result = await createCheckout(trimmed, planKey);
+      const url = result.checkout_url || result.redirect_url;
+      if (url) {
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.open(url, '_blank');
+        } else {
+          await Linking.openURL(url);
+        }
+        setInfo('Complete payment in the browser, then tap "Already paid?" below to verify.');
+        setStep('email');
+      } else {
+        setError(result.error || 'Could not create checkout. Try again.');
+      }
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Checkout failed. Try again.');
+    } finally {
+      setCheckoutLoading(null);
+    }
+  };
+
+  const handleAlreadyPaid = async () => {
+    const trimmed = email.trim().toLowerCase();
+    if (!trimmed) { setError('Enter your email address.'); return; }
+    setLoading(true);
+    setError('');
+    setInfo('');
+    try {
+      const result = await verifyAccess(trimmed);
+      if (result.requires_password_setup) {
+        setStep('setup');
+      } else if (result.requires_password) {
+        setStep('password');
+      } else if (result.verified && result.session_token && result.email) {
+        await loginWithResponse({
+          email: result.email,
+          session_token: result.session_token,
+          access_type: result.access_type,
+        });
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        router.replace('/(tabs)/scan');
+      } else {
+        setError('Payment not yet confirmed. It may take a minute — try again shortly.');
+      }
+    } catch {
+      setError('Could not verify. Check your connection and try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const goBack = () => {
     setStep('email');
     setPassword('');
     setConfirmPassword('');
     setError('');
+    setInfo('');
   };
 
   return (
@@ -109,152 +186,224 @@ export default function AuthScreen() {
         showsVerticalScrollIndicator={false}
         bounces={false}
       >
-        <View style={styles.hero}>
-          <Image
-            source={require('../assets/logo.png')}
-            style={styles.logo}
-            resizeMode="contain"
-          />
-          <Text style={styles.title}>ReversePicks</Text>
-          <Text style={styles.subtitle}>Soccer AI Analytics</Text>
-          <View style={styles.divider} />
-        </View>
+        {step !== 'pricing' && (
+          <View style={styles.hero}>
+            <Image
+              source={require('../assets/logo.png')}
+              style={styles.logo}
+              resizeMode="contain"
+            />
+            <Text style={styles.appName}>REVERSEPICKS</Text>
+            <Text style={styles.tagline}>ELITE PROP INTELLIGENCE</Text>
+          </View>
+        )}
 
-        <View style={styles.card}>
-          {step === 'email' && (
-            <>
-              <Text style={styles.stepLabel}>SIGN IN</Text>
+        {step === 'email' && (
+          <View style={styles.card}>
+            <View style={styles.inputRow}>
+              <Ionicons name="mail-outline" size={17} color={Colors.textSecondary} style={styles.icon} />
+              <TextInput
+                style={[styles.input, INPUT_STYLE]}
+                placeholder="Enter your email"
+                placeholderTextColor={Colors.textTertiary}
+                value={email}
+                onChangeText={v => { setEmail(v); setError(''); setInfo(''); }}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+                autoComplete="email"
+                textContentType="emailAddress"
+                onSubmitEditing={handleCheckEmail}
+                returnKeyType="done"
+              />
+            </View>
 
-              <View style={styles.inputRow}>
-                <Ionicons name="mail-outline" size={17} color={Colors.textSecondary} style={styles.icon} />
-                <TextInput
-                  style={[styles.input, INPUT_STYLE]}
-                  placeholder="Email address"
-                  placeholderTextColor={Colors.textTertiary}
-                  value={email}
-                  onChangeText={setEmail}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  autoComplete="email"
-                  textContentType="emailAddress"
-                  onSubmitEditing={handleCheckEmail}
-                  returnKeyType="next"
-                />
+            {!!info && <InfoBox message={info} />}
+            {!!error && <ErrorBox message={error} />}
+
+            <TouchableOpacity
+              style={[styles.btn, loading && styles.btnDisabled]}
+              onPress={handleCheckEmail}
+              disabled={loading}
+              activeOpacity={0.85}
+            >
+              {loading
+                ? <ActivityIndicator color="#000" size="small" />
+                : (
+                  <View style={styles.btnInner}>
+                    <Ionicons name="flash" size={16} color="#000" />
+                    <Text style={styles.btnText}>VERIFY ACCESS</Text>
+                  </View>
+                )
+              }
+            </TouchableOpacity>
+
+            <View style={styles.dividerRow}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>Not a member yet?</Text>
+              <View style={styles.dividerLine} />
+            </View>
+
+            <TouchableOpacity
+              style={[styles.btn, styles.btnSubscribe]}
+              onPress={handleShowPricing}
+              activeOpacity={0.85}
+            >
+              <View style={styles.btnInner}>
+                <Ionicons name="card-outline" size={16} color="#000" />
+                <Text style={styles.btnText}>Subscribe Now</Text>
               </View>
+            </TouchableOpacity>
 
-              {!!error && <ErrorBox message={error} />}
+            <TouchableOpacity onPress={handleAlreadyPaid} disabled={loading} style={styles.alreadyPaidRow}>
+              {loading
+                ? <ActivityIndicator color={Colors.primary} size="small" />
+                : <Text style={styles.alreadyPaid}>Already paid? Verify your payment</Text>
+              }
+            </TouchableOpacity>
+          </View>
+        )}
 
-              <TouchableOpacity
-                style={[styles.btn, loading && styles.btnDisabled]}
-                onPress={handleCheckEmail}
-                disabled={loading}
-                activeOpacity={0.85}
-              >
-                {loading
-                  ? <ActivityIndicator color="#000" size="small" />
-                  : <Text style={styles.btnText}>Continue</Text>
-                }
+        {step === 'password' && (
+          <View style={styles.card}>
+            <EmailBadge email={email} onBack={goBack} />
+
+            <View style={styles.inputRow}>
+              <Ionicons name="lock-closed-outline" size={17} color={Colors.textSecondary} style={styles.icon} />
+              <TextInput
+                style={[styles.input, INPUT_STYLE]}
+                placeholder="Password"
+                placeholderTextColor={Colors.textTertiary}
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry={!showPassword}
+                autoComplete="password"
+                textContentType="password"
+                onSubmitEditing={handleLogin}
+                returnKeyType="done"
+              />
+              <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eye}>
+                <Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={17} color={Colors.textSecondary} />
               </TouchableOpacity>
-            </>
-          )}
+            </View>
 
-          {step === 'password' && (
-            <>
-              <EmailBadge email={email} onBack={goBack} />
+            {!!error && <ErrorBox message={error} />}
 
-              <View style={styles.inputRow}>
-                <Ionicons name="lock-closed-outline" size={17} color={Colors.textSecondary} style={styles.icon} />
-                <TextInput
-                  style={[styles.input, INPUT_STYLE]}
-                  placeholder="Password"
-                  placeholderTextColor={Colors.textTertiary}
-                  value={password}
-                  onChangeText={setPassword}
-                  secureTextEntry={!showPassword}
-                  autoComplete="password"
-                  textContentType="password"
-                  onSubmitEditing={handleLogin}
-                  returnKeyType="done"
-                />
-                <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eye}>
-                  <Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={17} color={Colors.textSecondary} />
-                </TouchableOpacity>
-              </View>
+            <TouchableOpacity
+              style={[styles.btn, loading && styles.btnDisabled]}
+              onPress={handleLogin}
+              disabled={loading}
+              activeOpacity={0.85}
+            >
+              {loading
+                ? <ActivityIndicator color="#000" size="small" />
+                : <Text style={styles.btnText}>Sign In</Text>
+              }
+            </TouchableOpacity>
+          </View>
+        )}
 
-              {!!error && <ErrorBox message={error} />}
+        {step === 'setup' && (
+          <View style={styles.card}>
+            <EmailBadge email={email} onBack={goBack} />
+            <Text style={styles.setupNote}>Create a password to secure your account</Text>
 
-              <TouchableOpacity
-                style={[styles.btn, loading && styles.btnDisabled]}
-                onPress={handleLogin}
-                disabled={loading}
-                activeOpacity={0.85}
-              >
-                {loading
-                  ? <ActivityIndicator color="#000" size="small" />
-                  : <Text style={styles.btnText}>Sign In</Text>
-                }
+            <View style={styles.inputRow}>
+              <Ionicons name="lock-closed-outline" size={17} color={Colors.textSecondary} style={styles.icon} />
+              <TextInput
+                style={[styles.input, INPUT_STYLE]}
+                placeholder="Choose a password (min. 6 chars)"
+                placeholderTextColor={Colors.textTertiary}
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry={!showPassword}
+                autoComplete="new-password"
+                textContentType="newPassword"
+                returnKeyType="next"
+              />
+              <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eye}>
+                <Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={17} color={Colors.textSecondary} />
               </TouchableOpacity>
-            </>
-          )}
+            </View>
 
-          {step === 'setup' && (
-            <>
-              <EmailBadge email={email} onBack={goBack} />
-              <Text style={styles.setupNote}>Create a password to secure your account</Text>
+            <View style={styles.inputRow}>
+              <Ionicons name="lock-closed-outline" size={17} color={Colors.textSecondary} style={styles.icon} />
+              <TextInput
+                style={[styles.input, INPUT_STYLE]}
+                placeholder="Confirm password"
+                placeholderTextColor={Colors.textTertiary}
+                value={confirmPassword}
+                onChangeText={setConfirmPassword}
+                secureTextEntry={!showPassword}
+                autoComplete="new-password"
+                textContentType="newPassword"
+                onSubmitEditing={handleSetPassword}
+                returnKeyType="done"
+              />
+            </View>
 
-              <View style={styles.inputRow}>
-                <Ionicons name="lock-closed-outline" size={17} color={Colors.textSecondary} style={styles.icon} />
-                <TextInput
-                  style={[styles.input, INPUT_STYLE]}
-                  placeholder="Choose a password (min. 6 chars)"
-                  placeholderTextColor={Colors.textTertiary}
-                  value={password}
-                  onChangeText={setPassword}
-                  secureTextEntry={!showPassword}
-                  autoComplete="new-password"
-                  textContentType="newPassword"
-                  returnKeyType="next"
-                />
-                <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eye}>
-                  <Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={17} color={Colors.textSecondary} />
-                </TouchableOpacity>
-              </View>
+            {!!error && <ErrorBox message={error} />}
 
-              <View style={styles.inputRow}>
-                <Ionicons name="lock-closed-outline" size={17} color={Colors.textSecondary} style={styles.icon} />
-                <TextInput
-                  style={[styles.input, INPUT_STYLE]}
-                  placeholder="Confirm password"
-                  placeholderTextColor={Colors.textTertiary}
-                  value={confirmPassword}
-                  onChangeText={setConfirmPassword}
-                  secureTextEntry={!showPassword}
-                  autoComplete="new-password"
-                  textContentType="newPassword"
-                  onSubmitEditing={handleSetPassword}
-                  returnKeyType="done"
-                />
-              </View>
+            <TouchableOpacity
+              style={[styles.btn, loading && styles.btnDisabled]}
+              onPress={handleSetPassword}
+              disabled={loading}
+              activeOpacity={0.85}
+            >
+              {loading
+                ? <ActivityIndicator color="#000" size="small" />
+                : <Text style={styles.btnText}>Set Password & Enter</Text>
+              }
+            </TouchableOpacity>
+          </View>
+        )}
 
-              {!!error && <ErrorBox message={error} />}
+        {step === 'pricing' && (
+          <View style={styles.pricingContainer}>
+            <View style={styles.pricingHero}>
+              <Image source={require('../assets/logo.png')} style={styles.pricingLogo} resizeMode="contain" />
+              <Text style={styles.pricingTitle}>CHOOSE YOUR PLAN</Text>
+            </View>
 
+            {!!error && <ErrorBox message={error} />}
+
+            {PLANS.map(plan => (
               <TouchableOpacity
-                style={[styles.btn, loading && styles.btnDisabled]}
-                onPress={handleSetPassword}
-                disabled={loading}
-                activeOpacity={0.85}
+                key={plan.key}
+                style={[styles.planCard, plan.popular && styles.planCardPopular]}
+                onPress={() => handleSubscribePlan(plan.key)}
+                disabled={checkoutLoading !== null}
+                activeOpacity={0.8}
               >
-                {loading
-                  ? <ActivityIndicator color="#000" size="small" />
-                  : <Text style={styles.btnText}>Set Password & Enter</Text>
-                }
+                {plan.popular && (
+                  <View style={styles.popularBadge}>
+                    <Text style={styles.popularText}>MOST POPULAR</Text>
+                  </View>
+                )}
+                <View style={styles.planLeft}>
+                  <Text style={styles.planName}>{plan.label}</Text>
+                  <Text style={styles.planSub}>{plan.sub}</Text>
+                </View>
+                <View style={styles.planRight}>
+                  {checkoutLoading === plan.key
+                    ? <ActivityIndicator color={Colors.primary} size="small" />
+                    : (
+                      <View style={styles.priceRow}>
+                        <Text style={styles.planPrice}>{plan.price}</Text>
+                        <Text style={styles.planUnit}>{plan.unit}</Text>
+                      </View>
+                    )
+                  }
+                </View>
               </TouchableOpacity>
-            </>
-          )}
-        </View>
+            ))}
 
-        <Text style={styles.footnote}>Members only · Contact admin for access</Text>
+            <TouchableOpacity style={styles.backBtn} onPress={goBack} activeOpacity={0.8}>
+              <Ionicons name="arrow-back" size={15} color={Colors.text} />
+              <Text style={styles.backBtnText}>Back to Login</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </ScrollView>
     </View>
   );
@@ -279,57 +428,40 @@ function ErrorBox({ message }: { message: string }) {
   );
 }
 
+function InfoBox({ message }: { message: string }) {
+  return (
+    <View style={styles.infoBox}>
+      <Ionicons name="checkmark-circle-outline" size={15} color={Colors.primary} />
+      <Text style={styles.infoText}>{message}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: Colors.background,
-  },
+  root: { flex: 1, backgroundColor: Colors.background },
   scroll: {
     flexGrow: 1,
     alignItems: 'center',
-    paddingTop: 48,
+    paddingTop: 40,
     paddingHorizontal: 24,
   },
-  hero: {
-    alignItems: 'center',
-    marginBottom: 32,
-  },
-  logo: {
-    width: 130,
-    height: 130,
-    marginBottom: 20,
-  },
-  title: {
-    fontSize: 30,
-    fontWeight: '800',
+  hero: { alignItems: 'center', marginBottom: 36 },
+  logo: { width: 90, height: 90, marginBottom: 16 },
+  appName: {
+    fontSize: 22,
+    fontWeight: '900',
     color: Colors.text,
-    letterSpacing: -0.5,
+    letterSpacing: 4,
   },
-  subtitle: {
-    fontSize: 13,
-    color: Colors.primary,
-    marginTop: 5,
-    letterSpacing: 2,
-    textTransform: 'uppercase',
-    fontWeight: '600',
-  },
-  divider: {
-    width: 40,
-    height: 1,
-    backgroundColor: Colors.border,
-    marginTop: 24,
-  },
-  card: {
-    width: '100%',
-    gap: 12,
-  },
-  stepLabel: {
+  tagline: {
     fontSize: 11,
-    fontWeight: '700',
-    color: Colors.textTertiary,
-    letterSpacing: 2,
+    color: Colors.primary,
+    letterSpacing: 3,
     textTransform: 'uppercase',
+    fontWeight: '700',
+    marginTop: 6,
   },
+  card: { width: '100%', gap: 12 },
   inputRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -341,12 +473,39 @@ const styles = StyleSheet.create({
     height: 54,
   },
   icon: { marginRight: 10 },
-  input: {
-    flex: 1,
-    color: Colors.text,
-    fontSize: 15,
-  },
+  input: { flex: 1, color: Colors.text, fontSize: 15 },
   eye: { padding: 4 },
+  btn: {
+    backgroundColor: Colors.primary,
+    borderRadius: Colors.radius,
+    height: 54,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: Colors.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  btnSubscribe: {},
+  btnDisabled: { opacity: 0.6 },
+  btnInner: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  btnText: { color: '#000', fontWeight: '800', fontSize: 15, letterSpacing: 0.5 },
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginVertical: 4,
+  },
+  dividerLine: { flex: 1, height: 1, backgroundColor: Colors.borderSubtle },
+  dividerText: { color: Colors.textSecondary, fontSize: 12, fontWeight: '500' },
+  alreadyPaidRow: { alignItems: 'center', paddingVertical: 6 },
+  alreadyPaid: {
+    color: Colors.primary,
+    fontSize: 13,
+    fontWeight: '600',
+    textDecorationLine: 'underline',
+  },
   emailBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -358,17 +517,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
   },
-  emailText: {
-    flex: 1,
-    color: Colors.text,
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  setupNote: {
-    color: Colors.textSecondary,
-    fontSize: 13,
-    textAlign: 'center',
-  },
+  emailText: { flex: 1, color: Colors.text, fontSize: 14, fontWeight: '500' },
+  setupNote: { color: Colors.textSecondary, fontSize: 13, textAlign: 'center' },
   errorBox: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -378,26 +528,67 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   errorText: { color: Colors.error, fontSize: 13, flex: 1 },
-  btn: {
-    backgroundColor: Colors.primary,
+  infoBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: Colors.primaryDim,
+    padding: 12,
     borderRadius: Colors.radius,
-    height: 54,
+    gap: 8,
+  },
+  infoText: { color: Colors.primary, fontSize: 13, flex: 1 },
+  pricingContainer: { width: '100%', gap: 14 },
+  pricingHero: { alignItems: 'center', marginBottom: 8 },
+  pricingLogo: { width: 60, height: 60, marginBottom: 12 },
+  pricingTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: Colors.primary,
+    letterSpacing: 3,
+    textTransform: 'uppercase',
+  },
+  planCard: {
+    backgroundColor: Colors.card,
+    borderRadius: Colors.radiusLg,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+    padding: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  planCardPopular: {
+    borderColor: Colors.primary,
+    borderWidth: 1.5,
+  },
+  popularBadge: {
+    position: 'absolute',
+    top: -11,
+    right: 16,
+    backgroundColor: Colors.primary,
+    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+  },
+  popularText: { color: '#000', fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
+  planLeft: { flex: 1 },
+  planName: { fontSize: 18, fontWeight: '700', color: Colors.text, marginBottom: 3 },
+  planSub: { fontSize: 12, color: Colors.textSecondary },
+  planRight: { alignItems: 'flex-end' },
+  priceRow: { flexDirection: 'row', alignItems: 'baseline', gap: 2 },
+  planPrice: { fontSize: 24, fontWeight: '800', color: Colors.primary },
+  planUnit: { fontSize: 13, color: Colors.textSecondary, fontWeight: '500' },
+  backBtn: {
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 8,
+    backgroundColor: Colors.card,
+    borderRadius: Colors.radius,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+    height: 50,
     marginTop: 4,
-    shadowColor: Colors.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 12,
-    elevation: 8,
   },
-  btnDisabled: { opacity: 0.6 },
-  btnText: { color: '#000', fontWeight: '800', fontSize: 16, letterSpacing: 0.3 },
-  footnote: {
-    color: Colors.textTertiary,
-    fontSize: 12,
-    textAlign: 'center',
-    marginTop: 40,
-    letterSpacing: 0.3,
-  },
+  backBtnText: { color: Colors.text, fontSize: 14, fontWeight: '600' },
 });

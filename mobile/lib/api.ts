@@ -81,6 +81,16 @@ export async function verifySession(email: string, session_token: string) {
   });
 }
 
+export async function createCheckout(email: string, planKey: string): Promise<{ checkout_url?: string; redirect_url?: string; error?: string }> {
+  const redirectUrl = typeof window !== 'undefined'
+    ? `${window.location.origin}/auth`
+    : 'https://reversepicks.com/auth';
+  return apiCall('/api/square/create-checkout', {
+    method: 'POST',
+    body: JSON.stringify({ email, planKey, redirectUrl }),
+  });
+}
+
 export interface ScanResult {
   playerName?: string;
   playerTeam?: string;

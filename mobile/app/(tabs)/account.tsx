@@ -43,18 +43,24 @@ export default function AccountScreen() {
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const bottomPad = Platform.OS === 'web' ? 34 : insets.bottom;
 
-  const handleLogout = () => {
-    Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Sign Out',
-        style: 'destructive',
-        onPress: async () => {
-          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-          await logout();
+  const handleLogout = async () => {
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined' && !window.confirm('Sign out of ReversePicks?')) return;
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      await logout();
+    } else {
+      Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Sign Out',
+          style: 'destructive',
+          onPress: async () => {
+            await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+            await logout();
+          },
         },
-      },
-    ]);
+      ]);
+    }
   };
 
   const initials = session?.email
