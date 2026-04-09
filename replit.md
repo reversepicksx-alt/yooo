@@ -4,6 +4,15 @@
 
 ReversePicks is a premium soccer player props analytics platform. It combines a FastAPI + MongoDB backend with a React Native / Expo mobile frontend designed for App Store submission. The design features a pure black background with neon green (#39FF14) accents matching the RP crest logo.
 
+## Critical: MongoDB Data Persistence
+
+**Production DB path:** `/home/runner/.reversepicks_db` (outside workspace — immune to redeployments)
+**Dev DB path:** `/home/runner/workspace/mongodb_data` (workspace, dev only)
+
+The production path lives in the home directory, NOT inside `/home/runner/workspace/`. This means every time you redeploy (which updates the workspace), the database is completely untouched. User passwords, picks, subscriptions — all safe forever.
+
+`start.sh` includes a one-time migration: if the new path is empty but the old workspace path has data, it copies it over automatically on first boot.
+
 ## Architecture
 
 ```
