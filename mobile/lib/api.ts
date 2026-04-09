@@ -538,6 +538,54 @@ export async function searchPlayers(query: string, leagueId?: number) {
   });
 }
 
+export interface SubscriptionStatus {
+  active: boolean;
+  plan?: string;
+  planKey?: string;
+  planLabel?: string;
+  cadence?: string;
+  status?: string;
+  cardLast4?: string;
+  cardBrand?: string;
+  subscribedAt?: string;
+  expiresAt?: string;
+  canceledAt?: string;
+}
+
+export async function getSubscriptionStatus(email: string): Promise<SubscriptionStatus> {
+  return apiCall<SubscriptionStatus>(`/api/square/status/${encodeURIComponent(email)}`);
+}
+
+export async function cancelSubscription(email: string): Promise<{ success: boolean; status?: string; message?: string }> {
+  return apiCall('/api/square/cancel', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+}
+
+export async function changePlan(email: string, newPlanKey: string): Promise<{ success?: boolean; previous_plan?: string; new_plan?: string; new_label?: string; message?: string }> {
+  return apiCall('/api/square/change-plan', {
+    method: 'POST',
+    body: JSON.stringify({ email, new_plan_key: newPlanKey }),
+  });
+}
+
+export async function resubscribeCheckout(email: string, planKey: string): Promise<{ checkoutUrl?: string; checkout_url?: string; redirect_url?: string; error?: string }> {
+  const redirectUrl = typeof window !== 'undefined'
+    ? `${window.location.origin}/auth`
+    : 'https://reversepicks.com/auth';
+  return apiCall('/api/square/resubscribe-checkout', {
+    method: 'POST',
+    body: JSON.stringify({ email, planKey, redirectUrl }),
+  });
+}
+
+export const PLAN_OPTIONS = [
+  { key: 'weekly', name: 'Weekly', price: '$11/week' },
+  { key: 'monthly', name: 'Monthly', price: '$39.99/month' },
+  { key: 'quarterly', name: 'Quarterly', price: '$99.99/3 months' },
+] as const;
+
 export const PROP_TYPES = [
   { value: 'pass_attempts', label: 'Pass Attempts' },
   { value: 'shots', label: 'Shots' },

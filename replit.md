@@ -75,6 +75,16 @@ Two-step auth:
 2. Returns `requires_password_setup` (new user) or `requires_password` (returning) or `verified`
 3. Password screen → `/api/auth/set-password` or `/api/auth/login`
 
+## Subscription Management
+
+The Account tab (`account.tsx`) includes full subscription management for Square subscribers:
+- View plan details (name, price, status, next billing, card on file)
+- Change plan (Weekly/Monthly/Quarterly) via `/api/square/change-plan`
+- Cancel subscription via `/api/square/cancel` (access retained until billing period ends)
+- Resubscribe after cancellation via `/api/square/resubscribe-checkout` (opens Square checkout)
+- Lifetime/Owner users see "Lifetime Access" badge; Whop members see "Managed by Whop"
+- API wrappers: `getSubscriptionStatus()`, `cancelSubscription()`, `changePlan()`, `resubscribeCheckout()` in `mobile/lib/api.ts`
+
 No Whop integration — access control is:
 - Owner email (`reversepicksx@gmail.com`) → always allowed
 - `LIFETIME_SUB_EMAILS` env var → lifetime access
