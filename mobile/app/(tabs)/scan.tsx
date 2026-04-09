@@ -523,6 +523,61 @@ export default function ScanScreen() {
                 </>
               )}
 
+              {/* Moneyline & Game Type */}
+              {(prediction.moneyline || prediction.expectedGameType) && (
+                <>
+                  <View style={styles.analysisDivider} />
+                  <View style={styles.matchOddsRow}>
+                    {prediction.moneyline && (() => {
+                      const toAmerican = (dec: string) => {
+                        const d = parseFloat(dec);
+                        if (!d || d <= 1) return dec;
+                        if (d >= 2) return `+${Math.round((d - 1) * 100)}`;
+                        return `${Math.round(-100 / (d - 1))}`;
+                      };
+                      const homeTeamShort = (prediction.teamName || 'HOME').split(' ').pop()?.slice(0, 5).toUpperCase() || 'HOME';
+                      const awayTeamShort = (prediction.opponentName || 'AWAY').split(' ').pop()?.slice(0, 5).toUpperCase() || 'AWAY';
+                      const isPlayerHome = venueOverride === 'home';
+                      const team1 = isPlayerHome ? homeTeamShort : awayTeamShort;
+                      const team2 = isPlayerHome ? awayTeamShort : homeTeamShort;
+                      const odds1 = isPlayerHome ? prediction.moneyline.home : prediction.moneyline.away;
+                      const odds2 = isPlayerHome ? prediction.moneyline.away : prediction.moneyline.home;
+                      return (
+                        <View style={styles.moneylineWrap}>
+                          <View style={styles.moneylineHeader}>
+                            <Ionicons name="cash-outline" size={12} color={Colors.textSecondary} />
+                            <Text style={styles.moneylineLabel}>MONEYLINE</Text>
+                          </View>
+                          <View style={styles.moneylinePills}>
+                            <View style={styles.mlPill}>
+                              <Text style={styles.mlPillTeam}>{team1}</Text>
+                              <Text style={styles.mlPillOdds}>{toAmerican(odds1)}</Text>
+                            </View>
+                            <View style={styles.mlPill}>
+                              <Text style={styles.mlPillTeam}>DRAW</Text>
+                              <Text style={styles.mlPillOdds}>{toAmerican(prediction.moneyline.draw)}</Text>
+                            </View>
+                            <View style={styles.mlPill}>
+                              <Text style={styles.mlPillTeam}>{team2}</Text>
+                              <Text style={styles.mlPillOdds}>{toAmerican(odds2)}</Text>
+                            </View>
+                          </View>
+                        </View>
+                      );
+                    })()}
+                    {prediction.expectedGameType && (
+                      <View style={styles.gameTypeWrap}>
+                        <Text style={styles.gameTypeLabel}>GAME TYPE</Text>
+                        <Text style={styles.gameTypeValue}>{prediction.expectedGameType.toUpperCase()}</Text>
+                        {prediction.keyMatchupFactor && (
+                          <Text style={styles.gameTypeSub}>{prediction.keyMatchupFactor}</Text>
+                        )}
+                      </View>
+                    )}
+                  </View>
+                </>
+              )}
+
               {/* Expected Possession */}
               {prediction.expectedPossession
                 && Number.isFinite(prediction.expectedPossession.home)
@@ -1075,6 +1130,23 @@ const styles = StyleSheet.create({
   },
   ciLabel: { fontSize: 10, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 0.8 },
   ciVal: { fontSize: 13, color: Colors.textSecondary, fontWeight: '600' },
+
+  /* Moneyline & Game Type */
+  matchOddsRow: { paddingHorizontal: 16, paddingVertical: 12, gap: 10 },
+  moneylineWrap: { gap: 6 },
+  moneylineHeader: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  moneylineLabel: { fontSize: 10, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 1.2 },
+  moneylinePills: { flexDirection: 'row', gap: 6 },
+  mlPill: {
+    flex: 1, backgroundColor: '#1a1a1a', borderRadius: 8, paddingVertical: 8,
+    alignItems: 'center', borderWidth: 1, borderColor: Colors.borderSubtle,
+  },
+  mlPillTeam: { fontSize: 9, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 0.8, marginBottom: 2 },
+  mlPillOdds: { fontSize: 15, color: Colors.textPrimary, fontWeight: '800', fontVariant: ['tabular-nums'] as any },
+  gameTypeWrap: { marginTop: 2, gap: 2 },
+  gameTypeLabel: { fontSize: 10, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 1.2 },
+  gameTypeValue: { fontSize: 14, color: Colors.primary, fontWeight: '800', letterSpacing: 0.5 },
+  gameTypeSub: { fontSize: 11, color: Colors.textSecondary },
 
   /* Expected Possession */
   possRow: { paddingHorizontal: 16, paddingVertical: 12, gap: 6 },

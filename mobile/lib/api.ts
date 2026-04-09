@@ -216,6 +216,10 @@ export interface PredictionResult {
   possessionMultiplier?: number;
   possessionTeamAvg?: number;
   possessionOppAvg?: number;
+  moneyline?: { home: string; draw: string; away: string };
+  expectedGameType?: string;
+  favorite?: string;
+  keyMatchupFactor?: string;
   teamId?: number;
   opponentId?: number;
   leagueId?: number;
@@ -289,6 +293,10 @@ interface RawPrediction {
     expectedPossession?: { home: number; away: number };
     homeTeam?: string;
     awayTeam?: string;
+    moneyline?: { home: string; draw: string; away: string };
+    favorite?: string;
+    expectedGameType?: string;
+    keyMatchupFactor?: string;
   };
   error?: string;
 }
@@ -399,6 +407,10 @@ export async function predict(request: Record<string, unknown>): Promise<Predict
     possessionMultiplier: raw.matchDominance?.multiplier,
     possessionTeamAvg: raw.matchDominance?.teamSeasonAvg ?? undefined,
     possessionOppAvg: raw.matchDominance?.oppSeasonAvg ?? undefined,
+    moneyline: raw.matchupOverview?.moneyline ?? undefined,
+    expectedGameType: raw.matchupOverview?.expectedGameType ?? undefined,
+    favorite: raw.matchupOverview?.favorite ?? undefined,
+    keyMatchupFactor: raw.matchupOverview?.keyMatchupFactor ?? undefined,
     teamId: raw._request?.teamId || (request.teamId as number) || undefined,
     opponentId: raw._request?.opponentId || (request.opponentId as number) || undefined,
     leagueId: raw._request?.leagueId || (request.leagueId as number) || undefined,
