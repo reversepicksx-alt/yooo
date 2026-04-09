@@ -40,17 +40,44 @@ async def _verify_square_live(square_sub: dict, email_lower: str) -> str | None:
             print(f"[AUTH] Square live check: {email_lower} is DEACTIVATED → access denied")
             return None
 
+        has_overdue = False
+        invoice_ids = getattr(sq_sub, 'invoice_ids', None) or []
+        if invoice_ids:
+            try:
+                for inv_id in invoice_ids[-3:]:
+                    inv_resp = client.invoices.get(invoice_id=inv_id)
+                    inv = inv_resp.invoice
+                    inv_status = getattr(inv, 'status', '') or ''
+                    if inv_status.upper() in ('OVERDUE', 'UNPAID', 'PAYMENT_PENDING'):
+                        has_overdue = True
+                        print(f"[AUTH] Overdue invoice {inv_id} for {email_lower}")
+                        break
+            except Exception as inv_err:
+                print(f"[AUTH] Invoice check error for {email_lower}: {inv_err}")
+
+        if has_overdue:
+            print(f"[AUTH] {email_lower} has overdue invoice → auto-canceling + deny")
+            try:
+                client.subscriptions.cancel(subscription_id=sub_id)
+            except Exception:
+                pass
+            await db.square_subscriptions.update_one(
+                {"email": email_lower},
+                {"$set": {"status": "EXPIRED", "expiredReason": "payment_overdue", "updatedAt": datetime.now(timezone.utc).isoformat()}}
+            )
+            await db.sessions.delete_many({"email": email_lower})
+            return None
+
         if live_status in ("ACTIVE", "PENDING") and charged_through:
             try:
                 ct_str = str(charged_through)[:10]
                 from datetime import date as date_type
                 ct_date = date_type.fromisoformat(ct_str)
                 today = date_type.today()
-                if ct_date < today:
-                    print(f"[AUTH] Square OVERDUE: {email_lower} charged_through={ct_str} < today={today} → auto-canceling")
+                if ct_date <= today:
+                    print(f"[AUTH] Square OVERDUE: {email_lower} charged_through={ct_str} <= today={today} → auto-canceling")
                     try:
                         client.subscriptions.cancel(subscription_id=sub_id)
-                        print(f"[AUTH] Square auto-canceled overdue subscription for {email_lower}")
                     except Exception as cancel_err:
                         print(f"[AUTH] Square auto-cancel failed for {email_lower}: {cancel_err}")
                     await db.square_subscriptions.update_one(
@@ -61,6 +88,7 @@ async def _verify_square_live(square_sub: dict, email_lower: str) -> str | None:
                             "expiredReason": "payment_overdue",
                         }}
                     )
+                    await db.sessions.delete_many({"email": email_lower})
                     return None
             except Exception as ct_err:
                 print(f"[AUTH] charged_through check error for {email_lower}: {ct_err}")
@@ -85,7 +113,7 @@ async def _verify_square_live(square_sub: dict, email_lower: str) -> str | None:
                     from datetime import date as date_type
                     ct_str = str(charged_through)[:10]
                     ct_date = date_type.fromisoformat(ct_str)
-                    if ct_date < date_type.today():
+                    if ct_date <= date_type.today():
                         print(f"[AUTH] CANCELED + OVERDUE: {email_lower} charged_through={ct_str} → instant lockout")
                         await db.square_subscriptions.update_one(
                             {"email": email_lower},
@@ -280,25 +308,53 @@ async def _get_denial_reason(email_lower: str) -> str | None:
             client = get_square_client()
             resp = client.subscriptions.get(subscription_id=sq_sub["squareSubscriptionId"])
             sq_live = resp.subscription
+            live_status = sq_live.status or ""
             charged_through = getattr(sq_live, 'charged_through_date', None)
-            if charged_through:
+            canceled_date = getattr(sq_live, 'canceled_date', None)
+
+            has_overdue_invoice = False
+            invoice_ids = getattr(sq_live, 'invoice_ids', None) or []
+            if invoice_ids:
+                try:
+                    for inv_id in invoice_ids[-3:]:
+                        inv_resp = client.invoices.get(invoice_id=inv_id)
+                        inv = inv_resp.invoice
+                        inv_status = getattr(inv, 'status', '') or ''
+                        if inv_status.upper() in ('OVERDUE', 'UNPAID', 'PAYMENT_PENDING'):
+                            has_overdue_invoice = True
+                            print(f"[AUTH] Found overdue invoice {inv_id} for {email_lower} (status={inv_status})")
+                            break
+                except Exception as inv_err:
+                    print(f"[AUTH] Invoice check error for {email_lower}: {inv_err}")
+
+            should_lock = False
+            if has_overdue_invoice:
+                should_lock = True
+                print(f"[AUTH] Overdue invoice detected for {email_lower} → locking out")
+            elif charged_through:
                 from datetime import date as date_type
                 ct_date = date_type.fromisoformat(str(charged_through)[:10])
-                if ct_date < date_type.today():
-                    try:
-                        client.subscriptions.cancel(subscription_id=sq_sub["squareSubscriptionId"])
-                    except Exception:
-                        pass
-                    await db.square_subscriptions.update_one(
-                        {"email": email_lower},
-                        {"$set": {
-                            "status": "EXPIRED",
-                            "expiredReason": "payment_overdue",
-                            "updatedAt": datetime.now(timezone.utc).isoformat(),
-                        }}
-                    )
-                    await db.sessions.delete_many({"email": email_lower})
-                    return "Your subscription has been suspended due to a missed payment. Please resubscribe to regain access."
+                if ct_date <= date_type.today():
+                    should_lock = True
+                    print(f"[AUTH] charged_through {charged_through} <= today → locking out {email_lower}")
+            elif live_status == "DEACTIVATED":
+                should_lock = True
+
+            if should_lock:
+                try:
+                    client.subscriptions.cancel(subscription_id=sq_sub["squareSubscriptionId"])
+                except Exception:
+                    pass
+                await db.square_subscriptions.update_one(
+                    {"email": email_lower},
+                    {"$set": {
+                        "status": "EXPIRED",
+                        "expiredReason": "payment_overdue",
+                        "updatedAt": datetime.now(timezone.utc).isoformat(),
+                    }}
+                )
+                await db.sessions.delete_many({"email": email_lower})
+                return "Your subscription has been suspended due to a missed payment. Please resubscribe to regain access."
         except Exception as e:
             print(f"[AUTH] Pre-check Square live failed for {email_lower}: {e}")
 

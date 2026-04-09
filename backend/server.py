@@ -474,7 +474,7 @@ async def _overdue_subscription_sweep():
                 except Exception:
                     continue
 
-                if ct_date >= today:
+                if ct_date > today:
                     continue
 
                 email = ""

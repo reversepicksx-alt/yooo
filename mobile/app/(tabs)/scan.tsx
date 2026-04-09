@@ -529,19 +529,27 @@ export default function ScanScreen() {
                   <View style={styles.analysisDivider} />
                   <View style={styles.matchOddsRow}>
                     {prediction.moneyline && (() => {
-                      const toAmerican = (dec: string) => {
-                        const d = parseFloat(dec);
-                        if (!d || d <= 1) return dec;
-                        if (d >= 2) return `+${Math.round((d - 1) * 100)}`;
-                        return `${Math.round(-100 / (d - 1))}`;
+                      const formatOdds = (val: string) => {
+                        if (!val || val === 'N/A') return '';
+                        const n = parseFloat(val);
+                        if (isNaN(n)) return val;
+                        if (n > 1 && n < 50) {
+                          if (n >= 2) return `+${Math.round((n - 1) * 100)}`;
+                          return `${Math.round(-100 / (n - 1))}`;
+                        }
+                        return n > 0 ? `+${Math.round(n)}` : `${Math.round(n)}`;
                       };
+                      const h = formatOdds(prediction.moneyline.home);
+                      const d = formatOdds(prediction.moneyline.draw);
+                      const a = formatOdds(prediction.moneyline.away);
+                      if (!h && !d && !a) return null;
                       const homeTeamShort = (prediction.teamName || 'HOME').split(' ').pop()?.slice(0, 5).toUpperCase() || 'HOME';
                       const awayTeamShort = (prediction.opponentName || 'AWAY').split(' ').pop()?.slice(0, 5).toUpperCase() || 'AWAY';
                       const isPlayerHome = venueOverride === 'home';
                       const team1 = isPlayerHome ? homeTeamShort : awayTeamShort;
                       const team2 = isPlayerHome ? awayTeamShort : homeTeamShort;
-                      const odds1 = isPlayerHome ? prediction.moneyline.home : prediction.moneyline.away;
-                      const odds2 = isPlayerHome ? prediction.moneyline.away : prediction.moneyline.home;
+                      const odds1 = isPlayerHome ? h : a;
+                      const odds2 = isPlayerHome ? a : h;
                       return (
                         <View style={styles.moneylineWrap}>
                           <View style={styles.moneylineHeader}>
@@ -551,15 +559,15 @@ export default function ScanScreen() {
                           <View style={styles.moneylinePills}>
                             <View style={styles.mlPill}>
                               <Text style={styles.mlPillTeam}>{team1}</Text>
-                              <Text style={styles.mlPillOdds}>{toAmerican(odds1)}</Text>
+                              <Text style={styles.mlPillOdds}>{odds1}</Text>
                             </View>
                             <View style={styles.mlPill}>
                               <Text style={styles.mlPillTeam}>DRAW</Text>
-                              <Text style={styles.mlPillOdds}>{toAmerican(prediction.moneyline.draw)}</Text>
+                              <Text style={styles.mlPillOdds}>{d}</Text>
                             </View>
                             <View style={styles.mlPill}>
                               <Text style={styles.mlPillTeam}>{team2}</Text>
-                              <Text style={styles.mlPillOdds}>{toAmerican(odds2)}</Text>
+                              <Text style={styles.mlPillOdds}>{odds2}</Text>
                             </View>
                           </View>
                         </View>

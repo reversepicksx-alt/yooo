@@ -2361,13 +2361,19 @@ Analyze ALL data thoroughly. Return JSON only."""
                 }
         # 2. Moneyline + favorite from real odds data
         if match_odds:
-            if match_odds.get("bookmakerOdds"):
+            if match_odds.get("americanOdds"):
+                ao = match_odds["americanOdds"]
+                if ao.get("home") and ao.get("away") and ao.get("draw"):
+                    real_matchup["moneyline"] = {
+                        "home": str(ao["home"]),
+                        "draw": str(ao["draw"]),
+                        "away": str(ao["away"]),
+                    }
+            elif match_odds.get("bookmakerOdds"):
                 bo = match_odds["bookmakerOdds"]
-                real_matchup["moneyline"] = {
-                    "home": bo.get("homeWin", "N/A"),
-                    "draw": bo.get("draw", "N/A"),
-                    "away": bo.get("awayWin", "N/A")
-                }
+                h, d, a = bo.get("homeWin", ""), bo.get("draw", ""), bo.get("awayWin", "")
+                if h and d and a and h != "N/A" and d != "N/A" and a != "N/A":
+                    real_matchup["moneyline"] = {"home": h, "draw": d, "away": a}
             if match_odds.get("favorite"):
                 real_matchup["favorite"] = match_odds["favorite"]
         # 3. Game type from real stats — deterministic classification

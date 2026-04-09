@@ -600,7 +600,7 @@ async def get_subscription_status(email: str):
                 from datetime import date as date_type
                 try:
                     ct_date = date_type.fromisoformat(str(charged_through)[:10])
-                    if ct_date < date_type.today():
+                    if ct_date <= date_type.today():
                         try:
                             client.subscriptions.cancel(subscription_id=sub["squareSubscriptionId"])
                         except Exception:
