@@ -542,9 +542,9 @@ const styles = StyleSheet.create({
     marginBottom: 40,
   },
   logo: {
-    width: 80,
-    height: 80,
-    marginBottom: 18,
+    width: 130,
+    height: 130,
+    marginBottom: 20,
   },
   appName: {
     fontSize: 24,

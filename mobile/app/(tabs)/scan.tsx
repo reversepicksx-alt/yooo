@@ -204,13 +204,9 @@ export default function ScanScreen() {
   return (
     <View style={[styles.root, { paddingTop: topPad }]}>
       <View style={styles.header}>
-        <View style={styles.logoRow}>
-          <Image source={require('../../assets/logo.png')} style={styles.logoImg} resizeMode="contain" />
-          <View>
-            <Text style={styles.logoText}>ReversePicks</Text>
-            <Text style={styles.tagline}>AI Soccer Prop Analytics</Text>
-          </View>
-        </View>
+        <Image source={require('../../assets/logo.png')} style={styles.logoImg} resizeMode="contain" />
+        <Text style={styles.logoText}>ReversePicks</Text>
+        <Text style={styles.tagline}>AI Soccer Prop Analytics</Text>
       </View>
 
 
@@ -683,33 +679,44 @@ export default function ScanScreen() {
                     ))}
                   </View>
 
-                  {/* 4-column grid */}
+                  {/* 4-column grid — pad last row to always fill 4 columns */}
                   <View style={styles.glGrid}>
-                    {filteredLogs.map((g, i) => {
-                      const isOver = g.value != null && prediction.line != null && g.value >= prediction.line;
-                      const oppRaw = g.opponent || '?';
-                      const oppShort = oppRaw.replace(/^(al-?|fc |cf |rc |sc |cd |ud |sd |rcd |as |ss |ac |us |ac |sp |ca |cp |ue |ue |ce |cm |se |sk )/i, '').slice(0, 3).toUpperCase();
+                    {(() => {
+                      const remainder = filteredLogs.length % 4;
+                      const padCount = remainder === 0 ? 0 : 4 - remainder;
                       return (
-                        <View
-                          key={i}
-                          style={[
-                            styles.glTile,
-                            { width: tileW },
-                            isOver ? styles.glTileOver : styles.glTileUnder,
-                          ]}
-                        >
-                          {isOver && <View style={styles.glDot} />}
-                          <Text style={[styles.glTileVal, { color: isOver ? Colors.success : Colors.error }]}>
-                            {g.value != null ? String(g.value) : '—'}
-                          </Text>
-                          <Text style={styles.glTileMins}>{g.minutes > 0 ? `${g.minutes}'` : '—'}</Text>
-                          <View style={styles.glVenueBadge}>
-                            <Text style={styles.glVenueText}>{g.venue === 'home' ? 'H' : 'A'}</Text>
-                          </View>
-                          <Text style={styles.glTileOpp} numberOfLines={1}>{oppShort}</Text>
-                        </View>
+                        <>
+                          {filteredLogs.map((g, i) => {
+                            const isOver = g.value != null && prediction.line != null && g.value >= prediction.line;
+                            const oppRaw = g.opponent || '?';
+                            const oppShort = oppRaw.replace(/^(al-?|fc |cf |rc |sc |cd |ud |sd |rcd |as |ss |ac |us |ac |sp |ca |cp |ue |ue |ce |cm |se |sk )/i, '').slice(0, 3).toUpperCase();
+                            return (
+                              <View
+                                key={i}
+                                style={[
+                                  styles.glTile,
+                                  { width: tileW },
+                                  isOver ? styles.glTileOver : styles.glTileUnder,
+                                ]}
+                              >
+                                {isOver && <View style={styles.glDot} />}
+                                <Text style={[styles.glTileVal, { color: isOver ? Colors.success : Colors.error }]}>
+                                  {g.value != null ? String(g.value) : '—'}
+                                </Text>
+                                <Text style={styles.glTileMins}>{g.minutes > 0 ? `${g.minutes}'` : '—'}</Text>
+                                <View style={styles.glVenueBadge}>
+                                  <Text style={styles.glVenueText}>{g.venue === 'home' ? 'H' : 'A'}</Text>
+                                </View>
+                                <Text style={styles.glTileOpp} numberOfLines={1}>{oppShort}</Text>
+                              </View>
+                            );
+                          })}
+                          {Array.from({ length: padCount }).map((_, pi) => (
+                            <View key={`pad-${pi}`} style={[styles.glTile, { width: tileW, opacity: 0 }]} pointerEvents="none" />
+                          ))}
+                        </>
                       );
-                    })}
+                    })()}
                   </View>
 
                   {/* Home/Away splits */}
@@ -856,11 +863,11 @@ export default function ScanScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.background },
-  header: { paddingHorizontal: 20, paddingBottom: 12 },
+  header: { paddingHorizontal: 20, paddingBottom: 14, alignItems: 'center' },
   logoRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  logoImg: { width: 36, height: 36 },
+  logoImg: { width: 54, height: 54, marginBottom: 8 },
   logoText: { fontSize: 20, fontWeight: '800', color: Colors.text, letterSpacing: -0.3 },
-  tagline: { fontSize: 11, color: Colors.primary, marginTop: 1, letterSpacing: 0.5, fontWeight: '600' },
+  tagline: { fontSize: 11, color: Colors.primary, marginTop: 2, letterSpacing: 0.5, fontWeight: '600' },
   modeRow: {
     flexDirection: 'row',
     marginHorizontal: 20,
