@@ -48,23 +48,46 @@ async def check_access(email_lower: str):
 
     if WHOP_API_KEY:
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.get(
-                    "https://api.whop.com/api/v2/memberships",
-                    params={"email": email_lower, "valid": "true", "per_page": 10},
-                    headers={"Authorization": f"Bearer {WHOP_API_KEY}"},
-                )
-                if resp.status_code == 200:
+            # 1. Check local synced cache first (populated by startup sync)
+            cached = await db.whop_subscriptions.find_one(
+                {"email": email_lower, "status": "active"},
+                {"_id": 0}
+            )
+            if cached:
+                return "Whop Member"
+
+            # 2. Live fallback — fetch all pages and filter by email locally
+            # (Whop API does not support filtering by email server-side)
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                page = 1
+                while page <= 5:
+                    resp = await client.get(
+                        "https://api.whop.com/api/v2/memberships",
+                        params={"valid": "true", "per_page": 50, "page": page},
+                        headers={"Authorization": f"Bearer {WHOP_API_KEY}"},
+                    )
+                    if resp.status_code != 200:
+                        break
                     data = resp.json()
                     memberships = data.get("data", [])
-                    active = [m for m in memberships if m.get("valid") or m.get("status") == "active"]
-                    if active:
-                        await db.whop_subscriptions.update_one(
-                            {"email": email_lower},
-                            {"$set": {"email": email_lower, "status": "active", "memberships": active, "updatedAt": datetime.now(timezone.utc).isoformat()}},
-                            upsert=True,
-                        )
-                        return "Whop Member"
+                    for m in memberships:
+                        m_email = (m.get("email") or "").lower()
+                        if m_email == email_lower and (m.get("valid") or m.get("status") == "active"):
+                            await db.whop_subscriptions.update_one(
+                                {"email": email_lower},
+                                {"$set": {
+                                    "email": email_lower,
+                                    "status": "active",
+                                    "whop_id": m.get("id"),
+                                    "updatedAt": datetime.now(timezone.utc).isoformat(),
+                                }},
+                                upsert=True,
+                            )
+                            return "Whop Member"
+                    pagination = data.get("pagination", {})
+                    if page >= pagination.get("total_page", 1):
+                        break
+                    page += 1
         except Exception as exc:
             print(f"[WHOP] Check failed for {email_lower}: {exc}")
 
