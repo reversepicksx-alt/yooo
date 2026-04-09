@@ -112,9 +112,6 @@ async def verify_access(req: VerifyAccessRequest):
     if not access_type:
         return {"verified": False, "email": email_lower, "message": "No active membership found. Contact your administrator to get access."}
     if email_lower == OWNER_EMAIL:
-        user_record = await db.users.find_one({"email": email_lower}, {"_id": 0})
-        if not (user_record and user_record.get("passwordHash")):
-            return {"requires_password_setup": True, "email": email_lower, "access_type": access_type}
         token = await create_session(email_lower, "Owner")
         return {"verified": True, "email": email_lower, "session_token": token, "access_type": "Owner", "message": "Access granted"}
     user_record = await db.users.find_one({"email": email_lower}, {"_id": 0})
