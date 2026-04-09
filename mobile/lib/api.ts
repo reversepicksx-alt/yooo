@@ -170,6 +170,15 @@ export interface GameLog {
   minutes: number;
 }
 
+export interface H2HMatch {
+  date: string;
+  score: string;
+  venue: string;
+  minutes: number;
+  targetStat: number | null;
+  opponent: string;
+}
+
 export interface PredictionResult {
   playerName?: string;
   teamName?: string;
@@ -187,14 +196,22 @@ export interface PredictionResult {
   confidenceLevel?: string;
   confidenceInterval?: [number, number];
   priorMean?: number;
+  momentumMean?: number;
   momentumEffect?: number;
   momentumLabel?: string;
   streakFlag?: string;
+  pOver?: number;
+  pUnder?: number;
+  volatility?: string;
+  priorSamples?: number;
+  covariateAdjustment?: number;
+  reversalFlag?: string;
   gameLogs?: GameLog[];
   homeAvg?: number;
   awayAvg?: number;
   sampleSize?: number;
   hitRates?: { overHits: number; underHits: number; overPct: number; underPct: number; total: number };
+  h2hPlayerStats?: { matches: H2HMatch[]; avgVsOpponent?: number; sampleSize: number; targetProp?: string };
   teamId?: number;
   opponentId?: number;
   leagueId?: number;
@@ -225,18 +242,36 @@ interface RawPrediction {
     posteriorMean?: number;
     edgeZ?: number;
     momentumEffect?: number;
+    momentumMean?: number;
     momentumLabel?: string;
     priorMean?: number;
     streakFlag?: string;
     pOver?: number;
     pUnder?: number;
     reversalFlag?: string;
+    volatility?: string;
+    priorSamples?: number;
+    covariateAdjustment?: number;
+    cv?: number;
   };
   playerGameLogs?: {
     games?: Record<string, unknown>[];
     homeAvg?: number;
     awayAvg?: number;
     hitRates?: { overHits: number; underHits: number; overPct: number; underPct: number; total: number; summary?: string };
+  };
+  h2hPlayerStats?: {
+    matches?: Array<{
+      date?: string;
+      score?: string;
+      venue?: string;
+      minutes?: number;
+      targetStat?: number | null;
+      opponent?: string;
+    }>;
+    avgVsOpponent?: number;
+    sampleSize?: number;
+    targetProp?: string;
   };
   error?: string;
 }
@@ -302,9 +337,16 @@ export async function predict(request: Record<string, unknown>): Promise<Predict
     bayesianProjection: bm.posteriorMean,
     edgeScore: bm.edgeZ,
     priorMean: bm.priorMean,
+    momentumMean: bm.momentumMean,
     momentumEffect: bm.momentumEffect,
     momentumLabel: bm.momentumLabel,
     streakFlag: bm.streakFlag,
+    pOver: bm.pOver,
+    pUnder: bm.pUnder,
+    volatility: bm.volatility,
+    priorSamples: bm.priorSamples,
+    covariateAdjustment: bm.covariateAdjustment,
+    reversalFlag: bm.reversalFlag,
     gameLogs: gameLogs.length > 0 ? gameLogs : undefined,
     homeAvg: raw.playerGameLogs?.homeAvg,
     awayAvg: raw.playerGameLogs?.awayAvg,
@@ -316,6 +358,21 @@ export async function predict(request: Record<string, unknown>): Promise<Predict
           overPct: raw.playerGameLogs.hitRates.overPct,
           underPct: raw.playerGameLogs.hitRates.underPct,
           total: raw.playerGameLogs.hitRates.total,
+        }
+      : undefined,
+    h2hPlayerStats: raw.h2hPlayerStats?.matches?.length
+      ? {
+          matches: raw.h2hPlayerStats.matches.map(m => ({
+            date: m.date || '',
+            score: m.score || '',
+            venue: m.venue || '',
+            minutes: m.minutes || 0,
+            targetStat: m.targetStat ?? null,
+            opponent: m.opponent || '',
+          })),
+          avgVsOpponent: raw.h2hPlayerStats.avgVsOpponent,
+          sampleSize: raw.h2hPlayerStats.sampleSize || 0,
+          targetProp: raw.h2hPlayerStats.targetProp,
         }
       : undefined,
     teamId: raw._request?.teamId || (request.teamId as number) || undefined,

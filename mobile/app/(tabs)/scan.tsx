@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  TextInput, ActivityIndicator, Alert, Platform, Modal, Image,
+  TextInput, ActivityIndicator, Alert, Platform, Modal, Image, Dimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
@@ -13,6 +13,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { scanProp, predict, savePick, PROP_TYPES, LEAGUES, PredictionResult, ScanResult } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 
+const SCREEN_W = Dimensions.get('window').width;
 const INPUT_STYLE = Platform.OS === 'web' ? { outlineWidth: 0 } as object : {};
 
 const PROP_LABELS: Record<string, string> = {
@@ -44,6 +45,7 @@ export default function ScanScreen() {
 
   // User-controlled venue override
   const [venueOverride, setVenueOverride] = useState<'home' | 'away'>('home');
+  const [gameLogFilter, setGameLogFilter] = useState<'all' | 'home' | 'away'>('all');
 
   // Manual mode fields
   const [playerQuery, setPlayerQuery] = useState('');
@@ -66,6 +68,7 @@ export default function ScanScreen() {
     setPlayerQuery('');
     setLine('');
     setVenueOverride('home');
+    setGameLogFilter('all');
   };
 
   const processImage = async (base64: string, uri: string) => {
@@ -510,46 +513,6 @@ export default function ScanScreen() {
                 </View>
               </View>
 
-              {/* Bayesian breakdown */}
-              {(prediction.priorMean != null || prediction.momentumEffect != null) && (
-                <>
-                  <View style={styles.analysisDivider} />
-                  <View style={styles.bayesRow}>
-                    {prediction.priorMean != null && (
-                      <View style={styles.bayesStat}>
-                        <Text style={styles.bayesLabel}>SEASON AVG</Text>
-                        <Text style={styles.bayesVal}>{prediction.priorMean.toFixed(1)}</Text>
-                      </View>
-                    )}
-                    {prediction.momentumEffect != null && (
-                      <View style={styles.bayesStat}>
-                        <Text style={styles.bayesLabel}>MOMENTUM</Text>
-                        <Text style={[styles.bayesVal, {
-                          color: prediction.momentumEffect > 0 ? Colors.success : prediction.momentumEffect < 0 ? Colors.error : Colors.text
-                        }]}>
-                          {prediction.momentumEffect > 0 ? '+' : ''}{prediction.momentumEffect.toFixed(1)}
-                        </Text>
-                      </View>
-                    )}
-                    {prediction.momentumLabel && (
-                      <View style={styles.bayesStat}>
-                        <Text style={styles.bayesLabel}>FORM</Text>
-                        <Text style={[styles.bayesVal, {
-                          color: prediction.momentumLabel === 'HOT' ? Colors.success
-                            : prediction.momentumLabel === 'COLD' ? Colors.error
-                            : Colors.textSecondary
-                        }]}>{prediction.momentumLabel}</Text>
-                      </View>
-                    )}
-                    {prediction.streakFlag && prediction.streakFlag !== 'NONE' && (
-                      <View style={styles.bayesStat}>
-                        <Text style={styles.bayesLabel}>STREAK</Text>
-                        <Text style={[styles.bayesVal, { color: Colors.primary }]}>{prediction.streakFlag.replace('_', ' ')}</Text>
-                      </View>
-                    )}
-                  </View>
-                </>
-              )}
 
               {/* Confidence Interval */}
               {prediction.confidenceInterval && (
@@ -579,59 +542,220 @@ export default function ScanScreen() {
               )}
             </View>
 
-            {/* ─── GAME LOG TILES ─── */}
-            {prediction.gameLogs && prediction.gameLogs.length > 0 && (
-              <View style={styles.gameLogsCard}>
-                <View style={styles.gameLogsHeader}>
-                  <Text style={styles.gameLogsTitle}>GAME LOG</Text>
-                  {prediction.sampleSize != null && (
-                    <View style={styles.gameLogsBadge}>
-                      <Text style={styles.gameLogsBadgeText}>{prediction.sampleSize} games</Text>
+            {/* ─── REVERSE FORMULA CARD ─── */}
+            {prediction.priorSamples != null && prediction.priorSamples >= 3 && (
+              <View style={styles.rfCard}>
+                <View style={styles.rfHeader}>
+                  <View style={styles.rfTitleRow}>
+                    <Ionicons name="pulse" size={13} color={Colors.primary} />
+                    <Text style={styles.rfTitle}>REVERSE FORMULA</Text>
+                  </View>
+                  <Text style={styles.rfGamesAnalyzed}>{prediction.priorSamples} GAMES ANALYZED</Text>
+                </View>
+
+                {/* SEASON row */}
+                <View style={styles.rfRow}>
+                  <Text style={styles.rfRowLabel}>SEASON</Text>
+                  <View style={styles.rfBarTrack}>
+                    <View style={[styles.rfBarFill, { width: '45%', backgroundColor: '#4DA6FF' }]} />
+                  </View>
+                  <Text style={[styles.rfPct, { color: '#4DA6FF' }]}>45%</Text>
+                  <Text style={[styles.rfVal, { color: '#4DA6FF' }]}>
+                    {prediction.priorMean != null ? prediction.priorMean.toFixed(1) : '—'}
+                  </Text>
+                </View>
+
+                {/* MOMENTUM row */}
+                <View style={styles.rfRow}>
+                  <Text style={styles.rfRowLabel}>MOMENTUM</Text>
+                  <View style={styles.rfBarTrack}>
+                    <View style={[styles.rfBarFill, { width: '30%', backgroundColor: '#FF8C42' }]} />
+                  </View>
+                  <Text style={[styles.rfPct, { color: '#FF8C42' }]}>30%</Text>
+                  <Text style={[styles.rfVal, { color: '#FF8C42' }]}>
+                    {prediction.momentumMean != null ? prediction.momentumMean.toFixed(1) : '—'}
+                  </Text>
+                </View>
+
+                {/* CONTEXT row */}
+                <View style={styles.rfRow}>
+                  <Text style={styles.rfRowLabel}>CONTEXT</Text>
+                  <View style={styles.rfBarTrack}>
+                    <View style={[styles.rfBarFill, { width: '25%', backgroundColor: '#A084E8' }]} />
+                  </View>
+                  <Text style={[styles.rfPct, { color: '#A084E8' }]}>25%</Text>
+                  <Text style={[styles.rfVal, { color: '#A084E8' }]}>
+                    {prediction.covariateAdjustment != null
+                      ? (prediction.covariateAdjustment >= 0 ? '+' : '') + prediction.covariateAdjustment.toFixed(2)
+                      : '—'}
+                  </Text>
+                </View>
+
+                {/* Badges */}
+                <View style={styles.rfBadgeRow}>
+                  {prediction.momentumLabel && (
+                    <View style={[styles.rfBadge, styles.rfBadgeMomentum]}>
+                      <Text style={styles.rfBadgeMomentumText}>
+                        {prediction.momentumLabel === 'HOT' ? '🔥' : prediction.momentumLabel === 'COLD' ? '🧊' : '〜'}{' '}
+                        {prediction.momentumLabel}
+                        {prediction.momentumEffect != null && prediction.momentumEffect !== 0
+                          ? ` ${prediction.momentumEffect > 0 ? '+' : ''}${prediction.momentumEffect.toFixed(2)}`
+                          : ''}
+                      </Text>
                     </View>
                   )}
-                  {prediction.hitRates && (
-                    <Text style={styles.hitRateText}>
-                      {prediction.hitRates.overPct}% OVER · {prediction.hitRates.underPct}% UNDER
+                  {prediction.recommendation && prediction.recommendation !== 'PASS' && (
+                    <View style={[styles.rfBadge, {
+                      backgroundColor: prediction.recommendation === 'OVER' ? 'rgba(57,255,20,0.15)' : 'rgba(255,59,48,0.15)',
+                      borderColor: prediction.recommendation === 'OVER' ? Colors.success : Colors.error,
+                    }]}>
+                      <Text style={[styles.rfBadgeText, {
+                        color: prediction.recommendation === 'OVER' ? Colors.success : Colors.error,
+                      }]}>
+                        {prediction.recommendation} {prediction.line}
+                      </Text>
+                    </View>
+                  )}
+                  {prediction.volatility && (
+                    <View style={[styles.rfBadge, styles.rfBadgeVol]}>
+                      <Text style={styles.rfBadgeVolText}>{prediction.volatility} VOL</Text>
+                    </View>
+                  )}
+                </View>
+
+                {/* Math Projection */}
+                <View style={styles.rfProjectionRow}>
+                  <Text style={styles.rfProjectionLabel}>Math Projection</Text>
+                  <View style={styles.rfProjectionRight}>
+                    <Text style={styles.rfProjectionVal}>
+                      {(prediction.projection ?? prediction.bayesianProjection)?.toFixed(1) ?? '—'}
+                    </Text>
+                    {(prediction.pOver != null || prediction.pUnder != null) && (
+                      <Text style={styles.rfProjectionProb}>
+                        {prediction.recommendation === 'UNDER'
+                          ? `P(UNDER) ${prediction.pUnder?.toFixed(1)}%`
+                          : `P(OVER) ${prediction.pOver?.toFixed(1)}%`}
+                      </Text>
+                    )}
+                  </View>
+                </View>
+              </View>
+            )}
+
+            {/* ─── GAME LOG GRID ─── */}
+            {prediction.gameLogs && prediction.gameLogs.length > 0 && (() => {
+              const overCount = prediction.gameLogs.filter(g => g.value != null && prediction.line != null && g.value >= prediction.line).length;
+              const filteredLogs = prediction.gameLogs.filter(g =>
+                gameLogFilter === 'all' ? true : g.venue === gameLogFilter
+              );
+              const tileW = (SCREEN_W - 40 - 32 - 18) / 4;
+              return (
+                <View style={styles.gameLogsCard}>
+                  {/* Header */}
+                  <View style={styles.gameLogsHeader}>
+                    <View style={styles.glHeaderLeft}>
+                      <Ionicons name="pulse" size={11} color={Colors.textTertiary} />
+                      <Text style={styles.gameLogsTitle}>
+                        RECENT FORM ({prediction.gameLogs.length} GAMES)
+                      </Text>
+                    </View>
+                    {prediction.hitRates != null && (
+                      <View style={styles.hitRateBadge}>
+                        <Text style={styles.hitRateBadgeText}>
+                          {overCount} / {prediction.gameLogs.length} HIT RATE
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+
+                  {/* ALL / HOME / AWAY tabs */}
+                  <View style={styles.glTabRow}>
+                    {(['all', 'home', 'away'] as const).map(f => (
+                      <TouchableOpacity
+                        key={f}
+                        style={[styles.glTab, gameLogFilter === f && styles.glTabActive]}
+                        onPress={() => { setGameLogFilter(f); Haptics.selectionAsync(); }}
+                      >
+                        <Text style={[styles.glTabText, gameLogFilter === f && styles.glTabTextActive]}>
+                          {f.toUpperCase()}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+
+                  {/* 4-column grid */}
+                  <View style={styles.glGrid}>
+                    {filteredLogs.map((g, i) => {
+                      const isOver = g.value != null && prediction.line != null && g.value >= prediction.line;
+                      const oppRaw = g.opponent || '?';
+                      const oppShort = oppRaw.replace(/^(al-?|fc |cf |rc |sc |cd |ud |sd |rcd |as |ss |ac |us |ac |sp |ca |cp |ue |ue |ce |cm |se |sk )/i, '').slice(0, 3).toUpperCase();
+                      return (
+                        <View
+                          key={i}
+                          style={[
+                            styles.glTile,
+                            { width: tileW },
+                            isOver ? styles.glTileOver : styles.glTileUnder,
+                          ]}
+                        >
+                          {isOver && <View style={styles.glDot} />}
+                          <Text style={[styles.glTileVal, { color: isOver ? Colors.success : Colors.error }]}>
+                            {g.value != null ? String(g.value) : '—'}
+                          </Text>
+                          <Text style={styles.glTileMins}>{g.minutes > 0 ? `${g.minutes}'` : '—'}</Text>
+                          <View style={styles.glVenueBadge}>
+                            <Text style={styles.glVenueText}>{g.venue === 'home' ? 'H' : 'A'}</Text>
+                          </View>
+                          <Text style={styles.glTileOpp} numberOfLines={1}>{oppShort}</Text>
+                        </View>
+                      );
+                    })}
+                  </View>
+
+                  {/* Home/Away splits */}
+                  {(prediction.homeAvg != null || prediction.awayAvg != null) && (
+                    <View style={styles.avgRow}>
+                      {prediction.homeAvg != null && (
+                        <Text style={styles.avgText}>HOME AVG  {prediction.homeAvg.toFixed(1)}</Text>
+                      )}
+                      {prediction.awayAvg != null && (
+                        <Text style={styles.avgText}>AWAY AVG  {prediction.awayAvg.toFixed(1)}</Text>
+                      )}
+                    </View>
+                  )}
+                </View>
+              );
+            })()}
+
+            {/* ─── H2H CARD ─── */}
+            {prediction.h2hPlayerStats && prediction.h2hPlayerStats.matches.length > 0 && (
+              <View style={styles.h2hCard}>
+                <View style={styles.h2hHeader}>
+                  <Ionicons name="swap-horizontal-outline" size={13} color={Colors.primary} />
+                  <Text style={styles.h2hTitle}>
+                    H2H{prediction.opponentName ? ` vs ${prediction.opponentName}` : ''}
+                  </Text>
+                  {prediction.h2hPlayerStats.avgVsOpponent != null && (
+                    <Text style={styles.h2hAvg}>
+                      AVG {prediction.h2hPlayerStats.avgVsOpponent.toFixed(1)}
                     </Text>
                   )}
                 </View>
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.tilesRow}
-                >
-                  {prediction.gameLogs.map((g, i) => {
-                    const isOver = g.value != null && prediction.line != null && g.value >= prediction.line;
-                    const dateStr = g.date ? g.date.slice(5) : '??-??';
-                    const oppRaw = g.opponent || '?';
-                    const oppShort = oppRaw.length > 7 ? oppRaw.slice(0, 6) + '…' : oppRaw;
-                    return (
-                      <TouchableOpacity
-                        key={i}
-                        style={[styles.gameTile, isOver ? styles.gameTileOver : styles.gameTileUnder]}
-                        onPress={() => Haptics.selectionAsync()}
-                        activeOpacity={0.7}
-                      >
-                        <Text style={styles.gameTileVenue}>{g.venue === 'home' ? 'H' : 'A'}</Text>
-                        <Text style={styles.gameTileDate}>{dateStr}</Text>
-                        <Text style={styles.gameTileOpp} numberOfLines={1}>{oppShort}</Text>
-                        <Text style={[styles.gameTileVal, { color: isOver ? Colors.success : Colors.error }]}>
-                          {g.value != null ? String(g.value) : '—'}
+                {prediction.h2hPlayerStats.matches.map((m, i) => {
+                  const isOver = m.targetStat != null && prediction.line != null && m.targetStat >= prediction.line;
+                  return (
+                    <View key={i} style={[styles.h2hRow, i < prediction.h2hPlayerStats!.matches.length - 1 && styles.h2hRowBorder]}>
+                      <Text style={styles.h2hDate}>{m.date ? m.date.slice(0, 10) : '—'}</Text>
+                      {m.score ? <Text style={styles.h2hScore}>{m.score}</Text> : null}
+                      <View style={styles.h2hRight}>
+                        {m.minutes > 0 && <Text style={styles.h2hMins}>{m.minutes}'</Text>}
+                        <Text style={[styles.h2hStat, { color: m.targetStat != null ? (isOver ? Colors.success : Colors.error) : Colors.textTertiary }]}>
+                          {m.targetStat != null ? String(m.targetStat) : '—'}
                         </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </ScrollView>
-                {(prediction.homeAvg != null || prediction.awayAvg != null) && (
-                  <View style={styles.avgRow}>
-                    {prediction.homeAvg != null && (
-                      <Text style={styles.avgText}>HOME AVG {prediction.homeAvg.toFixed(1)}</Text>
-                    )}
-                    {prediction.awayAvg != null && (
-                      <Text style={styles.avgText}>AWAY AVG {prediction.awayAvg.toFixed(1)}</Text>
-                    )}
-                  </View>
-                )}
+                      </View>
+                    </View>
+                  );
+                })}
               </View>
             )}
 
@@ -898,12 +1022,6 @@ const styles = StyleSheet.create({
   analysisStatSub: { fontSize: 9, color: Colors.textTertiary, letterSpacing: 0.8 },
   analysisStatDivider: { width: 1, backgroundColor: Colors.borderSubtle, marginVertical: 14 },
 
-  /* Bayesian breakdown */
-  bayesRow: { flexDirection: 'row', paddingHorizontal: 16, paddingVertical: 12, gap: 0 },
-  bayesStat: { flex: 1, alignItems: 'center', gap: 3 },
-  bayesLabel: { fontSize: 9, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 0.8 },
-  bayesVal: { fontSize: 13, fontWeight: '700', color: Colors.text },
-
   /* Confidence interval */
   ciRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
@@ -918,49 +1036,108 @@ const styles = StyleSheet.create({
   reasoningLabel: { fontSize: 10, color: Colors.primary, fontWeight: '700', letterSpacing: 1.5 },
   reasoningText: { fontSize: 13, color: Colors.textSecondary, lineHeight: 20 },
 
-  /* Game Log Tiles */
+  /* ─── REVERSE FORMULA CARD ─── */
+  rfCard: {
+    backgroundColor: Colors.card, borderRadius: Colors.radiusLg,
+    padding: 16, borderWidth: 1, borderColor: Colors.borderSubtle, marginTop: 12, gap: 10,
+  },
+  rfHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  rfTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  rfTitle: { fontSize: 12, fontWeight: '800', color: Colors.primary, letterSpacing: 1.5 },
+  rfGamesAnalyzed: { fontSize: 10, color: Colors.textTertiary, fontWeight: '600', letterSpacing: 0.5 },
+  rfRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  rfRowLabel: { fontSize: 11, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.5, width: 78 },
+  rfBarTrack: {
+    flex: 1, height: 6, backgroundColor: Colors.cardSecondary,
+    borderRadius: 3, overflow: 'hidden',
+  },
+  rfBarFill: { height: '100%', borderRadius: 3 },
+  rfPct: { fontSize: 11, fontWeight: '700', width: 34, textAlign: 'right' },
+  rfVal: { fontSize: 13, fontWeight: '800', width: 52, textAlign: 'right' },
+  rfBadgeRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 2 },
+  rfBadge: {
+    paddingHorizontal: 10, paddingVertical: 5,
+    borderRadius: 8, borderWidth: 1,
+  },
+  rfBadgeMomentum: { backgroundColor: 'rgba(255,140,66,0.15)', borderColor: '#FF8C42' },
+  rfBadgeMomentumText: { fontSize: 12, fontWeight: '700', color: '#FF8C42' },
+  rfBadgeText: { fontSize: 12, fontWeight: '800' },
+  rfBadgeVol: { backgroundColor: Colors.cardSecondary, borderColor: Colors.border },
+  rfBadgeVolText: { fontSize: 11, fontWeight: '600', color: Colors.textSecondary },
+  rfProjectionRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    backgroundColor: Colors.cardSecondary, borderRadius: 10, padding: 12, marginTop: 4,
+  },
+  rfProjectionLabel: { fontSize: 13, color: Colors.textSecondary, fontWeight: '600' },
+  rfProjectionRight: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
+  rfProjectionVal: { fontSize: 20, fontWeight: '800', color: '#4DA6FF' },
+  rfProjectionProb: { fontSize: 12, color: '#4DA6FF', fontWeight: '600' },
+
+  /* ─── GAME LOG GRID ─── */
   gameLogsCard: {
-    backgroundColor: Colors.card,
-    borderRadius: Colors.radiusLg,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: Colors.borderSubtle,
-    marginTop: 12,
-    gap: 12,
+    backgroundColor: Colors.card, borderRadius: Colors.radiusLg,
+    padding: 16, borderWidth: 1, borderColor: Colors.borderSubtle, marginTop: 12, gap: 12,
   },
-  gameLogsHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
-  gameLogsTitle: { fontSize: 10, fontWeight: '700', color: Colors.textTertiary, letterSpacing: 1.5 },
-  gameLogsBadge: {
-    backgroundColor: Colors.cardSecondary,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: 20,
+  gameLogsHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  glHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  gameLogsTitle: { fontSize: 10, fontWeight: '700', color: Colors.textTertiary, letterSpacing: 1.2 },
+  hitRateBadge: {
+    backgroundColor: 'rgba(57,255,20,0.12)', borderRadius: 20,
+    paddingHorizontal: 10, paddingVertical: 3, borderWidth: 1, borderColor: 'rgba(57,255,20,0.3)',
   },
-  gameLogsBadgeText: { fontSize: 10, color: Colors.textSecondary, fontWeight: '600' },
-  hitRateText: { fontSize: 10, color: Colors.textSecondary, marginLeft: 'auto' as unknown as number },
-  tilesRow: { gap: 6, paddingBottom: 2 },
-  gameTile: {
-    width: 70,
-    borderRadius: 10,
-    padding: 8,
-    alignItems: 'center',
-    gap: 3,
-    borderWidth: 1,
+  hitRateBadgeText: { fontSize: 10, fontWeight: '700', color: Colors.success },
+  glTabRow: {
+    flexDirection: 'row', backgroundColor: Colors.cardSecondary,
+    borderRadius: 8, padding: 2, gap: 2,
   },
-  gameTileOver: {
-    backgroundColor: 'rgba(57,255,20,0.07)',
-    borderColor: 'rgba(57,255,20,0.25)',
+  glTab: { flex: 1, alignItems: 'center', paddingVertical: 7, borderRadius: 7 },
+  glTabActive: { backgroundColor: Colors.primaryDim },
+  glTabText: { fontSize: 11, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.5 },
+  glTabTextActive: { color: Colors.primary },
+  glGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  glTile: {
+    borderRadius: 10, padding: 8, alignItems: 'center',
+    gap: 4, borderWidth: 1, position: 'relative',
   },
-  gameTileUnder: {
-    backgroundColor: 'rgba(255,59,48,0.07)',
-    borderColor: 'rgba(255,59,48,0.2)',
+  glTileOver: {
+    backgroundColor: 'rgba(57,255,20,0.07)', borderColor: 'rgba(57,255,20,0.3)',
   },
-  gameTileVenue: { fontSize: 8, fontWeight: '800', color: Colors.textTertiary, letterSpacing: 1 },
-  gameTileDate: { fontSize: 9, color: Colors.textSecondary },
-  gameTileOpp: { fontSize: 8, color: Colors.textSecondary, textAlign: 'center' },
-  gameTileVal: { fontSize: 17, fontWeight: '800', lineHeight: 20 },
+  glTileUnder: {
+    backgroundColor: 'rgba(255,59,48,0.07)', borderColor: 'rgba(255,59,48,0.2)',
+  },
+  glDot: {
+    position: 'absolute', top: 6, right: 6,
+    width: 6, height: 6, borderRadius: 3, backgroundColor: '#FF8C42',
+  },
+  glTileVal: { fontSize: 18, fontWeight: '900', lineHeight: 22 },
+  glTileMins: { fontSize: 9, color: Colors.textSecondary, fontWeight: '600' },
+  glVenueBadge: {
+    backgroundColor: '#1a1a1a', borderRadius: 4,
+    paddingHorizontal: 5, paddingVertical: 2,
+  },
+  glVenueText: { fontSize: 9, fontWeight: '800', color: Colors.textSecondary, letterSpacing: 0.5 },
+  glTileOpp: { fontSize: 9, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 0.5 },
   avgRow: { flexDirection: 'row', gap: 16 },
   avgText: { fontSize: 10, color: Colors.textSecondary, fontWeight: '600', letterSpacing: 0.5 },
+
+  /* ─── H2H CARD ─── */
+  h2hCard: {
+    backgroundColor: Colors.card, borderRadius: Colors.radiusLg,
+    padding: 16, borderWidth: 1, borderColor: Colors.borderSubtle, marginTop: 12, gap: 0,
+  },
+  h2hHeader: { flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 12 },
+  h2hTitle: { fontSize: 11, fontWeight: '800', color: Colors.primary, letterSpacing: 1.2, flex: 1 },
+  h2hAvg: { fontSize: 11, color: Colors.textSecondary, fontWeight: '600' },
+  h2hRow: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingVertical: 10, gap: 10,
+  },
+  h2hRowBorder: { borderBottomWidth: 1, borderBottomColor: Colors.borderSubtle },
+  h2hDate: { fontSize: 11, color: Colors.textTertiary, fontWeight: '600', width: 72 },
+  h2hScore: { fontSize: 12, color: Colors.textSecondary, fontWeight: '600', flex: 1 },
+  h2hRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  h2hMins: { fontSize: 10, color: Colors.textTertiary },
+  h2hStat: { fontSize: 16, fontWeight: '800', minWidth: 28, textAlign: 'right' },
 
   /* Save/New buttons */
   saveBtn: {
