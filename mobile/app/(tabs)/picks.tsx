@@ -121,9 +121,6 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
               <Text style={styles.pendingText}>PUSH</Text>
             </View>
           )}
-          <TouchableOpacity onPress={onDelete} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-            <Ionicons name="trash-outline" size={16} color="rgba(255,255,255,0.2)" />
-          </TouchableOpacity>
         </View>
       </View>
 
@@ -185,6 +182,9 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
       {pick.trackingId && (
         <Text style={styles.trackingId}>{pick.trackingId}</Text>
       )}
+      <TouchableOpacity style={styles.trashBtn} onPress={onDelete} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+        <Ionicons name="trash-outline" size={11} color="rgba(255,255,255,0.2)" />
+      </TouchableOpacity>
     </View>
   );
 }
@@ -491,4 +491,9 @@ const styles = StyleSheet.create({
   },
 
   trackingId: { fontSize: 9, color: Colors.textTertiary, textAlign: 'right', letterSpacing: 0.5 },
+  trashBtn: {
+    position: 'absolute',
+    right: 12,
+    bottom: 12,
+  },
 });
