@@ -379,44 +379,6 @@ export default function AccountScreen() {
           </>
         )}
 
-        {(isLifetime || isOwner) && (
-          <>
-            <Text style={styles.sectionLabel}>Subscription</Text>
-            <View style={styles.menuGroup}>
-              <MenuRow
-                icon="infinite-outline"
-                label="Plan"
-                value="Lifetime Access"
-              />
-              <MenuRow
-                icon="pulse-outline"
-                label="Status"
-                value="Active Forever"
-                valueColor={Colors.primary}
-              />
-            </View>
-          </>
-        )}
-
-        {isWhop && (
-          <>
-            <Text style={styles.sectionLabel}>Subscription</Text>
-            <View style={styles.menuGroup}>
-              <MenuRow
-                icon="globe-outline"
-                label="Managed By"
-                value="Whop"
-              />
-              <MenuRow
-                icon="pulse-outline"
-                label="Status"
-                value="Active"
-                valueColor={Colors.primary}
-              />
-            </View>
-          </>
-        )}
-
         <Text style={styles.sectionLabel}>About</Text>
         <View style={styles.menuGroup}>
           <MenuRow icon="football-outline" label="Sport" value="Soccer (All Major Leagues)" />
