@@ -54,35 +54,27 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
   const propLabel = PROP_LABELS[pick.propType] || pick.propType?.replace(/_/g, ' ') || '—';
   const venueStr = pick.venue ? pick.venue.toUpperCase() : '';
 
-  // Tracking bar: only use actual in-game value — never projection (match not started yet)
-  const trackValue = pick.actualValue != null ? pick.actualValue : null;
-  const isProjected = false;
+  const nowValue = pick.actualValue;
+  const paceValue = pick.projection ?? pick.pace ?? pick.liveValue ?? pick.actualValue;
+  const hitPct = pick.hitRate ?? pick.hitPct ?? pick.winRate;
+  const lineValue = typeof pick.line === 'number' ? pick.line : null;
 
-  const trackWinning = trackValue != null && pick.line != null
-    ? (isOver && trackValue > pick.line) || (isUnder && trackValue < pick.line)
+  const trackValue = nowValue ?? paceValue ?? null;
+  const trackDistance = lineValue != null && lineValue > 0 && trackValue != null
+    ? Math.max(0, Math.min(2, trackValue / lineValue))
     : null;
+  const trackFillPct = trackDistance != null
+    ? Math.max(6, Math.min(94, (trackDistance / 2) * 100))
+    : null;
+  const trackMarkerPct = 50;
   const trackColor = won
     ? Colors.success
     : lost
     ? Colors.error
-    : trackWinning === true
-    ? Colors.success
-    : trackWinning === false
-    ? Colors.error
-    : Colors.textTertiary;
-
-  // Fill %: line sits at 50%, value scaled to 0–100% (range: 0 to 2×line)
-  const trackFillPct = trackValue != null && pick.line != null && pick.line > 0
-    ? Math.min(Math.max((trackValue / (pick.line * 2)) * 100, 1), 99)
-    : null;
-
-  // PACE: for settled = actual, for live = projection
-  const paceVal = pick.actualValue != null
-    ? Number(pick.actualValue).toFixed(0)
-    : pick.projection != null
-    ? Number(pick.projection).toFixed(1)
-    : '—';
-  const paceColor = pick.actualValue != null ? statusColor : Colors.primary;
+    : trackValue != null && lineValue != null
+    ? ((isOver && trackValue > lineValue) || (isUnder && trackValue < lineValue) ? Colors.success : Colors.error)
+    : Colors.textSecondary;
+  const paceColor = trackValue != null ? Colors.primary : Colors.textSecondary;
 
   return (
     <View style={[styles.card, won && styles.cardWon, lost && styles.cardLost]}>
@@ -147,42 +139,42 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
       {/* Stats row: NOW | LINE | PACE | HIT% */}
       <View style={styles.statsRow}>
         <View style={styles.statCol}>
-          <Text style={[styles.statVal, { color: pick.actualValue != null ? statusColor : Colors.textSecondary }]}>
-            {pick.actualValue != null ? Number(pick.actualValue).toFixed(0) : '—'}
+          <Text style={[styles.statVal, { color: nowValue != null ? trackColor : Colors.textSecondary }]}>
+            {nowValue != null ? Number(nowValue).toFixed(0) : '—'}
           </Text>
           <Text style={styles.statLbl}>NOW</Text>
         </View>
         <View style={styles.statDivider} />
         <View style={styles.statCol}>
-          <Text style={styles.statVal}>{pick.line ?? '—'}</Text>
+          <Text style={styles.statVal}>{lineValue ?? '—'}</Text>
           <Text style={styles.statLbl}>LINE</Text>
         </View>
         <View style={styles.statDivider} />
         <View style={styles.statCol}>
-          <Text style={[styles.statVal, { color: paceColor }]}>{paceVal}</Text>
+          <Text style={[styles.statVal, { color: paceColor }]}>{paceValue != null ? Number(paceValue).toFixed(1) : '—'}</Text>
           <Text style={styles.statLbl}>PACE</Text>
         </View>
         <View style={styles.statDivider} />
         <View style={styles.statCol}>
-          <Text style={styles.statVal}>—</Text>
+          <Text style={styles.statVal}>{hitPct != null ? `${Math.round(hitPct)}%` : '—'}</Text>
           <Text style={styles.statLbl}>HIT%</Text>
         </View>
       </View>
 
       {/* Tracking bar */}
-      {trackFillPct != null && (
+      {trackFillPct != null && lineValue != null && (
         <View style={styles.trackBarOuter}>
           <View
             style={[
               styles.trackBarFill,
               {
-                width: `${trackFillPct}%` as unknown as number,
+                width: `${trackFillPct}%`,
                 backgroundColor: trackColor,
-                opacity: isProjected ? 0.45 : 0.85,
+                opacity: 0.9,
               },
             ]}
           />
-          <View style={styles.trackBarMarker} />
+          <View style={[styles.trackBarMarker, { left: `${trackMarkerPct}%` }]} />
         </View>
       )}
 
