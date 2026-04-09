@@ -28,6 +28,7 @@ async def _verify_square_live(square_sub: dict, email_lower: str) -> str | None:
         live_status = sq_sub.status if sq_sub.status else square_sub.get("status", "")
 
         canceled_date = getattr(sq_sub, 'canceled_date', None)
+        charged_through = getattr(sq_sub, 'charged_through_date', None)
         updates = {}
 
         if live_status in ("DEACTIVATED",):
@@ -38,6 +39,31 @@ async def _verify_square_live(square_sub: dict, email_lower: str) -> str | None:
             )
             print(f"[AUTH] Square live check: {email_lower} is DEACTIVATED → access denied")
             return None
+
+        if live_status in ("ACTIVE", "PENDING") and charged_through:
+            try:
+                ct_str = str(charged_through)[:10]
+                from datetime import date as date_type
+                ct_date = date_type.fromisoformat(ct_str)
+                today = date_type.today()
+                if ct_date < today:
+                    print(f"[AUTH] Square OVERDUE: {email_lower} charged_through={ct_str} < today={today} → auto-canceling")
+                    try:
+                        client.subscriptions.cancel(subscription_id=sub_id)
+                        print(f"[AUTH] Square auto-canceled overdue subscription for {email_lower}")
+                    except Exception as cancel_err:
+                        print(f"[AUTH] Square auto-cancel failed for {email_lower}: {cancel_err}")
+                    await db.square_subscriptions.update_one(
+                        {"email": email_lower},
+                        {"$set": {
+                            "status": "EXPIRED",
+                            "updatedAt": datetime.now(timezone.utc).isoformat(),
+                            "expiredReason": "payment_overdue",
+                        }}
+                    )
+                    return None
+            except Exception as ct_err:
+                print(f"[AUTH] charged_through check error for {email_lower}: {ct_err}")
 
         if canceled_date:
             updates["status"] = "CANCELED"
@@ -68,6 +94,43 @@ async def _verify_square_live(square_sub: dict, email_lower: str) -> str | None:
     except Exception as e:
         print(f"[AUTH] Square live check failed for {email_lower}: {e}")
         return _check_square_local(square_sub, email_lower)
+
+
+async def _verify_whop_live(whop_id: str, email_lower: str) -> bool | None:
+    """Verify a Whop membership is still active via live API call.
+    Returns True if valid, False if expired/invalid, None if API unreachable."""
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            resp = await client.get(
+                f"https://api.whop.com/api/v2/memberships/{whop_id}",
+                headers={"Authorization": f"Bearer {WHOP_API_KEY}"},
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                is_valid = data.get("valid", False) or data.get("status") == "active"
+                if is_valid:
+                    print(f"[AUTH] Whop live check: {email_lower} membership {whop_id} is valid")
+                    return True
+                else:
+                    await db.whop_subscriptions.update_one(
+                        {"email": email_lower},
+                        {"$set": {"status": "expired", "updatedAt": datetime.now(timezone.utc).isoformat()}}
+                    )
+                    print(f"[AUTH] Whop live check: {email_lower} membership {whop_id} is no longer valid → access denied")
+                    return False
+            elif resp.status_code == 404:
+                await db.whop_subscriptions.update_one(
+                    {"email": email_lower},
+                    {"$set": {"status": "expired", "updatedAt": datetime.now(timezone.utc).isoformat()}}
+                )
+                print(f"[AUTH] Whop live check: {email_lower} membership {whop_id} not found → access denied")
+                return False
+            else:
+                print(f"[AUTH] Whop live check: unexpected status {resp.status_code} for {email_lower}")
+                return None
+    except Exception as e:
+        print(f"[AUTH] Whop live check failed for {email_lower}: {e}")
+        return None
 
 
 async def _check_square_local(square_sub: dict, email_lower: str) -> str | None:
@@ -110,16 +173,20 @@ async def check_access(email_lower: str):
 
     if WHOP_API_KEY:
         try:
-            # 1. Check local synced cache first (populated by startup sync)
             cached = await db.whop_subscriptions.find_one(
                 {"email": email_lower, "status": "active"},
                 {"_id": 0}
             )
-            if cached:
-                return "Whop Member"
 
-            # 2. Live fallback — fetch all pages and filter by email locally
-            # (Whop API does not support filtering by email server-side)
+            if cached and cached.get("whop_id"):
+                live_valid = await _verify_whop_live(cached["whop_id"], email_lower)
+                if live_valid:
+                    return "Whop Member"
+                elif live_valid is False:
+                    pass
+                else:
+                    return "Whop Member"
+
             async with httpx.AsyncClient(timeout=8.0) as client:
                 page = 1
                 while page <= 5:

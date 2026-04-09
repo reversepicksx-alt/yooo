@@ -75,10 +75,9 @@ async def seed_grants():
     asyncio.create_task(build_teams_cache())
     # Start 24h auto-refresh loop for transfers + data freshness
     asyncio.create_task(background_refresh_loop())
-    # Auto-sync Square payments → subscriptions (non-blocking)
     asyncio.create_task(_auto_sync_square_payments())
-    # Auto-sync Whop memberships → local cache (non-blocking)
     asyncio.create_task(_auto_sync_whop_memberships())
+    asyncio.create_task(_overdue_subscription_sweep())
     # Auto-backfill positions for picks missing them (runs once at startup)
     asyncio.create_task(_auto_backfill_positions())
     # Grok Engine background tasks
@@ -435,6 +434,88 @@ async def _auto_sync_whop_memberships():
 
     except Exception as e:
         print(f"[WHOP SYNC] Error: {e}")
+
+
+async def _overdue_subscription_sweep():
+    """Periodically check all ACTIVE Square subscriptions for overdue payments.
+    If charged_through_date has passed, auto-cancel and expire them."""
+    import asyncio
+    await asyncio.sleep(15)
+    while True:
+        try:
+            from routes.square import get_square_client
+            from datetime import date as date_type, datetime, timezone
+            import os
+
+            client = get_square_client()
+            location_id = os.environ.get("SQUARE_LOCATION_ID")
+            if not client or not location_id:
+                await asyncio.sleep(3600)
+                continue
+
+            result = client.subscriptions.search(
+                query={"filter": {"location_ids": [location_id]}}
+            )
+            sq_subs = result.subscriptions or []
+
+            today = date_type.today()
+            canceled_count = 0
+
+            for sub in sq_subs:
+                if sub.status != "ACTIVE":
+                    continue
+
+                charged_through = getattr(sub, 'charged_through_date', None)
+                if not charged_through:
+                    continue
+
+                try:
+                    ct_date = date_type.fromisoformat(str(charged_through)[:10])
+                except Exception:
+                    continue
+
+                if ct_date >= today:
+                    continue
+
+                email = ""
+                try:
+                    cust = client.customers.get(customer_id=sub.customer_id)
+                    email = (cust.customer.email_address or "").lower().strip()
+                except Exception:
+                    pass
+
+                days_overdue = (today - ct_date).days
+                print(f"[OVERDUE SWEEP] {email or sub.id}: overdue by {days_overdue} day(s), charged_through={ct_date}")
+
+                try:
+                    client.subscriptions.cancel(subscription_id=sub.id)
+                    print(f"[OVERDUE SWEEP] Auto-canceled {email or sub.id}")
+                except Exception as ce:
+                    err_msg = str(ce).lower()
+                    if "pending cancel" not in err_msg and "already" not in err_msg:
+                        print(f"[OVERDUE SWEEP] Cancel failed for {email or sub.id}: {ce}")
+                        continue
+
+                if email:
+                    await db.square_subscriptions.update_one(
+                        {"email": email},
+                        {"$set": {
+                            "status": "EXPIRED",
+                            "expiredReason": "payment_overdue",
+                            "updatedAt": datetime.now(timezone.utc).isoformat(),
+                        }}
+                    )
+                    await db.sessions.delete_many({"email": email})
+
+                canceled_count += 1
+
+            if canceled_count > 0:
+                print(f"[OVERDUE SWEEP] Canceled {canceled_count} overdue subscription(s)")
+
+        except Exception as e:
+            print(f"[OVERDUE SWEEP] Error: {e}")
+
+        await asyncio.sleep(3600)
 
 
 # ── Legacy alias: /api/search-player ──
