@@ -384,10 +384,14 @@ async def _get_denial_reason(email_lower: str) -> str | None:
                 print(f"[AUTH] Overdue invoice detected for {email_lower} → locking out")
             elif charged_through:
                 from datetime import date as date_type
-                ct_date = date_type.fromisoformat(str(charged_through)[:10])
-                if ct_date <= date_type.today():
+                try:
+                    ct_date = date_type.fromisoformat(str(charged_through)[:10])
+                    if ct_date <= date_type.today():
+                        should_lock = True
+                        print(f"[AUTH] charged_through {charged_through} <= today → locking out {email_lower}")
+                except Exception:
                     should_lock = True
-                    print(f"[AUTH] charged_through {charged_through} <= today → locking out {email_lower}")
+                    print(f"[AUTH] charged_through parse failed for {email_lower} → locking out")
             elif live_status == "DEACTIVATED":
                 should_lock = True
 
