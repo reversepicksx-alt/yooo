@@ -77,6 +77,8 @@ async def seed_grants():
     asyncio.create_task(background_refresh_loop())
     # Auto-sync Square payments → subscriptions (non-blocking)
     asyncio.create_task(_auto_sync_square_payments())
+    # Auto-sync Whop memberships → local cache (non-blocking)
+    asyncio.create_task(_auto_sync_whop_memberships())
     # Auto-backfill positions for picks missing them (runs once at startup)
     asyncio.create_task(_auto_backfill_positions())
     # Grok Engine background tasks
@@ -372,6 +374,67 @@ async def _auto_sync_square_payments():
 
     except Exception as e:
         print(f"[SQUARE SYNC] Error: {e}")
+
+
+async def _auto_sync_whop_memberships():
+    """On startup, sync all active Whop memberships to local DB for fast email lookups."""
+    import asyncio, httpx, os
+    await asyncio.sleep(8)
+    try:
+        api_key = os.environ.get("WHOP_API_KEY", "")
+        if not api_key:
+            print("[WHOP SYNC] No WHOP_API_KEY, skipping")
+            return
+
+        from datetime import datetime, timezone
+        synced = 0
+        page = 1
+
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            while page <= 20:
+                resp = await client.get(
+                    "https://api.whop.com/api/v2/memberships",
+                    params={"valid": "true", "per_page": 50, "page": page},
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+                if resp.status_code != 200:
+                    print(f"[WHOP SYNC] API error {resp.status_code}: {resp.text[:100]}")
+                    break
+
+                data = resp.json()
+                memberships = data.get("data", [])
+                if not memberships:
+                    break
+
+                for m in memberships:
+                    email = (m.get("email") or "").lower().strip()
+                    if not email:
+                        continue
+                    is_active = m.get("valid") or m.get("status") == "active"
+                    if not is_active:
+                        continue
+                    await db.whop_subscriptions.update_one(
+                        {"email": email},
+                        {"$set": {
+                            "email": email,
+                            "status": "active",
+                            "whop_id": m.get("id"),
+                            "plan": m.get("plan"),
+                            "updatedAt": datetime.now(timezone.utc).isoformat(),
+                        }},
+                        upsert=True,
+                    )
+                    synced += 1
+
+                pagination = data.get("pagination", {})
+                if page >= pagination.get("total_page", 1):
+                    break
+                page += 1
+
+        print(f"[WHOP SYNC] Synced {synced} active memberships to local DB")
+
+    except Exception as e:
+        print(f"[WHOP SYNC] Error: {e}")
 
 
 # ── Legacy alias: /api/search-player ──
