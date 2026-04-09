@@ -24,10 +24,10 @@ const PROP_LABELS: Record<string, string> = {
 };
 
 function isLive(p: Pick) {
-  return p.status === 'live' || p.status === 'pending' || (!p.status && !['hit','miss','push','won','lost'].includes(p.result));
+  return p.matchStatus === 'live' || p.status === 'live' || p.status === 'pending' || (!p.status && !['hit','miss','push','won','lost'].includes(p.result));
 }
 function isSettled(p: Pick) {
-  return p.status === 'settled' || ['hit','miss','push','won','lost'].includes(p.result);
+  return p.matchStatus === 'final' || p.status === 'settled' || ['hit','miss','push','won','lost'].includes(p.result);
 }
 function pickWon(p: Pick) {
   return p.result === 'hit' || p.result === 'won' || p.status === 'won';
@@ -265,12 +265,15 @@ export default function PicksScreen() {
       return listPicks(session.email, session.token);
     },
     enabled: !!session,
-    refetchInterval: 60000,
+    refetchInterval: 15000,
+    refetchIntervalInBackground: true,
   });
 
   useFocusEffect(
     useCallback(() => {
       refetch();
+      const timer = setInterval(() => refetch(), 15000);
+      return () => clearInterval(timer);
     }, [refetch])
   );
 

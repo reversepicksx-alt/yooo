@@ -143,9 +143,14 @@ export interface Pick {
   hitPct?: number | null;
   elapsed?: number | null;
   period?: string;
+  matchStatus?: string;
   fixtureId?: number | null;
   playerId?: number | null;
   createdAt?: string;
+}
+
+export interface PicksListResponse {
+  picks?: Pick[];
 }
 
 export const PROP_TYPES = [
@@ -198,4 +203,26 @@ export async function predict(request: Record<string, unknown>): Promise<Predict
     body: JSON.stringify(request),
   });
   return raw;
+}
+
+export async function listPicks(email: string, token: string): Promise<Pick[]> {
+  const raw = await apiCall<PicksListResponse>('/api/picks/list', {
+    method: 'POST',
+    body: JSON.stringify({ email, token }),
+  });
+  return raw.picks || [];
+}
+
+export async function savePick(email: string, token: string, pick: Record<string, unknown>) {
+  return apiCall('/api/picks/save', {
+    method: 'POST',
+    body: JSON.stringify({ email, token, pick }),
+  });
+}
+
+export async function deletePick(email: string, token: string, pickId: string) {
+  return apiCall('/api/picks/delete', {
+    method: 'POST',
+    body: JSON.stringify({ email, token, pickId }),
+  });
 }
