@@ -210,24 +210,6 @@ export default function ScanScreen() {
         </View>
       </View>
 
-      <View style={styles.modeRow}>
-        {(['scan', 'manual'] as Mode[]).map(m => (
-          <TouchableOpacity
-            key={m}
-            style={[styles.modeTab, mode === m && styles.modeTabActive]}
-            onPress={() => { setMode(m); reset(); Haptics.selectionAsync(); }}
-          >
-            <Ionicons
-              name={m === 'scan' ? 'scan-outline' : 'search-outline'}
-              size={14}
-              color={mode === m ? Colors.primary : Colors.textSecondary}
-            />
-            <Text style={[styles.modeTabText, mode === m && styles.modeTabTextActive]}>
-              {m === 'scan' ? 'Scan Slip' : 'Manual Search'}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
 
       <ScrollView
         contentContainerStyle={styles.body}
