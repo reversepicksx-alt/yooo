@@ -140,7 +140,7 @@ async def _verify_square_live(square_sub: dict, email_lower: str) -> str | None:
         return None
     except Exception as e:
         print(f"[AUTH] Square live check failed for {email_lower}: {e}")
-        return _check_square_local(square_sub, email_lower)
+        return await _check_square_local(square_sub, email_lower)
 
 
 async def _verify_whop_live(whop_id: str, email_lower: str) -> bool | None:
@@ -207,6 +207,34 @@ async def _check_square_local(square_sub: dict, email_lower: str) -> str | None:
             return "Premium (Square)"
     else:
         return "Premium (Square)"
+
+
+async def _check_access_local(email_lower: str):
+    """Check access using LOCAL DB only — no live API calls.
+    Used by verify-session to avoid killing sessions on transient API failures."""
+    if email_lower == OWNER_EMAIL:
+        return "Owner"
+    if email_lower in LIFETIME_SUB_EMAILS:
+        return "Lifetime"
+    grant = await db.manual_access_grants.find_one({"email": email_lower}, {"_id": 0})
+    if grant:
+        return grant.get("access_type", "Manual")
+
+    square_sub = await db.square_subscriptions.find_one(
+        {"email": email_lower, "status": {"$in": ["ACTIVE", "PENDING", "CANCELED"]}},
+        {"_id": 0}
+    )
+    if square_sub:
+        return await _check_square_local(square_sub, email_lower)
+
+    whop_sub = await db.whop_subscriptions.find_one(
+        {"email": email_lower, "status": "active"},
+        {"_id": 0}
+    )
+    if whop_sub:
+        return "Whop Member"
+
+    return None
 
 
 async def check_access(email_lower: str):
@@ -469,7 +497,7 @@ async def verify_session(req: VerifySessionRequest):
     session = await db.sessions.find_one({"email": email_lower, "session_token": req.session_token}, {"_id": 0})
     if not session:
         return {"valid": False}
-    access_type = await check_access(email_lower)
+    access_type = await _check_access_local(email_lower)
     if not access_type:
         await db.sessions.delete_one({"email": email_lower, "session_token": req.session_token})
         return {"valid": False}

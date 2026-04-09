@@ -238,19 +238,45 @@ async def _infer_league_id(team_name: str, opponent_name: str, ai_league_id: int
     return ai_league_id or 71
 
 
+def _names_similar(query: str, candidate: str) -> bool:
+    """Check if a resolved player name is reasonably similar to the search query.
+    Prevents returning 'Kevin' from Fulham when searching for 'Kewin' from Damac."""
+    from utils import strip_accents
+    q = strip_accents(query.lower().strip())
+    c = strip_accents(candidate.lower().strip())
+    if not q or not c:
+        return False
+    if q == c:
+        return True
+    q_parts = q.split()
+    c_parts = c.split()
+    q_last = q_parts[-1] if q_parts else q
+    c_last = c_parts[-1] if c_parts else c
+    if q_last == c_last:
+        return True
+    if len(q_parts) >= 2 and len(c_parts) >= 2:
+        if q_parts[0][0] == c_parts[0][0] and q_last == c_last:
+            return True
+    if len(q) >= 4 and len(c) >= 4 and (q in c or c in q):
+        return True
+    if len(q_last) >= 5 and len(c_last) >= 5 and (q_last in c_last or c_last in q_last):
+        return True
+    return False
+
+
 async def _resolve_player_via_cache(player_name: str, team_id: int = None, league_id: int = None, team_name_hint: str = None) -> dict:
     """Try to find a player in the MongoDB cache. Returns player doc or None.
     Uses league_id and team_name_hint to disambiguate duplicates (e.g., J. Alvarez at Atletico vs Honduras)."""
     if team_id:
-        # Search with team filter first (most precise)
         player = await get_player_by_name(player_name, team_id, league_id=league_id, team_name_hint=team_name_hint)
-        if player:
+        if player and _names_similar(player_name, player.get("name", "")):
             return player
-        # Team filter failed — fall through to unfiltered below
 
-    # Unfiltered search — league_id + team_name_hint help disambiguate
     player = await get_player_by_name(player_name, league_id=league_id, team_name_hint=team_name_hint)
     if not player:
+        return None
+    if not _names_similar(player_name, player.get("name", "")):
+        print(f"[SCAN] Name mismatch rejected: searched '{player_name}', found '{player.get('name')}' — too different")
         return None
 
     # If this player is from a national team but we're looking for a club match,
