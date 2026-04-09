@@ -262,13 +262,11 @@ export default function AuthScreen() {
     >
       <View style={styles.inner}>
         <View style={styles.hero}>
-          <View style={styles.logoGlow}>
-            <Image
-              source={require('../assets/logo.png')}
-              style={styles.logo}
-              resizeMode="contain"
-            />
-          </View>
+          <Image
+            source={require('../assets/logo.png')}
+            style={styles.logo}
+            resizeMode="contain"
+          />
           <Text style={styles.appName}>REVERSEPICKS</Text>
           <Text style={styles.tagline}>ELITE PROP INTELLIGENCE</Text>
         </View>
@@ -546,17 +544,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 40,
   },
-  logoGlow: {
-    shadowColor: '#39FF14',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.6,
-    shadowRadius: 24,
-    elevation: 20,
-    marginBottom: 18,
-  },
   logo: {
-    width: 120,
-    height: 120,
+    width: 80,
+    height: 80,
+    marginBottom: 18,
   },
   appName: {
     fontSize: 24,
