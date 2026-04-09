@@ -75,3 +75,4 @@ externalPort = 3000
 [deployment]
 deploymentTarget = "vm"
 run = ["bash", "start.sh"]
+build = ["bash", "-c", "cd mobile && npx expo export --platform web --output-dir dist --no-bytecode 2>&1 | tail -20"]
