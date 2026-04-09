@@ -184,7 +184,6 @@ async def list_picks(req: GetPicksRequest):
         raise HTTPException(status_code=401, detail="Invalid session")
     picks = await db.picks.find({"email": req.email.lower()}, {"_id": 0}).sort("timestamp", -1).to_list(100)
 
-    # Backfill trackingId and sport for any old picks that don't have them
     for p in picks:
         updates = {}
         if not p.get("trackingId"):
@@ -199,6 +198,30 @@ async def list_picks(req: GetPicksRequest):
                 {"pickId": p["pickId"], "email": req.email.lower()},
                 {"$set": updates}
             )
+
+    live_picks = [p for p in picks if p.get("status") == "live"]
+    if live_picks:
+        try:
+            live_updates = await _process_soccer_live(live_picks, req.email.lower())
+            update_map = {u["pickId"]: u for u in live_updates if u.get("pickId")}
+            for p in picks:
+                upd = update_map.get(p.get("pickId"))
+                if upd:
+                    p["currentValue"] = upd.get("currentValue")
+                    p["pace"] = upd.get("pace")
+                    p["hitPct"] = upd.get("hitPct")
+                    p["elapsed"] = upd.get("elapsed")
+                    p["period"] = upd.get("period")
+                    p["matchStatus"] = upd.get("matchStatus")
+                    p["matchScore"] = upd.get("matchScore")
+                    p["fixtureId"] = upd.get("fixtureId")
+                    p["minutesPlayed"] = upd.get("minutesPlayed")
+                    if upd.get("result") and upd["result"] != "pending":
+                        p["status"] = "settled"
+                        p["result"] = upd["result"]
+                        p["actualValue"] = upd.get("actualValue")
+        except Exception:
+            traceback.print_exc()
 
     return {"picks": picks}
 

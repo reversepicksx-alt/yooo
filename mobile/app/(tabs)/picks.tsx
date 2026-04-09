@@ -54,8 +54,11 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
   const propLabel = PROP_LABELS[pick.propType] || pick.propType?.replace(/_/g, ' ') || '—';
   const venueStr = pick.venue ? pick.venue.toUpperCase() : '';
 
-  const nowValue = pick.actualValue ?? (pick as { currentValue?: number | null }).currentValue ?? null;
-  const paceValue = (pick as { pace?: number | null }).pace ?? pick.projection ?? (pick as { projectedValue?: number | null }).projectedValue ?? (pick as { liveValue?: number | null }).liveValue ?? nowValue;
+  const settled = won || lost || push;
+  const nowValue = settled
+    ? (pick.actualValue ?? (pick as { currentValue?: number | null }).currentValue ?? null)
+    : ((pick as { currentValue?: number | null }).currentValue ?? pick.actualValue ?? null);
+  const paceValue = (pick as { pace?: number | null }).pace ?? (settled ? (pick.projection ?? (pick as { projectedValue?: number | null }).projectedValue ?? null) : null);
   const hitPct = (pick as { hitPct?: number | null }).hitPct ?? (pick as { hitRate?: number | null }).hitRate ?? (pick as { winRate?: number | null }).winRate;
   const lineValue = typeof pick.line === 'number' ? pick.line : null;
 
@@ -91,13 +94,13 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
           </Text>
         </View>
         <View style={styles.cardRight}>
-          {live && !won && !lost && pick.actualValue != null && (
+          {live && !won && !lost && (nowValue != null || (pick as { matchStatus?: string }).matchStatus === 'live') && (
             <View style={styles.liveBadge}>
               <View style={styles.liveDot} />
               <Text style={styles.liveText}>LIVE</Text>
             </View>
           )}
-          {live && !won && !lost && pick.actualValue == null && (
+          {live && !won && !lost && nowValue == null && (pick as { matchStatus?: string }).matchStatus !== 'live' && (
             <View style={styles.pendingBadge}>
               <Ionicons name="time-outline" size={11} color={Colors.textSecondary} />
               <Text style={styles.pendingText}>PENDING</Text>
