@@ -239,6 +239,19 @@ function RecordBar({ picks }: { picks: Pick[] }) {
           <Text style={styles.recordKey}>STRK</Text>
         </View>
       </View>
+      <View style={styles.progressWrap}>
+        <View style={styles.progressTrack}>
+          <View
+            style={[
+              styles.progressFill,
+              { width: `${picks.length > 0 ? Math.max(8, Math.min(100, (settled / picks.length) * 100)) : 0}%` },
+            ]}
+          />
+        </View>
+        <Text style={styles.progressText}>
+          {settled}/{picks.length} settled
+        </Text>
+      </View>
     </View>
   );
 }
@@ -373,6 +386,19 @@ const styles = StyleSheet.create({
   toggleText: { fontSize: 13, fontWeight: '600', color: Colors.textSecondary },
   toggleTextActive: { color: '#000' },
   tabDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: Colors.primary },
+  progressWrap: { gap: 6, marginTop: 2 },
+  progressTrack: {
+    height: 6,
+    borderRadius: 999,
+    backgroundColor: Colors.cardSecondary,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%' as unknown as number,
+    borderRadius: 999,
+    backgroundColor: Colors.primary,
+  },
+  progressText: { fontSize: 10, color: Colors.textTertiary, fontWeight: '600', textAlign: 'right' },
 
   recordBar: {
     marginHorizontal: 20, marginBottom: 12, backgroundColor: Colors.card,
