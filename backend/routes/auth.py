@@ -257,13 +257,66 @@ async def create_session(email: str, access_type: str):
     return session_token
 
 
+async def _get_denial_reason(email_lower: str) -> str | None:
+    """Check if a user has been explicitly expired/locked out and return a specific reason."""
+    expired_sub = await db.square_subscriptions.find_one(
+        {"email": email_lower, "status": "EXPIRED"}, {"_id": 0}
+    )
+    if expired_sub:
+        reason = expired_sub.get("expiredReason", "")
+        if reason == "payment_overdue":
+            return "Your subscription has been suspended due to a missed payment. Please resubscribe to regain access."
+        if reason == "admin_force_expired":
+            return "Your subscription has been revoked. Contact support if you believe this is an error."
+        return "Your subscription has expired. Please resubscribe to continue."
+
+    sq_sub = await db.square_subscriptions.find_one(
+        {"email": email_lower, "status": {"$in": ["ACTIVE", "PENDING", "CANCELED"]}},
+        {"_id": 0}
+    )
+    if sq_sub and sq_sub.get("squareSubscriptionId"):
+        try:
+            from routes.square import get_square_client
+            client = get_square_client()
+            resp = client.subscriptions.get(subscription_id=sq_sub["squareSubscriptionId"])
+            sq_live = resp.subscription
+            charged_through = getattr(sq_live, 'charged_through_date', None)
+            if charged_through:
+                from datetime import date as date_type
+                ct_date = date_type.fromisoformat(str(charged_through)[:10])
+                if ct_date < date_type.today():
+                    try:
+                        client.subscriptions.cancel(subscription_id=sq_sub["squareSubscriptionId"])
+                    except Exception:
+                        pass
+                    await db.square_subscriptions.update_one(
+                        {"email": email_lower},
+                        {"$set": {
+                            "status": "EXPIRED",
+                            "expiredReason": "payment_overdue",
+                            "updatedAt": datetime.now(timezone.utc).isoformat(),
+                        }}
+                    )
+                    await db.sessions.delete_many({"email": email_lower})
+                    return "Your subscription has been suspended due to a missed payment. Please resubscribe to regain access."
+        except Exception as e:
+            print(f"[AUTH] Pre-check Square live failed for {email_lower}: {e}")
+
+    return None
+
+
 @router.post("/verify-access")
 @router.post("/verify-whop")
 async def verify_access(req: VerifyAccessRequest):
     email_lower = req.email.lower().strip()
+
+    denial = await _get_denial_reason(email_lower)
+    if denial:
+        return {"verified": False, "email": email_lower, "denied": True, "denial_reason": denial, "message": denial}
+
     access_type = await check_access(email_lower)
     if not access_type:
-        return {"verified": False, "email": email_lower, "message": "No active membership found. Contact your administrator to get access."}
+        return {"verified": False, "email": email_lower, "message": "No active membership found."}
     if email_lower == OWNER_EMAIL:
         token = await create_session(email_lower, "Owner")
         return {"verified": True, "email": email_lower, "session_token": token, "access_type": "Owner", "message": "Access granted"}
@@ -281,9 +334,12 @@ async def login(req: LoginRequest):
         raise HTTPException(status_code=401, detail="Invalid credentials or password not set.")
     if not bcrypt.checkpw(req.password.encode("utf-8"), user_record["passwordHash"].encode("utf-8")):
         raise HTTPException(status_code=401, detail="Invalid password.")
+    denial = await _get_denial_reason(email_lower)
+    if denial:
+        raise HTTPException(status_code=403, detail=denial)
     access_type = await check_access(email_lower)
     if not access_type:
-        raise HTTPException(status_code=401, detail="Your subscription has expired or been revoked.")
+        raise HTTPException(status_code=403, detail="Your subscription has expired. Please resubscribe to regain access.")
     token = await create_session(email_lower, access_type)
     return {"verified": True, "email": email_lower, "session_token": token, "access_type": access_type, "message": "Login successful"}
 

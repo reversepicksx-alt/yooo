@@ -44,7 +44,10 @@ export default function AuthScreen() {
     setInfo('');
     try {
       const result = await verifyAccess(trimmed);
-      if (result.requires_password_setup) {
+      if (result.denied && result.denial_reason) {
+        setError(result.denial_reason);
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      } else if (result.requires_password_setup) {
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         setStep('setup');
       } else if (result.requires_password) {
@@ -59,7 +62,7 @@ export default function AuthScreen() {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         router.replace('/(tabs)/scan');
       } else {
-        setError('No active membership found. Subscribe below to get access.');
+        setError(result.message || 'No active membership found. Subscribe below to get access.');
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       }
     } catch (e: unknown) {
