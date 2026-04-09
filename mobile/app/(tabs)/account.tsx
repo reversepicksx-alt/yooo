@@ -13,6 +13,12 @@ import {
   resubscribeCheckout, PLAN_OPTIONS, type SubscriptionStatus,
 } from '@/lib/api';
 
+function getErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === 'string') return err;
+  return 'Something went wrong. Please try again.';
+}
+
 interface MenuRowProps {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
@@ -154,8 +160,8 @@ export default function AccountScreen() {
         await cancelSubscription(session.email);
         await fetchSubStatus();
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      } catch (e: any) {
-        const msg = e?.message || 'Failed to cancel. Please try again.';
+      } catch (e: unknown) {
+        const msg = getErrorMessage(e);
         if (Platform.OS === 'web') {
           window.alert(msg);
         } else {
@@ -192,8 +198,8 @@ export default function AccountScreen() {
       await fetchSubStatus();
       setPlanPickerVisible(false);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch (e: any) {
-      const msg = e?.message || 'Failed to change plan. Please try again.';
+    } catch (e: unknown) {
+      const msg = getErrorMessage(e);
       if (Platform.OS === 'web') {
         window.alert(msg);
       } else {
@@ -225,8 +231,8 @@ export default function AccountScreen() {
       } else {
         throw new Error('Could not create checkout. Please try again.');
       }
-    } catch (e: any) {
-      const msg = e?.message || 'Failed to create checkout. Please try again.';
+    } catch (e: unknown) {
+      const msg = getErrorMessage(e);
       if (Platform.OS === 'web') {
         window.alert(msg);
       } else {
@@ -311,7 +317,12 @@ export default function AccountScreen() {
                 <MenuRow
                   icon="card-outline"
                   label="Plan"
-                  value={subStatus.planLabel || subStatus.plan || '—'}
+                  value={subStatus.plan || '—'}
+                />
+                <MenuRow
+                  icon="pricetag-outline"
+                  label="Price"
+                  value={subStatus.planLabel || '—'}
                 />
                 <MenuRow
                   icon="pulse-outline"
