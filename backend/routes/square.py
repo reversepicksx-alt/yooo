@@ -581,23 +581,43 @@ async def get_subscription_status(email: str):
     if not sub:
         return {"active": False}
 
-    if sub.get("status") in ("ACTIVE", "PENDING"):
+    if sub.get("status") in ("ACTIVE", "PENDING", "CANCELED"):
         try:
             client = get_square_client()
             resp = client.subscriptions.get(subscription_id=sub["squareSubscriptionId"])
             sq_sub = resp.subscription
             new_status = sq_sub.status or sub["status"]
 
-            # Check if Square has a pending cancellation
             canceled_date = getattr(sq_sub, 'canceled_date', None)
+            charged_through = getattr(sq_sub, 'charged_through_date', None)
             updates = {}
-            if canceled_date:
-                # Square says there's a pending cancel — mark as CANCELED in our DB
-                new_status = "CANCELED"
-                updates["canceledAt"] = canceled_date
-                updates["status"] = "CANCELED"
-            elif new_status != sub["status"]:
-                updates["status"] = new_status
+
+            if new_status == "DEACTIVATED":
+                updates["status"] = "EXPIRED"
+                updates["expiredReason"] = "deactivated"
+
+            elif charged_through:
+                from datetime import date as date_type
+                try:
+                    ct_date = date_type.fromisoformat(str(charged_through)[:10])
+                    if ct_date < date_type.today():
+                        try:
+                            client.subscriptions.cancel(subscription_id=sub["squareSubscriptionId"])
+                        except Exception:
+                            pass
+                        updates["status"] = "EXPIRED"
+                        updates["expiredReason"] = "payment_overdue"
+                        await db.sessions.delete_many({"email": email_lower})
+                except Exception:
+                    pass
+
+            if not updates.get("status") == "EXPIRED":
+                if canceled_date:
+                    new_status = "CANCELED"
+                    updates["canceledAt"] = canceled_date
+                    updates["status"] = "CANCELED"
+                elif new_status != sub["status"]:
+                    updates["status"] = new_status
 
             if updates:
                 updates["updatedAt"] = datetime.now(timezone.utc).isoformat()
@@ -609,13 +629,11 @@ async def get_subscription_status(email: str):
         except Exception:
             pass
 
-    # Fill in missing planLabel/cadence from PLANS reference
     plan_key = sub.get("planKey", "")
     plan_ref = PLANS.get(plan_key, {})
     plan_label = sub.get("planLabel") or plan_ref.get("label", "")
     cadence = sub.get("cadence") or plan_ref.get("cadence", "")
 
-    # Determine if subscription is still usable (active OR canceled but within billing period)
     status = sub.get("status", "")
     is_active = status in ("ACTIVE", "PENDING")
     is_canceled_but_valid = False
@@ -626,7 +644,7 @@ async def get_subscription_status(email: str):
                 exp_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
                 is_canceled_but_valid = datetime.now(timezone.utc) < exp_dt
             except Exception:
-                is_canceled_but_valid = True  # Can't parse, give benefit of doubt
+                pass
 
     return {
         "active": is_active or is_canceled_but_valid,
@@ -1206,6 +1224,47 @@ async def admin_activate_customer(req: AdminActivateRequest):
         "plan": plan_info.get("name", plan_key),
         "payment_found": payment_record is not None,
         "message": f"Activated {email_lower} on {plan_info.get('name', plan_key)} plan.",
+    }
+
+
+@router.post("/admin/force-expire")
+async def admin_force_expire(body: dict):
+    """Admin: immediately expire a subscription and kill all sessions. No grace period."""
+    from config import OWNER_EMAIL
+    admin = (body.get("admin_email", "")).lower().strip()
+    if admin != OWNER_EMAIL:
+        raise HTTPException(status_code=403, detail="Admin only.")
+
+    target = (body.get("email", "")).lower().strip()
+    if not target:
+        raise HTTPException(status_code=400, detail="Email required.")
+
+    sub = await db.square_subscriptions.find_one({"email": target})
+    if not sub:
+        raise HTTPException(status_code=404, detail="No subscription found.")
+
+    if sub.get("squareSubscriptionId"):
+        try:
+            client = get_square_client()
+            client.subscriptions.cancel(subscription_id=sub["squareSubscriptionId"])
+        except Exception:
+            pass
+
+    await db.square_subscriptions.update_one(
+        {"email": target},
+        {"$set": {
+            "status": "EXPIRED",
+            "expiredReason": "admin_force_expired",
+            "updatedAt": datetime.now(timezone.utc).isoformat(),
+        }}
+    )
+    deleted = await db.sessions.delete_many({"email": target})
+
+    return {
+        "status": "expired",
+        "email": target,
+        "sessions_killed": deleted.deleted_count,
+        "message": f"Immediately expired and locked out {target}.",
     }
 
 

@@ -29,7 +29,7 @@ class GetMissesRequest(BaseModel):
 
 async def _run_miss_postmortem(pick: dict) -> dict:
     """Run 3-AI consensus analysis on why a prediction missed."""
-    from litellm import acompletion
+    from openai import OpenAI
     import asyncio
 
     player_name = pick.get("playerName", "Unknown")
@@ -93,68 +93,33 @@ Return ONLY valid JSON, no markdown or explanation."""
     ]
 
     EMERGENT_PROXY = "https://integrations.emergentagent.com/llm"
-    import litellm
-    litellm.drop_params = True
 
     async def call_model(model_id, label):
         try:
             import json as jmod
+            from openai import OpenAI
 
             if label == "GK":
-                # Grok: Direct OpenAI SDK with xAI base URL (proven pattern from predict.py)
                 import os
-                from openai import OpenAI
                 xai_key = os.environ.get("XAI_API_KEY", "")
                 if not xai_key:
                     return label, None
-                grok_client = OpenAI(api_key=xai_key, base_url="https://api.x.ai/v1")
-                loop = asyncio.get_event_loop()
-                resp = await asyncio.wait_for(
-                    loop.run_in_executor(
-                        None,
-                        lambda: grok_client.chat.completions.create(
-                            model="grok-4-1-fast-non-reasoning",
-                            messages=[{"role": "user", "content": prompt}],
-                            temperature=0,
-                            max_tokens=500,
-                        )
-                    ),
-                    timeout=20,
-                )
-                text = resp.choices[0].message.content.strip()
-            elif label == "GP":
-                # GPT: Via Emergent proxy using OpenAI SDK (proven pattern from predict.py)
-                from openai import OpenAI
-                gpt_client = OpenAI(api_key=EMERGENT_LLM_KEY, base_url=EMERGENT_PROXY + "/v1")
-                loop = asyncio.get_event_loop()
-                resp = await asyncio.wait_for(
-                    loop.run_in_executor(
-                        None,
-                        lambda: gpt_client.chat.completions.create(
-                            model="gpt-5.2",
-                            messages=[{"role": "user", "content": prompt}],
-                            temperature=0,
-                            max_tokens=500,
-                        )
-                    ),
-                    timeout=20,
-                )
-                text = resp.choices[0].message.content.strip()
+                ai_client = OpenAI(api_key=xai_key, base_url="https://api.x.ai/v1")
+                use_model = "grok-4-1-fast-non-reasoning"
             else:
-                # Gemini: Via litellm with Emergent proxy + custom_llm_provider (proven pattern)
-                resp = await asyncio.wait_for(
-                    acompletion(
-                        model=model_id,
-                        messages=[{"role": "user", "content": prompt}],
-                        api_key=EMERGENT_LLM_KEY,
-                        api_base=EMERGENT_PROXY,
-                        custom_llm_provider="openai",
-                        temperature=0,
-                        max_tokens=500,
-                    ),
-                    timeout=20,
+                ai_client = OpenAI(api_key=EMERGENT_LLM_KEY, base_url=EMERGENT_PROXY + "/v1")
+                use_model = model_id
+
+            loop = asyncio.get_event_loop()
+            def _run():
+                return ai_client.chat.completions.create(
+                    model=use_model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0,
+                    max_tokens=500,
                 )
-                text = resp.choices[0].message.content.strip()
+            resp = await asyncio.wait_for(loop.run_in_executor(None, _run), timeout=20)
+            text = resp.choices[0].message.content.strip()
 
             # Clean markdown fences
             if text.startswith("```"):

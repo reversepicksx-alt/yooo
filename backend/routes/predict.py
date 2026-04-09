@@ -1522,23 +1522,19 @@ POSITION CLUES: CB=high tackles/blocks/aerial duels, low crosses/key passes/drib
 
                     async def resolve_pos_gemini():
                         EMERGENT_PROXY = "https://integrations.emergentagent.com/llm"
-                        import litellm
-                        litellm.drop_params = True
-                        return await aio.wait_for(
-                            litellm.acompletion(
+                        gemini_client = OpenAI(api_key=EMERGENT_LLM_KEY, base_url=EMERGENT_PROXY + "/v1")
+                        loop = aio.get_event_loop()
+                        def _run_gemini():
+                            return gemini_client.chat.completions.create(
                                 model="gemini/gemini-2.0-flash",
                                 messages=[
                                     {"role": "system", "content": "You are a football/soccer tactical analyst. Reply in EXACTLY this format on one line:\nPOSITION|ROLE\nNothing else."},
                                     {"role": "user", "content": pos_prompt},
                                 ],
-                                api_key=EMERGENT_LLM_KEY,
-                                api_base=EMERGENT_PROXY,
-                                custom_llm_provider="openai",
                                 temperature=0,
                                 max_tokens=50,
-                            ),
-                            timeout=8
-                        )
+                            )
+                        return await aio.wait_for(loop.run_in_executor(None, _run_gemini), timeout=8)
 
                     def parse_pos_response(resp_text, allowed):
                         parts = resp_text.strip().split("|")
@@ -1986,53 +1982,10 @@ recentSamples=[]
 
 Analyze ALL data thoroughly. Return JSON only."""
 
-        # Run 3 AIs in TRULY PARALLEL (using litellm.acompletion, not blocking LlmChat)
-        # LlmChat uses litellm.completion (sync) which blocks the event loop.
-        # litellm.acompletion is truly async — all 3 AIs execute concurrently.
-        import litellm
-        litellm.drop_params = True
         EMERGENT_PROXY = "https://integrations.emergentagent.com/llm"
 
-        async def call_ai(model_name, label, provider="openai"):
-            try:
-                model_id = f"gemini/{model_name}" if provider == "gemini" else model_name
-                resp = await aio.wait_for(
-                    litellm.acompletion(
-                        model=model_id,
-                        messages=[
-                            {"role": "system", "content": PREDICTION_SYSTEM},
-                            {"role": "user", "content": prompt},
-                        ],
-                        api_key=EMERGENT_LLM_KEY,
-                        api_base=EMERGENT_PROXY,
-                        custom_llm_provider="openai",
-                        max_tokens=2500,
-                        temperature=0.0,
-                    ),
-                    timeout=40
-                )
-                text = resp.choices[0].message.content.strip()
-                if text.startswith("```"):
-                    text = "\n".join(ln for ln in text.split("\n") if not ln.strip().startswith("```"))
-                # Robust JSON extraction
-                start = text.find("{")
-                if start >= 0:
-                    for end_pos in range(len(text), start, -1):
-                        if text[end_pos - 1] == "}":
-                            try:
-                                result = json.loads(text[start:end_pos])
-                                result["_source"] = label
-                                return result
-                            except json.JSONDecodeError:
-                                continue
-                raise ValueError("No valid JSON in response")
-            except Exception as e:
-                print(f"[MULTI-AI] {label} failed: {e}")
-                return None
-
-
         async def call_emergent_direct(model_name, label):
-            """Call Claude/other models directly via OpenAI SDK to bypass litellm provider detection."""
+            """Call Claude/other models directly via OpenAI SDK through Emergent proxy."""
             try:
                 client = OpenAI(api_key=EMERGENT_LLM_KEY, base_url=EMERGENT_PROXY + "/v1")
                 loop = aio.get_event_loop()
@@ -2561,18 +2514,16 @@ Write a single cohesive ~1500 char markdown tactical breakdown. Format:
 
 Rules: No AI model names. Be specific with numbers. Be decisive. ALWAYS reference the player's position/role and how it impacts the prop. ALWAYS reference venue (home/away) context."""
 
-            synth_resp = await aio.wait_for(
-                litellm.acompletion(
+            synth_client = OpenAI(api_key=EMERGENT_LLM_KEY, base_url=EMERGENT_PROXY + "/v1")
+            loop = aio.get_event_loop()
+            def _run_synth():
+                return synth_client.chat.completions.create(
                     model="gemini/gemini-2.0-flash",
                     messages=[{"role": "user", "content": synth_prompt}],
-                    api_key=EMERGENT_LLM_KEY,
-                    api_base=EMERGENT_PROXY,
-                    custom_llm_provider="openai",
                     max_tokens=1500,
                     temperature=0.2,
-                ),
-                timeout=10
-            )
+                )
+            synth_resp = await aio.wait_for(loop.run_in_executor(None, _run_synth), timeout=10)
             synth_text = synth_resp.choices[0].message.content.strip()
             if synth_text and len(synth_text) > 200:
                 prediction["tacticalBreakdown"] = synth_text

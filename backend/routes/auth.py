@@ -80,6 +80,25 @@ async def _verify_square_live(square_sub: dict, email_lower: str) -> str | None:
             return "Premium (Square)"
 
         if live_status == "CANCELED":
+            if charged_through:
+                try:
+                    from datetime import date as date_type
+                    ct_str = str(charged_through)[:10]
+                    ct_date = date_type.fromisoformat(ct_str)
+                    if ct_date < date_type.today():
+                        print(f"[AUTH] CANCELED + OVERDUE: {email_lower} charged_through={ct_str} → instant lockout")
+                        await db.square_subscriptions.update_one(
+                            {"email": email_lower},
+                            {"$set": {
+                                "status": "EXPIRED",
+                                "expiredReason": "payment_overdue",
+                                "updatedAt": datetime.now(timezone.utc).isoformat(),
+                            }}
+                        )
+                        await db.sessions.delete_many({"email": email_lower})
+                        return None
+                except Exception:
+                    pass
             expires_at = square_sub.get("expiresAt")
             if expires_at:
                 try:
@@ -135,6 +154,11 @@ async def _verify_whop_live(whop_id: str, email_lower: str) -> bool | None:
 
 async def _check_square_local(square_sub: dict, email_lower: str) -> str | None:
     """Fallback: check Square subscription using only local DB data."""
+    if square_sub.get("status") == "EXPIRED":
+        return None
+    if square_sub.get("expiredReason") == "payment_overdue":
+        return None
+
     expires_at = square_sub.get("expiresAt")
     if expires_at:
         try:

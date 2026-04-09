@@ -462,7 +462,7 @@ async def _overdue_subscription_sweep():
             canceled_count = 0
 
             for sub in sq_subs:
-                if sub.status != "ACTIVE":
+                if sub.status not in ("ACTIVE", "PENDING"):
                     continue
 
                 charged_through = getattr(sub, 'charged_through_date', None)
@@ -515,7 +515,7 @@ async def _overdue_subscription_sweep():
         except Exception as e:
             print(f"[OVERDUE SWEEP] Error: {e}")
 
-        await asyncio.sleep(3600)
+        await asyncio.sleep(900)
 
 
 # ── Legacy alias: /api/search-player ──

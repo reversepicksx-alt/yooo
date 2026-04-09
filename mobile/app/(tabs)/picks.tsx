@@ -23,18 +23,20 @@ const PROP_LABELS: Record<string, string> = {
   yellow_cards: 'Yellow Cards', shots_assisted: 'Shot Assists', passes: 'Passes',
 };
 
-// backend: status="live"|"settled", result="pending"|"won"|"lost"
 function isLive(p: Pick) {
-  return p.status === 'live' || p.status === 'pending' || (!p.status && p.result !== 'won' && p.result !== 'lost');
+  return p.status === 'live' || p.status === 'pending' || (!p.status && !['hit','miss','push','won','lost'].includes(p.result));
 }
 function isSettled(p: Pick) {
-  return p.status === 'settled' || p.result === 'won' || p.result === 'lost' || p.status === 'won' || p.status === 'lost';
+  return p.status === 'settled' || ['hit','miss','push','won','lost'].includes(p.result);
 }
 function pickWon(p: Pick) {
-  return p.result === 'won' || p.status === 'won';
+  return p.result === 'hit' || p.result === 'won' || p.status === 'won';
 }
 function pickLost(p: Pick) {
-  return p.result === 'lost' || p.status === 'lost';
+  return p.result === 'miss' || p.result === 'lost' || p.status === 'lost';
+}
+function pickPush(p: Pick) {
+  return p.result === 'push';
 }
 
 function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
@@ -46,7 +48,8 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
   const isUnder = pick.recommendation === 'UNDER';
 
   const recColor = isOver ? Colors.primary : isUnder ? Colors.error : Colors.textSecondary;
-  const statusColor = won ? Colors.success : lost ? Colors.error : Colors.textTertiary;
+  const push = pickPush(pick);
+  const statusColor = won ? Colors.success : lost ? Colors.error : push ? Colors.textSecondary : Colors.textTertiary;
 
   const propLabel = PROP_LABELS[pick.propType] || pick.propType?.replace(/_/g, ' ') || '—';
   const venueStr = pick.venue ? pick.venue.toUpperCase() : '';
@@ -115,6 +118,12 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
             <View style={styles.lostBadge}>
               <Ionicons name="close" size={11} color={Colors.error} />
               <Text style={styles.lostText}>MISS</Text>
+            </View>
+          )}
+          {push && !won && !lost && (
+            <View style={styles.pendingBadge}>
+              <Ionicons name="remove-outline" size={11} color={Colors.textSecondary} />
+              <Text style={styles.pendingText}>PUSH</Text>
             </View>
           )}
           <TouchableOpacity onPress={onDelete} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
