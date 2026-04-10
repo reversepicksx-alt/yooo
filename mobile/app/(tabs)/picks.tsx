@@ -58,7 +58,9 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
   const nowValue = settled
     ? (pick.actualValue ?? (pick as { currentValue?: number | null }).currentValue ?? null)
     : ((pick as { currentValue?: number | null }).currentValue ?? pick.actualValue ?? null);
-  const paceValue = (pick as { pace?: number | null }).pace ?? (settled ? (pick.projection ?? (pick as { projectedValue?: number | null }).projectedValue ?? null) : null);
+  const projValue = pick.projection ?? (pick as { projectedValue?: number | null }).projectedValue ?? null;
+  const livePace = (pick as { pace?: number | null }).pace;
+  const paceValue = settled ? projValue : (livePace != null && livePace > 0 ? livePace : projValue);
   const hitPct = (pick as { hitPct?: number | null }).hitPct ?? (pick as { hitRate?: number | null }).hitRate ?? (pick as { winRate?: number | null }).winRate;
   const lineValue = typeof pick.line === 'number' ? pick.line : null;
 
@@ -154,8 +156,8 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
         </View>
         <View style={styles.statDivider} />
         <View style={styles.statCol}>
-          <Text style={[styles.statVal, { color: paceColor }]}>{paceValue != null ? Number(paceValue).toFixed(1) : '—'}</Text>
-          <Text style={styles.statLbl}>{(won || lost || push) ? 'PROJ' : 'PACE'}</Text>
+          <Text style={[styles.statVal, { color: paceColor }]}>{paceValue != null ? Number(paceValue).toFixed(0) : '—'}</Text>
+          <Text style={styles.statLbl}>{settled ? 'PROJ' : (livePace != null && livePace > 0 ? 'PACE' : 'PROJ')}</Text>
         </View>
         <View style={styles.statDivider} />
         <View style={styles.statCol}>
