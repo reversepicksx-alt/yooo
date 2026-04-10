@@ -97,6 +97,24 @@ No Whop integration — access control is:
 - `babel-preset-expo` pinned to `~54.0.10`
 - `express` + `http-proxy-middleware` in `mobile/` for the proxy server
 
+## API-Football Reference
+
+- **Documentation**: https://www.api-football.com/documentation-v3
+- **Player IDs**: https://dashboard.api-football.com/soccer/ids/players
+- **Team IDs**: https://dashboard.api-football.com/soccer/ids/teams
+- **League IDs**: https://dashboard.api-football.com/soccer/ids
+- **Base URL**: `https://v3.football.api-sports.io`
+- **Key endpoints used**: `players`, `fixtures`, `fixtures/players`, `teams/statistics`, `standings`
+- **Player stats per fixture**: `fixtures/players?fixture={id}` — gives passes.total, shots.total, goals.saves, etc.
+- **Count stats** (pass_attempts, shots, tackles, etc.) must ALWAYS be whole numbers — never decimals
+
+## Prediction Data Integrity
+
+- Game logs MUST come from real API-Football fixture data (`fixtures/players` endpoint)
+- No synthetic/fabricated game logs — if real data unavailable, use line as prior
+- Projections for count stats are rounded to integers (no 23.1 pass attempts)
+- Prediction caching: same player+prop+line+opponent returns same result for all users per day
+
 ## LLM Integration Shim
 
 `backend/emergentintegrations/` is a local shim (not on PyPI):
