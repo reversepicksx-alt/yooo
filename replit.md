@@ -115,6 +115,20 @@ No Whop integration — access control is:
 - Projections for count stats are rounded to integers (no 23.1 pass attempts)
 - Prediction caching: same player+prop+line+opponent returns same result for all users per day
 
+## Possession Symmetry (CRITICAL)
+
+- `compute_match_dominance()` always calculates from HOME team perspective first, then maps back
+- This guarantees that analyzing ANY player in the SAME match produces IDENTICAL possession numbers
+- The function normalizes inputs: if `is_home=False`, it swaps team/opp stats to home/away before computing
+- Output includes `homePoss` and `awayPoss` (match-level, deterministic) plus `expectedPoss`/`oppExpectedPoss` (player-relative)
+- The matchup overview uses `homePoss`/`awayPoss` directly for the possession bar display
+
+## Player Team Resolution
+
+- Player's CURRENT team is resolved from API-Football player stats (`statistics[-1].team.name`), not from scan input
+- `req.teamName` (from scan/user) is only used as fallback when API data is unavailable
+- This prevents stale club associations (e.g., Wan-Bissaka showing as Man United when he's at West Ham)
+
 ## LLM Integration Shim
 
 `backend/emergentintegrations/` is a local shim (not on PyPI):

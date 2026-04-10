@@ -15,7 +15,6 @@ from config import (
 )
 from models import PredictionRequest
 from utils import api_football_request, get_recent_fixtures_fast, strip_accents, get_soccer_odds, decimal_to_american
-from team_resolver import find_team
 
 router = APIRouter(prefix="/api", tags=["predict"])
 
@@ -228,12 +227,12 @@ async def predict(req: PredictionRequest):
         if actual_team_id == 0 and player_stats:
             stats_list = player_stats.get("statistics", [])
             if stats_list:
-                actual_team_id = stats_list[-1].get("team", {}).get("id", 0)
+                actual_team_id = stats_list[0].get("team", {}).get("id", 0)
 
         if not league_id and player_stats:
             stats_list = player_stats.get("statistics", [])
             if stats_list:
-                league_id = stats_list[-1].get("league", {}).get("id", 39)
+                league_id = stats_list[0].get("league", {}).get("id", 39)
 
         # Recovery: if ai_only_mode skipped fixture fetching but we now have a real team ID,
         # fetch recent fixtures retroactively so the Reverse Formula has game log data.
@@ -747,10 +746,12 @@ async def predict(req: PredictionRequest):
         # MATCH DOMINANCE: Opponent-aware possession + context multiplier
         # =============================================
         def compute_match_dominance(team_stats_list, opp_stats_list, odds, is_home, standing_data):
-            """Compute expected possession using opponent-aware model + odds adjustment."""
+            """Compute expected possession using opponent-aware model + odds adjustment.
+            SYMMETRIC: Always computes from HOME team perspective first, then maps back.
+            This ensures the SAME match always produces identical possession numbers
+            regardless of which player (home or away) triggers the analysis."""
             dom = {"expectedPoss": 50.0, "oppExpectedPoss": 50.0, "multiplier": 1.0, "notes": []}
 
-            # 1. Get each team's average possession from fixture stats
             def avg_poss(sl):
                 vals = []
                 for s in (sl or []):
@@ -766,112 +767,114 @@ async def predict(req: PredictionRequest):
             opp_avg = avg_poss(opp_stats_list)
 
             if team_avg is not None and opp_avg is not None:
-                opp_concedes = 100.0 - opp_avg
-
-                if opp_avg > 57:
-                    # Possession-dominant opponent: their style DICTATES the match
-                    # At 57%: 60/40 opponent-weighted → At 68%+: 90/10 opponent-weighted
-                    extremity = min((opp_avg - 57) / 11.0, 1.0)
-                    opp_weight = 0.60 + extremity * 0.30
-                    team_weight = 1.0 - opp_weight
-                    base_poss = team_weight * team_avg + opp_weight * opp_concedes
-                    dom["notes"].append(f"Possession monster: opp avg {opp_avg:.0f}% → weight {opp_weight*100:.0f}% opp-driven (raw base {base_poss:.1f}%)")
-                else:
-                    # Normal matchup: symmetric 50/50 blend
-                    base_poss = (team_avg + opp_concedes) / 2.0
-
-                # Home advantage — dampened against possession monsters
                 if is_home:
-                    home_boost = 2.5
-                    if opp_avg > 60:
-                        dampen = min((opp_avg - 60) / 10.0, 0.7)
-                        home_boost *= (1.0 - dampen)
-                        dom["notes"].append(f"Home poss boost dampened: {home_boost:.1f}% (vs {opp_avg:.0f}% opp)")
-                    base_poss += home_boost
+                    home_avg = team_avg
+                    away_avg = opp_avg
+                    home_rank = standing_data.get("teamRank") if standing_data else None
+                    away_rank = standing_data.get("oppRank") if standing_data else None
                 else:
-                    base_poss -= 1.0
+                    home_avg = opp_avg
+                    away_avg = team_avg
+                    home_rank = standing_data.get("oppRank") if standing_data else None
+                    away_rank = standing_data.get("teamRank") if standing_data else None
 
-                # Standings quality gap
-                if standing_data:
-                    team_rank = standing_data.get("teamRank")
-                    opp_rank = standing_data.get("oppRank")
-                    if team_rank and opp_rank:
-                        gap = opp_rank - team_rank  # positive = team is higher
-                        quality_adj = min(4.0, max(-4.0, gap * 0.4))
-                        base_poss += quality_adj
-                        if abs(quality_adj) > 1:
-                            dom["notes"].append(f"Standings gap (#{team_rank} vs #{opp_rank}): {quality_adj:+.1f}% poss adj")
+                away_concedes = 100.0 - away_avg
 
-                # Odds-based dominance adjustment
-                # IMPORTANT: Odds predict WHO WINS, not WHO HAS POSSESSION.
-                # A possession-dominant team like Barcelona can have 65% possession even as underdogs.
-                # So we REDUCE the odds impact when the opponent is a known possession team.
+                if away_avg > 57:
+                    extremity = min((away_avg - 57) / 11.0, 1.0)
+                    away_weight = 0.60 + extremity * 0.30
+                    home_weight = 1.0 - away_weight
+                    home_poss = home_weight * home_avg + away_weight * away_concedes
+                    dom["notes"].append(f"Possession monster: away avg {away_avg:.0f}% → weight {away_weight*100:.0f}% away-driven (raw base {home_poss:.1f}%)")
+                elif home_avg > 57:
+                    extremity = min((home_avg - 57) / 11.0, 1.0)
+                    home_weight = 0.60 + extremity * 0.30
+                    away_weight_blend = 1.0 - home_weight
+                    home_concedes = 100.0 - home_avg
+                    away_poss_raw = away_weight_blend * away_avg + home_weight * home_concedes
+                    home_poss = 100.0 - away_poss_raw
+                    dom["notes"].append(f"Possession monster: home avg {home_avg:.0f}% → weight {home_weight*100:.0f}% home-driven (raw base {home_poss:.1f}%)")
+                else:
+                    home_poss = (home_avg + away_concedes) / 2.0
+
+                home_boost = 2.5
+                higher_avg = max(home_avg, away_avg)
+                if higher_avg > 60:
+                    dampen = min((higher_avg - 60) / 10.0, 0.7)
+                    home_boost *= (1.0 - dampen)
+                    dom["notes"].append(f"Home poss boost dampened: {home_boost:.1f}% (dominant team avg {higher_avg:.0f}%)")
+                home_poss += home_boost
+
+                if home_rank and away_rank:
+                    gap = away_rank - home_rank
+                    quality_adj = min(4.0, max(-4.0, gap * 0.4))
+                    home_poss += quality_adj
+                    if abs(quality_adj) > 1:
+                        dom["notes"].append(f"Standings gap (#{home_rank} vs #{away_rank}): {quality_adj:+.1f}% poss adj")
+
                 if odds and odds.get("bookmakerOdds"):
                     try:
-                        home_odds = float(odds["bookmakerOdds"].get("homeWin", 3.0))
-                        away_odds = float(odds["bookmakerOdds"].get("awayWin", 3.0))
-                        team_odds = home_odds if is_home else away_odds
-                        opp_odds = away_odds if is_home else home_odds
+                        home_odds_val = float(odds["bookmakerOdds"].get("homeWin", 3.0))
+                        away_odds_val = float(odds["bookmakerOdds"].get("awayWin", 3.0))
 
-                        team_prob = 1.0 / max(team_odds, 1.01)
-                        opp_prob = 1.0 / max(opp_odds, 1.01)
-                        prob_diff = team_prob - opp_prob
+                        home_prob = 1.0 / max(home_odds_val, 1.01)
+                        away_prob = 1.0 / max(away_odds_val, 1.01)
+                        prob_diff = home_prob - away_prob
 
-                        # Dampen odds signal when opponent is a possession-heavy team (55%+ avg)
-                        # Barcelona/Man City averaging 63% possession should override "team is favorite"
                         odds_dampener = 1.0
-                        if opp_avg and opp_avg >= 57:
-                            odds_dampener = 0.3  # 70% reduction — opponent style dominates
-                            dom["notes"].append(f"Opponent possession-dominant ({opp_avg:.0f}% avg): odds signal dampened")
-                        elif opp_avg and opp_avg >= 53:
-                            odds_dampener = 0.6  # 40% reduction
+                        if away_avg >= 57 or home_avg >= 57:
+                            odds_dampener = 0.3
+                            dom["notes"].append(f"Possession-dominant team in match ({max(home_avg, away_avg):.0f}% avg): odds signal dampened")
+                        elif away_avg >= 53 or home_avg >= 53:
+                            odds_dampener = 0.6
 
                         odds_adj = round(prob_diff * 12 * odds_dampener, 1)
                         odds_adj = min(7.0, max(-7.0, odds_adj))
-                        base_poss += odds_adj
+                        home_poss += odds_adj
                         if abs(odds_adj) > 1:
-                            dom["notes"].append(f"Odds signal (team={team_odds:.2f}, opp={opp_odds:.2f}): {odds_adj:+.1f}% poss adj")
+                            dom["notes"].append(f"Odds signal (home={home_odds_val:.2f}, away={away_odds_val:.2f}): {odds_adj:+.1f}% poss adj")
                     except Exception:
                         pass
 
-                # Clamp to realistic range: 30-75%
-                base_poss = min(75.0, max(30.0, base_poss))
-                opp_poss = 100.0 - base_poss
+                home_poss = min(75.0, max(30.0, round(home_poss, 1)))
+                away_poss = round(100.0 - home_poss, 1)
 
-                dom["expectedPoss"] = round(base_poss, 1)
-                dom["oppExpectedPoss"] = round(opp_poss, 1)
-                dom["teamSeasonAvg"] = team_avg
-                dom["oppSeasonAvg"] = opp_avg
+                if is_home:
+                    dom["expectedPoss"] = home_poss
+                    dom["oppExpectedPoss"] = away_poss
+                    dom["teamSeasonAvg"] = home_avg
+                    dom["oppSeasonAvg"] = away_avg
+                else:
+                    dom["expectedPoss"] = away_poss
+                    dom["oppExpectedPoss"] = home_poss
+                    dom["teamSeasonAvg"] = away_avg
+                    dom["oppSeasonAvg"] = home_avg
 
-                # Match dominance multiplier for prop adjustments
-                # RATIO-BASED: Pass attempts scale proportionally with possession share.
-                # If a team normally has 50% possession but expects 35% in this match,
-                # their players will have ~30% fewer passes (35/50 = 0.70).
-                poss_ratio = base_poss / team_avg if team_avg > 0 else 1.0
-                poss_diff = base_poss - team_avg
+                dom["homePoss"] = home_poss
+                dom["awayPoss"] = away_poss
+
+                player_team_poss = dom["expectedPoss"]
+                poss_ratio = player_team_poss / team_avg if team_avg > 0 else 1.0
                 PASS_PROPS = {"pass_attempts", "key_passes", "crosses", "passes"}
                 DEF_PROPS = {"tackles", "interceptions", "blocks", "clearances"}
 
                 if req.propType in PASS_PROPS:
-                    # Ratio-based scaling — capped at ±35% to prevent extreme outliers
-                    raw_adj = poss_ratio - 1.0  # e.g., 0.70 - 1.0 = -0.30 (30% reduction)
+                    raw_adj = poss_ratio - 1.0
                     capped_adj = max(-0.35, min(0.35, raw_adj))
                     dom["multiplier"] = round(1.0 + capped_adj, 3)
                     if abs(capped_adj) > 0.03:
                         direction = "boost" if capped_adj > 0 else "drop"
-                        dom["notes"].append(f"Pass volume {direction}: expected {base_poss:.0f}% poss vs {team_avg:.0f}% avg (ratio={poss_ratio:.2f}) → {capped_adj*100:+.0f}%")
+                        dom["notes"].append(f"Pass volume {direction}: expected {player_team_poss:.0f}% poss vs {team_avg:.0f}% avg (ratio={poss_ratio:.2f}) → {capped_adj*100:+.0f}%")
                 elif req.propType in DEF_PROPS:
-                    # Defensive props scale INVERSELY with possession — less ball = more defending
-                    inverse_ratio = (100.0 - base_poss) / (100.0 - team_avg) if team_avg < 100 else 1.0
+                    inverse_ratio = (100.0 - player_team_poss) / (100.0 - team_avg) if team_avg < 100 else 1.0
                     raw_adj = inverse_ratio - 1.0
                     capped_adj = max(-0.25, min(0.25, raw_adj))
                     dom["multiplier"] = round(1.0 + capped_adj, 3)
                     if abs(capped_adj) > 0.03:
                         direction = "boost" if capped_adj > 0 else "drop"
-                        dom["notes"].append(f"Def action {direction}: expected {100-base_poss:.0f}% without ball vs {100-team_avg:.0f}% avg → {capped_adj*100:+.0f}%")
+                        dom["notes"].append(f"Def action {direction}: expected {100-player_team_poss:.0f}% without ball vs {100-team_avg:.0f}% avg → {capped_adj*100:+.0f}%")
                 elif req.propType in {"shots", "shots_on_target"}:
-                    # Shot props scale with possession but less aggressively
-                    raw_adj = (poss_ratio - 1.0) * 0.6  # 60% of possession ratio
+                    raw_adj = (poss_ratio - 1.0) * 0.6
                     capped_adj = max(-0.20, min(0.20, raw_adj))
                     dom["multiplier"] = round(1.0 + capped_adj, 3)
                     if abs(capped_adj) > 0.03:
@@ -2248,16 +2251,14 @@ Analyze ALL data thoroughly. Return JSON only."""
         final_proj_cal = prediction.get("projectedValue", req.line)
         prediction["recommendation"] = "over" if final_proj_cal > req.line else "under"
 
-        # Force-set identity fields from REQUEST data — never trust AI output for these
-        player_team_display = req.teamName or (player_stats.get("statistics", [{}])[0].get("team", {}).get("name", "") if player_stats else "")
-        resolved_team = None
-        if req.playerName:
-            try:
-                resolved_team = await find_team(req.playerName, req.leagueId)
-            except Exception:
-                resolved_team = None
-        if resolved_team and resolved_team.get("teamName"):
-            player_team_display = resolved_team["teamName"]
+        # Force-set identity fields — prefer API-Football's current-season team over scan input
+        # statistics[0] is the most recent season (get_player_data iterates newest-first)
+        api_team_name = ""
+        if player_stats:
+            stats_list = player_stats.get("statistics", [])
+            if stats_list:
+                api_team_name = stats_list[0].get("team", {}).get("name", "")
+        player_team_display = api_team_name or req.teamName or ""
         prediction["player"] = {
             "id": req.playerId,
             "name": req.playerName,
@@ -2304,20 +2305,13 @@ Analyze ALL data thoroughly. Return JSON only."""
 
         # OVERRIDE: Lock matchupOverview to REAL DATA so it never fluctuates between predictions
         real_matchup = prediction.get("matchupOverview", {})
-        # 1. Possession: Use MATCH DOMINANCE model (opponent-aware + odds-adjusted)
-        if match_dominance.get("expectedPoss", 50) != 50:
-            if player_venue == "home":
-                real_matchup["expectedPossession"] = {
-                    "home": match_dominance["expectedPoss"],
-                    "away": match_dominance["oppExpectedPoss"]
-                }
-            else:
-                real_matchup["expectedPossession"] = {
-                    "home": match_dominance["oppExpectedPoss"],
-                    "away": match_dominance["expectedPoss"]
-                }
+        # 1. Possession: Use MATCH DOMINANCE model (symmetric — always computed from HOME perspective)
+        if match_dominance.get("homePoss") is not None:
+            real_matchup["expectedPossession"] = {
+                "home": match_dominance["homePoss"],
+                "away": match_dominance["awayPoss"]
+            }
         elif team_fixture_stats or opponent_fixture_stats:
-            # Fallback: simple average if dominance model has no data
             def avg_possession(stats_list):
                 vals = []
                 for s in (stats_list or []):
@@ -2330,20 +2324,24 @@ Analyze ALL data thoroughly. Return JSON only."""
                 return round(sum(vals) / len(vals), 0) if vals else None
             team_poss = avg_possession(team_fixture_stats)
             opp_poss = avg_possession(opponent_fixture_stats)
-            if team_poss is not None and opp_poss is not None:
-                total = team_poss + opp_poss
-                if total > 0:
-                    team_poss = round(team_poss / total * 100)
-                    opp_poss = 100 - team_poss
-                real_matchup["expectedPossession"] = {
-                    "home": team_poss if player_venue == "home" else opp_poss,
-                    "away": opp_poss if player_venue == "home" else team_poss
-                }
-            elif team_poss is not None:
-                real_matchup["expectedPossession"] = {
-                    "home": team_poss if player_venue == "home" else (100 - team_poss),
-                    "away": (100 - team_poss) if player_venue == "home" else team_poss
-                }
+            if player_venue == "home":
+                fb_home_avg = team_poss
+                fb_away_avg = opp_poss
+            else:
+                fb_home_avg = opp_poss
+                fb_away_avg = team_poss
+            if fb_home_avg is not None and fb_away_avg is not None:
+                fb_away_concedes = 100 - fb_away_avg
+                fb_home_poss = round((fb_home_avg + fb_away_concedes) / 2.0 + 2.5)
+                fb_home_poss = min(75, max(30, fb_home_poss))
+                fb_away_poss = 100 - fb_home_poss
+                real_matchup["expectedPossession"] = {"home": fb_home_poss, "away": fb_away_poss}
+            elif fb_home_avg is not None:
+                fb_home_poss = round(min(75, max(30, fb_home_avg + 2.5)))
+                real_matchup["expectedPossession"] = {"home": fb_home_poss, "away": 100 - fb_home_poss}
+            elif fb_away_avg is not None:
+                fb_away_poss = round(min(75, max(30, fb_away_avg - 2.5)))
+                real_matchup["expectedPossession"] = {"home": 100 - fb_away_poss, "away": fb_away_poss}
         # 2. Moneyline + favorite from real odds data
         if match_odds:
             if match_odds.get("americanOdds"):
@@ -2379,9 +2377,8 @@ Analyze ALL data thoroughly. Return JSON only."""
             else:
                 real_matchup["expectedGameType"] = "high-tempo" if combined_shots >= 23 else "cagey"
         # 4. Always set team names from request data (deterministic)
-        player_team = req.teamName or (player_stats.get("statistics", [{}])[0].get("team", {}).get("name", "") if player_stats else "")
-        real_matchup["homeTeam"] = player_team if player_venue == "home" else req.opponentName
-        real_matchup["awayTeam"] = req.opponentName if player_venue == "home" else player_team
+        real_matchup["homeTeam"] = player_team_display if player_venue == "home" else req.opponentName
+        real_matchup["awayTeam"] = req.opponentName if player_venue == "home" else player_team_display
         prediction["matchupOverview"] = real_matchup
 
         # Add match context (competition name, round) for frontend display
