@@ -591,14 +591,15 @@ export default function ScanScreen() {
                 && Number.isFinite(prediction.expectedPossession.home)
                 && Number.isFinite(prediction.expectedPossession.away)
                 && (() => {
-                const teamPoss = venueOverride === 'home'
-                  ? prediction.expectedPossession!.home
-                  : prediction.expectedPossession!.away;
-                const oppPoss = venueOverride === 'home'
-                  ? prediction.expectedPossession!.away
-                  : prediction.expectedPossession!.home;
-                const teamShort = (prediction.teamName || 'TEAM').split(' ').pop()?.slice(0, 6).toUpperCase() || 'TEAM';
-                const oppShort = (prediction.opponentName || 'OPP').split(' ').pop()?.slice(0, 6).toUpperCase() || 'OPP';
+                const homePoss = prediction.expectedPossession!.home;
+                const awayPoss = prediction.expectedPossession!.away;
+                const isPlayerHome = venueOverride === 'home';
+                const homeShort = isPlayerHome
+                  ? (prediction.teamName || 'HOME').split(' ').pop()?.slice(0, 6).toUpperCase() || 'HOME'
+                  : (prediction.opponentName || 'HOME').split(' ').pop()?.slice(0, 6).toUpperCase() || 'HOME';
+                const awayShort = isPlayerHome
+                  ? (prediction.opponentName || 'AWAY').split(' ').pop()?.slice(0, 6).toUpperCase() || 'AWAY'
+                  : (prediction.teamName || 'AWAY').split(' ').pop()?.slice(0, 6).toUpperCase() || 'AWAY';
                 return (
                   <>
                     <View style={styles.analysisDivider} />
@@ -608,12 +609,12 @@ export default function ScanScreen() {
                         <Text style={styles.possLabel}>EXPECTED POSSESSION</Text>
                       </View>
                       <View style={styles.possBarWrap}>
-                        <View style={[styles.possBarHome, { flex: teamPoss }]} />
-                        <View style={[styles.possBarAway, { flex: oppPoss }]} />
+                        <View style={[styles.possBarHome, { flex: homePoss }]} />
+                        <View style={[styles.possBarAway, { flex: awayPoss }]} />
                       </View>
                       <View style={styles.possNumbers}>
-                        <Text style={styles.possHomeText}>{teamShort}  {Math.round(teamPoss)}%</Text>
-                        <Text style={styles.possAwayText}>{Math.round(oppPoss)}%  {oppShort}</Text>
+                        <Text style={styles.possHomeText}>{homeShort}  {Math.round(homePoss)}%</Text>
+                        <Text style={styles.possAwayText}>{Math.round(awayPoss)}%  {awayShort}</Text>
                       </View>
                       {(prediction.possessionTeamAvg != null || prediction.possessionOppAvg != null) && (
                         <Text style={styles.possSub}>
