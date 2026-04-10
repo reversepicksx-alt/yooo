@@ -257,6 +257,22 @@ async def predict(req: PredictionRequest):
             except Exception as _fre:
                 print(f"[FIXTURE RECOVERY] Error: {_fre}")
 
+        # ── SINGLE SOURCE OF TRUTH: correct club team name ──────────────────────
+        # Trust req.teamName (what the user explicitly scanned) as primary.
+        # Only use API-Football stats to SUPPLEMENT when req.teamName is empty.
+        # Never let a national-team or historical-club entry override the user's input.
+        corrected_team_name = req.teamName or ""
+        if player_stats and not corrected_team_name:
+            _pl_nat2 = (player_stats.get("player") or {}).get("nationality", "")
+            for _st2 in (player_stats.get("statistics") or []):
+                _t2_name = (_st2.get("team") or {}).get("name", "")
+                if _pl_nat2 and _t2_name and _t2_name.strip().lower() == _pl_nat2.strip().lower():
+                    continue  # skip national team entries
+                if _t2_name:
+                    corrected_team_name = _t2_name
+                    break
+        print(f"[TEAM] corrected_team_name={corrected_team_name!r} (req.teamName={req.teamName!r})")
+
         standings = []
         if standings_raw:
             try:
@@ -727,7 +743,7 @@ async def predict(req: PredictionRequest):
         # Wave 2: Fetch deep fixture data + Grok digest in parallel
         from grok_engine import build_grok_digest
         grok_digest_task = build_grok_digest(
-            player_name=req.playerName, team_name=req.teamName or "",
+            player_name=req.playerName, team_name=corrected_team_name or "",
             opponent_name=req.opponentName, prop_type=req.propType,
             line=req.line, venue=player_venue,
             player_stats=player_stats, team_stats=team_stats,
@@ -1474,7 +1490,7 @@ ACTUAL SEASON STATS (use these to determine position — stats don't lie):
 - Yellow cards: {cards.get('yellow', 0)}, Red: {cards.get('red', 0)}
 POSITION CLUES: CB=high tackles/blocks/aerial duels, low crosses/key passes/dribbles. LB/RB=crosses, some key passes, overlapping runs. CDM=high interceptions, moderate passing. CM=balanced. CAM=high key passes. Winger=high dribbles/crosses. ST=high shots/goals."""
 
-                    pos_prompt = f"What is {req.playerName}'s primary position and tactical role at {req.teamName}?{category_hint}{stats_evidence}\nPosition must be one of: {pos_list}\nRole must be one of: Shot-Stopper, Sweeper Keeper, Ball-Playing CB, Stopper, Fullback, Wing-Back, Inverted Fullback, Anchor, Box-to-Box, Deep-Lying Playmaker, Ball Winner, Mezzala, Advanced Playmaker, Wide Playmaker, Traditional Winger, Inverted Winger, Progressive Carrier, Inside Forward, Target Man, Poacher, False 9, Shadow Striker, Complete Forward, Pressing Forward\nReply ONLY: POSITION|ROLE"
+                    pos_prompt = f"What is {req.playerName}'s primary position and tactical role at {corrected_team_name}?{category_hint}{stats_evidence}\nPosition must be one of: {pos_list}\nRole must be one of: Shot-Stopper, Sweeper Keeper, Ball-Playing CB, Stopper, Fullback, Wing-Back, Inverted Fullback, Anchor, Box-to-Box, Deep-Lying Playmaker, Ball Winner, Mezzala, Advanced Playmaker, Wide Playmaker, Traditional Winger, Inverted Winger, Progressive Carrier, Inside Forward, Target Man, Poacher, False 9, Shadow Striker, Complete Forward, Pressing Forward\nReply ONLY: POSITION|ROLE"
 
                     # DUAL-AI POSITION VALIDATION: Grok + Gemini in parallel for defenders
                     is_defender = player_position == "Defender"
@@ -1598,7 +1614,7 @@ POSITION CLUES: CB=high tackles/blocks/aerial duels, low crosses/key passes/drib
                             {"$set": {
                                 "playerId": req.playerId,
                                 "playerName": req.playerName,
-                                "team": req.teamName,
+                                "team": corrected_team_name,
                                 "genericPosition": player_position,
                                 "specificPosition": specific_position,
                                 "role": player_role,
@@ -1914,7 +1930,7 @@ Average {req.propType}: {comp_avg} | Per-90 avg: {comp_per90_avg} | Sample: {len
             dom_notes = "\n".join(f"  - {n}" for n in match_dominance.get("notes", []))
             dom_context = f"""
 [MATCH DOMINANCE ANALYSIS — DO NOT IGNORE]
-Expected possession for {req.teamName}: {match_dominance['expectedPoss']}% (season avg: {match_dominance.get('teamSeasonAvg', '?')}%)
+Expected possession for {corrected_team_name}: {match_dominance['expectedPoss']}% (season avg: {match_dominance.get('teamSeasonAvg', '?')}%)
 Expected possession for {req.opponentName}: {match_dominance['oppExpectedPoss']}% (season avg: {match_dominance.get('oppSeasonAvg', '?')}%)
 {dom_notes}
 >>> CRITICAL: If expected possession is HIGHER than season average, pass-dependent players (DLP, CM, CAM) WILL exceed their historical averages.
@@ -1947,7 +1963,8 @@ Expected possession for {req.opponentName}: {match_dominance['oppExpectedPoss']}
 {hit_rates['summary']}
 >>> If over-rate >= 65%, strongly lean OVER. If under-rate >= 65%, lean UNDER. If neither exceeds 60%, treat as close call — lower confidence. <<<"""
 
-        prompt = f"""{req.playerName} ({display_position}) — plays for {req.teamName} ({player_venue.upper()}) | OPPONENT: {req.opponentName} | {req.propType} line {req.line}
+        prompt = f"""{req.playerName} ({display_position}) — plays for {corrected_team_name} ({player_venue.upper()}) | OPPONENT: {req.opponentName} | {req.propType} line {req.line}
+IMPORTANT: This player's current CLUB is {corrected_team_name}. Do NOT reference any national team or previous club in your analysis — use only "{corrected_team_name}" when referring to this player's team.
 Odds: {json.dumps(match_odds.get('bookmakerOdds',{}), default=str) if match_odds else 'N/A'}{match_context}
 {pronoun_note}
 recentSamples=[]
@@ -2265,27 +2282,8 @@ Analyze ALL data thoroughly. Return JSON only."""
         final_proj_cal = prediction.get("projectedValue", req.line)
         prediction["recommendation"] = "over" if final_proj_cal > req.line else "under"
 
-        # Force-set identity fields — prefer API-Football's current-season CLUB team over scan input
-        # statistics[0] is the most recent entry, but may be a national team (e.g., "Portugal", "Uruguay")
-        # We must filter those out: national team stats have team.name == player.nationality
-        api_team_name = ""
-        if player_stats:
-            player_nationality = (player_stats.get("player") or {}).get("nationality", "")
-            stats_list = player_stats.get("statistics", [])
-            # Prefer: entry matching req.teamId → then first non-national-team club entry → then first entry
-            for entry in stats_list:
-                t_id = (entry.get("team") or {}).get("id", 0)
-                t_name = (entry.get("team") or {}).get("name", "")
-                # Skip clearly national team entries (team name matches player nationality)
-                if player_nationality and t_name and t_name.strip().lower() == player_nationality.strip().lower():
-                    continue
-                if req.teamId and req.teamId != 0 and t_id == req.teamId:
-                    api_team_name = t_name
-                    break
-                if not api_team_name and t_name:
-                    api_team_name = t_name  # take first valid club name, keep scanning for ID match
-        # Fall back to what the user explicitly typed in the scan if API gave us nothing useful
-        player_team_display = api_team_name or req.teamName or ""
+        # Use the single corrected team name resolved early (trusts req.teamName from scan)
+        player_team_display = corrected_team_name
         prediction["player"] = {
             "id": req.playerId,
             "name": req.playerName,

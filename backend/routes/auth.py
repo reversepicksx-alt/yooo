@@ -18,11 +18,29 @@ async def _check_access_local(email_lower: str):
     grant = await db.manual_access_grants.find_one({"email": email_lower}, {"_id": 0})
     if grant:
         return grant.get("access_type", "Manual")
-    square_sub = await db.square_subscriptions.find_one({"email": email_lower, "status": {"$in": ["ACTIVE", "PENDING", "CANCELED"]}}, {"_id": 0})
+    # Active/pending/canceled subs always have access
+    square_sub = await db.square_subscriptions.find_one(
+        {"email": email_lower, "status": {"$in": ["ACTIVE", "PENDING", "CANCELED"]}}, {"_id": 0}
+    )
     if square_sub:
-        if square_sub.get("status") == "EXPIRED":
-            return None
         return "Premium (Square)"
+    # EXPIRED subs: grant access if still within the paid billing window (expiresAt in future)
+    # This handles: Square marks sub EXPIRED on renewal day but user already paid for the period
+    expired_sub = await db.square_subscriptions.find_one(
+        {"email": email_lower, "status": "EXPIRED"}, {"_id": 0}
+    )
+    if expired_sub:
+        expires_at_raw = expired_sub.get("expiresAt")
+        if expires_at_raw:
+            try:
+                exp_str = str(expires_at_raw).replace(" ", "T")
+                exp_dt = datetime.fromisoformat(exp_str)
+                if exp_dt.tzinfo is None:
+                    exp_dt = exp_dt.replace(tzinfo=timezone.utc)
+                if datetime.now(timezone.utc) < exp_dt:
+                    return "Premium (Square)"  # paid period not yet over
+            except Exception:
+                pass
     whop_sub = await db.whop_subscriptions.find_one({"email": email_lower, "status": "active"}, {"_id": 0})
     if whop_sub:
         return "Whop Member"
