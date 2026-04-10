@@ -60,6 +60,8 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
     : ((pick as { currentValue?: number | null }).currentValue ?? pick.actualValue ?? null);
   const projValue = pick.projection ?? (pick as { projectedValue?: number | null }).projectedValue ?? null;
   const livePace = (pick as { pace?: number | null }).pace;
+  const matchStatus = (pick as { matchStatus?: string }).matchStatus;
+  const hasLiveData = matchStatus === 'live' || (livePace != null && livePace > 0) || nowValue != null;
   const paceValue = settled ? projValue : (livePace != null && livePace > 0 ? livePace : projValue);
   const hitPct = (pick as { hitPct?: number | null }).hitPct ?? (pick as { hitRate?: number | null }).hitRate ?? (pick as { winRate?: number | null }).winRate;
   const lineValue = typeof pick.line === 'number' ? pick.line : null;
@@ -96,13 +98,13 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
           </Text>
         </View>
         <View style={styles.cardRight}>
-          {live && !won && !lost && (nowValue != null || (pick as { matchStatus?: string }).matchStatus === 'live') && (
+          {live && !won && !lost && hasLiveData && (
             <View style={styles.liveBadge}>
               <View style={styles.liveDot} />
               <Text style={styles.liveText}>LIVE</Text>
             </View>
           )}
-          {live && !won && !lost && nowValue == null && (pick as { matchStatus?: string }).matchStatus !== 'live' && (
+          {live && !won && !lost && !hasLiveData && (
             <View style={styles.pendingBadge}>
               <Ionicons name="time-outline" size={11} color={Colors.textSecondary} />
               <Text style={styles.pendingText}>PENDING</Text>

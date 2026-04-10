@@ -511,7 +511,7 @@ export default function ScanScreen() {
 
 
               {/* Confidence Interval */}
-              {prediction.confidenceInterval && (
+              {prediction.confidenceInterval && prediction.confidenceInterval[1] > prediction.confidenceInterval[0] && (
                 <>
                   <View style={styles.analysisDivider} />
                   <View style={styles.ciRow}>
@@ -593,13 +593,10 @@ export default function ScanScreen() {
                 && (() => {
                 const homePoss = prediction.expectedPossession!.home;
                 const awayPoss = prediction.expectedPossession!.away;
-                const isPlayerHome = venueOverride === 'home';
-                const homeShort = isPlayerHome
-                  ? (prediction.teamName || 'HOME').split(' ').pop()?.slice(0, 6).toUpperCase() || 'HOME'
-                  : (prediction.opponentName || 'HOME').split(' ').pop()?.slice(0, 6).toUpperCase() || 'HOME';
-                const awayShort = isPlayerHome
-                  ? (prediction.opponentName || 'AWAY').split(' ').pop()?.slice(0, 6).toUpperCase() || 'AWAY'
-                  : (prediction.teamName || 'AWAY').split(' ').pop()?.slice(0, 6).toUpperCase() || 'AWAY';
+                const homeShort = (prediction.matchupOverview?.homeTeam || prediction.opponentName || 'HOME')
+                  .split(' ').pop()?.slice(0, 6).toUpperCase() || 'HOME';
+                const awayShort = (prediction.matchupOverview?.awayTeam || prediction.teamName || 'AWAY')
+                  .split(' ').pop()?.slice(0, 6).toUpperCase() || 'AWAY';
                 return (
                   <>
                     <View style={styles.analysisDivider} />

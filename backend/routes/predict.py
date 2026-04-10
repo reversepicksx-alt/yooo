@@ -2263,7 +2263,7 @@ Analyze ALL data thoroughly. Return JSON only."""
         prediction.setdefault("recommendation", "over")
         prediction.setdefault("confidenceScore", 50)
         prediction.setdefault("confidenceLevel", "Medium")
-        prediction.setdefault("confidenceInterval", [req.line * 0.8, req.line * 1.2])
+        prediction.setdefault("confidenceInterval", None)
         prediction.setdefault("recentSamples", [])
         if real_recent_samples:
             prediction["recentSamples"] = real_recent_samples
@@ -2281,7 +2281,9 @@ Analyze ALL data thoroughly. Return JSON only."""
                 prediction["projectedValue"] = round(pv)
             ci = prediction.get("confidenceInterval")
             if ci and len(ci) >= 2:
-                prediction["confidenceInterval"] = [round(ci[0], 1), round(ci[1], 1)]
+                lo = round(float(ci[0]), 1)
+                hi = round(float(ci[1]), 1)
+                prediction["confidenceInterval"] = [lo, hi] if hi > lo else None
             for s in prediction.get("recentSamples", []):
                 v = s.get("value")
                 if v is not None:
@@ -2643,7 +2645,7 @@ Rules: No AI model names. Be specific with numbers. Be decisive. ALWAYS referenc
             "recommendation": "over",
             "confidenceScore": 50,
             "confidenceLevel": "Medium",
-            "confidenceInterval": [req.line * 0.8, req.line * 1.2],
+            "confidenceInterval": None,
             "recentSamples": [],
             "bayesianMetrics": {"priorMean": req.line, "momentumEffect": 0, "covariateAdjustment": 0, "reversalFlag": "stable"},
             "probabilityCurve": [],
