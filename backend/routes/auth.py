@@ -20,7 +20,7 @@ async def _check_access_local(email_lower: str):
         return grant.get("access_type", "Manual")
     square_sub = await db.square_subscriptions.find_one({"email": email_lower, "status": {"$in": ["ACTIVE", "PENDING", "CANCELED"]}}, {"_id": 0})
     if square_sub:
-        if square_sub.get("expiredReason") == "payment_overdue":
+        if square_sub.get("status") == "EXPIRED":
             return None
         return "Premium (Square)"
     whop_sub = await db.whop_subscriptions.find_one({"email": email_lower, "status": "active"}, {"_id": 0})
