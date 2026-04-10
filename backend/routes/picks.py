@@ -213,6 +213,27 @@ async def list_picks(req: GetPicksRequest):
                     {"$set": {"result": correct}}
                 )
 
+    needs_proj = [p for p in picks if not p.get("projectedValue")]
+    if needs_proj:
+        for p in needs_proj:
+            try:
+                pid = p.get("playerId")
+                pt = p.get("propType", "")
+                if pid:
+                    pred = await db.predictions.find_one(
+                        {"player.id": pid, "propType": pt},
+                        {"projectedValue": 1, "_id": 0},
+                        sort=[("_created", -1)]
+                    )
+                    if pred and pred.get("projectedValue"):
+                        p["projectedValue"] = pred["projectedValue"]
+                        await db.picks.update_one(
+                            {"pickId": p["pickId"], "email": req.email.lower()},
+                            {"$set": {"projectedValue": pred["projectedValue"]}}
+                        )
+            except Exception:
+                pass
+
     live_picks = [p for p in picks if p.get("status") == "live"]
     if live_picks:
         try:

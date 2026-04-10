@@ -2443,14 +2443,31 @@ Analyze ALL data thoroughly. Return JSON only."""
             }.get(prop_key, prop_key.replace("_", " ").title())
 
         venue_samples = [g for g in player_game_logs if g.get("venue") == player_venue and g.get(target_check) is not None]
-        opp_samples = [g for g in opponent_fixture_stats if g.get("shotsOnTarget") is not None] if req.propType == "saves" else []
         venue_avg = round(sum((g.get(target_check) or 0) for g in venue_samples) / len(venue_samples), 2) if venue_samples else None
         opp_allowed_avg = None
-        if req.propType in ("shots_on_target", "saves"):
-            if req.propType == "shots_on_target":
-                opp_allowed_avg = round(sum((g.get("shotsOnTarget") or 0) for g in opp_samples) / len(opp_samples), 2) if opp_samples else None
-            else:
-                opp_allowed_avg = round(sum((g.get("shotsOnTarget") or 0) for g in opp_samples) / len(opp_samples), 2) if opp_samples else None
+        opp_stat_field_map = {
+            "pass_attempts": "totalPasses",
+            "shots": "totalShots",
+            "shots_on_target": "shotsOnTarget",
+            "saves": "shotsOnTarget",
+            "key_passes": "totalPasses",
+            "tackles": "totalShots",
+            "interceptions": "totalShots",
+            "blocks": "totalShots",
+            "fouls_drawn": "fouls",
+            "crosses": "totalPasses",
+            "clearances": "totalShots",
+            "dribbles": "totalPasses",
+        }
+        opp_stat_key = opp_stat_field_map.get(req.propType)
+        if opp_stat_key and opponent_fixture_stats:
+            opp_vals = [g.get(opp_stat_key) for g in opponent_fixture_stats if g.get(opp_stat_key) is not None]
+            if opp_vals:
+                try:
+                    opp_vals_num = [float(str(v).replace("%", "")) for v in opp_vals]
+                    opp_allowed_avg = round(sum(opp_vals_num) / len(opp_vals_num), 1)
+                except (ValueError, TypeError):
+                    pass
 
         prediction["analysisSummary"] = {
             "statLabel": stat_label,

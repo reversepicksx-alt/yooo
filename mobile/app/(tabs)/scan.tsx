@@ -543,13 +543,13 @@ export default function ScanScreen() {
                       const d = formatOdds(prediction.moneyline.draw);
                       const a = formatOdds(prediction.moneyline.away);
                       if (!h && !d && !a) return null;
-                      const homeTeamShort = (prediction.teamName || 'HOME').split(' ').pop()?.slice(0, 5).toUpperCase() || 'HOME';
-                      const awayTeamShort = (prediction.opponentName || 'AWAY').split(' ').pop()?.slice(0, 5).toUpperCase() || 'AWAY';
+                      const playerTeamShort = (prediction.teamName || 'HOME').split(' ').pop()?.slice(0, 5).toUpperCase() || 'HOME';
+                      const oppTeamShort = (prediction.opponentName || 'AWAY').split(' ').pop()?.slice(0, 5).toUpperCase() || 'AWAY';
                       const isPlayerHome = venueOverride === 'home';
-                      const team1 = isPlayerHome ? homeTeamShort : awayTeamShort;
-                      const team2 = isPlayerHome ? awayTeamShort : homeTeamShort;
-                      const odds1 = isPlayerHome ? h : a;
-                      const odds2 = isPlayerHome ? a : h;
+                      const team1 = isPlayerHome ? playerTeamShort : oppTeamShort;
+                      const team2 = isPlayerHome ? oppTeamShort : playerTeamShort;
+                      const odds1 = h;
+                      const odds2 = a;
                       return (
                         <View style={styles.moneylineWrap}>
                           <View style={styles.moneylineHeader}>
