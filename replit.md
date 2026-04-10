@@ -58,7 +58,7 @@ This proxy architecture allows API calls from any device (mobile, desktop) to re
 
 - **Bundle ID**: `com.reversepicks.app`
 - **Owner email**: `reversepicksx@gmail.com`
-- **MongoDB**: localhost:27017, DB `reversepicks`
+- **MongoDB**: localhost:27017, DB `reversepicks`, data at `/home/runner/.reversepicks_db` (BOTH dev workflow and production use this path — NEVER change back to workspace path or data will be wiped on redeploy)
 - **API calls (web)**: Relative URLs `/api/...` — proxy handles routing
 - **API calls (native)**: `EXPO_PUBLIC_API_URL` env var or localhost:8000 fallback
 - **Design**: Background `#050505`, Primary `#39FF14` neon green, Cards `#111111`

@@ -50,7 +50,8 @@ outputType = "console"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "mkdir -p /home/runner/workspace/mongodb_data && (mongod --dbpath /home/runner/workspace/mongodb_data --logpath /home/runner/workspace/mongodb.log --fork --quiet 2>/dev/null || true) && sleep 5 && cd backend && python -m uvicorn server:app --host 0.0.0.0 --port 8000"
+args = "mkdir -p /home/runner/.reversepicks_db && (mongod --dbpath /home/runner/.reversepicks_db --logpath /home/runner/.reversepicks_mongo.log --fork --quiet 2>/dev/null || true) && sleep 5 && cd backend && python -m uvicorn server:app --host 0.0.0.0 --port 8000"
+waitForPort = 8000
 
 [[ports]]
 localPort = 5000
