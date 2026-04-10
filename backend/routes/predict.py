@@ -15,6 +15,7 @@ from config import (
 )
 from models import PredictionRequest
 from utils import api_football_request, get_recent_fixtures_fast, strip_accents, get_soccer_odds, decimal_to_american
+from team_resolver import find_team
 
 router = APIRouter(prefix="/api", tags=["predict"])
 
@@ -2249,6 +2250,14 @@ Analyze ALL data thoroughly. Return JSON only."""
 
         # Force-set identity fields from REQUEST data — never trust AI output for these
         player_team_display = req.teamName or (player_stats.get("statistics", [{}])[0].get("team", {}).get("name", "") if player_stats else "")
+        resolved_team = None
+        if req.playerName:
+            try:
+                resolved_team = await find_team(req.playerName, req.leagueId)
+            except Exception:
+                resolved_team = None
+        if resolved_team and resolved_team.get("teamName"):
+            player_team_display = resolved_team["teamName"]
         prediction["player"] = {
             "id": req.playerId,
             "name": req.playerName,

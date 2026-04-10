@@ -347,6 +347,10 @@ SCAN_ALIASES = {
     "alnajma": "al najma",
 }
 
+PLAYER_TEAM_OVERRIDES = {
+    "aaron wan-bissaka": "west ham united",
+}
+
 
 async def build_teams_cache(force: bool = False):
     """Fetch all teams from supported domestic leagues and cache them."""
@@ -443,6 +447,8 @@ async def find_team(query: str, league_id: int = None) -> dict:
     norm = _normalize(query)
     if not norm:
         return None
+    if norm in PLAYER_TEAM_OVERRIDES:
+        return await find_team(PLAYER_TEAM_OVERRIDES[norm], league_id=league_id)
 
     # Strategy 0: Known scan aliases (AI vision model abbreviations)
     if norm in SCAN_ALIASES:
