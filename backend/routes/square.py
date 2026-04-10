@@ -131,6 +131,8 @@ class CheckoutRequest(BaseModel):
 @router.post("/create-checkout")
 async def create_checkout(req: CheckoutRequest):
     """Create a Square Checkout link for subscription — redirects user to Square's hosted page."""
+    if (get_dynamic_setting("DISABLE_SQUARE_BILLING") or "").lower() in ("1", "true", "yes", "on"):
+        raise HTTPException(status_code=403, detail="Square billing is disabled.")
     email_lower = req.email.lower().strip()
     plan_key = req.planKey.lower()
 
@@ -354,6 +356,8 @@ class ResubscribeRequest(BaseModel):
 @router.post("/resubscribe-checkout")
 async def resubscribe_checkout(req: ResubscribeRequest):
     """Create a Square Checkout link for a canceled user to resubscribe with new payment."""
+    if (get_dynamic_setting("DISABLE_SQUARE_BILLING") or "").lower() in ("1", "true", "yes", "on"):
+        raise HTTPException(status_code=403, detail="Square billing is disabled.")
     email_lower = req.email.lower().strip()
     plan_key = req.planKey.lower()
 
@@ -457,6 +461,8 @@ async def resubscribe_checkout(req: ResubscribeRequest):
 
 @router.post("/subscribe")
 async def subscribe(req: SubscribeRequest):
+    if (get_dynamic_setting("DISABLE_SQUARE_BILLING") or "").lower() in ("1", "true", "yes", "on"):
+        raise HTTPException(status_code=403, detail="Square billing is disabled.")
     email_lower = req.email.lower().strip()
     plan_key = req.planKey.lower()
 
@@ -670,6 +676,8 @@ class ChangePlanRequest(BaseModel):
 async def change_plan(req: ChangePlanRequest):
     """Change a user's subscription plan via cancel + recreate (more reliable than swap_plan).
     Also handles resubscription for canceled users — starts billing after current period ends."""
+    if (get_dynamic_setting("DISABLE_SQUARE_BILLING") or "").lower() in ("1", "true", "yes", "on"):
+        raise HTTPException(status_code=403, detail="Square billing is disabled.")
     email_lower = req.email.lower().strip()
     new_plan_key = req.new_plan_key.lower()
 
