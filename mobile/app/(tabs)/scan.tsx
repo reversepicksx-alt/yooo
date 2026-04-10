@@ -662,7 +662,7 @@ export default function ScanScreen() {
                           <Text style={styles.summarySub}>{(s.venue || 'venue').toUpperCase()}</Text>
                         </View>
                         <View style={styles.summaryItem}>
-                          <Text style={styles.summaryLabel}>Opponent Allows</Text>
+                          <Text style={styles.summaryLabel}>Opponent Profile</Text>
                           <Text style={styles.summaryValue}>{s.opponentAllowedAverage != null ? s.opponentAllowedAverage.toFixed(1) : '—'}</Text>
                           <Text style={styles.summarySub}>OPP AVG</Text>
                         </View>

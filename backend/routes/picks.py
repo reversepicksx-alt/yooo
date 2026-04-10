@@ -219,12 +219,22 @@ async def list_picks(req: GetPicksRequest):
             try:
                 pid = p.get("playerId")
                 pt = p.get("propType", "")
+                opp = p.get("opponentName", "")
                 if pid:
+                    query = {"player.id": pid, "propType": pt}
+                    if opp:
+                        query["opponent"] = opp
                     pred = await db.predictions.find_one(
-                        {"player.id": pid, "propType": pt},
+                        query,
                         {"projectedValue": 1, "_id": 0},
                         sort=[("_created", -1)]
                     )
+                    if not pred and opp:
+                        pred = await db.predictions.find_one(
+                            {"player.id": pid, "propType": pt},
+                            {"projectedValue": 1, "_id": 0},
+                            sort=[("_created", -1)]
+                        )
                     if pred and pred.get("projectedValue"):
                         p["projectedValue"] = pred["projectedValue"]
                         await db.picks.update_one(
