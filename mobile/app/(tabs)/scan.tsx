@@ -593,9 +593,12 @@ export default function ScanScreen() {
                 && (() => {
                 const homePoss = prediction.expectedPossession!.home;
                 const awayPoss = prediction.expectedPossession!.away;
-                const homeShort = (prediction.matchupOverview?.homeTeam || prediction.opponentName || 'HOME')
+                const isPlayerHome = venueOverride === 'home';
+                const playerTeamName = prediction.teamName || '';
+                const opponentTeamName = prediction.opponentName || '';
+                const homeShort = (prediction.homeTeam || (isPlayerHome ? playerTeamName : opponentTeamName) || 'HOME')
                   .split(' ').pop()?.slice(0, 6).toUpperCase() || 'HOME';
-                const awayShort = (prediction.matchupOverview?.awayTeam || prediction.teamName || 'AWAY')
+                const awayShort = (prediction.awayTeam || (isPlayerHome ? opponentTeamName : playerTeamName) || 'AWAY')
                   .split(' ').pop()?.slice(0, 6).toUpperCase() || 'AWAY';
                 return (
                   <>

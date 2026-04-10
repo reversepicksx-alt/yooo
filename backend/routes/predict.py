@@ -225,14 +225,28 @@ async def predict(req: PredictionRequest):
         print(f"[TIMING] Wave 1: {_t.time()-_t0:.1f}s")
 
         if actual_team_id == 0 and player_stats:
-            stats_list = player_stats.get("statistics", [])
-            if stats_list:
-                actual_team_id = stats_list[0].get("team", {}).get("id", 0)
+            _pl_nat = (player_stats.get("player") or {}).get("nationality", "")
+            for _st in (player_stats.get("statistics") or []):
+                _t_name = (_st.get("team") or {}).get("name", "")
+                if _pl_nat and _t_name and _t_name.strip().lower() == _pl_nat.strip().lower():
+                    continue
+                _t_id = (_st.get("team") or {}).get("id", 0)
+                if _t_id:
+                    actual_team_id = _t_id
+                    break
 
         if not league_id and player_stats:
-            stats_list = player_stats.get("statistics", [])
-            if stats_list:
-                league_id = stats_list[0].get("league", {}).get("id", 39)
+            _pl_nat = (player_stats.get("player") or {}).get("nationality", "")
+            for _st in (player_stats.get("statistics") or []):
+                _t_name = (_st.get("team") or {}).get("name", "")
+                if _pl_nat and _t_name and _t_name.strip().lower() == _pl_nat.strip().lower():
+                    continue
+                _l_id = (_st.get("league") or {}).get("id", 0)
+                if _l_id:
+                    league_id = _l_id
+                    break
+            if not league_id:
+                league_id = 39
 
         # Recovery: if ai_only_mode skipped fixture fetching but we now have a real team ID,
         # fetch recent fixtures retroactively so the Reverse Formula has game log data.
@@ -2251,13 +2265,26 @@ Analyze ALL data thoroughly. Return JSON only."""
         final_proj_cal = prediction.get("projectedValue", req.line)
         prediction["recommendation"] = "over" if final_proj_cal > req.line else "under"
 
-        # Force-set identity fields — prefer API-Football's current-season team over scan input
-        # statistics[0] is the most recent season (get_player_data iterates newest-first)
+        # Force-set identity fields — prefer API-Football's current-season CLUB team over scan input
+        # statistics[0] is the most recent entry, but may be a national team (e.g., "Portugal", "Uruguay")
+        # We must filter those out: national team stats have team.name == player.nationality
         api_team_name = ""
         if player_stats:
+            player_nationality = (player_stats.get("player") or {}).get("nationality", "")
             stats_list = player_stats.get("statistics", [])
-            if stats_list:
-                api_team_name = stats_list[0].get("team", {}).get("name", "")
+            # Prefer: entry matching req.teamId → then first non-national-team club entry → then first entry
+            for entry in stats_list:
+                t_id = (entry.get("team") or {}).get("id", 0)
+                t_name = (entry.get("team") or {}).get("name", "")
+                # Skip clearly national team entries (team name matches player nationality)
+                if player_nationality and t_name and t_name.strip().lower() == player_nationality.strip().lower():
+                    continue
+                if req.teamId and req.teamId != 0 and t_id == req.teamId:
+                    api_team_name = t_name
+                    break
+                if not api_team_name and t_name:
+                    api_team_name = t_name  # take first valid club name, keep scanning for ID match
+        # Fall back to what the user explicitly typed in the scan if API gave us nothing useful
         player_team_display = api_team_name or req.teamName or ""
         prediction["player"] = {
             "id": req.playerId,

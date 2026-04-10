@@ -222,6 +222,8 @@ export interface PredictionResult {
   expectedGameType?: string;
   favorite?: string;
   keyMatchupFactor?: string;
+  homeTeam?: string;
+  awayTeam?: string;
   teamId?: number;
   opponentId?: number;
   leagueId?: number;
@@ -433,6 +435,8 @@ export async function predict(request: Record<string, unknown>): Promise<Predict
     expectedGameType: raw.matchupOverview?.expectedGameType ?? undefined,
     favorite: raw.matchupOverview?.favorite ?? undefined,
     keyMatchupFactor: raw.matchupOverview?.keyMatchupFactor ?? undefined,
+    homeTeam: raw.matchupOverview?.homeTeam ?? undefined,
+    awayTeam: raw.matchupOverview?.awayTeam ?? undefined,
     teamId: raw._request?.teamId || (request.teamId as number) || undefined,
     opponentId: raw._request?.opponentId || (request.opponentId as number) || undefined,
     leagueId: raw._request?.leagueId || (request.leagueId as number) || undefined,
