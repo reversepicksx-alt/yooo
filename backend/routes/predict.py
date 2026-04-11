@@ -388,56 +388,76 @@ async def predict(req: PredictionRequest):
                     data = await api_football_request("fixtures/players", {"fixture": fid})
                     if not data:
                         return None
+
+                    def _build_game_log(stats: dict) -> dict:
+                        minutes = stats.get("games", {}).get("minutes") or 0
+                        rating = stats.get("games", {}).get("rating")
+                        return {
+                            "minutes": minutes,
+                            "rating": float(rating) if rating else None,
+                            "passes_total": stats.get("passes", {}).get("total"),
+                            "passes_key": stats.get("passes", {}).get("key"),
+                            "passes_accuracy": stats.get("passes", {}).get("accuracy"),
+                            "shots_total": stats.get("shots", {}).get("total"),
+                            "shots_on": stats.get("shots", {}).get("on"),
+                            "tackles_total": stats.get("tackles", {}).get("total"),
+                            "tackles_interceptions": stats.get("tackles", {}).get("interceptions"),
+                            "tackles_blocks": stats.get("tackles", {}).get("blocks"),
+                            "dribbles_attempts": stats.get("dribbles", {}).get("attempts"),
+                            "dribbles_success": stats.get("dribbles", {}).get("success"),
+                            "fouls_drawn": stats.get("fouls", {}).get("drawn"),
+                            "fouls_committed": stats.get("fouls", {}).get("committed"),
+                            "duels_total": stats.get("duels", {}).get("total"),
+                            "duels_won": stats.get("duels", {}).get("won"),
+                            "goals_saves": stats.get("goals", {}).get("saves"),
+                            "goals_total": stats.get("goals", {}).get("total"),
+                            "goals_assists": stats.get("goals", {}).get("assists"),
+                            "passes_crosses": stats.get("passes", {}).get("cross"),
+                            "tackles_clearances": stats.get("tackles", {}).get("clearances"),
+                            "cards_yellow": stats.get("cards", {}).get("yellow"),
+                        }
+
+                    # One API call returns all 22+ players — cache ALL of them now
+                    # so any teammate/opponent scanned next gets instant cache hits
                     matched_stats = None
+                    matched_pid = None
+                    all_player_logs = {}  # pid -> game_log dict
+
                     for team_data in data:
                         for p in team_data.get("players", []):
                             pid = p.get("player", {}).get("id")
                             pname = strip_accents((p.get("player", {}).get("name") or "").lower())
-                            if pid == player_id or (player_name_lower and player_name_lower in pname):
-                                stats = p.get("statistics", [{}])[0] if p.get("statistics") else {}
-                                minutes = stats.get("games", {}).get("minutes") or 0
-                                if minutes > 0:
-                                    matched_stats = stats
-                                    break
-                        if matched_stats:
-                            break
+                            stats = p.get("statistics", [{}])[0] if p.get("statistics") else {}
+                            minutes = stats.get("games", {}).get("minutes") or 0
+                            if pid:
+                                gl = _build_game_log(stats)
+                                all_player_logs[pid] = gl
+                                if minutes > 0 and matched_stats is None:
+                                    if pid == player_id or (player_name_lower and player_name_lower in pname):
+                                        matched_stats = stats
+                                        matched_pid = pid
+
+                    # Bulk-write every player to cache (fire-and-forget, don't await one-by-one)
+                    import asyncio as _asyncio
+                    async def _bulk_cache():
+                        ops = []
+                        for pid_k, gl_v in all_player_logs.items():
+                            k = f"fxp_{fid}_{pid_k}"
+                            ops.append(db.fixture_player_cache.update_one(
+                                {"_k": k}, {"$set": {"_k": k, "d": gl_v}}, upsert=True
+                            ))
+                        if ops:
+                            await _asyncio.gather(*ops, return_exceptions=True)
+                    _asyncio.ensure_future(_bulk_cache())
+
                     if not matched_stats:
-                        # Cache miss (player not found) to avoid re-fetching
+                        # Cache a None sentinel for this specific player so we skip them in future
                         await db.fixture_player_cache.update_one(
                             {"_k": cache_key}, {"$set": {"_k": cache_key, "d": None}}, upsert=True
                         )
                         return None
                     stats = matched_stats
-                    minutes = stats.get("games", {}).get("minutes") or 0
-                    rating = stats.get("games", {}).get("rating")
-                    game_log = {
-                        "minutes": minutes,
-                        "rating": float(rating) if rating else None,
-                        "passes_total": stats.get("passes", {}).get("total"),
-                        "passes_key": stats.get("passes", {}).get("key"),
-                        "passes_accuracy": stats.get("passes", {}).get("accuracy"),
-                        "shots_total": stats.get("shots", {}).get("total"),
-                        "shots_on": stats.get("shots", {}).get("on"),
-                        "tackles_total": stats.get("tackles", {}).get("total"),
-                        "tackles_interceptions": stats.get("tackles", {}).get("interceptions"),
-                        "tackles_blocks": stats.get("tackles", {}).get("blocks"),
-                        "dribbles_attempts": stats.get("dribbles", {}).get("attempts"),
-                        "dribbles_success": stats.get("dribbles", {}).get("success"),
-                        "fouls_drawn": stats.get("fouls", {}).get("drawn"),
-                        "fouls_committed": stats.get("fouls", {}).get("committed"),
-                        "duels_total": stats.get("duels", {}).get("total"),
-                        "duels_won": stats.get("duels", {}).get("won"),
-                        "goals_saves": stats.get("goals", {}).get("saves"),
-                        "goals_total": stats.get("goals", {}).get("total"),
-                        "goals_assists": stats.get("goals", {}).get("assists"),
-                        "passes_crosses": stats.get("passes", {}).get("cross"),
-                        "tackles_clearances": stats.get("tackles", {}).get("clearances"),
-                        "cards_yellow": stats.get("cards", {}).get("yellow"),
-                    }
-                    # Cache the player stat data
-                    await db.fixture_player_cache.update_one(
-                        {"_k": cache_key}, {"$set": {"_k": cache_key, "d": game_log}}, upsert=True
-                    )
+                    game_log = _build_game_log(stats)
                     # Add contextual fields for return
                     game_log["date"] = fix.get("date", "")[:10]
                     game_log["opponent"] = fix.get("opponent", "")
