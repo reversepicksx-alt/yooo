@@ -129,16 +129,17 @@ export default function AccountScreen() {
   const [planPickerVisible, setPlanPickerVisible] = useState(false);
 
   const isSquareSub = session?.accessType?.toLowerCase().includes('square');
+  const isStripeSub = session?.accessType?.toLowerCase().includes('stripe');
   const isLifetime = session?.accessType?.toLowerCase().includes('lifetime');
   const isWhop = session?.accessType?.toLowerCase().includes('whop');
   const isOwner = session?.accessType?.toLowerCase() === 'owner';
-  const showSubManagement = isSquareSub && !isLifetime && !isOwner;
+  const showSubManagement = (isSquareSub || isStripeSub) && !isLifetime && !isOwner;
 
   const fetchSubStatus = useCallback(async () => {
     if (!session?.email || !showSubManagement) return;
     setSubLoading(true);
     try {
-      const status = await getSubscriptionStatus(session.email);
+      const status = await getSubscriptionStatus(session.email, session.accessType);
       setSubStatus(status);
     } catch {
       setSubStatus(null);
@@ -157,7 +158,7 @@ export default function AccountScreen() {
       setActionLoading(true);
       try {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-        await cancelSubscription(session.email);
+        await cancelSubscription(session.email, session.accessType);
         await fetchSubStatus();
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } catch (e: unknown) {
@@ -194,7 +195,7 @@ export default function AccountScreen() {
     setActionLoading(true);
     try {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      await changePlan(session.email, newKey);
+      await changePlan(session.email, newKey, session.accessType);
       await fetchSubStatus();
       setPlanPickerVisible(false);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -219,7 +220,7 @@ export default function AccountScreen() {
     setActionLoading(true);
     try {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      const result = await resubscribeCheckout(session.email, planKey);
+      const result = await resubscribeCheckout(session.email, planKey, session.accessType);
       const url = result.checkoutUrl || result.checkout_url || result.redirect_url;
       if (url) {
         setPlanPickerVisible(false);

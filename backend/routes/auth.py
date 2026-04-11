@@ -44,6 +44,27 @@ async def _check_access_local(email_lower: str):
     whop_sub = await db.whop_subscriptions.find_one({"email": email_lower, "status": "active"}, {"_id": 0})
     if whop_sub:
         return "Whop Member"
+    # Stripe subscriptions (new subscribers)
+    stripe_sub = await db.stripe_subscriptions.find_one(
+        {"email": email_lower, "status": {"$in": ["active", "trialing"]}}, {"_id": 0}
+    )
+    if stripe_sub:
+        return "Premium (Stripe)"
+    # Stripe: past_due — still give a short grace window (webhook may be delayed)
+    stripe_past_due = await db.stripe_subscriptions.find_one(
+        {"email": email_lower, "status": "past_due"}, {"_id": 0}
+    )
+    if stripe_past_due:
+        end_raw = stripe_past_due.get("currentPeriodEnd")
+        if end_raw:
+            try:
+                end_dt = datetime.fromisoformat(str(end_raw).replace(" ", "T"))
+                if end_dt.tzinfo is None:
+                    end_dt = end_dt.replace(tzinfo=timezone.utc)
+                if datetime.now(timezone.utc) < end_dt:
+                    return "Premium (Stripe)"
+            except Exception:
+                pass
     return None
 
 async def check_access(email_lower: str):

@@ -26,6 +26,7 @@ from routes.chat import router as chat_router
 from routes.misc import router as misc_router
 from routes.tactical import router as tactical_router
 from routes.square import router as square_router
+from routes.stripe_pay import router as stripe_router
 from routes.admin import router as admin_router
 from routes.miss_analysis import router as miss_router
 from routes.manual_search import router as manual_router
@@ -43,6 +44,7 @@ app.include_router(chat_router)
 app.include_router(misc_router)
 app.include_router(tactical_router)
 app.include_router(square_router)
+app.include_router(stripe_router)
 app.include_router(admin_router)
 app.include_router(miss_router)
 app.include_router(manual_router)
