@@ -162,8 +162,21 @@ async def check_access(email_lower: str):
     return await _check_stripe_live(email_lower)
 
 async def create_session(email: str, access_type: str):
+    # Reuse existing session token so any device that already has it stays logged in.
+    # Only generate a new token if there is no existing session (fresh login or after logout).
+    existing = await db.sessions.find_one({"email": email}, {"_id": 0})
+    if existing and existing.get("session_token"):
+        await db.sessions.update_one(
+            {"email": email},
+            {"$set": {"access_type": access_type, "last_active": datetime.now(timezone.utc).isoformat()}}
+        )
+        return existing["session_token"]
     session_token = str(uuid.uuid4())
-    await db.sessions.update_one({"email": email}, {"$set": {"email": email, "session_token": session_token, "access_type": access_type, "last_active": datetime.now(timezone.utc).isoformat()}}, upsert=True)
+    await db.sessions.update_one(
+        {"email": email},
+        {"$set": {"email": email, "session_token": session_token, "access_type": access_type, "last_active": datetime.now(timezone.utc).isoformat()}},
+        upsert=True
+    )
     return session_token
 
 @router.post("/verify-access")

@@ -272,15 +272,26 @@ export default function PicksScreen() {
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const [activeTab, setActiveTab] = useState<Tab>('live');
 
-  const { data: picks = [], isLoading, refetch, isRefetching } = useQuery({
+  const { data: picks = [], isLoading, refetch, isRefetching, error } = useQuery({
     queryKey: ['picks', session?.email],
-    queryFn: () => {
+    queryFn: async () => {
       if (!session) return [];
-      return listPicks(session.email, session.token);
+      try {
+        return await listPicks(session.email, session.token);
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        // If auth failed, don't silently return [] — re-throw so error state is set
+        if (msg.includes('Invalid session') || msg.includes('401') || msg.includes('Unauthorized')) {
+          throw new Error('SESSION_INVALID');
+        }
+        throw e;
+      }
     },
     enabled: !!session,
     refetchInterval: 15000,
     refetchIntervalInBackground: true,
+    retry: 2,
+    retryDelay: 2000,
   });
 
   useFocusEffect(
@@ -348,7 +359,18 @@ export default function PicksScreen() {
       {/* Record bar — always show if any picks exist */}
       {picks.length > 0 && <RecordBar picks={picks} />}
 
-      {isLoading ? (
+      {error && (error as Error).message === 'SESSION_INVALID' ? (
+        <View style={styles.center}>
+          <Ionicons name="lock-closed-outline" size={44} color={Colors.textTertiary} />
+          <Text style={[styles.emptyTitle, { marginTop: 12 }]}>Session expired</Text>
+          <Text style={[styles.emptySub, { textAlign: 'center', marginTop: 6 }]}>
+            Your session timed out. Go to Account and tap Verify Access to restore your picks.
+          </Text>
+          <TouchableOpacity onPress={() => refetch()} style={{ marginTop: 16 }}>
+            <Text style={{ color: Colors.primary, fontWeight: '700' }}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      ) : isLoading ? (
         <View style={styles.center}>
           <ActivityIndicator color={Colors.primary} size="large" />
         </View>
