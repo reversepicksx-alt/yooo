@@ -1,6 +1,9 @@
+import os
 import uuid
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
+
+import stripe as _stripe
 
 from config import db, OWNER_EMAIL, LIFETIME_SUB_EMAILS, WHOP_API_KEY
 from models import (
@@ -67,8 +70,96 @@ async def _check_access_local(email_lower: str):
                 pass
     return None
 
+async def _check_stripe_live(email_lower: str):
+    """
+    Live fallback: query Stripe directly.
+    Called only when the local DB has no record — e.g. webhook was missed.
+    If an active subscription is found, we write it to the DB immediately
+    so future logins are instant without hitting Stripe again.
+    """
+    try:
+        key = os.environ.get("STRIPE_SECRET_KEY", "")
+        if not key:
+            return None
+        _stripe.api_key = key
+
+        customers = _stripe.Customer.list(email=email_lower, limit=1)
+        cust_list = customers["data"]
+        if not cust_list:
+            return None
+
+        cust_id = cust_list[0]["id"]
+        subs = _stripe.Subscription.list(customer=cust_id, status="active", limit=5)
+        active_subs = subs["data"]
+        if not active_subs:
+            # Also check trialing
+            subs_trial = _stripe.Subscription.list(customer=cust_id, status="trialing", limit=5)
+            active_subs = subs_trial["data"]
+        if not active_subs:
+            return None
+
+        sub = active_subs[0]
+        sub_id = sub["id"]
+        status = sub["status"]
+
+        # Determine plan key from price
+        plan_key = "monthly"
+        try:
+            items = sub["items"]["data"]
+            if items:
+                price = items[0]["price"]
+                lk = price.get("lookup_key") or ""
+                if lk.startswith("reversepicks_"):
+                    plan_key = lk.replace("reversepicks_", "")
+                else:
+                    interval = (price.get("recurring") or {}).get("interval", "month")
+                    interval_count = (price.get("recurring") or {}).get("interval_count", 1)
+                    if interval == "week":
+                        plan_key = "weekly"
+                    elif interval == "month" and interval_count >= 3:
+                        plan_key = "quarterly"
+        except Exception:
+            pass
+
+        # Get period end
+        end_iso = ""
+        try:
+            ts = sub.get("current_period_end")
+            if ts:
+                end_iso = datetime.fromtimestamp(int(ts), tz=timezone.utc).isoformat()
+        except Exception:
+            pass
+
+        # Write to DB so webhook is no longer needed for this user
+        now = datetime.now(timezone.utc).isoformat()
+        await db.stripe_subscriptions.update_one(
+            {"email": email_lower},
+            {"$set": {
+                "email": email_lower,
+                "stripeSubscriptionId": sub_id,
+                "planKey": plan_key,
+                "status": status,
+                "currentPeriodEnd": end_iso,
+                "subscribedAt": now,
+                "updatedAt": now,
+                "source": "stripe",
+                "autoRestored": True,
+            }},
+            upsert=True,
+        )
+        print(f"[STRIPE LIVE FALLBACK] Restored access for {email_lower}: sub={sub_id} plan={plan_key}")
+        return "Premium (Stripe)"
+    except Exception as e:
+        print(f"[STRIPE LIVE FALLBACK] Error for {email_lower}: {e}")
+        return None
+
+
 async def check_access(email_lower: str):
-    return await _check_access_local(email_lower)
+    result = await _check_access_local(email_lower)
+    if result:
+        return result
+    # Webhook may have failed — check Stripe directly as a safety net
+    return await _check_stripe_live(email_lower)
 
 async def create_session(email: str, access_type: str):
     session_token = str(uuid.uuid4())
