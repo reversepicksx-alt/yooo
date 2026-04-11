@@ -168,9 +168,13 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
         </View>
       </View>
 
-      {/* Tracking bar */}
-      {lineValue != null && (progressFillPct != null || paceValue != null) && (() => {
-        const fillPct = progressFillPct ?? (paceValue != null ? Math.max(0, Math.min(100, (paceValue / Math.max(lineValue * 2, 1)) * 100)) : 0);
+      {/* Tracking bar — fill only when game is live or settled (nowValue != null) */}
+      {lineValue != null && (() => {
+        // Pre-match: bar is always empty (fill=0). Only fill when real current stats exist.
+        const hasRealData = nowValue != null;
+        const fillPct = hasRealData
+          ? (progressFillPct ?? Math.max(0, Math.min(100, (nowValue / Math.max(lineValue * 2, 1)) * 100)))
+          : 0;
         return (
         <View style={styles.trackBarOuter}>
           <View
@@ -179,7 +183,7 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
               {
                 width: `${fillPct}%`,
                 backgroundColor: trackColor,
-                opacity: 0.9,
+                opacity: hasRealData ? 0.9 : 0,
               },
             ]}
           />
