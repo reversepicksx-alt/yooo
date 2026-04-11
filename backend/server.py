@@ -337,9 +337,23 @@ async def _auto_sync_square_payments():
 
             plan_info = PLANS.get(plan_key, {})
 
-            # Calculate expiration from charged_through_date (Square's next billing date)
+            # Calculate expiration
+            # CANCELED subs: expire on the cancel date (revoke access immediately, not at charged_through)
+            # ACTIVE subs: expire at charged_through_date (next billing date)
             expires_at = ""
-            if sub.charged_through_date:
+            if sq_status == "CANCELED":
+                # Revoke access on cancel date — NEVER give future access for a canceled sub
+                from datetime import date as _date
+                today_str = _date.today().isoformat()
+                cancel_date = str(getattr(sub, 'canceled_date', '') or '').strip()[:10]
+                charged_str = str(sub.charged_through_date or '').strip()[:10] if sub.charged_through_date else ''
+
+                # Use the EARLIEST of: cancel_date, charged_through_date, today
+                candidates = [d for d in [cancel_date, charged_str, today_str] if d]
+                expires_day = min(candidates) if candidates else today_str
+                expires_at = expires_day + "T23:59:59+00:00"
+                print(f"[SQUARE SYNC] CANCELED sub {email}: access expires {expires_at} (cancel={cancel_date or 'N/A'}, charged={charged_str or 'N/A'})")
+            elif sub.charged_through_date:
                 expires_at = str(sub.charged_through_date) + "T23:59:59+00:00"
             elif start_date:
                 cadence_days = {"weekly": 7, "monthly": 30, "quarterly": 90}
