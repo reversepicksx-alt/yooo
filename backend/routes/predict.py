@@ -18,6 +18,12 @@ from utils import api_football_request, get_recent_fixtures_fast, strip_accents,
 
 router = APIRouter(prefix="/api", tags=["predict"])
 
+# Match dominance cache: keyed by (home_team_id, away_team_id)
+# Ensures the SAME game always returns identical possession numbers regardless of which player is scanned.
+import time as _time
+_match_dom_cache: dict = {}
+_MATCH_DOM_TTL = 3600 * 6  # 6 hours
+
 @router.post("/predict")
 async def predict(req: PredictionRequest):
     try:
@@ -924,10 +930,49 @@ async def predict(req: PredictionRequest):
                 if s_team_name.lower() == req.opponentName.lower() or str(s_team_id) == str(req.opponentId):
                     standing_data["oppRank"] = s.get("rank")
 
-        match_dominance = compute_match_dominance(
-            team_fixture_stats, opponent_fixture_stats, match_odds,
-            player_venue == "home", standing_data
-        )
+        # Determine canonical (home_team_id, away_team_id) for cache key
+        _is_home = player_venue == "home"
+        _home_id = actual_team_id if _is_home else req.opponentId
+        _away_id = req.opponentId if _is_home else actual_team_id
+        _dom_cache_key = (_home_id, _away_id) if (_home_id and _away_id) else None
+
+        # Check cache first — same game always returns same possession
+        _cached_dom = None
+        if _dom_cache_key:
+            _entry = _match_dom_cache.get(_dom_cache_key)
+            if _entry and (_time.time() - _entry["ts"]) < _MATCH_DOM_TTL:
+                _cached_dom = _entry["dom"]
+
+        if _cached_dom is not None:
+            # Remap expectedPoss/oppExpectedPoss for this player's perspective
+            match_dominance = dict(_cached_dom)
+            if _is_home:
+                match_dominance["expectedPoss"] = _cached_dom["homePoss"]
+                match_dominance["oppExpectedPoss"] = _cached_dom["awayPoss"]
+                match_dominance["teamSeasonAvg"] = _cached_dom.get("homeSeasonAvg", _cached_dom.get("teamSeasonAvg"))
+                match_dominance["oppSeasonAvg"] = _cached_dom.get("awaySeasonAvg", _cached_dom.get("oppSeasonAvg"))
+            else:
+                match_dominance["expectedPoss"] = _cached_dom["awayPoss"]
+                match_dominance["oppExpectedPoss"] = _cached_dom["homePoss"]
+                match_dominance["teamSeasonAvg"] = _cached_dom.get("awaySeasonAvg", _cached_dom.get("oppSeasonAvg"))
+                match_dominance["oppSeasonAvg"] = _cached_dom.get("homeSeasonAvg", _cached_dom.get("teamSeasonAvg"))
+            print(f"[MATCH DOMINANCE CACHE HIT] {req.playerName}: home={_cached_dom['homePoss']}% away={_cached_dom['awayPoss']}%")
+        else:
+            match_dominance = compute_match_dominance(
+                team_fixture_stats, opponent_fixture_stats, match_odds,
+                _is_home, standing_data
+            )
+            # Store in cache with home/away season avgs for perspective remapping
+            if _dom_cache_key and match_dominance.get("homePoss") is not None:
+                _cache_entry = dict(match_dominance)
+                if _is_home:
+                    _cache_entry["homeSeasonAvg"] = match_dominance.get("teamSeasonAvg")
+                    _cache_entry["awaySeasonAvg"] = match_dominance.get("oppSeasonAvg")
+                else:
+                    _cache_entry["homeSeasonAvg"] = match_dominance.get("oppSeasonAvg")
+                    _cache_entry["awaySeasonAvg"] = match_dominance.get("teamSeasonAvg")
+                _match_dom_cache[_dom_cache_key] = {"ts": _time.time(), "dom": _cache_entry}
+
         if match_dominance.get("notes"):
             print(f"[MATCH DOMINANCE] {req.playerName}: poss={match_dominance['expectedPoss']}%, mult={match_dominance['multiplier']}, {' | '.join(match_dominance['notes'])}")
 
