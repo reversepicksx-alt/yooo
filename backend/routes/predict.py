@@ -65,14 +65,73 @@ async def predict(req: PredictionRequest):
 
         actual_team_id = req.teamId
         league_id = req.leagueId or 39
+
+        # ── AUTO-RESOLVE missing IDs from team/player names using local cache ──
+        # This runs BEFORE ai_only_mode is decided, so predictions always have
+        # real fixture data even when the scan didn't return numeric IDs.
+        _resolved_opp_id = req.opponentId or 0
+        _resolved_player_id = req.playerId or 0
+
+        try:
+            from team_resolver import find_team as _find_team
+            from cache import get_player_by_name as _get_player_by_name
+
+            # 1. Resolve team ID from team name
+            if (not actual_team_id or actual_team_id == 0) and req.teamName:
+                try:
+                    _t = await _find_team(req.teamName, league_id=league_id if league_id and league_id != 39 else None)
+                    if _t and _t.get("teamId"):
+                        actual_team_id = _t["teamId"]
+                        print(f"[ID RESOLVE] '{req.teamName}' → teamId={actual_team_id}")
+                except Exception as _re:
+                    print(f"[ID RESOLVE] team lookup failed: {_re}")
+
+            # 2. Resolve opponent ID from opponent name
+            if (not _resolved_opp_id or _resolved_opp_id == 0) and req.opponentName:
+                try:
+                    _o = await _find_team(req.opponentName)
+                    if _o and _o.get("teamId"):
+                        _resolved_opp_id = _o["teamId"]
+                        print(f"[ID RESOLVE] '{req.opponentName}' → opponentId={_resolved_opp_id}")
+                except Exception as _re:
+                    print(f"[ID RESOLVE] opponent lookup failed: {_re}")
+
+            # 3. Resolve player ID from player name
+            if (not _resolved_player_id or _resolved_player_id == 0) and req.playerName:
+                try:
+                    _p = await _get_player_by_name(
+                        req.playerName,
+                        actual_team_id if actual_team_id and actual_team_id != 0 else None,
+                        league_id=league_id if league_id and league_id != 39 else None,
+                        team_name_hint=req.teamName or None,
+                    )
+                    if _p and _p.get("playerId"):
+                        _resolved_player_id = _p["playerId"]
+                        if not actual_team_id or actual_team_id == 0:
+                            actual_team_id = _p.get("teamId") or actual_team_id
+                        print(f"[ID RESOLVE] '{req.playerName}' → playerId={_resolved_player_id}, teamId={actual_team_id}")
+                except Exception as _re:
+                    print(f"[ID RESOLVE] player lookup failed: {_re}")
+
+            # Bake resolved IDs back into req so all downstream references see them
+            if _resolved_opp_id != req.opponentId or _resolved_player_id != req.playerId or actual_team_id != req.teamId:
+                req = req.model_copy(update={
+                    "teamId": actual_team_id or 0,
+                    "opponentId": _resolved_opp_id,
+                    "playerId": _resolved_player_id,
+                })
+        except Exception as _global_resolve_err:
+            print(f"[ID RESOLVE] Global error: {_global_resolve_err}")
+
         ai_only_mode = (not actual_team_id or actual_team_id == 0 or not req.opponentId or req.opponentId == 0)
+        if ai_only_mode:
+            print(f"[ID RESOLVE] After resolution: teamId={actual_team_id}, opponentId={req.opponentId}, playerId={req.playerId}")
 
         # Guard: skip team/opponent API calls when IDs are missing
         safe_team_id = actual_team_id if actual_team_id and actual_team_id != 0 else None
         safe_opp_id = req.opponentId if req.opponentId and req.opponentId != 0 else None
 
         # Fire ALL API calls at once (optimized — kept odds for game context)
-        player_data_task = get_player_data()
         async def get_team_stats_multi_season(team_id, lid):
             for s in [CURRENT_SEASON + 1, CURRENT_SEASON, CURRENT_SEASON - 1]:
                 result = await safe_fetch("teams/statistics", {"team": team_id, "league": lid, "season": s})
@@ -208,6 +267,7 @@ async def predict(req: PredictionRequest):
             fixtures_task = noop_list()
             odds_task = noop_none()
         else:
+            player_data_task = get_player_data()
             team_stats_task = get_team_stats_multi_season(actual_team_id, league_id)
             opponent_stats_task = get_team_stats_multi_season(req.opponentId, league_id)
             h2h_task = safe_fetch("fixtures/headtohead", {"h2h": f"{actual_team_id}-{req.opponentId}", "last": 10}, [])
@@ -484,9 +544,48 @@ async def predict(req: PredictionRequest):
                 except Exception:
                     return None
 
-            tasks = [fetch_one_log(fix) for fix in fixture_list[:limit]]
-            results_raw = await aio.gather(*tasks, return_exceptions=True)
-            return [r for r in results_raw if r and not isinstance(r, Exception)]
+            # Phase 1: Batch-check MongoDB cache for all fixtures at once
+            fixture_subset = fixture_list[:limit]
+            cache_keys = [f"fxp_{fix.get('fixtureId')}_{player_id}" for fix in fixture_subset if fix.get("fixtureId")]
+            cached_map: dict = {}
+            if cache_keys:
+                async for cdoc in db.fixture_player_cache.find({"_k": {"$in": cache_keys}}, {"_k": 1, "d": 1}):
+                    cached_map[cdoc["_k"]] = cdoc.get("d")
+
+            # Phase 2: Sort fixtures — cached hits first, then API misses
+            cached_fixes = []
+            api_fixes = []
+            for fix in fixture_subset:
+                fid = fix.get("fixtureId")
+                if not fid:
+                    continue
+                ck = f"fxp_{fid}_{player_id}"
+                if ck in cached_map and cached_map[ck] is not None:
+                    cached_fixes.append(fix)
+                else:
+                    api_fixes.append(fix)
+
+            # Phase 3: Collect cached results instantly
+            collected = []
+            for fix in cached_fixes:
+                r = await fetch_one_log(fix)
+                if r:
+                    collected.append(r)
+
+            # Phase 4: Fetch API misses with a semaphore (max 6 concurrent requests)
+            if len(collected) < 20 and api_fixes:
+                _sem = aio.Semaphore(6)
+                async def _sem_fetch(fix):
+                    async with _sem:
+                        return await fetch_one_log(fix)
+
+                api_tasks = [_sem_fetch(fix) for fix in api_fixes]
+                api_results = await aio.gather(*api_tasks, return_exceptions=True)
+                for r in api_results:
+                    if r and not isinstance(r, Exception):
+                        collected.append(r)
+
+            return collected
 
         # =============================================
         # POSITION COMPARISON: Same-position players vs opponent
@@ -785,9 +884,10 @@ async def predict(req: PredictionRequest):
             return_exceptions=True
         )
         try:
-            results = await aio.wait_for(all_wave2, timeout=15)
+            results = await aio.wait_for(all_wave2, timeout=35)
         except aio.TimeoutError:
             results = [None, None, None, None]
+            print(f"[WAVE2 TIMEOUT] Wave 2 exceeded 35s for {req.playerName}")
 
         team_fixture_stats = results[0] if not isinstance(results[0], (Exception, type(None))) else []
         opponent_fixture_stats = results[1] if not isinstance(results[1], (Exception, type(None))) else []
@@ -1208,9 +1308,10 @@ async def predict(req: PredictionRequest):
                 bprob = early_bayes['pOver'] if bdir == 'OVER' else early_bayes['pUnder']
                 bayesian_prompt_anchor = f"""
 [MATHEMATICAL ENGINE — DO NOT IGNORE]
-3-Layer Bayesian analysis ({early_bayes['priorSamples']} games): projects {early_bayes['posteriorMean']} {bdir} (P={bprob}%).
+3-Layer Reverse Formula analysis ({early_bayes['priorSamples']} games): projects {early_bayes['posteriorMean']} {bdir} (P={bprob}%).
 Season avg: {early_bayes['priorMean']} | Recent form (decay-weighted): {early_bayes['momentumMean']} ({early_bayes['momentumLabel']}) | Context adj: {early_bayes['covariateAdjustment']:+.1f}
 Streak: {early_bayes['streakFlag']} | Volatility: {early_bayes['volatility']} (CV={early_bayes['cv']}) | Reversal: {early_bayes['reversalFlag']}
+IMPORTANT: Never use the word "Bayesian" in your response. Always say "Reverse Formula" instead.
 >>> Your projectedValue MUST be within 20% of {early_bayes['posteriorMean']}. If you disagree, explain specifically why in your reasoning. <<<"""
                 # Inject game tempo context into the AI prompt
                 if game_tempo.get("expectedTempo") != "normal" and req.propType in {"pass_attempts", "passes", "key_passes", "crosses", "dribbles"}:
@@ -1719,6 +1820,10 @@ CRITICAL RULES:
 - Match context OVERRIDES raw averages: If [MATCH DOMINANCE ANALYSIS] shows expected possession significantly above the team's season average, RAISE projections for pass-dependent props (pass_attempts, key_passes) accordingly. Historical averages are baselines, not ceilings.
 - For pass/creative props: weight POSSESSION EXPECTATION heavily. A deep-lying playmaker on a team expected at 65%+ possession WILL exceed their season average.
 
+TERMINOLOGY RULES:
+- NEVER use the word "Bayesian" anywhere in your response. Always say "Reverse Formula" instead.
+- Example: "Reverse Formula projects..." or "The Reverse Formula math shows..." NOT "Bayesian analysis suggests..."
+
 CALIBRATION RULES (MUST FOLLOW):
 - UNDER SKEW: Stats have positive skew — a player can have a monster game but can't go below 0. UNDER bets are inherently riskier. If recommending UNDER, your confidence should be 3-5% LOWER than you'd give for an equivalent OVER edge.
 - BINARY LINES: If the line is 0.5 (e.g., UNDER 0.5 means ZERO of that stat), be EXTREMELY cautious recommending UNDER. One event loses the bet. UNDER 0.5 confidence should NEVER exceed 55% unless data overwhelmingly supports it.
@@ -2156,7 +2261,7 @@ Analyze ALL data thoroughly. Return JSON only."""
                     "projectedValue": pv,
                     "recommendation": early_bayes.get("recommendation", "over"),
                     "confidenceScore": max(early_bayes.get("pOver", 50), early_bayes.get("pUnder", 50)),
-                    "reasoning": "AI models unavailable — projection based on pure Bayesian mathematical analysis.",
+                    "reasoning": "AI models unavailable — projection based on Reverse Formula mathematical analysis.",
                     "_source": "bayesian_fallback",
                 }
                 print(f"[BAYESIAN FALLBACK] All Grok models failed — using Bayesian projection: {pv}")
@@ -2187,7 +2292,7 @@ Analyze ALL data thoroughly. Return JSON only."""
         else:
             prediction["confidenceScore"] = 50
 
-        prediction["consensusNote"] = f"Bayesian math projection. Grok provides tactical analysis only."
+        prediction["consensusNote"] = f"Reverse Formula projection. Grok provides tactical analysis only."
         prediction["modelBreakdown"] = [{
             "model": source_model,
             "recommendation": prediction["recommendation"],
