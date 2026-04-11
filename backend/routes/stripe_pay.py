@@ -188,8 +188,22 @@ async def change_plan(req: ChangePlanRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _stripe_to_dict(obj) -> dict:
+    """Safely convert a Stripe SDK object (or plain dict) to a plain Python dict."""
+    import json
+    try:
+        if hasattr(obj, "to_dict"):
+            return obj.to_dict()
+        if hasattr(obj, "to_json"):
+            return json.loads(obj.to_json())
+        return dict(obj)
+    except Exception:
+        return {}
+
+
 @router.post("/webhook")
 async def stripe_webhook(request: Request):
+    import json as _json
     payload = await request.body()
     sig_header = request.headers.get("stripe-signature", "")
     webhook_secret = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
@@ -198,43 +212,50 @@ async def stripe_webhook(request: Request):
 
     if webhook_secret:
         try:
-            event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
+            raw_event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
         except stripe.SignatureVerificationError:
             raise HTTPException(status_code=400, detail="Invalid signature")
+        # Convert to plain dict so .get() works everywhere
+        try:
+            event = _json.loads(raw_event.to_json())
+        except Exception:
+            event = _stripe_to_dict(raw_event)
     else:
-        import json
-        event = json.loads(payload)
+        event = _json.loads(payload)
 
     etype = event.get("type", "")
 
-    if etype in ("checkout.session.completed",):
-        session = event["data"]["object"]
-        email = (session.get("customer_email") or session.get("metadata", {}).get("email", "")).lower().strip()
-        plan_key = session.get("metadata", {}).get("plan_key", "monthly")
-        stripe_sub_id = session.get("subscription")
+    if etype == "checkout.session.completed":
+        session = event.get("data", {}).get("object", {})
+        meta = session.get("metadata") or {}
+        email = (session.get("customer_email") or meta.get("email", "")).lower().strip()
+        plan_key = meta.get("plan_key", "monthly")
+        stripe_sub_id = session.get("subscription", "")
         if email and stripe_sub_id:
             await _upsert_stripe_sub(email, stripe_sub_id, plan_key, "active")
 
     elif etype in ("customer.subscription.updated", "customer.subscription.created"):
-        sub_obj = event["data"]["object"]
-        email = (sub_obj.get("metadata", {}).get("email", "")).lower().strip()
+        sub_obj = event.get("data", {}).get("object", {})
+        meta = sub_obj.get("metadata") or {}
+        email = meta.get("email", "").lower().strip()
         if not email:
-            cust_id = sub_obj.get("customer")
-            email = await _email_from_customer(cust_id)
-        plan_key = sub_obj.get("metadata", {}).get("plan_key", "")
+            email = await _email_from_customer(sub_obj.get("customer", ""))
+        plan_key = meta.get("plan_key", "")
         if not plan_key:
             plan_key = await _plan_key_from_sub(sub_obj)
         status = sub_obj.get("status", "active")
         current_period_end = sub_obj.get("current_period_end")
         end_iso = datetime.fromtimestamp(current_period_end, tz=timezone.utc).isoformat() if current_period_end else ""
-        if email:
-            await _upsert_stripe_sub(email, sub_obj["id"], plan_key, status, end_iso)
+        sub_id = sub_obj.get("id", "")
+        if email and sub_id:
+            await _upsert_stripe_sub(email, sub_id, plan_key, status, end_iso)
 
     elif etype == "customer.subscription.deleted":
-        sub_obj = event["data"]["object"]
-        email = (sub_obj.get("metadata", {}).get("email", "")).lower().strip()
+        sub_obj = event.get("data", {}).get("object", {})
+        meta = sub_obj.get("metadata") or {}
+        email = meta.get("email", "").lower().strip()
         if not email:
-            email = await _email_from_customer(sub_obj.get("customer"))
+            email = await _email_from_customer(sub_obj.get("customer", ""))
         if email:
             await db.stripe_subscriptions.update_one(
                 {"email": email},
@@ -247,9 +268,8 @@ async def stripe_webhook(request: Request):
             await db.sessions.delete_many({"email": email})
 
     elif etype == "invoice.payment_failed":
-        invoice = event["data"]["object"]
-        cust_id = invoice.get("customer")
-        email = await _email_from_customer(cust_id)
+        invoice = event.get("data", {}).get("object", {})
+        email = await _email_from_customer(invoice.get("customer", ""))
         if email:
             await db.stripe_subscriptions.update_one(
                 {"email": email},
@@ -283,7 +303,12 @@ async def _email_from_customer(cust_id: str) -> str:
     if not cust_id:
         return ""
     try:
-        cust = stripe.Customer.retrieve(cust_id)
+        import json as _json
+        cust_raw = stripe.Customer.retrieve(cust_id)
+        try:
+            cust = _json.loads(cust_raw.to_json())
+        except Exception:
+            cust = _stripe_to_dict(cust_raw)
         return (cust.get("email") or "").lower().strip()
     except Exception:
         return ""
@@ -291,14 +316,19 @@ async def _email_from_customer(cust_id: str) -> str:
 
 async def _plan_key_from_sub(sub_obj: dict) -> str:
     try:
-        items = sub_obj.get("items", {}).get("data", [])
+        items_data = (sub_obj.get("items") or {})
+        if hasattr(items_data, "get"):
+            items = items_data.get("data", [])
+        else:
+            items = []
         if items:
-            price = items[0].get("price", {})
-            lookup_key = price.get("lookup_key", "")
+            price = items[0].get("price") or {}
+            lookup_key = price.get("lookup_key", "") or ""
             if lookup_key.startswith("reversepicks_"):
                 return lookup_key.replace("reversepicks_", "")
-            interval = price.get("recurring", {}).get("interval", "")
-            interval_count = price.get("recurring", {}).get("interval_count", 1)
+            recurring = price.get("recurring") or {}
+            interval = recurring.get("interval", "")
+            interval_count = recurring.get("interval_count", 1)
             if interval == "week":
                 return "weekly"
             elif interval == "month" and interval_count >= 3:
