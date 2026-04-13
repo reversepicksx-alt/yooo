@@ -489,80 +489,122 @@ async def _auto_sync_whop_memberships():
 
 
 async def _overdue_subscription_sweep():
-    """Periodically check all ACTIVE Square subscriptions for overdue payments.
-    If charged_through_date has passed, auto-cancel and expire them."""
+    """Periodically expire Square subscribers whose paid period has ended.
+    When Square billing is disabled, uses local DB expiresAt only (no Square API calls).
+    When enabled, also checks Square directly for overdue charged_through dates."""
     import asyncio
     await asyncio.sleep(15)
     while True:
         try:
-            from routes.square import get_square_client
             from datetime import date as date_type, datetime, timezone
-            import os
 
-            client = get_square_client()
-            location_id = os.environ.get("SQUARE_LOCATION_ID")
-            if not client or not location_id:
-                await asyncio.sleep(3600)
-                continue
-
-            result = client.subscriptions.search(
-                query={"filter": {"location_ids": [location_id]}}
-            )
-            sq_subs = result.subscriptions or []
-
-            today = date_type.today()
+            now = datetime.now(timezone.utc)
+            now_iso = now.isoformat()
             canceled_count = 0
 
-            for sub in sq_subs:
-                if sub.status not in ("ACTIVE", "PENDING"):
-                    continue
+            billing_disabled = (get_dynamic_setting("DISABLE_SQUARE_BILLING") or "").lower() in ("1", "true", "yes", "on")
 
-                charged_through = getattr(sub, 'charged_through_date', None)
-                if not charged_through:
-                    continue
+            if billing_disabled:
+                # ── DB-only sweep: expire anyone whose accessHonoredThrough has passed ──
+                # These are the users whose paid Square time was honored after billing shutdown.
+                active_subs = await db.square_subscriptions.find(
+                    {"status": {"$in": ["ACTIVE", "PENDING"]}}, {"_id": 0, "email": 1, "expiresAt": 1, "accessHonoredThrough": 1}
+                ).to_list(200)
 
-                try:
-                    ct_date = date_type.fromisoformat(str(charged_through)[:10])
-                except Exception:
-                    continue
-
-                if ct_date > today:
-                    continue
-
-                email = ""
-                try:
-                    cust = client.customers.get(customer_id=sub.customer_id)
-                    email = (cust.customer.email_address or "").lower().strip()
-                except Exception:
-                    pass
-
-                days_overdue = (today - ct_date).days
-                print(f"[OVERDUE SWEEP] {email or sub.id}: overdue by {days_overdue} day(s), charged_through={ct_date}")
-
-                try:
-                    client.subscriptions.cancel(subscription_id=sub.id)
-                    print(f"[OVERDUE SWEEP] Auto-canceled {email or sub.id}")
-                except Exception as ce:
-                    err_msg = str(ce).lower()
-                    if "pending cancel" not in err_msg and "already" not in err_msg:
-                        print(f"[OVERDUE SWEEP] Cancel failed for {email or sub.id}: {ce}")
+                for sub in active_subs:
+                    email = sub.get("email", "")
+                    # Use accessHonoredThrough if set, else expiresAt
+                    through_raw = sub.get("accessHonoredThrough") or sub.get("expiresAt", "")
+                    if not through_raw:
                         continue
+                    try:
+                        through_date = date_type.fromisoformat(str(through_raw)[:10])
+                    except Exception:
+                        continue
+                    if through_date > date_type.today():
+                        continue  # Still has valid time
 
-                if email:
+                    days_overdue = (date_type.today() - through_date).days
+                    print(f"[OVERDUE SWEEP] {email}: honored period ended {through_date} ({days_overdue}d ago) — expiring")
                     await db.square_subscriptions.update_one(
                         {"email": email},
                         {"$set": {
                             "status": "EXPIRED",
-                            "expiredReason": "payment_overdue",
-                            "updatedAt": datetime.now(timezone.utc).isoformat(),
+                            "expiredReason": "honored_period_ended",
+                            "updatedAt": now_iso,
                         }}
                     )
                     await db.sessions.delete_many({"email": email})
+                    canceled_count += 1
 
-                canceled_count += 1
+            else:
+                # ── Square API sweep (original behaviour when billing is active) ──
+                import os
+                from routes.square import get_square_client
+
+                client = get_square_client()
+                location_id = os.environ.get("SQUARE_LOCATION_ID")
+                if not client or not location_id:
+                    await asyncio.sleep(3600)
+                    continue
+
+                result = client.subscriptions.search(
+                    query={"filter": {"location_ids": [location_id]}}
+                )
+                sq_subs = result.subscriptions or []
+
+                today = date_type.today()
+
+                for sub in sq_subs:
+                    if sub.status not in ("ACTIVE", "PENDING"):
+                        continue
+
+                    charged_through = getattr(sub, 'charged_through_date', None)
+                    if not charged_through:
+                        continue
+
+                    try:
+                        ct_date = date_type.fromisoformat(str(charged_through)[:10])
+                    except Exception:
+                        continue
+
+                    if ct_date > today:
+                        continue
+
+                    email = ""
+                    try:
+                        cust = client.customers.get(customer_id=sub.customer_id)
+                        email = (cust.customer.email_address or "").lower().strip()
+                    except Exception:
+                        pass
+
+                    days_overdue = (today - ct_date).days
+                    print(f"[OVERDUE SWEEP] {email or sub.id}: overdue by {days_overdue} day(s), charged_through={ct_date}")
+
+                    try:
+                        client.subscriptions.cancel(subscription_id=sub.id)
+                        print(f"[OVERDUE SWEEP] Auto-canceled {email or sub.id}")
+                    except Exception as ce:
+                        err_msg = str(ce).lower()
+                        if "pending cancel" not in err_msg and "already" not in err_msg:
+                            print(f"[OVERDUE SWEEP] Cancel failed for {email or sub.id}: {ce}")
+                            continue
+
+                    if email:
+                        await db.square_subscriptions.update_one(
+                            {"email": email},
+                            {"$set": {
+                                "status": "EXPIRED",
+                                "expiredReason": "payment_overdue",
+                                "updatedAt": now_iso,
+                            }}
+                        )
+                        await db.sessions.delete_many({"email": email})
+
+                    canceled_count += 1
 
             if canceled_count > 0:
-                print(f"[OVERDUE SWEEP] Canceled {canceled_count} overdue subscription(s)")
+                print(f"[OVERDUE SWEEP] Expired {canceled_count} subscription(s)")
 
         except Exception as e:
             print(f"[OVERDUE SWEEP] Error: {e}")
