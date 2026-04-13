@@ -281,6 +281,28 @@ async def _auto_sync_square_payments():
 
         # Track which emails already have ACTIVE subs to prevent overwrite
         active_emails = set()
+        # Detect duplicate ACTIVE subs per customer and cancel extras immediately
+        from collections import defaultdict as _dd
+        active_by_customer: dict = _dd(list)
+        for _s in sq_subs:
+            if _s.status == "ACTIVE":
+                active_by_customer[_s.customer_id].append(_s.id)
+        for _cust_id, _sub_ids in active_by_customer.items():
+            if len(_sub_ids) > 1:
+                try:
+                    _cust = client.customers.get(customer_id=_cust_id)
+                    _email = (_cust.customer.email_address or "").lower().strip()
+                except Exception:
+                    _email = _cust_id
+                # Keep first (oldest), cancel the rest
+                for _dup_id in _sub_ids[1:]:
+                    try:
+                        client.subscriptions.cancel(subscription_id=_dup_id)
+                        print(f"[SQUARE SYNC] Duplicate ACTIVE sub canceled for {_email}: {_dup_id}")
+                    except Exception as _ce:
+                        _cerr = str(_ce).lower()
+                        if "pending" not in _cerr and "already" not in _cerr:
+                            print(f"[SQUARE SYNC] Could not cancel duplicate {_dup_id} for {_email}: {_ce}")
 
         synced = 0
         for sub in sq_subs:
@@ -297,8 +319,16 @@ async def _auto_sync_square_payments():
 
             sq_status = sub.status  # ACTIVE, CANCELED, PAUSED, etc.
 
-            # Skip if we already synced an ACTIVE sub for this email
-            if email in active_emails and sq_status != "ACTIVE":
+            # Skip if we already synced a sub for this email (ACTIVE takes priority,
+            # duplicates of any status are skipped — first sub processed wins)
+            if email in active_emails:
+                continue
+
+            # Never override a manually-blocked user, even if Square shows ACTIVE
+            existing_rec = await db.square_subscriptions.find_one({"email": email}, {"_id": 0, "manuallyBlocked": 1})
+            if existing_rec and existing_rec.get("manuallyBlocked"):
+                print(f"[SQUARE SYNC] Skipping {email} — manually blocked")
+                active_emails.add(email)  # Prevent further processing
                 continue
 
             our_status = "ACTIVE" if sq_status == "ACTIVE" else "EXPIRED"
