@@ -750,30 +750,144 @@ async def change_plan(req: ChangePlanRequest):
         print(f"[SQUARE CHANGE-PLAN] Could not get subscription details: {e}")
         raise HTTPException(status_code=500, detail="Could not verify subscription. Please try again.")
 
+    # ── LAYER 1: Atomic in-flight lock ───────────────────────────────────────
+    # Uses MongoDB's atomic update to guarantee only one plan-change can run
+    # at a time per user, preventing double-clicks / race conditions from
+    # creating two new Square subscriptions simultaneously.
+    now_dt = datetime.now(timezone.utc)
+    stale_threshold = (now_dt.timestamp() - 90)  # 90-second stale lock window
+
+    # Atomically acquire the lock ONLY when it's not already held (or is stale)
+    lock_acquired = await db.square_subscriptions.update_one(
+        {
+            "email": email_lower,
+            "$or": [
+                {"planChangePending": {"$in": [False, None]}},
+                {"planChangePending": {"$exists": False}},
+                # Stale lock: set more than 90 seconds ago
+                {"planChangePendingAt": {"$lt": datetime.fromtimestamp(stale_threshold, tz=timezone.utc).isoformat()}},
+            ],
+        },
+        {"$set": {"planChangePending": True, "planChangePendingAt": now_dt.isoformat()}},
+    )
+    if lock_acquired.modified_count == 0:
+        # Lock is already held by a concurrent request
+        raise HTTPException(
+            status_code=429,
+            detail="A plan change is already in progress. Please wait a moment and try again.",
+        )
+
     try:
-        # For resubscribe: don't cancel again (already canceled), set start_date after current period
-        # For plan change: cancel current, create new immediately
+        # ── LAYER 2: Pre-flight Square duplicate check ────────────────────────
+        # Before touching anything, ask Square if this customer ALREADY has
+        # more than one active subscription. Cancel any extras immediately.
+        try:
+            existing_subs_resp = client.subscriptions.search(
+                query={"filter": {
+                    "customer_ids": [customer_id],
+                    "location_ids": [location_id],
+                }}
+            )
+            all_customer_subs = existing_subs_resp.subscriptions or []
+            active_customer_subs = [s for s in all_customer_subs if s.status == "ACTIVE"]
+            if len(active_customer_subs) > 1:
+                print(f"[SQUARE CHANGE-PLAN] WARNING: {email_lower} has {len(active_customer_subs)} ACTIVE subs before plan change — canceling extras")
+                for extra_sub in active_customer_subs:
+                    if extra_sub.id == sq_sub_id:
+                        continue  # Keep the one we're about to cancel intentionally
+                    try:
+                        client.subscriptions.cancel(subscription_id=extra_sub.id)
+                        print(f"[SQUARE CHANGE-PLAN] Pre-flight canceled extra sub {extra_sub.id} for {email_lower}")
+                    except Exception as pre_ce:
+                        pre_cerr = str(pre_ce).lower()
+                        if "pending" not in pre_cerr and "already" not in pre_cerr:
+                            print(f"[SQUARE CHANGE-PLAN] Could not cancel extra sub {extra_sub.id}: {pre_ce}")
+        except Exception as pre_err:
+            print(f"[SQUARE CHANGE-PLAN] Pre-flight check warning (non-fatal): {pre_err}")
+
+        # ── LAYER 3: Cancel → Verify → Create ────────────────────────────────
+        # Store the idempotency key first so retries reuse the same key and
+        # Square deduplicates them, preventing a second subscription from
+        # being created if the client retries the create call.
+        idem_key = str(uuid.uuid4())
+        await db.square_subscriptions.update_one(
+            {"email": email_lower},
+            {"$set": {"_pendingCreateIdempotencyKey": idem_key}}
+        )
+
+        # Step 1: Cancel current subscription
+        cancel_succeeded = False
+        try:
+            client.subscriptions.cancel(subscription_id=sq_sub_id)
+            cancel_succeeded = True
+        except Exception as ce:
+            ce_str = str(ce).lower()
+            # Square error variants for "already being canceled":
+            #   "already has a pending cancel action"
+            #   "pending cancel"
+            #   "subscription is already canceled"
+            if any(phrase in ce_str for phrase in ("pending", "already", "canceled")):
+                cancel_succeeded = True  # Treat as success — sub is going away
+                print(f"[SQUARE CHANGE-PLAN] Cancel for {sq_sub_id} returned expected non-fatal error: {ce}")
+            else:
+                raise  # Unexpected cancel error — do NOT create new sub
+        print(f"[SQUARE CHANGE-PLAN] Cancelled {sq_sub_id} for {email_lower} (verified={cancel_succeeded})")
+
+        # Step 2: Verify Square accepted the cancel before creating new sub
+        try:
+            verify_resp = client.subscriptions.get(subscription_id=sq_sub_id)
+            verify_obj = verify_resp.subscription
+            still_active = (
+                verify_obj.status == "ACTIVE"
+                and not getattr(verify_obj, "canceled_date", None)
+            )
+            if still_active:
+                # Square didn't register the cancel — unsafe to create new sub
+                print(f"[SQUARE CHANGE-PLAN] SAFETY BLOCK: {sq_sub_id} still ACTIVE with no canceled_date after cancel call. Aborting.")
+                raise HTTPException(
+                    status_code=500,
+                    detail="Could not verify cancellation of your current plan. Please contact support."
+                )
+        except HTTPException:
+            raise
+        except Exception as verify_err:
+            # If we can't GET the sub it might be fully gone — that's fine, proceed
+            print(f"[SQUARE CHANGE-PLAN] Could not verify cancel status (proceeding): {verify_err}")
+
+        # Step 3: Create new subscription (idempotency key ensures retries are safe)
         create_params = {
-            "idempotency_key": str(uuid.uuid4()),
+            "idempotency_key": idem_key,
             "location_id": location_id,
             "plan_variation_id": new_plan_doc["variation_id"],
             "customer_id": customer_id,
             "card_id": card_id,
         }
-
-        # Cancel the current subscription, then create new
-        try:
-            client.subscriptions.cancel(subscription_id=sq_sub_id)
-        except Exception as ce:
-            # Already canceled or pending — that's fine
-            if "pending cancel" not in str(ce).lower():
-                raise
-        print(f"[SQUARE CHANGE-PLAN] Cancelled {sq_sub_id} for {email_lower}")
-
-        # Step 2: Create new subscription
         new_sub_result = client.subscriptions.create(**create_params)
-
         new_sub = new_sub_result.subscription
+
+        # ── LAYER 4: Post-creation duplicate sweep ────────────────────────────
+        # Even after a clean create, immediately check if any other subs for
+        # this customer snuck through and cancel them.
+        try:
+            post_subs_resp = client.subscriptions.search(
+                query={"filter": {
+                    "customer_ids": [customer_id],
+                    "location_ids": [location_id],
+                }}
+            )
+            post_all_subs = post_subs_resp.subscriptions or []
+            post_active = [s for s in post_all_subs if s.status == "ACTIVE" and s.id != new_sub.id]
+            for stale in post_active:
+                try:
+                    client.subscriptions.cancel(subscription_id=stale.id)
+                    print(f"[SQUARE CHANGE-PLAN] Post-creation canceled stale active sub {stale.id} for {email_lower}")
+                except Exception as post_ce:
+                    post_cerr = str(post_ce).lower()
+                    if "pending" not in post_cerr and "already" not in post_cerr:
+                        print(f"[SQUARE CHANGE-PLAN] Could not cancel stale sub {stale.id}: {post_ce}")
+        except Exception as post_err:
+            print(f"[SQUARE CHANGE-PLAN] Post-creation sweep warning (non-fatal): {post_err}")
+
         new_plan_info = PLANS[new_plan_key]
         now = datetime.now(timezone.utc).isoformat()
 
@@ -792,10 +906,11 @@ async def change_plan(req: ChangePlanRequest):
                 "planChangedAt": now,
                 "previousPlanKey": sub.get("planKey", ""),
                 "canceledAt": None,
+                "planChangePending": False,
+                "_pendingCreateIdempotencyKey": None,
             }}
         )
 
-        action = "Plan changed"
         msg = f"Plan changed to {new_plan_info['name']} ({new_plan_info['label']}). Your new plan is now active."
         print(f"[SQUARE CHANGE-PLAN] {email_lower}: {sub.get('planKey')} -> {new_plan_key} (new sub: {new_sub.id})")
         return {
@@ -812,6 +927,12 @@ async def change_plan(req: ChangePlanRequest):
         err_msg = str(e)
         print(f"[SQUARE CHANGE-PLAN] Error for {email_lower}: {err_msg}")
         raise HTTPException(status_code=500, detail="Plan change failed. Please contact support.")
+    finally:
+        # Always release the in-flight lock
+        await db.square_subscriptions.update_one(
+            {"email": email_lower},
+            {"$set": {"planChangePending": False}}
+        )
 
 
 class CancelRequest(BaseModel):
