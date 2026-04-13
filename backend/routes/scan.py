@@ -47,6 +47,25 @@ TEAM_LEAGUE_MAP = {
     "rayo vallecano": 140, "alaves": 140, "las palmas": 140, "cadiz": 140,
     "leganes": 140, "valladolid": 140, "real valladolid": 140, "espanyol": 140,
     "real betis": 140,
+    # Spanish La Liga 2 (Segunda División) - league 141
+    "levante": 141, "levante ud": 141,
+    "zaragoza": 141, "real zaragoza": 141,
+    "burgos": 141, "burgos cf": 141,
+    "sd eibar": 141, "eibar": 141,
+    "racing santander": 141,
+    "huesca": 141, "sd huesca": 141,
+    "tenerife": 141, "cd tenerife": 141,
+    "eldense": 141, "cd eldense": 141,
+    "almeria": 141, "ud almeria": 141,
+    "villarreal b": 141, "villarreal ii": 141,
+    "mirandes": 141, "cd mirandes": 141,
+    "oviedo": 141, "real oviedo": 141,
+    "albacete": 141, "albacete bp": 141,
+    "sporting gijon": 141, "real sporting": 141, "gijon": 141,
+    "ferrol": 141, "racing ferrol": 141,
+    "castellon": 141, "cd castellon": 141,
+    "cartagena": 141, "fc cartagena": 141,
+    "cordoba cf": 141, "cordoba": 141,
     # Argentine Liga Profesional - league 128
     "independiente": 128, "boca juniors": 128, "boca": 128, "river plate": 128, "river": 128,
     "racing": 128, "racing club": 128, "san lorenzo": 128, "huracan": 128,
@@ -306,11 +325,15 @@ async def _resolve_player_via_cache(player_name: str, team_id: int = None, leagu
             return club_doc
 
     # League validation for non-continental requests
+    # Accept same league OR adjacent leagues in the same country
+    ADJACENT_LEAGUES = {140: {141}, 141: {140}, 39: {40}, 40: {39}}
     if league_id and player_league:
         if league_id in continental_cups:
             return player
         if player_league == league_id:
             return player
+        if player_league in ADJACENT_LEAGUES.get(league_id, set()):
+            return player  # e.g. La Liga 2 player when La Liga is inferred
         if not team_id:
             return None
 
@@ -349,13 +372,17 @@ async def _resolve_player_via_api(player_name: str, player_team_hint: str,
             name_match = query_lower in pname or pname in query_lower or last_name in pname
             team_match = any(th in team_name or team_name in th for th in team_hints) if team_hints else False
             # Check if this player's league matches the opponent's league (disambiguation)
+            # Also accept leagues in the same country/tier as the opponent's league
             league_match = False
             if opponent_hint and not team_match:
                 opp_lower = opponent_hint.lower().strip()
                 if opp_lower in TEAM_LEAGUE_MAP:
                     opp_league = TEAM_LEAGUE_MAP[opp_lower]
                     player_league_id = d.get("statistics", [{}])[0].get("league", {}).get("id")
-                    if player_league_id == opp_league:
+                    # Adjacent leagues: La Liga (140) ↔ La Liga 2 (141), EPL (39) ↔ Championship (40)
+                    ADJACENT_LEAGUES = {140: {141}, 141: {140}, 39: {40}, 40: {39}}
+                    valid_leagues = {opp_league} | ADJACENT_LEAGUES.get(opp_league, set())
+                    if player_league_id in valid_leagues:
                         league_match = True
             if name_match:
                 candidates.append((d, team_match, league_match))
@@ -1022,7 +1049,12 @@ async def scan_prop(req: ScanPropRequest):
             # FALLBACK: API-Sports search
             if not resolved_player:
                 print(f"[SCAN] Cache MISS for '{player_name}', falling back to API-Sports...")
-                leagues_to_try = NATION_TO_LEAGUES.get(player_team_hint, TOP_5_LEAGUES) if is_international else [league_id]
+                _ADJACENT = {140: [141], 141: [140], 39: [40], 40: [39]}
+                if is_international:
+                    leagues_to_try = NATION_TO_LEAGUES.get(player_team_hint, TOP_5_LEAGUES)
+                else:
+                    # Include adjacent leagues (e.g. La Liga 2 when La Liga is inferred)
+                    leagues_to_try = [league_id] + _ADJACENT.get(league_id, [])
                 api_player, api_league_id, api_league_name = await _resolve_player_via_api(
                     player_name, player_team_hint, leagues_to_try,
                     is_international, nat_team_id, original_team_name,
@@ -1185,7 +1217,8 @@ async def re_resolve(req: ReResolveRequest):
                         break
 
         if not resolved_player:
-            leagues_to_try = [league_id]
+            _ADJ = {140: [141], 141: [140], 39: [40], 40: [39]}
+            leagues_to_try = [league_id] + _ADJ.get(league_id, [])
             api_player, api_lid, api_lname = await _resolve_player_via_api(
                 player_name, player_team_lower, leagues_to_try,
                 False, None, player_team,

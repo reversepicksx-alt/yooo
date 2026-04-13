@@ -547,13 +547,33 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str) -> dict:
 
     if player_stats_data:
         player_id = pick.get("playerId")
-        player_name = (pick.get("playerName") or "").lower()
+        player_name = (pick.get("playerName") or "").lower().strip()
+        # Pre-compute name parts for flexible matching
+        pname_parts = player_name.split()
+        pname_last = pname_parts[-1] if pname_parts else player_name
+        pname_initial = (pname_parts[0][0] + ".") if pname_parts else ""  # "J."
+
+        def _player_name_matches(api_name: str) -> bool:
+            """Match player names flexibly: full name, initial+last, last name only."""
+            n = api_name.lower().strip()
+            # Full name match (either direction)
+            if player_name and (player_name in n or n in player_name):
+                return True
+            # Last name match: "tverskov" in "j. tverskov"
+            if pname_last and len(pname_last) >= 4 and pname_last in n:
+                return True
+            # Initial + last match: "j. tverskov" matches "jeppe tverskov"
+            if pname_initial and pname_last:
+                if f"{pname_initial} {pname_last}" in n or n.startswith(pname_initial) and pname_last in n:
+                    return True
+            return False
+
         for team_data in player_stats_data:
             for p in team_data.get("players", []):
                 p_id = p.get("player", {}).get("id")
-                p_name = (p.get("player", {}).get("name") or "").lower()
-                # Match by ID first, fallback to name substring match
-                if p_id == player_id or (player_name and (player_name in p_name or p_name in player_name)):
+                p_name = (p.get("player", {}).get("name") or "")
+                # Match by ID first, fallback to flexible name match
+                if p_id == player_id or (player_name and _player_name_matches(p_name)):
                     pstats = p.get("statistics", [{}])[0] if p.get("statistics") else {}
                     minutes_played = pstats.get("games", {}).get("minutes") or 0
                     getter = SOCCER_STAT_MAP.get(pick.get("propType", ""))
@@ -590,10 +610,14 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str) -> dict:
         result_str = _settle_result(current_value, line, recommendation)
         update["result"] = result_str
         update["actualValue"] = current_value
+        # Store hitPct so settled pick cards show 100%/0%/50% instead of "—"
+        settled_hit_pct = 100 if result_str == "hit" else (0 if result_str == "miss" else 50)
+        update["hitPct"] = settled_hit_pct
         await db.picks.update_one(
             {"pickId": pick["pickId"], "email": email},
             {"$set": {"status": "settled", "result": result_str, "actualValue": current_value,
-                      "matchScore": match_score, "minutesPlayed": minutes_played,
+                      "hitPct": settled_hit_pct, "matchScore": match_score,
+                      "minutesPlayed": minutes_played,
                       "settledAt": datetime.now(timezone.utc).isoformat()}}
         )
     return update
