@@ -279,17 +279,35 @@ def _names_similar(query: str, candidate: str) -> bool:
     if len(q) >= 4 and len(c) >= 4 and (q in c or c in q):
         return True
     if len(q_last) >= 5 and len(c_last) >= 5 and (q_last in c_last or c_last in q_last):
-        return True
+        # Require ≥ 90% character overlap to avoid false positives like "fuente" vs "fuentes"
+        longer = max(len(q_last), len(c_last))
+        shorter = min(len(q_last), len(c_last))
+        if shorter / longer >= 0.90:
+            return True
     return False
 
 
 async def _resolve_player_via_cache(player_name: str, team_id: int = None, league_id: int = None, team_name_hint: str = None) -> dict:
     """Try to find a player in the MongoDB cache. Returns player doc or None.
     Uses league_id and team_name_hint to disambiguate duplicates (e.g., J. Alvarez at Atletico vs Honduras)."""
+    _ADJACENT_LG = {140: {141}, 141: {140}, 39: {40}, 40: {39}}
     if team_id:
         player = await get_player_by_name(player_name, team_id, league_id=league_id, team_name_hint=team_name_hint)
         if player and _names_similar(player_name, player.get("name", "")):
-            return player
+            # Validate that this player's league is consistent with the expected league.
+            # Prevents returning a player from a completely different country/league when
+            # the AI hallucinates a wrong team name (e.g. "Instituto Cordoba" instead of "Levante").
+            player_league = player.get("leagueId")
+            continental_cups = {2, 3, 848, 531, 480}
+            if league_id and player_league and league_id not in continental_cups:
+                valid = {league_id} | _ADJACENT_LG.get(league_id, set())
+                if player_league not in valid:
+                    print(f"[SCAN] Team-ID cache hit REJECTED: {player_name} in league {player_league} ≠ expected {league_id} (team_id={team_id})")
+                    # Don't return — fall through to name-only search below
+                else:
+                    return player
+            else:
+                return player
 
     player = await get_player_by_name(player_name, league_id=league_id, team_name_hint=team_name_hint)
     if not player:
@@ -334,8 +352,10 @@ async def _resolve_player_via_cache(player_name: str, team_id: int = None, leagu
             return player
         if player_league in ADJACENT_LEAGUES.get(league_id, set()):
             return player  # e.g. La Liga 2 player when La Liga is inferred
-        if not team_id:
-            return None
+        # Always reject if league doesn't match — regardless of whether team_id is set.
+        # Previously `if not team_id: return None` was incorrect because team_id from the
+        # outer scope stays non-None even after the team-specific search already ran.
+        return None
 
     return player
 
@@ -364,38 +384,53 @@ async def _resolve_player_via_api(player_name: str, player_team_hint: str,
                 team_hints.append(th_var)
             team_hints.append(team_hint.split()[0])
 
+        # Pre-compute valid leagues from opponent — used for ALL candidates regardless of team match
+        _ADJ = {140: {141}, 141: {140}, 39: {40}, 40: {39}}
+        opp_valid_leagues = set()
+        if opponent_hint:
+            _opp_key = strip_accents(opponent_hint.lower().strip())
+            if _opp_key in TEAM_LEAGUE_MAP:
+                _opp_league = TEAM_LEAGUE_MAP[_opp_key]
+                opp_valid_leagues = {_opp_league} | _ADJ.get(_opp_league, set())
+
+        import re as _re
         candidates = []
         for d in data_list[:20]:
             pname = strip_accents(d["player"]["name"].lower())
             team_name = (d.get("statistics", [{}])[0].get("team", {}).get("name") or "").lower()
-            _league_name = (d.get("statistics", [{}])[0].get("league", {}).get("name") or "").lower()
-            name_match = query_lower in pname or pname in query_lower or last_name in pname
+            player_league_id = d.get("statistics", [{}])[0].get("league", {}).get("id")
+            # Use word-boundary for last_name to avoid "fuente" matching "fuentes"
+            last_name_match = bool(_re.search(rf'\b{_re.escape(last_name)}\b', pname))
+            name_match = query_lower in pname or pname in query_lower or last_name_match
+            # If query has a first name, require candidate's first word to start with the same letter.
+            # Prevents "K. de La Fuente" matching search for "Adrián Fuente".
+            q_parts_local = query_lower.split()
+            if name_match and len(q_parts_local) >= 2 and pname.split():
+                q_first_char = q_parts_local[0][0]
+                pname_first_char = pname.split()[0][0]
+                if q_first_char != pname_first_char:
+                    name_match = False
             team_match = any(th in team_name or team_name in th for th in team_hints) if team_hints else False
-            # Check if this player's league matches the opponent's league (disambiguation)
-            # Also accept leagues in the same country/tier as the opponent's league
-            league_match = False
-            if opponent_hint and not team_match:
-                opp_lower = opponent_hint.lower().strip()
-                if opp_lower in TEAM_LEAGUE_MAP:
-                    opp_league = TEAM_LEAGUE_MAP[opp_lower]
-                    player_league_id = d.get("statistics", [{}])[0].get("league", {}).get("id")
-                    # Adjacent leagues: La Liga (140) ↔ La Liga 2 (141), EPL (39) ↔ Championship (40)
-                    ADJACENT_LEAGUES = {140: {141}, 141: {140}, 39: {40}, 40: {39}}
-                    valid_leagues = {opp_league} | ADJACENT_LEAGUES.get(opp_league, set())
-                    if player_league_id in valid_leagues:
-                        league_match = True
+            # League match: opponent's known league overrides hallucinated team names
+            # Evaluated for ALL candidates — not just those without a team match
+            league_match = bool(opp_valid_leagues and player_league_id and player_league_id in opp_valid_leagues)
             if name_match:
                 candidates.append((d, team_match, league_match))
+
         if candidates:
-            # Priority: team match > league match > first result
-            team_matched = [c for c in candidates if c[1]]
-            if team_matched:
-                return team_matched[0][0]
+            # Priority 1: both team match AND league match (most confident)
+            both = [c for c in candidates if c[1] and c[2]]
+            if both:
+                return both[0][0]
+            # Priority 2: league match via opponent (reliable even when team hint is wrong/hallucinated)
             league_matched = [c for c in candidates if c[2]]
             if league_matched:
                 return league_matched[0][0]
-            # If we have a team hint but NO candidate matched the team,
-            # don't return a random wrong player — let the caller handle it
+            # Priority 3: team match only — use but don't trust blindly
+            team_matched = [c for c in candidates if c[1]]
+            if team_matched:
+                return team_matched[0][0]
+            # No confident signal — don't return a random wrong player if a team hint was given
             if team_hint:
                 return None
             return candidates[0][0]
@@ -635,6 +670,7 @@ COMBO PROPS (TWO players combined):
 
 ADDITIONAL RULES:
 - Read player names EXACTLY as shown. Do NOT confuse with opponent/team names.
+- Read playerTeam EXACTLY as shown in the image. Do NOT guess or infer team names from your training knowledge — only use what is visually present in the screenshot.
 - If you see " + " between two names, this is a COMBO prop — set isCombo to true.
 - IGNORE any "Less"/"More" buttons.
 
