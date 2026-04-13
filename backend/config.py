@@ -35,6 +35,7 @@ DYNAMIC_KEYS = [
     "SQUARE_APPLICATION_ID",
     "SQUARE_LOCATION_ID",
     "SQUARE_ENVIRONMENT",
+    "DISABLE_SQUARE_BILLING",
 ]
 
 # Env fallbacks for each key
@@ -44,6 +45,8 @@ _ENV_DEFAULTS = {
     "SQUARE_APPLICATION_ID": SQUARE_APPLICATION_ID,
     "SQUARE_LOCATION_ID": SQUARE_LOCATION_ID,
     "SQUARE_ENVIRONMENT": SQUARE_ENVIRONMENT,
+    # Square billing is permanently disabled — default "true" means off unless DB explicitly says otherwise
+    "DISABLE_SQUARE_BILLING": os.environ.get("DISABLE_SQUARE_BILLING", "true"),
 }
 
 async def init_dynamic_settings():

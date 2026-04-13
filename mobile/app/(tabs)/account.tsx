@@ -220,7 +220,9 @@ export default function AccountScreen() {
     setActionLoading(true);
     try {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      const result = await resubscribeCheckout(session.email, planKey, session.accessType);
+      // Square billing is permanently disabled — always route to Stripe for resubscription
+      const forceStripeType = isSquareSub ? 'stripe' : (session.accessType || 'stripe');
+      const result = await resubscribeCheckout(session.email, planKey, forceStripeType);
       const url = result.checkoutUrl || result.checkout_url || result.redirect_url;
       if (url) {
         setPlanPickerVisible(false);
@@ -308,6 +310,14 @@ export default function AccountScreen() {
         {showSubManagement && (
           <>
             <Text style={styles.sectionLabel}>Subscription</Text>
+            {isSquareSub && (
+              <View style={styles.squareNotice}>
+                <Ionicons name="information-circle-outline" size={16} color="#f59e0b" />
+                <Text style={styles.squareNoticeText}>
+                  Square billing has ended. Use "New Subscription" below to continue with Stripe — no charges will occur on your old payment method.
+                </Text>
+              </View>
+            )}
             {subLoading && !subStatus ? (
               <View style={[styles.menuGroup, styles.subLoadingWrap]}>
                 <ActivityIndicator size="small" color={Colors.primary} />
@@ -345,7 +355,8 @@ export default function AccountScreen() {
                     value={`${subStatus.cardBrand || 'Card'} •••• ${subStatus.cardLast4}`}
                   />
                 )}
-                {!isCanceled && (
+                {/* Change Plan — hidden for Square subs (Square billing is permanently disabled) */}
+                {!isCanceled && !isSquareSub && (
                   <MenuRow
                     icon="swap-horizontal-outline"
                     label="Change Plan"
@@ -353,11 +364,12 @@ export default function AccountScreen() {
                     loading={actionLoading}
                   />
                 )}
-                {isCanceled ? (
+                {/* Resubscribe / Cancel — Square subs route to Stripe; hide cancel since already expired */}
+                {isCanceled || isSquareSub ? (
                   <MenuRow
                     icon="refresh-outline"
-                    label="Resubscribe"
-                    value="Choose a new plan"
+                    label={isSquareSub ? 'New Subscription (Stripe)' : 'Resubscribe'}
+                    value={isSquareSub ? 'Switch to secure Stripe billing' : 'Choose a new plan'}
                     onPress={handleResubscribe}
                     loading={actionLoading}
                   />
@@ -478,6 +490,14 @@ const styles = StyleSheet.create({
     gap: 10, paddingVertical: 24,
   },
   subLoadingText: { fontSize: 13, color: Colors.textTertiary },
+
+  squareNotice: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 8,
+    backgroundColor: 'rgba(245,158,11,0.1)', borderWidth: 1,
+    borderColor: 'rgba(245,158,11,0.3)', borderRadius: 10,
+    padding: 12, marginBottom: 10,
+  },
+  squareNoticeText: { flex: 1, fontSize: 12, color: '#f59e0b', lineHeight: 18 },
 
   modalOverlay: {
     flex: 1, backgroundColor: Colors.overlay,

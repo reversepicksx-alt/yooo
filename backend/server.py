@@ -1,7 +1,7 @@
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from config import db, LIFETIME_SUB_EMAILS, OWNER_EMAIL, init_dynamic_settings
+from config import db, LIFETIME_SUB_EMAILS, OWNER_EMAIL, init_dynamic_settings, get_dynamic_setting
 
 # ── Create App ──
 app = FastAPI(title="ReversePicks API")
@@ -254,6 +254,12 @@ async def _auto_sync_square_payments():
         from routes.square import get_square_client, PLANS
         from datetime import timedelta, timezone, datetime
         import os
+
+        # If Square billing is disabled, never re-activate anyone from Square data
+        disabled = (get_dynamic_setting("DISABLE_SQUARE_BILLING") or "").lower() in ("1", "true", "yes", "on")
+        if disabled:
+            print("[SQUARE SYNC] Square billing is DISABLED — sync skipped entirely (no re-activations possible)")
+            return
 
         client = get_square_client()
         if not client:

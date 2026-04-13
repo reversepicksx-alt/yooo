@@ -236,6 +236,8 @@ async def create_checkout(req: CheckoutRequest):
 @router.post("/verify-checkout")
 async def verify_checkout(body: dict):
     """Verify checkout completed and activate user account."""
+    if (get_dynamic_setting("DISABLE_SQUARE_BILLING") or "").lower() in ("1", "true", "yes", "on"):
+        raise HTTPException(status_code=403, detail="Square billing is disabled.")
     checkout_token = body.get("checkoutToken", "")
     if not checkout_token:
         raise HTTPException(status_code=400, detail="Missing checkout token.")
@@ -1039,6 +1041,9 @@ async def _activate_pending_checkout(pending: dict, source: str = "webhook"):
 @router.post("/webhook")
 async def square_webhook(event: dict):
     """Handle Square webhook events — payment.completed, order.updated, subscription.updated."""
+    if (get_dynamic_setting("DISABLE_SQUARE_BILLING") or "").lower() in ("1", "true", "yes", "on"):
+        print(f"[SQUARE WEBHOOK] Billing disabled — ignoring event {event.get('type', '')}")
+        return {"received": True, "ignored": True}
     event_type = event.get("type", "")
     data = event.get("data", {}).get("object", {})
     print(f"[SQUARE WEBHOOK] Received event: {event_type}")
@@ -1144,6 +1149,8 @@ def _search_square_payments(client, email_lower: str):
 @router.post("/verify-payment")
 async def verify_payment(req: VerifyPaymentRequest):
     """Self-recovery: user enters email + password, we search Square payment history and activate."""
+    if (get_dynamic_setting("DISABLE_SQUARE_BILLING") or "").lower() in ("1", "true", "yes", "on"):
+        raise HTTPException(status_code=403, detail="Square billing is disabled.")
     email_lower = req.email.lower().strip()
 
     # Check if already active
