@@ -1,7 +1,7 @@
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from config import db, LIFETIME_SUB_EMAILS, OWNER_EMAIL, init_dynamic_settings, get_dynamic_setting
+from config import db, LIFETIME_SUB_EMAILS, OWNER_EMAIL, COMPLIMENTARY_MEMBERS, init_dynamic_settings, get_dynamic_setting
 
 # ── Create App ──
 app = FastAPI(title="ReversePicks API")
@@ -67,6 +67,12 @@ async def seed_grants():
         {"$set": {"email": OWNER_EMAIL, "access_type": "Owner"}},
         upsert=True
     )
+    for email, expiry_date in COMPLIMENTARY_MEMBERS.items():
+        await db.manual_access_grants.update_one(
+            {"email": email},
+            {"$set": {"email": email, "access_type": "Complimentary", "expiresAt": expiry_date}},
+            upsert=True
+        )
     # Seed the API-Football lookup cache (non-blocking)
     import asyncio
     # Create index for fixture stat cache (speeds up prediction pipeline)

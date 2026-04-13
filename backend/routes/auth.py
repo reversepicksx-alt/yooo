@@ -20,7 +20,19 @@ async def _check_access_local(email_lower: str):
         return "Lifetime"
     grant = await db.manual_access_grants.find_one({"email": email_lower}, {"_id": 0})
     if grant:
-        return grant.get("access_type", "Manual")
+        access_type = grant.get("access_type", "Manual")
+        if access_type == "Complimentary":
+            expires_raw = grant.get("expiresAt")
+            if expires_raw:
+                try:
+                    exp_dt = datetime.fromisoformat(str(expires_raw))
+                    if exp_dt.tzinfo is None:
+                        exp_dt = exp_dt.replace(tzinfo=timezone.utc)
+                    if datetime.now(timezone.utc) >= exp_dt:
+                        return None  # expired — fall through to normal checks
+                except Exception:
+                    pass
+        return access_type
     # Active/pending/canceled subs always have access
     square_sub = await db.square_subscriptions.find_one(
         {"email": email_lower, "status": {"$in": ["ACTIVE", "PENDING", "CANCELED"]}}, {"_id": 0}

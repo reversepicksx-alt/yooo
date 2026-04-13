@@ -97,6 +97,11 @@ LIFETIME_SUB_EMAILS = [
 ]
 LIFETIME_SUB_EMAILS = [e.lower() for e in LIFETIME_SUB_EMAILS]
 
+# ── Complimentary Access (email → ISO expiry date, auto-expires) ──
+COMPLIMENTARY_MEMBERS = {
+    "xaviersteverson@gmail.com": "2026-07-13",  # 3 months from 2026-04-13
+}
+
 # ── Supported Leagues ──
 SUPPORTED_LEAGUES = [
     {"id": 39, "name": "Premier League", "type": "Domestic"},
