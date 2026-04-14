@@ -1379,6 +1379,19 @@ Season avg: {early_bayes['priorMean']} | Recent form (decay-weighted): {early_ba
 Streak: {early_bayes['streakFlag']} | Volatility: {early_bayes['volatility']} (CV={early_bayes['cv']}) | Reversal: {early_bayes['reversalFlag']}
 IMPORTANT: Never use the word "Bayesian" in your response. Always say "Reverse Formula" instead.
 >>> Your projectedValue MUST be within 20% of {early_bayes['posteriorMean']}. If you disagree, explain specifically why in your reasoning. <<<"""
+                # Inject press intensity context into AI prompt
+                _pi = early_bayes.get("pressIntensity", {})
+                if _pi.get("label") not in (None, "Unknown", "Low") and req.propType in {"pass_attempts", "passes"}:
+                    _pi_label = _pi["label"]
+                    _pi_passes = _pi.get("avg_passes", "?")
+                    _pi_fouls = _pi.get("avg_fouls", "?")
+                    _pi_mult = _pi.get("multiplier", 1.0)
+                    bayesian_prompt_anchor += f"""
+[OPPONENT PRESS INTENSITY — {_pi_label.upper()}]
+Press Intensity Proxy (PPDA equivalent): {_pi_label} | Opponent avg {_pi_passes} passes/game + {_pi_fouls} fouls/game.
+Mathematical press penalty already applied: ×{_pi_mult} reduction to pass projection.
+CRITICAL: This opponent actively suppresses passing volume for defenders. Do NOT project pass totals near season average — account for possession being contested and disrupted."""
+
                 # Inject game tempo context into the AI prompt
                 if game_tempo.get("expectedTempo") != "normal" and req.propType in {"pass_attempts", "passes", "key_passes", "crosses", "dribbles"}:
                     tempo_label = game_tempo["expectedTempo"].upper()

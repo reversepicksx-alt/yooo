@@ -221,6 +221,20 @@ def compute_bayesian_projection(
     posterior_std = round(math.sqrt(1 / total_precision) if total_precision > 0 else prior_std, 2)
 
     # ═══════════════════════════════════════════
+    # PRESS INTENSITY — PPDA Proxy (outside Covariate cap)
+    # Applied AFTER posterior for pass props only.
+    # Uses opponent's avg passes + fouls as a proxy for how aggressively
+    # they suppress the subject team's passing volume.
+    # ═══════════════════════════════════════════
+    press_intensity_info = {"score": 0.0, "multiplier": 1.0, "label": "Unknown", "avg_passes": None, "avg_fouls": None}
+    if opponent_fixture_stats and prop_type in {"pass_attempts", "passes"}:
+        press_intensity_info = compute_press_intensity_score(opponent_fixture_stats)
+        if press_intensity_info["multiplier"] < 1.0:
+            raw_before = posterior_mean
+            posterior_mean = round(posterior_mean * press_intensity_info["multiplier"], 1)
+            print(f"[PRESS] {prop_type}: press={press_intensity_info['label']} (score={press_intensity_info['score']}, mult={press_intensity_info['multiplier']}) → {raw_before} → {posterior_mean}")
+
+    # ═══════════════════════════════════════════
     # REVERSAL FLAG — Mean Reversion Detection
     # ═══════════════════════════════════════════
     if prior_std > 0 and abs(momentum_mean - prior_mean) > 1.5 * prior_std:
@@ -301,6 +315,7 @@ def compute_bayesian_projection(
         "streakFlag": streak_flag,
         "volatility": volatility_label,
         "cv": round(cv, 3),
+        "pressIntensity": press_intensity_info,
     }
 
 
@@ -348,6 +363,67 @@ def _normal_cdf(z: float) -> float:
         t * (0.319381530 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))))
     )
     return 0.5 + sign * (0.5 - p)
+
+
+def compute_press_intensity_score(opp_fixture_stats: list) -> dict:
+    """
+    PPDA Proxy — Press Intensity Score from existing API-Football fixture data.
+
+    Uses the opponent's:
+      - avg total passes per game  (possession-dominant pressing: high passes = control the ball + press on loss)
+      - avg fouls per game         (aggressive pressing: winning ball by force)
+
+    Both stats are already available in opponent_fixture_stats from the existing pipeline.
+    No extra API calls needed.
+
+    Returns:
+      score      : 0.0 (passive) → 1.0 (elite press)
+      multiplier : 1.0 → 0.80 (applied to pass projections outside Covariate cap)
+      label      : "Low" / "Moderate" / "High" / "Elite"
+      avg_passes : opponent avg passes/game
+      avg_fouls  : opponent avg fouls/game
+    """
+    unknown = {"score": 0.0, "multiplier": 1.0, "label": "Unknown", "avg_passes": None, "avg_fouls": None}
+    if not opp_fixture_stats or len(opp_fixture_stats) < 2:
+        return unknown
+
+    passes = [s.get("totalPasses") for s in opp_fixture_stats if s.get("totalPasses") is not None]
+    fouls  = [s.get("fouls")       for s in opp_fixture_stats if s.get("fouls")       is not None]
+
+    if len(passes) < 2:
+        return unknown
+
+    avg_passes = sum(passes) / len(passes)
+    avg_fouls  = sum(fouls)  / len(fouls) if len(fouls) >= 2 else 10.0
+
+    # Possession-dominant pressing: baseline ~400 passes, elite ~600+
+    pass_score = max(0.0, min(1.0, (avg_passes - 400) / 200))
+
+    # Aggressive winning of the ball: baseline ~9 fouls, elite presser ~15+
+    foul_score = max(0.0, min(1.0, (avg_fouls - 9) / 6))
+
+    # Combined — possession volume is more predictive for pass suppression
+    press_score = round(pass_score * 0.65 + foul_score * 0.35, 3)
+
+    # Multiplier applied to pass projections (max 20% reduction for elite press)
+    multiplier = round(max(0.80, 1.0 - press_score * 0.20), 3)
+
+    if press_score < 0.20:
+        label = "Low"
+    elif press_score < 0.45:
+        label = "Moderate"
+    elif press_score < 0.70:
+        label = "High"
+    else:
+        label = "Elite"
+
+    return {
+        "score":      press_score,
+        "multiplier": multiplier,
+        "label":      label,
+        "avg_passes": round(avg_passes, 1),
+        "avg_fouls":  round(avg_fouls, 1),
+    }
 
 
 def _estimate_opponent_concession(opp_fixture_stats: list, prop_type: str) -> Optional[float]:
