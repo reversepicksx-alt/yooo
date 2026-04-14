@@ -61,6 +61,6 @@
     "owner_email": "josselj001@gmail.com",
     "session_token_endpoint": "POST /api/auth/verify-whop",
     "non_owner_test_email": "xaviersteverson@gmail.com",
-    "non_owner_password": "test123456"
+    "non_owner_password": "[REDACTED]"
   }
 }
