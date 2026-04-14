@@ -362,11 +362,14 @@ async def build_game_situation(
         season = CURRENT_SEASON
 
     is_knockout = _detect_knockout(match_round)
+    # Explicit 2nd leg from round name (e.g., "Round of 16 - 2nd Leg")
     is_second_leg = _detect_second_leg(match_round)
 
-    # Run H2H and injury fetches in parallel
+    # For knockout matches that don't explicitly say "2nd Leg" in the round name,
+    # check H2H history. If there's a recent finished match between these teams in
+    # the same competition this season, today is the 2nd leg.
     h2h_task = _fetch_h2h_same_competition(home_team_id, away_team_id, league_id, season) \
-        if is_second_leg else asyncio.sleep(0, result=[])
+        if is_knockout else asyncio.sleep(0, result=[])
     injury_task = _fetch_injuries(fixture_id) if fixture_id else asyncio.sleep(0, result=[])
 
     h2h_raw, injury_raw = await asyncio.gather(h2h_task, injury_task, return_exceptions=True)
@@ -375,8 +378,14 @@ async def build_game_situation(
     if isinstance(injury_raw, Exception):
         injury_raw = []
 
-    # Parse aggregate
+    # Parse aggregate (always done for knockout matches)
     aggregate = _parse_aggregate(h2h_raw, home_team_id, away_team_id, fixture_id)
+
+    # Auto-detect 2nd leg from H2H data when round name doesn't say "2nd Leg"
+    # If we found a recent first-leg result in the same competition, this is the 2nd leg
+    if is_knockout and not is_second_leg and aggregate.get("firstLegFound"):
+        is_second_leg = True
+        print(f"[SITUATION ENGINE] 2nd leg AUTO-DETECTED via H2H history (round='{match_round}')")
 
     # Parse injuries
     injuries = _parse_injuries(injury_raw, home_team_id if is_player_home else away_team_id,

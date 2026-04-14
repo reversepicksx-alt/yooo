@@ -136,26 +136,38 @@ async def fetch_web_intel(
         except Exception as e:
             print(f"[WEB INTEL] Error ({model}): {type(e).__name__}: {e}")
 
-    # Strategy 2: Grok training data only (no live search) — still useful for tactical context
-    # Uses knowledge of both teams' styles, historical tendencies, key players
+    # Strategy 2: Tactical knowledge fallback — extracts what the model knows about
+    # both teams' styles, tendencies, and this competition stage. No live news needed.
+    knowledge_prompt = (
+        f"You are a professional soccer analyst. Provide a concise tactical briefing (max 180 words) for "
+        f"{player_team} vs {opponent}"
+        f"{f' in the {league}' if league else ''}"
+        f"{f' ({match_round})' if match_round else ''}.\n\n"
+        f"Cover: (1) each team's typical tactical shape and possession style, "
+        f"(2) expected game tempo given the stage/competition pressure, "
+        f"(3) which team typically dominates the ball and through what channels, "
+        f"(4) historical head-to-head tendencies or notable patterns between these clubs.\n\n"
+        f"Do NOT mention specific recent match results or current injuries — focus on known tactical identities "
+        f"and what kind of game script is typical for these teams in this context. Be specific and analytical."
+    )
     for model in [GROK_REASONING_MODEL, GROK_MODEL]:
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10)) as client:
                 payload = {
                     "model": model,
-                    "messages": [{"role": "user", "content": prompt + "\n\nNote: Use your best knowledge of these teams — if you cannot confirm current injury/lineup news, say so clearly."}],
+                    "messages": [{"role": "user", "content": knowledge_prompt}],
                     "temperature": 0.1,
                     "max_tokens": 350,
                 }
                 resp = await client.post(GROK_URL, headers=headers, json=payload)
                 if resp.status_code == 200:
                     text = resp.json()["choices"][0]["message"]["content"].strip()
-                    print(f"[WEB INTEL] Knowledge fallback ({model}): {text[:120]}...")
+                    print(f"[WEB INTEL] Tactical knowledge ({model}): {text[:120]}...")
                     return text
                 else:
-                    print(f"[WEB INTEL] Knowledge fallback error {resp.status_code} ({model})")
+                    print(f"[WEB INTEL] Tactical knowledge error {resp.status_code} ({model})")
         except Exception as e:
-            print(f"[WEB INTEL] Knowledge fallback error ({model}): {e}")
+            print(f"[WEB INTEL] Tactical knowledge error ({model}): {e}")
 
     return ""
 
