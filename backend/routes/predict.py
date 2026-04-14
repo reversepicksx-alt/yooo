@@ -2409,6 +2409,52 @@ Analyze ALL data thoroughly. Return JSON only."""
         if real_bayes and real_bayes.get("priorSamples", 0) >= 3:
             bayesian_posterior = real_bayes["posteriorMean"]
 
+            # ─── OPPONENT H2H PRIOR ADJUSTMENT ────────────────────────────────────
+            # Blend player's historical stats vs THIS specific opponent into the prior.
+            # Captures opponent-specific patterns season averages can't see:
+            # e.g., a player who averages 70 passes/game but only 55 vs this opponent.
+            # Weight is proportional to H2H sample size, capped at 25% max influence —
+            # season average always holds at least 75% authority.
+            # Venue-filtered when enough same-venue H2H games exist (home vs home, away vs away).
+            _h2h_summary = historical_data.get("h2hPlayerStats", {})
+            _h2h_avg = _h2h_summary.get("avgVsOpponent")
+            _h2h_n = _h2h_summary.get("sampleSize", 0)
+
+            if _h2h_avg is not None and _h2h_n >= 2:
+                # Prefer same-venue H2H data when available (>= 2 games at same venue)
+                _venue_vals = [
+                    s["targetStat"] for s in h2h_player_stats
+                    if s.get("venue") == req.venue and s.get("targetStat") is not None
+                ]
+                if len(_venue_vals) >= 2:
+                    _h2h_avg_use = round(sum(_venue_vals) / len(_venue_vals), 2)
+                    _h2h_n_use = len(_venue_vals)
+                    _venue_note = f"venue-filtered ({req.venue})"
+                else:
+                    _h2h_avg_use = _h2h_avg
+                    _h2h_n_use = _h2h_n
+                    _venue_note = "all venues"
+
+                # Weight: 5% per H2H game, max 25% — season data always dominates
+                _h2h_weight = min(_h2h_n_use * 0.05, 0.25)
+                _old_bp = bayesian_posterior
+                bayesian_posterior = round(
+                    _old_bp * (1 - _h2h_weight) + _h2h_avg_use * _h2h_weight, 1
+                )
+                real_bayes["opponentH2HAvg"] = _h2h_avg_use
+                real_bayes["opponentH2HSamples"] = _h2h_n_use
+                real_bayes["opponentH2HWeight"] = round(_h2h_weight * 100)
+                real_bayes["posteriorMean"] = bayesian_posterior
+
+                if abs(bayesian_posterior - _old_bp) >= 0.3:
+                    direction = "▲" if bayesian_posterior > _old_bp else "▼"
+                    print(
+                        f"[H2H ADJ] {req.playerName} vs {req.opponentName}: "
+                        f"H2H avg={_h2h_avg_use} ({_h2h_n_use} games, {_venue_note}, "
+                        f"weight={_h2h_weight:.0%}) {direction} {_old_bp:.1f} → {bayesian_posterior:.1f}"
+                    )
+            # ─────────────────────────────────────────────────────────────────────
+
             # ─── SITUATIONAL MULTIPLIER — applied BEFORE final number is locked ───
             # When game state demands different output than seasonal avg, scale the projection.
             _sit_m = game_situation.get("multipliers", {})
