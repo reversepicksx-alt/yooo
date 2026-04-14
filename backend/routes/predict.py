@@ -2455,6 +2455,41 @@ Analyze ALL data thoroughly. Return JSON only."""
                     )
             # ─────────────────────────────────────────────────────────────────────
 
+            # ─── OPPONENT DEFENSIVE PROFILE ADJUSTMENT ────────────────────────────
+            # Blend in what same-position players produce against THIS opponent.
+            # Captures opponent-style effects that season averages can't see:
+            # e.g., PSG's press suppresses opposing CB pass volume league-wide,
+            # or a low-block team inflates opposition shot attempts.
+            # Data source: fetch_position_comparison — same position, same venue,
+            # opponent's last 10 fixtures (already computed above for AI context).
+            # Weight: 2.5% per comparison player, max 15%.
+            # Requires at least 3 sampled players to fire (noise guard).
+            # Applied AFTER personal H2H blend, BEFORE situational multiplier.
+            # ──────────────────────────────────────────────────────────────────────
+            if position_comp_data:
+                _opp_allowed_avg = position_comp_data.get("avgStatValue", 0)
+                _opp_allowed_n   = position_comp_data.get("sampleSize", 0)
+                _opp_pos_label   = position_comp_data.get("positionShort", "?")
+                if _opp_allowed_avg and _opp_allowed_n >= 3:
+                    _opp_weight = min(_opp_allowed_n * 0.025, 0.15)
+                    _old_bp = bayesian_posterior
+                    bayesian_posterior = round(
+                        _old_bp * (1 - _opp_weight) + _opp_allowed_avg * _opp_weight, 1
+                    )
+                    real_bayes["opponentAllowedAvg"]     = round(_opp_allowed_avg, 1)
+                    real_bayes["opponentAllowedSamples"] = _opp_allowed_n
+                    real_bayes["opponentAllowedWeight"]  = round(_opp_weight * 100)
+                    real_bayes["posteriorMean"] = bayesian_posterior
+                    if abs(bayesian_posterior - _old_bp) >= 0.2:
+                        _dir = "▲" if bayesian_posterior > _old_bp else "▼"
+                        print(
+                            f"[OPP PROFILE] {_opp_pos_label}s vs {req.opponentName} "
+                            f"({player_venue.upper()}): allowed avg={_opp_allowed_avg:.1f} "
+                            f"({_opp_allowed_n} players, weight={_opp_weight:.0%}) "
+                            f"{_dir} {_old_bp:.1f} → {bayesian_posterior:.1f}"
+                        )
+            # ─────────────────────────────────────────────────────────────────────
+
             # ─── SITUATIONAL MULTIPLIER — applied BEFORE final number is locked ───
             # When game state demands different output than seasonal avg, scale the projection.
             _sit_m = game_situation.get("multipliers", {})
