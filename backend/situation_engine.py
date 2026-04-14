@@ -117,6 +117,11 @@ def _parse_aggregate(
 
     finished_statuses = {"FT", "AET", "PEN", "FT_PEN"}
     first_leg = None
+    today = datetime.now(timezone.utc)
+    # Knockout legs are always 1–3 weeks apart. If the most recent H2H finished
+    # match is older than 45 days, it is a group-stage/earlier-round result and
+    # must NOT be treated as the first leg of the current knockout tie.
+    MAX_FIRST_LEG_AGE_DAYS = 45
 
     for fx in h2h_fixtures:
         fid = fx.get("fixture", {}).get("id")
@@ -125,8 +130,25 @@ def _parse_aggregate(
             continue
         if current_fixture_id and fid == current_fixture_id:
             continue  # skip today's fixture
+
+        # Date proximity guard — reject group-stage / earlier-season matches
+        date_str = fx.get("fixture", {}).get("date", "")
+        if date_str:
+            try:
+                from datetime import datetime as dt
+                match_date = dt.fromisoformat(date_str.replace("Z", "+00:00"))
+                age_days = (today - match_date).days
+                if age_days > MAX_FIRST_LEG_AGE_DAYS:
+                    print(
+                        f"[SITUATION] H2H match {fid} is {age_days}d old — "
+                        f"treating as group-stage result, NOT a first leg. Skipping."
+                    )
+                    continue
+            except Exception:
+                pass
+
         first_leg = fx
-        break  # take the most recent finished H2H in same competition
+        break  # take the most recent qualifying finished H2H match
 
     if not first_leg:
         return result
