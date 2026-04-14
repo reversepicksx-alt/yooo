@@ -9,7 +9,7 @@ channel = "stable-25_05"
 [userenv]
 
 [userenv.shared]
-MONGO_URL = "mongodb://localhost:27017"
+MONGO_URL = "mongodb+srv://josselj001_db_user:BjAzgoASteNCPRft@reverse.4h7msnc.mongodb.net/?appName=Reverse&tls=true&tlsAllowInvalidCertificates=true"
 DB_NAME = "reversepicks"
 PORT = "8000"
 REACT_APP_BACKEND_URL = ""
