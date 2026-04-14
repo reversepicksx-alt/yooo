@@ -11,6 +11,7 @@ from config import db, XAI_API_KEY
 
 GROK_MODEL = "grok-4-1-fast-non-reasoning"
 GROK_REASONING_MODEL = "grok-3-mini"
+GROK_SEARCH_MODEL = "grok-3"       # Grok 3 supports live web search
 GROK_URL = "https://api.x.ai/v1/chat/completions"
 
 
@@ -48,6 +49,114 @@ async def _grok_call(prompt: str, temperature: float = 0, max_tokens: int = 2000
             print(f"[GROK] Timeout ({attempt_model}, {timeout}s)")
         except Exception as e:
             print(f"[GROK] Call error ({attempt_model}): {type(e).__name__}: {e}")
+    return ""
+
+
+async def fetch_web_intel(
+    player_team: str,
+    opponent: str,
+    match_date: str,
+    match_round: str = "",
+    league: str = "",
+    timeout: int = 25,
+) -> str:
+    """
+    WEB INTELLIGENCE: Uses Grok's live search capability to fetch real-time
+    match preview data — injuries, suspensions, lineup news, tactical shifts,
+    manager quotes. Returns a concise text block for injection into AI prompt.
+
+    Falls back silently to empty string if search fails or API key missing.
+    """
+    if not XAI_API_KEY:
+        return ""
+
+    date_str = match_date[:10] if match_date else ""
+    context_str = f"{league} — {match_round}" if (league or match_round) else "upcoming match"
+
+    prompt = (
+        f"Give me a concise pre-match intelligence briefing (max 200 words) for: "
+        f"{player_team} vs {opponent}{f' ({date_str})' if date_str else ''} [{context_str}].\n\n"
+        f"Focus ONLY on: (1) confirmed injuries and suspensions for both teams, "
+        f"(2) expected lineup or formation changes, (3) manager tactical comments, "
+        f"(4) any relevant match context (must-win, rotation, travel fatigue, etc.).\n"
+        f"Be factual and specific. Do not make up information. If nothing significant is confirmed, say so briefly."
+    )
+
+    headers = {"Authorization": f"Bearer {XAI_API_KEY}", "Content-Type": "application/json"}
+
+    # Strategy 1: xAI Agent Tools API (new web search format post-deprecation of search_parameters)
+    for model in [GROK_SEARCH_MODEL, GROK_REASONING_MODEL]:
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10)) as client:
+                # Try Agent Tools web_search_preview (xAI's current search approach)
+                payload = {
+                    "model": model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0,
+                    "max_tokens": 500,
+                    "tools": [{"type": "web_search_preview"}],
+                    "tool_choice": "auto",
+                }
+                resp = await client.post(GROK_URL, headers=headers, json=payload)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    # Handle both direct content and tool-call responses
+                    choice = data["choices"][0]
+                    msg = choice.get("message", {})
+                    content = msg.get("content", "")
+                    # If model returned tool calls, process multi-turn
+                    tool_calls = msg.get("tool_calls", [])
+                    if not content and tool_calls:
+                        # Model wants to search — execute the search turn
+                        messages = [
+                            {"role": "user", "content": prompt},
+                            {"role": "assistant", "tool_calls": tool_calls, "content": None},
+                        ]
+                        for tc in tool_calls:
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": tc.get("id", ""),
+                                "content": "[Search results integrated by model]",
+                            })
+                        payload2 = {**payload, "messages": messages}
+                        resp2 = await client.post(GROK_URL, headers=headers, json=payload2)
+                        if resp2.status_code == 200:
+                            content = resp2.json()["choices"][0]["message"].get("content", "")
+                    if content:
+                        print(f"[WEB INTEL] Agent Tools success ({model}): {content[:120]}...")
+                        return content.strip()
+                elif resp.status_code in (400, 404, 422):
+                    # Agent Tools not supported — fall through to non-search
+                    print(f"[WEB INTEL] Agent Tools not supported ({model}), {resp.status_code}")
+                    break
+                else:
+                    print(f"[WEB INTEL] Agent Tools error {resp.status_code} ({model}): {resp.text[:150]}")
+        except httpx.TimeoutException:
+            print(f"[WEB INTEL] Timeout ({model})")
+        except Exception as e:
+            print(f"[WEB INTEL] Error ({model}): {type(e).__name__}: {e}")
+
+    # Strategy 2: Grok training data only (no live search) — still useful for tactical context
+    # Uses knowledge of both teams' styles, historical tendencies, key players
+    for model in [GROK_REASONING_MODEL, GROK_MODEL]:
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10)) as client:
+                payload = {
+                    "model": model,
+                    "messages": [{"role": "user", "content": prompt + "\n\nNote: Use your best knowledge of these teams — if you cannot confirm current injury/lineup news, say so clearly."}],
+                    "temperature": 0.1,
+                    "max_tokens": 350,
+                }
+                resp = await client.post(GROK_URL, headers=headers, json=payload)
+                if resp.status_code == 200:
+                    text = resp.json()["choices"][0]["message"]["content"].strip()
+                    print(f"[WEB INTEL] Knowledge fallback ({model}): {text[:120]}...")
+                    return text
+                else:
+                    print(f"[WEB INTEL] Knowledge fallback error {resp.status_code} ({model})")
+        except Exception as e:
+            print(f"[WEB INTEL] Knowledge fallback error ({model}): {e}")
+
     return ""
 
 

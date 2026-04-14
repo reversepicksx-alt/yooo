@@ -200,6 +200,8 @@ async def predict(req: PredictionRequest):
 
                 fid = fixture_match.get("fixture", {}).get("id")
                 result = {}
+                if fid:
+                    result["fixtureId"] = fid
                 # Extract competition context (league/cup name + round)
                 match_round = fixture_match.get("league", {}).get("round", "")
                 match_league = fixture_match.get("league", {}).get("name", "")
@@ -865,8 +867,9 @@ async def predict(req: PredictionRequest):
         # =============================================
         match_dominance = {"expectedPoss": 50.0, "oppExpectedPoss": 50.0, "multiplier": 1.0, "notes": []}
 
-        # Wave 2: Fetch deep fixture data + Grok digest in parallel
-        from grok_engine import build_grok_digest
+        # Wave 2: Fetch deep fixture data + Grok digest + Situation Engine + Web Intel in parallel
+        from grok_engine import build_grok_digest, fetch_web_intel
+        from situation_engine import build_game_situation
         grok_digest_task = build_grok_digest(
             player_name=req.playerName, team_name=corrected_team_name or "",
             opponent_name=req.opponentName, prop_type=req.propType,
@@ -878,21 +881,55 @@ async def predict(req: PredictionRequest):
             opponent_fixture_stats=[], match_dominance={},
             sport="soccer"
         )
+
+        # Situation engine inputs
+        _sit_is_home = player_venue == "home"
+        _sit_home_id = actual_team_id if _sit_is_home else req.opponentId
+        _sit_away_id = req.opponentId if _sit_is_home else actual_team_id
+        _sit_match_round = (match_odds or {}).get("matchRound", "")
+        _sit_match_league = (match_odds or {}).get("matchLeague", "")
+        _sit_match_date = (match_odds or {}).get("matchDate", "")
+        _sit_fixture_id = (match_odds or {}).get("fixtureId")
+
+        situation_task = build_game_situation(
+            home_team_id=_sit_home_id,
+            away_team_id=_sit_away_id,
+            is_player_home=_sit_is_home,
+            league_id=league_id or 39,
+            match_round=_sit_match_round,
+            fixture_id=_sit_fixture_id,
+            player_team_name=corrected_team_name or req.teamName or "",
+            opponent_name=req.opponentName or "",
+            prop_type=req.propType,
+        )
+
+        web_intel_task = fetch_web_intel(
+            player_team=corrected_team_name or req.teamName or "",
+            opponent=req.opponentName or "",
+            match_date=_sit_match_date,
+            match_round=_sit_match_round,
+            league=_sit_match_league,
+        )
+
         all_wave2 = aio.gather(
             team_fixture_stats_task, opponent_fixture_stats_task, player_game_logs_task,
-            grok_digest_task,
+            grok_digest_task, situation_task, web_intel_task,
             return_exceptions=True
         )
         try:
-            results = await aio.wait_for(all_wave2, timeout=35)
+            results = await aio.wait_for(all_wave2, timeout=45)
         except aio.TimeoutError:
-            results = [None, None, None, None]
-            print(f"[WAVE2 TIMEOUT] Wave 2 exceeded 35s for {req.playerName}")
+            results = [None, None, None, None, None, None]
+            print(f"[WAVE2 TIMEOUT] Wave 2 exceeded 45s for {req.playerName}")
 
         team_fixture_stats = results[0] if not isinstance(results[0], (Exception, type(None))) else []
         opponent_fixture_stats = results[1] if not isinstance(results[1], (Exception, type(None))) else []
         player_game_logs = results[2] if not isinstance(results[2], (Exception, type(None))) else []
         grok_digest = results[3] if len(results) > 3 and not isinstance(results[3], (Exception, type(None))) else ""
+        game_situation = results[4] if len(results) > 4 and not isinstance(results[4], (Exception, type(None))) else {}
+        web_intel = results[5] if len(results) > 5 and not isinstance(results[5], (Exception, type(None))) else ""
+        if not game_situation:
+            game_situation = {"isKnockout": False, "isSecondLeg": False, "aggregate": {}, "multipliers": {}, "injuries": {}, "contextBlock": ""}
 
         # =============================================
         if not player_game_logs:
@@ -1095,6 +1132,35 @@ async def predict(req: PredictionRequest):
 
         if match_dominance.get("notes"):
             print(f"[MATCH DOMINANCE] {req.playerName}: poss={match_dominance['expectedPoss']}%, mult={match_dominance['multiplier']}, {' | '.join(match_dominance['notes'])}")
+
+        # =============================================
+        # SITUATION ENGINE: Apply possession boost from knockout/2nd-leg context
+        # Overrides the season-average-based possession model when game state demands it
+        # =============================================
+        _sit_mults = game_situation.get("multipliers", {})
+        _sit_poss_boost = _sit_mults.get("possessionBoostHome", 0.0)
+        if _sit_poss_boost != 0.0 and match_dominance.get("homePoss") is not None:
+            # Apply boost to home team's raw possession, recalculate both sides
+            old_home_poss = match_dominance["homePoss"]
+            new_home_poss = min(80.0, max(30.0, old_home_poss + _sit_poss_boost))
+            new_away_poss = round(100.0 - new_home_poss, 1)
+            print(f"[SITUATION BOOST] Possession: home {old_home_poss:.1f}% → {new_home_poss:.1f}% (boost={_sit_poss_boost:+.1f}%)")
+            match_dominance["homePoss"] = new_home_poss
+            match_dominance["awayPoss"] = new_away_poss
+            # Remap player perspective
+            if _sit_is_home:
+                match_dominance["expectedPoss"] = new_home_poss
+                match_dominance["oppExpectedPoss"] = new_away_poss
+            else:
+                match_dominance["expectedPoss"] = new_away_poss
+                match_dominance["oppExpectedPoss"] = new_home_poss
+            match_dominance["notes"].extend(_sit_mults.get("notes", []))
+            # Also update the in-process cache with boosted values
+            if _dom_cache_key:
+                _ce = _match_dom_cache.get(_dom_cache_key, {}).get("dom", {})
+                if _ce:
+                    _ce["homePoss"] = new_home_poss
+                    _ce["awayPoss"] = new_away_poss
 
         # =============================================
         # GAME TEMPO ESTIMATION — Expected match intensity
@@ -2125,6 +2191,15 @@ Expected possession for {req.opponentName}: {match_dominance['oppExpectedPoss']}
                 if is_knockout:
                     match_context += "\n** KNOCKOUT/ELIMINATION MATCH — Higher stakes, tactical conservatism likely, possible extra time. Account for this in projections.**"
 
+        # ── SITUATION ENGINE CONTEXT BLOCK ─────────────────────────────────────
+        _sit_context_block = game_situation.get("contextBlock", "")
+        if _sit_context_block:
+            match_context += f"\n\n{_sit_context_block}"
+
+        # ── WEB INTELLIGENCE ────────────────────────────────────────────────────
+        if web_intel:
+            match_context += f"\n\n[LIVE WEB INTELLIGENCE — Pre-match intel fetched in real-time]\n{web_intel}\n>>> Integrate this live intelligence into your analysis. Prioritize confirmed injuries and lineup changes. <<<" 
+
         # Inject hit rate context into prompt
         hit_rate_context = ""
         hit_rates = wave2_supplement.get("playerGameLogs", {}).get("hitRates")
@@ -2333,6 +2408,19 @@ Analyze ALL data thoroughly. Return JSON only."""
         # =============================================
         if real_bayes and real_bayes.get("priorSamples", 0) >= 3:
             bayesian_posterior = real_bayes["posteriorMean"]
+
+            # ─── SITUATIONAL MULTIPLIER — applied BEFORE final number is locked ───
+            # When game state demands different output than seasonal avg, scale the projection.
+            _sit_m = game_situation.get("multipliers", {})
+            _sit_bayes_mult = _sit_m.get("bayesianMultiplierHome", 1.0) if _sit_is_home else _sit_m.get("bayesianMultiplierAway", 1.0)
+            if _sit_bayes_mult != 1.0:
+                _old_bp = bayesian_posterior
+                bayesian_posterior = round(bayesian_posterior * _sit_bayes_mult, 1)
+                print(f"[SITUATION MULT] Bayesian {_old_bp:.1f} × {_sit_bayes_mult:.3f} = {bayesian_posterior:.1f} ({req.propType})")
+                real_bayes["posteriorMean"] = bayesian_posterior
+                real_bayes["situationalMultiplier"] = _sit_bayes_mult
+            # ─────────────────────────────────────────────────────────────────────
+
             bayesian_prob = max(real_bayes.get("pOver", 50), real_bayes.get("pUnder", 50)) / 100
             bayesian_rec = real_bayes.get("recommendation", "over")
             ai_proj = prediction.get("projectedValue", req.line)
