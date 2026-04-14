@@ -1,0 +1,16 @@
+Why the Model Struggles Here
+Bayesian models update probabilities by starting with priors (season averages, historical home/away splits, opponent strength) and incorporating new evidence (recent form, venue, etc.). The app’s formula weights season (heaviest), momentum, and context — which is solid for most games.
+In this specific case, the 38% Liverpool possession projection likely comes from:
+•  Strong PSG season-long possession dominance (~64–68%).
+•  The extreme first-leg outcome (PSG ~74% possession, Liverpool just 26%).
+•  “Knockout stage” conservatism (PSG protecting a 2-0 lead).
+This creates a prior-heavy pull toward low Liverpool control, even though the game state has fundamentally reversed: Liverpool must attack aggressively at Anfield to have any chance of advancing. Pure Bayesian updating needs explicit, well-calibrated “evidence” for comeback urgency, crowd effect, manager intent (Arne Slot’s build-up style), and historical Anfield European comebacks. Without strong, game-specific features for “must-win trailing in 2nd leg,” the model defaults toward the safer season + recent data blend — which underweights the desperation factor. ￼
+Ways to “Help” the Bayesian Awareness
+1.  Feature Engineering (Best for Developers) Add explicit variables like:
+	•  Aggregate score deficit + home leg indicator.
+	•  “Required goal differential” or win probability needed to advance.
+	•  Venue-specific comeback multipliers (Anfield has a documented history of high-possession, high-intensity responses in Europe).
+	•  Dynamic context weight that increases for knockout ties when trailing. Many advanced sports models do this with hierarchical Bayesian setups or by blending in simulation-based adjustments (e.g., running Monte Carlo scenarios that force higher home aggression when down on aggregate).
+2.  Prior Adjustment or Hierarchical Modeling Use a weaker prior for rare situational contexts (like 2nd-leg comebacks) or create a separate “knockout comeback” sub-model that feeds into the main one. This prevents over-relying on regular-season or first-leg data.
+3.  Online/Sequential Updating Update beliefs as the game progresses (e.g., if Liverpool scores early, possession projection shifts sharply). Some in-game win-probability models already do this well in soccer.
+4.  Hybrid Approach Combine Bayesian elements with rule-based overrides or machine learning that explicitly flags “reversal scenarios.” For example, boost home possession expectation by 10–15% when the home team trails by 2+ goals in a knockout 2nd leg.
