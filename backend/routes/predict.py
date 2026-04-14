@@ -2106,7 +2106,8 @@ Expected possession for {req.opponentName}: {match_dominance['oppExpectedPoss']}
 >>> CRITICAL: If expected possession is HIGHER than season average, pass-dependent players (DLP, CM, CAM) WILL exceed their historical averages.
 >>> A deep-lying playmaker on a team expected at 65%+ possession will have significantly MORE pass attempts than their season average suggests.
 >>> Conversely, defenders on low-possession teams will have MORE tackles/interceptions than average.
->>> DO NOT just project from historical averages when match context predicts a clear possession advantage or disadvantage. <<<"""
+>>> DO NOT just project from historical averages when match context predicts a clear possession advantage or disadvantage.
+>>> NARRATIVE ALIGNMENT: Your `keyMatchupFactor` and `gameFlowDynamics` MUST match the computed possession numbers above. If {req.opponentName} has HIGHER expected possession, say they control possession — never claim {corrected_team_name} dominates possession if their number is lower. <<<"""
             final_data += dom_context
 
         # Build match context (round/stage, knockout detection)
@@ -2574,6 +2575,29 @@ Analyze ALL data thoroughly. Return JSON only."""
         # 4. Always set team names from request data (deterministic)
         real_matchup["homeTeam"] = player_team_display if player_venue == "home" else req.opponentName
         real_matchup["awayTeam"] = req.opponentName if player_venue == "home" else player_team_display
+
+        # 5. Deterministic keyMatchupFactor — MUST align with computed possession numbers.
+        # Overrides AI-generated text to prevent contradictions like "Liverpool dominates
+        # possession" when the model computed PSG at 62% and Liverpool at 38%.
+        _ep = real_matchup.get("expectedPossession", {})
+        _home_p = _ep.get("home", 50)
+        _away_p = _ep.get("away", 50)
+        _home_team = real_matchup.get("homeTeam", "Home")
+        _away_team = real_matchup.get("awayTeam", "Away")
+        _game_type = real_matchup.get("expectedGameType", "open")
+        _game_type_label = {"open": "open", "cagey": "cagey", "one-sided": "one-sided", "high-tempo": "high-tempo"}.get(_game_type, _game_type)
+        if _home_p >= 58:
+            _kmf = f"{_home_team}'s possession dominance ({_home_p:.0f}%) expected to control tempo at home"
+        elif _away_p >= 58:
+            _kmf = f"{_away_team}'s possession superiority ({_away_p:.0f}%) expected to control the ball despite playing away"
+        elif _home_p >= 53:
+            _kmf = f"{_home_team} holds home possession edge ({_home_p:.0f}% vs {_away_p:.0f}%) in an {_game_type_label} game"
+        elif _away_p >= 53:
+            _kmf = f"{_away_team} holds possession edge ({_away_p:.0f}% vs {_home_p:.0f}%) in an {_game_type_label} game despite being away"
+        else:
+            _kmf = f"Balanced possession expected ({_home_p:.0f}% vs {_away_p:.0f}%) — {_game_type_label} game"
+        real_matchup["keyMatchupFactor"] = _kmf
+
         prediction["matchupOverview"] = real_matchup
 
         # Add match context (competition name, round) for frontend display
