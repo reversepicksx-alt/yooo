@@ -1022,8 +1022,74 @@ async def predict(req: PredictionRequest):
             game_situation = {"isKnockout": False, "isSecondLeg": False, "aggregate": {}, "multipliers": {}, "injuries": {}, "contextBlock": ""}
 
         # =============================================
-        if not player_game_logs:
-            print(f"[NO GAME LOGS] {req.playerName}/{req.propType}: no fixture-level game logs available. Using line as prior.")
+        # SEASON-STATS FALLBACK: Build synthetic game logs when no fixture-level logs exist.
+        # This ensures every player always has real data — regardless of cache state.
+        # =============================================
+        if not player_game_logs and player_stats:
+            _sfm_fallback = {
+                "goals": ("goals", "total"), "assists": ("goals", "assists"),
+                "shots_assisted": ("passes", "key"), "pass_attempts": ("passes", "total"),
+                "passes": ("passes", "total"), "shots": ("shots", "total"),
+                "shots_on_target": ("shots", "on"), "tackles": ("tackles", "total"),
+                "key_passes": ("passes", "key"), "saves": ("goals", "saves"),
+                "interceptions": ("tackles", "interceptions"), "blocks": ("tackles", "blocks"),
+                "dribbles": ("dribbles", "attempts"), "fouls_drawn": ("fouls", "drawn"),
+                "fouls_committed": ("fouls", "committed"), "crosses": ("passes", "cross"),
+                "clearances": ("tackles", "clearances"), "duels_won": ("duels", "won"),
+                "yellow_cards": ("cards", "yellow"),
+            }
+            _gl_field_map = {
+                "goals": "goals_total", "assists": "goals_assists",
+                "shots_assisted": "passes_key", "pass_attempts": "passes_total",
+                "passes": "passes_total", "shots": "shots_total",
+                "shots_on_target": "shots_on", "tackles": "tackles_total",
+                "key_passes": "passes_key", "saves": "goals_saves",
+                "interceptions": "tackles_interceptions", "blocks": "tackles_blocks",
+                "dribbles": "dribbles_attempts", "fouls_drawn": "fouls_drawn",
+                "fouls_committed": "fouls_committed", "crosses": "passes_crosses",
+                "clearances": "tackles_clearances", "duels_won": "duels_won",
+                "yellow_cards": "cards_yellow",
+            }
+            _best_stat = None
+            _best_appearances = 0
+            _best_minutes = 0
+            for _stat_entry in (player_stats.get("statistics") or []):
+                _apps = _stat_entry.get("games", {}).get("appearences") or 0
+                _mins = _stat_entry.get("games", {}).get("minutes") or 0
+                if _apps >= 3 and _mins >= 270 and _apps > _best_appearances:
+                    _cat, _sub = _sfm_fallback.get(req.propType, ("passes", "total"))
+                    _raw = _stat_entry.get(_cat, {}).get(_sub)
+                    if _raw is not None:
+                        _best_stat = _stat_entry
+                        _best_appearances = _apps
+                        _best_minutes = _mins
+
+            if _best_stat:
+                _cat, _sub = _sfm_fallback.get(req.propType, ("passes", "total"))
+                _raw_total = _best_stat.get(_cat, {}).get(_sub) or 0
+                _avg_per_game = round(_raw_total / _best_appearances, 2) if _best_appearances else 0
+                _avg_minutes = round(_best_minutes / _best_appearances, 1) if _best_appearances else 90
+                _gl_key = _gl_field_map.get(req.propType, "passes_total")
+                # Build N synthetic logs (capped at 20) from season per-game average
+                _n_synthetic = min(_best_appearances, 20)
+                for _i in range(_n_synthetic):
+                    _syn_log = {
+                        _gl_key: _avg_per_game,
+                        "minutes": _avg_minutes,
+                        "date": "",
+                        "opponent": "",
+                        "venue": "home" if _i % 2 == 0 else "away",
+                        "score": "",
+                        "league": (_best_stat.get("league") or {}).get("name", ""),
+                        "round": "",
+                        "synthetic": True,
+                    }
+                    if _avg_per_game and _avg_minutes > 0:
+                        _syn_log["targetStatPer90"] = round((_avg_per_game / _avg_minutes) * 90, 2)
+                    player_game_logs.append(_syn_log)
+                print(f"[SEASON FALLBACK] {req.playerName}/{req.propType}: built {_n_synthetic} synthetic logs from {_best_appearances} appearances, avg={_avg_per_game}/game")
+            else:
+                print(f"[NO GAME LOGS] {req.playerName}/{req.propType}: no fixture logs and no usable season stats. Using line as prior.")
 
         # =============================================
         # MATCH DOMINANCE: Opponent-aware possession + context multiplier
@@ -2899,6 +2965,7 @@ Analyze ALL data thoroughly. Return JSON only."""
 
         # DATA QUALITY INDICATOR — flag when API data might be unreliable
         total_game_logs = len(player_game_logs)
+        _is_synthetic = total_game_logs > 0 and all(g.get("synthetic") for g in player_game_logs)
         gl_target_field_map_check = {
             "pass_attempts": "passes_total", "shots": "shots_total", "shots_on_target": "shots_on",
             "tackles": "tackles_total", "key_passes": "passes_key", "shots_assisted": "passes_key",
@@ -2913,7 +2980,14 @@ Analyze ALL data thoroughly. Return JSON only."""
         target_check = gl_target_field_map_check.get(req.propType, "passes_total")
         games_with_data = sum(1 for g in player_game_logs if g.get(target_check) is not None)
         games_with_none = total_game_logs - games_with_data
-        if total_game_logs > 0 and games_with_none / total_game_logs >= 0.3:
+        if _is_synthetic:
+            prediction["dataQuality"] = {
+                "level": "medium",
+                "message": f"No recent match logs cached. Analysis based on season averages ({total_game_logs} appearances).",
+                "gamesWithData": games_with_data,
+                "totalGames": total_game_logs,
+            }
+        elif total_game_logs > 0 and games_with_none / total_game_logs >= 0.3:
             prediction["dataQuality"] = {
                 "level": "limited",
                 "message": f"API data incomplete — {games_with_none} of {total_game_logs} recent games missing {req.propType} stats. Cross-referenced sources used for analysis.",
