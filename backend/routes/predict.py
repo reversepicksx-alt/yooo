@@ -3004,6 +3004,10 @@ Analyze ALL data thoroughly. Return JSON only."""
             if match_odds.get("favorite"):
                 real_matchup["favorite"] = match_odds["favorite"]
         # 3. Game type from real stats — deterministic classification
+        # ALWAYS override Grok's expectedGameType. Grok invents values like
+        # "KNOCKOUT (HIGH-PRESSURE, END-TO-END)" for group stage matches.
+        # Valid labels: open | cagey | one-sided | high-tempo only.
+        _poss_diff = abs((real_matchup.get("expectedPossession", {}).get("home", 50)) - 50)
         if team_fixture_stats and opponent_fixture_stats:
             def avg_stat(stats_list, key):
                 vals = [s.get(key) for s in stats_list if s.get(key) is not None]
@@ -3011,15 +3015,28 @@ Analyze ALL data thoroughly. Return JSON only."""
             team_avg_shots = avg_stat(team_fixture_stats, "totalShots")
             opp_avg_shots = avg_stat(opponent_fixture_stats, "totalShots")
             combined_shots = team_avg_shots + opp_avg_shots
-            poss_diff = abs((real_matchup.get("expectedPossession", {}).get("home", 50)) - 50)
             if combined_shots >= 28:
                 real_matchup["expectedGameType"] = "open"
             elif combined_shots <= 18:
                 real_matchup["expectedGameType"] = "cagey"
-            elif poss_diff >= 12:
+            elif _poss_diff >= 12:
                 real_matchup["expectedGameType"] = "one-sided"
             else:
                 real_matchup["expectedGameType"] = "high-tempo" if combined_shots >= 23 else "cagey"
+        else:
+            # No shot data — classify purely from possession imbalance
+            if _poss_diff >= 14:
+                real_matchup["expectedGameType"] = "one-sided"
+            elif _poss_diff >= 6:
+                real_matchup["expectedGameType"] = "open"
+            else:
+                real_matchup["expectedGameType"] = "open"
+
+        # Final sanitisation — reject any value Grok invented that isn't in the approved set
+        _valid_game_types = {"open", "cagey", "one-sided", "high-tempo"}
+        if real_matchup.get("expectedGameType", "open").lower().strip() not in _valid_game_types:
+            real_matchup["expectedGameType"] = "one-sided" if _poss_diff >= 12 else "open"
+
         # 4. Always set team names from request data (deterministic)
         real_matchup["homeTeam"] = player_team_display if player_venue == "home" else req.opponentName
         real_matchup["awayTeam"] = req.opponentName if player_venue == "home" else player_team_display
@@ -3129,18 +3146,18 @@ Analyze ALL data thoroughly. Return JSON only."""
         venue_avg = round(sum((g.get(target_check) or 0) for g in venue_samples) / len(venue_samples), 2) if venue_samples else None
         opp_allowed_avg = None
         opp_stat_field_map = {
-            "pass_attempts": "totalPasses",
+            # ONLY include props where team-level opponent stats are actually meaningful.
+            # Pass-volume props (pass_attempts, passes, key_passes, crosses, dribbles) are
+            # possession-dependent: opponent's totalPasses tells us nothing about what
+            # they concede to individual players in those categories — removed.
             "shots": "totalShots",
             "shots_on_target": "shotsOnTarget",
             "saves": "shotsOnTarget",
-            "key_passes": "totalPasses",
             "tackles": "totalShots",
             "interceptions": "totalShots",
             "blocks": "totalShots",
             "fouls_drawn": "fouls",
-            "crosses": "totalPasses",
             "clearances": "totalShots",
-            "dribbles": "totalPasses",
         }
         opp_stat_key = opp_stat_field_map.get(req.propType)
         if opp_stat_key and opponent_fixture_stats:

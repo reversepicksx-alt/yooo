@@ -375,15 +375,20 @@ export async function predict(request: Record<string, unknown>): Promise<Predict
   const propTypeStr = (raw.propType || request.propType as string || '');
   const statField = GAME_LOG_FIELD_MAP[propTypeStr];
   const rawGames = (raw.playerGameLogs?.games || []) as Record<string, unknown>[];
-  const gameLogs: GameLog[] = statField
+  const gameLogs: GameLog[] = rawGames.length > 0
     ? rawGames
-        .map(g => ({
-          date: (g.date as string) || '',
-          opponent: (g.opponent as string) || '',
-          venue: (g.venue as string) || '',
-          value: (g[statField] as number) ?? null,
-          minutes: (g.minutes as number) || 0,
-        }))
+        .map(g => {
+          // Prefer the mapped field, fall back to backend-computed targetStat
+          const mappedVal = statField ? (g[statField] as number | null | undefined) : undefined;
+          const value = mappedVal != null ? mappedVal : (g.targetStat as number | null | undefined) ?? null;
+          return {
+            date: (g.date as string) || '',
+            opponent: (g.opponent as string) || '',
+            venue: (g.venue as string) || '',
+            value,
+            minutes: (g.minutes as number) || 0,
+          };
+        })
         .filter(g => g.value != null)
     : [];
 

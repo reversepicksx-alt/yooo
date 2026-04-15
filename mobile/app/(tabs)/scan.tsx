@@ -589,13 +589,18 @@ export default function ScanScreen() {
                               <Text style={styles.mlPillOdds}>{odds2}</Text>
                             </View>
                           </View>
+                          <Text style={styles.mlDisclaimer}>Indicative · verify with your sportsbook</Text>
                         </View>
                       );
                     })()}
                     {prediction.expectedGameType && (
                       <View style={styles.gameTypeWrap}>
                         <Text style={styles.gameTypeLabel}>GAME TYPE</Text>
-                        <Text style={styles.gameTypeValue}>{prediction.expectedGameType.toUpperCase()}</Text>
+                        <Text style={styles.gameTypeValue}>{
+                          (['open','cagey','one-sided','high-tempo'].includes(prediction.expectedGameType?.toLowerCase())
+                            ? prediction.expectedGameType.toUpperCase()
+                            : 'OPEN')
+                        }</Text>
                         {prediction.keyMatchupFactor && (
                           <Text style={styles.gameTypeSub}>{prediction.keyMatchupFactor}</Text>
                         )}
@@ -1365,6 +1370,7 @@ const styles = StyleSheet.create({
   moneylineWrap: { gap: 6 },
   moneylineHeader: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   moneylineLabel: { fontSize: 10, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 1.2 },
+  mlDisclaimer: { fontSize: 9, color: Colors.textTertiary, marginTop: 4, fontStyle: 'italic' },
   moneylinePills: { flexDirection: 'row', gap: 6 },
   mlPill: {
     flex: 1, backgroundColor: '#1a1a1a', borderRadius: 8, paddingVertical: 8,
