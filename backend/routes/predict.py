@@ -354,7 +354,17 @@ async def predict(req: PredictionRequest):
 
         # 1. Per-fixture team stats (possession, shots, passes per match)
         async def fetch_fixture_team_stats(fixture_list, team_id, limit=5):
-            """Fetch per-match team stats — cached in MongoDB for finished fixtures."""
+            """Fetch per-match team stats — cached in MongoDB for finished fixtures.
+
+            Fetches two data sources per fixture:
+              1. /fixtures/statistics  → possession, passes, shots, fouls (team-level)
+              2. /fixtures/players     → player-level data aggregated for tackles +
+                                         interceptions (not available at team level in
+                                         /fixtures/statistics)
+
+            Cached together under fxt_{fid}_{team_id}. Existing cache entries missing
+            tackles data are enriched incrementally (one extra API call, then re-cached).
+            """
             async def fetch_one(fix):
                 fid = fix.get("fixtureId")
                 if not fid:
@@ -362,7 +372,9 @@ async def predict(req: PredictionRequest):
                 try:
                     cache_key = f"fxt_{fid}_{team_id}"
                     cached = await db.fixture_player_cache.find_one({"_k": cache_key}, {"_id": 0, "d": 1})
-                    if cached and cached.get("d"):
+
+                    # Full cache hit — has tackles data already
+                    if cached and cached.get("d") and "tackles_total" in cached["d"]:
                         r = cached["d"]
                         r["date"] = fix.get("date", "")[:10]
                         r["opponent"] = fix.get("opponent", "")
@@ -370,37 +382,73 @@ async def predict(req: PredictionRequest):
                         r["score"] = f"{fix.get('homeGoals',0)}-{fix.get('awayGoals',0)}"
                         return r
 
-                    data = await api_football_request("fixtures/statistics", {"fixture": fid})
-                    if not data:
-                        return None
-                    for team_data in data:
-                        if team_data.get("team", {}).get("id") == team_id:
-                            raw_stats = {}
-                            for s in team_data.get("statistics", []):
-                                raw_stats[s.get("type", "")] = s.get("value")
-                            result = {
-                                "possession": raw_stats.get("Ball Possession", ""),
-                                "totalShots": raw_stats.get("Total Shots"),
-                                "shotsOnTarget": raw_stats.get("Shots on Goal"),
-                                "shotsOffTarget": raw_stats.get("Shots off Goal"),
-                                "blockedShots": raw_stats.get("Blocked Shots"),
-                                "shotsInsideBox": raw_stats.get("Shots insidebox"),
-                                "shotsOutsideBox": raw_stats.get("Shots outsidebox"),
-                                "totalPasses": raw_stats.get("Total passes"),
-                                "passAccuracy": raw_stats.get("Passes %"),
-                                "accuratePasses": raw_stats.get("Passes accurate"),
-                                "fouls": raw_stats.get("Fouls"),
-                                "corners": raw_stats.get("Corner Kicks"),
-                                "expectedGoals": raw_stats.get("expected_goals"),
-                            }
-                            await db.fixture_player_cache.update_one(
-                                {"_k": cache_key}, {"$set": {"_k": cache_key, "d": result}}, upsert=True
-                            )
-                            result["date"] = fix.get("date", "")[:10]
-                            result["opponent"] = fix.get("opponent", "")
-                            result["venue"] = fix.get("venue", "")
-                            result["score"] = f"{fix.get('homeGoals',0)}-{fix.get('awayGoals',0)}"
-                            return result
+                    # Partial cache hit — has team stats but no tackles yet
+                    if cached and cached.get("d"):
+                        result = dict(cached["d"])
+                    else:
+                        # Cold fetch — get team-level stats from /fixtures/statistics
+                        data = await api_football_request("fixtures/statistics", {"fixture": fid})
+                        if not data:
+                            return None
+                        result = None
+                        for team_data in data:
+                            if team_data.get("team", {}).get("id") == team_id:
+                                raw_stats = {}
+                                for s in team_data.get("statistics", []):
+                                    raw_stats[s.get("type", "")] = s.get("value")
+                                result = {
+                                    "possession": raw_stats.get("Ball Possession", ""),
+                                    "totalShots": raw_stats.get("Total Shots"),
+                                    "shotsOnTarget": raw_stats.get("Shots on Goal"),
+                                    "shotsOffTarget": raw_stats.get("Shots off Goal"),
+                                    "blockedShots": raw_stats.get("Blocked Shots"),
+                                    "shotsInsideBox": raw_stats.get("Shots insidebox"),
+                                    "shotsOutsideBox": raw_stats.get("Shots outsidebox"),
+                                    "totalPasses": raw_stats.get("Total passes"),
+                                    "passAccuracy": raw_stats.get("Passes %"),
+                                    "accuratePasses": raw_stats.get("Passes accurate"),
+                                    "fouls": raw_stats.get("Fouls"),
+                                    "corners": raw_stats.get("Corner Kicks"),
+                                    "expectedGoals": raw_stats.get("expected_goals"),
+                                }
+                                break
+                        if not result:
+                            return None
+
+                    # Fetch player-level data to aggregate tackles + interceptions
+                    # (these are not available from /fixtures/statistics at team level)
+                    try:
+                        player_data = await api_football_request(
+                            "fixtures/players", {"fixture": fid, "team": team_id}
+                        )
+                        tkl_total = 0
+                        tkl_int = 0
+                        got_tkl = False
+                        if player_data:
+                            for team_block in player_data:
+                                if team_block.get("team", {}).get("id") == team_id:
+                                    for p in team_block.get("players", []):
+                                        st = (p.get("statistics") or [{}])[0]
+                                        tkl = st.get("tackles") or {}
+                                        tkl_total += (tkl.get("total") or 0)
+                                        tkl_int   += (tkl.get("interceptions") or 0)
+                                    got_tkl = True
+                                    break
+                        result["tackles_total"]         = tkl_total if got_tkl else None
+                        result["tackles_interceptions"] = tkl_int   if got_tkl else None
+                    except Exception:
+                        result["tackles_total"]         = None
+                        result["tackles_interceptions"] = None
+
+                    # Cache the enriched result
+                    await db.fixture_player_cache.update_one(
+                        {"_k": cache_key}, {"$set": {"_k": cache_key, "d": result}}, upsert=True
+                    )
+                    result["date"]     = fix.get("date", "")[:10]
+                    result["opponent"] = fix.get("opponent", "")
+                    result["venue"]    = fix.get("venue", "")
+                    result["score"]    = f"{fix.get('homeGoals',0)}-{fix.get('awayGoals',0)}"
+                    return result
                 except Exception:
                     return None
 
@@ -1383,14 +1431,27 @@ IMPORTANT: Never use the word "Bayesian" in your response. Always say "Reverse F
                 _pi = early_bayes.get("pressIntensity", {})
                 if _pi.get("label") not in (None, "Unknown", "Low") and req.propType in {"pass_attempts", "passes"}:
                     _pi_label = _pi["label"]
-                    _pi_passes = _pi.get("avg_passes", "?")
-                    _pi_fouls = _pi.get("avg_fouls", "?")
-                    _pi_mult = _pi.get("multiplier", 1.0)
-                    bayesian_prompt_anchor += f"""
+                    _pi_mult  = _pi.get("multiplier", 1.0)
+                    _pi_sig   = _pi.get("signal_used", "possession")
+                    if _pi_sig == "tackles":
+                        _pi_da  = _pi.get("avg_defensive_actions", "?")
+                        _pi_tkl = _pi.get("avg_tackles", "?")
+                        _pi_int = _pi.get("avg_interceptions", "?")
+                        bayesian_prompt_anchor += f"""
 [OPPONENT PRESS INTENSITY — {_pi_label.upper()}]
-Press Intensity Proxy (PPDA equivalent): {_pi_label} | Opponent avg {_pi_passes} passes/game + {_pi_fouls} fouls/game.
+PPDA Proxy (tackles + interceptions/game): {_pi_label} | Opponent avg {_pi_da} defensive actions/game ({_pi_tkl} tackles + {_pi_int} interceptions).
+High defensive actions = opponent aggressively hunts the ball → subject player has less time/space with the ball, disrupted in possession.
 Mathematical press penalty already applied: ×{_pi_mult} reduction to pass projection.
-CRITICAL: This opponent actively suppresses passing volume for defenders. Do NOT project pass totals near season average — account for possession being contested and disrupted."""
+CRITICAL: This opponent actively disrupts passing lanes. Account for the subject player being pressured even when their team has the ball."""
+                    else:
+                        _pi_poss   = _pi.get("avg_poss", "?")
+                        _pi_passes = _pi.get("avg_passes", "?")
+                        bayesian_prompt_anchor += f"""
+[OPPONENT POSSESSION PRESSURE — {_pi_label.upper()}]
+Possession Pressure Index: {_pi_label} | Opponent avg {_pi_poss}% ball possession per game ({_pi_passes} total passes/game).
+High opponent possession = the subject player's team has less time on the ball → subject player makes fewer pass attempts.
+Mathematical possession penalty already applied: ×{_pi_mult} reduction to pass projection.
+CRITICAL: This opponent dominates ball possession. Do NOT project pass totals near season average — the subject player's team will have significantly reduced time with the ball."""
 
                 # Inject game tempo context into the AI prompt
                 if game_tempo.get("expectedTempo") != "normal" and req.propType in {"pass_attempts", "passes", "key_passes", "crosses", "dribbles"}:

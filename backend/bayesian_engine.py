@@ -221,18 +221,31 @@ def compute_bayesian_projection(
     posterior_std = round(math.sqrt(1 / total_precision) if total_precision > 0 else prior_std, 2)
 
     # ═══════════════════════════════════════════
-    # PRESS INTENSITY — PPDA Proxy (outside Covariate cap)
-    # Applied AFTER posterior for pass props only.
-    # Uses opponent's avg passes + fouls as a proxy for how aggressively
-    # they suppress the subject team's passing volume.
+    # PRESS INTENSITY — PPDA Proxy (independent of match dominance)
+    # Applied AFTER posterior for pass_attempts/passes props only.
+    #
+    # PRIMARY: opponent tackles + interceptions/game (aggregated from /fixtures/players)
+    # FALLBACK: opponent possession % + passes/game
+    #
+    # Multiplier capped at 10% max — this is ADDITIVE to match dominance, not
+    # duplicating it. Match dominance = possession/ball-time. Pressing = active
+    # defensive disruption. These are correlated but independently causal.
+    # Max 10% ensures no overcorrection when both signals are present.
     # ═══════════════════════════════════════════
-    press_intensity_info = {"score": 0.0, "multiplier": 1.0, "label": "Unknown", "avg_passes": None, "avg_fouls": None}
+    press_intensity_info = {
+        "score": 0.0, "multiplier": 1.0, "label": "Unknown", "signal_used": None,
+        "avg_defensive_actions": None, "avg_tackles": None, "avg_interceptions": None,
+        "avg_poss": None, "avg_passes": None,
+    }
     if opponent_fixture_stats and prop_type in {"pass_attempts", "passes"}:
         press_intensity_info = compute_press_intensity_score(opponent_fixture_stats)
         if press_intensity_info["multiplier"] < 1.0:
             raw_before = posterior_mean
             posterior_mean = round(posterior_mean * press_intensity_info["multiplier"], 1)
-            print(f"[PRESS] {prop_type}: press={press_intensity_info['label']} (score={press_intensity_info['score']}, mult={press_intensity_info['multiplier']}) → {raw_before} → {posterior_mean}")
+            print(f"[PRESS] {prop_type}: signal={press_intensity_info['signal_used']} label={press_intensity_info['label']} "
+                  f"(score={press_intensity_info['score']}, mult={press_intensity_info['multiplier']}) "
+                  f"da={press_intensity_info.get('avg_defensive_actions')} tkl={press_intensity_info.get('avg_tackles')} "
+                  f"int={press_intensity_info.get('avg_interceptions')} → {raw_before} → {posterior_mean}")
 
     # ═══════════════════════════════════════════
     # REVERSAL FLAG — Mean Reversion Detection
@@ -367,62 +380,137 @@ def _normal_cdf(z: float) -> float:
 
 def compute_press_intensity_score(opp_fixture_stats: list) -> dict:
     """
-    PPDA Proxy — Press Intensity Score from existing API-Football fixture data.
+    Press Intensity Score — PPDA Proxy for pass_attempts/passes props.
 
-    Uses the opponent's:
-      - avg total passes per game  (possession-dominant pressing: high passes = control the ball + press on loss)
-      - avg fouls per game         (aggressive pressing: winning ball by force)
+    ─── PRIMARY SIGNAL (when available) ───────────────────────────────────────
+    Opponent's avg tackles + interceptions per game, aggregated from player-level
+    data via /fixtures/players (fetched and cached in fetch_fixture_team_stats).
 
-    Both stats are already available in opponent_fixture_stats from the existing pipeline.
-    No extra API calls needed.
+    This is the correct PPDA-proxy signal: defensive actions directly measure
+    how aggressively a team hunts the ball when not in possession.
+      Low-press team  : ~14 tackles + 8  interceptions = ~22 def actions/game
+      Average team    : ~18 tackles + 11 interceptions = ~29 def actions/game
+      High-press team : ~22 tackles + 14 interceptions = ~36 def actions/game
+      Elite press     : ~26 tackles + 16 interceptions = ~42+ def actions/game
+
+    ─── FALLBACK SIGNAL (when tackles data not yet cached) ─────────────────────
+    Opponent's avg possession % and total passes per game (possession-based signal).
+    Possession thresholds: 50% = neutral, 70% = dominant.
+
+    ─── MULTIPLIER CAP ─────────────────────────────────────────────────────────
+    Capped at 10% max reduction (multiplier floor = 0.90), NOT 20%.
+    This is independent of match dominance (which handles possession imbalance).
+    Pressing = disruption/turnovers. Dominance = ball-time. They are additive
+    but the pressing effect is smaller and more marginal — hence the 10% cap.
 
     Returns:
-      score      : 0.0 (passive) → 1.0 (elite press)
-      multiplier : 1.0 → 0.80 (applied to pass projections outside Covariate cap)
-      label      : "Low" / "Moderate" / "High" / "Elite"
-      avg_passes : opponent avg passes/game
-      avg_fouls  : opponent avg fouls/game
+      score                 : 0.0 → 1.0
+      multiplier            : 1.0 → 0.90 (max 10% reduction)
+      label                 : "Low" / "Moderate" / "High" / "Elite"
+      signal_used           : "tackles" or "possession"
+      avg_defensive_actions : tackles + interceptions per game (if tackles used)
+      avg_tackles           : opponent avg tackles / game
+      avg_interceptions     : opponent avg interceptions / game
+      avg_poss              : opponent avg possession % (if possession used)
+      avg_passes            : opponent avg total passes / game
     """
-    unknown = {"score": 0.0, "multiplier": 1.0, "label": "Unknown", "avg_passes": None, "avg_fouls": None}
+    unknown = {
+        "score": 0.0, "multiplier": 1.0, "label": "Unknown",
+        "signal_used": None,
+        "avg_defensive_actions": None, "avg_tackles": None, "avg_interceptions": None,
+        "avg_poss": None, "avg_passes": None,
+    }
     if not opp_fixture_stats or len(opp_fixture_stats) < 2:
         return unknown
 
-    passes = [s.get("totalPasses") for s in opp_fixture_stats if s.get("totalPasses") is not None]
-    fouls  = [s.get("fouls")       for s in opp_fixture_stats if s.get("fouls")       is not None]
+    # ── PRIMARY: tackles + interceptions from /fixtures/players aggregation ──
+    tackles       = [s.get("tackles_total")         for s in opp_fixture_stats if s.get("tackles_total")         is not None]
+    interceptions = [s.get("tackles_interceptions")  for s in opp_fixture_stats if s.get("tackles_interceptions") is not None]
 
-    if len(passes) < 2:
+    if len(tackles) >= 2:
+        avg_tkl = sum(tackles) / len(tackles)
+        avg_int = sum(interceptions) / len(interceptions) if len(interceptions) >= 2 else 10.0
+        avg_da  = avg_tkl + avg_int
+        # Baseline 22 def-actions/game (low press) → 42+ = elite (score=1.0)
+        score = round(max(0.0, min(1.0, (avg_da - 22) / 20)), 3)
+        multiplier = round(max(0.90, 1.0 - score * 0.10), 3)
+        if score < 0.20:
+            label = "Low"
+        elif score < 0.45:
+            label = "Moderate"
+        elif score < 0.70:
+            label = "High"
+        else:
+            label = "Elite"
+        return {
+            "score":                 score,
+            "multiplier":            multiplier,
+            "label":                 label,
+            "signal_used":           "tackles",
+            "avg_defensive_actions": round(avg_da, 1),
+            "avg_tackles":           round(avg_tkl, 1),
+            "avg_interceptions":     round(avg_int, 1),
+            "avg_poss":              None,
+            "avg_passes":            None,
+        }
+
+    # ── FALLBACK: possession % + total passes ───────────────────────────────
+    raw_poss = []
+    for s in opp_fixture_stats:
+        p = s.get("possession")
+        if p is None:
+            continue
+        if isinstance(p, str):
+            p = p.replace("%", "").strip()
+            try:
+                p = float(p)
+            except ValueError:
+                continue
+        try:
+            raw_poss.append(float(p))
+        except (TypeError, ValueError):
+            continue
+
+    passes = [s.get("totalPasses") for s in opp_fixture_stats if s.get("totalPasses") is not None]
+
+    if len(raw_poss) < 2 and len(passes) < 2:
         return unknown
 
-    avg_passes = sum(passes) / len(passes)
-    avg_fouls  = sum(fouls)  / len(fouls) if len(fouls) >= 2 else 10.0
+    avg_poss   = sum(raw_poss) / len(raw_poss) if len(raw_poss) >= 2 else None
+    avg_passes = sum(passes)   / len(passes)   if len(passes)   >= 2 else None
 
-    # Possession-dominant pressing: baseline ~400 passes, elite ~600+
-    pass_score = max(0.0, min(1.0, (avg_passes - 400) / 200))
+    poss_score = max(0.0, min(1.0, (avg_poss - 50) / 20))   if avg_poss   is not None else None
+    pass_score = max(0.0, min(1.0, (avg_passes - 450) / 200)) if avg_passes is not None else None
 
-    # Aggressive winning of the ball: baseline ~9 fouls, elite presser ~15+
-    foul_score = max(0.0, min(1.0, (avg_fouls - 9) / 6))
+    if poss_score is not None and pass_score is not None:
+        score = poss_score * 0.70 + pass_score * 0.30
+    elif poss_score is not None:
+        score = poss_score
+    else:
+        score = pass_score
 
-    # Combined — possession volume is more predictive for pass suppression
-    press_score = round(pass_score * 0.65 + foul_score * 0.35, 3)
+    score = round(max(0.0, min(1.0, score)), 3)
+    multiplier = round(max(0.90, 1.0 - score * 0.10), 3)
 
-    # Multiplier applied to pass projections (max 20% reduction for elite press)
-    multiplier = round(max(0.80, 1.0 - press_score * 0.20), 3)
-
-    if press_score < 0.20:
+    if score < 0.20:
         label = "Low"
-    elif press_score < 0.45:
+    elif score < 0.45:
         label = "Moderate"
-    elif press_score < 0.70:
+    elif score < 0.70:
         label = "High"
     else:
         label = "Elite"
 
     return {
-        "score":      press_score,
-        "multiplier": multiplier,
-        "label":      label,
-        "avg_passes": round(avg_passes, 1),
-        "avg_fouls":  round(avg_fouls, 1),
+        "score":                 score,
+        "multiplier":            multiplier,
+        "label":                 label,
+        "signal_used":           "possession",
+        "avg_defensive_actions": None,
+        "avg_tackles":           None,
+        "avg_interceptions":     None,
+        "avg_poss":              round(avg_poss, 1)   if avg_poss   is not None else None,
+        "avg_passes":            round(avg_passes, 1) if avg_passes is not None else None,
     }
 
 
