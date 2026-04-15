@@ -272,6 +272,10 @@ def _names_similar(query: str, candidate: str) -> bool:
     q_last = q_parts[-1] if q_parts else q
     c_last = c_parts[-1] if c_parts else c
     if q_last == c_last:
+        # If both have a full first name and the first initials differ, it's a different person
+        # e.g. "Álvaro Carreras" ≠ "Jofre Carreras" — same surname, different people
+        if len(q_parts) >= 2 and len(c_parts) >= 2 and q_parts[0][0] != c_parts[0][0]:
+            return False
         return True
     if len(q_parts) >= 2 and len(c_parts) >= 2:
         if q_parts[0][0] == c_parts[0][0] and q_last == c_last:
