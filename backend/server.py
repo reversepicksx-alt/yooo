@@ -261,10 +261,55 @@ async def _auto_sync_square_payments():
         from datetime import timedelta, timezone, datetime
         import os
 
-        # If Square billing is disabled, never re-activate anyone from Square data
+        # If Square billing is disabled, cancel all active Square subscriptions so Square
+        # stops independently retrying charges against customers.
         disabled = (get_dynamic_setting("DISABLE_SQUARE_BILLING") or "").lower() in ("1", "true", "yes", "on")
         if disabled:
-            print("[SQUARE SYNC] Square billing is DISABLED — sync skipped entirely (no re-activations possible)")
+            print("[SQUARE SYNC] Square billing is DISABLED — canceling all active Square subscriptions to stop recurring charges")
+            try:
+                _client = get_square_client()
+                _loc = os.environ.get("SQUARE_LOCATION_ID")
+                if _client and _loc:
+                    _result = _client.subscriptions.search(
+                        query={"filter": {"location_ids": [_loc]}}
+                    )
+                    _all_subs = (_result.subscriptions or []) if _result else []
+                    _billable = [s for s in _all_subs if s.status in ("ACTIVE", "PENDING")]
+                    _canceled = 0
+                    for _sub in _billable:
+                        try:
+                            _client.subscriptions.cancel(subscription_id=_sub.id)
+                            _canceled += 1
+                            print(f"[SQUARE SYNC] Canceled {_sub.status} sub {_sub.id} (customer {_sub.customer_id})")
+                        except Exception as _ce:
+                            _cerr = str(_ce).lower()
+                            if "already" not in _cerr and "cancel" not in _cerr:
+                                print(f"[SQUARE SYNC] Could not cancel {_sub.id}: {_ce}")
+                    print(f"[SQUARE SYNC] Subscriptions — canceled {_canceled} of {len(_billable)} billable")
+                    # Also void outstanding invoices so Square stops retrying failed charges.
+                    # Only fetch first page (up to 200) to avoid hanging on large accounts.
+                    try:
+                        _inv_resp = _client.invoices.list(location_id=_loc)
+                        _first_page = next(iter(_inv_resp.pages()), None)
+                        _invoices = _first_page.items if _first_page else []
+                        _voided = 0
+                        for _inv in _invoices:
+                            _inv_status = getattr(_inv, "status", "")
+                            if _inv_status in ("UNPAID", "PARTIALLY_PAID", "SCHEDULED"):
+                                try:
+                                    _client.invoices.cancel(invoice_id=_inv.id, version=_inv.version or 0)
+                                    _voided += 1
+                                    print(f"[SQUARE SYNC] Voided invoice {_inv.id} ({_inv_status})")
+                                except Exception as _ie:
+                                    print(f"[SQUARE SYNC] Could not void invoice {_inv.id}: {_ie}")
+                        if _invoices:
+                            print(f"[SQUARE SYNC] Invoices — voided {_voided} of {len(_invoices)} checked")
+                        else:
+                            print("[SQUARE SYNC] Invoices — none found on first page")
+                    except Exception as _ie2:
+                        print(f"[SQUARE SYNC] Invoice check skipped: {_ie2}")
+            except Exception as _e:
+                print(f"[SQUARE SYNC] Error canceling active subs: {_e}")
             return
 
         client = get_square_client()
