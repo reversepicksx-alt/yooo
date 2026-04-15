@@ -172,6 +172,69 @@ async def fetch_web_intel(
     return ""
 
 
+async def fetch_opponent_ppda(opponent: str, league: str = "", timeout: int = 18) -> float | None:
+    """
+    Ask Grok for the opponent team's PPDA (Passes Per Defensive Action) this season.
+
+    PPDA = passes allowed in the opponent's final 60% / defensive actions in that zone.
+    Lower PPDA = more intense pressing. Typical scale:
+      < 6    : Elite press (e.g. Bayer Leverkusen, Man City peak seasons)
+      6 – 8  : High press  (e.g. Liverpool, Arsenal)
+      8 – 11 : Moderate
+      11+    : Low press / deep block
+
+    Returns a float (PPDA value) or None if Grok can't provide a reliable estimate.
+    Only used for pass_attempts / passes props.
+    """
+    import re as _re
+    if not XAI_API_KEY or not opponent:
+        return None
+
+    prompt = (
+        f"What is {opponent}'s PPDA (Passes Per Defensive Action) this season"
+        f"{f' in the {league}' if league else ''}? "
+        f"PPDA measures pressing intensity — lower values mean more intensive pressing. "
+        f"Typical values: 5-8 for high-pressing teams (e.g. Man City, Liverpool, Arsenal), "
+        f"8-12 for average teams, 12+ for low-pressing/deep-block sides. "
+        f"Reply with ONLY a single decimal number (e.g. '7.8' or '11.2'). "
+        f"If you are not confident in a specific value, reply with exactly 'unknown'."
+    )
+
+    headers = {"Authorization": f"Bearer {XAI_API_KEY}", "Content-Type": "application/json"}
+    for model in [GROK_REASONING_MODEL, GROK_MODEL]:
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=8)) as client:
+                resp = await client.post(
+                    GROK_URL, headers=headers,
+                    json={
+                        "model": model,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": 0,
+                        "max_tokens": 15,
+                    }
+                )
+                if resp.status_code == 200:
+                    text = resp.json()["choices"][0]["message"]["content"].strip()
+                    if "unknown" in text.lower():
+                        print(f"[PPDA] Grok has no PPDA for {opponent}: '{text}'")
+                        return None
+                    m = _re.search(r'\b(\d{1,2}(?:\.\d{1,2})?)\b', text)
+                    if m:
+                        val = float(m.group(1))
+                        if 3.0 <= val <= 30.0:
+                            print(f"[PPDA] Grok PPDA {opponent} ({league}): {val}")
+                            return val
+                    print(f"[PPDA] Grok unparseable PPDA response: '{text}'")
+                    return None
+                else:
+                    print(f"[PPDA] Grok error {resp.status_code} ({model})")
+        except asyncio.TimeoutError:
+            print(f"[PPDA] Grok PPDA timeout ({model})")
+        except Exception as e:
+            print(f"[PPDA] Grok PPDA exception: {e}")
+    return None
+
+
 def _parse_json(raw: str) -> dict | list | None:
     """Parse JSON from Grok response, stripping markdown wrappers."""
     raw = raw.strip()
