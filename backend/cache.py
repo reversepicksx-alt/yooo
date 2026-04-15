@@ -632,7 +632,7 @@ async def get_league_by_name(league_name: str) -> dict:
 #  4. PLAYER SEASON STATS (full stats per player)
 # ══════════════════════════════════════════════
 
-async def sync_player_season_stats_for_team(team_id: int, season: int = None) -> int:
+async def sync_player_season_stats_for_team(team_id: int, season: int = None, league_id: int = 0) -> int:
     """
     Fetch full player stats for every player in a team for a given season.
     Uses /players?team={id}&season={year} which returns ALL players + stats in one call
@@ -657,6 +657,7 @@ async def sync_player_season_stats_for_team(team_id: int, season: int = None) ->
                     "playerId": pid,
                     "season": season,
                     "teamId": team_id,
+                    "leagueId": league_id,
                     "player": player,
                     "statistics": entry.get("statistics", []),
                     "_ts": time.time(),
@@ -685,6 +686,7 @@ async def sync_player_season_stats_for_all_leagues(seasons: list = None) -> int:
     await db[COL_PLAYER_STATS].create_index("playerId")
     await db[COL_PLAYER_STATS].create_index("season")
     await db[COL_PLAYER_STATS].create_index("teamId")
+    await db[COL_PLAYER_STATS].create_index("leagueId")
 
     # Check if we synced recently (skip if fresh)
     meta = await _get_meta("player_stats_sync")
@@ -694,20 +696,21 @@ async def sync_player_season_stats_for_all_leagues(seasons: list = None) -> int:
 
     seasons = seasons or [CURRENT_SEASON, CURRENT_SEASON - 1]
     total = 0
-    # Collect all unique team IDs across supported leagues
-    team_ids = set()
-    async for doc in db[COL_TEAMS].find({}, {"teamId": 1}):
-        if doc.get("teamId"):
-            team_ids.add(doc["teamId"])
+    # Collect all unique team IDs across supported leagues, with their leagueId
+    team_league_map: dict[int, int] = {}  # teamId → leagueId
+    async for doc in db[COL_TEAMS].find({}, {"teamId": 1, "leagueId": 1}):
+        tid = doc.get("teamId")
+        if tid:
+            team_league_map[tid] = doc.get("leagueId", 0)
 
-    print(f"[CACHE] Player stats: syncing {len(team_ids)} teams × {len(seasons)} seasons")
+    print(f"[CACHE] Player stats: syncing {len(team_league_map)} teams × {len(seasons)} seasons")
     for season in seasons:
-        for team_id in team_ids:
-            count = await sync_player_season_stats_for_team(team_id, season)
+        for team_id, league_id in team_league_map.items():
+            count = await sync_player_season_stats_for_team(team_id, season, league_id)
             total += count
             await aio.sleep(0.3)  # ~3 req/s — stay well under rate limits
 
-    await _set_meta("player_stats_sync", {"players": total, "teams": len(team_ids)})
+    await _set_meta("player_stats_sync", {"players": total, "teams": len(team_league_map)})
     print(f"[CACHE] Player stats sync complete: {total} player-season records")
     return total
 
@@ -933,17 +936,69 @@ async def deep_stats_sync():
           f"{player_records} player-season records, {team_records} team-stat records")
 
 
+async def _sync_missing_leagues() -> list[int]:
+    """
+    Detect any SUPPORTED_LEAGUES that have zero entries in cache_teams.
+    For each missing league, sync its teams + squads immediately so the
+    rest of the pipeline (fixture history, season stats) picks them up.
+    Returns list of newly-synced league IDs.
+    """
+    existing_leagues: set[int] = set()
+    async for doc in db[COL_TEAMS].find({}, {"leagueId": 1}):
+        lid = doc.get("leagueId")
+        if lid:
+            existing_leagues.add(lid)
+
+    missing = [lg for lg in SUPPORTED_LEAGUES if lg["id"] not in existing_leagues]
+    if not missing:
+        return []
+
+    print(f"[CACHE] Detected {len(missing)} leagues not yet in cache_teams: "
+          f"{[lg['name'] for lg in missing]} — syncing now...")
+
+    synced_ids = []
+    for lg in missing:
+        lid = lg["id"]
+        count = await sync_teams_for_league(lid)
+        print(f"[CACHE] New league sync: {lg['name']} → {count} teams")
+        await aio.sleep(0.4)
+
+        # Also sync squads for these new teams so cache_players has them
+        async for team in db[COL_TEAMS].find({"leagueId": lid}, {"teamId": 1, "name": 1}):
+            await sync_squad(team["teamId"], team.get("name", ""), lid)
+            await aio.sleep(0.3)
+
+        synced_ids.append(lid)
+
+    if synced_ids:
+        # Invalidate player_stats_sync and team_fixtures_sync TTLs so the
+        # next deep_stats_sync actually downloads data for the new leagues.
+        await db[COL_META].update_many(
+            {"_key": {"$in": ["player_stats_sync", "team_fixtures_sync", "team_stats_sync"]}},
+            {"$unset": {"_ts": ""}}
+        )
+        print(f"[CACHE] TTL reset for stats syncs — new leagues will be included next run")
+
+    return synced_ids
+
+
 async def seed_cache():
     """Non-blocking startup seed — checks if data exists, syncs if needed."""
     try:
         players_count = await db[COL_PLAYERS].count_documents({})
         if players_count > 100:
             status = await get_cache_status()
-            print(f"[CACHE] Data loaded: {status['leagues']} leagues, {status['teams']} teams, {status['players']} players, {status['nationalTeams']} national")
-            # Still kick off deep stats in background if not yet downloaded
+            print(f"[CACHE] Data loaded: {status['leagues']} leagues, {status['teams']} teams, "
+                  f"{status['players']} players, {status['nationalTeams']} national")
+
+            # Detect newly added leagues that are not yet in cache_teams
+            new_leagues = await _sync_missing_leagues()
+
+            # Kick off deep stats in background if not yet downloaded OR new leagues added
             ps_count = await db[COL_PLAYER_STATS].count_documents({})
-            if ps_count < 100:
-                print("[CACHE] Player stats not yet seeded — scheduling deep sync")
+            if ps_count < 100 or new_leagues:
+                reason = "not yet seeded" if ps_count < 100 else f"new leagues {new_leagues}"
+                print(f"[CACHE] Scheduling deep stats sync ({reason})")
                 aio.ensure_future(deep_stats_sync())
             return
 
