@@ -10,7 +10,7 @@ from datetime import datetime, timezone, timedelta
 from config import db, XAI_API_KEY
 
 GROK_MODEL = "grok-4-1-fast-non-reasoning"
-GROK_REASONING_MODEL = "grok-3-mini"
+GROK_REASONING_MODEL = "grok-4-1-fast-non-reasoning"
 GROK_SEARCH_MODEL = "grok-3"       # Grok 3 supports live web search
 GROK_URL = "https://api.x.ai/v1/chat/completions"
 
