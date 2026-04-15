@@ -436,7 +436,7 @@ Produce a brief with EXACTLY these sections (keep each to 1-2 sentences max):
 
 Be direct. No hedging. Use numbers, not words like "good" or "bad"."""
 
-    result = await _grok_call(prompt, temperature=0, max_tokens=600, timeout=20, reasoning=True)
+    result = await _grok_call(prompt, temperature=0, max_tokens=500, timeout=12, reasoning=False)
     return result if result else raw_data  # Fallback to raw data if Grok fails
 
 
