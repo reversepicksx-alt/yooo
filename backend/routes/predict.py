@@ -373,8 +373,8 @@ async def predict(req: PredictionRequest):
                     cache_key = f"fxt_{fid}_{team_id}"
                     cached = await db.fixture_player_cache.find_one({"_k": cache_key}, {"_id": 0, "d": 1})
 
-                    # Full cache hit — has tackles data already
-                    if cached and cached.get("d") and "tackles_total" in cached["d"]:
+                    # Full cache hit — has all four PPDA denominator components cached
+                    if cached and cached.get("d") and "fouls_committed_agg" in cached["d"]:
                         r = cached["d"]
                         r["date"] = fix.get("date", "")[:10]
                         r["opponent"] = fix.get("opponent", "")
@@ -421,24 +421,35 @@ async def predict(req: PredictionRequest):
                         player_data = await api_football_request(
                             "fixtures/players", {"fixture": fid, "team": team_id}
                         )
-                        tkl_total = 0
-                        tkl_int = 0
+                        tkl_total  = 0
+                        tkl_int    = 0
+                        tkl_blocks = 0
+                        fls_committed = 0
                         got_tkl = False
                         if player_data:
                             for team_block in player_data:
                                 if team_block.get("team", {}).get("id") == team_id:
                                     for p in team_block.get("players", []):
-                                        st = (p.get("statistics") or [{}])[0]
+                                        st  = (p.get("statistics") or [{}])[0]
                                         tkl = st.get("tackles") or {}
-                                        tkl_total += (tkl.get("total") or 0)
-                                        tkl_int   += (tkl.get("interceptions") or 0)
+                                        fls = st.get("fouls")   or {}
+                                        tkl_total     += (tkl.get("total")          or 0)
+                                        tkl_int       += (tkl.get("interceptions")  or 0)
+                                        tkl_blocks    += (tkl.get("blocks")         or 0)
+                                        fls_committed += (fls.get("committed")      or 0)
                                     got_tkl = True
                                     break
-                        result["tackles_total"]         = tkl_total if got_tkl else None
-                        result["tackles_interceptions"] = tkl_int   if got_tkl else None
+                        # All four components of the PPDA denominator
+                        # (tackles + interceptions + fouls + blocks — full-pitch approximation)
+                        result["tackles_total"]         = tkl_total     if got_tkl else None
+                        result["tackles_interceptions"] = tkl_int       if got_tkl else None
+                        result["tackles_blocks"]        = tkl_blocks    if got_tkl else None
+                        result["fouls_committed_agg"]   = fls_committed if got_tkl else None
                     except Exception:
                         result["tackles_total"]         = None
                         result["tackles_interceptions"] = None
+                        result["tackles_blocks"]        = None
+                        result["fouls_committed_agg"]   = None
 
                     # Cache the enriched result
                     await db.fixture_player_cache.update_one(
