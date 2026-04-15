@@ -963,8 +963,18 @@ async def _sync_missing_leagues() -> list[int]:
         print(f"[CACHE] New league sync: {lg['name']} → {count} teams")
         await aio.sleep(0.4)
 
+        if count == 0:
+            # League has no active club teams (e.g. World Cup qualifiers, tournaments).
+            # Store a placeholder so we don't re-check it on every restart.
+            await db[COL_TEAMS].update_one(
+                {"leagueId": lid, "_placeholder": True},
+                {"$set": {"leagueId": lid, "_placeholder": True, "teamId": None}},
+                upsert=True
+            )
+            continue
+
         # Also sync squads for these new teams so cache_players has them
-        async for team in db[COL_TEAMS].find({"leagueId": lid}, {"teamId": 1, "name": 1}):
+        async for team in db[COL_TEAMS].find({"leagueId": lid, "_placeholder": {"$ne": True}}, {"teamId": 1, "name": 1}):
             await sync_squad(team["teamId"], team.get("name", ""), lid)
             await aio.sleep(0.3)
 
