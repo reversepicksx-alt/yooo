@@ -61,7 +61,7 @@ async def save_pick(req: SavePickRequest):
         "propType": normalized_prop,
         "line": pick.get("line", 0),
         "recommendation": (pick.get("recommendation") or "over").lower(),
-        "projectedValue": pick.get("projectedValue", 0),
+        "projectedValue": pick.get("projectedValue") or pick.get("projection") or 0,
         "confidenceScore": pick.get("confidenceScore", 50),
         "confidenceLevel": pick.get("confidenceLevel", "Medium"),
         "confidenceInterval": pick.get("confidenceInterval", []),

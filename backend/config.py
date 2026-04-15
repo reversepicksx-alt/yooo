@@ -99,7 +99,22 @@ LIFETIME_SUB_EMAILS = [e.lower() for e in LIFETIME_SUB_EMAILS]
 
 # ── Complimentary Access (email → ISO expiry date, auto-expires) ──
 COMPLIMENTARY_MEMBERS = {
-    "xaviersteverson@gmail.com": "2026-07-13",  # 3 months from 2026-04-13
+    "xaviersteverson@gmail.com":       "2026-07-13",  # 3 months comp
+    # Square members — access through their paid charged_through_date
+    "veinzice@gmail.com":              "2026-04-16",
+    "rayhanekobeni@gmail.com":         "2026-05-01",
+    "jeffreyabega@gmail.com":          "2026-04-16",
+    "ryan086b@gmail.com":              "2026-05-01",
+    "trillstunna0@gmail.com":          "2026-04-16",
+    "luismartinez.lm878@gmail.com":    "2026-05-03",
+    "babyscar100@icloud.com":          "2026-05-04",
+    "luismendoxa27@gmail.com":         "2026-05-04",
+    "alvarezraul285@gmail.com":        "2026-04-16",
+    "jimmy.062910@gmail.com":          "2026-05-08",
+    "thundafan0@gmail.com":            "2026-04-16",
+    "mathieujulens@gmail.com":         "2026-07-09",
+    "josequinteros8201@gmail.com":     "2026-04-17",
+    "exoticveinz7985@gmail.com":       "2026-04-17",
 }
 
 # ── Supported Leagues ──
