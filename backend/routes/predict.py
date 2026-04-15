@@ -2673,6 +2673,8 @@ Analyze ALL data thoroughly. Return JSON only."""
                 hi = round(float(ci[1]), 1)
                 prediction["confidenceInterval"] = [lo, hi] if hi > lo else None
             for s in prediction.get("recentSamples", []):
+                if not isinstance(s, dict):
+                    continue
                 v = s.get("value")
                 if v is not None:
                     s["value"] = int(round(v))
