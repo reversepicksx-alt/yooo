@@ -214,6 +214,7 @@ export interface PredictionResult {
   sampleSize?: number;
   hitRates?: { overHits: number; underHits: number; overPct: number; underPct: number; total: number };
   h2hPlayerStats?: { matches: H2HMatch[]; avgVsOpponent?: number; sampleSize: number; targetProp?: string };
+  positionComparison?: { positionShort?: string; opponent?: string; venue?: string; avgStatValue?: number; sampleSize?: number; players?: Record<string, unknown>[] };
   expectedPossession?: { home: number; away: number };
   possessionMultiplier?: number;
   possessionTeamAvg?: number;
@@ -320,6 +321,7 @@ interface RawPrediction {
     expectedGameType?: string;
     keyMatchupFactor?: string;
   };
+  positionComparison?: Record<string, unknown>;
   sharpSummary?: string;
   keyEvidence?: string;
   gameFlowDynamics?: string;
@@ -451,6 +453,7 @@ export async function predict(request: Record<string, unknown>): Promise<Predict
     keyMatchupFactor: raw.matchupOverview?.keyMatchupFactor ?? undefined,
     homeTeam: raw.matchupOverview?.homeTeam ?? undefined,
     awayTeam: raw.matchupOverview?.awayTeam ?? undefined,
+    positionComparison: raw.positionComparison ?? undefined,
     teamId: raw._request?.teamId || (request.teamId as number) || undefined,
     opponentId: raw._request?.opponentId || (request.opponentId as number) || undefined,
     leagueId: raw._request?.leagueId || (request.leagueId as number) || undefined,

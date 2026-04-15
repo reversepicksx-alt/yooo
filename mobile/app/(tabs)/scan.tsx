@@ -1003,6 +1003,35 @@ export default function ScanScreen() {
               </View>
             )}
 
+            {/* ─── POSITION COMPARISON (PROOF) ─── */}
+            {prediction.positionComparison && prediction.positionComparison.players && prediction.positionComparison.players.length > 0 && (() => {
+              const pc = prediction.positionComparison;
+              return (
+                <View style={styles.pcCard}>
+                  <View style={styles.pcHeader}>
+                    <View style={styles.pcTitleRow}>
+                      <Ionicons name="people-outline" size={13} color={Colors.primary} />
+                      <Text style={styles.pcTitle}>OPPONENT PROFILE — WHO WAS SAMPLED</Text>
+                    </View>
+                    <Text style={styles.pcSub}>{pc.positionShort}s vs {pc.opponent} ({(pc.venue || '').toUpperCase()}) · avg {pc.avgStatValue}</Text>
+                  </View>
+                  {pc.players.slice(0, 7).map((p: Record<string, unknown>, i: number) => {
+                    const val = p.statValue as number;
+                    const over = prediction.line != null && val >= (prediction.line as number);
+                    return (
+                      <View key={i} style={[styles.pcRow, i > 0 && styles.pcRowBorder]}>
+                        <View style={styles.pcLeft}>
+                          <Text style={styles.pcPlayerName} numberOfLines={1}>{p.name as string}</Text>
+                          <Text style={styles.pcMeta} numberOfLines={1}>{p.team as string} · {(p.date as string)?.slice(0, 10) ?? '—'} · {p.minutes as number}'</Text>
+                        </View>
+                        <Text style={[styles.pcVal, { color: over ? Colors.success : Colors.error }]}>{val}</Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              );
+            })()}
+
             {saveError && (
               <View style={styles.inlineError}>
                 <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />
@@ -1285,7 +1314,7 @@ const styles = StyleSheet.create({
     alignItems: 'center', borderWidth: 1, borderColor: Colors.borderSubtle,
   },
   mlPillTeam: { fontSize: 9, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 0.8, marginBottom: 2 },
-  mlPillOdds: { fontSize: 15, color: Colors.textPrimary, fontWeight: '800', fontVariant: ['tabular-nums'] as any },
+  mlPillOdds: { fontSize: 15, color: Colors.text, fontWeight: '800', fontVariant: ['tabular-nums'] as any },
   gameTypeWrap: { marginTop: 2, gap: 2 },
   gameTypeLabel: { fontSize: 10, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 1.2 },
   gameTypeValue: { fontSize: 14, color: Colors.primary, fontWeight: '800', letterSpacing: 0.5 },
@@ -1455,6 +1484,22 @@ const styles = StyleSheet.create({
   saveBtnText: { color: '#000', fontWeight: '800', fontSize: 16 },
   newBtn: { alignItems: 'center', paddingVertical: 14 },
   newBtnText: { color: Colors.textSecondary, fontSize: 14, fontWeight: '600' },
+
+  /* Position Comparison (Proof) */
+  pcCard: {
+    backgroundColor: Colors.card, borderRadius: Colors.radiusLg,
+    borderWidth: 1, borderColor: Colors.borderSubtle, overflow: 'hidden', marginTop: 12,
+  },
+  pcHeader: { padding: 14, gap: 4, borderBottomWidth: 1, borderBottomColor: Colors.borderSubtle },
+  pcTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  pcTitle: { fontSize: 10, fontWeight: '800', color: Colors.primary, letterSpacing: 1.2 },
+  pcSub: { fontSize: 11, color: Colors.textSecondary },
+  pcRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14, paddingVertical: 10 },
+  pcRowBorder: { borderTopWidth: 1, borderTopColor: Colors.borderSubtle },
+  pcLeft: { flex: 1, marginRight: 12 },
+  pcPlayerName: { fontSize: 13, fontWeight: '600', color: Colors.text },
+  pcMeta: { fontSize: 10, color: Colors.textTertiary, marginTop: 1 },
+  pcVal: { fontSize: 16, fontWeight: '800' },
 
   /* Saved state */
   savedState: { alignItems: 'center', paddingTop: 30, gap: 14 },

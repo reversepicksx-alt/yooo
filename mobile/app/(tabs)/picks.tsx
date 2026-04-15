@@ -40,7 +40,7 @@ function pickPush(p: Pick) {
   return p.result === 'push';
 }
 
-function PickCard({ pick, onDelete, onPress }: { pick: Pick; onDelete: () => void; onPress?: () => void }) {
+function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
   const won = pickWon(pick);
   const lost = pickLost(pick);
   const live = isLive(pick);
@@ -88,7 +88,7 @@ function PickCard({ pick, onDelete, onPress }: { pick: Pick; onDelete: () => voi
     : Colors.textSecondary;
   const paceColor = trackValue != null ? Colors.primary : Colors.textSecondary;
 
-  const cardContent = (
+  return (
     <View style={[styles.card, won && styles.cardWon, lost && styles.cardLost]}>
       {/* Top row */}
       <View style={styles.cardTopRow}>
@@ -206,7 +206,7 @@ function PickCard({ pick, onDelete, onPress }: { pick: Pick; onDelete: () => voi
       <TouchableOpacity style={styles.trashBtn} onPress={onDelete} hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }} activeOpacity={0.5}>
         <Ionicons name="trash-outline" size={14} color="rgba(255,255,255,0.35)" />
       </TouchableOpacity>
-      {live && !won && !lost && onPress && (
+      {live && !won && !lost && (
         <View style={styles.tapHint}>
           <Ionicons name="analytics-outline" size={10} color={Colors.primary} />
           <Text style={styles.tapHintText}>Tap for analysis</Text>
@@ -214,15 +214,6 @@ function PickCard({ pick, onDelete, onPress }: { pick: Pick; onDelete: () => voi
       )}
     </View>
   );
-
-  if (live && !won && !lost && onPress) {
-    return (
-      <TouchableOpacity onPress={() => { Haptics.selectionAsync(); onPress(); }} activeOpacity={0.85}>
-        {cardContent}
-      </TouchableOpacity>
-    );
-  }
-  return cardContent;
 }
 
 function RecordBar({ picks }: { picks: Pick[] }) {
@@ -481,7 +472,23 @@ export default function PicksScreen() {
         <FlatList
           data={displayed}
           keyExtractor={(item, i) => item.pickId || item._id || item.id || String(i)}
-          renderItem={({ item }) => <PickCard pick={item} onDelete={() => handleDelete(item)} onPress={() => handlePickPress(item)} />}
+          renderItem={({ item }) => {
+            const tappable = isLive(item) && !pickWon(item) && !pickLost(item);
+            if (tappable) {
+              return (
+                <Pressable
+                  onPress={() => {
+                    try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+                    handlePickPress(item);
+                  }}
+                  style={({ pressed }) => [{ opacity: pressed ? 0.88 : 1 }]}
+                >
+                  <PickCard pick={item} onDelete={() => handleDelete(item)} />
+                </Pressable>
+              );
+            }
+            return <PickCard pick={item} onDelete={() => handleDelete(item)} />;
+          }}
           contentContainerStyle={styles.list}
           refreshControl={
             <RefreshControl
