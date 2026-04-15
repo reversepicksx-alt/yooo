@@ -93,6 +93,10 @@ async def seed_grants():
     asyncio.create_task(auto_settlement_loop())
     asyncio.create_task(auto_scout_loop())
     asyncio.create_task(pattern_mining_loop())
+    # Bulk player-stats prefetch — caches all players from recent fixtures so
+    # predictions never hit "no data". Runs on startup then every 24h.
+    from data_prefetch import data_prefetch_loop
+    asyncio.create_task(data_prefetch_loop())
 
 
 async def _auto_backfill_positions():
