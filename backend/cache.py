@@ -10,16 +10,21 @@ from datetime import datetime, timezone
 from config import db, SUPPORTED_LEAGUES, CURRENT_SEASON
 from utils import api_football_request
 
-CACHE_TTL_SECONDS = 7 * 24 * 3600  # 7 days for general data
-SQUAD_TTL_SECONDS = 3 * 24 * 3600  # 3 days for squads (catches transfers faster)
+CACHE_TTL_SECONDS    = 7 * 24 * 3600   # 7 days for general data
+SQUAD_TTL_SECONDS    = 3 * 24 * 3600   # 3 days for squads (catches transfers faster)
+STATS_TTL_SECONDS    = 7 * 24 * 3600   # 7 days for season stats
+FIXTURE_TTL_SECONDS  = 24 * 3600       # 1 day for fixture history
 
 # ── Collections ──
-COL_LEAGUES = "cache_leagues"       # All leagues from API
-COL_TEAMS = "cache_teams"           # All teams, indexed by league
-COL_PLAYERS = "cache_players"       # All players, indexed by team
-COL_NATIONAL = "cache_national"     # National team lookup
-COL_TRANSFERS = "cache_transfers"   # Detected transfers
-COL_META = "cache_meta"             # Timestamps, status
+COL_LEAGUES         = "cache_leagues"       # All leagues from API
+COL_TEAMS           = "cache_teams"         # All teams, indexed by league
+COL_PLAYERS         = "cache_players"       # All players, indexed by team
+COL_NATIONAL        = "cache_national"      # National team lookup
+COL_TRANSFERS       = "cache_transfers"     # Detected transfers
+COL_META            = "cache_meta"          # Timestamps, status
+COL_PLAYER_STATS    = "player_season_stats" # Full season stats per player
+COL_TEAM_STATS      = "team_season_stats"   # Team season stats per team×league
+COL_TEAM_FIXTURES   = "team_fixture_history" # Recent fixture list per team
 
 
 # ══════════════════════════════════════════════
@@ -624,6 +629,219 @@ async def get_league_by_name(league_name: str) -> dict:
 
 
 # ══════════════════════════════════════════════
+#  4. PLAYER SEASON STATS (full stats per player)
+# ══════════════════════════════════════════════
+
+async def sync_player_season_stats_for_team(team_id: int, season: int = None) -> int:
+    """
+    Fetch full player stats for every player in a team for a given season.
+    Uses /players?team={id}&season={year} which returns ALL players + stats in one call
+    (paginated). Stores in player_season_stats collection.
+    """
+    season = season or CURRENT_SEASON
+    stored = 0
+    try:
+        page = 1
+        while True:
+            data = await api_football_request("players", {"team": team_id, "season": season, "page": page})
+            if not data:
+                break
+            ops = []
+            for entry in data:
+                player = entry.get("player", {})
+                pid = player.get("id")
+                if not pid:
+                    continue
+                doc = {
+                    "_id_key": f"{pid}_{season}",
+                    "playerId": pid,
+                    "season": season,
+                    "teamId": team_id,
+                    "player": player,
+                    "statistics": entry.get("statistics", []),
+                    "_ts": time.time(),
+                }
+                ops.append(db[COL_PLAYER_STATS].update_one(
+                    {"_id_key": doc["_id_key"]},
+                    {"$set": doc},
+                    upsert=True
+                ))
+                stored += 1
+            if ops:
+                await aio.gather(*ops, return_exceptions=True)
+            # API-Football paginates at 20 per page; stop when we get fewer
+            if len(data) < 20:
+                break
+            page += 1
+            await aio.sleep(0.2)
+    except Exception as e:
+        print(f"[CACHE] Player stats error for team {team_id} season {season}: {e}")
+    return stored
+
+
+async def sync_player_season_stats_for_all_leagues(seasons: list = None) -> int:
+    """Download season stats for every player in every supported league."""
+    await db[COL_PLAYER_STATS].create_index("_id_key", unique=True)
+    await db[COL_PLAYER_STATS].create_index("playerId")
+    await db[COL_PLAYER_STATS].create_index("season")
+    await db[COL_PLAYER_STATS].create_index("teamId")
+
+    # Check if we synced recently (skip if fresh)
+    meta = await _get_meta("player_stats_sync")
+    if meta and (time.time() - meta.get("_ts", 0)) < STATS_TTL_SECONDS:
+        print(f"[CACHE] Player stats fresh (synced {meta.get('_updated', '?')}). Skipping.")
+        return 0
+
+    seasons = seasons or [CURRENT_SEASON, CURRENT_SEASON - 1]
+    total = 0
+    # Collect all unique team IDs across supported leagues
+    team_ids = set()
+    async for doc in db[COL_TEAMS].find({}, {"teamId": 1}):
+        if doc.get("teamId"):
+            team_ids.add(doc["teamId"])
+
+    print(f"[CACHE] Player stats: syncing {len(team_ids)} teams × {len(seasons)} seasons")
+    for season in seasons:
+        for team_id in team_ids:
+            count = await sync_player_season_stats_for_team(team_id, season)
+            total += count
+            await aio.sleep(0.3)  # ~3 req/s — stay well under rate limits
+
+    await _set_meta("player_stats_sync", {"players": total, "teams": len(team_ids)})
+    print(f"[CACHE] Player stats sync complete: {total} player-season records")
+    return total
+
+
+async def get_cached_player_season_stats(player_id: int, seasons: list = None):
+    """Read player season stats from local DB. Returns list of API-style entries."""
+    seasons = seasons or [CURRENT_SEASON + 1, CURRENT_SEASON, CURRENT_SEASON - 1, CURRENT_SEASON - 2]
+    results = []
+    async for doc in db[COL_PLAYER_STATS].find(
+        {"playerId": player_id, "season": {"$in": seasons}},
+        {"_id": 0}
+    ):
+        results.append({"player": doc.get("player", {}), "statistics": doc.get("statistics", [])})
+    return results
+
+
+# ══════════════════════════════════════════════
+#  5. TEAM SEASON STATS
+# ══════════════════════════════════════════════
+
+async def sync_team_season_stats_for_all_leagues(seasons: list = None) -> int:
+    """Download /teams/statistics for every team×league×season combination."""
+    await db[COL_TEAM_STATS].create_index(
+        [("teamId", 1), ("leagueId", 1), ("season", 1)], unique=True
+    )
+
+    meta = await _get_meta("team_stats_sync")
+    if meta and (time.time() - meta.get("_ts", 0)) < STATS_TTL_SECONDS:
+        print(f"[CACHE] Team stats fresh. Skipping.")
+        return 0
+
+    seasons = seasons or [CURRENT_SEASON + 1, CURRENT_SEASON, CURRENT_SEASON - 1]
+    total = 0
+    for league in SUPPORTED_LEAGUES:
+        lid = league["id"]
+        team_ids = []
+        async for doc in db[COL_TEAMS].find({"leagueId": lid}, {"teamId": 1}):
+            if doc.get("teamId"):
+                team_ids.append(doc["teamId"])
+
+        for team_id in team_ids:
+            for season in seasons:
+                try:
+                    data = await api_football_request("teams/statistics", {
+                        "team": team_id, "league": lid, "season": season
+                    })
+                    if data:
+                        doc = {
+                            "teamId": team_id,
+                            "leagueId": lid,
+                            "season": season,
+                            "data": data,
+                            "_ts": time.time(),
+                        }
+                        await db[COL_TEAM_STATS].update_one(
+                            {"teamId": team_id, "leagueId": lid, "season": season},
+                            {"$set": doc},
+                            upsert=True
+                        )
+                        total += 1
+                    await aio.sleep(0.2)
+                except Exception as e:
+                    print(f"[CACHE] Team stats error {team_id}/{lid}/{season}: {e}")
+                    continue
+
+    await _set_meta("team_stats_sync", {"records": total})
+    print(f"[CACHE] Team stats sync complete: {total} records")
+    return total
+
+
+async def get_cached_team_season_stats(team_id: int, league_id: int, seasons: list = None):
+    """Read team season stats from local DB."""
+    seasons = seasons or [CURRENT_SEASON + 1, CURRENT_SEASON, CURRENT_SEASON - 1]
+    async for doc in db[COL_TEAM_STATS].find(
+        {"teamId": team_id, "leagueId": league_id, "season": {"$in": seasons}},
+        {"_id": 0, "data": 1}
+    ):
+        if doc.get("data"):
+            return doc["data"]
+    return None
+
+
+# ══════════════════════════════════════════════
+#  6. TEAM FIXTURE HISTORY
+# ══════════════════════════════════════════════
+
+async def sync_team_fixture_history_for_all_leagues(count: int = 40) -> int:
+    """Download the last `count` finished fixtures for every team in supported leagues."""
+    await db[COL_TEAM_FIXTURES].create_index("teamId", unique=True)
+
+    meta = await _get_meta("team_fixtures_sync")
+    if meta and (time.time() - meta.get("_ts", 0)) < FIXTURE_TTL_SECONDS:
+        print(f"[CACHE] Team fixture history fresh. Skipping.")
+        return 0
+
+    total = 0
+    team_ids = set()
+    async for doc in db[COL_TEAMS].find({}, {"teamId": 1}):
+        if doc.get("teamId"):
+            team_ids.add(doc["teamId"])
+
+    print(f"[CACHE] Fixture history: syncing last {count} fixtures for {len(team_ids)} teams")
+    for team_id in team_ids:
+        try:
+            data = await api_football_request("fixtures", {"team": team_id, "last": count, "status": "FT"})
+            if data:
+                await db[COL_TEAM_FIXTURES].update_one(
+                    {"teamId": team_id},
+                    {"$set": {"teamId": team_id, "fixtures": data, "_ts": time.time()}},
+                    upsert=True
+                )
+                total += 1
+            await aio.sleep(0.3)
+        except Exception as e:
+            print(f"[CACHE] Fixture history error for team {team_id}: {e}")
+            continue
+
+    await _set_meta("team_fixtures_sync", {"teams": total})
+    print(f"[CACHE] Fixture history sync complete: {total} teams")
+    return total
+
+
+async def get_cached_team_fixtures(team_id: int) -> list:
+    """Read recent fixture history for a team from local DB."""
+    doc = await db[COL_TEAM_FIXTURES].find_one({"teamId": team_id}, {"_id": 0, "fixtures": 1, "_ts": 1})
+    if not doc or not doc.get("fixtures"):
+        return []
+    # Refresh if older than TTL (return stale while noting staleness)
+    if time.time() - doc.get("_ts", 0) > FIXTURE_TTL_SECONDS * 2:
+        return []
+    return doc["fixtures"]
+
+
+# ══════════════════════════════════════════════
 #  CACHE STATUS
 # ══════════════════════════════════════════════
 
@@ -634,6 +852,9 @@ async def get_cache_status() -> dict:
     players_count = await db[COL_PLAYERS].count_documents({})
     national_count = await db[COL_NATIONAL].count_documents({})
     transfers_count = await db[COL_TRANSFERS].count_documents({})
+    player_stats_count = await db[COL_PLAYER_STATS].count_documents({})
+    team_stats_count = await db[COL_TEAM_STATS].count_documents({})
+    fixture_history_count = await db[COL_TEAM_FIXTURES].count_documents({})
 
     meta = {}
     async for doc in db[COL_META].find({}, {"_id": 0}):
@@ -645,6 +866,9 @@ async def get_cache_status() -> dict:
         "players": players_count,
         "nationalTeams": national_count,
         "transfersDetected": transfers_count,
+        "playerSeasonStats": player_stats_count,
+        "teamSeasonStats": team_stats_count,
+        "teamFixtureHistory": fixture_history_count,
         "lastSync": meta,
     }
 
@@ -674,7 +898,7 @@ async def full_sync(force: bool = False):
     # 3. National teams
     national_count = await sync_national_teams()
 
-    # 4. Squads (all players)
+    # 4. Squads (all players — basic name/position/team)
     player_count = await sync_all_squads()
 
     elapsed = round(time.time() - start, 1)
@@ -686,6 +910,29 @@ async def full_sync(force: bool = False):
     print(f"[CACHE] Full sync complete in {elapsed}s: {league_count} leagues, {team_count} teams, {player_count} players, {national_count} national entries")
 
 
+async def deep_stats_sync():
+    """
+    Downloads the heavy stat collections: player season stats, team season stats,
+    and team fixture history. These are queried by predictions instead of
+    calling the API live. Runs separately from full_sync to avoid blocking it.
+    """
+    print("[CACHE] Starting deep stats sync (player stats, team stats, fixture history)...")
+    start = time.time()
+
+    # Team fixture history — refresh daily (quick, needed for Bayesian engine)
+    fixture_teams = await sync_team_fixture_history_for_all_leagues(count=40)
+
+    # Player season stats — refresh weekly (heavier, many paginated calls)
+    player_records = await sync_player_season_stats_for_all_leagues()
+
+    # Team season stats — refresh weekly
+    team_records = await sync_team_season_stats_for_all_leagues()
+
+    elapsed = round(time.time() - start, 1)
+    print(f"[CACHE] Deep stats sync done in {elapsed}s — {fixture_teams} teams' fixtures, "
+          f"{player_records} player-season records, {team_records} team-stat records")
+
+
 async def seed_cache():
     """Non-blocking startup seed — checks if data exists, syncs if needed."""
     try:
@@ -693,9 +940,16 @@ async def seed_cache():
         if players_count > 100:
             status = await get_cache_status()
             print(f"[CACHE] Data loaded: {status['leagues']} leagues, {status['teams']} teams, {status['players']} players, {status['nationalTeams']} national")
+            # Still kick off deep stats in background if not yet downloaded
+            ps_count = await db[COL_PLAYER_STATS].count_documents({})
+            if ps_count < 100:
+                print("[CACHE] Player stats not yet seeded — scheduling deep sync")
+                aio.ensure_future(deep_stats_sync())
             return
 
         await full_sync(force=True)
+        # After basic sync, kick off deep stats in background
+        aio.ensure_future(deep_stats_sync())
     except Exception as e:
         print(f"[CACHE] Seed error: {e}")
 
@@ -705,14 +959,26 @@ async def seed_cache():
 # ══════════════════════════════════════════════
 
 async def background_refresh_loop():
-    """Runs every 24 hours: refreshes squads and detects transfers."""
+    """
+    Two-speed scheduler:
+    - Every 24h: refresh team fixture history + run transfers/squad sync
+    - Every 7 days: refresh player season stats + team season stats
+    """
+    cycle = 0
     while True:
-        await aio.sleep(24 * 3600)  # Wait 24 hours
+        await aio.sleep(24 * 3600)
+        cycle += 1
         try:
-            print("[CACHE] Running scheduled refresh...")
+            print(f"[CACHE] Scheduled refresh (cycle {cycle})...")
             transfers = await detect_transfers()
             if transfers:
                 print(f"[CACHE] {len(transfers)} transfers detected!")
             await full_sync(force=True)
+            # Fixture history refreshes every day (daily cycle)
+            await sync_team_fixture_history_for_all_leagues(count=40)
+            # Player + team stats refresh every 7 days
+            if cycle % 7 == 0:
+                await sync_player_season_stats_for_all_leagues()
+                await sync_team_season_stats_for_all_leagues()
         except Exception as e:
             print(f"[CACHE] Scheduled refresh error: {e}")

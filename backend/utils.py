@@ -41,29 +41,47 @@ async def api_football_request(endpoint: str, params: dict = None):
         raise HTTPException(status_code=429, detail="API-Sports rate limit — try again in a few seconds")
 
 
+def _parse_fixtures_to_results(fixtures: list, team_id: int, count: int) -> list:
+    """Convert raw API fixture objects into the shape predict.py expects."""
+    results = []
+    for f in fixtures[:count]:
+        home_team_id = f.get("teams", {}).get("home", {}).get("id")
+        venue = "home" if home_team_id == team_id else "away"
+        home_goals = f.get("goals", {}).get("home", 0) or 0
+        away_goals = f.get("goals", {}).get("away", 0) or 0
+        opponent_name = f.get("teams", {}).get("away" if venue == "home" else "home", {}).get("name", "Unknown")
+        results.append({
+            "fixtureId": f.get("fixture", {}).get("id"),
+            "date": f.get("fixture", {}).get("date", ""),
+            "opponent": opponent_name,
+            "venue": venue,
+            "homeGoals": home_goals,
+            "awayGoals": away_goals,
+            "result": f.get("teams", {}).get("home" if venue == "home" else "away", {}).get("winner"),
+            "league": f.get("league", {}).get("name", ""),
+            "round": f.get("league", {}).get("round", ""),
+        })
+    return results
+
+
 async def get_recent_fixtures_fast(team_id: int, count: int = 20):
-    """Get recent fixtures with fixture IDs for deeper stat lookups."""
+    """
+    Get recent fixtures for a team.
+    Checks local DB first (team_fixture_history), falls back to live API.
+    """
     try:
-        fixtures = await api_football_request("fixtures", {"team": team_id, "last": count})
-        results = []
-        for f in fixtures[:count]:
-            home_team_id = f.get("teams", {}).get("home", {}).get("id")
-            venue = "home" if home_team_id == team_id else "away"
-            home_goals = f.get("goals", {}).get("home", 0) or 0
-            away_goals = f.get("goals", {}).get("away", 0) or 0
-            opponent_name = f.get("teams", {}).get("away" if venue == "home" else "home", {}).get("name", "Unknown")
-            results.append({
-                "fixtureId": f.get("fixture", {}).get("id"),
-                "date": f.get("fixture", {}).get("date", ""),
-                "opponent": opponent_name,
-                "venue": venue,
-                "homeGoals": home_goals,
-                "awayGoals": away_goals,
-                "result": f.get("teams", {}).get("home" if venue == "home" else "away", {}).get("winner"),
-                "league": f.get("league", {}).get("name", ""),
-                "round": f.get("league", {}).get("round", ""),
-            })
-        return results
+        # ── Local cache first ──────────────────────────────────────────
+        from config import db
+        doc = await db.team_fixture_history.find_one({"teamId": team_id}, {"_id": 0, "fixtures": 1, "_ts": 1})
+        if doc and doc.get("fixtures"):
+            import time as _t
+            age = _t.time() - doc.get("_ts", 0)
+            if age < 48 * 3600:  # use local if < 48h old
+                return _parse_fixtures_to_results(doc["fixtures"], team_id, count)
+
+        # ── Live API fallback ──────────────────────────────────────────
+        fixtures = await api_football_request("fixtures", {"team": team_id, "last": count, "status": "FT"})
+        return _parse_fixtures_to_results(fixtures or [], team_id, count)
     except Exception:
         return []
 

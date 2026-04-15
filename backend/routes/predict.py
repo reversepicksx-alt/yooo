@@ -48,7 +48,21 @@ async def predict(req: PredictionRequest):
                 return fallback
 
         async def get_player_data():
-            # Try to get data from multiple seasons for richer context
+            if not req.playerId:
+                return None
+            # ── Local DB first (no API call if cached) ────────────────────
+            try:
+                from cache import get_cached_player_season_stats
+                seasons_to_check = [CURRENT_SEASON + 1, CURRENT_SEASON, CURRENT_SEASON - 1, CURRENT_SEASON - 2]
+                local_records = await get_cached_player_season_stats(req.playerId, seasons_to_check)
+                if local_records:
+                    all_data = local_records[0]
+                    for rec in local_records[1:]:
+                        all_data.setdefault("statistics", []).extend(rec.get("statistics", []))
+                    return all_data
+            except Exception:
+                pass
+            # ── Live API fallback (only when not yet cached) ──────────────
             all_data = None
             for s in [CURRENT_SEASON + 1, CURRENT_SEASON, CURRENT_SEASON - 1, CURRENT_SEASON - 2]:
                 try:
@@ -57,7 +71,6 @@ async def predict(req: PredictionRequest):
                         if all_data is None:
                             all_data = data[0]
                         else:
-                            # Merge additional season stats
                             all_data.setdefault("statistics", []).extend(data[0].get("statistics", []))
                 except Exception:
                     continue
@@ -133,6 +146,15 @@ async def predict(req: PredictionRequest):
 
         # Fire ALL API calls at once (optimized — kept odds for game context)
         async def get_team_stats_multi_season(team_id, lid):
+            # ── Local DB first ─────────────────────────────────────────────
+            try:
+                from cache import get_cached_team_season_stats
+                cached = await get_cached_team_season_stats(team_id, lid)
+                if cached:
+                    return cached
+            except Exception:
+                pass
+            # ── Live API fallback ──────────────────────────────────────────
             for s in [CURRENT_SEASON + 1, CURRENT_SEASON, CURRENT_SEASON - 1]:
                 result = await safe_fetch("teams/statistics", {"team": team_id, "league": lid, "season": s})
                 if result:
