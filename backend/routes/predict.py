@@ -2992,111 +2992,33 @@ Analyze ALL data thoroughly. Return JSON only."""
             "opponentShotsOnTarget": gk_formula_data.get("opponentAvgSOT") if gk_formula_data else None,
         }
 
-        # SYNTHESIS STEP: Combine all AI analyses into one rich tactical breakdown
-        # This recreates the original Grok+Gemini depth — one AI synthesizes all others' insights
+        # USE GROK OUTPUT DIRECTLY — no secondary synthesis
         rec = prediction.get('recommendation', 'over').upper()
         line = prediction.get('line', req.line)
         proj = prediction.get('projectedValue', '?')
         conf = prediction.get('confidenceScore', '?')
         pl = {
-            "pass_attempts": "Pass Attempts",
-            "shots": "Shots",
-            "shots_on_target": "Shots on Target",
-            "tackles": "Tackles",
-            "key_passes": "Key Passes",
-            "saves": "Saves",
-            "interceptions": "Interceptions",
-            "blocks": "Blocks",
-            "dribbles": "Dribbles",
-            "fouls_drawn": "Fouls Drawn",
+            "pass_attempts": "Pass Attempts", "passes": "Passes",
+            "shots": "Shots", "shots_on_target": "Shots on Target",
+            "tackles": "Tackles", "key_passes": "Key Passes",
+            "saves": "Saves", "interceptions": "Interceptions",
+            "blocks": "Blocks", "dribbles": "Dribbles",
+            "fouls_drawn": "Fouls Drawn", "fouls_committed": "Fouls Committed",
+            "crosses": "Crosses", "clearances": "Clearances",
+            "duels_won": "Duels Won", "yellow_cards": "Yellow Cards",
+            "shots_assisted": "Shots Assisted", "goals": "Goals", "assists": "Assists",
         }.get(req.propType, req.propType)
         consensus_note = prediction.get('consensusNote', '')
 
-        # Gather text from Grok response for synthesis
-        all_texts = []
-        bits = []
-        for field in ["tacticalBreakdown", "reasoning", "scenarioAnalysis", "keyEvidence", "sharpSummary", "gameFlowDynamics", "sensitivityTests", "subRisk", "uncertaintyNote"]:
-            val = prediction.get(field, "")
-            if isinstance(val, dict):
-                val = json.dumps(val)
-            if val and len(str(val)) > 10:
-                bits.append(f"{field}: {val}")
-        if bits:
-            all_texts.append("[grok]\n" + "\n".join(bits))
-
-        synthesis_input = "\n\n".join(all_texts)
-
-        # Fast Gemini synthesis — combine insights into one cohesive breakdown
-        # Build dynamic context from all available data
-        pos_context_for_synth = ""
-        if display_position:
-            pos_context_for_synth = f"\nPosition: {display_position}"
-            if display_role:
-                pos_context_for_synth += f" ({display_role})"
-        comp_context = ""
-        if position_comp_data:
-            pc = position_comp_data
-            comp_context = f"\nPosition Comparison ({player_venue.upper()} only): {pc['sampleSize']} {pc.get('positionShort', '')}s vs {pc['opponent']} averaged {pc['avgStatValue']} {pl.lower()} (per-90: {pc['avgPer90']})"
-            if pc.get('avgPossession'):
-                comp_context += f" | Avg team possession: {pc['avgPossession']}%"
-
-        try:
-            synth_prompt = f"""You are synthesizing multiple AI analyses into ONE elite tactical breakdown for a {pl} prop prediction.
-
-FINAL VERDICT: {rec} {line} {pl} (Projected: {proj}, Confidence: {conf}%, {consensus_note})
-Player: {req.playerName} vs {req.opponentName} ({player_venue.upper()}){pos_context_for_synth}{comp_context}
-
-Here are the individual AI analyses to synthesize:
-
-{synthesis_input[:4000]}
-
-Write a single cohesive ~1500 char markdown tactical breakdown. Format:
-**Verdict: {rec} {line} {pl}**
-[1-2 sentence sharp summary with projection vs line]
-
-**Position & Role Context**
-[1-2 sentences about how the player's specific position ({display_position}) and role ({display_role or 'N/A'}) affects their {pl.lower()} output. How does this role generate or limit this stat? Reference the positional comparison data if available. Mention venue ({player_venue.upper()}) — are {player_venue} performances typically better or worse for this stat? If possession data is available, note how expected possession impacts this prop type.]
-
-**Analysis**
-[3-4 sentences combining the BEST insights from ALL analyses. Cite specific numbers: per-game averages, venue splits ({player_venue.upper()} context), sample sizes, opponent tendencies. Reference the positional comparison baseline when relevant. Factor in possession context — how does team possession % correlate with {pl.lower()} output for a {display_position}? Merge complementary insights, resolve contradictions]
-
-**Game Script Scenarios**
-[Best case / Worst case / Most likely — with stat projections for each]
-
-**Key Evidence**
-[3-4 bullet points — strongest data points from across all analyses, including position comparison baseline and venue-specific trends]
-
-**Risk Radar**
-[Sub risk, sensitivity factors, what would flip the pick]
-
-**TL;DR** — {rec} {line} at {conf}% confidence. Projected: {proj} {pl.lower()}. {consensus_note}
-
-Rules: No AI model names. Be specific with numbers. Be decisive. ALWAYS reference the player's position/role and how it impacts the prop. ALWAYS reference venue (home/away) context."""
-
-            synth_client = OpenAI(api_key=EMERGENT_LLM_KEY, base_url=EMERGENT_PROXY + "/v1")
-            loop = aio.get_event_loop()
-            def _run_synth():
-                return synth_client.chat.completions.create(
-                    model="gemini/gemini-2.0-flash",
-                    messages=[{"role": "user", "content": synth_prompt}],
-                    max_tokens=1500,
-                    temperature=0.2,
-                )
-            synth_resp = await aio.wait_for(loop.run_in_executor(None, _run_synth), timeout=10)
-            synth_text = synth_resp.choices[0].message.content.strip()
-            if synth_text and len(synth_text) > 200:
-                prediction["tacticalBreakdown"] = synth_text
-                print(f"[TIMING] Synthesis done: {_t.time()-_t0:.1f}s total, {len(synth_text)} chars")
-            else:
-                raise ValueError("Synthesis too short")
-        except Exception as synth_err:
-            print(f"[SYNTHESIS] Fallback — {synth_err}")
-            # Fallback: Build from fields manually
+        # If Grok returned a solid tacticalBreakdown, use it directly
+        grok_tb = prediction.get('tacticalBreakdown', '')
+        if not grok_tb or len(str(grok_tb)) < 200:
+            # Build from individual Grok fields
             tb_parts = []
             if prediction.get('sharpSummary'):
                 tb_parts.append(f"**Verdict: {rec} {line} {pl}**\n{prediction['sharpSummary']}")
             else:
-                tb_parts.append(f"**Verdict: {rec} {line} {pl}**\nProjected {proj} {pl.lower()} — consensus favors {rec.lower()}.")
+                tb_parts.append(f"**Verdict: {rec} {line} {pl}**\nProjected {proj} {pl.lower()} — favors {rec.lower()}.")
 
             if prediction.get('reasoning') and len(str(prediction['reasoning'])) > 30:
                 tb_parts.append(f"**Analysis**\n{prediction['reasoning']}")
@@ -3120,6 +3042,9 @@ Rules: No AI model names. Be specific with numbers. Be decisive. ALWAYS referenc
 
             tb_parts.append(f"**TL;DR** — {rec} {line} at {conf}% confidence. Projected: {proj} {pl.lower()}. {consensus_note}")
             prediction["tacticalBreakdown"] = "\n\n".join(tb_parts)
+            print(f"[TIMING] Built tacticalBreakdown from Grok fields: {len(prediction['tacticalBreakdown'])} chars")
+        else:
+            print(f"[TIMING] Using Grok tacticalBreakdown directly: {len(grok_tb)} chars")
 
         # Save to MongoDB
         prediction["_created"] = datetime.now(timezone.utc).isoformat()
