@@ -659,43 +659,6 @@ export default function ScanScreen() {
                 </>
               )}
 
-              {/* Sharp Intel — sharpSummary + keyEvidence + gameFlowDynamics + scenarioAnalysis */}
-              {(prediction.sharpSummary || prediction.keyEvidence || prediction.gameFlowDynamics || prediction.scenarioAnalysis) && (
-                <>
-                  <View style={styles.analysisDivider} />
-                  <View style={styles.sharpIntelBox}>
-                    <View style={styles.sharpIntelHeader}>
-                      <Ionicons name="flash" size={13} color="#FFD700" />
-                      <Text style={styles.sharpIntelLabel}>SHARP INTELLIGENCE</Text>
-                    </View>
-                    {prediction.sharpSummary && (
-                      <View style={styles.sharpRow}>
-                        <Text style={styles.sharpRowTitle}>Bet Rationale</Text>
-                        <Text style={styles.sharpRowText}>{prediction.sharpSummary}</Text>
-                      </View>
-                    )}
-                    {prediction.keyEvidence && (
-                      <View style={styles.sharpRow}>
-                        <Text style={styles.sharpRowTitle}>Key Evidence</Text>
-                        <Text style={styles.sharpRowText}>{prediction.keyEvidence}</Text>
-                      </View>
-                    )}
-                    {prediction.gameFlowDynamics && (
-                      <View style={styles.sharpRow}>
-                        <Text style={styles.sharpRowTitle}>Game Flow</Text>
-                        <Text style={styles.sharpRowText}>{prediction.gameFlowDynamics}</Text>
-                      </View>
-                    )}
-                    {prediction.scenarioAnalysis && (
-                      <View style={[styles.sharpRow, { borderBottomWidth: 0 }]}>
-                        <Text style={styles.sharpRowTitle}>Scenarios</Text>
-                        <Text style={styles.sharpRowText}>{prediction.scenarioAnalysis}</Text>
-                      </View>
-                    )}
-                  </View>
-                </>
-              )}
-
               {/* Analysis Summary */}
               {prediction.analysisSummary && (() => {
                 const s = prediction.analysisSummary!;
