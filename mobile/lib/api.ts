@@ -556,6 +556,11 @@ export async function deletePick(email: string, token: string, pickId: string) {
   });
 }
 
+export async function fetchPickAnalysis(email: string, token: string, pickId: string): Promise<{ found: boolean; analysis?: Record<string, unknown> }> {
+  const params = new URLSearchParams({ email, token, pickId });
+  return apiCall<{ found: boolean; analysis?: Record<string, unknown> }>(`/api/picks/analysis?${params.toString()}`);
+}
+
 export interface IntelDashboard {
   topPicks?: unknown[];
   insights?: string;

@@ -2,6 +2,7 @@ import React, { useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
   ActivityIndicator, Alert, Platform, RefreshControl,
+  Modal, ScrollView, Pressable,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
@@ -9,7 +10,7 @@ import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Colors from '@/constants/colors';
-import { listPicks, deletePick, Pick } from '@/lib/api';
+import { listPicks, deletePick, fetchPickAnalysis, Pick } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 
 type Tab = 'live' | 'history';
@@ -39,7 +40,7 @@ function pickPush(p: Pick) {
   return p.result === 'push';
 }
 
-function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
+function PickCard({ pick, onDelete, onPress }: { pick: Pick; onDelete: () => void; onPress?: () => void }) {
   const won = pickWon(pick);
   const lost = pickLost(pick);
   const live = isLive(pick);
@@ -87,7 +88,7 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
     : Colors.textSecondary;
   const paceColor = trackValue != null ? Colors.primary : Colors.textSecondary;
 
-  return (
+  const cardContent = (
     <View style={[styles.card, won && styles.cardWon, lost && styles.cardLost]}>
       {/* Top row */}
       <View style={styles.cardTopRow}>
@@ -205,8 +206,23 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
       <TouchableOpacity style={styles.trashBtn} onPress={onDelete} hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }} activeOpacity={0.5}>
         <Ionicons name="trash-outline" size={14} color="rgba(255,255,255,0.35)" />
       </TouchableOpacity>
+      {live && !won && !lost && onPress && (
+        <View style={styles.tapHint}>
+          <Ionicons name="analytics-outline" size={10} color={Colors.primary} />
+          <Text style={styles.tapHintText}>Tap for analysis</Text>
+        </View>
+      )}
     </View>
   );
+
+  if (live && !won && !lost && onPress) {
+    return (
+      <TouchableOpacity onPress={() => { Haptics.selectionAsync(); onPress(); }} activeOpacity={0.85}>
+        {cardContent}
+      </TouchableOpacity>
+    );
+  }
+  return cardContent;
 }
 
 function RecordBar({ picks }: { picks: Pick[] }) {
@@ -271,12 +287,59 @@ function RecordBar({ picks }: { picks: Pick[] }) {
   );
 }
 
+function renderAnalysisBlocks(text: string, rec: string) {
+  const isOver = rec === 'OVER';
+  const isUnder = rec === 'UNDER';
+  const recColor = isOver ? Colors.success : isUnder ? Colors.error : Colors.textSecondary;
+  const paragraphs = text.split(/\n\n+/).filter(p => p.trim());
+  const blocks: React.ReactElement[] = [];
+  for (let i = 0; i < paragraphs.length; i++) {
+    const para = paragraphs[i];
+    const m = para.match(/^\*\*([^*]+)\*\*\s*([\s\S]*)/);
+    if (m) {
+      const section = m[1].trim();
+      const body = m[2].trim().replace(/\*\*/g, '');
+      if (section === 'Analysis') continue;
+      if (section === 'Verdict') {
+        blocks.push(
+          <View key={i} style={mStyles.aiVerdictBlock}>
+            <View style={[mStyles.aiVerdictPill, { backgroundColor: isOver ? 'rgba(57,255,20,0.12)' : 'rgba(255,59,48,0.12)' }]}>
+              <Text style={[mStyles.aiVerdictLabel, { color: recColor }]}>VERDICT</Text>
+            </View>
+            <Text style={mStyles.aiVerdictText}>{body}</Text>
+          </View>
+        );
+        continue;
+      }
+      if (section === 'TL;DR') {
+        blocks.push(
+          <View key={i} style={mStyles.aiTldrBlock}>
+            <Text style={mStyles.aiTldrText}>{body}</Text>
+          </View>
+        );
+        continue;
+      }
+      blocks.push(
+        <View key={i} style={mStyles.aiSection}>
+          <Text style={mStyles.aiSectionTitle}>{section.toUpperCase()}</Text>
+          {body ? <Text style={mStyles.aiSectionBody}>{body}</Text> : null}
+        </View>
+      );
+    } else {
+      const plain = para.replace(/\*\*/g, '').trim();
+      if (plain) blocks.push(<Text key={i} style={mStyles.aiSectionBody}>{plain}</Text>);
+    }
+  }
+  return blocks;
+}
+
 export default function PicksScreen() {
   const insets = useSafeAreaInsets();
   const { session } = useAuth();
   const qc = useQueryClient();
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const [activeTab, setActiveTab] = useState<Tab>('live');
+  const [analysisModal, setAnalysisModal] = useState<{ pick: Pick; data: Record<string, unknown> | null; loading: boolean } | null>(null);
 
   const { data: picks = [], isLoading, refetch, isRefetching, error } = useQuery({
     queryKey: ['picks', session?.email],
@@ -335,9 +398,27 @@ export default function PicksScreen() {
     }
   }, [deleteMutation]);
 
+  const handlePickPress = useCallback(async (pick: Pick) => {
+    const id = pick.pickId || pick._id || pick.id;
+    if (!id || !session) return;
+    setAnalysisModal({ pick, data: null, loading: true });
+    try {
+      const result = await fetchPickAnalysis(session.email, session.token, id);
+      setAnalysisModal({ pick, data: result.found ? (result.analysis ?? null) : null, loading: false });
+    } catch {
+      setAnalysisModal({ pick, data: null, loading: false });
+    }
+  }, [session]);
+
   const live = picks.filter(isLive);
   const history = picks.filter(isSettled);
   const displayed = activeTab === 'live' ? live : history;
+
+  const modalRec = ((analysisModal?.data?.recommendation ?? analysisModal?.pick?.recommendation) as string | undefined)?.toUpperCase() ?? '';
+  const modalIsOver = modalRec === 'OVER';
+  const modalIsUnder = modalRec === 'UNDER';
+  const modalRecColor = modalIsOver ? Colors.success : modalIsUnder ? Colors.error : Colors.textSecondary;
+  const modalText = (analysisModal?.data?.reasoning ?? analysisModal?.data?.tacticalBreakdown ?? analysisModal?.data?.explanation) as string | undefined;
 
   return (
     <View style={[styles.root, { paddingTop: topPad }]}>
@@ -400,7 +481,7 @@ export default function PicksScreen() {
         <FlatList
           data={displayed}
           keyExtractor={(item, i) => item.pickId || item._id || item.id || String(i)}
-          renderItem={({ item }) => <PickCard pick={item} onDelete={() => handleDelete(item)} />}
+          renderItem={({ item }) => <PickCard pick={item} onDelete={() => handleDelete(item)} onPress={() => handlePickPress(item)} />}
           contentContainerStyle={styles.list}
           refreshControl={
             <RefreshControl
@@ -412,9 +493,132 @@ export default function PicksScreen() {
           showsVerticalScrollIndicator={false}
         />
       )}
+
+      {/* ── Analysis Modal ── */}
+      <Modal
+        visible={analysisModal !== null}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setAnalysisModal(null)}
+      >
+        <View style={mStyles.modalContainer}>
+          <Pressable style={mStyles.modalBackdrop} onPress={() => setAnalysisModal(null)} />
+          <View style={mStyles.modalSheet}>
+          {/* Handle */}
+          <View style={mStyles.modalHandle} />
+
+          {/* Header */}
+          <View style={mStyles.modalHeader}>
+            <View style={mStyles.modalPlayerInfo}>
+              <Text style={mStyles.modalPlayer} numberOfLines={1}>{analysisModal?.pick.playerName}</Text>
+              <Text style={mStyles.modalMeta} numberOfLines={1}>
+                {[analysisModal?.pick.teamName, analysisModal?.pick.opponentName ? `vs ${analysisModal?.pick.opponentName}` : null].filter(Boolean).join(' · ')}
+              </Text>
+            </View>
+            <View style={mStyles.modalRight}>
+              {modalRec ? (
+                <View style={[mStyles.modalRecBadge, { backgroundColor: modalIsOver ? Colors.successDim : modalIsUnder ? Colors.errorDim : Colors.cardSecondary }]}>
+                  <Text style={[mStyles.modalRecText, { color: modalRecColor }]}>{modalRec}</Text>
+                </View>
+              ) : null}
+              <TouchableOpacity onPress={() => setAnalysisModal(null)} style={mStyles.modalClose}>
+                <Ionicons name="close" size={18} color={Colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Prop row */}
+          <View style={mStyles.modalPropRow}>
+            <Text style={mStyles.modalPropText}>
+              {PROP_LABELS[analysisModal?.pick.propType ?? ''] ?? analysisModal?.pick.propType} · Line {analysisModal?.pick.line}
+            </Text>
+            {analysisModal?.data?.projectedValue != null && (
+              <Text style={[mStyles.modalProjText, { color: modalRecColor }]}>
+                Proj {(analysisModal.data.projectedValue as number).toFixed(1)}
+              </Text>
+            )}
+          </View>
+
+          <View style={mStyles.modalDivider} />
+
+          {/* Body */}
+          <ScrollView style={mStyles.modalScroll} contentContainerStyle={mStyles.modalScrollContent} showsVerticalScrollIndicator={false}>
+            {analysisModal?.loading ? (
+              <View style={mStyles.modalLoading}>
+                <ActivityIndicator color={Colors.primary} />
+                <Text style={mStyles.modalLoadingText}>Loading analysis…</Text>
+              </View>
+            ) : !modalText ? (
+              <View style={mStyles.modalLoading}>
+                <Ionicons name="analytics-outline" size={32} color={Colors.textTertiary} />
+                <Text style={mStyles.modalLoadingText}>No analysis found for this pick yet.</Text>
+              </View>
+            ) : (
+              <View style={mStyles.aiBlocks}>
+                {renderAnalysisBlocks(modalText, modalRec)}
+              </View>
+            )}
+          </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
+
+const mStyles = StyleSheet.create({
+  modalContainer: { flex: 1, justifyContent: 'flex-end' },
+  modalBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.6)' },
+  modalSheet: {
+    backgroundColor: Colors.card,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '82%',
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+    borderBottomWidth: 0,
+  },
+  modalHandle: {
+    width: 36, height: 4, borderRadius: 2,
+    backgroundColor: Colors.border, alignSelf: 'center', marginTop: 10,
+  },
+  modalHeader: {
+    flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between',
+    paddingHorizontal: 18, paddingTop: 14, paddingBottom: 10, gap: 10,
+  },
+  modalPlayerInfo: { flex: 1 },
+  modalPlayer: { fontSize: 18, fontWeight: '800', color: Colors.text },
+  modalMeta: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
+  modalRight: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  modalRecBadge: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 8 },
+  modalRecText: { fontSize: 13, fontWeight: '800', letterSpacing: 0.5 },
+  modalClose: { padding: 4 },
+  modalPropRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 18, paddingBottom: 12,
+  },
+  modalPropText: { fontSize: 13, color: Colors.textSecondary },
+  modalProjText: { fontSize: 14, fontWeight: '700' },
+  modalDivider: { height: 1, backgroundColor: Colors.borderSubtle },
+  modalScroll: { flex: 0 },
+  modalScrollContent: { padding: 18, paddingBottom: 40 },
+  modalLoading: { alignItems: 'center', paddingVertical: 40, gap: 14 },
+  modalLoadingText: { fontSize: 14, color: Colors.textSecondary, textAlign: 'center' },
+  aiBlocks: { gap: 16 },
+  aiVerdictBlock: {
+    backgroundColor: 'rgba(57,255,20,0.06)',
+    borderLeftWidth: 3, borderLeftColor: Colors.primary,
+    borderRadius: 8, padding: 12, gap: 6,
+  },
+  aiVerdictPill: { alignSelf: 'flex-start', borderRadius: 4, paddingHorizontal: 7, paddingVertical: 2 },
+  aiVerdictLabel: { fontSize: 9, fontWeight: '800', letterSpacing: 1.5 },
+  aiVerdictText: { fontSize: 14, fontWeight: '600', lineHeight: 21, color: Colors.text },
+  aiTldrBlock: { backgroundColor: Colors.cardSecondary, borderRadius: 8, padding: 12 },
+  aiTldrText: { fontSize: 12, color: Colors.textSecondary, lineHeight: 18, fontStyle: 'italic' },
+  aiSection: { gap: 5 },
+  aiSectionTitle: { fontSize: 10, fontWeight: '800', color: Colors.primary, letterSpacing: 1.2 },
+  aiSectionBody: { fontSize: 13, color: Colors.textSecondary, lineHeight: 20 },
+});
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.background },
@@ -547,4 +751,10 @@ const styles = StyleSheet.create({
     bottom: 8,
     padding: 8,
   },
+  tapHint: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingTop: 6, borderTopWidth: 1, borderTopColor: Colors.borderSubtle,
+    marginTop: 4,
+  },
+  tapHintText: { fontSize: 10, color: Colors.primary, fontWeight: '600', letterSpacing: 0.4 },
 });

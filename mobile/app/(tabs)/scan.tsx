@@ -646,18 +646,86 @@ export default function ScanScreen() {
               })()}
 
               {/* AI Reasoning */}
-              {prediction.reasoning && (
-                <>
-                  <View style={styles.analysisDivider} />
-                  <View style={styles.reasoningBox}>
-                    <View style={styles.reasoningHeader}>
-                      <Ionicons name="bulb-outline" size={13} color={Colors.primary} />
-                      <Text style={styles.reasoningLabel}>AI ANALYSIS</Text>
+              {prediction.reasoning && (() => {
+                const isOver = prediction.recommendation === 'OVER';
+                const isUnder = prediction.recommendation === 'UNDER';
+                const recColor = isOver ? Colors.success : isUnder ? Colors.error : Colors.textSecondary;
+
+                const paragraphs = prediction.reasoning.split(/\n\n+/).filter(p => p.trim());
+                const blocks: React.ReactElement[] = [];
+
+                for (let i = 0; i < paragraphs.length; i++) {
+                  const para = paragraphs[i];
+                  const headerMatch = para.match(/^\*\*([^*]+)\*\*\s*([\s\S]*)/);
+                  if (headerMatch) {
+                    const section = headerMatch[1].trim();
+                    const body = headerMatch[2].trim().replace(/\*\*/g, '');
+
+                    // Skip Analysis — raw averages already shown in tiles
+                    if (section === 'Analysis') continue;
+
+                    if (section === 'Verdict') {
+                      blocks.push(
+                        <View key={i} style={styles.aiVerdictBlock}>
+                          <View style={styles.aiVerdictPill}>
+                            <Text style={[styles.aiVerdictLabel, { color: recColor }]}>VERDICT</Text>
+                          </View>
+                          <Text style={[styles.aiVerdictText, { color: Colors.text }]}>{body}</Text>
+                        </View>
+                      );
+                      continue;
+                    }
+
+                    if (section === 'TL;DR') {
+                      blocks.push(
+                        <View key={i} style={styles.aiTldrBlock}>
+                          <Text style={styles.aiTldrText}>{body}</Text>
+                        </View>
+                      );
+                      continue;
+                    }
+
+                    const sectionIcons: Record<string, string> = {
+                      Matchup: 'git-compare-outline',
+                      Situation: 'flag-outline',
+                      Scenarios: 'layers-outline',
+                      Risk: 'warning-outline',
+                      'Risk Radar': 'warning-outline',
+                      'Game Flow': 'trending-up-outline',
+                    };
+                    const iconName = (sectionIcons[section] || 'chevron-forward-outline') as keyof typeof Ionicons.glyphMap;
+
+                    blocks.push(
+                      <View key={i} style={styles.aiSection}>
+                        <View style={styles.aiSectionHeader}>
+                          <Ionicons name={iconName} size={11} color={Colors.primary} />
+                          <Text style={styles.aiSectionTitle}>{section.toUpperCase()}</Text>
+                        </View>
+                        {body ? <Text style={styles.aiSectionBody}>{body}</Text> : null}
+                      </View>
+                    );
+                  } else {
+                    const plainText = para.replace(/\*\*/g, '').trim();
+                    if (plainText) {
+                      blocks.push(<Text key={i} style={styles.aiBodyText}>{plainText}</Text>);
+                    }
+                  }
+                }
+
+                if (blocks.length === 0) return null;
+                return (
+                  <>
+                    <View style={styles.analysisDivider} />
+                    <View style={styles.aiAnalysisBox}>
+                      <View style={styles.reasoningHeader}>
+                        <Ionicons name="bulb-outline" size={13} color={Colors.primary} />
+                        <Text style={styles.reasoningLabel}>AI ANALYSIS</Text>
+                      </View>
+                      <View style={styles.aiBlocks}>{blocks}</View>
                     </View>
-                    <Text style={styles.reasoningText}>{prediction.reasoning}</Text>
-                  </View>
-                </>
-              )}
+                  </>
+                );
+              })()}
 
               {/* Analysis Summary */}
               {prediction.analysisSummary && (() => {
@@ -1237,9 +1305,41 @@ const styles = StyleSheet.create({
 
   /* Reasoning */
   reasoningBox: { padding: 16, gap: 8 },
+  aiAnalysisBox: { padding: 16, gap: 12 },
   reasoningHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   reasoningLabel: { fontSize: 10, color: Colors.primary, fontWeight: '700', letterSpacing: 1.5 },
   reasoningText: { fontSize: 13, color: Colors.textSecondary, lineHeight: 20 },
+
+  /* AI section blocks */
+  aiBlocks: { gap: 14, marginTop: 4 },
+  aiVerdictBlock: {
+    backgroundColor: 'rgba(57,255,20,0.06)',
+    borderLeftWidth: 3,
+    borderLeftColor: Colors.primary,
+    borderRadius: 8,
+    padding: 12,
+    gap: 6,
+  },
+  aiVerdictPill: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(57,255,20,0.12)',
+    borderRadius: 4,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+  },
+  aiVerdictLabel: { fontSize: 9, fontWeight: '800', letterSpacing: 1.5 },
+  aiVerdictText: { fontSize: 14, fontWeight: '600', lineHeight: 21, color: Colors.text },
+  aiTldrBlock: {
+    backgroundColor: Colors.cardSecondary,
+    borderRadius: 8,
+    padding: 12,
+  },
+  aiTldrText: { fontSize: 12, color: Colors.textSecondary, lineHeight: 18, fontStyle: 'italic' },
+  aiSection: { gap: 5 },
+  aiSectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  aiSectionTitle: { fontSize: 10, fontWeight: '800', color: Colors.primary, letterSpacing: 1.2 },
+  aiSectionBody: { fontSize: 13, color: Colors.textSecondary, lineHeight: 20 },
+  aiBodyText: { fontSize: 13, color: Colors.textSecondary, lineHeight: 20 },
 
   /* ─── REVERSE FORMULA CARD ─── */
   rfCard: {
