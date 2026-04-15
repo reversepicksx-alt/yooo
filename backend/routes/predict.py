@@ -824,10 +824,19 @@ async def predict(req: PredictionRequest):
         # Also keep all fixtures for general context
         all_team_fixtures = recent_fixtures
 
-        # Get opponent's recent fixtures (need fixture IDs)
+        # Get opponent's recent fixtures — local DB first, API fallback
         opponent_recent_raw = None
         if safe_opp_id:
-            opponent_recent_raw = await api_football_request("fixtures", {"team": safe_opp_id, "last": 15})
+            try:
+                from cache import get_cached_team_fixtures as _get_opp_fixtures
+                _opp_local = await _get_opp_fixtures(safe_opp_id)
+                if _opp_local:
+                    opponent_recent_raw = _opp_local[:15]
+                    print(f"[LOCAL] Opponent fixtures from DB: {len(opponent_recent_raw)} games")
+            except Exception:
+                pass
+            if not opponent_recent_raw:
+                opponent_recent_raw = await api_football_request("fixtures", {"team": safe_opp_id, "last": 15})
         opponent_fixture_list = []
         if opponent_recent_raw:
             for f in opponent_recent_raw[:15]:
