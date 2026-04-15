@@ -927,7 +927,7 @@ async def predict(req: PredictionRequest):
         match_dominance = {"expectedPoss": 50.0, "oppExpectedPoss": 50.0, "multiplier": 1.0, "notes": []}
 
         # Wave 2: Fetch deep fixture data + Grok digest + Situation Engine + Web Intel in parallel
-        from grok_engine import build_grok_digest, fetch_web_intel, fetch_opponent_ppda
+        from grok_engine import build_grok_digest, fetch_web_intel
         from situation_engine import build_game_situation
         grok_digest_task = build_grok_digest(
             player_name=req.playerName, team_name=corrected_team_name or "",
@@ -970,26 +970,16 @@ async def predict(req: PredictionRequest):
             league=_sit_match_league,
         )
 
-        # Grok PPDA lookup — only for pass props (runs in parallel, no latency cost)
-        _is_pass_prop = req.propType in {"pass_attempts", "passes"}
-        if _is_pass_prop:
-            ppda_task = fetch_opponent_ppda(
-                opponent=req.opponentName or "",
-                league=_sit_match_league,
-            )
-        else:
-            ppda_task = aio.sleep(0)  # no-op placeholder, returns None
-
         all_wave2 = aio.gather(
             team_fixture_stats_task, opponent_fixture_stats_task, player_game_logs_task,
-            grok_digest_task, situation_task, web_intel_task, ppda_task,
+            grok_digest_task, situation_task, web_intel_task,
             return_exceptions=True
         )
         try:
-            results = await aio.wait_for(all_wave2, timeout=45)
+            results = await aio.wait_for(all_wave2, timeout=40)
         except aio.TimeoutError:
-            results = [None, None, None, None, None, None, None]
-            print(f"[WAVE2 TIMEOUT] Wave 2 exceeded 45s for {req.playerName}")
+            results = [None, None, None, None, None, None]
+            print(f"[WAVE2 TIMEOUT] Wave 2 exceeded 40s for {req.playerName}")
 
         team_fixture_stats = results[0] if not isinstance(results[0], (Exception, type(None))) else []
         opponent_fixture_stats = results[1] if not isinstance(results[1], (Exception, type(None))) else []
@@ -997,7 +987,6 @@ async def predict(req: PredictionRequest):
         grok_digest = results[3] if len(results) > 3 and not isinstance(results[3], (Exception, type(None))) else ""
         game_situation = results[4] if len(results) > 4 and not isinstance(results[4], (Exception, type(None))) else {}
         web_intel = results[5] if len(results) > 5 and not isinstance(results[5], (Exception, type(None))) else ""
-        grok_ppda = results[6] if len(results) > 6 and isinstance(results[6], (int, float)) else None
         if not game_situation:
             game_situation = {"isKnockout": False, "isSecondLeg": False, "aggregate": {}, "multipliers": {}, "injuries": {}, "contextBlock": ""}
 
@@ -1440,38 +1429,6 @@ async def predict(req: PredictionRequest):
             )
             print(f"[BAYESIAN] {req.playerName}/{req.propType}: samples={early_bayes.get('priorSamples') if early_bayes else 0}, logs={len(player_game_logs)}")
 
-            # ── GROK PPDA OVERRIDE ──────────────────────────────────────────────────
-            # If Grok returned a real PPDA value, replace the defensive-actions proxy
-            # with the Grok-sourced multiplier. Undo proxy adjustment first so we don't
-            # double-count; then apply the Grok-calibrated multiplier.
-            if grok_ppda is not None and _is_pass_prop and early_bayes:
-                if grok_ppda < 6:
-                    _grok_label, _grok_score, _grok_mult = "Elite", 1.0, 0.90
-                elif grok_ppda < 8:
-                    _grok_label, _grok_score, _grok_mult = "High", 0.70, 0.93
-                elif grok_ppda < 11:
-                    _grok_label, _grok_score, _grok_mult = "Moderate", 0.40, 0.97
-                else:
-                    _grok_label, _grok_score, _grok_mult = "Low", 0.10, 1.0
-                _proxy_mult = early_bayes.get("pressIntensity", {}).get("multiplier", 1.0) or 1.0
-                _adj_post = early_bayes.get("posteriorMean", req.line)
-                if _adj_post and _proxy_mult:
-                    _adj_post = round(_adj_post / _proxy_mult * _grok_mult, 1)
-                    early_bayes["posteriorMean"] = _adj_post
-                early_bayes["pressIntensity"] = {
-                    "score": _grok_score,
-                    "multiplier": _grok_mult,
-                    "label": _grok_label,
-                    "signal_used": "grok_ppda",
-                    "grok_ppda": grok_ppda,
-                    "avg_defensive_actions": None,
-                    "avg_tackles": None,
-                    "avg_interceptions": None,
-                    "avg_poss": None,
-                    "avg_passes": None,
-                }
-                print(f"[PPDA] Override: {req.opponentName} PPDA={grok_ppda} → {_grok_label} (×{_grok_mult}), posterior={early_bayes['posteriorMean']}")
-
             if early_bayes and early_bayes.get("priorSamples", 0) >= 3:
                 bdir = early_bayes['recommendation'].upper()
                 bprob = early_bayes['pOver'] if bdir == 'OVER' else early_bayes['pUnder']
@@ -1488,15 +1445,7 @@ IMPORTANT: Never use the word "Bayesian" in your response. Always say "Reverse F
                     _pi_label = _pi["label"]
                     _pi_mult  = _pi.get("multiplier", 1.0)
                     _pi_sig   = _pi.get("signal_used", "possession")
-                    if _pi_sig == "grok_ppda":
-                        _pi_ppda_val = _pi.get("grok_ppda", "?")
-                        bayesian_prompt_anchor += f"""
-[OPPONENT PRESS INTENSITY — {_pi_label.upper()} (Grok-sourced PPDA)]
-PPDA: {_pi_ppda_val} passes per defensive action | {_pi_label} pressing intensity.
-Lower PPDA = opponent aggressively hunts the ball → subject player has less time/space in possession, disrupted in build-up.
-Mathematical press penalty already applied: ×{_pi_mult} reduction to pass projection.
-CRITICAL: This opponent actively disrupts passing lanes. Account for the subject player being pressured even when their team has the ball."""
-                    elif _pi_sig == "tackles":
+                    if _pi_sig == "tackles":
                         _pi_da  = _pi.get("avg_defensive_actions", "?")
                         _pi_tkl = _pi.get("avg_tackles", "?")
                         _pi_int = _pi.get("avg_interceptions", "?")
@@ -2353,7 +2302,7 @@ Odds: {json.dumps(match_odds.get('bookmakerOdds',{}), default=str) if match_odds
 recentSamples=[]
 {hit_rate_context}
 {bayesian_prompt_anchor}
-{final_data[:6000]}
+{final_data[:4000]}
 
 Analyze ALL data thoroughly. Return JSON only."""
 
@@ -2405,10 +2354,10 @@ Analyze ALL data thoroughly. Return JSON only."""
                     return grok_client.chat.completions.create(
                         model=model,
                         messages=grok_messages,
-                        max_tokens=2500,
+                        max_tokens=1600,
                         temperature=0.0,
                     )
-                grok_result = await aio.wait_for(loop.run_in_executor(None, _run), timeout=40)
+                grok_result = await aio.wait_for(loop.run_in_executor(None, _run), timeout=30)
                 text = grok_result.choices[0].message.content.strip()
                 if text.startswith("```"):
                     text = "\n".join(ln for ln in text.split("\n") if not ln.strip().startswith("```"))
@@ -2429,41 +2378,30 @@ Analyze ALL data thoroughly. Return JSON only."""
                 return None
 
         # =============================================
-        # GROK-ONLY: grok-3-mini (cost-efficient, Bayesian does the heavy lifting)
-        # Falls back to Bayesian-only if all AI models fail
+        # GROK SYNTHESIS: grok-4-1-fast (primary — reliable, fast)
+        # Falls back to Bayesian-only if model fails
         # =============================================
         grok_result = None
         try:
             grok_result = await aio.wait_for(
-                call_grok(label="grok3mini", model="grok-3-mini"),
-                timeout=45
+                call_grok(label="grok41fast", model="grok-4-1-fast-non-reasoning"),
+                timeout=35
             )
         except Exception as e:
-            print(f"[HYBRID] grok-3-mini exception: {e}")
-
-        if not grok_result or not isinstance(grok_result, dict) or not grok_result.get("projectedValue"):
-            # Grok failed — try once more with fast model
-            print("[HYBRID] grok-3-mini failed, retrying with grok-4-1-fast")
-            try:
-                grok_result = await aio.wait_for(
-                    call_grok(label="grok41fast", model="grok-4-1-fast-non-reasoning"),
-                    timeout=40
-                )
-            except Exception as e:
-                print(f"[HYBRID] grok-4-1-fast exception: {e}")
+            print(f"[HYBRID] grok-4-1-fast exception: {e}")
 
         pv = grok_result.get("projectedValue", 0) if grok_result and isinstance(grok_result, dict) else 0
         if not isinstance(pv, (int, float)) or pv <= 0:
-            # Invalid projection — retry with fast model
-            print(f"[HYBRID] Grok returned invalid projection: {pv}, retrying with fast model")
+            # Invalid projection — one retry
+            print(f"[HYBRID] Invalid projection {pv}, retrying")
             try:
                 grok_result = await aio.wait_for(
-                    call_grok(label="grok41fast", model="grok-4-1-fast-non-reasoning"),
-                    timeout=40
+                    call_grok(label="grok41fast_retry", model="grok-4-1-fast-non-reasoning"),
+                    timeout=30
                 )
                 pv = grok_result.get("projectedValue", 0) if grok_result and isinstance(grok_result, dict) else 0
             except Exception as e:
-                print(f"[HYBRID] grok-4-1-fast retry exception: {e}")
+                print(f"[HYBRID] retry exception: {e}")
                 pv = 0
 
         # BAYESIAN FALLBACK: If ALL Grok models failed, use Bayesian projection directly

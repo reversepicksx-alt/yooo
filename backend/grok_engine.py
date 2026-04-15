@@ -58,7 +58,7 @@ async def fetch_web_intel(
     match_date: str,
     match_round: str = "",
     league: str = "",
-    timeout: int = 25,
+    timeout: int = 15,
 ) -> str:
     """
     WEB INTELLIGENCE: Uses Grok's live search capability to fetch real-time
