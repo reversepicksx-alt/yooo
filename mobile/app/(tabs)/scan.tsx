@@ -610,6 +610,52 @@ export default function ScanScreen() {
                 </>
               )}
 
+              {/* 2nd Leg Aggregate Banner */}
+              {prediction.gameSituation && (prediction.gameSituation as any).isSecondLeg && (() => {
+                const gs = prediction.gameSituation as any;
+                const agg = gs.aggregate || {};
+                const homeTeam = prediction.homeTeam || prediction.teamName || 'HOME';
+                const awayTeam = prediction.awayTeam || prediction.opponentName || 'AWAY';
+                const tied = agg.goalDeficit === 0;
+                const homeName = homeTeam.split(' ').pop()?.slice(0, 8).toUpperCase() || 'HOME';
+                const awayName = awayTeam.split(' ').pop()?.slice(0, 8).toUpperCase() || 'AWAY';
+                const aggColor = tied ? '#F59E0B' : agg.homeTeamTrailing ? Colors.error : Colors.success;
+                const aggLabel = tied
+                  ? '⚡ AGGREGATE TIED — Both teams must score'
+                  : agg.homeTeamTrailing
+                    ? `⚠ ${homeName} TRAILS — Must score ${agg.mustWinByGoals} to advance`
+                    : `✓ ${homeName} LEADS — Can manage the game`;
+                return (
+                  <View style={styles.secondLegBanner}>
+                    <View style={styles.secondLegHeader}>
+                      <View style={styles.secondLegBadge}>
+                        <Text style={styles.secondLegBadgeText}>2ND LEG</Text>
+                      </View>
+                      {gs.isKnockout && (
+                        <View style={[styles.secondLegBadge, { backgroundColor: '#1a1a2e' }]}>
+                          <Text style={[styles.secondLegBadgeText, { color: '#818cf8' }]}>KNOCKOUT</Text>
+                        </View>
+                      )}
+                    </View>
+                    {agg.firstLegFound && agg.firstLegScore ? (
+                      <>
+                        <Text style={styles.secondLegFirstLeg}>1st leg: {agg.firstLegScore}</Text>
+                        <View style={styles.secondLegAggRow}>
+                          <Text style={styles.secondLegAggTeam}>{homeName}</Text>
+                          <Text style={[styles.secondLegAggScore, { color: aggColor }]}>
+                            {agg.homeTeamAggregate} – {agg.awayTeamAggregate}
+                          </Text>
+                          <Text style={styles.secondLegAggTeam}>{awayName}</Text>
+                        </View>
+                        <Text style={[styles.secondLegStatus, { color: aggColor }]}>{aggLabel}</Text>
+                      </>
+                    ) : (
+                      <Text style={styles.secondLegFirstLeg}>Knockout 2nd leg — elevated intensity expected</Text>
+                    )}
+                  </View>
+                );
+              })()}
+
               {/* Expected Possession */}
               {prediction.expectedPossession
                 && Number.isFinite(prediction.expectedPossession.home)
@@ -1368,6 +1414,21 @@ const styles = StyleSheet.create({
   /* Moneyline & Game Type */
   matchOddsRow: { paddingHorizontal: 16, paddingVertical: 12, gap: 10 },
   moneylineWrap: { gap: 6 },
+  secondLegBanner: {
+    marginHorizontal: 16, marginBottom: 12, padding: 12,
+    backgroundColor: '#0f172a', borderRadius: 10,
+    borderWidth: 1, borderColor: '#334155',
+  },
+  secondLegHeader: { flexDirection: 'row', gap: 6, marginBottom: 8 },
+  secondLegBadge: {
+    backgroundColor: '#7c3aed', borderRadius: 4, paddingHorizontal: 7, paddingVertical: 3,
+  },
+  secondLegBadgeText: { fontSize: 10, fontWeight: '800', color: '#fff', letterSpacing: 1 },
+  secondLegFirstLeg: { fontSize: 11, color: Colors.textSecondary, marginBottom: 6 },
+  secondLegAggRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, marginBottom: 6 },
+  secondLegAggTeam: { fontSize: 12, fontWeight: '700', color: Colors.text, flex: 1, textAlign: 'center' },
+  secondLegAggScore: { fontSize: 22, fontWeight: '900', letterSpacing: 2 },
+  secondLegStatus: { fontSize: 11, fontWeight: '600', textAlign: 'center' },
   moneylineHeader: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   moneylineLabel: { fontSize: 10, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 1.2 },
   mlDisclaimer: { fontSize: 9, color: Colors.textTertiary, marginTop: 4, fontStyle: 'italic' },

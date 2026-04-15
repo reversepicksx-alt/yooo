@@ -236,6 +236,20 @@ export interface PredictionResult {
   gameFlowDynamics?: string;
   scenarioAnalysis?: string;
   matchContext?: { league?: string; round?: string; date?: string };
+  gameSituation?: {
+    isKnockout: boolean;
+    isSecondLeg: boolean;
+    aggregate: {
+      firstLegFound: boolean;
+      firstLegScore: string;
+      homeTeamAggregate: number;
+      awayTeamAggregate: number;
+      goalDeficit: number;
+      homeTeamTrailing: boolean;
+      mustWinByGoals: number;
+    };
+    injuries: string;
+  };
   dataQuality?: { level?: string; message?: string; gamesWithData?: number; totalGames?: number };
   analysisSummary?: {
     statLabel?: string;
@@ -327,6 +341,7 @@ interface RawPrediction {
   gameFlowDynamics?: string;
   scenarioAnalysis?: string;
   matchContext?: { league?: string; round?: string; date?: string };
+  gameSituation?: Record<string, unknown>;
   dataQuality?: { level?: string; message?: string; gamesWithData?: number; totalGames?: number };
   analysisSummary?: {
     statLabel?: string;
@@ -470,6 +485,7 @@ export async function predict(request: Record<string, unknown>): Promise<Predict
     gameFlowDynamics: raw.gameFlowDynamics || undefined,
     scenarioAnalysis: raw.scenarioAnalysis || undefined,
     matchContext: raw.matchContext ? { league: raw.matchContext.league, round: raw.matchContext.round, date: raw.matchContext.date } : undefined,
+    gameSituation: raw.gameSituation ?? undefined,
     dataQuality: raw.dataQuality ? { level: raw.dataQuality.level, message: raw.dataQuality.message, gamesWithData: raw.dataQuality.gamesWithData, totalGames: raw.dataQuality.totalGames } : undefined,
     analysisSummary: raw.analysisSummary ?? undefined,
   };

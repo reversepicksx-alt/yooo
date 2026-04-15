@@ -233,11 +233,14 @@ async def predict(req: PredictionRequest):
                 # Extract competition context (league/cup name + round)
                 match_round = fixture_match.get("league", {}).get("round", "")
                 match_league = fixture_match.get("league", {}).get("name", "")
+                match_league_id = fixture_match.get("league", {}).get("id")
                 match_date = fixture_match.get("fixture", {}).get("date", "")
                 if match_round:
                     result["matchRound"] = match_round
                 if match_league:
                     result["matchLeague"] = match_league
+                if match_league_id:
+                    result["matchLeagueId"] = match_league_id  # actual competition (e.g. Europa League = 3)
                 if match_date:
                     result["matchDate"] = match_date
                 try:
@@ -945,11 +948,15 @@ async def predict(req: PredictionRequest):
         _sit_match_date = (match_odds or {}).get("matchDate", "")
         _sit_fixture_id = (match_odds or {}).get("fixtureId")
 
+        # Use the fixture's actual competition league_id (e.g. Europa League = 3),
+        # not the player's domestic league. Domestic league_id breaks H2H lookup
+        # for European ties (e.g. Braga in Europa League vs Primeira Liga = 94).
+        _sit_fixture_league_id = (match_odds or {}).get("matchLeagueId") or league_id or 39
         situation_task = build_game_situation(
             home_team_id=_sit_home_id,
             away_team_id=_sit_away_id,
             is_player_home=_sit_is_home,
-            league_id=league_id or 39,
+            league_id=_sit_fixture_league_id,
             match_round=_sit_match_round,
             fixture_id=_sit_fixture_id,
             player_team_name=corrected_team_name or req.teamName or "",
@@ -1195,12 +1202,18 @@ async def predict(req: PredictionRequest):
             """Compute expected possession using opponent-aware model + odds adjustment.
             SYMMETRIC: Always computes from HOME team perspective first, then maps back.
             This ensures the SAME match always produces identical possession numbers
-            regardless of which player (home or away) triggers the analysis."""
+            regardless of which player (home or away) triggers the analysis.
+
+            Uses venue-split averages: home team's HOME-game possession avg vs
+            away team's AWAY-game possession avg. Overall averages inflate expected
+            possession for away teams (e.g. Braga 54% overall but ~48% away)."""
             dom = {"expectedPoss": 50.0, "oppExpectedPoss": 50.0, "multiplier": 1.0, "notes": []}
 
-            def avg_poss(sl):
+            def avg_poss(sl, venue_filter=None):
                 vals = []
                 for s in (sl or []):
+                    if venue_filter and s.get("venue") != venue_filter:
+                        continue
                     p = s.get("possession")
                     if p is not None:
                         try:
@@ -1209,20 +1222,24 @@ async def predict(req: PredictionRequest):
                             pass
                 return round(sum(vals) / len(vals), 1) if vals else None
 
+            if is_home:
+                # Player's team is HOME → use their home game avg; opponent uses away game avg
+                home_avg = avg_poss(team_stats_list, "home") or avg_poss(team_stats_list)
+                away_avg = avg_poss(opp_stats_list, "away") or avg_poss(opp_stats_list)
+                home_rank = standing_data.get("teamRank") if standing_data else None
+                away_rank = standing_data.get("oppRank") if standing_data else None
+            else:
+                # Player's team is AWAY → use their away game avg; opponent (home) uses home game avg
+                home_avg = avg_poss(opp_stats_list, "home") or avg_poss(opp_stats_list)
+                away_avg = avg_poss(team_stats_list, "away") or avg_poss(team_stats_list)
+                home_rank = standing_data.get("oppRank") if standing_data else None
+                away_rank = standing_data.get("teamRank") if standing_data else None
+
+            # For the possession squeeze engine, also compute overall season averages
             team_avg = avg_poss(team_stats_list)
             opp_avg = avg_poss(opp_stats_list)
 
-            if team_avg is not None and opp_avg is not None:
-                if is_home:
-                    home_avg = team_avg
-                    away_avg = opp_avg
-                    home_rank = standing_data.get("teamRank") if standing_data else None
-                    away_rank = standing_data.get("oppRank") if standing_data else None
-                else:
-                    home_avg = opp_avg
-                    away_avg = team_avg
-                    home_rank = standing_data.get("oppRank") if standing_data else None
-                    away_rank = standing_data.get("teamRank") if standing_data else None
+            if home_avg is not None and away_avg is not None:
 
                 away_concedes = 100.0 - away_avg
 
@@ -3076,6 +3093,24 @@ Analyze ALL data thoroughly. Return JSON only."""
                 mc["date"] = match_odds["matchDate"][:10]
             if mc:
                 prediction["matchContext"] = mc
+
+        # Expose situation engine result to frontend (second leg, aggregate, injuries)
+        if game_situation:
+            _agg = game_situation.get("aggregate", {})
+            prediction["gameSituation"] = {
+                "isKnockout": game_situation.get("isKnockout", False),
+                "isSecondLeg": game_situation.get("isSecondLeg", False),
+                "aggregate": {
+                    "firstLegFound": _agg.get("firstLegFound", False),
+                    "firstLegScore": _agg.get("firstLegScore", ""),
+                    "homeTeamAggregate": _agg.get("homeTeamAggregate", 0),
+                    "awayTeamAggregate": _agg.get("awayTeamAggregate", 0),
+                    "goalDeficit": _agg.get("goalDeficit", 0),
+                    "homeTeamTrailing": _agg.get("homeTeamTrailing", False),
+                    "mustWinByGoals": _agg.get("mustWinByGoals", 0),
+                },
+                "injuries": game_situation.get("injuries", {}).get("summaryText", ""),
+            }
 
         # DATA QUALITY INDICATOR — flag when API data might be unreliable
         total_game_logs = len(player_game_logs)
