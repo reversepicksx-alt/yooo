@@ -13,6 +13,7 @@ interface Props {
 
 const PROP_LABELS: Record<string, string> = {
   pass_attempts: 'Pass Attempts',
+  passes: 'Passes',
   shots: 'Shots',
   shots_on_target: 'Shots on Target',
   goals: 'Goals',
@@ -22,6 +23,14 @@ const PROP_LABELS: Record<string, string> = {
   saves: 'Saves',
   dribbles: 'Dribbles',
   crosses: 'Crosses',
+  clearances: 'Clearances',
+  fouls_drawn: 'Fouls Drawn',
+  fouls_committed: 'Fouls Committed',
+  duels_won: 'Duels Won',
+  yellow_cards: 'Yellow Cards',
+  shots_assisted: 'Shots Assisted',
+  blocks: 'Blocks',
+  interceptions: 'Interceptions',
 };
 
 export default function PredictionCard({ result, onSave, saving }: Props) {

@@ -53,7 +53,7 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
 
   const propLabel = PROP_LABELS[pick.propType] || pick.propType?.replace(/_/g, ' ') || '—';
   const venueStr = pick.venue ? pick.venue.toUpperCase() : '';
-  const posLabel = pick.position || '';
+  const posLabel = [pick.position, pick.role].filter(Boolean).join(' · ');
 
   const settled = won || lost || push;
   const nowValue = settled
@@ -141,6 +141,11 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
           <Text style={styles.pickDetail}>
             {propLabel} · Line {pick.line}
           </Text>
+          {pick.coinFlip && (
+            <View style={styles.coinFlipBadge}>
+              <Text style={styles.coinFlipText}>COIN FLIP</Text>
+            </View>
+          )}
         </View>
       )}
 
@@ -502,6 +507,8 @@ const styles = StyleSheet.create({
   recPill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6 },
   recPillText: { fontSize: 12, fontWeight: '800', letterSpacing: 0.5 },
   pickDetail: { fontSize: 13, color: Colors.textSecondary, flex: 1 },
+  coinFlipBadge: { backgroundColor: Colors.cardSecondary, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 6, borderWidth: 1, borderColor: Colors.border },
+  coinFlipText: { fontSize: 9, fontWeight: '800', color: Colors.textTertiary, letterSpacing: 0.8 },
 
   statsRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.cardSecondary, borderRadius: 10, padding: 2 },
   statCol: { flex: 1, alignItems: 'center', paddingVertical: 10, gap: 3 },

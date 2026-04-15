@@ -170,11 +170,16 @@ export default function ScanScreen() {
         projection: prediction.projection ?? prediction.bayesianProjection,
         recommendation: prediction.recommendation,
         confidence: prediction.confidence,
+        confidenceLevel: prediction.confidenceLevel,
+        position: prediction.playerPosition || undefined,
+        role: prediction.playerRole || undefined,
         sport: 'soccer',
         player: {
           id: prediction.playerId || 0,
           name: prediction.playerName || scanResult.playerName || playerQuery,
           team: prediction.teamName || scanResult.teamName || scanResult.playerTeam || '',
+          position: prediction.playerPosition || undefined,
+          role: prediction.playerRole || undefined,
         },
         _request: {
           teamId: prediction.teamId || scanResult.teamId || 0,
@@ -471,7 +476,14 @@ export default function ScanScreen() {
                   </Text>
                   <Text style={styles.analysisVenue}>
                     {venueOverride.toUpperCase()} · {PROP_LABELS[prediction.propType || ''] || prediction.propType}
+                    {prediction.playerPosition ? `  ·  ${prediction.playerPosition}` : ''}
+                    {prediction.playerRole ? ` (${prediction.playerRole})` : ''}
                   </Text>
+                  {prediction.matchContext && (prediction.matchContext.league || prediction.matchContext.round) && (
+                    <Text style={styles.matchContextText} numberOfLines={1}>
+                      {[prediction.matchContext.league, prediction.matchContext.round, prediction.matchContext.date].filter(Boolean).join('  ·  ')}
+                    </Text>
+                  )}
                 </View>
                 {prediction.recommendation && (
                   <View style={[styles.recBadge, {
@@ -509,6 +521,13 @@ export default function ScanScreen() {
                 </View>
               </View>
 
+              {/* Data Quality Warning */}
+              {prediction.dataQuality && prediction.dataQuality.level !== 'good' && prediction.dataQuality.message && (
+                <View style={styles.dataQualityBanner}>
+                  <Ionicons name="warning-outline" size={12} color="#F59E0B" />
+                  <Text style={styles.dataQualityText}>{prediction.dataQuality.message}</Text>
+                </View>
+              )}
 
               {/* Confidence Interval */}
               {prediction.confidenceInterval && prediction.confidenceInterval[1] > prediction.confidenceInterval[0] && (
@@ -636,6 +655,43 @@ export default function ScanScreen() {
                       <Text style={styles.reasoningLabel}>AI ANALYSIS</Text>
                     </View>
                     <Text style={styles.reasoningText}>{prediction.reasoning}</Text>
+                  </View>
+                </>
+              )}
+
+              {/* Sharp Intel — sharpSummary + keyEvidence + gameFlowDynamics + scenarioAnalysis */}
+              {(prediction.sharpSummary || prediction.keyEvidence || prediction.gameFlowDynamics || prediction.scenarioAnalysis) && (
+                <>
+                  <View style={styles.analysisDivider} />
+                  <View style={styles.sharpIntelBox}>
+                    <View style={styles.sharpIntelHeader}>
+                      <Ionicons name="flash" size={13} color="#FFD700" />
+                      <Text style={styles.sharpIntelLabel}>SHARP INTELLIGENCE</Text>
+                    </View>
+                    {prediction.sharpSummary && (
+                      <View style={styles.sharpRow}>
+                        <Text style={styles.sharpRowTitle}>Bet Rationale</Text>
+                        <Text style={styles.sharpRowText}>{prediction.sharpSummary}</Text>
+                      </View>
+                    )}
+                    {prediction.keyEvidence && (
+                      <View style={styles.sharpRow}>
+                        <Text style={styles.sharpRowTitle}>Key Evidence</Text>
+                        <Text style={styles.sharpRowText}>{prediction.keyEvidence}</Text>
+                      </View>
+                    )}
+                    {prediction.gameFlowDynamics && (
+                      <View style={styles.sharpRow}>
+                        <Text style={styles.sharpRowTitle}>Game Flow</Text>
+                        <Text style={styles.sharpRowText}>{prediction.gameFlowDynamics}</Text>
+                      </View>
+                    )}
+                    {prediction.scenarioAnalysis && (
+                      <View style={[styles.sharpRow, { borderBottomWidth: 0 }]}>
+                        <Text style={styles.sharpRowTitle}>Scenarios</Text>
+                        <Text style={styles.sharpRowText}>{prediction.scenarioAnalysis}</Text>
+                      </View>
+                    )}
                   </View>
                 </>
               )}
@@ -1383,4 +1439,40 @@ const styles = StyleSheet.create({
   summaryLabel: { fontSize: 9, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 0.5, textAlign: 'center' },
   summaryValue: { fontSize: 18, fontWeight: '800', color: Colors.text },
   summarySub: { fontSize: 8, color: Colors.textTertiary, fontWeight: '600', letterSpacing: 0.8 },
+
+  /* Match context tag line in header */
+  matchContextText: {
+    fontSize: 10, color: Colors.primary, fontWeight: '600', letterSpacing: 0.5, marginTop: 2,
+  },
+
+  /* Data quality banner */
+  dataQualityBanner: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 6,
+    backgroundColor: '#F59E0B15', paddingHorizontal: 14, paddingVertical: 8,
+    borderTopWidth: 1, borderTopColor: '#F59E0B30',
+  },
+  dataQualityText: { fontSize: 11, color: '#F59E0B', flex: 1, lineHeight: 16 },
+
+  /* Sharp Intelligence section */
+  sharpIntelBox: {
+    backgroundColor: '#FFD70008', paddingHorizontal: 16, paddingBottom: 4,
+  },
+  sharpIntelHeader: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingTop: 12, paddingBottom: 8,
+  },
+  sharpIntelLabel: {
+    fontSize: 10, fontWeight: '800', color: '#FFD700', letterSpacing: 1.5,
+  },
+  sharpRow: {
+    paddingBottom: 12, marginBottom: 2,
+    borderBottomWidth: 1, borderBottomColor: Colors.border + '60',
+  },
+  sharpRowTitle: {
+    fontSize: 10, fontWeight: '800', color: Colors.textTertiary,
+    letterSpacing: 0.8, marginBottom: 4,
+  },
+  sharpRowText: {
+    fontSize: 13, color: Colors.textSecondary, lineHeight: 19,
+  },
 });

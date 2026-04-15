@@ -228,6 +228,14 @@ export interface PredictionResult {
   opponentId?: number;
   leagueId?: number;
   playerId?: number;
+  playerPosition?: string;
+  playerRole?: string;
+  sharpSummary?: string;
+  keyEvidence?: string;
+  gameFlowDynamics?: string;
+  scenarioAnalysis?: string;
+  matchContext?: { league?: string; round?: string; date?: string };
+  dataQuality?: { level?: string; message?: string; gamesWithData?: number; totalGames?: number };
   analysisSummary?: {
     statLabel?: string;
     venue?: string;
@@ -242,7 +250,7 @@ export interface PredictionResult {
 }
 
 interface RawPrediction {
-  player?: { id?: number; name?: string; team?: string; position?: string };
+  player?: { id?: number; name?: string; team?: string; position?: string; role?: string };
   propType?: string;
   line?: number;
   projectedValue?: number;
@@ -312,6 +320,12 @@ interface RawPrediction {
     expectedGameType?: string;
     keyMatchupFactor?: string;
   };
+  sharpSummary?: string;
+  keyEvidence?: string;
+  gameFlowDynamics?: string;
+  scenarioAnalysis?: string;
+  matchContext?: { league?: string; round?: string; date?: string };
+  dataQuality?: { level?: string; message?: string; gamesWithData?: number; totalGames?: number };
   analysisSummary?: {
     statLabel?: string;
     venue?: string;
@@ -441,6 +455,14 @@ export async function predict(request: Record<string, unknown>): Promise<Predict
     opponentId: raw._request?.opponentId || (request.opponentId as number) || undefined,
     leagueId: raw._request?.leagueId || (request.leagueId as number) || undefined,
     playerId: raw._request?.playerId || raw.player?.id || undefined,
+    playerPosition: raw.player?.position || undefined,
+    playerRole: raw.player?.role || undefined,
+    sharpSummary: raw.sharpSummary || undefined,
+    keyEvidence: raw.keyEvidence || undefined,
+    gameFlowDynamics: raw.gameFlowDynamics || undefined,
+    scenarioAnalysis: raw.scenarioAnalysis || undefined,
+    matchContext: raw.matchContext ? { league: raw.matchContext.league, round: raw.matchContext.round, date: raw.matchContext.date } : undefined,
+    dataQuality: raw.dataQuality ? { level: raw.dataQuality.level, message: raw.dataQuality.message, gamesWithData: raw.dataQuality.gamesWithData, totalGames: raw.dataQuality.totalGames } : undefined,
     analysisSummary: raw.analysisSummary ?? undefined,
   };
 }
@@ -474,6 +496,8 @@ export interface Pick {
   venue?: string;
   trackingId?: string;
   position?: string;
+  role?: string;
+  coinFlip?: boolean;
 }
 
 export async function listPicks(email: string, token: string): Promise<Pick[]> {
@@ -513,6 +537,8 @@ export async function listPicks(email: string, token: string): Promise<Pick[]> {
     venue: p.venue as string,
     trackingId: p.trackingId as string,
     position: (p.position as string) || undefined,
+    role: (p.role as string) || undefined,
+    coinFlip: (p.coinFlip as boolean) || undefined,
   }));
 }
 
