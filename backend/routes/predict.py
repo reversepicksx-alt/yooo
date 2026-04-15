@@ -1990,12 +1990,19 @@ POSITION CLUES: CB=high tackles/blocks/aerial duels, low crosses/key passes/drib
         PREDICTION_SYSTEM = """Elite soccer prop prediction engine. Analyze data thoroughly, return calibrated JSON.
 
 REQUIREMENTS:
-- "reasoning": 3-5 sentences citing specific per-game averages, venue splits, opponent tendencies from data
-- "tacticalBreakdown": ~1500 char markdown. Sections: **Verdict** (1 sentence), **Analysis** (cite real numbers, venue/sample context), **Scenarios** (best/worst/likely with stat ranges), **Risk** (sub risk, rotation, tactical shifts), **TL;DR**. Mention knockout/tournament stage if applicable
+- "reasoning": 3-5 sentences citing specific per-game averages, venue splits, and — CRITICALLY — what the opponent allows to THIS POSITION (use [POSITION COMPARISON] data). If it's a knockout/2nd leg, explain how the aggregate situation changes expected game flow.
+- "tacticalBreakdown": ~1500 char markdown with these MANDATORY sections:
+  **Verdict** (1 sentence with recommendation and projected value)
+  **Matchup** (How this specific opponent has allowed this stat to same-position players — cite the average from [POSITION COMPARISON]. Note venue context.)
+  **Analysis** (Player's recent form with real numbers. Home/away split. Possession context and how it affects this prop.)
+  **Situation** (Knockout leg? Aggregate score? Tournament stakes? How does this change expected tactics and tempo?)
+  **Scenarios** (Best/base/worst case with specific stat ranges)
+  **Risk** (Rotation risk, sub timing, tactical shifts, injury concerns)
+  **TL;DR** (1-2 sentence sharp summary of the bet)
 - "scenarioAnalysis": 2-3 sentences with specific projections per scenario
-- "sharpSummary": 2 sentences explaining why projection differs from line
-- "keyEvidence": 2-3 strongest data points as string
-- "gameFlowDynamics": How game state impacts this stat (1-2 sentences)
+- "sharpSummary": 2 sentences explaining why projection differs from line, referencing opponent positional allowance if available
+- "keyEvidence": cite the 2-3 most important data points as a string — must include the opponent's positional allowed average if [POSITION COMPARISON] data is present
+- "gameFlowDynamics": How game state, aggregate score, and expected possession impact this specific stat (1-2 sentences)
 - "sensitivityTests", "subRisk", "uncertaintyNote": 1 sentence each
 
 CRITICAL RULES:
@@ -2271,14 +2278,14 @@ Average {req.propType}: {comp_avg} | Per-90 avg: {comp_per90_avg} | Sample: {len
             final_data = "\n\n".join(final_data_parts)[:10000]
             if saves_context:
                 final_data += f"\n\n{saves_context}"
-            if position_context:
-                final_data += f"\n{position_context}"
+            # NOTE: position_context is injected separately in the prompt (never truncated)
         else:
             final_data = json.dumps(historical_data, default=str)[:8000]
 
         # =============================================
-        # MATCH DOMINANCE CONTEXT: Inject possession & multiplier into AI prompt
+        # MATCH DOMINANCE CONTEXT — kept as separate prompt block (not inside final_data)
         # =============================================
+        dom_context = ""
         if match_dominance.get("expectedPoss", 50) != 50 or match_dominance.get("notes"):
             dom_notes = "\n".join(f"  - {n}" for n in match_dominance.get("notes", []))
             dom_context = f"""
@@ -2291,7 +2298,6 @@ Expected possession for {req.opponentName}: {match_dominance['oppExpectedPoss']}
 >>> Conversely, defenders on low-possession teams will have MORE tackles/interceptions than average.
 >>> DO NOT just project from historical averages when match context predicts a clear possession advantage or disadvantage.
 >>> NARRATIVE ALIGNMENT: Your `keyMatchupFactor` and `gameFlowDynamics` MUST match the computed possession numbers above. If {req.opponentName} has HIGHER expected possession, say they control possession — never claim {corrected_team_name} dominates possession if their number is lower. <<<"""
-            final_data += dom_context
 
         # Build match context (round/stage, knockout detection)
         match_context = ""
@@ -2333,7 +2339,9 @@ Odds: {json.dumps(match_odds.get('bookmakerOdds',{}), default=str) if match_odds
 recentSamples=[]
 {hit_rate_context}
 {bayesian_prompt_anchor}
-{final_data[:4000]}
+{dom_context}
+{position_context}
+{final_data[:3500]}
 
 Analyze ALL data thoroughly. Return JSON only."""
 

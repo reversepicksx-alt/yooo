@@ -473,6 +473,7 @@ export interface Pick {
   sport?: string;
   venue?: string;
   trackingId?: string;
+  position?: string;
 }
 
 export async function listPicks(email: string, token: string): Promise<Pick[]> {
@@ -511,6 +512,7 @@ export async function listPicks(email: string, token: string): Promise<Pick[]> {
     sport: p.sport as string,
     venue: p.venue as string,
     trackingId: p.trackingId as string,
+    position: (p.position as string) || undefined,
   }));
 }
 

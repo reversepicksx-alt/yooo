@@ -564,36 +564,44 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
     player_id = pick.get("playerId", 0)
     player_name_key = pick.get("playerName", "").lower().strip()
 
-    # Find matching finished fixture
+    # Parse pick creation time for timestamp guard
+    pick_created_at = None
+    for ts_field in ("timestamp", "createdAt", "settledAt"):
+        raw_ts = pick.get(ts_field)
+        if raw_ts:
+            try:
+                pick_created_at = datetime.fromisoformat(str(raw_ts).replace("Z", "+00:00"))
+                break
+            except Exception:
+                pass
+
+    # Find matching finished fixture — opponent name MUST match
     matched = None
     for f in fixtures:
         status = f.get("fixture", {}).get("status", {}).get("short", "")
         if status not in ("FT", "AET", "PEN"):
             continue
+        # Timestamp guard: fixture must have occurred AFTER the pick was saved
+        fix_date = f.get("fixture", {}).get("date", "")
+        if fix_date and pick_created_at:
+            try:
+                fix_dt = datetime.fromisoformat(fix_date.replace("Z", "+00:00"))
+                if fix_dt < pick_created_at:
+                    continue  # This game happened before pick was made — skip
+            except Exception:
+                pass
         home_name = f.get("teams", {}).get("home", {}).get("name", "")
         away_name = f.get("teams", {}).get("away", {}).get("name", "")
-        if strip_accents(opponent.lower()) in strip_accents(home_name.lower()) or \
-           strip_accents(opponent.lower()) in strip_accents(away_name.lower()) or \
-           strip_accents(home_name.lower()) in strip_accents(opponent.lower()) or \
-           strip_accents(away_name.lower()) in strip_accents(opponent.lower()):
+        if opponent and (
+            strip_accents(opponent.lower()) in strip_accents(home_name.lower()) or
+            strip_accents(opponent.lower()) in strip_accents(away_name.lower()) or
+            strip_accents(home_name.lower()) in strip_accents(opponent.lower()) or
+            strip_accents(away_name.lower()) in strip_accents(opponent.lower())
+        ):
             matched = f
             break
 
-    # If no opponent match, take any finished game for this team (live game rule)
-    if not matched:
-        for f in fixtures:
-            status = f.get("fixture", {}).get("status", {}).get("short", "")
-            if status in ("FT", "AET", "PEN"):
-                # Check timestamp — only matches from last 48 hours
-                fix_date = f.get("fixture", {}).get("date", "")
-                if fix_date:
-                    try:
-                        fix_dt = datetime.fromisoformat(fix_date.replace("Z", "+00:00"))
-                        if (datetime.now(timezone.utc) - fix_dt).total_seconds() < 172800:
-                            matched = f
-                            break
-                    except Exception:
-                        pass
+    # No fallback to wrong games — if opponent not matched, do not settle
 
     if not matched:
         return False

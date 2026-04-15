@@ -53,6 +53,7 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
 
   const propLabel = PROP_LABELS[pick.propType] || pick.propType?.replace(/_/g, ' ') || '—';
   const venueStr = pick.venue ? pick.venue.toUpperCase() : '';
+  const posLabel = pick.position || '';
 
   const settled = won || lost || push;
   const nowValue = settled
@@ -93,7 +94,7 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
         <View style={styles.cardLeft}>
           <Text style={styles.cardPlayer} numberOfLines={1}>{pick.playerName}</Text>
           <Text style={styles.cardMeta} numberOfLines={1}>
-            {[pick.teamName, pick.opponentName ? `vs ${pick.opponentName}` : null, venueStr]
+            {[pick.teamName, posLabel || null, pick.opponentName ? `vs ${pick.opponentName}` : null, venueStr]
               .filter(Boolean).join(' · ')}
           </Text>
         </View>
