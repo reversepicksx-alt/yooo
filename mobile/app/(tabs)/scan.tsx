@@ -645,6 +645,63 @@ export default function ScanScreen() {
                 );
               })()}
 
+              {/* ─── PRESSURE DYNAMICS ─── */}
+              {prediction.expectedPossession
+                && Number.isFinite(prediction.expectedPossession.home)
+                && Number.isFinite(prediction.expectedPossession.away)
+                && (() => {
+                const homePoss = prediction.expectedPossession!.home;
+                const awayPoss = prediction.expectedPossession!.away;
+                const isPlayerHome = venueOverride === 'home';
+                const playerTeamName = prediction.teamName || '';
+                const opponentTeamName = prediction.opponentName || '';
+                const homeName = prediction.homeTeam || (isPlayerHome ? playerTeamName : opponentTeamName) || 'Home';
+                const awayName = prediction.awayTeam || (isPlayerHome ? opponentTeamName : playerTeamName) || 'Away';
+
+                const homeIsAggressor = homePoss >= awayPoss;
+                const aggressorName = homeIsAggressor ? homeName : awayName;
+                const defenderName = homeIsAggressor ? awayName : homeName;
+                const aggressorPoss = homeIsAggressor ? homePoss : awayPoss;
+                const defenderPoss = homeIsAggressor ? awayPoss : homePoss;
+                const gap = Math.round(aggressorPoss - defenderPoss);
+
+                const pressureText = gap >= 15
+                  ? `${aggressorName} are projected to dominate possession by ${gap} percentage points — a significant tactical edge. Expect ${aggressorName} to dictate the tempo, pin ${defenderName} deep, and create chances through sustained pressure. ${defenderName} will likely look to absorb and counter.`
+                  : gap >= 8
+                  ? `${aggressorName} hold a meaningful possession edge (~${gap}pp). They set the pace and play in the opponent's half more often. ${defenderName} will be reactive, defending in a mid-block and waiting for chances to transition.`
+                  : `Possession is projected to be closely contested. Both teams are expected to have spells of control — game flow will depend on which midfield wins the second balls and sets the tempo.`;
+
+                return (
+                  <>
+                    <View style={styles.analysisDivider} />
+                    <View style={styles.pressureCard}>
+                      <View style={styles.pressureHeaderRow}>
+                        <Ionicons name="shield-half-outline" size={12} color={Colors.primary} />
+                        <Text style={styles.pressureTitle}>PRESSURE DYNAMICS</Text>
+                      </View>
+                      <Text style={styles.pressureBody}>{pressureText}</Text>
+                      <View style={styles.pressureTeamsRow}>
+                        <View style={styles.pressureTeamBlock}>
+                          <Text style={styles.pressureTeamName} numberOfLines={1}>{aggressorName}</Text>
+                          <View style={[styles.pressureLabel, styles.pressureLabelAggressor]}>
+                            <Text style={styles.pressureLabelText}>⚔ THE AGGRESSORS</Text>
+                          </View>
+                          <Text style={styles.pressurePossText}>{Math.round(aggressorPoss)}% poss</Text>
+                        </View>
+                        <View style={styles.pressureVsDivider} />
+                        <View style={styles.pressureTeamBlock}>
+                          <Text style={styles.pressureTeamName} numberOfLines={1}>{defenderName}</Text>
+                          <View style={[styles.pressureLabel, styles.pressureLabelDefender]}>
+                            <Text style={styles.pressureLabelText}>🛡 THE DEFENDERS</Text>
+                          </View>
+                          <Text style={styles.pressurePossText}>{Math.round(defenderPoss)}% poss</Text>
+                        </View>
+                      </View>
+                    </View>
+                  </>
+                );
+              })()}
+
               {/* AI Reasoning */}
               {prediction.reasoning && (() => {
                 const isOver = prediction.recommendation === 'OVER';
@@ -1484,6 +1541,24 @@ const styles = StyleSheet.create({
   saveBtnText: { color: '#000', fontWeight: '800', fontSize: 16 },
   newBtn: { alignItems: 'center', paddingVertical: 14 },
   newBtnText: { color: Colors.textSecondary, fontSize: 14, fontWeight: '600' },
+
+  /* Pressure Dynamics */
+  pressureCard: {
+    backgroundColor: Colors.cardSecondary, borderRadius: Colors.radius,
+    borderWidth: 1, borderColor: Colors.borderSubtle, padding: 14, gap: 12,
+  },
+  pressureHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  pressureTitle: { fontSize: 10, fontWeight: '800', color: Colors.primary, letterSpacing: 1.2 },
+  pressureBody: { fontSize: 12, color: Colors.textSecondary, lineHeight: 18 },
+  pressureTeamsRow: { flexDirection: 'row', alignItems: 'stretch', gap: 10 },
+  pressureTeamBlock: { flex: 1, alignItems: 'center', gap: 4 },
+  pressureTeamName: { fontSize: 13, fontWeight: '700', color: Colors.text, textAlign: 'center' },
+  pressureLabel: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
+  pressureLabelAggressor: { backgroundColor: 'rgba(57,255,20,0.12)', borderWidth: 1, borderColor: 'rgba(57,255,20,0.3)' },
+  pressureLabelDefender: { backgroundColor: 'rgba(255,149,0,0.10)', borderWidth: 1, borderColor: 'rgba(255,149,0,0.3)' },
+  pressureLabelText: { fontSize: 9, fontWeight: '800', color: Colors.textSecondary, letterSpacing: 0.8 },
+  pressurePossText: { fontSize: 11, color: Colors.textTertiary },
+  pressureVsDivider: { width: 1, backgroundColor: Colors.borderSubtle, alignSelf: 'stretch' },
 
   /* Position Comparison (Proof) */
   pcCard: {
