@@ -221,6 +221,34 @@ def compute_bayesian_projection(
     posterior_std = round(math.sqrt(1 / total_precision) if total_precision > 0 else prior_std, 2)
 
     # ═══════════════════════════════════════════
+    # POSSESSION SQUEEZE — Direct multiplier for ball-control props
+    # Applied AFTER posterior when the player's team faces a meaningful
+    # possession disadvantage vs their season norm.
+    #
+    # WHY: The covariate pathway (≤25% weight) dilutes the possession signal
+    # to ~4% effect even for severe imbalances (e.g. Real Madrid at Bayern).
+    # When a team loses 10+ poss points vs their average, individual pass
+    # volume drops near-linearly. This step captures that directly.
+    #
+    # Activates when: expected_poss < team_season_avg × 0.92 (8%+ below norm)
+    # Multiplier: poss_ratio^1.3 — slightly convex so extremes hit harder
+    # Floor: 0.60 — prevents overcorrection (max 40% reduction)
+    # ═══════════════════════════════════════════
+    BALL_CONTROL_PROPS = {"pass_attempts", "passes", "key_passes", "crosses", "dribbles"}
+    if match_dominance and prop_type in BALL_CONTROL_PROPS:
+        expected_poss = match_dominance.get("expectedPoss")
+        team_season_avg_poss = match_dominance.get("teamSeasonAvg")
+        if expected_poss is not None and team_season_avg_poss and team_season_avg_poss > 0:
+            poss_ratio = expected_poss / team_season_avg_poss
+            if poss_ratio < 0.92:
+                squeeze_mult = round(max(0.60, poss_ratio ** 1.3), 3)
+                raw_before_squeeze = posterior_mean
+                posterior_mean = round(posterior_mean * squeeze_mult, 1)
+                print(f"[POSS SQUEEZE] {prop_type}: team_avg={team_season_avg_poss:.1f}% "
+                      f"expected={expected_poss:.1f}% ratio={poss_ratio:.2f} "
+                      f"mult={squeeze_mult} {raw_before_squeeze} → {posterior_mean}")
+
+    # ═══════════════════════════════════════════
     # PRESS INTENSITY — PPDA Proxy (independent of match dominance)
     # Applied AFTER posterior for pass_attempts/passes props only.
     #
@@ -529,14 +557,18 @@ def _estimate_opponent_concession(opp_fixture_stats: list, prop_type: str) -> Op
         return None
 
     # (stat_field_from_opponent_data, player_share_of_that_stat)
+    #
+    # IMPORTANT: pass_attempts, passes, key_passes, crosses, dribbles are intentionally
+    # EXCLUDED. Their "opponent concession" relies on totalPasses — but opponent totalPasses
+    # measures THEIR possession volume, which is INVERSELY correlated with how many passes
+    # the attacking player gets (more opp passes = opp has ball = fewer passes for attacker).
+    # Including these was boosting projections against Arsenal/Bayern/City by +5-10 — wrong.
+    # Possession-based penalties for these props are handled by the POSSESSION SQUEEZE step.
     prop_config = {
-        "pass_attempts": ("totalPasses", 0.18),
-        "passes":        ("totalPasses", 0.18),
-        "shots":         ("totalShots", 0.18),
+        "shots":           ("totalShots",    0.18),
         "shots_on_target": ("shotsOnTarget", 0.18),
-        "saves":         ("shotsOnTarget", 0.70),   # GK saves ~70% of opponent SOT
-        "tackles":       ("totalPasses", 0.015),     # more opp passes = more tackle opportunities
-        "key_passes":    ("totalPasses", 0.012),     # creative output correlates with possession volume
+        "saves":           ("shotsOnTarget", 0.70),   # GK saves ~70% of opponent SOT
+        "tackles":         ("totalPasses",   0.015),  # more opp passes = more tackle opportunities
     }
 
     config = prop_config.get(prop_type)
