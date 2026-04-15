@@ -1632,7 +1632,7 @@ async def predict(req: PredictionRequest):
 Season avg: {early_bayes['priorMean']} | Recent form (decay-weighted): {early_bayes['momentumMean']} ({early_bayes['momentumLabel']}) | Context adj: {early_bayes['covariateAdjustment']:+.1f}
 Streak: {early_bayes['streakFlag']} | Volatility: {early_bayes['volatility']} (CV={early_bayes['cv']}) | Reversal: {early_bayes['reversalFlag']}
 IMPORTANT: Never use the word "Bayesian" in your response. Always say "Reverse Formula" instead.
->>> Your projectedValue MUST be within 20% of {early_bayes['posteriorMean']}. If you disagree, explain specifically why in your reasoning. <<<"""
+>>> MANDATORY: The math projects {bdir}. Your **Verdict** MUST recommend {bdir}. Do NOT write the opposite direction — this creates a contradiction the user sees. Your projectedValue MUST be within 20% of {early_bayes['posteriorMean']}. <<<"""
                 # Inject press intensity context into AI prompt
                 _pi = early_bayes.get("pressIntensity", {})
                 if _pi.get("label") not in (None, "Unknown", "Low") and req.propType in {"pass_attempts", "passes"}:
@@ -3216,6 +3216,22 @@ Analyze ALL data thoroughly. Return JSON only."""
             print(f"[TIMING] Built tacticalBreakdown from Grok fields: {len(prediction['tacticalBreakdown'])} chars")
         else:
             print(f"[TIMING] Using Grok tacticalBreakdown directly: {len(grok_tb)} chars")
+
+        # ── DIRECTION GUARD: If Grok's Verdict contradicts the math, fix the first line ──
+        final_rec = prediction.get("recommendation", "").lower()
+        tb = prediction.get("tacticalBreakdown", "")
+        if tb and final_rec:
+            wrong_dir = "under" if final_rec == "over" else "over"
+            right_dir = final_rec.upper()
+            right_dir_cap = final_rec.capitalize()
+            # Check if the very first Verdict line contradicts the recommendation
+            first_line = tb.split("\n")[0] if tb else ""
+            if "**verdict**" in first_line.lower() and wrong_dir in first_line.lower() and right_dir.lower() not in first_line.lower():
+                corrected_line = first_line.replace(
+                    wrong_dir.capitalize(), right_dir_cap
+                ).replace(wrong_dir.upper(), right_dir).replace(wrong_dir, right_dir.lower())
+                prediction["tacticalBreakdown"] = corrected_line + tb[len(first_line):]
+                print(f"[DIRECTION GUARD] Corrected Grok verdict from {wrong_dir.upper()} to {right_dir} to match math")
 
         # Save to MongoDB
         prediction["_created"] = datetime.now(timezone.utc).isoformat()
