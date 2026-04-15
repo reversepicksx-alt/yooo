@@ -124,6 +124,8 @@ SUPPORTED_LEAGUES = [
     {"id": 135, "name": "Serie A", "type": "Domestic"},
     {"id": 78, "name": "Bundesliga", "type": "Domestic"},
     {"id": 61, "name": "Ligue 1", "type": "Domestic"},
+    {"id": 94, "name": "Primeira Liga", "type": "Domestic"},
+    {"id": 203, "name": "Süper Lig", "type": "Domestic"},
     {"id": 40, "name": "Championship", "type": "Domestic"},
     {"id": 188, "name": "A-League", "type": "Domestic"},
     {"id": 253, "name": "MLS", "type": "Domestic"},

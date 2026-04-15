@@ -79,8 +79,9 @@ async def seed_grants():
     await db.fixture_player_cache.create_index("_k", unique=True)
     asyncio.create_task(seed_cache())
     # Build master team cache for smart opponent resolution
+    # force=True ensures Portugal/Turkey + leaguePriority field are included
     from team_resolver import build_teams_cache
-    asyncio.create_task(build_teams_cache())
+    asyncio.create_task(build_teams_cache(force=True))
     # Start 24h auto-refresh loop for transfers + data freshness
     asyncio.create_task(background_refresh_loop())
     asyncio.create_task(_auto_sync_square_payments())

@@ -13,6 +13,30 @@ from utils import api_football_request
 COL_TEAMS_MASTER = "teams_master"
 CACHE_TTL = 7 * 24 * 3600  # 7 days
 
+# Higher priority = preferred when two teams share the same alias (e.g. "Sporting")
+# Top 5 European → 100, UEFA club comps + Portugal/Turkey/Championship → 80,
+# Other domestic → 60, International → 50, everything else → 30
+LEAGUE_PRIORITY: dict = {
+    39: 100,   # Premier League
+    140: 100,  # La Liga
+    135: 100,  # Serie A
+    78: 100,   # Bundesliga
+    61: 100,   # Ligue 1
+    2: 90,     # Champions League
+    3: 90,     # Europa League
+    848: 90,   # Conference League
+    94: 85,    # Primeira Liga (Portugal)
+    203: 85,   # Süper Lig (Turkey)
+    40: 80,    # Championship
+    71: 70,    # Brasileirao
+    128: 70,   # Argentina
+    307: 65,   # Saudi Pro League
+    262: 65,   # Liga MX
+    253: 60,   # MLS
+    254: 60,   # NWSL
+    188: 55,   # A-League
+}
+
 
 def _strip_accents(s: str) -> str:
     return "".join(
@@ -195,6 +219,36 @@ SCAN_ALIASES = {
     "como": "como",
     "venezia": "venezia",
     "monza": "monza",
+    # Primeira Liga (Portugal)
+    "sporting cp": "sporting cp",
+    "sporting": "sporting cp",
+    "benfica": "sl benfica",
+    "sl benfica": "sl benfica",
+    "porto": "fc porto",
+    "fc porto": "fc porto",
+    "braga": "sc braga",
+    "guimaraes": "vitoria sc",
+    "vitoria": "vitoria sc",
+    "estoril": "estoril",
+    "famalicao": "fc famalicao",
+    "moreirense": "moreirense",
+    "boavista": "boavista",
+    # Süper Lig (Turkey)
+    "galatasaray": "galatasaray",
+    "galata": "galatasaray",
+    "fenerbahce": "fenerbahce",
+    "fener": "fenerbahce",
+    "besiktas": "besiktas jk",
+    "trabzon": "trabzonspor",
+    "trabzonspor": "trabzonspor",
+    "istanbul": "istanbul basaksehir",
+    "basaksehir": "istanbul basaksehir",
+    "sivasspor": "sivasspor",
+    "konyaspor": "konyaspor",
+    "kayserispor": "kayserispor",
+    "antalyaspor": "antalyaspor",
+    "alanyaspor": "alanyaspor",
+    "kasimpasa": "kasimpasa",
     # Premier League common abbreviations
     "man utd": "manchester united",
     "man united": "manchester united",
@@ -396,10 +450,11 @@ async def build_teams_cache(force: bool = False):
                         "teamId": team_id,
                         "name": name,
                         "nameNormalized": _normalize(name),
-                        "aliases": aliases,
+                        "aliases": list(aliases),
                         "leagueId": lid,
                         "leagueName": league["name"],
                         "country": country,
+                        "leaguePriority": LEAGUE_PRIORITY.get(lid, 30),
                     })
                 print(f"  [TEAM CACHE] League {lid} ({league['name']}): {len(data)} teams")
         except Exception as e:
@@ -431,9 +486,18 @@ async def build_teams_cache(force: bool = False):
     return len(all_teams)
 
 
+def _pick_best(candidates: list) -> dict | None:
+    """Return the highest-priority team from a list of candidates."""
+    if not candidates:
+        return None
+    return max(candidates, key=lambda c: c.get("leaguePriority", 30))
+
+
 async def find_team(query: str, league_id: int = None) -> dict:
     """
     Smart fuzzy search for a team name. Handles abbreviations, accents, etc.
+    When multiple teams share an alias (e.g. "Sporting" → Sporting CP vs Sporting KC),
+    the team in the higher-priority league wins.
     Returns: {"teamId": int, "teamName": str, "leagueId": int} or None
     """
     # Ensure cache exists
@@ -445,31 +509,28 @@ async def find_team(query: str, league_id: int = None) -> dict:
     if not norm:
         return None
 
+    def _to_result(doc):
+        return {"teamId": doc["teamId"], "teamName": doc["name"], "leagueId": doc["leagueId"]}
+
     # Strategy 0: Known scan aliases (AI vision model abbreviations)
     if norm in SCAN_ALIASES:
         canonical = _normalize(SCAN_ALIASES[norm])
-        filt = {"nameNormalized": canonical}
-        if league_id:
-            filt["leagueId"] = league_id
-        doc = await db[COL_TEAMS_MASTER].find_one(filt, {"_id": 0})
-        if doc:
-            return {"teamId": doc["teamId"], "teamName": doc["name"], "leagueId": doc["leagueId"]}
-        # Try alias match on canonical
-        filt2 = {"aliases": canonical}
-        if league_id:
-            filt2["leagueId"] = league_id
-        doc = await db[COL_TEAMS_MASTER].find_one(filt2, {"_id": 0})
-        if doc:
-            return {"teamId": doc["teamId"], "teamName": doc["name"], "leagueId": doc["leagueId"]}
-        # Try without league filter
-        doc = await db[COL_TEAMS_MASTER].find_one({"nameNormalized": canonical}, {"_id": 0})
-        if not doc:
-            doc = await db[COL_TEAMS_MASTER].find_one({"aliases": canonical}, {"_id": 0})
-        if doc:
-            return {"teamId": doc["teamId"], "teamName": doc["name"], "leagueId": doc["leagueId"]}
+        for field in ("nameNormalized", "aliases"):
+            filt = {field: canonical}
+            if league_id:
+                filt["leagueId"] = league_id
+            candidates = await db[COL_TEAMS_MASTER].find(filt, {"_id": 0}).to_list(10)
+            best = _pick_best(candidates)
+            if best:
+                return _to_result(best)
+        # Without league filter
+        for field in ("nameNormalized", "aliases"):
+            candidates = await db[COL_TEAMS_MASTER].find({field: canonical}, {"_id": 0}).to_list(10)
+            best = _pick_best(candidates)
+            if best:
+                return _to_result(best)
 
-    # Strategy 0b: Try expanding abbreviations in the query itself
-    # "man utd" → try "man united", "newcastle utd" → "newcastle united"
+    # Strategy 0b: Expand common abbreviations
     QUERY_EXPANSIONS = {"utd": "united", "wed": "wednesday", "ath": "athletic", "alb": "albion", "for": "forest"}
     expanded_norms = [norm]
     for abbr, full in QUERY_EXPANSIONS.items():
@@ -478,35 +539,47 @@ async def find_team(query: str, league_id: int = None) -> dict:
         if full in norm.split():
             expanded_norms.append(norm.replace(full, abbr))
 
-    norm = _normalize(query)
-    if not norm:
-        return None
-
-    # Strategy 1: Exact normalized name match
+    # Strategy 1: Exact normalized name match (prefer league_id if provided)
     for n in expanded_norms:
         filt = {"nameNormalized": n}
         if league_id:
             filt["leagueId"] = league_id
-        doc = await db[COL_TEAMS_MASTER].find_one(filt, {"_id": 0})
-        if doc:
-            return {"teamId": doc["teamId"], "teamName": doc["name"], "leagueId": doc["leagueId"]}
+        candidates = await db[COL_TEAMS_MASTER].find(filt, {"_id": 0}).to_list(10)
+        best = _pick_best(candidates)
+        if best:
+            return _to_result(best)
+    # Retry without league filter
+    for n in expanded_norms:
+        candidates = await db[COL_TEAMS_MASTER].find({"nameNormalized": n}, {"_id": 0}).to_list(10)
+        best = _pick_best(candidates)
+        if best:
+            return _to_result(best)
 
-    # Strategy 2: Alias match (handles "paris sg", "psg", "sheff wed", etc.)
+    # Strategy 2: Alias match — fetch ALL matches, return highest-priority league
     for n in expanded_norms:
         filt = {"aliases": n}
         if league_id:
             filt["leagueId"] = league_id
-        doc = await db[COL_TEAMS_MASTER].find_one(filt, {"_id": 0})
-        if doc:
-            return {"teamId": doc["teamId"], "teamName": doc["name"], "leagueId": doc["leagueId"]}
+        candidates = await db[COL_TEAMS_MASTER].find(filt, {"_id": 0}).to_list(20)
+        best = _pick_best(candidates)
+        if best:
+            return _to_result(best)
+    # Retry without league filter
+    for n in expanded_norms:
+        candidates = await db[COL_TEAMS_MASTER].find({"aliases": n}, {"_id": 0}).to_list(20)
+        best = _pick_best(candidates)
+        if best:
+            return _to_result(best)
 
     # Strategy 3: Substring match on normalized name
-    filt = {"nameNormalized": {"$regex": re.escape(norm)}}
-    if league_id:
-        filt["leagueId"] = league_id
-    doc = await db[COL_TEAMS_MASTER].find_one(filt, {"_id": 0})
-    if doc:
-        return {"teamId": doc["teamId"], "teamName": doc["name"], "leagueId": doc["leagueId"]}
+    for n in expanded_norms:
+        filt = {"nameNormalized": {"$regex": re.escape(n)}}
+        if league_id:
+            filt["leagueId"] = league_id
+        candidates = await db[COL_TEAMS_MASTER].find(filt, {"_id": 0}).to_list(10)
+        best = _pick_best(candidates)
+        if best:
+            return _to_result(best)
 
     # Strategy 4: Any word from query appears in any alias
     words = norm.split()
@@ -516,21 +589,16 @@ async def find_team(query: str, league_id: int = None) -> dict:
             filt = {"aliases": {"$regex": re.escape(longest_word)}}
             if league_id:
                 filt["leagueId"] = league_id
-            candidates = await db[COL_TEAMS_MASTER].find(filt, {"_id": 0}).to_list(10)
+            candidates = await db[COL_TEAMS_MASTER].find(filt, {"_id": 0}).to_list(20)
             if candidates:
-                # Score by how many query words match
-                best = None
-                best_score = 0
+                # Score by word coverage AND league priority
+                scored = []
                 for c in candidates:
-                    score = sum(1 for w in words if any(w in a for a in c["aliases"]))
-                    if score > best_score:
-                        best = c
-                        best_score = score
-                if best:
-                    return {"teamId": best["teamId"], "teamName": best["name"], "leagueId": best["leagueId"]}
-
-    # Strategy 5: Without league filter (if we had one)
-    if league_id:
-        return await find_team(query, league_id=None)
+                    word_score = sum(1 for w in words if any(w in a for a in c.get("aliases", [])))
+                    priority = c.get("leaguePriority", 30)
+                    scored.append((word_score * 1000 + priority, c))
+                scored.sort(key=lambda x: x[0], reverse=True)
+                if scored:
+                    return _to_result(scored[0][1])
 
     return None

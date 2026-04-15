@@ -19,15 +19,18 @@ PREFETCH_LEAGUES = [
     135,  # Serie A
     78,   # Bundesliga
     61,   # Ligue 1
+    94,   # Primeira Liga (Portugal)
+    203,  # Süper Lig (Turkey)
+    40,   # Championship
     2,    # Champions League
     3,    # Europa League
+    848,  # UEFA Conference League
     71,   # Brazil Série A
     128,  # Argentina Liga Profesional
     307,  # Saudi Pro League
     253,  # MLS
     254,  # NWSL
-    94,   # Primeira Liga (Portugal — UCL/UEL teams)
-    40,   # Championship
+    262,  # Liga MX
     1,    # World Cup
     4,    # Euro Championship
     32,   # WCQ UEFA
@@ -36,7 +39,6 @@ PREFETCH_LEAGUES = [
     29,   # WCQ CAF
     30,   # WCQ AFC
     960,  # UEFA Nations League
-    848,  # UEFA Conference League
 ]
 
 _PREFETCH_SEM = asyncio.Semaphore(3)  # gentle on API — 3 concurrent fixture fetches
