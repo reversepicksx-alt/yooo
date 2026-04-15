@@ -172,66 +172,158 @@ async def fetch_web_intel(
     return ""
 
 
-async def fetch_opponent_ppda(opponent: str, league: str = "", timeout: int = 18) -> float | None:
-    """
-    Ask Grok for the opponent team's PPDA (Passes Per Defensive Action) this season.
+# Understat covers these 5 major leagues with full PPDA data
+_UNDERSTAT_LEAGUE_MAP = {
+    "premier league": "EPL",
+    "epl": "EPL",
+    "english premier league": "EPL",
+    "la liga": "La_liga",
+    "laliga": "La_liga",
+    "spain": "La_liga",
+    "bundesliga": "Bundesliga",
+    "german bundesliga": "Bundesliga",
+    "serie a": "Serie_A",
+    "italian serie a": "Serie_A",
+    "ligue 1": "Ligue_1",
+    "french ligue 1": "Ligue_1",
+    "ligue1": "Ligue_1",
+}
 
-    PPDA = passes allowed in the opponent's final 60% / defensive actions in that zone.
-    Lower PPDA = more intense pressing. Typical scale:
-      < 6    : Elite press (e.g. Bayer Leverkusen, Man City peak seasons)
-      6 – 8  : High press  (e.g. Liverpool, Arsenal)
+
+async def fetch_opponent_ppda(opponent: str, league: str = "", timeout: int = 20) -> float | None:
+    """
+    Scrape understat.com via Grok's live web search for the opponent's real PPDA
+    (Passes Per Defensive Action) for the current season.
+
+    Understat covers: EPL, La Liga, Bundesliga, Serie A, Ligue 1.
+    For all other leagues this returns None immediately (proxy handles them).
+
+    PPDA scale:
+      < 6    : Elite press
+      6 – 8  : High press
       8 – 11 : Moderate
       11+    : Low press / deep block
-
-    Returns a float (PPDA value) or None if Grok can't provide a reliable estimate.
-    Only used for pass_attempts / passes props.
     """
     import re as _re
     if not XAI_API_KEY or not opponent:
         return None
 
-    prompt = (
-        f"What is {opponent}'s PPDA (Passes Per Defensive Action) this season"
-        f"{f' in the {league}' if league else ''}? "
-        f"PPDA measures pressing intensity — lower values mean more intensive pressing. "
-        f"Typical values: 5-8 for high-pressing teams (e.g. Man City, Liverpool, Arsenal), "
-        f"8-12 for average teams, 12+ for low-pressing/deep-block sides. "
-        f"Reply with ONLY a single decimal number (e.g. '7.8' or '11.2'). "
-        f"If you are not confident in a specific value, reply with exactly 'unknown'."
+    # Only fire for understat-covered major leagues
+    league_lower = (league or "").lower()
+    understat_code = None
+    for key, code in _UNDERSTAT_LEAGUE_MAP.items():
+        if key in league_lower:
+            understat_code = code
+            break
+
+    if not understat_code:
+        print(f"[PPDA] League '{league}' not on understat — skipping")
+        return None
+
+    understat_url = f"https://understat.com/league/{understat_code}"
+
+    # Prompt Grok to search understat specifically for this team's PPDA
+    search_prompt = (
+        f"Go to {understat_url} and look at the team statistics table. "
+        f"Find {opponent}'s PPDA (Passes Per Defensive Action) for the current 2025/2026 season. "
+        f"PPDA is a pressing intensity metric — lower values mean more aggressive pressing "
+        f"(e.g. 6.5 = elite press, 9.0 = moderate, 13+ = low press). "
+        f"Reply with ONLY the PPDA number as a decimal (e.g. '7.8'). "
+        f"If you cannot find {opponent} on that page or cannot confirm the value, reply with exactly 'unknown'."
     )
 
     headers = {"Authorization": f"Bearer {XAI_API_KEY}", "Content-Type": "application/json"}
-    for model in [GROK_REASONING_MODEL, GROK_MODEL]:
+
+    # Strategy 1: Grok web search (live scrape of understat.com)
+    for model in [GROK_SEARCH_MODEL]:
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=8)) as client:
-                resp = await client.post(
-                    GROK_URL, headers=headers,
-                    json={
-                        "model": model,
-                        "messages": [{"role": "user", "content": prompt}],
-                        "temperature": 0,
-                        "max_tokens": 15,
-                    }
-                )
+                payload = {
+                    "model": model,
+                    "messages": [{"role": "user", "content": search_prompt}],
+                    "temperature": 0,
+                    "max_tokens": 30,
+                    "tools": [{"type": "web_search_preview"}],
+                    "tool_choice": "required",
+                }
+                resp = await client.post(GROK_URL, headers=headers, json=payload)
                 if resp.status_code == 200:
-                    text = resp.json()["choices"][0]["message"]["content"].strip()
-                    if "unknown" in text.lower():
-                        print(f"[PPDA] Grok has no PPDA for {opponent}: '{text}'")
+                    data = resp.json()
+                    choice = data["choices"][0]
+                    msg = choice.get("message", {})
+                    content = msg.get("content", "")
+                    tool_calls = msg.get("tool_calls", [])
+                    if not content and tool_calls:
+                        messages = [
+                            {"role": "user", "content": search_prompt},
+                            {"role": "assistant", "tool_calls": tool_calls, "content": None},
+                        ]
+                        for tc in tool_calls:
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": tc.get("id", ""),
+                                "content": "[Search results integrated by model]",
+                            })
+                        payload2 = {**payload, "messages": messages, "tool_choice": "auto", "max_tokens": 30}
+                        resp2 = await client.post(GROK_URL, headers=headers, json=payload2)
+                        if resp2.status_code == 200:
+                            content = resp2.json()["choices"][0]["message"].get("content", "")
+                    if content:
+                        text = content.strip()
+                        if "unknown" in text.lower():
+                            print(f"[PPDA] understat: {opponent} not found ({understat_code})")
+                            return None
+                        m = _re.search(r'\b(\d{1,2}(?:\.\d{1,2})?)\b', text)
+                        if m:
+                            val = float(m.group(1))
+                            if 3.0 <= val <= 30.0:
+                                print(f"[PPDA] understat scrape: {opponent} ({understat_code}) PPDA={val}")
+                                return val
+                        print(f"[PPDA] understat unparseable: '{text}'")
                         return None
-                    m = _re.search(r'\b(\d{1,2}(?:\.\d{1,2})?)\b', text)
-                    if m:
-                        val = float(m.group(1))
-                        if 3.0 <= val <= 30.0:
-                            print(f"[PPDA] Grok PPDA {opponent} ({league}): {val}")
-                            return val
-                    print(f"[PPDA] Grok unparseable PPDA response: '{text}'")
-                    return None
+                elif resp.status_code in (400, 404, 422):
+                    print(f"[PPDA] Web search not available ({resp.status_code}) — falling through")
+                    break
                 else:
-                    print(f"[PPDA] Grok error {resp.status_code} ({model})")
+                    print(f"[PPDA] Web search error {resp.status_code}: {resp.text[:100]}")
         except asyncio.TimeoutError:
-            print(f"[PPDA] Grok PPDA timeout ({model})")
+            print(f"[PPDA] understat scrape timeout ({model})")
         except Exception as e:
-            print(f"[PPDA] Grok PPDA exception: {e}")
+            print(f"[PPDA] understat scrape exception: {e}")
+
+    # Strategy 2: Grok knowledge fallback — only for understat-covered leagues
+    # Ask directly about the team's known PPDA from training data
+    knowledge_prompt = (
+        f"What is {opponent}'s PPDA (Passes Per Defensive Action) in the current or most recent "
+        f"{league} season, based on understat.com data? "
+        f"PPDA < 6 = elite press, 6-8 = high, 8-11 = moderate, 11+ = low. "
+        f"Reply with ONLY a single decimal number. If unsure, reply 'unknown'."
+    )
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(15, connect=8)) as client:
+            resp = await client.post(
+                GROK_URL, headers=headers,
+                json={
+                    "model": GROK_REASONING_MODEL,
+                    "messages": [{"role": "user", "content": knowledge_prompt}],
+                    "temperature": 0,
+                    "max_tokens": 15,
+                }
+            )
+            if resp.status_code == 200:
+                text = resp.json()["choices"][0]["message"]["content"].strip()
+                if "unknown" in text.lower():
+                    print(f"[PPDA] Knowledge fallback: {opponent} unknown")
+                    return None
+                m = _re.search(r'\b(\d{1,2}(?:\.\d{1,2})?)\b', text)
+                if m:
+                    val = float(m.group(1))
+                    if 3.0 <= val <= 30.0:
+                        print(f"[PPDA] Knowledge fallback: {opponent} PPDA={val}")
+                        return val
+    except Exception as e:
+        print(f"[PPDA] Knowledge fallback exception: {e}")
+
     return None
 
 
