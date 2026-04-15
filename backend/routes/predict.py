@@ -89,18 +89,24 @@ async def predict(req: PredictionRequest):
             from team_resolver import find_team as _find_team
             from cache import get_player_by_name as _get_player_by_name
 
-            # 1. Resolve team ID from team name
-            if (not actual_team_id or actual_team_id == 0) and req.teamName:
+            # 1. Resolve team ID from team name — always verify, never blindly trust req.teamId
+            if req.teamName:
                 try:
                     _t = await _find_team(req.teamName, league_id=league_id if league_id and league_id != 39 else None)
                     if _t and _t.get("teamId"):
-                        actual_team_id = _t["teamId"]
-                        print(f"[ID RESOLVE] '{req.teamName}' → teamId={actual_team_id}")
+                        _resolved_tid = _t["teamId"]
+                        if _resolved_tid != actual_team_id:
+                            print(f"[ID RESOLVE] '{req.teamName}' teamId corrected: {actual_team_id} → {_resolved_tid}")
+                            actual_team_id = _resolved_tid
+                        else:
+                            print(f"[ID RESOLVE] '{req.teamName}' → teamId={actual_team_id} (confirmed)")
+                    elif not actual_team_id or actual_team_id == 0:
+                        print(f"[ID RESOLVE] '{req.teamName}' not found in local cache, keeping req.teamId={actual_team_id}")
                 except Exception as _re:
                     print(f"[ID RESOLVE] team lookup failed: {_re}")
 
-            # 2. Resolve opponent ID from opponent name
-            if (not _resolved_opp_id or _resolved_opp_id == 0) and req.opponentName:
+            # 2. Resolve opponent ID from opponent name — always verify
+            if req.opponentName:
                 try:
                     _o = await _find_team(req.opponentName)
                     if _o and _o.get("teamId"):
@@ -491,182 +497,140 @@ async def predict(req: PredictionRequest):
 
         # 2. Player game-by-game box scores from recent fixtures
         async def fetch_player_game_logs(fixture_list, player_id, limit=35):
-            """Fetch player's individual stats — uses MongoDB cache for finished fixtures."""
-            player_name_lower = strip_accents(req.playerName.lower().split()[-1]) if req.playerName else ""
+            """Fetch player's individual stats — always live from API, all competitions."""
 
-            async def fetch_one_log(fix):
-                fid = fix.get("fixtureId")
-                if not fid:
-                    return None
-                try:
-                    # Check MongoDB cache first
-                    cache_key = f"fxp_{fid}_{player_id}"
-                    cached = await db.fixture_player_cache.find_one({"_k": cache_key}, {"_id": 0, "d": 1})
-                    if cached and cached.get("d"):
-                        gl = cached["d"]
-                        gl["date"] = fix.get("date", "")[:10]
-                        gl["opponent"] = fix.get("opponent", "")
-                        gl["venue"] = fix.get("venue", "")
-                        gl["score"] = f"{fix.get('homeGoals',0)}-{fix.get('awayGoals',0)}"
-                        gl["league"] = fix.get("league", "")
-                        gl["round"] = fix.get("round", "")
-                        stat_field_map = {
-                            "goals": "goals_total", "assists": "goals_assists",
-                            "shots_assisted": "passes_key",
-                            "pass_attempts": "passes_total", "shots": "shots_total",
-                            "shots_on_target": "shots_on", "tackles": "tackles_total",
-                            "key_passes": "passes_key", "saves": "goals_saves",
-                            "interceptions": "tackles_interceptions", "blocks": "tackles_blocks",
-                            "dribbles": "dribbles_attempts", "dribbles_success": "dribbles_success",
-                            "fouls_drawn": "fouls_drawn", "fouls_committed": "fouls_committed",
-                            "crosses": "passes_crosses", "clearances": "tackles_clearances",
-                            "duels_won": "duels_won", "yellow_cards": "cards_yellow",
-                        }
-                        raw_val = gl.get(stat_field_map.get(req.propType, ""), None)
+            def _build_game_log(stats: dict) -> dict:
+                minutes = stats.get("games", {}).get("minutes") or 0
+                rating = stats.get("games", {}).get("rating")
+                return {
+                    "minutes": minutes,
+                    "rating": float(rating) if rating else None,
+                    "passes_total": stats.get("passes", {}).get("total"),
+                    "passes_key": stats.get("passes", {}).get("key"),
+                    "passes_accuracy": stats.get("passes", {}).get("accuracy"),
+                    "shots_total": stats.get("shots", {}).get("total"),
+                    "shots_on": stats.get("shots", {}).get("on"),
+                    "tackles_total": stats.get("tackles", {}).get("total"),
+                    "tackles_interceptions": stats.get("tackles", {}).get("interceptions"),
+                    "tackles_blocks": stats.get("tackles", {}).get("blocks"),
+                    "dribbles_attempts": stats.get("dribbles", {}).get("attempts"),
+                    "dribbles_success": stats.get("dribbles", {}).get("success"),
+                    "fouls_drawn": stats.get("fouls", {}).get("drawn"),
+                    "fouls_committed": stats.get("fouls", {}).get("committed"),
+                    "duels_total": stats.get("duels", {}).get("total"),
+                    "duels_won": stats.get("duels", {}).get("won"),
+                    "goals_saves": stats.get("goals", {}).get("saves"),
+                    "goals_total": stats.get("goals", {}).get("total"),
+                    "goals_assists": stats.get("goals", {}).get("assists"),
+                    "passes_crosses": stats.get("passes", {}).get("cross"),
+                    "tackles_clearances": stats.get("tackles", {}).get("clearances"),
+                    "cards_yellow": stats.get("cards", {}).get("yellow"),
+                }
+
+            stat_field_map = {
+                "goals": "goals_total", "assists": "goals_assists",
+                "shots_assisted": "passes_key",
+                "pass_attempts": "passes_total", "passes": "passes_total",
+                "shots": "shots_total", "shots_on_target": "shots_on",
+                "tackles": "tackles_total", "key_passes": "passes_key",
+                "saves": "goals_saves", "interceptions": "tackles_interceptions",
+                "blocks": "tackles_blocks", "dribbles": "dribbles_attempts",
+                "fouls_drawn": "fouls_drawn", "fouls_committed": "fouls_committed",
+                "crosses": "passes_crosses", "clearances": "tackles_clearances",
+                "duels_won": "duels_won", "yellow_cards": "cards_yellow",
+            }
+
+            collected = []
+            if not player_id or not actual_team_id:
+                return collected
+
+            try:
+                # Fetch the team's last 20 finished fixtures across ALL competitions from API
+                team_fixtures_raw = await api_football_request(
+                    "fixtures", {"team": actual_team_id, "last": 20, "status": "FT"}
+                )
+                if not team_fixtures_raw:
+                    print(f"[API-DIRECT] No fixtures found for teamId={actual_team_id}")
+                    return collected
+
+                print(f"[API-DIRECT] {req.playerName}: {len(team_fixtures_raw)} team fixtures from API")
+
+                async def _fetch_one(fix_raw):
+                    try:
+                        fid = fix_raw.get("fixture", {}).get("id")
+                        if not fid:
+                            return None
+                        home_id = fix_raw.get("teams", {}).get("home", {}).get("id")
+                        fix_venue = "home" if home_id == actual_team_id else "away"
+                        fix_date = fix_raw.get("fixture", {}).get("date", "")[:10]
+                        fix_league = fix_raw.get("league", {}).get("name", "")
+                        fix_round = fix_raw.get("league", {}).get("round", "")
+                        opp_key = "away" if home_id == actual_team_id else "home"
+                        fix_opponent = fix_raw.get("teams", {}).get(opp_key, {}).get("name", "")
+                        home_goals = fix_raw.get("goals", {}).get("home", 0) or 0
+                        away_goals = fix_raw.get("goals", {}).get("away", 0) or 0
+
+                        fix_data = await api_football_request("fixtures/players", {"fixture": fid})
+                        if not fix_data:
+                            return None
+
+                        matched_stats = None
+                        all_player_logs = {}
+                        for team_data in fix_data:
+                            for p in team_data.get("players", []):
+                                pid = p.get("player", {}).get("id")
+                                stats = p.get("statistics", [{}])[0] if p.get("statistics") else {}
+                                mins = stats.get("games", {}).get("minutes") or 0
+                                if pid:
+                                    all_player_logs[pid] = _build_game_log(stats)
+                                    if pid == player_id and mins > 0:
+                                        matched_stats = stats
+
+                        # Cache all players from this fixture (fire-and-forget, for position comparisons)
+                        async def _cache_fix(fid_c, logs_c):
+                            ops = [
+                                db.fixture_player_cache.update_one(
+                                    {"_k": f"fxp_{fid_c}_{pk}"},
+                                    {"$set": {"_k": f"fxp_{fid_c}_{pk}", "d": lv}},
+                                    upsert=True
+                                ) for pk, lv in logs_c.items()
+                            ]
+                            if ops:
+                                await aio.gather(*ops, return_exceptions=True)
+                        aio.ensure_future(_cache_fix(fid, all_player_logs))
+
+                        if not matched_stats:
+                            return None
+
+                        gl = _build_game_log(matched_stats)
+                        gl["date"] = fix_date
+                        gl["opponent"] = fix_opponent
+                        gl["venue"] = fix_venue
+                        gl["score"] = f"{home_goals}-{away_goals}"
+                        gl["league"] = fix_league
+                        gl["round"] = fix_round
                         minutes = gl.get("minutes", 0)
+                        raw_val = gl.get(stat_field_map.get(req.propType, ""), None)
                         if raw_val is not None and minutes > 0:
                             gl["targetStatPer90"] = round((raw_val / minutes) * 90, 2)
                         return gl
-
-                    data = await api_football_request("fixtures/players", {"fixture": fid})
-                    if not data:
+                    except Exception:
                         return None
 
-                    def _build_game_log(stats: dict) -> dict:
-                        minutes = stats.get("games", {}).get("minutes") or 0
-                        rating = stats.get("games", {}).get("rating")
-                        return {
-                            "minutes": minutes,
-                            "rating": float(rating) if rating else None,
-                            "passes_total": stats.get("passes", {}).get("total"),
-                            "passes_key": stats.get("passes", {}).get("key"),
-                            "passes_accuracy": stats.get("passes", {}).get("accuracy"),
-                            "shots_total": stats.get("shots", {}).get("total"),
-                            "shots_on": stats.get("shots", {}).get("on"),
-                            "tackles_total": stats.get("tackles", {}).get("total"),
-                            "tackles_interceptions": stats.get("tackles", {}).get("interceptions"),
-                            "tackles_blocks": stats.get("tackles", {}).get("blocks"),
-                            "dribbles_attempts": stats.get("dribbles", {}).get("attempts"),
-                            "dribbles_success": stats.get("dribbles", {}).get("success"),
-                            "fouls_drawn": stats.get("fouls", {}).get("drawn"),
-                            "fouls_committed": stats.get("fouls", {}).get("committed"),
-                            "duels_total": stats.get("duels", {}).get("total"),
-                            "duels_won": stats.get("duels", {}).get("won"),
-                            "goals_saves": stats.get("goals", {}).get("saves"),
-                            "goals_total": stats.get("goals", {}).get("total"),
-                            "goals_assists": stats.get("goals", {}).get("assists"),
-                            "passes_crosses": stats.get("passes", {}).get("cross"),
-                            "tackles_clearances": stats.get("tackles", {}).get("clearances"),
-                            "cards_yellow": stats.get("cards", {}).get("yellow"),
-                        }
+                sem = aio.Semaphore(5)
+                async def _sem_fetch(fix_raw):
+                    async with sem:
+                        return await _fetch_one(fix_raw)
 
-                    # One API call returns all 22+ players — cache ALL of them now
-                    # so any teammate/opponent scanned next gets instant cache hits
-                    matched_stats = None
-                    matched_pid = None
-                    all_player_logs = {}  # pid -> game_log dict
-
-                    for team_data in data:
-                        for p in team_data.get("players", []):
-                            pid = p.get("player", {}).get("id")
-                            pname = strip_accents((p.get("player", {}).get("name") or "").lower())
-                            stats = p.get("statistics", [{}])[0] if p.get("statistics") else {}
-                            minutes = stats.get("games", {}).get("minutes") or 0
-                            if pid:
-                                gl = _build_game_log(stats)
-                                all_player_logs[pid] = gl
-                                if minutes > 0 and matched_stats is None:
-                                    if pid == player_id or (player_name_lower and player_name_lower in pname):
-                                        matched_stats = stats
-                                        matched_pid = pid
-
-                    # Bulk-write every player to cache (fire-and-forget, don't await one-by-one)
-                    import asyncio as _asyncio
-                    async def _bulk_cache():
-                        ops = []
-                        for pid_k, gl_v in all_player_logs.items():
-                            k = f"fxp_{fid}_{pid_k}"
-                            ops.append(db.fixture_player_cache.update_one(
-                                {"_k": k}, {"$set": {"_k": k, "d": gl_v}}, upsert=True
-                            ))
-                        if ops:
-                            await _asyncio.gather(*ops, return_exceptions=True)
-                    _asyncio.ensure_future(_bulk_cache())
-
-                    if not matched_stats:
-                        # Cache a None sentinel for this specific player so we skip them in future
-                        await db.fixture_player_cache.update_one(
-                            {"_k": cache_key}, {"$set": {"_k": cache_key, "d": None}}, upsert=True
-                        )
-                        return None
-                    stats = matched_stats
-                    game_log = _build_game_log(stats)
-                    # Add contextual fields for return
-                    game_log["date"] = fix.get("date", "")[:10]
-                    game_log["opponent"] = fix.get("opponent", "")
-                    game_log["venue"] = fix.get("venue", "")
-                    game_log["score"] = f"{fix.get('homeGoals',0)}-{fix.get('awayGoals',0)}"
-                    game_log["league"] = fix.get("league", "")
-                    game_log["round"] = fix.get("round", "")
-                    stat_field_map = {
-                        "goals": "goals_total", "assists": "goals_assists",
-                        "shots_assisted": "passes_key",
-                        "pass_attempts": "passes_total", "shots": "shots_total",
-                        "shots_on_target": "shots_on", "tackles": "tackles_total",
-                        "key_passes": "passes_key", "saves": "goals_saves",
-                        "interceptions": "tackles_interceptions", "blocks": "tackles_blocks",
-                        "dribbles": "dribbles_attempts", "dribbles_success": "dribbles_success",
-                        "fouls_drawn": "fouls_drawn", "fouls_committed": "fouls_committed",
-                        "crosses": "passes_crosses", "clearances": "tackles_clearances",
-                        "duels_won": "duels_won", "yellow_cards": "cards_yellow",
-                    }
-                    raw_val = game_log.get(stat_field_map.get(req.propType, ""), None)
-                    if raw_val is not None and minutes > 0:
-                        game_log["targetStatPer90"] = round((raw_val / minutes) * 90, 2)
-                    return game_log
-                except Exception:
-                    return None
-
-            # Phase 1: Batch-check MongoDB cache for all fixtures at once
-            fixture_subset = fixture_list[:limit]
-            cache_keys = [f"fxp_{fix.get('fixtureId')}_{player_id}" for fix in fixture_subset if fix.get("fixtureId")]
-            cached_map: dict = {}
-            if cache_keys:
-                async for cdoc in db.fixture_player_cache.find({"_k": {"$in": cache_keys}}, {"_k": 1, "d": 1}):
-                    cached_map[cdoc["_k"]] = cdoc.get("d")
-
-            # Phase 2: Sort fixtures — cached hits first, then API misses
-            cached_fixes = []
-            api_fixes = []
-            for fix in fixture_subset:
-                fid = fix.get("fixtureId")
-                if not fid:
-                    continue
-                ck = f"fxp_{fid}_{player_id}"
-                if ck in cached_map and cached_map[ck] is not None:
-                    cached_fixes.append(fix)
-                else:
-                    api_fixes.append(fix)
-
-            # Phase 3: Collect cached results instantly
-            collected = []
-            for fix in cached_fixes:
-                r = await fetch_one_log(fix)
-                if r:
-                    collected.append(r)
-
-            # Phase 4: Fetch API misses with a semaphore (max 6 concurrent requests)
-            if len(collected) < 20 and api_fixes:
-                _sem = aio.Semaphore(6)
-                async def _sem_fetch(fix):
-                    async with _sem:
-                        return await fetch_one_log(fix)
-
-                api_tasks = [_sem_fetch(fix) for fix in api_fixes]
-                api_results = await aio.gather(*api_tasks, return_exceptions=True)
-                for r in api_results:
+                tasks = [_sem_fetch(fx) for fx in team_fixtures_raw]
+                results = await aio.gather(*tasks, return_exceptions=True)
+                for r in results:
                     if r and not isinstance(r, Exception):
                         collected.append(r)
+
+                print(f"[API-DIRECT] {req.playerName}/{req.propType}: {len(collected)} real game logs from {len(team_fixtures_raw)} fixtures")
+            except Exception as _e:
+                print(f"[API-DIRECT] Error: {_e}")
 
             return collected
 
@@ -1022,9 +986,145 @@ async def predict(req: PredictionRequest):
             game_situation = {"isKnockout": False, "isSecondLeg": False, "aggregate": {}, "multipliers": {}, "injuries": {}, "contextBlock": ""}
 
         # =============================================
-        # SEASON-STATS FALLBACK: Build synthetic game logs when no fixture-level logs exist.
-        # This ensures every player always has real data — regardless of cache state.
+        # PLAYER-DIRECT API FALLBACK: When fixture cache misses, fetch the player's
+        # recent fixtures directly from the API by player ID — no team cache needed.
         # =============================================
+        if not player_game_logs and req.playerId:
+            _gl_field_map2 = {
+                "goals": "goals_total", "assists": "goals_assists",
+                "shots_assisted": "passes_key", "pass_attempts": "passes_total",
+                "passes": "passes_total", "shots": "shots_total",
+                "shots_on_target": "shots_on", "tackles": "tackles_total",
+                "key_passes": "passes_key", "saves": "goals_saves",
+                "interceptions": "tackles_interceptions", "blocks": "tackles_blocks",
+                "dribbles": "dribbles_attempts", "fouls_drawn": "fouls_drawn",
+                "fouls_committed": "fouls_committed", "crosses": "passes_crosses",
+                "clearances": "tackles_clearances", "duels_won": "duels_won",
+                "yellow_cards": "cards_yellow",
+            }
+            _stat_key_map2 = {
+                "goals": ("goals", "total"), "assists": ("goals", "assists"),
+                "shots_assisted": ("passes", "key"), "pass_attempts": ("passes", "total"),
+                "passes": ("passes", "total"), "shots": ("shots", "total"),
+                "shots_on_target": ("shots", "on"), "tackles": ("tackles", "total"),
+                "key_passes": ("passes", "key"), "saves": ("goals", "saves"),
+                "interceptions": ("tackles", "interceptions"), "blocks": ("tackles", "blocks"),
+                "dribbles": ("dribbles", "attempts"), "fouls_drawn": ("fouls", "drawn"),
+                "fouls_committed": ("fouls", "committed"), "crosses": ("passes", "cross"),
+                "clearances": ("tackles", "clearances"), "duels_won": ("duels", "won"),
+                "yellow_cards": ("cards", "yellow"),
+            }
+            _gl_key2 = _gl_field_map2.get(req.propType, "passes_total")
+
+            # Stage 1: Pull the player's last 20 fixtures directly from API by player ID
+            try:
+                print(f"[PLAYER-DIRECT] {req.playerName}: fetching fixtures directly by playerId={req.playerId}")
+                _player_fixtures_raw = await api_football_request(
+                    "fixtures", {"player": req.playerId, "last": 20}
+                )
+                if _player_fixtures_raw:
+                    # For each fixture, fetch per-game stats
+                    _sem2 = aio.Semaphore(5)
+                    async def _fetch_player_fix_stats(fix_raw):
+                        try:
+                            fid = fix_raw.get("fixture", {}).get("id")
+                            if not fid:
+                                return None
+                            home_team_id = fix_raw.get("teams", {}).get("home", {}).get("id")
+                            player_fix_venue = "home" if home_team_id == actual_team_id else "away"
+                            fix_date = fix_raw.get("fixture", {}).get("date", "")[:10]
+                            fix_league = fix_raw.get("league", {}).get("name", "")
+                            fix_round = fix_raw.get("league", {}).get("round", "")
+                            fix_opp_key = "away" if home_team_id == actual_team_id else "home"
+                            fix_opponent = fix_raw.get("teams", {}).get(fix_opp_key, {}).get("name", "")
+                            home_goals = fix_raw.get("goals", {}).get("home", 0) or 0
+                            away_goals = fix_raw.get("goals", {}).get("away", 0) or 0
+
+                            # Check cache first
+                            ck = f"fxp_{fid}_{req.playerId}"
+                            cached_doc = await db.fixture_player_cache.find_one({"_k": ck}, {"_id": 0, "d": 1})
+                            if cached_doc and cached_doc.get("d"):
+                                gl = cached_doc["d"]
+                            else:
+                                # Hit the API
+                                async with _sem2:
+                                    fix_data = await api_football_request("fixtures/players", {"fixture": fid})
+                                if not fix_data:
+                                    return None
+                                gl = None
+                                all_player_logs_inner = {}
+                                for team_data in fix_data:
+                                    for p in team_data.get("players", []):
+                                        pid = p.get("player", {}).get("id")
+                                        stats = p.get("statistics", [{}])[0] if p.get("statistics") else {}
+                                        mins = stats.get("games", {}).get("minutes") or 0
+                                        if pid:
+                                            built = {
+                                                "minutes": mins,
+                                                "passes_total": stats.get("passes", {}).get("total"),
+                                                "passes_key": stats.get("passes", {}).get("key"),
+                                                "passes_crosses": stats.get("passes", {}).get("cross"),
+                                                "shots_total": stats.get("shots", {}).get("total"),
+                                                "shots_on": stats.get("shots", {}).get("on"),
+                                                "tackles_total": stats.get("tackles", {}).get("total"),
+                                                "tackles_interceptions": stats.get("tackles", {}).get("interceptions"),
+                                                "tackles_blocks": stats.get("tackles", {}).get("blocks"),
+                                                "tackles_clearances": stats.get("tackles", {}).get("clearances"),
+                                                "dribbles_attempts": stats.get("dribbles", {}).get("attempts"),
+                                                "fouls_drawn": stats.get("fouls", {}).get("drawn"),
+                                                "fouls_committed": stats.get("fouls", {}).get("committed"),
+                                                "duels_won": stats.get("duels", {}).get("won"),
+                                                "goals_total": stats.get("goals", {}).get("total"),
+                                                "goals_assists": stats.get("goals", {}).get("assists"),
+                                                "goals_saves": stats.get("goals", {}).get("saves"),
+                                                "cards_yellow": stats.get("cards", {}).get("yellow"),
+                                            }
+                                            all_player_logs_inner[pid] = built
+                                            if pid == req.playerId and mins > 0:
+                                                gl = built
+                                # Cache all players from this fixture
+                                async def _cache_all_inner(fid_inner, logs_inner):
+                                    ops = [
+                                        db.fixture_player_cache.update_one(
+                                            {"_k": f"fxp_{fid_inner}_{pid_k}"},
+                                            {"$set": {"_k": f"fxp_{fid_inner}_{pid_k}", "d": gl_v}},
+                                            upsert=True
+                                        ) for pid_k, gl_v in logs_inner.items()
+                                    ]
+                                    if ops:
+                                        await aio.gather(*ops, return_exceptions=True)
+                                aio.ensure_future(_cache_all_inner(fid, all_player_logs_inner))
+                                if gl is None:
+                                    return None
+
+                            minutes = gl.get("minutes", 0)
+                            if not minutes or minutes == 0:
+                                return None
+                            gl["date"] = fix_date
+                            gl["opponent"] = fix_opponent
+                            gl["venue"] = player_fix_venue
+                            gl["score"] = f"{home_goals}-{away_goals}"
+                            gl["league"] = fix_league
+                            gl["round"] = fix_round
+                            stat_val = gl.get(_gl_key2)
+                            if stat_val is not None and minutes > 0:
+                                gl["targetStatPer90"] = round((stat_val / minutes) * 90, 2)
+                            return gl
+                        except Exception:
+                            return None
+
+                    _pf_tasks = [_fetch_player_fix_stats(fx) for fx in _player_fixtures_raw]
+                    _pf_results = await aio.gather(*_pf_tasks, return_exceptions=True)
+                    for r in _pf_results:
+                        if r and not isinstance(r, Exception):
+                            player_game_logs.append(r)
+
+                    if player_game_logs:
+                        print(f"[PLAYER-DIRECT] {req.playerName}/{req.propType}: fetched {len(player_game_logs)} real game logs via player API")
+            except Exception as _pde:
+                print(f"[PLAYER-DIRECT] Error: {_pde}")
+
+        # Stage 2: Season aggregate fallback — only if API direct also returned nothing
         if not player_game_logs and player_stats:
             _sfm_fallback = {
                 "goals": ("goals", "total"), "assists": ("goals", "assists"),
@@ -1038,7 +1138,7 @@ async def predict(req: PredictionRequest):
                 "clearances": ("tackles", "clearances"), "duels_won": ("duels", "won"),
                 "yellow_cards": ("cards", "yellow"),
             }
-            _gl_field_map = {
+            _gl_field_map3 = {
                 "goals": "goals_total", "assists": "goals_assists",
                 "shots_assisted": "passes_key", "pass_attempts": "passes_total",
                 "passes": "passes_total", "shots": "shots_total",
@@ -1069,27 +1169,24 @@ async def predict(req: PredictionRequest):
                 _raw_total = _best_stat.get(_cat, {}).get(_sub) or 0
                 _avg_per_game = round(_raw_total / _best_appearances, 2) if _best_appearances else 0
                 _avg_minutes = round(_best_minutes / _best_appearances, 1) if _best_appearances else 90
-                _gl_key = _gl_field_map.get(req.propType, "passes_total")
-                # Build N synthetic logs (capped at 20) from season per-game average
+                _gl_key3 = _gl_field_map3.get(req.propType, "passes_total")
                 _n_synthetic = min(_best_appearances, 20)
                 for _i in range(_n_synthetic):
                     _syn_log = {
-                        _gl_key: _avg_per_game,
+                        _gl_key3: _avg_per_game,
                         "minutes": _avg_minutes,
-                        "date": "",
-                        "opponent": "",
+                        "date": "", "opponent": "",
                         "venue": "home" if _i % 2 == 0 else "away",
                         "score": "",
                         "league": (_best_stat.get("league") or {}).get("name", ""),
-                        "round": "",
-                        "synthetic": True,
+                        "round": "", "synthetic": True,
                     }
                     if _avg_per_game and _avg_minutes > 0:
                         _syn_log["targetStatPer90"] = round((_avg_per_game / _avg_minutes) * 90, 2)
                     player_game_logs.append(_syn_log)
-                print(f"[SEASON FALLBACK] {req.playerName}/{req.propType}: built {_n_synthetic} synthetic logs from {_best_appearances} appearances, avg={_avg_per_game}/game")
+                print(f"[SEASON FALLBACK] {req.playerName}/{req.propType}: built {_n_synthetic} synthetic logs from season avg={_avg_per_game}/game")
             else:
-                print(f"[NO GAME LOGS] {req.playerName}/{req.propType}: no fixture logs and no usable season stats. Using line as prior.")
+                print(f"[NO GAME LOGS] {req.playerName}/{req.propType}: no game logs anywhere. Using line as prior.")
 
         # =============================================
         # MATCH DOMINANCE: Opponent-aware possession + context multiplier
