@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   Platform, ActivityIndicator, Image, Linking,
 } from 'react-native';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
@@ -26,12 +26,68 @@ const PLANS = [
 export default function AuthScreen() {
   const insets = useSafeAreaInsets();
   const { loginWithResponse } = useAuth();
+  const params = useLocalSearchParams<{ stripe_success?: string }>();
   const [step, setStep] = useState<Step>('email');
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
+
+  // When Stripe redirects back with ?stripe_success=1, pre-fill the email
+  // (saved before redirect) and auto-trigger verification so the user lands
+  // in a logged-in state without any manual steps.
+  useEffect(() => {
+    const isSuccess =
+      params.stripe_success === '1' ||
+      (Platform.OS === 'web' &&
+        typeof window !== 'undefined' &&
+        window.location.search.includes('stripe_success=1'));
+
+    if (!isSuccess) return;
+
+    // Retrieve the email we saved right before the Stripe redirect
+    let savedEmail = '';
+    try {
+      if (typeof window !== 'undefined' && window.sessionStorage) {
+        savedEmail = window.sessionStorage.getItem('rp_checkout_email') || '';
+      }
+    } catch {}
+
+    if (savedEmail) {
+      setEmail(savedEmail);
+      setInfo('✅ Payment confirmed! Verifying your access...');
+      // Auto-trigger verification with a brief delay so state settles
+      setTimeout(async () => {
+        setLoading(true);
+        try {
+          const { verifyAccess } = await import('@/lib/api');
+          const result = await verifyAccess(savedEmail);
+          if (result.verified && result.session_token && result.email) {
+            await loginWithResponse({
+              email: result.email,
+              session_token: result.session_token,
+              access_type: result.access_type,
+            });
+            try { window.sessionStorage.removeItem('rp_checkout_email'); } catch {}
+            await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            router.replace('/(tabs)/scan');
+          } else {
+            setInfo('');
+            setError('Payment received! Enter your email below and tap "Already paid?" to finish signing in.');
+          }
+        } catch {
+          setInfo('');
+          setError('Payment received! Enter your email below and tap "Already paid?" to finish signing in.');
+        } finally {
+          setLoading(false);
+        }
+      }, 400);
+    } else {
+      setInfo('✅ Payment complete! Enter the email you used at checkout, then tap "Already paid?" below.');
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleCheckEmail = async () => {
     const trimmed = email.trim().toLowerCase();
@@ -83,6 +139,8 @@ export default function AuthScreen() {
       if (url) {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          // Save email so we can pre-fill and auto-verify on Stripe redirect return
+          try { window.sessionStorage.setItem('rp_checkout_email', trimmed); } catch {}
           window.location.href = url;
         } else {
           await Linking.openURL(url);
