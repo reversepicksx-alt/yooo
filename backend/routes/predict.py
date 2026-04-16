@@ -2573,16 +2573,28 @@ Analyze ALL data thoroughly. Return JSON only."""
                     return grok_client.chat.completions.create(
                         model=model,
                         messages=grok_messages,
-                        max_tokens=1600,
+                        max_tokens=2200,
                         temperature=0.0,
                     )
-                grok_result = await aio.wait_for(loop.run_in_executor(None, _run), timeout=30)
+                grok_result = await aio.wait_for(loop.run_in_executor(None, _run), timeout=35)
                 text = grok_result.choices[0].message.content.strip()
-                if text.startswith("```"):
-                    text = "\n".join(ln for ln in text.split("\n") if not ln.strip().startswith("```"))
-                # Robust JSON extraction
+                # Strip any markdown code fences (```json ... ``` or ``` ... ```)
+                import re as _re
+                text = _re.sub(r"```(?:json)?\s*", "", text)
+                text = _re.sub(r"```\s*$", "", text, flags=_re.MULTILINE)
+                text = text.strip()
+                # Robust JSON extraction — try full text first, then brace-scan
                 start = text.find("{")
                 if start >= 0:
+                    # Try the whole remaining string first (fastest)
+                    candidate = text[start:]
+                    try:
+                        result = json.loads(candidate)
+                        result["_source"] = label
+                        return result
+                    except json.JSONDecodeError:
+                        pass
+                    # Walk backwards to find largest valid JSON block
                     for end_pos in range(len(text), start, -1):
                         if text[end_pos - 1] == "}":
                             try:
@@ -2591,6 +2603,8 @@ Analyze ALL data thoroughly. Return JSON only."""
                                 return result
                             except json.JSONDecodeError:
                                 continue
+                # Log first 300 chars of non-JSON response for debugging
+                print(f"[MULTI-AI] {label} non-JSON response (first 300): {text[:300]!r}")
                 raise ValueError("No valid JSON found in Grok response")
             except Exception as e:
                 print(f"[MULTI-AI] {label} failed: {e}")
