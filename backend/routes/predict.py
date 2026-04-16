@@ -1617,6 +1617,51 @@ async def predict(req: PredictionRequest):
         bayesian_prompt_anchor = ""
         try:
             from bayesian_engine import compute_bayesian_projection
+
+            # ── Quick position cache lookup (fast indexed read) ──────────────
+            # We look up the cached position so the engine can apply the correct
+            # momentum decay table (attackers decay faster, GKs decay slower).
+            _bayes_position = ""
+            try:
+                _pos_doc = await db.player_positions.find_one({"playerName": req.playerName})
+                if _pos_doc:
+                    _bayes_position = _pos_doc.get("specificPosition", "")
+            except Exception:
+                pass
+
+            # ── Hyperprior for low-sample players (n < 6) ───────────────────
+            # Derive a league-context anchor from opponent fixture stats.
+            # Same field map as _estimate_opponent_concession in bayesian_engine.
+            # If a player has very few logs this pulls the prior toward the
+            # "typical output for this prop type in this match context."
+            _bayes_hyperprior = None
+            _hp_map = {
+                "shots":           ("totalShots",     0.18),
+                "shots_on_target": ("shotsOnTarget",  0.18),
+                "goals":           ("goals",           0.40),
+                "assists":         ("goals",           0.25),
+                "saves":           ("shotsOnTarget",   0.70),
+                "tackles":         ("totalPasses",     0.015),
+                "key_passes":      ("keyPasses",       0.28),
+                "crosses":         ("totalCrosses",    0.35),
+                "interceptions":   ("totalInterceptions", 0.22),
+                "clearances":      ("totalClearances", 0.18),
+                "dribbles":        ("dribbleAttempts", 0.30),
+                "fouls_drawn":     ("foulsDrawn",      0.25),
+                "fouls_committed": ("foulsCommitted",  0.22),
+                "duels_won":       ("totalDuels",      0.22),
+            }
+            if opponent_fixture_stats and len(player_game_logs) < 6:
+                _hp_entry = _hp_map.get(req.propType)
+                if _hp_entry:
+                    _hp_field, _hp_share = _hp_entry
+                    _hp_vals = [
+                        s.get(_hp_field) for s in opponent_fixture_stats
+                        if s.get(_hp_field) is not None
+                    ]
+                    if len(_hp_vals) >= 3:
+                        _bayes_hyperprior = (sum(_hp_vals) / len(_hp_vals)) * _hp_share
+
             _sfm = {
                 "goals": "goals_total", "assists": "goals_assists",
                 "shots_assisted": "passes_key",
@@ -1637,6 +1682,8 @@ async def predict(req: PredictionRequest):
                 stat_field=_sfm.get(req.propType, "passes_total"),
                 opponent_fixture_stats=opponent_fixture_stats,
                 match_dominance=match_dominance,
+                position=_bayes_position,
+                hyperprior_mean=_bayes_hyperprior,
             )
             print(f"[BAYESIAN] {req.playerName}/{req.propType}: samples={early_bayes.get('priorSamples') if early_bayes else 0}, logs={len(player_game_logs)}")
 
