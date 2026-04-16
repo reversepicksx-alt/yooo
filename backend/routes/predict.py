@@ -2641,10 +2641,14 @@ Analyze ALL data thoroughly. Return JSON only."""
         if not grok_result or not isinstance(grok_result, dict) or not isinstance(pv, (int, float)) or pv <= 0:
             if early_bayes and early_bayes.get("posteriorMean"):
                 pv = early_bayes["posteriorMean"]
+                # Cap confidence at 72% (shows "High") when Grok fails — the math had
+                # no AI sanity check so claiming "Very High" confidence would be misleading.
+                _raw_bayes_conf = max(early_bayes.get("pOver", 50), early_bayes.get("pUnder", 50))
+                _capped_conf = min(_raw_bayes_conf, 72)
                 grok_result = {
                     "projectedValue": pv,
                     "recommendation": early_bayes.get("recommendation", "over"),
-                    "confidenceScore": max(early_bayes.get("pOver", 50), early_bayes.get("pUnder", 50)),
+                    "confidenceScore": _capped_conf,
                     "reasoning": "AI models unavailable — projection based on Reverse Formula mathematical analysis.",
                     "_source": "bayesian_fallback",
                 }
@@ -2914,10 +2918,12 @@ Analyze ALL data thoroughly. Return JSON only."""
                 ]
                 print(f"[GUARD] Coin-flip zone: edge={edge:.1f}, Bayesian P={bayes_conf}% → capped at 52% (was {old_conf})")
 
-        # Guard 3: UNDER skew penalty — stats have positive skew
+        # Guard 3: UNDER skew penalty — stats have positive skew (outlier games pull mean up).
+        # Penalty scales with edge: close lines get 3%, large gaps get up to 10%.
+        # This prevents inflated confidence on aggressive UNDER calls like "proj=30, line=38.5".
         if rec == "under":
             adj_conf = prediction.get("confidenceScore", 50)
-            penalty = min(4, max(2, round(edge * 0.5)))  # 2-4% penalty based on edge size
+            penalty = min(10, max(3, round(edge * 0.9)))  # 3-10% penalty based on edge size
             prediction["confidenceScore"] = max(45, adj_conf - penalty)
             if adj_conf != prediction["confidenceScore"]:
                 print(f"[GUARD] UNDER skew penalty: -{penalty}% confidence ({adj_conf} → {prediction['confidenceScore']})")

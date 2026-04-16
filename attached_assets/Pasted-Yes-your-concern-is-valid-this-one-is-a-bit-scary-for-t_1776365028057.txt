@@ -1,0 +1,12 @@
+Yes, your concern is valid — this one is a bit scary for the UNDER side, even though the app’s logic has some merit.
+Ricardo Horta (Braga attacking midfielder/winger) has a season-long pass-attempt average of roughly 38–45 per game in 2025/26 across Primeira Liga and Europa League (most consistent sources land ~38.5–45 attempts per 90, with ~88% completion). He’s not a deep-lying pivot who piles up 60+ passes; he’s a creative forward/AM who gets involved in build-up, key passes (2+ per game), and transitions. That makes the 38.5 line sit right around his realistic floor in tougher fixtures.
+Why the UNDER Call Has Some Backing
+•  Away game at Betis (Europa League quarter-final 2nd leg, 1-1 aggregate from first leg). Betis are slight home favorites and expected to hold a modest possession edge (~54% Betis vs 46% Braga, matching the app’s “OPEN” game type and preview consensus).
+•  In lower-possession away matches, Horta’s volume often dips into the mid-to-high 30s because Braga play more direct/counter-focused. He’s not constantly recycling in his own half like a No. 6.
+•  Recent European away patterns for Braga attackers show more conservative touch counts when the opponent controls tempo.
+The app’s 30.0 projection and 93% very high confidence (80% range 25.5–35.9) is an aggressive downward adjustment for exactly that script.
+Why It Feels Scary (and Why You’re Right to Question It)
+•  His baseline is higher than 30. Even in away or lower-possession games, he rarely crashes that far below 35–38 unless heavily substituted or the match is extremely one-sided. The first leg (home vs Betis) saw him play 77 minutes with solid involvement.
+•  Open/knockout dynamic: Previews describe this as competitive and transitional rather than a total smash-and-grab. If Braga need to chase or the game opens up (very possible in a 1-1 agg tie), Horta’s key-pass and link-up work keeps his attempts closer to 36–42.
+•  The 93% confidence feels inflated for a forward/AM prop — these have more natural variance than goalkeeper or defensive-mid volume.
+My independent projection: ~34–38 attempts in 90 minutes (realistic expected value ~36). The UNDER 38.5 has edge if Betis dominate the ball early and Braga stay compact/counter, but it’s not a lock — more like 55–60% probability, not 93%. The line is close enough to his norm that one strong half of involvement could push him over.

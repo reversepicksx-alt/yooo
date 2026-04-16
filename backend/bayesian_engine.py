@@ -291,9 +291,11 @@ def compute_bayesian_projection(
     # ═══════════════════════════════════════════
     # PROBABILITY CURVE — Over/Under probabilities
     # ═══════════════════════════════════════════
-    # Use a blended std that accounts for both posterior precision AND player volatility
-    # This prevents overconfident probabilities for volatile players
-    effective_std = max(posterior_std, prior_std * 0.4)
+    # Use a blended std that accounts for both posterior precision AND player volatility.
+    # Floor = 55% of prior_std ensures we never collapse the band too far below historical
+    # spread, PLUS an absolute floor of 17% of the posterior mean so wide-gap props stay
+    # honest (e.g. a 30-mean projection with line at 38.5 must acknowledge the real range).
+    effective_std = max(posterior_std, prior_std * 0.55, posterior_mean * 0.17)
 
     if effective_std > 0:
         z = (line - posterior_mean) / effective_std
