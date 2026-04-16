@@ -331,9 +331,10 @@ def _compute_pressure_multipliers(
 
     elif not home_trailing and is_second_leg:
         # Home team IS LEADING on aggregate — defending a lead at home
-        lead = -deficit  # positive number = how much they lead
+        # deficit is positive when home leads (per _parse_aggregate convention)
+        lead = deficit  # positive = how many goals the home team leads by
         if lead >= 2:
-            # Comfortable cushion — may sit back a bit
+            # Comfortable cushion — home may sit back a bit
             out["possessionBoostHome"] = -3.0  # slight possession reduction (less urgency)
             out["notes"].append(
                 f"Home leads by {lead} on aggregate — slight possession reduction (-3%), expect sit-back"
@@ -341,6 +342,38 @@ def _compute_pressure_multipliers(
             if is_player_home and prop_type in SHOT_PROPS:
                 out["bayesianMultiplierHome"] = 0.90
                 out["notes"].append("Shot reduction: home managing the game (comfortable lead)")
+
+            # AWAY TEAM (trailing) — must chase aggressively to advance
+            # This COUNTERACTS the possession squeeze applied by the Bayesian engine
+            if not is_player_home:
+                away_urgency = min(lead, 3)  # how many goals the away team needs
+                if prop_type in PASS_PROPS:
+                    mult = 1.0 + (away_urgency * 0.07)  # +7-21% pass volume (chasing)
+                    out["bayesianMultiplierAway"] = round(min(mult, 1.25), 3)
+                    out["notes"].append(
+                        f"Away pass prop boost: x{out['bayesianMultiplierAway']:.2f} "
+                        f"(must chase {away_urgency} goal(s), forced build-up)"
+                    )
+                elif prop_type in SHOT_PROPS:
+                    mult = 1.0 + (away_urgency * 0.09)  # +9-27% shot volume (must attack)
+                    out["bayesianMultiplierAway"] = round(min(mult, 1.30), 3)
+                    out["notes"].append(
+                        f"Away shot prop boost: x{out['bayesianMultiplierAway']:.2f} "
+                        f"(must chase {away_urgency} goal(s), forced attack)"
+                    )
+                out["gameTypeOverride"] = "high-tempo"
+
+        elif lead == 1:
+            # Narrow lead — away team can still advance by scoring once (ET/AET)
+            if not is_player_home:
+                if prop_type in PASS_PROPS:
+                    out["bayesianMultiplierAway"] = 1.07
+                    out["notes"].append("Away pass prop boost: x1.07 (one goal away from levelling)")
+                elif prop_type in SHOT_PROPS:
+                    out["bayesianMultiplierAway"] = 1.09
+                    out["notes"].append("Away shot prop boost: x1.09 (must attack to force ET)")
+            out["gameTypeOverride"] = "high-tempo"
+
         elif lead == 0:
             # Level — both teams need to score to advance; high tempo expected
             out["possessionBoostHome"] = 4.0
