@@ -227,7 +227,7 @@ export default function AccountScreen() {
       if (url) {
         setPlanPickerVisible(false);
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
-          window.open(url, '_blank');
+          window.location.href = url;
         } else {
           await Linking.openURL(url);
         }

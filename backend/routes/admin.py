@@ -1,5 +1,8 @@
+import os
 import httpx
+import stripe
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 from config import (
     db, OWNER_EMAIL, DYNAMIC_KEYS,
     get_dynamic_setting, set_dynamic_setting,
@@ -162,3 +165,75 @@ async def get_calibration(email: str, token: str):
     return {
         "soccer": summarize(soccer_stats),
     }
+
+
+# ─── ADMIN: Generate a direct Stripe checkout link for any client ───────────
+
+STRIPE_PLANS = {
+    "weekly":    {"name": "Weekly",    "amount": 1100,  "interval": "week",  "interval_count": 1},
+    "monthly":   {"name": "Monthly",   "amount": 3999,  "interval": "month", "interval_count": 1},
+    "quarterly": {"name": "Quarterly", "amount": 9999,  "interval": "month", "interval_count": 3},
+}
+
+
+class CheckoutLinkRequest(BaseModel):
+    adminEmail: str
+    sessionToken: str
+    clientEmail: str
+    planKey: str = "monthly"
+
+
+@router.post("/generate-checkout-link")
+async def generate_checkout_link(req: CheckoutLinkRequest):
+    """Generate a direct Stripe checkout URL for any client email. Owner-only."""
+    await verify_owner(req.adminEmail, req.sessionToken)
+
+    plan_key = req.planKey.lower()
+    if plan_key not in STRIPE_PLANS:
+        raise HTTPException(status_code=400, detail=f"Unknown plan: {plan_key}")
+
+    stripe_key = os.environ.get("STRIPE_SECRET_KEY", "")
+    if not stripe_key:
+        raise HTTPException(status_code=500, detail="Stripe not configured.")
+    stripe.api_key = stripe_key
+
+    plan = STRIPE_PLANS[plan_key]
+    client_email = req.clientEmail.lower().strip()
+
+    try:
+        prices = stripe.Price.list(
+            lookup_keys=[f"reversepicks_{plan_key}"],
+            expand=["data.product"],
+        )
+        if prices.data:
+            price_id = prices.data[0].id
+        else:
+            price = stripe.Price.create(
+                unit_amount=plan["amount"],
+                currency="usd",
+                recurring={"interval": plan["interval"], "interval_count": plan["interval_count"]},
+                product_data={"name": f"ReversePicks {plan['name']}"},
+                lookup_key=f"reversepicks_{plan_key}",
+            )
+            price_id = price.id
+
+        session = stripe.checkout.Session.create(
+            mode="subscription",
+            customer_email=client_email,
+            line_items=[{"price": price_id, "quantity": 1}],
+            success_url="https://reversepicks.com/auth?stripe_success=1",
+            cancel_url="https://reversepicks.com/auth",
+            subscription_data={
+                "metadata": {"email": client_email, "plan_key": plan_key}
+            },
+            metadata={"email": client_email, "plan_key": plan_key},
+            allow_promotion_codes=True,
+        )
+        return {
+            "checkoutUrl": session.url,
+            "clientEmail": client_email,
+            "planKey": plan_key,
+            "expiresIn": "24 hours",
+        }
+    except stripe.StripeError as e:
+        raise HTTPException(status_code=500, detail=str(e))

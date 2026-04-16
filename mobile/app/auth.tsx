@@ -83,7 +83,7 @@ export default function AuthScreen() {
       if (url) {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
-          window.open(url, '_blank');
+          window.location.href = url;
         } else {
           await Linking.openURL(url);
         }
