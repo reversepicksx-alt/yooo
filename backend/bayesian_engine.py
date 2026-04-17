@@ -389,6 +389,54 @@ def compute_bayesian_projection(
             print(f"[XG COVARIATE] {prop_type}: opp_xg_avg={avg_xg:.2f} "
                   f"ratio={xg_ratio:.2f} adj={xg_adj:+.1f}")
 
+    # 3e. xG Shot Quality Proxy — player's own conversion metrics
+    # ─────────────────────────────────────────────────────────────────────────
+    # The standard prior treats all shots as equal. In reality, a player who
+    # converts 40% of their on-target shots (elite finisher) is very different
+    # from one who converts 15% (low quality / shot location).
+    #
+    # We compute two quality ratios from the player's own game logs:
+    #   shot_quality  = shots_on_target / shots  (how often they hit the frame)
+    #   conversion    = goals / shots_on_target   (finishing quality)
+    # then compare to European league averages to derive a quality factor.
+    #
+    # League averages (Opta research): quality≈0.37, conversion≈0.31
+    # Applied ONLY to goals/shots_on_target. Capped at ±18% influence.
+    _SHOT_QUALITY_PROPS = {"goals", "shots_on_target"}
+    if prop_type in _SHOT_QUALITY_PROPS and len(game_logs) >= 4:
+        _SQ_LEAGUE_AVG  = 0.37  # shots_on_target / shots
+        _CON_LEAGUE_AVG = 0.31  # goals / shots_on_target
+
+        _sq_samples, _con_samples = [], []
+        for g in game_logs:
+            _g_shots  = g.get("shots_total") or g.get("shots")
+            _g_sot    = g.get("shots_on")    or g.get("shots_on_target")
+            _g_goals  = g.get("goals_total") or g.get("goals")
+            if _g_shots and _g_shots > 0 and _g_sot is not None:
+                _sq_samples.append(_g_sot / _g_shots)
+            if _g_sot and _g_sot > 0 and _g_goals is not None:
+                _con_samples.append(_g_goals / _g_sot)
+
+        _sq_factor  = (sum(_sq_samples)  / len(_sq_samples))  / _SQ_LEAGUE_AVG  if len(_sq_samples)  >= 3 else 1.0
+        _con_factor = (sum(_con_samples) / len(_con_samples)) / _CON_LEAGUE_AVG if len(_con_samples) >= 3 else 1.0
+
+        if prop_type == "shots_on_target":
+            # Quality factor: do more of their shots hit the target than average?
+            _sq_raw_adj = prior_mean * (_sq_factor - 1.0) * 0.20
+            _sq_adj = max(-prior_mean * 0.18, min(prior_mean * 0.18, _sq_raw_adj))
+            covariate_adjustment += _sq_adj
+            if abs(_sq_adj) > 0.05:
+                print(f"[SHOT QUALITY] {prop_type}: sq_ratio={_sq_factor:.2f}x league_avg → adj={_sq_adj:+.2f}")
+
+        elif prop_type == "goals":
+            # Combined: shot quality × finishing rate vs league averages
+            _combined_factor = (_sq_factor * _con_factor) ** 0.5  # geometric mean of both
+            _sq_raw_adj = prior_mean * (_combined_factor - 1.0) * 0.20
+            _sq_adj = max(-prior_mean * 0.18, min(prior_mean * 0.18, _sq_raw_adj))
+            covariate_adjustment += _sq_adj
+            if abs(_sq_adj) > 0.01:
+                print(f"[SHOT QUALITY] goals: sq={_sq_factor:.2f}x conv={_con_factor:.2f}x combined={_combined_factor:.2f}x → adj={_sq_adj:+.3f}")
+
     covariate_adjustment = round(covariate_adjustment, 2)
 
     # Covariate precision: base contextual precision, boosted by venue data quality
@@ -780,10 +828,22 @@ def _estimate_opponent_concession(opp_fixture_stats: list, prop_type: str) -> Op
     # Including these was boosting projections against Arsenal/Bayern/City by +5-10 — wrong.
     # Possession-based penalties for these props are handled by the POSSESSION SQUEEZE step.
     prop_config = {
-        "shots":           ("totalShots",    0.18),
-        "shots_on_target": ("shotsOnTarget", 0.18),
+        # ── Attacking / Goal-threat props ────────────────────────────────────
+        # opponent totalShots = how much the opponent attacks → shot volume
+        # opponent shotsOnTarget = higher quality attack → more dangerous shots taken/faced
+        "shots":           ("totalShots",    0.18),   # ~18% of team shots belong to the subject
+        "shots_on_target": ("shotsOnTarget", 0.18),   # same share for quality shots
         "saves":           ("shotsOnTarget", 0.70),   # GK saves ~70% of opponent SOT
-        "tackles":         ("totalPasses",   0.015),  # more opp passes = more tackle opportunities
+
+        # ── Defensive action props ───────────────────────────────────────────
+        # More opponent shots/passes → more defensive work for the subject player
+        "tackles":         ("totalPasses",   0.015),  # opp passes = tackle opportunities
+        "clearances":      ("totalShots",    0.28),   # each opp shot ≈ 0.28 clearances for a CB
+        "blocks":          ("shotsOnTarget", 0.14),   # on-target shots blocked by outfield players
+        "interceptions":   ("totalPasses",   0.013),  # more opp passes = more interception chances
+        "fouls_committed": ("totalPasses",   0.009),  # more opp pressure = more fouls defending
+        "duels_won":       ("totalPasses",   0.028),  # more opp passes = more duel situations
+        "fouls_drawn":     ("totalShots",    0.09),   # attackers draw fouls near goal → opp shots proxy
     }
 
     config = prop_config.get(prop_type)

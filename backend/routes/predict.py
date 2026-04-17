@@ -3164,6 +3164,42 @@ Analyze ALL data thoroughly. Return JSON only."""
             if adj_conf != prediction["confidenceScore"]:
                 print(f"[GUARD] UNDER skew penalty: -{penalty}% confidence ({adj_conf} → {prediction['confidenceScore']})")
 
+        # ── Market Edge Calibration ───────────────────────────────────────────
+        # edgeZ = (|posteriorMean - line|) / effective_std.
+        # It measures how many standard deviations our projection sits away from
+        # the prop line — a true measure of edge sharpness vs the market price.
+        #
+        # A fair prop line implies ~50% probability either side. Any deviation
+        # from 50% must be justified by the magnitude of our edge relative to
+        # our own uncertainty.  We apply a final calibration nudge:
+        #   edgeZ ≥ 2.0 → very sharp → +7% confidence
+        #   edgeZ ≥ 1.5 → sharp      → +4% confidence
+        #   edgeZ ≥ 1.0 → moderate   → +2% confidence
+        #   edgeZ < 0.5 → weak       → -4% confidence (marginal edge)
+        #   edgeZ < 0.3 → razor thin → -7% confidence (near-random)
+        # Cap: confidence stays in [45, 85] regardless.
+        if real_bayes:
+            _ez = real_bayes.get("edgeZ", 0)
+            if _ez >= 2.0:
+                _edge_nudge = 7
+            elif _ez >= 1.5:
+                _edge_nudge = 4
+            elif _ez >= 1.0:
+                _edge_nudge = 2
+            elif _ez >= 0.5:
+                _edge_nudge = 0
+            elif _ez >= 0.3:
+                _edge_nudge = -4
+            else:
+                _edge_nudge = -7
+            if _edge_nudge != 0:
+                _pre_edge_conf = prediction.get("confidenceScore", 50)
+                prediction["confidenceScore"] = max(45, min(85, _pre_edge_conf + _edge_nudge))
+                if prediction["confidenceScore"] != _pre_edge_conf:
+                    print(f"[EDGE CAL] edgeZ={_ez:.2f} nudge={_edge_nudge:+d}% "
+                          f"({_pre_edge_conf} → {prediction['confidenceScore']})")
+            prediction["edgeZ"] = round(_ez, 2)
+
         # Recalculate confidence level after guards
         cs = prediction.get("confidenceScore", 50)
         prediction["confidenceLevel"] = "Very High" if cs >= 75 else "High" if cs >= 65 else "Medium" if cs >= 50 else "Low"
