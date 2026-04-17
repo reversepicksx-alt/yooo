@@ -3526,6 +3526,12 @@ Analyze ALL data thoroughly. Return JSON only."""
                 except (ValueError, TypeError):
                     pass
 
+        # For saves props: the "Opponent Profile OPP AVG" must reflect the avg saves
+        # that other GKs at the same venue made vs this opponent — not the opponent's SOT.
+        # positionComparison already sampled exactly that (same position, same venue, same opponent).
+        if req.propType == "saves" and position_comp_data and position_comp_data.get("avgStatValue"):
+            opp_allowed_avg = round(float(position_comp_data["avgStatValue"]), 1)
+
         prediction["analysisSummary"] = {
             "statLabel": stat_label,
             "venue": player_venue,
@@ -3591,14 +3597,14 @@ Analyze ALL data thoroughly. Return JSON only."""
         else:
             print(f"[TIMING] Using Grok tacticalBreakdown directly: {len(grok_tb)} chars")
 
-        # ── DIRECTION GUARD: If Grok's Verdict contradicts the math, fix the first line ──
+        # ── DIRECTION GUARD: If Grok's Verdict contradicts the math, fix text fields ──
         final_rec = prediction.get("recommendation", "").lower()
         tb = prediction.get("tacticalBreakdown", "")
         if tb and final_rec:
             wrong_dir = "under" if final_rec == "over" else "over"
             right_dir = final_rec.upper()
             right_dir_cap = final_rec.capitalize()
-            # Check if the very first Verdict line contradicts the recommendation
+            # Fix tacticalBreakdown first Verdict line
             first_line = tb.split("\n")[0] if tb else ""
             if "**verdict**" in first_line.lower() and wrong_dir in first_line.lower() and right_dir.lower() not in first_line.lower():
                 corrected_line = first_line.replace(
@@ -3606,6 +3612,48 @@ Analyze ALL data thoroughly. Return JSON only."""
                 ).replace(wrong_dir.upper(), right_dir).replace(wrong_dir, right_dir.lower())
                 prediction["tacticalBreakdown"] = corrected_line + tb[len(first_line):]
                 print(f"[DIRECTION GUARD] Corrected Grok verdict from {wrong_dir.upper()} to {right_dir} to match math")
+
+            # Fix sharpSummary — append a math-override note if it leans the wrong way
+            sharp = prediction.get("sharpSummary", "")
+            _sharp_has_wrong = wrong_dir in sharp.lower()
+            _sharp_has_right  = right_dir.lower() in sharp.lower()
+            if sharp and _sharp_has_wrong and not _sharp_has_right:
+                _punder = real_bayes.get("pUnder", 50) if real_bayes else 50
+                _pover  = real_bayes.get("pOver",  50) if real_bayes else 50
+                _winning_p = max(_punder, _pover)
+                prediction["sharpSummary"] = (
+                    sharp.rstrip(" .") +
+                    f". Math ({_winning_p:.0f}% P({right_dir})) overrides qualitative lean — narrow {right_dir} edge."
+                )
+                print(f"[DIRECTION GUARD] sharpSummary corrected: appended {right_dir} override note")
+
+        # ── CONFIDENCE LANGUAGE GUARD: strip overconfident phrasing on low-edge calls ──
+        _is_coin_flip = prediction.get("coinFlip", False)
+        _final_conf   = prediction.get("confidenceScore", 100)
+        if _is_coin_flip or _final_conf <= 55:
+            import re as _re
+            _overconfident_phrases = [
+                ("strong value",   "slim edge"),
+                ("strong edge",    "slim edge"),
+                ("strong lean",    "slight lean"),
+                ("reliable over",  "marginal over"),
+                ("reliable under", "marginal under"),
+                ("reliable",       "marginal"),
+                ("high confidence","low confidence"),
+                ("at strong value", "at slim value"),
+            ]
+            for _field in ("tacticalBreakdown", "sharpSummary"):
+                _txt = prediction.get(_field, "")
+                if not _txt:
+                    continue
+                _changed = False
+                for _bad, _good in _overconfident_phrases:
+                    if _bad in _txt.lower():
+                        _txt = _re.sub(_bad, _good, _txt, flags=_re.IGNORECASE)
+                        _changed = True
+                if _changed:
+                    prediction[_field] = _txt
+                    print(f"[CONFIDENCE GUARD] Replaced overconfident phrasing in {_field} (conf={_final_conf}%)")
 
         # Save to MongoDB
         prediction["_created"] = datetime.now(timezone.utc).isoformat()
