@@ -1,0 +1,19 @@
+No, this prediction doesn’t make strong sense — the UNDER 77.5 feels off, and the market leaning OVER is more aligned with the data.
+Here’s my independent breakdown (based on 2025/26 Ligue 1 stats, the opponent profile you shared, and matchup context — no reliance on the app’s formula):
+Malang Sarr’s Baseline
+•  Season average: ~61.4 pass attempts per 90 across 27 Ligue 1 starts (~2,430 minutes, total ~1,656–1,657 attempts).
+•  Completion rate ~88.4% (very solid for a ball-playing CB). This is his normal output in a typical Lens game.
+The Matchup Boost Is Real and Significant
+•  Lens at home vs Toulouse: Lens are projected for 63% possession (app + previews confirm they dictate tempo, pin opponents deep, and build patiently).
+•  Toulouse away style: They sit compact/low-block and allow opposing CBs to rack up huge numbers on build-up passes.
+	•  The Opponent Profile you screenshotted proves this: recent home CBs vs Toulouse averaged ~85 attempts (samples: 110, 104, 86, 83, 82). Even the lowest relevant sample was still well above Sarr’s season norm.
+•  Lens are heavy favorites (-204 ML) in an “OPEN” game where they’re the clear aggressors. This is exactly the spot where a ball-playing CB like Sarr sees his involvement spike (more short passes, recycling, progressive balls while controlling the half).
+A realistic expectation for Sarr here is 75–85+ attempts — comfortably in line with (or above) the samples of similar CBs in the same situation.
+Why the App’s Call Looks Weak
+•  Projection of exactly 77.0 is a huge upward adjustment from his 61.4 baseline (the model clearly sees the matchup boost).
+•  But then it still calls UNDER 77.5 with only 45% low confidence and a very wide 80% range (57.6–92.3).
+•  This screams uncertainty — the Reverse Formula is trying to split the difference but lands on a knife-edge call with minimal edge.
+•  In a high-possession home game against a low-block side, variance works against the UNDER: one strong half of sustained build-up easily pushes him over.
+Bottom line: The samples + possession projection point to OVER 77.5 being the more probable outcome (my independent lean: expected value ~78–82 attempts). The app’s slight UNDER lean with low confidence doesn’t hold up well here — it’s one of the shakier calls you’ve shared.
+Your instinct (and the market’s “nearly everyone over” lean) is correct. This is a classic spot where the opponent profile + home dominance outweigh the player’s raw season average. If you’re betting, the OVER has the better edge at 77.5.
+Track early possession/touches — if Lens settle into their usual home rhythm, Sarr will be touching it constantly. Let me know the final number after the match!

@@ -3107,8 +3107,37 @@ Analyze ALL data thoroughly. Return JSON only."""
                 _opp_allowed_n   = position_comp_data.get("sampleSize", 0)
                 _opp_pos_label   = position_comp_data.get("positionShort", "?")
                 if _opp_allowed_avg and _opp_allowed_n >= 3:
-                    _opp_weight = min(_opp_allowed_n * 0.025, 0.15)
+                    _opp_weight = min(_opp_allowed_n * 0.025, 0.15)  # base: 2.5% per player, max 15%
                     _old_bp = bayesian_posterior
+
+                    # ── CONVERGENCE BOOST ────────────────────────────────────────────────
+                    # When possession dominance AND opponent profile BOTH point the same
+                    # direction with meaningful magnitude for pass-sensitive props,
+                    # they are measuring the same underlying truth (this matchup inflates/
+                    # suppresses pass volume). Compound them by increasing opp_weight.
+                    # Without this boost the 15% cap keeps the signal too weak vs the
+                    # Bayesian season-average anchor — e.g. a dominant home CB vs a
+                    # low-block side where opp avg=85 and poss=63% still lands <line.
+                    # ────────────────────────────────────────────────────────────────────
+                    _poss_sens = {"pass_attempts", "passes", "key_passes", "crosses", "dribbles"}
+                    if req.propType in _poss_sens:
+                        _exp_poss  = match_dominance.get("expectedPoss", 50.0)
+                        _avg_poss  = match_dominance.get("teamSeasonAvg") or 50.0
+                        _poss_diff = _exp_poss - _avg_poss      # +ve = more poss than usual
+                        _opp_diff  = _opp_allowed_avg - _old_bp # +ve = opp allows more than proj
+                        # Same-direction AND both material (≥5pp poss gap, ≥5 stat gap)
+                        if (_poss_diff * _opp_diff > 0
+                                and abs(_poss_diff) >= 5
+                                and abs(_opp_diff) >= 5):
+                            # Boost scales with possession gap: 5pp→0.05 extra, 10pp→0.10, cap 0.15
+                            _conv_boost = min(abs(_poss_diff) / 100.0, 0.15)
+                            _opp_weight = min(_opp_weight + _conv_boost, 0.30)  # hard cap 30%
+                            print(
+                                f"[OPP CONVERGENCE] {req.propType}: poss_diff={_poss_diff:+.1f}pp "
+                                f"opp_diff={_opp_diff:+.1f} → weight {_opp_weight:.0%} "
+                                f"(+{_conv_boost:.0%} alignment boost)"
+                            )
+
                     bayesian_posterior = round(
                         _old_bp * (1 - _opp_weight) + _opp_allowed_avg * _opp_weight, 1
                     )
@@ -3171,15 +3200,18 @@ Analyze ALL data thoroughly. Return JSON only."""
 
         # =============================================
         # POST-PROJECTION DOMINANCE SCALING — SELECTIVE
-        # Applied ONLY when a low-possession team faces a possession monster.
-        # High-possession teams (>52% avg) keep their Bayesian projection as-is
-        # because their pass counts remain high regardless of matchup.
+        # Negative branch: low-possession team facing a possession monster → scale DOWN.
+        # Positive branch: team expected to dominate well above their own season avg → scale UP.
+        # The positive branch only fires when the OPP CONVERGENCE boost above was NOT
+        # sufficient (i.e., the expected poss gap is very large — a historically rare setup).
+        # In most cases the OPP CONVERGENCE boost inside the Bayesian step already handles it.
         # =============================================
         poss_sensitive = {"pass_attempts", "passes", "key_passes", "crosses", "dribbles"}
 
         if req.propType in poss_sensitive and match_dominance.get("multiplier", 1.0) != 1.0:
             dom_mult = match_dominance["multiplier"]
             team_avg_poss = match_dominance.get("teamSeasonAvg", 50)
+            exp_poss      = match_dominance.get("expectedPoss", 50)
             current = prediction.get("projectedValue", req.line)
 
             if team_avg_poss < 52 and dom_mult < 0.92:
@@ -3188,6 +3220,33 @@ Analyze ALL data thoroughly. Return JSON only."""
                 prediction["projectedValue"] = post_dom
                 prediction["recommendation"] = "over" if post_dom > req.line else "under"
                 print(f"[DOMINANCE] APPLIED: {current} × {dom_mult:.3f} → {post_dom} (team avg {team_avg_poss:.0f}% < 52% threshold)")
+            elif dom_mult > 1.08 and exp_poss > team_avg_poss + 8:
+                # Team expected to significantly exceed their own season-average possession.
+                # A +8pp gap (e.g., normally 53% → expected 63%) is historically meaningful
+                # for pass-volume props. Apply a damped positive boost (35% of the raw mult)
+                # to avoid double-counting with the OPP CONVERGENCE boost already applied.
+                _damped_mult = 1.0 + (dom_mult - 1.0) * 0.35  # 35% of the raw mult excess
+                post_dom = round(current * _damped_mult, 1)
+                _old_rec = prediction.get("recommendation", "over")
+                prediction["projectedValue"] = post_dom
+                prediction["recommendation"] = "over" if post_dom > req.line else "under"
+                print(
+                    f"[DOMINANCE] POSITIVE: {current} × {_damped_mult:.3f} → {post_dom} "
+                    f"(exp {exp_poss:.0f}% vs avg {team_avg_poss:.0f}%, raw mult={dom_mult:.3f})"
+                )
+                # If the positive boost flipped the recommendation, the AI confidence was
+                # calibrated for the opposite direction — reset it based on the new edge.
+                _new_rec = prediction["recommendation"]
+                if _new_rec != _old_rec or True:  # always recalibrate after DOMINANCE
+                    _dom_edge = abs(post_dom - req.line)
+                    # Base: 55% + 1.5% per pass over the line, capped at 68%
+                    _base_conf = min(68, round(55 + _dom_edge * 1.5))
+                    prediction["confidenceScore"] = _base_conf
+                    print(f"[DOMINANCE] Confidence recalibrated: {_base_conf}% (edge={_dom_edge:.1f})")
+                # Recalibrate edgeZ so downstream guards use the final edge
+                if real_bayes:
+                    _bstd = real_bayes.get("posteriorStd", 10) or 10
+                    real_bayes["edgeZ"] = round(abs(post_dom - req.line) / max(_bstd, 5), 2)
             else:
                 would_be = round(current * dom_mult, 1)
                 print(f"[DOMINANCE] SKIPPED: {current} × {dom_mult:.3f} would be {would_be} (team avg {team_avg_poss:.0f}% — Bayesian covers this)")
