@@ -734,8 +734,21 @@ async def predict(req: PredictionRequest):
                             if target_specific_pos and spec_pos and spec_pos != target_specific_pos:
                                 continue  # Skip — cached position doesn't match target
 
+                            # GK-specific: capture goals conceded for per-game save rate.
+                            # For saves prop: stat_cat="goals", stat_sub="saves" per PROP_STAT_KEYS.
+                            # Conceded is at the same "goals" block in the fixture player API.
+                            _gk_conceded = None
+                            if prop_type == "saves":
+                                _raw_conceded = pstats.get("goals", {}).get("conceded")
+                                if _raw_conceded is not None:
+                                    try:
+                                        _gk_conceded = int(_raw_conceded)
+                                    except (TypeError, ValueError):
+                                        pass
+
                             results.append({
                                 "name": p_name,
+                                "playerId": p_id,
                                 "team": team_name,
                                 "minutes": minutes,
                                 "statValue": stat_val,
@@ -747,6 +760,7 @@ async def predict(req: PredictionRequest):
                                 "role": spec_role,
                                 "teamPossession": team_poss,
                                 "oppPossession": opp_poss,
+                                "goalsConceded": _gk_conceded,
                             })
                     return results
                 except Exception:
@@ -2646,6 +2660,65 @@ COMPARE TO LINE: Line is {req.line}. Formula projects {projected_saves}.
             )
         except Exception as e:
             print(f"[POS COMP] Error/timeout: {e}")
+
+        # ── COMPARISON ENRICHMENT: Add season save rate (GK) or venue pass avg to each player ──
+        if position_comparison:
+            _enrich_prop = req.propType
+
+            async def _fetch_comp_player_stats(p_entry):
+                """Enrich one comparison player with save rate (GK) or season avg passes."""
+                _pid = p_entry.get("playerId")
+
+                # ── SAVES: compute per-game save rate from fixture data — no API call needed.
+                # API-Football does NOT return goalkeeper.saves in season stats for many leagues.
+                # Per-game rate (saves vs this opponent) is directly available and highly relevant.
+                if _enrich_prop == "saves":
+                    _gc = p_entry.get("goalsConceded")
+                    _sv = p_entry.get("statValue", 0)
+                    if _gc is not None and (_sv + _gc) > 0:
+                        p_entry["saveRate"] = round(_sv / (_sv + _gc) * 100, 1)
+                    return  # no API call needed for saves
+
+                # ── PASSES: fetch season stats for avg passes per game
+                if _enrich_prop not in {"pass_attempts", "passes", "key_passes", "crosses"}:
+                    return
+                if not _pid:
+                    return
+                _enrich_lid = req.leagueId or league_id or 39
+                # Fetch both seasons in parallel and use whichever returns data
+                async def _try_season(_s):
+                    try:
+                        return await aio.wait_for(
+                            api_football_request("players", {"id": _pid, "season": _s, "league": _enrich_lid}),
+                            timeout=5
+                        )
+                    except Exception:
+                        return None
+                try:
+                    _results = await aio.wait_for(
+                        aio.gather(_try_season(CURRENT_SEASON), _try_season(CURRENT_SEASON - 1)),
+                        timeout=6
+                    )
+                    _sdata = next((r for r in _results if r), None)
+                    if not _sdata:
+                        return
+                    _stats = (_sdata[0].get("statistics") or [{}])[0]
+                    _apps       = (_stats.get("games") or {}).get("appearences") or 0
+                    _pass_total = (_stats.get("passes") or {}).get("total") or 0
+                    if _apps > 0 and _pass_total > 0:
+                        p_entry["seasonAvgStat"] = round(_pass_total / _apps, 1)
+                except Exception as _e:
+                    print(f"[POS ENRICH] {p_entry.get('name')} pass avg skip: {type(_e).__name__}: {str(_e)[:80]}")
+
+            # Run enrichment for all comparison players in parallel
+            _enrich_tasks = [_fetch_comp_player_stats(p) for p in position_comparison]
+            try:
+                await aio.wait_for(aio.gather(*_enrich_tasks, return_exceptions=True), timeout=8)
+                _enriched = sum(1 for p in position_comparison if p.get("saveRate") or p.get("seasonAvgStat"))
+                if _enriched:
+                    print(f"[POS ENRICH] Enriched {_enriched}/{len(position_comparison)} comparison players for {req.propType}")
+            except Exception as _ee:
+                print(f"[POS ENRICH] Batch timeout/error: {_ee}")
 
         # POSITION CONTEXT: Compute position-specific baseline from game logs + comparison
         position_context = ""

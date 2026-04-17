@@ -1126,11 +1126,21 @@ export default function ScanScreen() {
                   {pc.players.slice(0, 7).map((p: Record<string, unknown>, i: number) => {
                     const val = p.statValue as number;
                     const over = prediction.line != null && val >= (prediction.line as number);
+                    const saveRate = p.saveRate as number | undefined;
+                    const seasonAvg = p.seasonAvgStat as number | undefined;
+                    const isSavesProp = prediction.propType === 'saves';
+                    const isPassProp = ['pass_attempts','passes','key_passes','crosses'].includes(prediction.propType || '');
                     return (
                       <View key={i} style={[styles.pcRow, i > 0 && styles.pcRowBorder]}>
                         <View style={styles.pcLeft}>
                           <Text style={styles.pcPlayerName} numberOfLines={1}>{p.name as string}</Text>
                           <Text style={styles.pcMeta} numberOfLines={1}>{p.team as string} · {(p.date as string)?.slice(0, 10) ?? '—'} · {p.minutes as number}'</Text>
+                          {isSavesProp && saveRate != null && (
+                            <Text style={styles.pcStatBadge}>{saveRate.toFixed(1)}% SR</Text>
+                          )}
+                          {isPassProp && seasonAvg != null && (
+                            <Text style={styles.pcStatBadge}>avg {seasonAvg} passes/g</Text>
+                          )}
                         </View>
                         <Text style={[styles.pcVal, { color: over ? Colors.success : Colors.error }]}>{val}</Text>
                       </View>
@@ -1641,6 +1651,7 @@ const styles = StyleSheet.create({
   pcLeft: { flex: 1, marginRight: 12 },
   pcPlayerName: { fontSize: 13, fontWeight: '600', color: Colors.text },
   pcMeta: { fontSize: 10, color: Colors.textTertiary, marginTop: 1 },
+  pcStatBadge: { fontSize: 10, color: Colors.primary, fontWeight: '700', marginTop: 3 },
   pcVal: { fontSize: 16, fontWeight: '800' },
 
   /* Saved state */
