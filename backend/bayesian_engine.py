@@ -477,7 +477,10 @@ def compute_bayesian_projection(
     # Floor: 0.60 — prevents overcorrection (max 40% reduction)
     # ═══════════════════════════════════════════
     BALL_CONTROL_PROPS = {"pass_attempts", "passes", "key_passes", "crosses", "dribbles"}
-    if match_dominance and prop_type in BALL_CONTROL_PROPS:
+    # GKs are excluded: their pass volume is driven by defensive load and goal kicks,
+    # NOT by team possession (a high-possession team's GK barely touches the ball).
+    _is_gk = (position or "").upper() in {"GK", "GOALKEEPER"}
+    if match_dominance and prop_type in BALL_CONTROL_PROPS and not _is_gk:
         expected_poss = match_dominance.get("expectedPoss")
         team_season_avg_poss = match_dominance.get("teamSeasonAvg")
         if expected_poss is not None and team_season_avg_poss and team_season_avg_poss > 0:

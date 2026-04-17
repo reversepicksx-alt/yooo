@@ -3120,7 +3120,8 @@ Analyze ALL data thoroughly. Return JSON only."""
                     # low-block side where opp avg=85 and poss=63% still lands <line.
                     # ────────────────────────────────────────────────────────────────────
                     _poss_sens = {"pass_attempts", "passes", "key_passes", "crosses", "dribbles"}
-                    if req.propType in _poss_sens:
+                    _is_gk_conv = (specific_position or "").upper() in {"GK", "GOALKEEPER"} or (player_position or "").lower() == "goalkeeper"
+                    if req.propType in _poss_sens and not _is_gk_conv:
                         _exp_poss  = match_dominance.get("expectedPoss", 50.0)
                         _avg_poss  = match_dominance.get("teamSeasonAvg") or 50.0
                         _poss_diff = _exp_poss - _avg_poss      # +ve = more poss than usual
@@ -3208,7 +3209,8 @@ Analyze ALL data thoroughly. Return JSON only."""
         # =============================================
         poss_sensitive = {"pass_attempts", "passes", "key_passes", "crosses", "dribbles"}
 
-        if req.propType in poss_sensitive and match_dominance.get("multiplier", 1.0) != 1.0:
+        _is_gk_dom = (specific_position or "").upper() in {"GK", "GOALKEEPER"} or (player_position or "").lower() == "goalkeeper"
+        if req.propType in poss_sensitive and not _is_gk_dom and match_dominance.get("multiplier", 1.0) != 1.0:
             dom_mult = match_dominance["multiplier"]
             team_avg_poss = match_dominance.get("teamSeasonAvg", 50)
             exp_poss      = match_dominance.get("expectedPoss", 50)
