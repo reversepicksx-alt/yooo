@@ -1615,6 +1615,11 @@ async def predict(req: PredictionRequest):
         # =============================================
         early_bayes = None
         bayesian_prompt_anchor = ""
+        # Safety defaults for T003/T004 — always defined even if exception occurs
+        _redist_alerts: list = []
+        _redist_multiplier: float = 1.0
+        _lineup_alert: str | None = None
+        _lineup_status: str = "unknown"
         try:
             from bayesian_engine import compute_bayesian_projection
 
@@ -1662,6 +1667,22 @@ async def predict(req: PredictionRequest):
                     if len(_hp_vals) >= 3:
                         _bayes_hyperprior = (sum(_hp_vals) / len(_hp_vals)) * _hp_share
 
+            # ── Expected minutes for this match ─────────────────────────────
+            # Use the MEDIAN of the player's recent minutes to estimate playing
+            # time. Median is more robust than mean — one 120-min ET game won't
+            # inflate the expectation. Clamp to [30, 90].
+            _all_mins = sorted([
+                g.get("minutes", 90) for g in player_game_logs
+                if g.get("minutes", 0) > 0
+            ])
+            if _all_mins:
+                _mid = len(_all_mins) // 2
+                _exp_mins = (_all_mins[_mid] if len(_all_mins) % 2 == 1
+                             else (_all_mins[_mid - 1] + _all_mins[_mid]) / 2)
+                _exp_mins = max(30.0, min(90.0, _exp_mins))
+            else:
+                _exp_mins = 90.0
+
             _sfm = {
                 "goals": "goals_total", "assists": "goals_assists",
                 "shots_assisted": "passes_key",
@@ -1684,8 +1705,149 @@ async def predict(req: PredictionRequest):
                 match_dominance=match_dominance,
                 position=_bayes_position,
                 hyperprior_mean=_bayes_hyperprior,
+                expected_minutes=_exp_mins,
             )
             print(f"[BAYESIAN] {req.playerName}/{req.propType}: samples={early_bayes.get('priorSamples') if early_bayes else 0}, logs={len(player_game_logs)}")
+
+            # ── T003: Redistribution model ───────────────────────────────────
+            # When a teammate of the same position is absent, the subject player
+            # absorbs a portion of their typical contribution. We detect absences
+            # from the situation-engine injury data and apply a per-prop-type
+            # multiplier to the Bayesian posteriorMean.
+            #
+            # Position groups: A/F → attacker, M → midfielder, D → defender.
+            # Redistribution only applies when >= 1 same-position teammate absent.
+            # Cap: total boost ≤ 25%, never applied to goalkeepers (G).
+            _player_team_absences = game_situation.get("injuries", {}).get("playerTeamAbsences", [])
+            _redist_multiplier = 1.0
+
+            # Map raw API-Football position codes → canonical group
+            def _pos_group(pos_code: str) -> str:
+                p = (pos_code or "").upper().strip()
+                if p in ("A", "F", "ST", "CF", "LW", "RW", "LF", "RF", "SS"):
+                    return "attacker"
+                if p in ("M", "AM", "CM", "DM", "CAM", "CDM", "LM", "RM", "MF", "W"):
+                    return "midfielder"
+                if p in ("D", "CB", "LB", "RB", "LWB", "RWB", "SW", "DF"):
+                    return "defender"
+                return "other"
+
+            # Determine subject player's position group
+            _subject_pos_group = _pos_group(_bayes_position)
+
+            # Redistribution table: (prop_type → boost per absent same-position teammate)
+            # Boosts are fractional multipliers above 1.0; typical squad size per position:
+            # attacker ~2, midfielder ~4, defender ~4 — so 1 absence = bigger impact for attacker
+            _REDIST_TABLE = {
+                "attacker": {
+                    "goals": 0.12, "shots": 0.12, "shots_on_target": 0.10,
+                    "key_passes": 0.07, "dribbles": 0.08, "dribbles_success": 0.07,
+                    "assists": 0.06, "fouls_drawn": 0.05,
+                },
+                "midfielder": {
+                    "pass_attempts": 0.08, "key_passes": 0.10, "assists": 0.08,
+                    "tackles": 0.06, "interceptions": 0.06, "fouls_committed": 0.05,
+                    "dribbles": 0.06, "crosses": 0.07,
+                },
+                "defender": {
+                    "tackles": 0.10, "clearances": 0.12, "interceptions": 0.09,
+                    "blocks": 0.08, "fouls_committed": 0.06, "duels_won": 0.07,
+                },
+            }
+
+            _redist_alerts = []
+            if _subject_pos_group in _REDIST_TABLE and _player_team_absences:
+                _prop_boosts = _REDIST_TABLE[_subject_pos_group]
+                _per_absence_boost = _prop_boosts.get(req.propType, 0.0)
+                if _per_absence_boost > 0:
+                    _absent_same_pos = [
+                        a for a in _player_team_absences
+                        if _pos_group(a.get("position", "")) == _subject_pos_group
+                    ]
+                    if _absent_same_pos:
+                        _raw_boost = len(_absent_same_pos) * _per_absence_boost
+                        _capped_boost = min(_raw_boost, 0.25)
+                        _redist_multiplier = 1.0 + _capped_boost
+                        _absent_names = ", ".join(a["name"] for a in _absent_same_pos[:3])
+                        _redist_alerts.append(
+                            f"Redistribution: {len(_absent_same_pos)} same-position teammate(s) absent "
+                            f"({_absent_names}) → +{round(_capped_boost*100)}% {req.propType} boost applied"
+                        )
+                        print(f"[REDIST] {req.playerName}/{req.propType}: "
+                              f"×{_redist_multiplier:.3f} from {len(_absent_same_pos)} absence(s)")
+
+            # Apply redistribution to early_bayes posteriorMean
+            if early_bayes and _redist_multiplier != 1.0:
+                _orig_pm = early_bayes["posteriorMean"]
+                _new_pm  = round(_orig_pm * _redist_multiplier, 1)
+                early_bayes["posteriorMean"] = _new_pm
+                early_bayes["recommendation"] = "over" if _new_pm > req.line else "under"
+                early_bayes["redistribution"] = {
+                    "multiplier": round(_redist_multiplier, 3),
+                    "originalMean": _orig_pm,
+                    "adjustedMean": _new_pm,
+                    "absentCount": len([a for a in _player_team_absences
+                                        if _pos_group(a.get("position", "")) == _subject_pos_group]),
+                }
+
+            # ── T004: Lineup confirmation gate ───────────────────────────────
+            # Fetch the confirmed starting XI for the upcoming fixture.
+            # If available and the subject player is NOT in the XI → confidence floor.
+            # If confirmed starting → positive tactical signal.
+            _lineup_alert = None
+            _lineup_confidence_floor = None
+            _lineup_status = "unknown"  # "starting" | "substitute" | "not_in_squad" | "unknown"
+            if _sit_fixture_id and req.playerId:
+                try:
+                    _lineup_raw = await api_football_request("fixtures/lineups", {"fixture": _sit_fixture_id})
+                    _lineup_responses = (_lineup_raw or {}).get("response", [])
+                    _player_id_int = int(req.playerId) if str(req.playerId).isdigit() else None
+                    if _lineup_responses and _player_id_int:
+                        # Determine which team the subject player belongs to by scanning both
+                        for _team_lineup in _lineup_responses:
+                            _starters = _team_lineup.get("startXI", [])
+                            _subs     = _team_lineup.get("substitutes", [])
+                            _starter_ids = {
+                                p.get("player", {}).get("id")
+                                for p in _starters
+                                if p.get("player", {}).get("id") is not None
+                            }
+                            _sub_ids = {
+                                p.get("player", {}).get("id")
+                                for p in _subs
+                                if p.get("player", {}).get("id") is not None
+                            }
+                            if _player_id_int in _starter_ids:
+                                _lineup_status = "starting"
+                                _lineup_alert = "✓ Confirmed in starting XI"
+                                print(f"[LINEUP] {req.playerName}: confirmed STARTING in fixture {_sit_fixture_id}")
+                                break
+                            elif _player_id_int in _sub_ids:
+                                _lineup_status = "substitute"
+                                _lineup_alert = "⚠ Listed as substitute — reduced involvement expected"
+                                _lineup_confidence_floor = 0.45
+                                print(f"[LINEUP] {req.playerName}: confirmed SUBSTITUTE in fixture {_sit_fixture_id}")
+                                break
+                        else:
+                            # Lineups posted but player found in neither — possibly not in squad
+                            if _lineup_responses:
+                                _lineup_status = "not_in_squad"
+                                _lineup_alert = "⚠ Player not found in confirmed lineup"
+                                _lineup_confidence_floor = 0.45
+                                print(f"[LINEUP] {req.playerName}: NOT in lineup for fixture {_sit_fixture_id}")
+                except Exception as _lineup_err:
+                    print(f"[LINEUP] fetch error for fixture {_sit_fixture_id}: {_lineup_err}")
+
+            # Apply confidence floor — cap pOver / pUnder at 45% if substitute / not in squad
+            if early_bayes and _lineup_confidence_floor is not None:
+                _dir = early_bayes["recommendation"]
+                if _dir == "over" and early_bayes["pOver"] > _lineup_confidence_floor * 100:
+                    early_bayes["pOver"]  = round(_lineup_confidence_floor * 100, 1)
+                    early_bayes["pUnder"] = round((1 - _lineup_confidence_floor) * 100, 1)
+                elif _dir == "under" and early_bayes["pUnder"] > _lineup_confidence_floor * 100:
+                    early_bayes["pUnder"] = round(_lineup_confidence_floor * 100, 1)
+                    early_bayes["pOver"]  = round((1 - _lineup_confidence_floor) * 100, 1)
+                early_bayes["lineupStatus"] = _lineup_status
 
             if early_bayes and early_bayes.get("priorSamples", 0) >= 3:
                 bdir = early_bayes['recommendation'].upper()
@@ -1697,6 +1859,23 @@ Season avg: {early_bayes['priorMean']} | Recent form (decay-weighted): {early_ba
 Streak: {early_bayes['streakFlag']} | Volatility: {early_bayes['volatility']} (CV={early_bayes['cv']}) | Reversal: {early_bayes['reversalFlag']}
 IMPORTANT: Never use the word "Bayesian" in your response. Always say "Reverse Formula" instead.
 >>> MANDATORY: The math projects {bdir}. Your **Verdict** MUST recommend {bdir}. Do NOT write the opposite direction — this creates a contradiction the user sees. Your projectedValue MUST be within 20% of {early_bayes['posteriorMean']}. <<<"""
+                # Inject redistribution context into prompt
+                if _redist_alerts:
+                    _redist_mult_pct = round((_redist_multiplier - 1) * 100)
+                    bayesian_prompt_anchor += f"""
+[TEAMMATE ABSENCE REDISTRIBUTION]
+{" | ".join(_redist_alerts)}
+The Reverse Formula has already boosted the projected {req.propType} by {_redist_mult_pct}% to account for this vacancy. Acknowledge this in your analysis."""
+                # Inject lineup status context into prompt
+                if _lineup_alert:
+                    if _lineup_status == "starting":
+                        bayesian_prompt_anchor += f"""
+[LINEUP CONFIRMATION — POSITIVE SIGNAL]
+{_lineup_alert}. Full minute involvement expected — no playing-time uncertainty for this projection."""
+                    elif _lineup_status in ("substitute", "not_in_squad"):
+                        bayesian_prompt_anchor += f"""
+[LINEUP WARNING — REDUCED INVOLVEMENT]
+{_lineup_alert}. Confidence capped at 45%. Flag this clearly in your analysis as a significant risk factor."""
                 # Inject press intensity context into AI prompt
                 _pi = early_bayes.get("pressIntensity", {})
                 if _pi.get("label") not in (None, "Unknown", "Low") and req.propType in {"pass_attempts", "passes"}:
@@ -2928,6 +3107,16 @@ Analyze ALL data thoroughly. Return JSON only."""
         # HARD GUARD: recommendation MUST match the FINAL projected value vs line
         final_proj = prediction.get("projectedValue", req.line)
         prediction["recommendation"] = "over" if final_proj > req.line else "under"
+
+        # ── Inject redistribution + lineup alerts into tacticalAlerts ────────
+        if _redist_alerts:
+            prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + _redist_alerts
+        if _lineup_alert:
+            prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [_lineup_alert]
+        if _lineup_status == "starting":
+            prediction["lineupConfirmed"] = True
+        elif _lineup_status in ("substitute", "not_in_squad"):
+            prediction["lineupWarning"] = True
 
         # =============================================
         # POST-CONSENSUS CONFIDENCE GUARDS

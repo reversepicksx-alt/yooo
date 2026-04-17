@@ -61,23 +61,74 @@ POSITION_GROUP_MAP = {
 DECAY_WEIGHTS = DECAY_BY_POSITION["midfielder"]
 
 
+# Props that are discrete counts (non-negative integers).
+# These use the negative binomial distribution instead of Gaussian in Monte Carlo.
+COUNT_PROPS = {
+    "shots", "shots_on_target", "goals", "assists", "saves", "tackles",
+    "key_passes", "interceptions", "blocks", "dribbles", "dribbles_success",
+    "fouls_drawn", "fouls_committed", "crosses", "clearances",
+    "duels_won", "yellow_cards", "shots_assisted",
+}
+
+
+def _sample_negative_binomial(mean: float, variance: float, n_sims: int) -> list:
+    """
+    Gamma-Poisson mixture (= negative binomial) for count data.
+    More accurate than Gaussian for discrete props like shots, saves, goals.
+    Handles overdispersion (variance > mean) naturally — common in football stats.
+
+    When variance <= mean (rare, underdispersed), falls back to Poisson via
+    Gaussian approximation since NB is undefined there.
+    """
+    if mean <= 0:
+        return [0] * n_sims
+
+    if variance <= mean:
+        # Underdispersed — use Poisson approximation
+        lam = max(mean, 0.01)
+        return [max(0, round(random.gauss(lam, math.sqrt(lam)))) for _ in range(n_sims)]
+
+    # NB parameters via method of moments
+    r     = max(mean ** 2 / (variance - mean), 0.1)  # dispersion (shape)
+    beta  = (variance - mean) / mean                  # scale
+
+    samples = []
+    for _ in range(n_sims):
+        # Draw Poisson rate from Gamma(r, beta) — this gives NB marginal
+        rate = random.gammavariate(r, beta)
+        # Approximate Poisson(rate) with Gaussian for speed (accurate for rate > 1)
+        sample = max(0, round(random.gauss(rate, math.sqrt(max(rate, 0.01)))))
+        samples.append(sample)
+    return samples
+
+
 def _monte_carlo_probability(
     mean: float,
     std: float,
     line: float,
     n_sims: int = 5000,
+    is_count_stat: bool = False,
+    variance: float = None,
 ) -> tuple:
     """
     Monte Carlo simulation for P(over) / P(under) and 80% CI.
-    More accurate than normal CDF approximation — captures real tail behaviour
-    and naturally reflects the posterior uncertainty without a closed-form assumption.
+
+    For count stats (shots, goals, saves etc.) uses the negative binomial
+    via a gamma-Poisson mixture — correctly handles discrete, right-skewed
+    distributions. For continuous stats uses Gaussian.
+
     Returns: (p_over, p_under, ci_low_80, ci_high_80)
     """
-    if std <= 0:
+    if std <= 0 or mean <= 0:
         p = 1.0 if mean > line else 0.0
         return p, 1.0 - p, round(mean, 1), round(mean, 1)
 
-    samples = [random.gauss(mean, std) for _ in range(n_sims)]
+    if is_count_stat:
+        var = variance if variance and variance > 0 else std ** 2
+        samples = _sample_negative_binomial(mean, var, n_sims)
+    else:
+        samples = [random.gauss(mean, std) for _ in range(n_sims)]
+
     over_count = sum(1 for s in samples if s > line)
     p_over = over_count / n_sims
     p_under = 1.0 - p_over
@@ -99,6 +150,7 @@ def compute_bayesian_projection(
     match_dominance: dict = None,
     position: str = "",
     hyperprior_mean: float = None,
+    expected_minutes: float = 90.0,
 ) -> dict:
     """
     Compute a 3-layer Bayesian projection from raw game data.
@@ -107,11 +159,42 @@ def compute_bayesian_projection(
     if not game_logs:
         return _empty_metrics(line)
 
-    # Extract stat values
-    all_vals = [g.get(stat_field, g.get("targetStat")) for g in game_logs
-                if g.get(stat_field, g.get("targetStat")) is not None]
-    if not all_vals:
+    # ── Is this a discrete count prop? ──────────────────────────────────────
+    is_count_stat = prop_type in COUNT_PROPS
+
+    # ── Per-90 normalization ─────────────────────────────────────────────────
+    # Raw stats from games of different durations are not comparable.
+    # A player with 40 passes in 60 min is performing better than 40 passes in 90 min.
+    # Normalize each value to per-90-minute rate, then de-normalize at the end
+    # by the player's expected playing time (median of recent minutes played).
+    # Floor: 30 min to avoid division by zero on very short cameos.
+    _MIN_MINUTES = 30       # ignore sub-30 min appearances in the dataset
+    _raw_pairs = [
+        (g.get(stat_field, g.get("targetStat")), g.get("minutes", 90))
+        for g in game_logs
+        if g.get(stat_field, g.get("targetStat")) is not None
+        and g.get("minutes", 90) >= _MIN_MINUTES
+    ]
+    if not _raw_pairs:
+        # Fall back to logs without the minutes filter
+        _raw_pairs = [
+            (g.get(stat_field, g.get("targetStat")), 90)
+            for g in game_logs
+            if g.get(stat_field, g.get("targetStat")) is not None
+        ]
+    if not _raw_pairs:
         return _empty_metrics(line)
+
+    # Normalise to per-90
+    all_vals    = [v * 90.0 / max(m, _MIN_MINUTES) for v, m in _raw_pairs]
+    all_minutes = [m for _, m in _raw_pairs]
+
+    # expected_minutes: caller passes the player's likely playing time for this match.
+    # Clamp to [30, 90] so partial substitution stays realistic.
+    _exp_min = max(30.0, min(90.0, expected_minutes))
+
+    # De-normalisation factor applied to posterior after all calculations
+    _denorm = _exp_min / 90.0
 
     n = len(all_vals)
 
@@ -238,9 +321,20 @@ def compute_bayesian_projection(
     # ═══════════════════════════════════════════
     covariate_adjustment = 0.0
 
-    # 3a. Venue split adjustment
-    venue_vals = [g.get(stat_field, g.get("targetStat")) for g in game_logs
-                  if g.get("venue") == venue and g.get(stat_field, g.get("targetStat")) is not None]
+    # 3a. Venue split adjustment (normalised to per-90 to match all_vals)
+    venue_vals = [
+        v * 90.0 / max(g.get("minutes", 90), _MIN_MINUTES)
+        for g in game_logs
+        if g.get("venue") == venue
+        and (v := g.get(stat_field, g.get("targetStat"))) is not None
+        and g.get("minutes", 90) >= _MIN_MINUTES
+    ]
+    if not venue_vals:
+        venue_vals = [
+            g.get(stat_field, g.get("targetStat"))
+            for g in game_logs
+            if g.get("venue") == venue and g.get(stat_field, g.get("targetStat")) is not None
+        ]
     if venue_vals and len(venue_vals) >= 3:
         venue_mean = sum(venue_vals) / len(venue_vals)
         venue_adj = venue_mean - prior_mean
@@ -397,26 +491,41 @@ def compute_bayesian_projection(
     # honest (e.g. a 30-mean projection with line at 38.5 must acknowledge the real range).
     effective_std = max(posterior_std, prior_std * 0.55, posterior_mean * 0.17)
 
+    # ── DE-NORMALISE: convert per-90 posterior back to raw expected units ────
+    # All maths above ran in per-90 space. Now scale down to the player's
+    # expected playing time for this match (e.g. 70 min → ×0.778).
+    # effective_std scales by the same factor so CI width stays proportional.
+    _posterior_mean_raw = posterior_mean * _denorm
+    _effective_std_raw  = effective_std  * _denorm
+    _prior_mean_raw     = prior_mean     * _denorm
+    _momentum_mean_raw  = momentum_mean  * _denorm
+    _prior_variance_raw = prior_variance * (_denorm ** 2)
+
+    print(f"[PER90] {prop_type}: posterior={posterior_mean:.1f}/90 → {_posterior_mean_raw:.1f} raw "
+          f"(exp_min={_exp_min:.0f}, denorm={_denorm:.3f})")
+
     # ── MONTE CARLO SIMULATION ───────────────────────────────────────────────
-    # Replaces the normal CDF approximation. 5,000 draws from the posterior
-    # distribution give accurate tail probabilities and a simulation-based 80% CI.
-    # Overhead: ~5ms per call — negligible vs overall API latency.
+    # Count stats (shots, goals, saves etc.) use the negative binomial
+    # distribution via gamma-Poisson mixture — naturally discrete and right-skewed.
+    # Continuous stats (pass_attempts) use Gaussian.
     p_over, p_under, ci_low, ci_high = _monte_carlo_probability(
-        mean=posterior_mean,
-        std=effective_std,
+        mean=_posterior_mean_raw,
+        std=_effective_std_raw,
         line=line,
         n_sims=5000,
+        is_count_stat=is_count_stat,
+        variance=_prior_variance_raw,
     )
 
-    # Edge = how far posterior is from line as % of std dev
-    edge_z = round(abs(posterior_mean - line) / effective_std, 2) if effective_std > 0 else 0
+    # Edge = how far DENORMALISED posterior is from line as % of denormalised std
+    edge_z = round(abs(_posterior_mean_raw - line) / _effective_std_raw, 2) if _effective_std_raw > 0 else 0
 
     # Layer weights (for transparency)
     w_prior = round(prior_precision / total_precision * 100)
     w_momentum = round(momentum_precision / total_precision * 100)
     w_covariate = round(covariate_precision / total_precision * 100)
 
-    # Volatility classification
+    # Volatility classification (based on per-90 CV — position-invariant)
     if cv < 0.15:
         volatility_label = "LOW"
     elif cv < 0.30:
@@ -426,31 +535,34 @@ def compute_bayesian_projection(
     else:
         volatility_label = "EXTREME"
 
+    # Venue avg — denormalise to match raw units
+    _venue_avg_raw = round(sum(venue_vals) / len(venue_vals) * _denorm, 1) if venue_vals else None
+
     return {
-        # Core output
-        "posteriorMean": posterior_mean,
-        "posteriorStd": posterior_std,
-        "recommendation": "over" if posterior_mean > line else "under",
+        # Core output — all values in RAW units (de-normalised from per-90)
+        "posteriorMean": round(_posterior_mean_raw, 1),
+        "posteriorStd": round(posterior_std * _denorm, 2),
+        "recommendation": "over" if _posterior_mean_raw > line else "under",
         "pOver": round(p_over * 100, 1),
         "pUnder": round(p_under * 100, 1),
         "confidenceInterval": [ci_low, ci_high],
         "edgeZ": edge_z,
 
-        # 3 Layers (for transparency)
-        "priorMean": round(prior_mean, 1),
-        "priorStd": round(prior_std, 2),
+        # 3 Layers (for transparency) — also in raw units
+        "priorMean": round(_prior_mean_raw, 1),
+        "priorStd": round(prior_std * _denorm, 2),
         "priorWeight": w_prior,
         "priorSamples": n,
 
-        "momentumEffect": momentum_effect,
-        "momentumMean": round(momentum_mean, 1),
+        "momentumEffect": round((_momentum_mean_raw - _prior_mean_raw), 2),
+        "momentumMean": round(_momentum_mean_raw, 1),
         "momentumLabel": momentum_label,
         "momentumWeight": w_momentum,
-        "trendPerGame": trend_per_game,
+        "trendPerGame": round(trend_per_game * _denorm, 3),
 
-        "covariateAdjustment": covariate_adjustment,
+        "covariateAdjustment": round(covariate_adjustment * _denorm, 2),
         "covariateWeight": w_covariate,
-        "venueAvg": round(sum(venue_vals) / len(venue_vals), 1) if venue_vals else None,
+        "venueAvg": _venue_avg_raw,
         "venueSamples": len(venue_vals) if venue_vals else 0,
 
         "reversalFlag": reversal_flag,
@@ -458,6 +570,8 @@ def compute_bayesian_projection(
         "volatility": volatility_label,
         "cv": round(cv, 3),
         "pressIntensity": press_intensity_info,
+        "expectedMinutes": round(_exp_min, 0),
+        "isCountStat": is_count_stat,
     }
 
 
