@@ -1383,7 +1383,32 @@ async def predict(req: PredictionRequest):
                 match_dominance["oppExpectedPoss"] = _cached_dom["homePoss"]
                 match_dominance["teamSeasonAvg"] = _cached_dom.get("awaySeasonAvg", _cached_dom.get("oppSeasonAvg"))
                 match_dominance["oppSeasonAvg"] = _cached_dom.get("homeSeasonAvg", _cached_dom.get("teamSeasonAvg"))
-            print(f"[MATCH DOMINANCE CACHE HIT] {req.playerName}: home={_cached_dom['homePoss']}% away={_cached_dom['awayPoss']}%")
+
+            # CRITICAL: multiplier is prop-type-specific — MUST be recomputed from
+            # cached possession data for the CURRENT prop type.  The cached value was
+            # set by whichever prop type hit this match first (e.g. clearances → +17%
+            # defensive boost) and is WRONG for a different prop type (e.g. pass_attempts).
+            _cp = match_dominance["expectedPoss"]
+            _ca = match_dominance.get("teamSeasonAvg") or 50.0
+            _PASS_PROPS_C  = {"pass_attempts", "key_passes", "crosses", "passes"}
+            _DEF_PROPS_C   = {"tackles", "interceptions", "blocks", "clearances"}
+            _SHOT_PROPS_C  = {"shots", "shots_on_target"}
+            if req.propType in _PASS_PROPS_C:
+                _poss_ratio_c = _cp / _ca if _ca > 0 else 1.0
+                _capped_c = max(-0.35, min(0.35, _poss_ratio_c - 1.0))
+                match_dominance["multiplier"] = round(1.0 + _capped_c, 3)
+            elif req.propType in _DEF_PROPS_C:
+                _inv_ratio_c = (100.0 - _cp) / (100.0 - _ca) if _ca < 100 else 1.0
+                _capped_c = max(-0.25, min(0.25, _inv_ratio_c - 1.0))
+                match_dominance["multiplier"] = round(1.0 + _capped_c, 3)
+            elif req.propType in _SHOT_PROPS_C:
+                _poss_ratio_c = _cp / _ca if _ca > 0 else 1.0
+                _capped_c = max(-0.20, min(0.20, (_poss_ratio_c - 1.0) * 0.6))
+                match_dominance["multiplier"] = round(1.0 + _capped_c, 3)
+            else:
+                match_dominance["multiplier"] = 1.0
+
+            print(f"[MATCH DOMINANCE CACHE HIT] {req.playerName}: home={_cached_dom['homePoss']}% away={_cached_dom['awayPoss']}% mult_recalc={match_dominance['multiplier']} for {req.propType}")
         else:
             match_dominance = compute_match_dominance(
                 team_fixture_stats, opponent_fixture_stats, match_odds,
