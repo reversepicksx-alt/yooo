@@ -3014,7 +3014,12 @@ Analyze ALL data thoroughly. Return JSON only."""
         if req.propType in _COUNT_STATS:
             pv = prediction.get("projectedValue")
             if pv is not None:
-                prediction["projectedValue"] = round(pv)
+                rounded_pv = round(pv)
+                prediction["projectedValue"] = rounded_pv
+                # Re-sync recommendation after rounding — round() can change the
+                # integer value relative to the line (e.g. pv=1.5 line=1.5 rounds
+                # to 2 via banker's rounding, but guard set "under" since 1.5 ≯ 1.5).
+                prediction["recommendation"] = "over" if rounded_pv > req.line else "under"
             ci = prediction.get("confidenceInterval")
             if ci and len(ci) >= 2:
                 lo = round(float(ci[0]), 1)
