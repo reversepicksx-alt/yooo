@@ -6,7 +6,8 @@ confidence band, and line range. Generates actionable "reasons why"
 for the AI prompt — not just numbers, but pattern explanations.
 """
 from config import db
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+import asyncio
 
 _cache = {}
 
@@ -855,3 +856,170 @@ async def apply_elite_calibration(
         print(f"[ELITE CAL] Applied {len(corrections)} corrections: proj {original_proj}→{final_proj}, rec {original_rec}→{new_rec}, conf {original_conf}→{new_conf}, edge={edge_label}")
 
     return prediction
+
+
+# =====================================================================
+# NIGHTLY CALIBRATION JOB — runs at midnight UTC every 24 hours.
+# Analyses all settled missed picks, computes systematic biases per
+# propType / propType+venue / propType+league, then persists them to
+# the `calibration_offsets` collection so future predictions
+# automatically correct for learned errors.
+# =====================================================================
+
+MIN_SAMPLES_NIGHTLY = 5    # minimum picks before we trust a bias estimate
+CORRECTION_DAMPEN   = 0.40  # apply 40% of the learned bias (conservative)
+
+
+async def run_nightly_calibration(sport: str = "soccer") -> dict:
+    """
+    Core nightly job.  Returns a summary dict describing what was learned.
+    """
+    now = datetime.now(timezone.utc)
+    print(f"[NIGHTLY CAL] Starting calibration job at {now.isoformat()}")
+
+    # ── Pull ALL settled picks that have both projectedValue & actualValue ──
+    query = {
+        "status": "settled",
+        "result": {"$in": ["hit", "miss"]},
+        "projectedValue": {"$exists": True, "$ne": None},
+        "actualValue":    {"$exists": True, "$ne": None},
+        "propType":       {"$exists": True},
+    }
+    if sport:
+        query["sport"] = sport
+
+    picks = await db.picks.find(query, {
+        "_id": 0, "propType": 1, "recommendation": 1, "result": 1,
+        "projectedValue": 1, "actualValue": 1, "line": 1,
+        "venue": 1, "leagueId": 1,
+    }).to_list(10000)
+
+    if not picks:
+        print("[NIGHTLY CAL] No settled picks found — nothing to calibrate.")
+        return {"status": "skipped", "reason": "no settled picks"}
+
+    # ── Bucket errors by various dimensions ────────────────────────────────
+    # error = actual - projected  (positive → we under-projected)
+    by_prop        = {}   # propType → [errors]
+    by_prop_venue  = {}   # "propType|venue" → [errors]
+    by_prop_league = {}   # "propType|leagueId" → [errors]
+    by_prop_rec    = {}   # "propType|rec" → [errors]
+
+    def _append(d, key, error):
+        d.setdefault(key, []).append(error)
+
+    for p in picks:
+        pt     = p.get("propType", "")
+        venue  = p.get("venue", "")
+        league = str(p.get("leagueId", ""))
+        rec    = p.get("recommendation", "")
+        proj   = p.get("projectedValue")
+        actual = p.get("actualValue")
+        if not pt or proj is None or actual is None:
+            continue
+        try:
+            error = float(actual) - float(proj)
+        except (TypeError, ValueError):
+            continue
+
+        _append(by_prop,        pt,               error)
+        _append(by_prop_venue,  f"{pt}|{venue}",  error)
+        _append(by_prop_league, f"{pt}|{league}", error)
+        _append(by_prop_rec,    f"{pt}|{rec}",    error)
+
+    # ── Compute bias offsets and upsert to MongoDB ─────────────────────────
+    saved = []
+
+    async def _upsert_offset(dimension: str, key: str, errors: list):
+        n = len(errors)
+        if n < MIN_SAMPLES_NIGHTLY:
+            return
+        mean_err = sum(errors) / n
+        if abs(mean_err) < 0.15:   # sub-0.15 bias — not worth correcting
+            return
+        dampened  = round(mean_err * CORRECTION_DAMPEN, 3)
+        direction = "under-projected" if mean_err > 0 else "over-projected"
+        rec = {
+            "dimension":      dimension,
+            "key":            key,
+            "sampleCount":    n,
+            "meanError":      round(mean_err, 3),
+            "dampenedOffset": dampened,
+            "direction":      direction,
+            "sport":          sport,
+            "updatedAt":      now,
+        }
+        await db.calibration_offsets.update_one(
+            {"dimension": dimension, "key": key, "sport": sport},
+            {"$set": rec},
+            upsert=True,
+        )
+        saved.append(rec)
+        print(
+            f"[NIGHTLY CAL] {dimension}/{key}: n={n}, "
+            f"mean_err={mean_err:+.2f} ({direction}), "
+            f"dampened={dampened:+.3f}"
+        )
+
+    for pt, errors in by_prop.items():
+        await _upsert_offset("prop", pt, errors)
+    for key, errors in by_prop_venue.items():
+        await _upsert_offset("prop_venue", key, errors)
+    for key, errors in by_prop_league.items():
+        await _upsert_offset("prop_league", key, errors)
+    for key, errors in by_prop_rec.items():
+        await _upsert_offset("prop_rec", key, errors)
+
+    # Invalidate in-memory cache so the next prediction picks up fresh stats
+    _cache.clear()
+    _blend_cache.clear()
+
+    summary = {
+        "status":       "ok",
+        "sport":        sport,
+        "totalPicks":   len(picks),
+        "offsetsSaved": len(saved),
+        "runAt":        now.isoformat(),
+        "offsets":      saved,
+    }
+
+    # Persist run summary for the status API endpoint
+    await db.calibration_runs.update_one(
+        {"sport": sport},
+        {"$set": summary},
+        upsert=True,
+    )
+
+    print(
+        f"[NIGHTLY CAL] Done — {len(picks)} picks analysed, "
+        f"{len(saved)} offsets updated."
+    )
+    return summary
+
+
+async def nightly_calibration_loop(sport: str = "soccer"):
+    """
+    Background loop: runs run_nightly_calibration() at midnight UTC every day.
+    Also runs once 60 s after startup so offsets are populated immediately.
+    """
+    await asyncio.sleep(60)
+    try:
+        await run_nightly_calibration(sport)
+    except Exception as exc:
+        print(f"[NIGHTLY CAL] Startup run failed: {exc}")
+
+    while True:
+        now = datetime.now(timezone.utc)
+        tomorrow_midnight = (now + timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        wait_seconds = (tomorrow_midnight - now).total_seconds()
+        print(
+            f"[NIGHTLY CAL] Next run in {wait_seconds/3600:.1f}h "
+            f"({tomorrow_midnight.strftime('%Y-%m-%d %H:%M UTC')})"
+        )
+        await asyncio.sleep(wait_seconds)
+        try:
+            await run_nightly_calibration(sport)
+        except Exception as exc:
+            print(f"[NIGHTLY CAL] Run failed: {exc}")

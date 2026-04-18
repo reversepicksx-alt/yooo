@@ -98,6 +98,10 @@ async def seed_grants():
     # predictions never hit "no data". Runs on startup then every 24h.
     from data_prefetch import data_prefetch_loop
     asyncio.create_task(data_prefetch_loop())
+    # Nightly calibration — analyses settled picks and persists bias offsets
+    # to MongoDB at midnight UTC. First run fires 60 s after startup.
+    from calibration import nightly_calibration_loop
+    asyncio.create_task(nightly_calibration_loop())
 
 
 async def _auto_backfill_positions():
@@ -675,3 +679,27 @@ async def search_player_alias(query: str = ""):
     from routes.players import search_players
     from models import PlayerSearchRequest
     return await search_players(PlayerSearchRequest(query=query))
+
+
+# ── Calibration status + manual trigger ──────────────────────────────────────
+@app.get("/api/calibration/status")
+async def calibration_status(sport: str = "soccer"):
+    """Return the last nightly calibration run summary and all stored offsets."""
+    from config import db
+    run = await db.calibration_runs.find_one({"sport": sport}, {"_id": 0})
+    offsets = await db.calibration_offsets.find(
+        {"sport": sport}, {"_id": 0}
+    ).sort("sampleCount", -1).to_list(200)
+    return {
+        "lastRun": run or {},
+        "offsets": offsets,
+        "offsetCount": len(offsets),
+    }
+
+
+@app.post("/api/calibration/run")
+async def trigger_calibration(sport: str = "soccer"):
+    """Manually trigger a calibration run (owner use only)."""
+    from calibration import run_nightly_calibration
+    result = await run_nightly_calibration(sport)
+    return result
