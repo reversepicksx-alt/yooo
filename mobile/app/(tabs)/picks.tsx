@@ -738,7 +738,7 @@ const styles = StyleSheet.create({
     transform: [{ translateX: -0.5 }],
   },
 
-  trashBtn: { position: 'absolute', right: 6, top: 6, padding: 6 },
+  trashBtn: { position: 'absolute', right: 6, bottom: 6, padding: 6 },
   tapHint: {
     flexDirection: 'row', alignItems: 'center', gap: 3,
     paddingTop: 4, borderTopWidth: 1, borderTopColor: Colors.borderSubtle,
