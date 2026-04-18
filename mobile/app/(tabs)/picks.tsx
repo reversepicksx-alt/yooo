@@ -88,17 +88,14 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
     : Colors.textSecondary;
   const paceColor = trackValue != null ? Colors.primary : Colors.textSecondary;
 
+  const nowLabel = (won || lost || push) ? 'FINAL' : (hasLiveData ? 'NOW' : null);
+  const paceLabel = settled ? 'PROJ' : (livePace != null && livePace > 0 ? 'PACE' : 'PROJ');
+
   return (
     <View style={[styles.card, won && styles.cardWon, lost && styles.cardLost]}>
-      {/* Top row */}
+      {/* Row 1: player name left | badge right */}
       <View style={styles.cardTopRow}>
-        <View style={styles.cardLeft}>
-          <Text style={styles.cardPlayer} numberOfLines={1}>{pick.playerName}</Text>
-          <Text style={styles.cardMeta} numberOfLines={1}>
-            {[pick.teamName, posLabel || null, pick.opponentName ? `vs ${pick.opponentName}` : null, venueStr]
-              .filter(Boolean).join(' · ')}
-          </Text>
-        </View>
+        <Text style={styles.cardPlayer} numberOfLines={1}>{pick.playerName}</Text>
         <View style={styles.cardRight}>
           {live && !won && !lost && hasLiveData && (
             <View style={styles.liveBadge}>
@@ -108,107 +105,95 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
           )}
           {live && !won && !lost && !hasLiveData && (
             <View style={styles.pendingBadge}>
-              <Ionicons name="time-outline" size={11} color={Colors.textSecondary} />
+              <Ionicons name="time-outline" size={9} color={Colors.textSecondary} />
               <Text style={styles.pendingText}>PENDING</Text>
             </View>
           )}
           {won && (
             <View style={styles.wonBadge}>
-              <Ionicons name="checkmark" size={11} color="#000" />
+              <Ionicons name="checkmark" size={9} color="#000" />
               <Text style={styles.wonText}>HIT</Text>
             </View>
           )}
           {lost && (
             <View style={styles.lostBadge}>
-              <Ionicons name="close" size={11} color={Colors.error} />
+              <Ionicons name="close" size={9} color={Colors.error} />
               <Text style={styles.lostText}>MISS</Text>
             </View>
           )}
           {push && !won && !lost && (
             <View style={styles.pendingBadge}>
-              <Ionicons name="remove-outline" size={11} color={Colors.textSecondary} />
+              <Ionicons name="remove-outline" size={9} color={Colors.textSecondary} />
               <Text style={styles.pendingText}>PUSH</Text>
             </View>
           )}
         </View>
       </View>
 
-      {/* Pick line */}
-      {pick.recommendation && (
-        <View style={styles.pickRow}>
-          <View style={[styles.recPill, { backgroundColor: isOver ? Colors.successDim : isUnder ? Colors.errorDim : Colors.cardSecondary }]}>
-            <Text style={[styles.recPillText, { color: recColor }]}>{pick.recommendation}</Text>
-          </View>
-          <Text style={styles.pickDetail}>
-            {propLabel} · Line {pick.line}
+      {/* Row 2: meta + pick pill left | inline stats right */}
+      <View style={styles.cardRow2}>
+        <View style={styles.cardRow2Left}>
+          <Text style={styles.cardMeta} numberOfLines={1}>
+            {[pick.teamName, posLabel || null, pick.opponentName ? `vs ${pick.opponentName}` : null]
+              .filter(Boolean).join(' · ')}
           </Text>
-          {pick.coinFlip && (
-            <View style={styles.coinFlipBadge}>
-              <Text style={styles.coinFlipText}>COIN FLIP</Text>
+          {pick.recommendation && (
+            <View style={styles.pickRow}>
+              <View style={[styles.recPill, { backgroundColor: isOver ? Colors.successDim : isUnder ? Colors.errorDim : Colors.cardSecondary }]}>
+                <Text style={[styles.recPillText, { color: recColor }]}>{pick.recommendation}</Text>
+              </View>
+              <Text style={styles.pickDetail} numberOfLines={1}>
+                {propLabel} · {pick.line}
+              </Text>
+              {pick.coinFlip && (
+                <View style={styles.coinFlipBadge}>
+                  <Text style={styles.coinFlipText}>~</Text>
+                </View>
+              )}
             </View>
           )}
         </View>
-      )}
-
-      {/* Stats row: NOW/FINAL | LINE | PACE/PROJ | HIT% */}
-      <View style={styles.statsRow}>
-        <View style={styles.statCol}>
-          <Text style={[styles.statVal, { color: nowValue != null ? trackColor : Colors.textSecondary }]}>
-            {nowValue != null ? Number(nowValue).toFixed(0) : '—'}
-          </Text>
-          <Text style={styles.statLbl}>{(won || lost || push) ? 'FINAL' : 'NOW'}</Text>
-        </View>
-        <View style={styles.statDivider} />
-        <View style={styles.statCol}>
-          <Text style={styles.statVal}>{lineValue ?? '—'}</Text>
-          <Text style={styles.statLbl}>LINE</Text>
-        </View>
-        <View style={styles.statDivider} />
-        <View style={styles.statCol}>
-          <Text style={[styles.statVal, { color: paceColor }]}>{paceValue != null ? Number(paceValue).toFixed(0) : '—'}</Text>
-          <Text style={styles.statLbl}>{settled ? 'PROJ' : (livePace != null && livePace > 0 ? 'PACE' : 'PROJ')}</Text>
-        </View>
-        <View style={styles.statDivider} />
-        <View style={styles.statCol}>
-          <Text style={styles.statVal}>{hitPct != null ? `${Math.round(hitPct)}%` : '—'}</Text>
-          <Text style={styles.statLbl}>HIT%</Text>
+        {/* Inline stats: NOW (if live/settled) and PROJ */}
+        <View style={styles.inlineStats}>
+          {nowLabel && nowValue != null && (
+            <View style={styles.inlineStat}>
+              <Text style={[styles.inlineVal, { color: trackColor }]}>{Number(nowValue).toFixed(0)}</Text>
+              <Text style={styles.inlineLbl}>{nowLabel}</Text>
+            </View>
+          )}
+          {paceValue != null && (
+            <View style={styles.inlineStat}>
+              <Text style={[styles.inlineVal, { color: Colors.primary }]}>{Number(paceValue).toFixed(0)}</Text>
+              <Text style={styles.inlineLbl}>{paceLabel}</Text>
+            </View>
+          )}
+          {hitPct != null && (
+            <View style={styles.inlineStat}>
+              <Text style={[styles.inlineVal, { color: Colors.textSecondary }]}>{Math.round(hitPct)}%</Text>
+              <Text style={styles.inlineLbl}>HIT</Text>
+            </View>
+          )}
         </View>
       </View>
 
-      {/* Tracking bar — fill only when game is live or settled (nowValue != null) */}
-      {lineValue != null && (() => {
-        // Pre-match: bar is always empty (fill=0). Only fill when real current stats exist.
-        const hasRealData = nowValue != null;
-        const fillPct = hasRealData
-          ? (progressFillPct ?? Math.max(0, Math.min(100, (nowValue / Math.max(lineValue * 2, 1)) * 100)))
-          : 0;
+      {/* Thin progress bar — only visible when live/settled with real data */}
+      {lineValue != null && nowValue != null && (() => {
+        const fillPct = Math.max(0, Math.min(100, (nowValue / Math.max(lineValue * 2, 1)) * 100));
         return (
-        <View style={styles.trackBarOuter}>
-          <View
-            style={[
-              styles.trackBarFill,
-              {
-                width: `${fillPct}%`,
-                backgroundColor: trackColor,
-                opacity: hasRealData ? 0.9 : 0,
-              },
-            ]}
-          />
-          <View style={[styles.trackBarMarker, { left: `${trackMarkerPct}%` }]} />
-        </View>
+          <View style={styles.trackBarOuter}>
+            <View style={[styles.trackBarFill, { width: `${fillPct}%`, backgroundColor: trackColor }]} />
+            <View style={[styles.trackBarMarker, { left: `${trackMarkerPct}%` }]} />
+          </View>
         );
       })()}
 
-      {/* Tracking ID */}
-      {pick.trackingId && (
-        <Text style={styles.trackingId}>{pick.trackingId}</Text>
-      )}
-      <TouchableOpacity style={styles.trashBtn} onPress={onDelete} hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }} activeOpacity={0.5}>
-        <Ionicons name="trash-outline" size={14} color="rgba(255,255,255,0.35)" />
+      <TouchableOpacity style={styles.trashBtn} onPress={onDelete} hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }} activeOpacity={0.5}>
+        <Ionicons name="trash-outline" size={12} color="rgba(255,255,255,0.3)" />
       </TouchableOpacity>
+
       {live && !won && !lost && (
         <View style={styles.tapHint}>
-          <Ionicons name="analytics-outline" size={10} color={Colors.primary} />
+          <Ionicons name="analytics-outline" size={9} color={Colors.primary} />
           <Text style={styles.tapHintText}>Tap for analysis</Text>
         </View>
       )}
@@ -674,17 +659,24 @@ const styles = StyleSheet.create({
   list: { paddingHorizontal: 16, paddingBottom: 40, gap: 6 },
 
   card: {
-    backgroundColor: Colors.card, borderRadius: Colors.radiusLg,
-    padding: 10, borderWidth: 1, borderColor: Colors.borderSubtle, gap: 6,
+    backgroundColor: Colors.card, borderRadius: 12,
+    paddingHorizontal: 12, paddingVertical: 9,
+    borderWidth: 1, borderColor: Colors.borderSubtle, gap: 4,
   },
   cardWon: { borderColor: 'rgba(57,255,20,0.3)' },
   cardLost: { borderColor: 'rgba(255,59,48,0.25)' },
 
-  cardTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
-  cardLeft: { flex: 1, marginRight: 8 },
-  cardRight: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  cardPlayer: { fontSize: 13, fontWeight: '700', color: Colors.text, marginBottom: 1 },
-  cardMeta: { fontSize: 10, color: Colors.textTertiary, letterSpacing: 0.2 },
+  cardTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  cardRight: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 0 },
+  cardPlayer: { fontSize: 14, fontWeight: '700', color: Colors.text, flex: 1 },
+  cardMeta: { fontSize: 10, color: Colors.textTertiary, letterSpacing: 0.2, marginBottom: 3 },
+
+  cardRow2: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  cardRow2Left: { flex: 1, gap: 2 },
+  inlineStats: { flexDirection: 'row', alignItems: 'center', gap: 10, flexShrink: 0 },
+  inlineStat: { alignItems: 'center', gap: 1 },
+  inlineVal: { fontSize: 14, fontWeight: '700', color: Colors.text },
+  inlineLbl: { fontSize: 8, color: Colors.textTertiary, fontWeight: '600', letterSpacing: 0.8 },
 
   liveBadge: {
     flexDirection: 'row', alignItems: 'center', gap: 3,
@@ -714,54 +706,42 @@ const styles = StyleSheet.create({
   },
   lostText: { fontSize: 8, color: Colors.error, fontWeight: '800', letterSpacing: 0.5 },
 
-  pickRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
-  recPill: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 5 },
-  recPillText: { fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
-  pickDetail: { fontSize: 11, color: Colors.textSecondary, flex: 1 },
-  coinFlipBadge: { backgroundColor: Colors.cardSecondary, paddingHorizontal: 5, paddingVertical: 2, borderRadius: 5, borderWidth: 1, borderColor: Colors.border },
-  coinFlipText: { fontSize: 8, fontWeight: '800', color: Colors.textTertiary, letterSpacing: 0.8 },
-
-  statsRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.cardSecondary, borderRadius: 8, padding: 1 },
-  statCol: { flex: 1, alignItems: 'center', paddingVertical: 6, gap: 2 },
-  statVal: { fontSize: 13, fontWeight: '700', color: Colors.text },
-  statLbl: { fontSize: 8, color: Colors.textTertiary, fontWeight: '600', letterSpacing: 0.8 },
-  statDivider: { width: 1, height: 22, backgroundColor: Colors.borderSubtle },
+  pickRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  recPill: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+  recPillText: { fontSize: 9, fontWeight: '800', letterSpacing: 0.5 },
+  pickDetail: { fontSize: 11, color: Colors.textSecondary },
+  coinFlipBadge: { backgroundColor: Colors.cardSecondary, paddingHorizontal: 4, paddingVertical: 1, borderRadius: 4 },
+  coinFlipText: { fontSize: 8, fontWeight: '800', color: Colors.textTertiary },
 
   trackBarOuter: {
-    height: 3,
+    height: 2,
     backgroundColor: Colors.cardSecondary,
-    borderRadius: 2,
+    borderRadius: 1,
     overflow: 'hidden',
     position: 'relative',
+    marginTop: 2,
   },
   trackBarFill: {
     position: 'absolute',
     left: 0,
     top: 0,
     height: '100%' as unknown as number,
-    borderRadius: 3,
+    borderRadius: 1,
   },
   trackBarMarker: {
     position: 'absolute',
     left: '50%' as unknown as number,
     top: 0,
-    width: 2,
+    width: 1,
     height: '100%' as unknown as number,
-    backgroundColor: 'rgba(255,255,255,0.35)',
-    transform: [{ translateX: -1 }],
+    backgroundColor: 'rgba(255,255,255,0.4)',
+    transform: [{ translateX: -0.5 }],
   },
 
-  trackingId: { fontSize: 8, color: Colors.textTertiary, textAlign: 'right', letterSpacing: 0.5 },
-  trashBtn: {
-    position: 'absolute',
-    right: 6,
-    bottom: 6,
-    padding: 6,
-  },
+  trashBtn: { position: 'absolute', right: 6, top: 6, padding: 6 },
   tapHint: {
     flexDirection: 'row', alignItems: 'center', gap: 3,
     paddingTop: 4, borderTopWidth: 1, borderTopColor: Colors.borderSubtle,
-    marginTop: 2,
   },
-  tapHintText: { fontSize: 9, color: Colors.primary, fontWeight: '600', letterSpacing: 0.4 },
+  tapHintText: { fontSize: 9, color: Colors.primary, fontWeight: '600', letterSpacing: 0.3 },
 });
