@@ -3381,9 +3381,26 @@ Analyze ALL data thoroughly. Return JSON only."""
             elif dom_mult > 1.08 and exp_poss > team_avg_poss + 8:
                 # Team expected to significantly exceed their own season-average possession.
                 # A +8pp gap (e.g., normally 53% → expected 63%) is historically meaningful
-                # for pass-volume props. Apply a damped positive boost (35% of the raw mult)
-                # to avoid double-counting with the OPP CONVERGENCE boost already applied.
-                _damped_mult = 1.0 + (dom_mult - 1.0) * 0.35  # 35% of the raw mult excess
+                # for pass-volume props. Apply a damped positive boost to avoid double-counting
+                # with the OPP CONVERGENCE boost already applied in the Bayesian step.
+                #
+                # Damping factor scales with how low the team's baseline possession is:
+                # A team that averages 38% possession has its season-average CBs/midfielders
+                # calibrated almost entirely in defensive setups. When they suddenly get 47%+,
+                # the effect on pass-volume props is fundamentally different from their baseline
+                # and deserves a stronger multiplier than a team that always has 52% possession.
+                #
+                # Damping schedule (fraction of raw mult excess applied):
+                #   team_avg < 42% → 65% (rarely in possession — surge is highly anomalous)
+                #   team_avg < 48% → 50% (below-average — meaningful departure from norm)
+                #   team_avg >= 48% → 35% (normal possession team — Bayesian already covers most)
+                if team_avg_poss < 42:
+                    _damp_frac = 0.65
+                elif team_avg_poss < 48:
+                    _damp_frac = 0.50
+                else:
+                    _damp_frac = 0.35
+                _damped_mult = 1.0 + (dom_mult - 1.0) * _damp_frac
                 post_dom = round(current * _damped_mult, 1)
                 _old_rec = prediction.get("recommendation", "over")
                 prediction["projectedValue"] = post_dom
