@@ -477,17 +477,20 @@ def compute_bayesian_projection(
     # Floor: 0.60 — prevents overcorrection (max 40% reduction)
     # ═══════════════════════════════════════════
     BALL_CONTROL_PROPS = {"pass_attempts", "passes", "key_passes", "crosses", "dribbles"}
-    # GKs are excluded: their pass volume is driven by defensive load and goal kicks,
-    # NOT by team possession (a high-possession team's GK barely touches the ball).
     _is_gk = (position or "").upper() in {"GK", "GOALKEEPER"}
+
+    # ═══════════════════════════════════════════
+    # OUTFIELD PLAYER POSSESSION SQUEEZE
+    # GKs use an INVERTED model below — they are excluded here.
+    # ═══════════════════════════════════════════
     if match_dominance and prop_type in BALL_CONTROL_PROPS and not _is_gk:
         expected_poss = match_dominance.get("expectedPoss")
         team_season_avg_poss = match_dominance.get("teamSeasonAvg")
         if expected_poss is not None and team_season_avg_poss and team_season_avg_poss > 0:
             poss_ratio = expected_poss / team_season_avg_poss
-            # Activates at 5%+ below norm (was 8%) — catches moderate mismatches sooner
-            # Exponent 1.5 (was 1.3) — steeper curve so severe mismatches hit harder
-            # Floor 0.55 (was 0.60) — allows up to 45% reduction in extreme cases
+            # Activates at 5%+ below norm — catches moderate mismatches sooner
+            # Exponent 1.5 — steeper curve so severe mismatches hit harder
+            # Floor 0.55 — allows up to 45% reduction in extreme cases
             if poss_ratio < 0.95:
                 squeeze_mult = round(max(0.55, poss_ratio ** 1.5), 3)
                 raw_before_squeeze = posterior_mean
@@ -497,16 +500,47 @@ def compute_bayesian_projection(
                       f"mult={squeeze_mult} {raw_before_squeeze} → {posterior_mean}")
 
     # ═══════════════════════════════════════════
+    # GK INVERTED POSSESSION MODEL
+    # GK pass volume is INVERSELY correlated with team possession:
+    #   Low possession → defenders constantly back-pass under pressure → HIGH GK volume
+    #   High possession → team builds through midfield → LOW GK volume
+    # This is the opposite of outfield players. The Miami case (away GK sitting
+    # deep on a 1-0 lead) is the worst-case: ultra-low team possession = maximum
+    # back-pass recycling volume through the GK.
+    # ═══════════════════════════════════════════
+    if match_dominance and prop_type in {"pass_attempts", "passes"} and _is_gk:
+        expected_poss = match_dominance.get("expectedPoss")
+        team_season_avg_poss = match_dominance.get("teamSeasonAvg")
+        if expected_poss is not None and team_season_avg_poss and team_season_avg_poss > 0:
+            poss_ratio = expected_poss / team_season_avg_poss
+            if poss_ratio < 0.93:
+                # Team expected to have meaningfully less possession than normal.
+                # Inverse: lower possession → more GK involvement.
+                # Capped at +25% to avoid overcorrection. Exponent 0.7 = gentle curve.
+                inverse_ratio = 1.0 / max(poss_ratio, 0.50)
+                boost_mult = round(min(1.25, inverse_ratio ** 0.7), 3)
+                raw_before_gk = posterior_mean
+                posterior_mean = round(posterior_mean * boost_mult, 1)
+                print(f"[GK POSS BOOST] {prop_type}: team_avg={team_season_avg_poss:.1f}% "
+                      f"expected={expected_poss:.1f}% ratio={poss_ratio:.2f} "
+                      f"inv_mult={boost_mult} {raw_before_gk} → {posterior_mean}")
+            elif poss_ratio > 1.08:
+                # Team expected to dominate possession → GK barely touched by back-passes.
+                # Cap at -15% reduction.
+                dampen_mult = round(max(0.85, 1.0 - (poss_ratio - 1.0) * 0.5), 3)
+                raw_before_gk = posterior_mean
+                posterior_mean = round(posterior_mean * dampen_mult, 1)
+                print(f"[GK POSS DAMPEN] {prop_type}: team_avg={team_season_avg_poss:.1f}% "
+                      f"expected={expected_poss:.1f}% ratio={poss_ratio:.2f} "
+                      f"dampen={dampen_mult} {raw_before_gk} → {posterior_mean}")
+
+    # ═══════════════════════════════════════════
     # PRESS INTENSITY — PPDA Proxy (independent of match dominance)
     # Applied AFTER posterior for pass_attempts/passes props only.
     #
-    # PRIMARY: opponent tackles + interceptions/game (aggregated from /fixtures/players)
-    # FALLBACK: opponent possession % + passes/game
-    #
-    # Multiplier capped at 10% max — this is ADDITIVE to match dominance, not
-    # duplicating it. Match dominance = possession/ball-time. Pressing = active
-    # defensive disruption. These are correlated but independently causal.
-    # Max 10% ensures no overcorrection when both signals are present.
+    # For OUTFIELD players: heavy opponent pressing → fewer passes (dispossessed)
+    # For GKs: heavy opponent pressing → MORE back-passes (defenders under pressure
+    #   play it safe back to the GK constantly) → INVERTED multiplier for GKs.
     # ═══════════════════════════════════════════
     press_intensity_info = {
         "score": 0.0, "multiplier": 1.0, "label": "Unknown", "signal_used": None,
@@ -515,7 +549,18 @@ def compute_bayesian_projection(
     }
     if opponent_fixture_stats and prop_type in {"pass_attempts", "passes"}:
         press_intensity_info = compute_press_intensity_score(opponent_fixture_stats)
-        if press_intensity_info["multiplier"] < 1.0:
+        if _is_gk:
+            # GK: invert — a pressing opponent forces MORE back-passes to the GK.
+            # Only boost (not squeeze) — cap at +10%.
+            raw_mult = press_intensity_info["multiplier"]
+            if raw_mult < 1.0:
+                gk_press_mult = round(min(1.10, 1.0 + (1.0 - raw_mult) * 0.5), 3)
+                raw_before = posterior_mean
+                posterior_mean = round(posterior_mean * gk_press_mult, 1)
+                print(f"[GK PRESS BOOST] {prop_type}: opp_press={press_intensity_info['label']} "
+                      f"(score={press_intensity_info['score']}, raw_mult={raw_mult}) "
+                      f"→ GK boost {gk_press_mult} {raw_before} → {posterior_mean}")
+        elif press_intensity_info["multiplier"] < 1.0:
             raw_before = posterior_mean
             posterior_mean = round(posterior_mean * press_intensity_info["multiplier"], 1)
             print(f"[PRESS] {prop_type}: signal={press_intensity_info['signal_used']} label={press_intensity_info['label']} "

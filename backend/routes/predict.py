@@ -946,7 +946,7 @@ async def predict(req: PredictionRequest):
 - Home ({ao.get('home', '')}) | Draw ({ao.get('draw', '')}) | Away ({ao.get('away', '')})
 - Favorite: {match_odds.get('favorite', 'Unknown').upper()}
 - Game Type: {gt}
->>> Moneyline tells you expected game flow. Heavy favorites control possession and tempo. Underdogs may sit deep (deflating pass/shot stats for attacker props). <<<""")
+>>> Moneyline tells you expected game flow. Heavy favorites control possession and tempo. Underdogs may sit deep (deflating pass/shot stats for attacker props). CRITICAL FOR GOALKEEPERS: GK pass volume is INVERTED — a team sitting deep and defending (low possession) produces MORE back-passes to the GK, not fewer. An away GK protecting a lead is the highest-volume scenario for GK passes. A GK on a dominant possession team sees FEWER back-passes. <<<""")
                 else:
                     parts.append(f"""[ODDS]
 - Home: {bo.get('homeWin', 'N/A')} | Draw: {bo.get('draw', 'N/A')} | Away: {bo.get('awayWin', 'N/A')}
@@ -2515,6 +2515,7 @@ CRITICAL RULES:
 - NEVER double-count minutes. If data shows a player averaging 43 passes in 26 minutes per game, the 43 IS their actual game output. Do NOT scale down by minutes. The average already reflects their real playing time.
 - Match context OVERRIDES raw averages: If [MATCH DOMINANCE ANALYSIS] shows expected possession significantly above the team's season average, RAISE projections for pass-dependent props (pass_attempts, key_passes) accordingly. Historical averages are baselines, not ceilings.
 - For pass/creative props: weight POSSESSION EXPECTATION heavily. A deep-lying playmaker on a team expected at 65%+ possession WILL exceed their season average.
+- GOALKEEPER PASS VOLUME — INVERTED POSSESSION RULE: For GK pass_attempts, the possession relationship is the OPPOSITE of outfield players. When a GK's team has LOW expected possession (defending, sitting deep, parking the bus, protecting a lead away from home), the GK receives constant back-passes from defenders under pressure — RAISE the projection. When the GK's team has HIGH possession, they build through midfield and rarely back-pass to the GK — LOWER the projection. An away GK holding a 1-0 lead in the second half is the maximum-volume scenario: DO NOT project UNDER unless the line is very high.
 
 TERMINOLOGY RULES:
 - NEVER use the word "Bayesian" anywhere in your response. Always say "Reverse Formula" instead.
@@ -2571,6 +2572,37 @@ JSON: {"projectedValue":0,"recommendation":"over|under","confidenceScore":0,"con
             wave2_supplement["teamMatchStats"] = team_fixture_stats
         if opponent_fixture_stats:
             wave2_supplement["opponentMatchStats"] = opponent_fixture_stats
+
+        # GK PASS CONTEXT — injected for GK pass_attempts props
+        gk_pass_context = ""
+        _is_gk_for_passes = (
+            req.propType in {"pass_attempts", "passes"}
+            and (
+                (specific_position or "").upper() in {"GK", "GOALKEEPER"}
+                or (player_position or "").lower() in {"goalkeeper", "gk"}
+            )
+        )
+        if _is_gk_for_passes and match_dominance:
+            _gk_exp_poss  = match_dominance.get("expectedPoss", 50)
+            _gk_team_avg  = match_dominance.get("teamSeasonAvg", 50)
+            _gk_opp_poss  = match_dominance.get("oppExpectedPoss", 50)
+            _gk_venue_lbl = "AWAY" if player_venue == "away" else "HOME"
+            _gk_poss_gap  = round(_gk_exp_poss - _gk_team_avg, 1)
+            if _gk_exp_poss < 45:
+                _gk_scenario = "LOW POSSESSION — HIGH GK VOLUME RISK: Team expected to defend deep. Defenders will constantly recycle to the GK under pressure. Model RAISES projection for this scenario. Do NOT underestimate."
+            elif _gk_exp_poss < 50:
+                _gk_scenario = "SLIGHTLY LOW POSSESSION — moderate back-pass volume expected."
+            elif _gk_exp_poss > 58:
+                _gk_scenario = "HIGH POSSESSION — LOW GK VOLUME: Team controls the ball through midfield. Fewer back-passes to the GK. Model LOWERS projection for this scenario."
+            else:
+                _gk_scenario = "BALANCED POSSESSION — normal GK pass volume expected."
+            gk_pass_context = f"""
+[GK PASS VOLUME CONTEXT — INVERTED POSSESSION MODEL]
+{req.playerName} is a GOALKEEPER. Pass volume rules are INVERTED vs outfield players.
+Venue: {_gk_venue_lbl} | Expected possession: {_gk_exp_poss}% (team season avg: {_gk_team_avg}%, gap: {_gk_poss_gap:+.1f}pp)
+Opponent expected possession: {_gk_opp_poss}%
+Scenario: {_gk_scenario}
+KEY PRINCIPLE: A GK defending deep = maximum back-pass recycling. A GK on a dominant team = barely touched. This is the single most important factor for GK pass props."""
 
         # SAVES-SPECIFIC: Elite GK Formula
         # Projected Saves = Opponent Avg SoT × GK Save% × Match Context Multiplier
@@ -2843,6 +2875,8 @@ Average {req.propType}: {comp_avg} | Per-90 avg: {comp_per90_avg} | Sample: {len
             final_data = "\n\n".join(final_data_parts)[:10000]
             if saves_context:
                 final_data += f"\n\n{saves_context}"
+            if gk_pass_context:
+                final_data += f"\n\n{gk_pass_context}"
             # NOTE: position_context is injected separately in the prompt (never truncated)
         else:
             final_data = json.dumps(historical_data, default=str)[:8000]
