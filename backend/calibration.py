@@ -997,6 +997,64 @@ async def run_nightly_calibration(sport: str = "soccer") -> dict:
     return summary
 
 
+async def apply_learned_offsets(
+    posterior: float,
+    prop_type: str,
+    venue: str,
+    recommendation: str,
+    league_id: int = None,
+    sport: str = "soccer",
+) -> tuple:
+    """
+    Load persisted calibration offsets from MongoDB and apply the most specific
+    matching one to the Bayesian posterior.
+
+    Priority (most → least specific):
+      1. prop_venue  e.g. "pass_attempts|home"
+      2. prop_rec    e.g. "pass_attempts|over"
+      3. prop        e.g. "pass_attempts"
+
+    The dampened offset (already at 40% of raw bias) is applied additively.
+    A ±20% posterior cap prevents wild corrections on thin sample sizes.
+    Returns (adjusted_posterior, offset_note).
+    """
+    if not prop_type or posterior is None:
+        return posterior, ""
+
+    candidates = [
+        ("prop_venue",  f"{prop_type}|{venue}"),
+        ("prop_rec",    f"{prop_type}|{recommendation}"),
+        ("prop",        prop_type),
+    ]
+    if league_id:
+        candidates.insert(1, ("prop_league", f"{prop_type}|{str(league_id)}"))
+
+    for dimension, key in candidates:
+        doc = await db.calibration_offsets.find_one(
+            {"dimension": dimension, "key": key, "sport": sport},
+            {"_id": 0, "dampenedOffset": 1, "sampleCount": 1, "direction": 1},
+        )
+        if not doc:
+            continue
+        offset = doc.get("dampenedOffset", 0)
+        n      = doc.get("sampleCount", 0)
+        if n < MIN_SAMPLES_NIGHTLY or abs(offset) < 0.10:
+            continue
+
+        # Cap at ±20 % of posterior
+        max_adj = max(0.5, abs(posterior) * 0.20)
+        clamped = max(-max_adj, min(max_adj, offset))
+        adjusted = round(posterior + clamped, 1)
+        note = (
+            f"LearnedOffset({dimension}/{key}): "
+            f"{posterior}→{adjusted} ({clamped:+.2f}, n={n})"
+        )
+        print(f"[NIGHTLY CAL APPLY] {note}")
+        return adjusted, note
+
+    return posterior, ""
+
+
 async def nightly_calibration_loop(sport: str = "soccer"):
     """
     Background loop: runs run_nightly_calibration() at midnight UTC every day.
