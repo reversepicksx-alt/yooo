@@ -3918,14 +3918,12 @@ Analyze ALL data thoroughly. Return JSON only."""
             right_dir_cap = final_rec.capitalize()
             right_dir_up  = final_rec.upper()
 
-            # Detect if the AI body text argues the wrong direction
-            _ai_text_disagrees = (wrong_dir in tb.lower()) and (
-                f"smash {wrong_dir}" in tb.lower()
-                or f"bang {wrong_dir}" in tb.lower()
-                or f"recommend {wrong_dir}" in tb.lower()
-                or f"clears {req.line}" in tb.lower() and wrong_dir == "under"
-                or tb.lower().count(wrong_dir) > tb.lower().count(right_dir)
-            )
+            # Detect if the AI recommendation actually differed from the math.
+            # Use fusionApplied (set earlier) for a reliable signal — never word-count heuristics.
+            _fusion_info = prediction.get("fusionApplied", {})
+            _ai_rec_dir  = (_fusion_info.get("aiRecommendation") or "").lower()
+            # True only when Grok called the opposite direction to what math gives
+            _ai_text_disagrees = bool(_ai_rec_dir) and (_ai_rec_dir != right_dir)
 
             if _ai_text_disagrees:
                 import re as _re_dg
@@ -4022,6 +4020,63 @@ Analyze ALL data thoroughly. Return JSON only."""
                 if _changed:
                     prediction[_field] = _txt
                     print(f"[CONFIDENCE GUARD] Replaced overconfident phrasing in {_field} (conf={_final_conf}%)")
+
+        # ── TEXT FINALIZATION: Normalize projection numbers + strip false overrides ──
+        # Problem: Grok writes analysis using its own projected value (e.g. 42.8).
+        # But the final badge uses the math-anchored+calibrated value (e.g. 48).
+        # This creates "projection says 42.8 but badge shows 48" contradictions.
+        # Fix: after ALL numeric adjustments are locked, replace the AI's stale
+        # projection number in all text fields with the final authoritative value.
+        # Also: only say "overrides qualitative lean" when directions *actually* differed.
+        import re as _re_fin
+        _fin_proj  = prediction.get("projectedValue", req.line)
+        _fin_rec   = prediction.get("recommendation", "over").lower()
+        _fusion    = prediction.get("fusionApplied", {})
+        _ai_proj   = _fusion.get("aiProjection", _fin_proj)
+        _ai_rec    = _fusion.get("aiRecommendation", _fin_rec)
+        _dirs_differed = (_ai_rec.lower() != _fin_rec.lower())
+
+        # Build patterns for the AI's stale number (e.g. 42.8, 42, ~43)
+        _ai_p_int   = int(round(_ai_proj))
+        _ai_p_float = f"{_ai_proj:.1f}"
+        _fin_p_str  = str(int(round(_fin_proj))) if _fin_proj == int(_fin_proj) else f"{_fin_proj:.1f}"
+
+        def _normalize_text(txt: str) -> str:
+            if not txt or abs(_ai_proj - _fin_proj) < 1.5:
+                return txt  # Numbers close enough — no substitution needed
+
+            # Replace float version (42.8) first, then int (42), to avoid partial matches
+            for _old_num in [_ai_p_float, str(_ai_p_int)]:
+                # Only replace when it appears as a standalone number (not part of a larger number)
+                txt = _re_fin.sub(r'(?<!\d)' + _re_fin.escape(_old_num) + r'(?!\d)', _fin_p_str, txt)
+
+            # Also patch "narrow OVER/UNDER edge" when the actual edge is large
+            _edge_size = abs(_fin_proj - req.line)
+            if _edge_size > 5:
+                txt = _re_fin.sub(r'\bnarrow (over|under) edge\b', r'strong \1 edge', txt, flags=_re_fin.IGNORECASE)
+                txt = _re_fin.sub(r'\bnarrow edge\b', 'strong edge', txt, flags=_re_fin.IGNORECASE)
+                txt = _re_fin.sub(r'\bslight (over|under) edge\b', r'clear \1 edge', txt, flags=_re_fin.IGNORECASE)
+            elif _edge_size > 2.5:
+                txt = _re_fin.sub(r'\bnarrow (over|under) edge\b', r'solid \1 edge', txt, flags=_re_fin.IGNORECASE)
+
+            # Remove "overrides qualitative lean" note when directions agreed
+            if not _dirs_differed:
+                txt = _re_fin.sub(
+                    r'\.\s*Math \(\d+% P\((OVER|UNDER)\)\) overrides qualitative lean — (narrow|solid|strong|slim|marginal|clear) (OVER|UNDER) edge\.',
+                    '', txt, flags=_re_fin.IGNORECASE
+                )
+
+            return txt
+
+        for _tf in ("tacticalBreakdown", "sharpSummary", "reasoning", "scenarioAnalysis", "gameFlowDynamics"):
+            _old_txt = prediction.get(_tf, "")
+            if _old_txt:
+                _new_txt = _normalize_text(_old_txt)
+                if _new_txt != _old_txt:
+                    prediction[_tf] = _new_txt
+
+        if abs(_ai_proj - _fin_proj) >= 1.5:
+            print(f"[TEXT NORM] AI proj={_ai_proj:.1f} → final={_fin_proj:.1f} — normalized numeric references in text fields")
 
         # Save to MongoDB
         prediction["_created"] = datetime.now(timezone.utc).isoformat()
