@@ -4,6 +4,7 @@ Stores ALL leagues, teams, players, and national teams in MongoDB.
 Auto-refreshes on a schedule to catch transfers, promotions/relegations, etc.
 """
 import asyncio as aio
+import html as html_module
 import re
 import time
 from datetime import datetime, timezone
@@ -177,7 +178,7 @@ async def sync_squad(team_id: int, team_name: str = "", league_id: int = 0):
         players = data[0]["players"]
         ops = []
         for p in players:
-            name = p.get("name", "")
+            name = html_module.unescape(p.get("name", ""))
             doc = {
                 "playerId": p.get("id"),
                 "name": name,

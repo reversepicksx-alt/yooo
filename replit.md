@@ -129,6 +129,15 @@ No Whop integration — access control is:
 - `req.teamName` (from scan/user) is only used as fallback when API data is unavailable
 - This prevents stale club associations (e.g., Wan-Bissaka showing as Man United when he's at West Ham)
 
+## A-League & Fixture Player Cache
+
+- A-League (`leagueId=188`) is in both `SUPPORTED_LEAGUES` and `PREFETCH_LEAGUES` (added Apr 2026)
+- Player names with HTML entities (e.g. `j. o&apos;shea`) are decoded via `html.unescape()` in `backend/cache.py` before storing as `nameClean`
+- Fixture player stats are cached as `fxp_{fixture_id}_{player_id}` docs in the `fixture_player_cache` collection
+- `fetch_player_game_logs` (primary Wave 2 path) now checks `fixture_player_cache` FIRST before hitting the API, making it dramatically faster for pre-fetched leagues
+- Wave 2 runs with a 40s timeout covering 6 concurrent tasks (team/opp fixture stats, player logs, LLM digest, situation engine, web intel); if LLM is slow the whole batch can be cancelled — cache hits eliminate this risk for player logs
+- Fallback path at line ~1013 in predict.py also checks cache by player fixture ID when Wave 2 player_game_logs is empty
+
 ## LLM Integration Shim
 
 `backend/emergentintegrations/` is a local shim (not on PyPI):

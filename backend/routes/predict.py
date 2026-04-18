@@ -573,6 +573,25 @@ async def predict(req: PredictionRequest):
                         home_goals = fix_raw.get("goals", {}).get("home", 0) or 0
                         away_goals = fix_raw.get("goals", {}).get("away", 0) or 0
 
+                        # Check prefetch cache first — avoids extra API call if already cached
+                        cache_key = f"fxp_{fid}_{player_id}"
+                        cached_doc = await db.fixture_player_cache.find_one({"_k": cache_key}, {"_id": 0, "d": 1})
+                        if cached_doc and cached_doc.get("d"):
+                            gl = dict(cached_doc["d"])
+                            minutes = gl.get("minutes", 0)
+                            if not minutes or minutes == 0:
+                                return None
+                            gl["date"] = fix_date
+                            gl["opponent"] = fix_opponent
+                            gl["venue"] = fix_venue
+                            gl["score"] = f"{home_goals}-{away_goals}"
+                            gl["league"] = fix_league
+                            gl["round"] = fix_round
+                            raw_val = gl.get(stat_field_map.get(req.propType, ""), None)
+                            if raw_val is not None and minutes > 0:
+                                gl["targetStatPer90"] = round((raw_val / minutes) * 90, 2)
+                            return gl
+
                         fix_data = await api_football_request("fixtures/players", {"fixture": fid})
                         if not fix_data:
                             return None

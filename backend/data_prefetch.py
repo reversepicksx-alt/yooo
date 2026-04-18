@@ -22,6 +22,7 @@ PREFETCH_LEAGUES = [
     94,   # Primeira Liga (Portugal)
     203,  # Süper Lig (Turkey)
     40,   # Championship
+    188,  # A-League (Australia)
     2,    # Champions League
     3,    # Europa League
     848,  # UEFA Conference League
