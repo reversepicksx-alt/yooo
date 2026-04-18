@@ -485,8 +485,11 @@ def compute_bayesian_projection(
         team_season_avg_poss = match_dominance.get("teamSeasonAvg")
         if expected_poss is not None and team_season_avg_poss and team_season_avg_poss > 0:
             poss_ratio = expected_poss / team_season_avg_poss
-            if poss_ratio < 0.92:
-                squeeze_mult = round(max(0.60, poss_ratio ** 1.3), 3)
+            # Activates at 5%+ below norm (was 8%) — catches moderate mismatches sooner
+            # Exponent 1.5 (was 1.3) — steeper curve so severe mismatches hit harder
+            # Floor 0.55 (was 0.60) — allows up to 45% reduction in extreme cases
+            if poss_ratio < 0.95:
+                squeeze_mult = round(max(0.55, poss_ratio ** 1.5), 3)
                 raw_before_squeeze = posterior_mean
                 posterior_mean = round(posterior_mean * squeeze_mult, 1)
                 print(f"[POSS SQUEEZE] {prop_type}: team_avg={team_season_avg_poss:.1f}% "

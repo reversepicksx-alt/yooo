@@ -1277,6 +1277,43 @@ async def predict(req: PredictionRequest):
             team_avg = avg_poss(team_stats_list)
             opp_avg = avg_poss(opp_stats_list)
 
+            # Fallback: when possession data is unavailable, estimate from standings
+            # gap only. Each rank position ≈ 0.8% possession difference.
+            if (home_avg is None or away_avg is None) and home_rank and away_rank:
+                gap = away_rank - home_rank  # positive = home team stronger
+                raw_poss = 50.0 + 2.5 + min(8.0, max(-8.0, gap * 0.8))
+                home_poss_fallback = min(65.0, max(35.0, round(raw_poss, 1)))
+                away_poss_fallback = round(100.0 - home_poss_fallback, 1)
+                # Use 50% as season avg so the squeeze can activate on big gaps
+                fallback_home_avg = 50.0
+                fallback_away_avg = 50.0
+                if is_home:
+                    dom["expectedPoss"] = home_poss_fallback
+                    dom["oppExpectedPoss"] = away_poss_fallback
+                    dom["teamSeasonAvg"] = fallback_home_avg
+                    dom["oppSeasonAvg"] = fallback_away_avg
+                else:
+                    dom["expectedPoss"] = away_poss_fallback
+                    dom["oppExpectedPoss"] = home_poss_fallback
+                    dom["teamSeasonAvg"] = fallback_away_avg
+                    dom["oppSeasonAvg"] = fallback_home_avg
+                dom["homePoss"] = home_poss_fallback
+                dom["awayPoss"] = away_poss_fallback
+                dom["notes"].append(f"Rank-gap fallback (no poss data): #{home_rank} vs #{away_rank} → {home_poss_fallback:.0f}% home / {away_poss_fallback:.0f}% away")
+                player_team_poss = dom["expectedPoss"]
+                poss_ratio = player_team_poss / 50.0
+                PASS_PROPS = {"pass_attempts", "key_passes", "crosses", "passes"}
+                DEF_PROPS = {"tackles", "interceptions", "blocks", "clearances"}
+                if req.propType in PASS_PROPS:
+                    raw_adj = poss_ratio - 1.0
+                    capped_adj = max(-0.35, min(0.35, raw_adj))
+                    dom["multiplier"] = round(1.0 + capped_adj, 3)
+                elif req.propType in DEF_PROPS:
+                    inverse_ratio = (100.0 - player_team_poss) / 50.0
+                    raw_adj = inverse_ratio - 1.0
+                    capped_adj = max(-0.25, min(0.25, raw_adj))
+                    dom["multiplier"] = round(1.0 + capped_adj, 3)
+
             if home_avg is not None and away_avg is not None:
 
                 away_concedes = 100.0 - away_avg
@@ -1921,7 +1958,7 @@ async def predict(req: PredictionRequest):
 Season avg: {early_bayes['priorMean']} | Recent form (decay-weighted): {early_bayes['momentumMean']} ({early_bayes['momentumLabel']}) | Context adj: {early_bayes['covariateAdjustment']:+.1f}
 Streak: {early_bayes['streakFlag']} | Volatility: {early_bayes['volatility']} (CV={early_bayes['cv']}) | Reversal: {early_bayes['reversalFlag']}
 IMPORTANT: Never use the word "Bayesian" in your response. Always say "Reverse Formula" instead.
->>> MANDATORY: The math projects {bdir}. Your **Verdict** MUST recommend {bdir}. Do NOT write the opposite direction — this creates a contradiction the user sees. Your projectedValue MUST be within 20% of {early_bayes['posteriorMean']}. <<<"""
+>>> MANDATORY: The math projects {bdir}. Your **Verdict** MUST recommend {bdir}. Do NOT write the opposite direction — this creates a contradiction the user sees. Your projectedValue MUST be within 12% of {early_bayes['posteriorMean']}. <<<"""
                 # Inject redistribution context into prompt
                 if _redist_alerts:
                     _redist_mult_pct = round((_redist_multiplier - 1) * 100)
