@@ -610,7 +610,46 @@ async def get_player_by_name(player_name: str, team_id: int = None, league_id: i
 
     # 5. Name contains (last resort)
     doc = await _best_match(_q({"nameClean": {"$regex": re.escape(last_name)}}))
-    return doc
+    if doc:
+        return doc
+
+    # 6. Fuzzy prefix match — handles OCR typos like doubled letters ("ferryyra" → "ferreyra")
+    #    Use the first 4 characters as a stable prefix (typos usually appear mid-word),
+    #    fetch candidates, then pick by minimum Levenshtein distance.
+    if len(last_name) >= 4:
+        prefix_len = 4
+        prefix = re.escape(last_name[:prefix_len])
+        candidates_q = dict(_q({"nameClean": {"$regex": rf"\b{prefix}"}}))
+        candidates = await db[COL_PLAYERS].find(candidates_q, {"_id": 0}).to_list(50)
+        if candidates:
+            def _edit_dist(a: str, b: str) -> int:
+                """Simple Levenshtein distance."""
+                if len(a) > len(b):
+                    a, b = b, a
+                prev = list(range(len(b) + 1))
+                for i, ca in enumerate(a):
+                    curr = [i + 1]
+                    for j, cb in enumerate(b):
+                        curr.append(min(prev[j + 1] + 1, curr[j] + 1, prev[j] + (0 if ca == cb else 1)))
+                    prev = curr
+                return prev[-1]
+
+            # Extract each candidate's last word and compute distance to our last_name
+            scored = []
+            for c in candidates:
+                c_name = c.get("nameClean", "")
+                c_parts = c_name.split()
+                c_last = c_parts[-1] if c_parts else c_name
+                dist = _edit_dist(last_name, c_last)
+                # Only accept if first initial matches when we have one
+                if initial_form and c_parts and c_parts[0] != parts[0][0] + ".":
+                    dist += 5  # penalise wrong initial
+                scored.append((dist, c))
+            scored.sort(key=lambda x: x[0])
+            if scored and scored[0][0] <= 3:
+                return scored[0][1]
+
+    return None
 
 
 async def get_league_by_name(league_name: str) -> dict:
