@@ -3904,35 +3904,96 @@ Analyze ALL data thoroughly. Return JSON only."""
         else:
             print(f"[TIMING] Using Grok tacticalBreakdown directly: {len(grok_tb)} chars")
 
-        # ── DIRECTION GUARD: If Grok's Verdict contradicts the math, fix text fields ──
+        # ── DIRECTION GUARD: If math recommendation contradicts AI text, fix ALL text ──
+        # The AI generates analysis based on its own projection which may differ from the
+        # final math-anchored number. When they disagree on direction, we must sanitize
+        # EVERY text field — not just the Verdict line — to prevent contradictions like
+        # "smash over" appearing in the TL;DR while the badge shows UNDER.
         final_rec = prediction.get("recommendation", "").lower()
+        final_proj = prediction.get("projectedValue", req.line)
         tb = prediction.get("tacticalBreakdown", "")
         if tb and final_rec:
             wrong_dir = "under" if final_rec == "over" else "over"
-            right_dir = final_rec.upper()
+            right_dir = final_rec          # lowercase
             right_dir_cap = final_rec.capitalize()
-            # Fix tacticalBreakdown first Verdict line
-            first_line = tb.split("\n")[0] if tb else ""
-            if "**verdict**" in first_line.lower() and wrong_dir in first_line.lower() and right_dir.lower() not in first_line.lower():
-                corrected_line = first_line.replace(
-                    wrong_dir.capitalize(), right_dir_cap
-                ).replace(wrong_dir.upper(), right_dir).replace(wrong_dir, right_dir.lower())
-                prediction["tacticalBreakdown"] = corrected_line + tb[len(first_line):]
-                print(f"[DIRECTION GUARD] Corrected Grok verdict from {wrong_dir.upper()} to {right_dir} to match math")
+            right_dir_up  = final_rec.upper()
 
-            # Fix sharpSummary — append a math-override note if it leans the wrong way
+            # Detect if the AI body text argues the wrong direction
+            _ai_text_disagrees = (wrong_dir in tb.lower()) and (
+                f"smash {wrong_dir}" in tb.lower()
+                or f"bang {wrong_dir}" in tb.lower()
+                or f"recommend {wrong_dir}" in tb.lower()
+                or f"clears {req.line}" in tb.lower() and wrong_dir == "under"
+                or tb.lower().count(wrong_dir) > tb.lower().count(right_dir)
+            )
+
+            if _ai_text_disagrees:
+                import re as _re_dg
+                # ── Step 1: Fix action phrases ("smash over" → "lean under" etc.) ──
+                _action_subs = {
+                    f"smash {wrong_dir}": f"slight {right_dir} edge",
+                    f"bang {wrong_dir}": f"lean {right_dir}",
+                    f"hammer {wrong_dir}": f"lean {right_dir}",
+                    f"pound {wrong_dir}": f"lean {right_dir}",
+                    f"load up {wrong_dir}": f"take {right_dir}",
+                    f"back {wrong_dir}": f"lean {right_dir}",
+                    f"confident {wrong_dir}": f"marginal {right_dir}",
+                    f"strong {wrong_dir}": f"marginal {right_dir}",
+                    f"clears {req.line}": f"falls short of {req.line}",
+                    f"racks {req.line}+": f"projects near {final_proj}",
+                }
+                for _bad, _good in _action_subs.items():
+                    tb = _re_dg.sub(_re_dg.escape(_bad), _good, tb, flags=_re_dg.IGNORECASE)
+
+                # ── Step 2: Fully rewrite TL;DR section ──
+                _tldr_match = _re_dg.search(r'\*\*TL;DR\*\*.*?(?=\n\*\*|\Z)', tb, _re_dg.DOTALL | _re_dg.IGNORECASE)
+                if _tldr_match:
+                    _punder = real_bayes.get("pUnder", 50) if real_bayes else 50
+                    _pover  = real_bayes.get("pOver",  50) if real_bayes else 50
+                    _winning_p = max(_punder, _pover)
+                    _edge = round(abs(final_proj - req.line), 1)
+                    _new_tldr = (
+                        f"**TL;DR** — Math projects {final_proj} vs the {req.line} line — "
+                        f"{right_dir_cap} ({_winning_p:.0f}% probability, {_edge} edge). "
+                        f"Reverse Formula anchors the call; qualitative analysis was overridden by the model."
+                    )
+                    tb = tb[:_tldr_match.start()] + _new_tldr + tb[_tldr_match.end():]
+
+                # ── Step 3: Fix Verdict line ──
+                lines = tb.split("\n")
+                for _i, _line in enumerate(lines):
+                    if "**verdict**" in _line.lower():
+                        lines[_i] = _re_dg.sub(
+                            r'\b' + wrong_dir + r'\b', right_dir, _line, flags=_re_dg.IGNORECASE
+                        )
+                        break
+                tb = "\n".join(lines)
+
+                prediction["tacticalBreakdown"] = tb
+                print(f"[DIRECTION GUARD] Full text rewrite: AI argued {wrong_dir.upper()}, math says {right_dir_up}. TL;DR replaced, body sanitized.")
+
+            else:
+                # Lighter fix: AI direction matches or is neutral — just patch Verdict line if needed
+                first_line = tb.split("\n")[0] if tb else ""
+                if "**verdict**" in first_line.lower() and wrong_dir in first_line.lower() and right_dir not in first_line.lower():
+                    import re as _re_dg2
+                    corrected = _re_dg2.sub(r'\b' + wrong_dir + r'\b', right_dir, first_line, flags=_re_dg2.IGNORECASE)
+                    prediction["tacticalBreakdown"] = corrected + tb[len(first_line):]
+                    print(f"[DIRECTION GUARD] Verdict line patched: {wrong_dir.upper()} → {right_dir_up}")
+
+            # Fix sharpSummary — always append override note when AI had wrong direction
             sharp = prediction.get("sharpSummary", "")
             _sharp_has_wrong = wrong_dir in sharp.lower()
-            _sharp_has_right  = right_dir.lower() in sharp.lower()
+            _sharp_has_right  = right_dir in sharp.lower()
             if sharp and _sharp_has_wrong and not _sharp_has_right:
                 _punder = real_bayes.get("pUnder", 50) if real_bayes else 50
                 _pover  = real_bayes.get("pOver",  50) if real_bayes else 50
                 _winning_p = max(_punder, _pover)
                 prediction["sharpSummary"] = (
                     sharp.rstrip(" .") +
-                    f". Math ({_winning_p:.0f}% P({right_dir})) overrides qualitative lean — narrow {right_dir} edge."
+                    f". Math ({_winning_p:.0f}% P({right_dir_up})) overrides qualitative lean — narrow {right_dir_up} edge."
                 )
-                print(f"[DIRECTION GUARD] sharpSummary corrected: appended {right_dir} override note")
+                print(f"[DIRECTION GUARD] sharpSummary corrected: appended {right_dir_up} override note")
 
         # ── CONFIDENCE LANGUAGE GUARD: strip overconfident phrasing on low-edge calls ──
         _is_coin_flip = prediction.get("coinFlip", False)
