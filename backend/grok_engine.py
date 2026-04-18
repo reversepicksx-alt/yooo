@@ -575,7 +575,9 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
             except Exception:
                 pass
 
-    # Find matching finished fixture — opponent name MUST match
+    opponent_id = pick.get("opponentId", 0)
+
+    # Find matching finished fixture — prefer opponentId match, fall back to name match
     matched = None
     for f in fixtures:
         status = f.get("fixture", {}).get("status", {}).get("short", "")
@@ -590,18 +592,39 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
                     continue  # This game happened before pick was made — skip
             except Exception:
                 pass
+
+        home_id = f.get("teams", {}).get("home", {}).get("id", 0)
+        away_id = f.get("teams", {}).get("away", {}).get("id", 0)
         home_name = f.get("teams", {}).get("home", {}).get("name", "")
         away_name = f.get("teams", {}).get("away", {}).get("name", "")
-        if opponent and (
-            strip_accents(opponent.lower()) in strip_accents(home_name.lower()) or
-            strip_accents(opponent.lower()) in strip_accents(away_name.lower()) or
-            strip_accents(home_name.lower()) in strip_accents(opponent.lower()) or
-            strip_accents(away_name.lower()) in strip_accents(opponent.lower())
-        ):
+
+        # Primary: match by opponentId (most reliable — immune to name abbreviations)
+        if opponent_id and (home_id == opponent_id or away_id == opponent_id):
             matched = f
             break
 
-    # No fallback to wrong games — if opponent not matched, do not settle
+        # Fallback: fuzzy name match (handles partial names like "Sporting KC" vs "Sporting Kansas City")
+        if opponent:
+            opp_lower = strip_accents(opponent.lower())
+            home_lower = strip_accents(home_name.lower())
+            away_lower = strip_accents(away_name.lower())
+            # Substring both ways
+            name_hit = (
+                opp_lower in home_lower or opp_lower in away_lower or
+                home_lower in opp_lower or away_lower in opp_lower
+            )
+            # Also check first word match (e.g. "Sporting" in "Sporting Kansas City")
+            if not name_hit:
+                opp_words = set(opp_lower.split())
+                home_words = set(home_lower.split())
+                away_words = set(away_lower.split())
+                # Require at least 2 shared words (or 1 if it's long enough) to avoid false positives
+                home_shared = opp_words & home_words - {"fc", "cf", "sc", "ac", "united", "city", "the"}
+                away_shared = opp_words & away_words - {"fc", "cf", "sc", "ac", "united", "city", "the"}
+                name_hit = len(home_shared) >= 2 or len(away_shared) >= 2
+            if name_hit:
+                matched = f
+                break
 
     if not matched:
         return False
@@ -617,6 +640,7 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
             return False
 
         actual_value = None
+        minutes_played = None
         from config import STAT_LAMBDA_MAP
         stat_fn = STAT_LAMBDA_MAP.get(prop_type)
 
@@ -629,6 +653,7 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
                 )
                 if pid == player_id or (not player_id and name_match):
                     stats = p.get("statistics", [{}])[0]
+                    minutes_played = stats.get("games", {}).get("minutes") or 0
                     if stat_fn:
                         actual_value = stat_fn(stats)
                     if actual_value is not None and not player_id and pid:
@@ -637,11 +662,32 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
                             {"$set": {"playerId": pid}}
                         )
                     break
-            if actual_value is not None:
+            if actual_value is not None or minutes_played is not None:
                 break
 
         if actual_value is None:
             return False
+
+        # Minimum minutes threshold — if player played < 30 min, void as push
+        # (benched, injured off, or DNP effectively — not enough data to fairly grade)
+        MIN_MINUTES = 30
+        if minutes_played is not None and minutes_played < MIN_MINUTES:
+            home_goals = matched.get("goals", {}).get("home", 0) or 0
+            away_goals = matched.get("goals", {}).get("away", 0) or 0
+            await db.picks.update_one(
+                {"pickId": pick["pickId"]},
+                {"$set": {
+                    "status": "settled",
+                    "result": "push",
+                    "actualValue": actual_value,
+                    "minutesPlayed": minutes_played,
+                    "matchScore": f"{home_goals}-{away_goals}",
+                    "settledAt": datetime.now(timezone.utc).isoformat(),
+                    "voidReason": f"Player only played {minutes_played} min (min {MIN_MINUTES} required)",
+                }}
+            )
+            print(f"[AUTO-SETTLE] {pick.get('playerName','')} {prop_type} → VOID/PUSH (only {minutes_played} min played)")
+            return True
 
         # Determine result
         line = pick.get("line", 0)
@@ -662,13 +708,15 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
                 "status": "settled",
                 "result": result,
                 "actualValue": actual_value,
+                "minutesPlayed": minutes_played,
                 "matchScore": f"{home_goals}-{away_goals}",
                 "settledAt": datetime.now(timezone.utc).isoformat(),
             }}
         )
-        print(f"[AUTO-SETTLE] {pick.get('playerName','')} {prop_type} {line} → actual {actual_value} = {result}")
+        print(f"[AUTO-SETTLE] {pick.get('playerName','')} {prop_type} {line} → actual {actual_value} ({minutes_played}min) = {result}")
         return True
-    except Exception:
+    except Exception as e:
+        print(f"[AUTO-SETTLE] Error settling {pick.get('playerName','')}: {e}")
         return False
 
 
