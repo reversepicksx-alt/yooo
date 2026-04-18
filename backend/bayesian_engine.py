@@ -515,8 +515,12 @@ def compute_bayesian_projection(
             poss_ratio = expected_poss / team_season_avg_poss
             if poss_ratio < 0.93:
                 # Team expected to have meaningfully less possession than normal.
-                # Inverse: lower possession → more GK involvement.
+                # Inverse: lower possession → more GK involvement (back-pass recycling).
                 # Capped at +25% to avoid overcorrection. Exponent 0.7 = gentle curve.
+                # NOTE: We only BOOST here — no dampen for high possession teams.
+                # Reason: the GK's season average ALREADY reflects games where the
+                # team dominated possession, so reducing further double-counts that.
+                # The only genuine out-of-sample signal is unexpected defensive load.
                 inverse_ratio = 1.0 / max(poss_ratio, 0.50)
                 boost_mult = round(min(1.25, inverse_ratio ** 0.7), 3)
                 raw_before_gk = posterior_mean
@@ -524,15 +528,6 @@ def compute_bayesian_projection(
                 print(f"[GK POSS BOOST] {prop_type}: team_avg={team_season_avg_poss:.1f}% "
                       f"expected={expected_poss:.1f}% ratio={poss_ratio:.2f} "
                       f"inv_mult={boost_mult} {raw_before_gk} → {posterior_mean}")
-            elif poss_ratio > 1.08:
-                # Team expected to dominate possession → GK barely touched by back-passes.
-                # Cap at -15% reduction.
-                dampen_mult = round(max(0.85, 1.0 - (poss_ratio - 1.0) * 0.5), 3)
-                raw_before_gk = posterior_mean
-                posterior_mean = round(posterior_mean * dampen_mult, 1)
-                print(f"[GK POSS DAMPEN] {prop_type}: team_avg={team_season_avg_poss:.1f}% "
-                      f"expected={expected_poss:.1f}% ratio={poss_ratio:.2f} "
-                      f"dampen={dampen_mult} {raw_before_gk} → {posterior_mean}")
 
     # ═══════════════════════════════════════════
     # PRESS INTENSITY — PPDA Proxy (independent of match dominance)

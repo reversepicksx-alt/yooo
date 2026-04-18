@@ -1734,6 +1734,19 @@ async def predict(req: PredictionRequest):
             except Exception:
                 pass
 
+            # ── GK detection fallback (position cache miss) ─────────────────
+            # If the position cache doesn't know this player yet, detect GK from
+            # game logs (saves data present) or from the propType being "saves".
+            # This prevents the outfield possession squeeze from firing on GKs.
+            if not _bayes_position:
+                if req.propType == "saves":
+                    _bayes_position = "GK"
+                elif req.propType in {"pass_attempts", "passes"}:
+                    # Any saves value in logs = goalkeeper
+                    if any(g.get("goals_saves") is not None and g.get("goals_saves", -1) >= 0
+                           for g in player_game_logs):
+                        _bayes_position = "GK"
+
             # ── Hyperprior for low-sample players (n < 6) ───────────────────
             # Derive a league-context anchor from opponent fixture stats.
             # Same field map as _estimate_opponent_concession in bayesian_engine.
