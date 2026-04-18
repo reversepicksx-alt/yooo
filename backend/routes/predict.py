@@ -581,16 +581,21 @@ async def predict(req: PredictionRequest):
                             minutes = gl.get("minutes", 0)
                             if not minutes or minutes == 0:
                                 return None
-                            gl["date"] = fix_date
-                            gl["opponent"] = fix_opponent
-                            gl["venue"] = fix_venue
-                            gl["score"] = f"{home_goals}-{away_goals}"
-                            gl["league"] = fix_league
-                            gl["round"] = fix_round
-                            raw_val = gl.get(stat_field_map.get(req.propType, ""), None)
-                            if raw_val is not None and minutes > 0:
-                                gl["targetStatPer90"] = round((raw_val / minutes) * 90, 2)
-                            return gl
+                            # For saves prop: bypass cache if saves value is None
+                            # (pre-fetch cache often misses saves for GKs — always fetch fresh)
+                            saves_cache_miss = req.propType == "saves" and gl.get("goals_saves") is None
+                            if not saves_cache_miss:
+                                gl["date"] = fix_date
+                                gl["opponent"] = fix_opponent
+                                gl["venue"] = fix_venue
+                                gl["score"] = f"{home_goals}-{away_goals}"
+                                gl["league"] = fix_league
+                                gl["round"] = fix_round
+                                raw_val = gl.get(stat_field_map.get(req.propType, ""), None)
+                                if raw_val is not None and minutes > 0:
+                                    gl["targetStatPer90"] = round((raw_val / minutes) * 90, 2)
+                                return gl
+                            # Fall through to live API fetch for saves
 
                         fix_data = await api_football_request("fixtures/players", {"fixture": fid})
                         if not fix_data:

@@ -50,7 +50,7 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
 
   const recColor = isOver ? Colors.primary : isUnder ? Colors.error : Colors.textSecondary;
   const push = pickPush(pick);
-  const statusColor = won ? Colors.success : lost ? Colors.error : push ? Colors.textSecondary : Colors.textTertiary;
+  const statusColor = won ? Colors.success : lost ? Colors.error : push ? Colors.push : Colors.textTertiary;
 
   const propLabel = PROP_LABELS[pick.propType] || pick.propType?.replace(/_/g, ' ') || '—';
   const venueStr = pick.venue ? pick.venue.toUpperCase() : '';
@@ -83,6 +83,8 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
     ? Colors.success
     : lost
     ? Colors.error
+    : push
+    ? Colors.push
     : trackValue != null && lineValue != null
     ? ((isOver && trackValue > lineValue) || (isUnder && trackValue < lineValue) ? Colors.success : Colors.error)
     : Colors.textSecondary;
@@ -122,9 +124,9 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
             </View>
           )}
           {push && !won && !lost && (
-            <View style={styles.pendingBadge}>
-              <Ionicons name="remove-outline" size={9} color={Colors.textSecondary} />
-              <Text style={styles.pendingText}>PUSH</Text>
+            <View style={styles.pushBadge}>
+              <Ionicons name="remove-outline" size={9} color={Colors.push} />
+              <Text style={styles.pushText}>PUSH</Text>
             </View>
           )}
         </View>
@@ -705,6 +707,13 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: 'rgba(255,59,48,0.3)',
   },
   lostText: { fontSize: 8, color: Colors.error, fontWeight: '800', letterSpacing: 0.5 },
+  pushBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    backgroundColor: Colors.pushDim, borderRadius: 5,
+    borderWidth: 1, borderColor: 'rgba(10,132,255,0.3)',
+    paddingHorizontal: 6, paddingVertical: 2,
+  },
+  pushText: { fontSize: 8, color: Colors.push, fontWeight: '800', letterSpacing: 0.5 },
 
   pickRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   recPill: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },

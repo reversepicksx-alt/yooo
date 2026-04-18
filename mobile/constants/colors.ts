@@ -16,6 +16,8 @@ const Colors = {
   successDim: 'rgba(57,255,20,0.12)',
   error: '#FF3B30',
   errorDim: 'rgba(255,59,48,0.12)',
+  push: '#0A84FF',
+  pushDim: 'rgba(10,132,255,0.14)',
   tabBar: '#000000',
   tabBarBorder: 'rgba(57,255,20,0.2)',
   overlay: 'rgba(0,0,0,0.85)',
