@@ -18,6 +18,12 @@ from utils import api_football_request, get_recent_fixtures_fast, strip_accents,
 
 router = APIRouter(prefix="/api", tags=["predict"])
 
+# ── CALIBRATION TOGGLE ────────────────────────────────────────────────────────
+# Set to True to re-enable nightly-learned bias offsets.
+# OFF by default — only turn on when explicitly requested.
+CALIBRATION_ENABLED = False
+# ─────────────────────────────────────────────────────────────────────────────
+
 # Match dominance cache: keyed by (home_team_id, away_team_id)
 # Ensures the SAME game always returns identical possession numbers regardless of which player is scanned.
 import time as _time
@@ -3364,22 +3370,25 @@ Analyze ALL data thoroughly. Return JSON only."""
             print(f"[PROJECTION] Bayesian={bayesian_posterior}({bayesian_rec}, {bayesian_prob:.0%}) | Early estimate={early_proj}({early_rec}) — MATH IS FINAL. Grok = explanation only.")
 
             # ── Apply nightly-learned bias offsets ──────────────────────────
-            try:
-                from calibration import apply_learned_offsets
-                _offset_venue = player_venue or req.venue or "home"
-                bayesian_posterior, _offset_note = await apply_learned_offsets(
-                    posterior=bayesian_posterior,
-                    prop_type=req.propType,
-                    venue=_offset_venue,
-                    recommendation=bayesian_rec,
-                    league_id=req.leagueId,
-                    sport="soccer",
-                )
-                if _offset_note:
-                    bayesian_rec = "over" if bayesian_posterior > req.line else "under"
-                    real_bayes["posteriorMean"] = bayesian_posterior
-            except Exception as _oe:
-                print(f"[NIGHTLY CAL APPLY] Error applying offsets: {_oe}")
+            if CALIBRATION_ENABLED:
+                try:
+                    from calibration import apply_learned_offsets
+                    _offset_venue = player_venue or req.venue or "home"
+                    bayesian_posterior, _offset_note = await apply_learned_offsets(
+                        posterior=bayesian_posterior,
+                        prop_type=req.propType,
+                        venue=_offset_venue,
+                        recommendation=bayesian_rec,
+                        league_id=req.leagueId,
+                        sport="soccer",
+                    )
+                    if _offset_note:
+                        bayesian_rec = "over" if bayesian_posterior > req.line else "under"
+                        real_bayes["posteriorMean"] = bayesian_posterior
+                except Exception as _oe:
+                    print(f"[NIGHTLY CAL APPLY] Error applying offsets: {_oe}")
+            else:
+                print("[NIGHTLY CAL] Calibration disabled — raw Bayesian posterior used.")
             # ───────────────────────────────────────────────────────────────
 
             prediction["projectedValue"] = bayesian_posterior
