@@ -530,7 +530,12 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str) -> dict:
     elapsed = fixture.get("fixture", {}).get("status", {}).get("elapsed") or 0
     home_goals = fixture.get("goals", {}).get("home", 0) or 0
     away_goals = fixture.get("goals", {}).get("away", 0) or 0
-    match_score = f"{home_goals}-{away_goals}"
+    # Store from player's team perspective: player_goals-opponent_goals
+    # so "Rennes 3-0 Strasbourg" shows correctly even when Rennes is away
+    _pick_venue = (pick.get("venue") or "home").lower()
+    _player_goals = home_goals if _pick_venue == "home" else away_goals
+    _opp_goals    = away_goals if _pick_venue == "home" else home_goals
+    match_score = f"{_player_goals}-{_opp_goals}"
 
     live_statuses = {"1H", "2H", "ET", "BT", "P", "LIVE", "HT"}
     finished_statuses = {"FT", "AET", "PEN"}

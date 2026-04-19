@@ -674,6 +674,9 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
         if minutes_played is not None and minutes_played < MIN_MINUTES:
             home_goals = matched.get("goals", {}).get("home", 0) or 0
             away_goals = matched.get("goals", {}).get("away", 0) or 0
+            _venue = (pick.get("venue") or "home").lower()
+            _player_goals = home_goals if _venue == "home" else away_goals
+            _opp_goals    = away_goals if _venue == "home" else home_goals
             await db.picks.update_one(
                 {"pickId": pick["pickId"]},
                 {"$set": {
@@ -681,7 +684,7 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
                     "result": "push",
                     "actualValue": actual_value,
                     "minutesPlayed": minutes_played,
-                    "matchScore": f"{home_goals}-{away_goals}",
+                    "matchScore": f"{_player_goals}-{_opp_goals}",
                     "settledAt": datetime.now(timezone.utc).isoformat(),
                     "voidReason": f"Player only played {minutes_played} min (min {MIN_MINUTES} required)",
                 }}
@@ -701,6 +704,9 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
 
         home_goals = matched.get("goals", {}).get("home", 0) or 0
         away_goals = matched.get("goals", {}).get("away", 0) or 0
+        _venue = (pick.get("venue") or "home").lower()
+        _player_goals = home_goals if _venue == "home" else away_goals
+        _opp_goals    = away_goals if _venue == "home" else home_goals
 
         await db.picks.update_one(
             {"pickId": pick["pickId"]},
@@ -709,7 +715,7 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
                 "result": result,
                 "actualValue": actual_value,
                 "minutesPlayed": minutes_played,
-                "matchScore": f"{home_goals}-{away_goals}",
+                "matchScore": f"{_player_goals}-{_opp_goals}",
                 "settledAt": datetime.now(timezone.utc).isoformat(),
             }}
         )
