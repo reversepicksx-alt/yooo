@@ -3550,6 +3550,31 @@ Analyze ALL data thoroughly. Return JSON only."""
             if adj_conf != prediction["confidenceScore"]:
                 print(f"[GUARD] UNDER skew penalty: -{penalty}% confidence ({adj_conf} → {prediction['confidenceScore']})")
 
+        # Guard 4: Base-rate conflict — model recommendation fights the player's own season average.
+        # When the season average sits on the OPPOSITE side of the line from the recommendation,
+        # an external factor (possession squeeze, opponent matchup) is overriding the base rate.
+        # These picks historically have lower accuracy because the base rate is a very strong prior.
+        # Apply a confidence penalty proportional to how far the average is on the wrong side.
+        _prior_m = (real_bayes or {}).get("priorMean")
+        if _prior_m is not None and req.line > 0:
+            _base_says_over = _prior_m > req.line
+            _model_says_over = rec == "over"
+            if _base_says_over != _model_says_over:
+                _conflict_gap = abs(_prior_m - req.line)
+                # Penalty: 15% flat minimum, +3% per pass of conflict gap beyond 2, capped at 25%
+                _conflict_penalty = min(25, max(15, round(15 + (_conflict_gap - 2) * 3)))
+                _pre_conflict = prediction.get("confidenceScore", 50)
+                prediction["confidenceScore"] = max(45, _pre_conflict - _conflict_penalty)
+                _conflict_dir = "OVER" if _base_says_over else "UNDER"
+                prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [
+                    f"BASE-RATE CONFLICT: Season avg {_prior_m} is on the {_conflict_dir} side of line {req.line} — contextual model fights historical norm"
+                ]
+                print(
+                    f"[GUARD] Base-rate conflict: season avg {_prior_m} is {_conflict_dir} of line {req.line}, "
+                    f"rec={rec.upper()}, gap={_conflict_gap:.1f} → -{_conflict_penalty}% conf "
+                    f"({_pre_conflict} → {prediction['confidenceScore']})"
+                )
+
         # ── Market Edge Calibration ───────────────────────────────────────────
         # edgeZ = (|posteriorMean - line|) / effective_std.
         # It measures how many standard deviations our projection sits away from

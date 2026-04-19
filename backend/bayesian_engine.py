@@ -499,11 +499,25 @@ def compute_bayesian_projection(
             # Floor 0.55 — allows up to 45% reduction in extreme cases
             if poss_ratio < 0.95:
                 squeeze_mult = round(max(0.55, poss_ratio ** 1.5), 3)
+                # HOT-STREAK DAMPENING: A player on an upward momentum trend may
+                # retain volume even when team possession dips — tactical discipline,
+                # manager trust, and personal form maintain their involvement.
+                # Dampen the squeeze so we don't fight a clear positive signal.
+                _squeeze_dampened = False
+                if momentum_effect > 5:
+                    # Clearly HOT — player has been significantly above their own avg
+                    squeeze_mult = round(min(1.0, squeeze_mult + (1.0 - squeeze_mult) * 0.35), 3)
+                    _squeeze_dampened = "HOT"
+                elif momentum_effect > 2:
+                    # WARMING — modest positive trend
+                    squeeze_mult = round(min(1.0, squeeze_mult + (1.0 - squeeze_mult) * 0.18), 3)
+                    _squeeze_dampened = "WARMING"
                 raw_before_squeeze = posterior_mean
                 posterior_mean = round(posterior_mean * squeeze_mult, 1)
+                _damp_note = f" [dampened for {_squeeze_dampened} streak]" if _squeeze_dampened else ""
                 print(f"[POSS SQUEEZE] {prop_type}: team_avg={team_season_avg_poss:.1f}% "
                       f"expected={expected_poss:.1f}% ratio={poss_ratio:.2f} "
-                      f"mult={squeeze_mult} {raw_before_squeeze} → {posterior_mean}")
+                      f"mult={squeeze_mult}{_damp_note} {raw_before_squeeze} → {posterior_mean}")
 
     # ═══════════════════════════════════════════
     # GK INVERTED POSSESSION MODEL
