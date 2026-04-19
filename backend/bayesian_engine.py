@@ -353,6 +353,12 @@ def compute_bayesian_projection(
 
         if prop_type in positive_poss_props and dom_mult != 1.0:
             dom_adj = prior_mean * (dom_mult - 1.0)
+            # Cap at ±20% of prior_mean — prevents possession signal from dominating
+            # when form/prior already point strongly in one direction.
+            # The post-projection dominance scaling in predict.py handles extreme outliers
+            # for low-possession teams, so the covariate only needs to carry the main signal.
+            _dom_cap = prior_mean * 0.20
+            dom_adj = max(-_dom_cap, min(_dom_cap, dom_adj))
             covariate_adjustment += dom_adj
         elif prop_type in inverse_poss_props and dom_mult != 1.0:
             # INVERTED: less possession → more defensive actions

@@ -3421,50 +3421,61 @@ Analyze ALL data thoroughly. Return JSON only."""
                 prediction["projectedValue"] = post_dom
                 prediction["recommendation"] = "over" if post_dom > req.line else "under"
                 print(f"[DOMINANCE] APPLIED: {current} × {dom_mult:.3f} → {post_dom} (team avg {team_avg_poss:.0f}% < 52% threshold)")
-            elif dom_mult > 1.08 and exp_poss > team_avg_poss + 8:
+            elif dom_mult > 1.08 and exp_poss > team_avg_poss + 8 and team_avg_poss < 52:
                 # Team expected to significantly exceed their own season-average possession.
-                # A +8pp gap (e.g., normally 53% → expected 63%) is historically meaningful
-                # for pass-volume props. Apply a damped positive boost to avoid double-counting
-                # with the OPP CONVERGENCE boost already applied in the Bayesian step.
+                # ONLY applies to LOW-possession teams (avg < 52%). High-possession teams
+                # already have their Bayesian calibrated to their possession style.
                 #
-                # Damping factor scales with how low the team's baseline possession is:
-                # A team that averages 38% possession has its season-average CBs/midfielders
-                # calibrated almost entirely in defensive setups. When they suddenly get 47%+,
-                # the effect on pass-volume props is fundamentally different from their baseline
-                # and deserves a stronger multiplier than a team that always has 52% possession.
-                #
-                # Damping schedule (fraction of raw mult excess applied):
-                #   team_avg < 42% → 65% (rarely in possession — surge is highly anomalous)
-                #   team_avg < 48% → 50% (below-average — meaningful departure from norm)
-                #   team_avg >= 48% → 35% (normal possession team — Bayesian already covers most)
-                if team_avg_poss < 42:
-                    _damp_frac = 0.65
-                elif team_avg_poss < 48:
-                    _damp_frac = 0.50
-                else:
-                    _damp_frac = 0.35
-                _damped_mult = 1.0 + (dom_mult - 1.0) * _damp_frac
-                post_dom = round(current * _damped_mult, 1)
-                _old_rec = prediction.get("recommendation", "over")
-                prediction["projectedValue"] = post_dom
-                prediction["recommendation"] = "over" if post_dom > req.line else "under"
-                print(
-                    f"[DOMINANCE] POSITIVE: {current} × {_damped_mult:.3f} → {post_dom} "
-                    f"(exp {exp_poss:.0f}% vs avg {team_avg_poss:.0f}%, raw mult={dom_mult:.3f})"
+                # COLD-STREAK GATE: If the player's recent form (momentumMean) is already
+                # running >4 passes below their season average, the form is the dominant
+                # signal — it likely reflects WHY possession isn't translating to more volume
+                # for this specific player (tactical role, fatigue, manager decisions).
+                # Applying a possession boost on top fights this signal and over-inflates.
+                _eb_momentum = (early_bayes or {}).get("momentumMean")
+                _eb_prior    = (early_bayes or {}).get("priorMean")
+                _cold_streak = (
+                    _eb_momentum is not None and _eb_prior is not None
+                    and _eb_momentum < _eb_prior - 4
                 )
-                # If the positive boost flipped the recommendation, the AI confidence was
-                # calibrated for the opposite direction — reset it based on the new edge.
-                _new_rec = prediction["recommendation"]
-                if _new_rec != _old_rec or True:  # always recalibrate after DOMINANCE
-                    _dom_edge = abs(post_dom - req.line)
-                    # Base: 55% + 1.5% per pass over the line, capped at 68%
-                    _base_conf = min(68, round(55 + _dom_edge * 1.5))
+                if _cold_streak:
+                    print(
+                        f"[DOMINANCE] SKIP positive boost — cold streak: "
+                        f"form={_eb_momentum:.1f} vs season_avg={_eb_prior:.1f} "
+                        f"(gap={_eb_prior - _eb_momentum:.1f}). Form is the lead signal."
+                    )
+                else:
+                    # Damping schedule (fraction of raw mult excess applied):
+                    #   team_avg < 42% → 55% (rarely in possession — surge is highly anomalous)
+                    #   team_avg < 48% → 40% (below-average — meaningful departure from norm)
+                    #   team_avg 48-52% → 20% (approaching normal — Bayesian covers most of it)
+                    if team_avg_poss < 42:
+                        _damp_frac = 0.55
+                    elif team_avg_poss < 48:
+                        _damp_frac = 0.40
+                    else:
+                        _damp_frac = 0.20
+                    _damped_mult = 1.0 + (dom_mult - 1.0) * _damp_frac
+                    post_dom = round(current * _damped_mult, 1)
+                    _old_rec = prediction.get("recommendation", "over")
+                    prediction["projectedValue"] = post_dom
+                    prediction["recommendation"] = "over" if post_dom > req.line else "under"
+                    print(
+                        f"[DOMINANCE] POSITIVE: {current} × {_damped_mult:.3f} → {post_dom} "
+                        f"(exp {exp_poss:.0f}% vs avg {team_avg_poss:.0f}%, raw mult={dom_mult:.3f})"
+                    )
+                    # If the positive boost flipped the recommendation, the AI confidence was
+                    # calibrated for the opposite direction — reset it based on the new edge.
+                    _new_rec = prediction["recommendation"]
+                    if _new_rec != _old_rec or True:  # always recalibrate after DOMINANCE
+                        _dom_edge = abs(post_dom - req.line)
+                        # Base: 55% + 1.5% per pass over the line, capped at 68%
+                        _base_conf = min(68, round(55 + _dom_edge * 1.5))
                     prediction["confidenceScore"] = _base_conf
                     print(f"[DOMINANCE] Confidence recalibrated: {_base_conf}% (edge={_dom_edge:.1f})")
-                # Recalibrate edgeZ so downstream guards use the final edge
-                if real_bayes:
-                    _bstd = real_bayes.get("posteriorStd", 10) or 10
-                    real_bayes["edgeZ"] = round(abs(post_dom - req.line) / max(_bstd, 5), 2)
+                    # Recalibrate edgeZ so downstream guards use the final edge
+                    if real_bayes:
+                        _bstd = real_bayes.get("posteriorStd", 10) or 10
+                        real_bayes["edgeZ"] = round(abs(post_dom - req.line) / max(_bstd, 5), 2)
             else:
                 would_be = round(current * dom_mult, 1)
                 print(f"[DOMINANCE] SKIPPED: {current} × {dom_mult:.3f} would be {would_be} (team avg {team_avg_poss:.0f}% — Bayesian covers this)")
