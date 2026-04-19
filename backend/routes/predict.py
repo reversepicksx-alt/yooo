@@ -2003,7 +2003,7 @@ async def predict(req: PredictionRequest):
 Season avg: {early_bayes['priorMean']} | Recent form (decay-weighted): {early_bayes['momentumMean']} ({early_bayes['momentumLabel']}) | Context adj: {early_bayes['covariateAdjustment']:+.1f}
 Streak: {early_bayes['streakFlag']} | Volatility: {early_bayes['volatility']} (CV={early_bayes['cv']}) | Reversal: {early_bayes['reversalFlag']}
 IMPORTANT: Never use the word "Bayesian" in your response. Always say "Reverse Formula" instead.
->>> MANDATORY: The math projects {bdir}. Your **Verdict** MUST recommend {bdir}. Do NOT write the opposite direction — this creates a contradiction the user sees. Your projectedValue MUST be within 12% of {_pf_proj}. <<<"""
+>>> MANDATORY: The math projection is {_pf_proj} {bdir}. This number is ALREADY FINAL. Your role is EXPLANATION ONLY — explain WHY the math arrived at {_pf_proj} {bdir}. When you reference the projection number in your text, write exactly {_pf_proj}. Do NOT write a different number. Do NOT argue against {bdir}. <<<"""
                 # Inject redistribution context into prompt
                 if _redist_alerts:
                     _redist_mult_pct = round((_redist_multiplier - 1) * 100)
@@ -2601,7 +2601,7 @@ CALIBRATION RULES:
 - BINARY LINES (0.5): UNDER 0.5 confidence NEVER exceeds 55%.
 - DEFENDER PASSES: Ball-playing CBs/LBs in possession teams hit 60-90+ per game routinely.
 
-JSON: {"projectedValue":0,"recommendation":"over|under","confidenceScore":0,"confidenceLevel":"","sharpSummary":"","reasoning":"","scenarioAnalysis":"","keyEvidence":"","sensitivityTests":"","subRisk":"","gameFlowDynamics":"","uncertaintyNote":"","tacticalBreakdown":"","matchupOverview":{"homeTeam":"","awayTeam":"","favorite":"","moneyline":{"home":"","draw":"","away":""},"expectedPossession":{"home":0,"away":0},"expectedGameType":"","keyMatchupFactor":""},"bayesianMetrics":{"priorMean":0,"momentumEffect":0,"covariateAdjustment":0,"reversalFlag":"stable"},"probabilityCurve":[],"recentSamples":[],"player":{"id":0,"name":"","team":"","position":""},"opponent":"","propType":"","line":0,"confidenceInterval":[0,0],"tacticalAlerts":[]}"""
+JSON: {"confidenceScore":0,"confidenceLevel":"","sharpSummary":"","reasoning":"","scenarioAnalysis":"","keyEvidence":"","sensitivityTests":"","subRisk":"","gameFlowDynamics":"","uncertaintyNote":"","tacticalBreakdown":"","matchupOverview":{"homeTeam":"","awayTeam":"","favorite":"","moneyline":{"home":"","draw":"","away":""},"expectedPossession":{"home":0,"away":0},"expectedGameType":"","keyMatchupFactor":""},"bayesianMetrics":{"priorMean":0,"momentumEffect":0,"covariateAdjustment":0,"reversalFlag":"stable"},"probabilityCurve":[],"recentSamples":[],"player":{"id":0,"name":"","team":"","position":""},"opponent":"","propType":"","line":0,"confidenceInterval":[0,0],"tacticalAlerts":[]}"""
 
         # Build the data payload — use GPT summary as primary + Wave 2 deep data as supplement
         wave2_supplement = {}
@@ -3116,22 +3116,23 @@ Analyze ALL data thoroughly. Return JSON only."""
         except Exception as e:
             print(f"[HYBRID] grok-4-1-fast exception: {e}")
 
-        pv = grok_result.get("projectedValue", 0) if grok_result and isinstance(grok_result, dict) else 0
-        if not isinstance(pv, (int, float)) or pv <= 0:
-            # Invalid projection — one retry
-            print(f"[HYBRID] Invalid projection {pv}, retrying")
+        # Projection comes ONLY from the math engine — Grok's projectedValue is never used.
+        # pv is set from early_bayes here as a temporary anchor; real_bayes will overwrite it at line ~3386.
+        pv = early_bayes["posteriorMean"] if early_bayes and early_bayes.get("posteriorMean") else req.line
+
+        # If Grok returned a bad/empty response, retry for the TEXT fields only
+        if not grok_result or not isinstance(grok_result, dict) or not grok_result.get("tacticalBreakdown"):
+            print(f"[HYBRID] Grok returned no text — retrying for analysis text")
             try:
                 grok_result = await aio.wait_for(
                     call_grok(label="grok41fast_retry", model="grok-4-1-fast-non-reasoning"),
                     timeout=30
                 )
-                pv = grok_result.get("projectedValue", 0) if grok_result and isinstance(grok_result, dict) else 0
             except Exception as e:
                 print(f"[HYBRID] retry exception: {e}")
-                pv = 0
 
-        # BAYESIAN FALLBACK: If ALL Grok models failed, use Bayesian projection directly
-        if not grok_result or not isinstance(grok_result, dict) or not isinstance(pv, (int, float)) or pv <= 0:
+        # BAYESIAN FALLBACK: If ALL Grok models failed (no text), build minimal result from math
+        if not grok_result or not isinstance(grok_result, dict) or not grok_result.get("tacticalBreakdown"):
             if early_bayes and early_bayes.get("posteriorMean"):
                 pv = early_bayes["posteriorMean"]
                 # Cap confidence at 72% (shows "High") when Grok fails — the math had
@@ -3350,19 +3351,17 @@ Analyze ALL data thoroughly. Return JSON only."""
 
             bayesian_prob = max(real_bayes.get("pOver", 50), real_bayes.get("pUnder", 50)) / 100
             bayesian_rec = real_bayes.get("recommendation", "over")
-            ai_proj = prediction.get("projectedValue", req.line)
-            ai_rec = prediction.get("recommendation", "over")
+            # early_proj = early_bayes estimate before full multi-factor Bayesian run
+            early_proj = prediction.get("projectedValue", req.line)
+            early_rec  = prediction.get("recommendation", "over")
 
-            divergence_pct = abs(ai_proj - bayesian_posterior) / max(bayesian_posterior, 1) * 100
+            divergence_pct = abs(early_proj - bayesian_posterior) / max(bayesian_posterior, 1) * 100
 
-            # Log when AI disagrees (for transparency in the UI)
-            if divergence_pct > 10 and bayesian_rec != ai_rec:
-                prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [
-                    f"AI reasoning suggested {ai_proj:.1f} ({ai_rec.upper()}) but math projects {bayesian_posterior:.1f} ({bayesian_rec.upper()}). Math prevails."
-                ]
-                print(f"[MATH OVERRIDE] AI={ai_proj}({ai_rec}) vs Bayes={bayesian_posterior}({bayesian_rec}) — {divergence_pct:.0f}% gap. Using math.")
+            # Log when early estimate and full Bayesian differ noticeably (adjustment audit trail)
+            if divergence_pct > 10 and bayesian_rec != early_rec:
+                print(f"[BAYES ADJUST] Early={early_proj}({early_rec}) → Full Bayes={bayesian_posterior}({bayesian_rec}) — {divergence_pct:.0f}% shift after all adjustments.")
 
-            print(f"[PROJECTION] Bayesian={bayesian_posterior}({bayesian_rec}, {bayesian_prob:.0%}) | AI opinion={ai_proj}({ai_rec}) — MATH IS FINAL")
+            print(f"[PROJECTION] Bayesian={bayesian_posterior}({bayesian_rec}, {bayesian_prob:.0%}) | Early estimate={early_proj}({early_rec}) — MATH IS FINAL. Grok = explanation only.")
 
             # ── Apply nightly-learned bias offsets ──────────────────────────
             try:
@@ -3386,16 +3385,17 @@ Analyze ALL data thoroughly. Return JSON only."""
             prediction["projectedValue"] = bayesian_posterior
             prediction["recommendation"] = bayesian_rec
             prediction["fusionApplied"] = {
-                "aiProjection": ai_proj,
-                "aiRecommendation": ai_rec,
+                "earlyEstimate": early_proj,        # math's early_bayes estimate before all adjustments
+                "earlyEstimateRec": early_rec,
                 "bayesianPosterior": bayesian_posterior,
                 "bayesianRecommendation": bayesian_rec,
                 "bayesianConfidence": round(bayesian_prob * 100, 1),
                 "fusedProjection": bayesian_posterior,
                 "fusedRecommendation": bayesian_rec,
-                "weights": {"ai": 0, "bayesian": 1.0},
-                "agreement": bayesian_rec == ai_rec,
+                "weights": {"math": 1.0, "grok": 0},  # Grok = explanation only, zero weight in projection
+                "agreement": bayesian_rec == early_rec,
                 "divergencePct": round(divergence_pct, 1),
+                "note": "projectedValue is determined entirely by the Reverse Formula math engine. Grok writes explanation text only.",
             }
 
         # =============================================
@@ -3961,12 +3961,24 @@ Analyze ALL data thoroughly. Return JSON only."""
             right_dir_cap = final_rec.capitalize()
             right_dir_up  = final_rec.upper()
 
-            # Detect if the AI recommendation actually differed from the math.
-            # Use fusionApplied (set earlier) for a reliable signal — never word-count heuristics.
-            _fusion_info = prediction.get("fusionApplied", {})
-            _ai_rec_dir  = (_fusion_info.get("aiRecommendation") or "").lower()
-            # True only when Grok called the opposite direction to what math gives
-            _ai_text_disagrees = bool(_ai_rec_dir) and (_ai_rec_dir != right_dir)
+            # Detect wrong-direction text by scanning the tacticalBreakdown directly.
+            # Grok is explanation-only now (no projectedValue/recommendation), but it may
+            # still accidentally write the wrong direction. Catch it by checking the text.
+            import re as _re_scan
+            _tb_raw = prediction.get("tacticalBreakdown", "")
+            _sharp_raw = prediction.get("sharpSummary", "")
+            # Look for definitive wrong-direction conclusion phrases in body/sharp
+            _wrong_conclusion_patterns = [
+                rf'(?i)(smash|bang|hammer|pound|back|take|play|fade)\s+the\s+{wrong_dir}',
+                rf'(?i)reverse formula\s+(nails|projects|lands at)\s+[\d.]+\s+{wrong_dir}',
+                rf'(?i)caps at\s+[\d.]+\s+{wrong_dir}',
+                rf'(?i)\b{wrong_dir}\s+is\s+(the\s+)?(right|correct|clear|obvious)\s+(play|call|bet|side)',
+                rf'(?i)(clear|obvious|easy)\s+{wrong_dir}',
+            ]
+            _ai_text_disagrees = any(
+                _re_scan.search(p, _tb_raw + " " + _sharp_raw)
+                for p in _wrong_conclusion_patterns
+            )
 
             if _ai_text_disagrees:
                 import re as _re_dg
@@ -4123,8 +4135,9 @@ Analyze ALL data thoroughly. Return JSON only."""
         _fin_proj  = prediction.get("projectedValue", req.line)
         _fin_rec   = prediction.get("recommendation", "over").lower()
         _fusion    = prediction.get("fusionApplied", {})
-        _ai_proj   = _fusion.get("aiProjection", _fin_proj)
-        _ai_rec    = _fusion.get("aiRecommendation", _fin_rec)
+        # earlyEstimate = math's early_bayes before all multi-factor adjustments (not Grok's opinion)
+        _ai_proj   = _fusion.get("earlyEstimate", _fin_proj)
+        _ai_rec    = _fusion.get("earlyEstimateRec", _fin_rec)
         _dirs_differed = (_ai_rec.lower() != _fin_rec.lower())
 
         # Build patterns for the AI's stale number (e.g. 42.8, 42, ~43)
@@ -4145,6 +4158,47 @@ Analyze ALL data thoroughly. Return JSON only."""
                     r' — (narrow|solid|strong|slim|marginal|clear) (OVER|UNDER) edge\.',
                     '', txt, flags=_re_fin.IGNORECASE
                 )
+
+            # ── Step B-0: Fix projection-attribution phrases regardless of which number Grok wrote ──
+            # Grok may internally reason about a stale number and write it in phrases like
+            # "Reverse Formula's 50.1 projection" or "projects 52 under" or "at 48.3 projected".
+            # Replace the number in these phrases with _fin_p_str unconditionally.
+            _proj_phrase_patterns = [
+                # "Reverse Formula's 50.1 projection" → "Reverse Formula's 49 projection"
+                (r"(Reverse Formula(?:'s)?)\s+(\d+\.?\d*)\s+(projection)", rf"\1 {_fin_p_str} \3"),
+                # "Reverse Formula projects/nails/lands at 52.3" → "Reverse Formula projects 49"
+                (r"(Reverse Formula\s+(?:nails|projects|lands at|estimates))\s+(\d+\.?\d*)", rf"\1 {_fin_p_str}"),
+                # "projects 52.3 over/under" → "projects 49 over/under"
+                (r"(projects?|projected(?:\s+at)?|projects\s+to\s+be)\s+(\d+\.?\d*)\s+(over|under)", rf"\1 {_fin_p_str} \3"),
+                # "50.1 projected" or "50.1 projection" → "49 projected/projection"
+                (r"(\d+\.?\d*)\s+(project(?:ed|ion)?\b)", rf"{_fin_p_str} \2"),
+                # "projection 60.3" (projection before number) → "projection 62"
+                (r"(project(?:ed|ion)?\s+)(\d+\.?\d*)(\b)", rf"\g<1>{_fin_p_str}\3"),
+                # "at 50.1 projected" → "at 49 projected"
+                (r"(at\s+)(\d+\.?\d*)(\s+project(?:ed|ion)?)", rf"\g<1>{_fin_p_str}\3"),
+                # "with 50.1 projection" / "with a 50.1 projection" → "with 49 projection"
+                (r"(with\s+(?:a\s+)?)(\d+\.?\d*)(\s+projection)", rf"\g<1>{_fin_p_str}\3"),
+                # "lands at 60.3" → "lands at 62"
+                (r"(\blands?\s+at\s+)(\d+\.?\d*)(\b)", rf"\g<1>{_fin_p_str}\3"),
+                # "sits 60.3 under 64.5" → "sits 62 under 64.5" (only when followed by over/under)
+                (r"(\bsits?\s+(?:at\s+)?)(\d+\.?\d*)(\s+(?:over|under)\b)", rf"\g<1>{_fin_p_str}\3"),
+                # "clears X with" / "clears X at" (OVER language in UNDER pick)
+                (r"(clears?\s+[\d.]+\s+(?:with|at)\s+)(\d+\.?\d*)(\b)", rf"\g<1>{_fin_p_str}\3"),
+                # "falls short of X.X at Y.Y" / "cruises under X.X at Y.Y"
+                (r"((?:falls short of|cruises (?:over|under))\s+[\d.]+\s+at\s+)(\d+\.?\d*)(\b)", rf"\g<1>{_fin_p_str}\3"),
+                # "sharp +3 edge on Reverse Formula's 50.1 projection"
+                (r"(sharp\s+[+-]?\d+\.?\d*\s+edge\s+on\s+Reverse Formula's?\s+)(\d+\.?\d*)(\s+projection)", rf"\g<1>{_fin_p_str}\3"),
+                # "pushing him past 50.1" / "pushing him to 50.1"
+                (r"(pushing\s+(?:him|her|them)\s+(?:past|to|above|over)\s+)(\d+\.?\d*)(\b)", rf"\g<1>{_fin_p_str}\3"),
+                # "inflates ... to 50.1 territory" / "to 50.1 range" / "to 50.1 levels"
+                (r"(\bto\s+)(\d+\.?\d*)(\s+(?:territory|range|level[s]?)\b)", rf"\g<1>{_fin_p_str}\3"),
+                # "capping Ginter at 60.3" / "caps Ginter at 60.3" / "caps him at 60.3"
+                (r"(cap(?:ping|s)?\s+(?:\w+\s+)?at\s+)(\d+\.?\d*)(\b)", rf"\g<1>{_fin_p_str}\3"),
+                # "ceiling of 60.3" / "ceiling at 60.3"
+                (r"(ceiling\s+(?:of|at)\s+)(\d+\.?\d*)(\b)", rf"\g<1>{_fin_p_str}\3"),
+            ]
+            for _pat, _repl in _proj_phrase_patterns:
+                txt = _re_fin.sub(_pat, _repl, txt, flags=_re_fin.IGNORECASE)
 
             # ── Step B: Number substitution — only when gap is meaningful (≥1.0) ──
             if abs(_ai_proj - _fin_proj) < 1.0:
