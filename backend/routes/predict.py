@@ -1963,15 +1963,47 @@ async def predict(req: PredictionRequest):
                 early_bayes["lineupStatus"] = _lineup_status
 
             if early_bayes and early_bayes.get("priorSamples", 0) >= 3:
-                bdir = early_bayes['recommendation'].upper()
-                bprob = early_bayes['pOver'] if bdir == 'OVER' else early_bayes['pUnder']
+                # ── PREFLIGHT PROJECTION: apply major downstream adjustments now ──
+                # early_bayes.posteriorMean is the raw Bayesian estimate BEFORE
+                # H2H, OPP-profile, and dominance adjustments that happen later.
+                # If the dominance boost (Ball-Playing CB, GK inverted etc.) will
+                # significantly move the final projection, we must tell Grok the
+                # RIGHT direction now — not the pre-adjustment direction.
+                # Without this, Grok writes "57.8 under" and the badge shows 66 OVER,
+                # which is the exact contradiction the user is complaining about.
+                _pf_proj = early_bayes["posteriorMean"]
+                _pf_poss_props = {"pass_attempts", "passes", "key_passes", "crosses", "dribbles"}
+                _pf_is_gk = _bayes_position.upper() in {"GK", "GOALKEEPER"}
+                if match_dominance and req.propType in _pf_poss_props and not _pf_is_gk:
+                    _pf_dom   = match_dominance.get("multiplier", 1.0)
+                    _pf_avg   = match_dominance.get("teamSeasonAvg", 50)
+                    _pf_exp   = match_dominance.get("expectedPoss", 50)
+                    if _pf_avg < 52 and _pf_dom < 0.92:
+                        # Pinned-back team — squeeze applies
+                        _pf_proj = round(_pf_proj * _pf_dom, 1)
+                    elif _pf_dom > 1.08 and _pf_exp > _pf_avg + 8:
+                        # Positive dominance surge — apply damped boost (same logic as main pipeline)
+                        _pf_damp = 0.65 if _pf_avg < 42 else (0.50 if _pf_avg < 48 else 0.35)
+                        _pf_mult = 1.0 + (_pf_dom - 1.0) * _pf_damp
+                        _pf_proj = round(_pf_proj * _pf_mult, 1)
+                # Apply redistribution if it was calculated (already applied to early_bayes in some paths)
+                # Note: early_bayes['posteriorMean'] may already include _redist_multiplier if it was applied above.
+                # _pf_proj uses early_bayes['posteriorMean'] which is the post-redist value.
+
+                _pf_rec  = "OVER" if _pf_proj > req.line else "UNDER"
+                _pf_bprob = early_bayes['pOver'] if _pf_rec == 'OVER' else early_bayes['pUnder']
+                bdir = _pf_rec  # Use preflight direction as the anchor direction
+                bprob = _pf_bprob
+                if _pf_proj != early_bayes["posteriorMean"]:
+                    print(f"[ANCHOR PREFLIGHT] {req.playerName}: raw={early_bayes['posteriorMean']} → preflight={_pf_proj} ({_pf_rec}) after dominance adjustment")
+
                 bayesian_prompt_anchor = f"""
 [MATHEMATICAL ENGINE — DO NOT IGNORE]
-3-Layer Reverse Formula analysis ({early_bayes['priorSamples']} games): projects {early_bayes['posteriorMean']} {bdir} (P={bprob}%).
+3-Layer Reverse Formula analysis ({early_bayes['priorSamples']} games): projects {_pf_proj} {bdir} (P={bprob}%).
 Season avg: {early_bayes['priorMean']} | Recent form (decay-weighted): {early_bayes['momentumMean']} ({early_bayes['momentumLabel']}) | Context adj: {early_bayes['covariateAdjustment']:+.1f}
 Streak: {early_bayes['streakFlag']} | Volatility: {early_bayes['volatility']} (CV={early_bayes['cv']}) | Reversal: {early_bayes['reversalFlag']}
 IMPORTANT: Never use the word "Bayesian" in your response. Always say "Reverse Formula" instead.
->>> MANDATORY: The math projects {bdir}. Your **Verdict** MUST recommend {bdir}. Do NOT write the opposite direction — this creates a contradiction the user sees. Your projectedValue MUST be within 12% of {early_bayes['posteriorMean']}. <<<"""
+>>> MANDATORY: The math projects {bdir}. Your **Verdict** MUST recommend {bdir}. Do NOT write the opposite direction — this creates a contradiction the user sees. Your projectedValue MUST be within 12% of {_pf_proj}. <<<"""
                 # Inject redistribution context into prompt
                 if _redist_alerts:
                     _redist_mult_pct = round((_redist_multiplier - 1) * 100)
@@ -3938,7 +3970,8 @@ Analyze ALL data thoroughly. Return JSON only."""
 
             if _ai_text_disagrees:
                 import re as _re_dg
-                # ── Step 1: Fix action phrases ("smash over" → "lean under" etc.) ──
+                # ── Step 1: Fix action phrases and conclusion statements ──
+                # Standard action phrase swaps
                 _action_subs = {
                     f"smash {wrong_dir}": f"slight {right_dir} edge",
                     f"bang {wrong_dir}": f"lean {right_dir}",
@@ -3953,6 +3986,34 @@ Analyze ALL data thoroughly. Return JSON only."""
                 }
                 for _bad, _good in _action_subs.items():
                     tb = _re_dg.sub(_re_dg.escape(_bad), _good, tb, flags=_re_dg.IGNORECASE)
+
+                # ── Step 1b: Fix "Reverse Formula" conclusion phrases ──
+                # These are body-text conclusions Grok writes when it believes UNDER/OVER.
+                # Pattern: "Reverse Formula nails 57.8 under" → "Reverse Formula projects 66.0 over"
+                # Pattern: "caps at 45.8 under" → "targets 50.0 over"
+                # Pattern: "adjusts +19.8 context but caps at 45.8 under" → "lands at 50.0 over"
+                _fin_p_dg = int(round(final_proj)) if final_proj == int(final_proj) else f"{final_proj:.1f}"
+                tb = _re_dg.sub(
+                    r'(?i)(reverse formula\s+(?:nails|projects|anchors|lands at|shows))\s+[\d.]+\s+' + wrong_dir,
+                    rf'\1 {_fin_p_dg} {right_dir}',
+                    tb
+                )
+                tb = _re_dg.sub(
+                    r'(?i)(adjusts\s+[\+\-][\d.]+\s+context\s+but\s+caps\s+at)\s+[\d.]+\s+' + wrong_dir,
+                    rf'lands at {_fin_p_dg} {right_dir}',
+                    tb
+                )
+                tb = _re_dg.sub(
+                    r'(?i)(caps\s+at)\s+[\d.]+\s+' + wrong_dir + r'\b',
+                    rf'targets {_fin_p_dg} {right_dir}',
+                    tb
+                )
+                # Generic "X under/over" conclusion at end of sentence (last word in sentence)
+                tb = _re_dg.sub(
+                    r'(?i)(\d+\.?\d*)\s+' + wrong_dir + r'\s*\.',
+                    rf'{_fin_p_dg} {right_dir}.',
+                    tb
+                )
 
                 # ── Step 2: Fully rewrite TL;DR section ──
                 _tldr_match = _re_dg.search(r'\*\*TL;DR\*\*.*?(?=\n\*\*|\Z)', tb, _re_dg.DOTALL | _re_dg.IGNORECASE)
@@ -3990,19 +4051,38 @@ Analyze ALL data thoroughly. Return JSON only."""
                     prediction["tacticalBreakdown"] = corrected + tb[len(first_line):]
                     print(f"[DIRECTION GUARD] Verdict line patched: {wrong_dir.upper()} → {right_dir_up}")
 
-            # Fix sharpSummary — always append override note when AI had wrong direction
+            # Fix sharpSummary
             sharp = prediction.get("sharpSummary", "")
-            _sharp_has_wrong = wrong_dir in sharp.lower()
-            _sharp_has_right  = right_dir in sharp.lower()
-            if sharp and _sharp_has_wrong and not _sharp_has_right:
+            if sharp and _ai_text_disagrees:
+                # AI text argued the WRONG direction → its sharpSummary is built around
+                # that wrong premise and cannot be salvaged by appending a note.
+                # Replace it entirely with a direction-correct expert summary.
                 _punder = real_bayes.get("pUnder", 50) if real_bayes else 50
                 _pover  = real_bayes.get("pOver",  50) if real_bayes else 50
                 _winning_p = max(_punder, _pover)
+                _edge_dg = round(abs(final_proj - req.line), 1)
                 prediction["sharpSummary"] = (
-                    sharp.rstrip(" .") +
-                    f". Math ({_winning_p:.0f}% P({right_dir_up})) overrides qualitative lean — narrow {right_dir_up} edge."
+                    f"Reverse Formula projects {final_proj} {right_dir_up} vs the {req.line} line "
+                    f"({_winning_p:.0f}% P({right_dir_up}), {_edge_dg} edge). "
+                    f"Qualitative analysis leaned {wrong_dir.upper()} but the mathematical model overrides — "
+                    f"sharp bettors follow the math when it disagrees with narrative."
                 )
-                print(f"[DIRECTION GUARD] sharpSummary corrected: appended {right_dir_up} override note")
+                print(f"[DIRECTION GUARD] sharpSummary fully replaced: AI={wrong_dir.upper()} → math={right_dir_up}")
+            elif sharp:
+                # Direction agreed — just clean up any stray wrong-direction language
+                import re as _re_sharp
+                _sharp_has_wrong_action = any(
+                    f"{a} {wrong_dir}" in sharp.lower()
+                    for a in ("smash", "bang", "hammer", "pound", "load up", "strong")
+                )
+                if _sharp_has_wrong_action:
+                    for _bad_s, _good_s in [
+                        (f"smash {wrong_dir}", f"lean {right_dir}"),
+                        (f"strong {wrong_dir}", f"marginal {right_dir}"),
+                        (f"bang {wrong_dir}", f"lean {right_dir}"),
+                    ]:
+                        sharp = _re_sharp.sub(_re_sharp.escape(_bad_s), _good_s, sharp, flags=_re_sharp.IGNORECASE)
+                    prediction["sharpSummary"] = sharp
 
         # ── CONFIDENCE LANGUAGE GUARD: strip overconfident phrasing on low-edge calls ──
         _is_coin_flip = prediction.get("coinFlip", False)
@@ -4066,9 +4146,9 @@ Analyze ALL data thoroughly. Return JSON only."""
                     '', txt, flags=_re_fin.IGNORECASE
                 )
 
-            # ── Step B: Number substitution — only when gap is meaningful (≥1.5) ──
-            if abs(_ai_proj - _fin_proj) < 1.5:
-                return txt  # Numbers close enough — skip substitution, keep cleaned text
+            # ── Step B: Number substitution — only when gap is meaningful (≥1.0) ──
+            if abs(_ai_proj - _fin_proj) < 1.0:
+                return txt  # Numbers very close — skip substitution, keep cleaned text
 
             # Replace float version (42.8) first, then int (42), to avoid partial matches
             for _old_num in [_ai_p_float, str(_ai_p_int)]:
@@ -4093,7 +4173,7 @@ Analyze ALL data thoroughly. Return JSON only."""
                 if _new_txt != _old_txt:
                     prediction[_tf] = _new_txt
 
-        if abs(_ai_proj - _fin_proj) >= 1.5:
+        if abs(_ai_proj - _fin_proj) >= 1.0:
             print(f"[TEXT NORM] AI proj={_ai_proj:.1f} → final={_fin_proj:.1f} — normalized numeric references in text fields")
 
         # Save to MongoDB
