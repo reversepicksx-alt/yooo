@@ -3210,6 +3210,17 @@ Analyze ALL data thoroughly. Return JSON only."""
 
                 # Weight: 5% per H2H game, max 25% — season data always dominates
                 _h2h_weight = min(_h2h_n_use * 0.05, 0.25)
+                # GK pass_attempts: H2H is highly noisy because GK pass volume is
+                # primarily driven by in-game possession dynamics (already modelled),
+                # not by a fixed opponent-specific tendency. A 4-game H2H where Columbus
+                # dominated will show 24 passes for Schulte — but Columbus dominates most
+                # opponents, so this H2H tells us nothing *extra* vs the possession model.
+                # Cap GK H2H weight at 10% (max 2 games worth) to prevent the H2H from
+                # dragging a ball-playing GK below the line in possession-dominant scenarios.
+                _is_gk_h2h = (specific_position or "").upper() in {"GK", "GOALKEEPER"} or \
+                              (player_position or "").lower() == "goalkeeper"
+                if _is_gk_h2h and req.propType in {"pass_attempts", "passes"}:
+                    _h2h_weight = min(_h2h_weight, 0.10)  # GK pass H2H capped at 10%
                 _old_bp = bayesian_posterior
                 bayesian_posterior = round(
                     _old_bp * (1 - _h2h_weight) + _h2h_avg_use * _h2h_weight, 1
@@ -4042,15 +4053,29 @@ Analyze ALL data thoroughly. Return JSON only."""
         _fin_p_str  = str(int(round(_fin_proj))) if _fin_proj == int(_fin_proj) else f"{_fin_proj:.1f}"
 
         def _normalize_text(txt: str) -> str:
-            if not txt or abs(_ai_proj - _fin_proj) < 1.5:
-                return txt  # Numbers close enough — no substitution needed
+            if not txt:
+                return txt
+
+            # ── Step A: Always strip false "overrides qualitative lean" notes ──
+            # These get appended by the direction guard or AI even when directions agree.
+            # Remove unconditionally when AI and math called the same direction.
+            if not _dirs_differed:
+                txt = _re_fin.sub(
+                    r'\.\s*Math \(\d+% P\((OVER|UNDER)\)\) overrides qualitative lean'
+                    r' — (narrow|solid|strong|slim|marginal|clear) (OVER|UNDER) edge\.',
+                    '', txt, flags=_re_fin.IGNORECASE
+                )
+
+            # ── Step B: Number substitution — only when gap is meaningful (≥1.5) ──
+            if abs(_ai_proj - _fin_proj) < 1.5:
+                return txt  # Numbers close enough — skip substitution, keep cleaned text
 
             # Replace float version (42.8) first, then int (42), to avoid partial matches
             for _old_num in [_ai_p_float, str(_ai_p_int)]:
                 # Only replace when it appears as a standalone number (not part of a larger number)
                 txt = _re_fin.sub(r'(?<!\d)' + _re_fin.escape(_old_num) + r'(?!\d)', _fin_p_str, txt)
 
-            # Also patch "narrow OVER/UNDER edge" when the actual edge is large
+            # ── Step C: Patch "narrow edge" language when actual edge is large ──
             _edge_size = abs(_fin_proj - req.line)
             if _edge_size > 5:
                 txt = _re_fin.sub(r'\bnarrow (over|under) edge\b', r'strong \1 edge', txt, flags=_re_fin.IGNORECASE)
@@ -4058,13 +4083,6 @@ Analyze ALL data thoroughly. Return JSON only."""
                 txt = _re_fin.sub(r'\bslight (over|under) edge\b', r'clear \1 edge', txt, flags=_re_fin.IGNORECASE)
             elif _edge_size > 2.5:
                 txt = _re_fin.sub(r'\bnarrow (over|under) edge\b', r'solid \1 edge', txt, flags=_re_fin.IGNORECASE)
-
-            # Remove "overrides qualitative lean" note when directions agreed
-            if not _dirs_differed:
-                txt = _re_fin.sub(
-                    r'\.\s*Math \(\d+% P\((OVER|UNDER)\)\) overrides qualitative lean — (narrow|solid|strong|slim|marginal|clear) (OVER|UNDER) edge\.',
-                    '', txt, flags=_re_fin.IGNORECASE
-                )
 
             return txt
 

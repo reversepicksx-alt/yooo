@@ -517,10 +517,6 @@ def compute_bayesian_projection(
                 # Team expected to have meaningfully less possession than normal.
                 # Inverse: lower possession → more GK involvement (back-pass recycling).
                 # Capped at +25% to avoid overcorrection. Exponent 0.7 = gentle curve.
-                # NOTE: We only BOOST here — no dampen for high possession teams.
-                # Reason: the GK's season average ALREADY reflects games where the
-                # team dominated possession, so reducing further double-counts that.
-                # The only genuine out-of-sample signal is unexpected defensive load.
                 inverse_ratio = 1.0 / max(poss_ratio, 0.50)
                 boost_mult = round(min(1.25, inverse_ratio ** 0.7), 3)
                 raw_before_gk = posterior_mean
@@ -528,6 +524,21 @@ def compute_bayesian_projection(
                 print(f"[GK POSS BOOST] {prop_type}: team_avg={team_season_avg_poss:.1f}% "
                       f"expected={expected_poss:.1f}% ratio={poss_ratio:.2f} "
                       f"inv_mult={boost_mult} {raw_before_gk} → {posterior_mean}")
+            elif poss_ratio > 1.04 and posterior_mean > 27:
+                # BALL-PLAYING GK IN HIGH-POSSESSION SCENARIO
+                # When a GK with a high pass average (>27/game) sees their team dominate
+                # significantly above their season norm (poss_ratio > 1.08), they are
+                # actively used as build-up starters — short goal kicks, 3rd CB role,
+                # sweeper-keeper distributions initiate attacks. These GKs do NOT sit
+                # idle in high-possession games; they participate at or above their avg.
+                # A 10% possession surge → ~6% more GK touch opportunities (damped).
+                # Cap at +10% to avoid overcorrection; only applies to active builders.
+                buildup_boost = round(min(1.10, 1.0 + (poss_ratio - 1.0) * 0.5), 3)
+                raw_before_gk = posterior_mean
+                posterior_mean = round(posterior_mean * buildup_boost, 1)
+                print(f"[GK BUILDUP BOOST] {prop_type}: ball-playing GK (avg={posterior_mean:.1f}>{27}) "
+                      f"team_avg={team_season_avg_poss:.1f}% expected={expected_poss:.1f}% "
+                      f"ratio={poss_ratio:.2f} boost={buildup_boost} {raw_before_gk} → {posterior_mean}")
 
     # ═══════════════════════════════════════════
     # PRESS INTENSITY — PPDA Proxy (independent of match dominance)
