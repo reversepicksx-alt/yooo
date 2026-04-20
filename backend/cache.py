@@ -167,13 +167,28 @@ async def sync_all_teams():
 #  3. PLAYERS (squad per team)
 # ══════════════════════════════════════════════
 
+_CONTINENTAL_LEAGUES = {2, 3, 11, 13, 848, 531, 480}  # UEFA CL/EL, Copa Lib/Sud, etc.
+
 async def sync_squad(team_id: int, team_name: str = "", league_id: int = 0):
-    """Fetch full squad for a team and store. Returns list of player docs."""
+    """Fetch full squad for a team and store. Returns list of player docs.
+    
+    IMPORTANT: Domestic league entries are never overwritten by continental cup entries.
+    This prevents Copa Libertadores (league 13) from overwriting Argentine Liga (128) data,
+    which would cause player disambiguation bugs (e.g., Álvaro Montero at Vélez vs Newells).
+    """
     from utils import strip_accents
     try:
         data = await api_football_request("players/squads", {"team": team_id})
         if not data or not data[0].get("players"):
             return []
+
+        # If this sync is for a continental cup, check whether the team already has
+        # a domestic league entry. If so, skip — domestic always wins.
+        if league_id in _CONTINENTAL_LEAGUES:
+            existing = await db[COL_PLAYERS].find_one({"teamId": team_id}, {"leagueId": 1})
+            if existing and existing.get("leagueId") not in _CONTINENTAL_LEAGUES:
+                # Team already has domestic players — don't overwrite with continental data
+                return []
 
         players = data[0]["players"]
         ops = []

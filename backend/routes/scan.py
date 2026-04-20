@@ -349,6 +349,12 @@ async def _resolve_player_via_cache(player_name: str, team_id: int = None, leagu
     # League validation for non-continental requests
     # Accept same league OR adjacent leagues in the same country
     ADJACENT_LEAGUES = {140: {141}, 141: {140}, 39: {40}, 40: {39}}
+    # South American cups: Copa Libertadores (13) / Copa Sudamericana (11) players
+    # are acceptable for domestic South American league queries, because many clubs
+    # play in BOTH competitions and may be cached under the cup league instead of the
+    # domestic league (e.g. Vélez players stored under league 13 instead of 128).
+    _SA_CUPS = {13, 11}
+    _SA_DOMESTIC = {128, 71, 242}
     if league_id and player_league:
         if league_id in continental_cups:
             return player
@@ -356,6 +362,8 @@ async def _resolve_player_via_cache(player_name: str, team_id: int = None, leagu
             return player
         if player_league in ADJACENT_LEAGUES.get(league_id, set()):
             return player  # e.g. La Liga 2 player when La Liga is inferred
+        if player_league in _SA_CUPS and league_id in _SA_DOMESTIC:
+            return player  # Copa Libertadores/Sudamericana player for domestic SA query
         # Always reject if league doesn't match — regardless of whether team_id is set.
         # Previously `if not team_id: return None` was incorrect because team_id from the
         # outer scope stays non-None even after the team-specific search already ran.
