@@ -414,7 +414,13 @@ SCAN_ALIASES = {
     "union sf": "union santa fe",
     "union santa fe": "union santa fe",
     "gimnasia lp": "gimnasia la plata",
-    "gimnasia": "gimnasia la plata",
+    # "gimnasia" alone is ambiguous (La Plata vs Mendoza) — DO NOT add generic alias
+    # Use "gimnasia lp" for La Plata, "gim mendoza"/"gimnasia mendoza" for Mendoza
+    "gim mendoza": "gimnasia mendoza",
+    "gimnasia mendoza": "gimnasia mendoza",
+    "gimnasia de mendoza": "gimnasia mendoza",
+    "gimnasia m": "gimnasia mendoza",
+    "gim m": "gimnasia mendoza",
     "argentinos": "argentinos juniors",
     "argentinos jrs": "argentinos juniors",
     "arg jrs": "argentinos juniors",
