@@ -3011,8 +3011,20 @@ Expected possession for {req.opponentName}: {match_dominance['oppExpectedPoss']}
 {hit_rates['summary']}
 >>> If over-rate >= 65%, strongly lean OVER. If under-rate >= 65%, lean UNDER. If neither exceeds 60%, treat as close call — lower confidence. <<<"""
 
+        # Team disambiguation notes — injected when similar-named clubs could be confused
+        _TEAM_DISAMBIGUATION = {
+            "los angeles fc": "LAFC (Los Angeles FC) — NOT LA Galaxy. These are two completely separate MLS clubs. Do NOT mention LA Galaxy.",
+            "lafc": "LAFC (Los Angeles FC) — NOT LA Galaxy. These are two completely separate MLS clubs. Do NOT mention LA Galaxy.",
+            "la galaxy": "LA Galaxy (Los Angeles Galaxy) — NOT LAFC. These are two completely separate MLS clubs. Do NOT mention LAFC.",
+            "los angeles galaxy": "LA Galaxy (Los Angeles Galaxy) — NOT LAFC. These are two completely separate MLS clubs. Do NOT mention LAFC.",
+            "new york city fc": "New York City FC (NYCFC) — NOT New York Red Bulls. Do NOT mention Red Bulls.",
+            "new york red bulls": "New York Red Bulls — NOT NYCFC. Do NOT mention New York City FC.",
+        }
+        _team_disambig = _TEAM_DISAMBIGUATION.get((corrected_team_name or "").lower().strip(), "")
+        _disambig_note = f"\nTEAM DISAMBIGUATION: {_team_disambig}" if _team_disambig else ""
+
         prompt = f"""{req.playerName} ({display_position}) — plays for {corrected_team_name} ({player_venue.upper()}) | OPPONENT: {req.opponentName} | {req.propType} line {req.line}
-IMPORTANT: This player's current CLUB is {corrected_team_name}. Do NOT reference any national team or previous club in your analysis — use only "{corrected_team_name}" when referring to this player's team.
+IMPORTANT: This player's current CLUB is {corrected_team_name}. Do NOT reference any national team or previous club in your analysis — use only "{corrected_team_name}" when referring to this player's team.{_disambig_note}
 Odds: {json.dumps(match_odds.get('bookmakerOdds',{}), default=str) if match_odds else 'N/A'}{match_context}
 {pronoun_note}
 recentSamples=[]

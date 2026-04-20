@@ -534,16 +534,34 @@ def compute_bayesian_projection(
         if expected_poss is not None and team_season_avg_poss and team_season_avg_poss > 0:
             poss_ratio = expected_poss / team_season_avg_poss
             if poss_ratio < 0.93:
-                # Team expected to have meaningfully less possession than normal.
-                # Inverse: lower possession → more GK involvement (back-pass recycling).
-                # Capped at +25% to avoid overcorrection. Exponent 0.7 = gentle curve.
-                inverse_ratio = 1.0 / max(poss_ratio, 0.50)
-                boost_mult = round(min(1.25, inverse_ratio ** 0.7), 3)
-                raw_before_gk = posterior_mean
-                posterior_mean = round(posterior_mean * boost_mult, 1)
-                print(f"[GK POSS BOOST] {prop_type}: team_avg={team_season_avg_poss:.1f}% "
-                      f"expected={expected_poss:.1f}% ratio={poss_ratio:.2f} "
-                      f"inv_mult={boost_mult} {raw_before_gk} → {posterior_mean}")
+                # TWO REGIMES for GK possession deficit:
+                #
+                # EXTREME deficit (expected < 40%): The team barely has the ball.
+                # Back-pass recycling theory breaks down — GK simply has fewer
+                # distribution opportunities. Apply a SQUEEZE instead of a boost.
+                # Example: Lyon (35%) vs PSG (65%) — Greif barely touches the ball.
+                #
+                # MODERATE deficit (40-93% of avg): Defenders are under pressure and
+                # play it safe back to the GK more frequently → inverse boost applies.
+                # Example: Miami (40%) vs Man City away (60%) — GK recycles constantly.
+                if expected_poss < 40.0:
+                    # SQUEEZE — GK starved of ball time in extreme possession imbalance
+                    squeeze_mult = round(max(0.70, poss_ratio ** 0.8), 3)
+                    raw_before_gk = posterior_mean
+                    posterior_mean = round(posterior_mean * squeeze_mult, 1)
+                    print(f"[GK EXTREME SQUEEZE] {prop_type}: team expected only {expected_poss:.1f}% "
+                          f"possession — GK ball-touch volume drops sharply. "
+                          f"mult={squeeze_mult} {raw_before_gk} → {posterior_mean}")
+                else:
+                    # MODERATE deficit — inverse back-pass recycling boost
+                    # Capped at +15% to avoid overcorrection. Exponent 0.5 = gentle curve.
+                    inverse_ratio = 1.0 / max(poss_ratio, 0.60)
+                    boost_mult = round(min(1.15, inverse_ratio ** 0.5), 3)
+                    raw_before_gk = posterior_mean
+                    posterior_mean = round(posterior_mean * boost_mult, 1)
+                    print(f"[GK POSS BOOST] {prop_type}: team_avg={team_season_avg_poss:.1f}% "
+                          f"expected={expected_poss:.1f}% ratio={poss_ratio:.2f} "
+                          f"inv_mult={boost_mult} {raw_before_gk} → {posterior_mean}")
             elif poss_ratio > 1.04 and posterior_mean > 27:
                 # BALL-PLAYING GK IN HIGH-POSSESSION SCENARIO
                 # When a GK with a high pass average (>27/game) sees their team dominate
