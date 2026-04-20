@@ -2360,13 +2360,22 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                 try:
                     from openai import OpenAI as SyncOpenAI
 
-                    # Build constrained position list based on API-Sports category
-                    allowed_positions = GENERIC_TO_SPECIFIC.get(player_position, None)
-                    if allowed_positions:
-                        pos_list = ", ".join(sorted(allowed_positions))
-                        category_hint = f"\nAPI-Sports categorizes this player as: {player_position}. ONLY choose from positions within that category: {pos_list}"
+                    # Build advisory (not hard-constraining) category hint based on API-Sports category.
+                    # We always allow ALL positions — stats evidence can override the API category.
+                    # API-Football sometimes miscategorizes players (e.g., CM tagged as "Attacker"),
+                    # so treating the category as a hard constraint causes systematic errors.
+                    pos_list = "GK, CB, LB, RB, LWB, RWB, CDM, CM, CAM, LM, RM, LW, RW, CF, ST, SS"
+                    allowed_positions = None  # allow all — stats are the authority
+                    suggested_positions = GENERIC_TO_SPECIFIC.get(player_position, None)
+                    if suggested_positions and player_position:
+                        pos_hint_list = ", ".join(sorted(suggested_positions))
+                        category_hint = (
+                            f"\nAPI-Sports categorizes this player as: {player_position} "
+                            f"(suggested positions: {pos_hint_list}). "
+                            f"Use the stats below to confirm — if the stats strongly suggest a different position, "
+                            f"you may pick ANY position from the full list: {pos_list}."
+                        )
                     else:
-                        pos_list = "GK, CB, LB, RB, LWB, RWB, CDM, CM, CAM, LM, RM, LW, RW, CF, ST, SS"
                         category_hint = ""
 
                     # STATS-AWARE: Extract position-relevant stats for evidence-based resolution
@@ -2398,8 +2407,11 @@ POSITION CLUES: CB=high tackles/blocks/aerial duels, low crosses/key passes/drib
 
                     pos_prompt = f"What is {req.playerName}'s primary position and tactical role at {corrected_team_name}?{category_hint}{stats_evidence}\nPosition must be one of: {pos_list}\nRole must be one of: Shot-Stopper, Sweeper Keeper, Ball-Playing CB, Stopper, Fullback, Wing-Back, Inverted Fullback, Anchor, Box-to-Box, Deep-Lying Playmaker, Ball Winner, Mezzala, Advanced Playmaker, Wide Playmaker, Traditional Winger, Inverted Winger, Progressive Carrier, Inside Forward, Target Man, Poacher, False 9, Shadow Striker, Complete Forward, Pressing Forward\nReply ONLY: POSITION|ROLE"
 
-                    # DUAL-AI POSITION VALIDATION: Grok + Gemini in parallel for defenders
-                    is_defender = player_position == "Defender"
+                    # DUAL-AI POSITION VALIDATION: Always run Grok + Gemini in parallel.
+                    # Previously only ran for defenders, but API-Football miscategorizes
+                    # players across all positions (e.g., CM as "Attacker") so all players
+                    # need cross-validation. Only skip dual-AI for GKs (unambiguous).
+                    is_defender = player_position != "Goalkeeper"  # dual-AI for everyone except GK
 
                     pos_client = SyncOpenAI(api_key=XAI_API_KEY, base_url="https://api.x.ai/v1")
 
