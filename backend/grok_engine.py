@@ -490,20 +490,46 @@ async def _run_auto_settlement():
                 yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
                 next_s = CURRENT_SEASON + 1  # MLS and other calendar-year leagues use next year label
 
+                # Also cover dates of the oldest pending pick for this team
+                # so picks from 3+ days ago don't fall out of the "last 3" window
+                oldest_pick = min(
+                    (p for p in soccer_picks if p.get("teamId") == tid),
+                    key=lambda p: p.get("timestamp") or p.get("createdAt") or "",
+                    default=None
+                )
+                pick_dates = []
+                if oldest_pick:
+                    for tf in ("timestamp", "createdAt"):
+                        raw = oldest_pick.get(tf)
+                        if raw:
+                            try:
+                                pd = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+                                pick_dates.append(pd.strftime("%Y-%m-%d"))
+                                pick_dates.append((pd - timedelta(days=1)).strftime("%Y-%m-%d"))
+                            except Exception:
+                                pass
+                            break
+
+                date_fix_calls = []
+                for pd in set(pick_dates):
+                    if pd not in (today, yesterday):
+                        date_fix_calls.append(api_football_request("fixtures", {"team": tid, "date": pd, "season": CURRENT_SEASON}))
+
                 (today_fix, yest_fix, last_fix,
-                 today_fix2, yest_fix2, last_fix2) = await asyncio.gather(
+                 today_fix2, yest_fix2, last_fix2, *extra_date_fixes) = await asyncio.gather(
                     api_football_request("fixtures", {"team": tid, "date": today, "season": CURRENT_SEASON}),
                     api_football_request("fixtures", {"team": tid, "date": yesterday, "season": CURRENT_SEASON}),
-                    api_football_request("fixtures", {"team": tid, "last": 3, "season": CURRENT_SEASON}),
+                    api_football_request("fixtures", {"team": tid, "last": 10, "season": CURRENT_SEASON}),
                     api_football_request("fixtures", {"team": tid, "date": today, "season": next_s}),
                     api_football_request("fixtures", {"team": tid, "date": yesterday, "season": next_s}),
-                    api_football_request("fixtures", {"team": tid, "last": 3, "season": next_s}),
+                    api_football_request("fixtures", {"team": tid, "last": 10, "season": next_s}),
+                    *date_fix_calls,
                     return_exceptions=True
                 )
 
                 all_fixtures = []
                 seen = set()
-                for batch in [today_fix, yest_fix, last_fix, today_fix2, yest_fix2, last_fix2]:
+                for batch in [today_fix, yest_fix, last_fix, today_fix2, yest_fix2, last_fix2, *extra_date_fixes]:
                     if isinstance(batch, Exception) or not batch:
                         continue
                     for f in batch:
@@ -542,10 +568,10 @@ async def _run_auto_settlement():
                      today_fix2, yest_fix2, last_fix2) = await asyncio.gather(
                         api_football_request("fixtures", {"team": tid, "date": today, "season": CURRENT_SEASON}),
                         api_football_request("fixtures", {"team": tid, "date": yesterday, "season": CURRENT_SEASON}),
-                        api_football_request("fixtures", {"team": tid, "last": 3, "season": CURRENT_SEASON}),
+                        api_football_request("fixtures", {"team": tid, "last": 10, "season": CURRENT_SEASON}),
                         api_football_request("fixtures", {"team": tid, "date": today, "season": next_s}),
                         api_football_request("fixtures", {"team": tid, "date": yesterday, "season": next_s}),
-                        api_football_request("fixtures", {"team": tid, "last": 3, "season": next_s}),
+                        api_football_request("fixtures", {"team": tid, "last": 10, "season": next_s}),
                         return_exceptions=True
                     )
                     all_fixtures = []
