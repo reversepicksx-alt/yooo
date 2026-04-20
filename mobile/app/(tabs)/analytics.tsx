@@ -98,9 +98,9 @@ export default function AnalyticsTab() {
         <View style={styles.header}>
           <View style={styles.headerLeft}>
             <Ionicons name="lock-closed" size={13} color={Colors.primary} style={{ marginRight: 6 }} />
-            <Text style={styles.headerSub}>OWNER ONLY</Text>
+            <Text style={styles.headerSub}>PRIVATE</Text>
           </View>
-          <Text style={styles.headerTitle}>Performance Lab</Text>
+          <Text style={styles.headerTitle}>Data Analysis</Text>
         </View>
 
         {isLoading ? (

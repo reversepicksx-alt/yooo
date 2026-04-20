@@ -73,8 +73,8 @@ export default function TabLayout() {
       <Tabs.Screen
         name="analytics"
         options={isOwner ? {
-          title: 'Lab',
-          tabBarIcon: ({ focused }) => <TabIcon name="flask" focused={focused} />,
+          title: 'Data Analysis',
+          tabBarIcon: ({ focused }) => <TabIcon name="stats-chart" focused={focused} />,
         } : { href: null }}
       />
       <Tabs.Screen name="intel" options={{ href: null }} />

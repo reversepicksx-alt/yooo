@@ -18,6 +18,8 @@ API_FOOTBALL_PLAYER_IDS = "https://dashboard.api-football.com/soccer/ids/players
 API_FOOTBALL_TEAM_IDS = "https://dashboard.api-football.com/soccer/ids/teams"
 API_FOOTBALL_LEAGUE_IDS = "https://dashboard.api-football.com/soccer/ids"
 OWNER_EMAIL = (os.environ.get("OWNER_EMAIL") or "reversepicksx@gmail.com").lower().strip()
+# All emails that should receive owner-level access (including personal accounts)
+OWNER_EMAILS = {OWNER_EMAIL, "willmenjivar123@gmail.com"}
 XAI_API_KEY = os.environ.get("XAI_API_KEY")
 SQUARE_ACCESS_TOKEN = os.environ.get("SQUARE_ACCESS_TOKEN")
 SQUARE_APPLICATION_ID = os.environ.get("SQUARE_APPLICATION_ID")

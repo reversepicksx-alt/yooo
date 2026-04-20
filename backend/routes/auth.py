@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException
 
 import stripe as _stripe
 
-from config import db, OWNER_EMAIL, LIFETIME_SUB_EMAILS, WHOP_API_KEY
+from config import db, OWNER_EMAIL, OWNER_EMAILS, LIFETIME_SUB_EMAILS, WHOP_API_KEY
 from models import (
     VerifyAccessRequest, LoginRequest, SetPasswordRequest,
     ResetPasswordRequest, VerifySessionRequest,
@@ -14,7 +14,7 @@ from models import (
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 async def _check_access_local(email_lower: str):
-    if email_lower == OWNER_EMAIL:
+    if email_lower in OWNER_EMAILS:
         return "Owner"
     if email_lower in LIFETIME_SUB_EMAILS:
         return "Lifetime"
