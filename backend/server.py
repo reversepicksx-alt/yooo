@@ -703,3 +703,14 @@ async def trigger_calibration(sport: str = "soccer"):
     from calibration import run_nightly_calibration
     result = await run_nightly_calibration(sport)
     return result
+
+
+@app.post("/api/admin/force-settle")
+async def force_settle():
+    """Immediately run the auto-settlement bot — use to unblock stuck picks."""
+    from grok_engine import _run_auto_settlement
+    try:
+        await _run_auto_settlement()
+        return {"ok": True, "message": "Settlement run complete — check picks for updates"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}

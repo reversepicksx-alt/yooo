@@ -463,7 +463,18 @@ async def _run_auto_settlement():
     from utils import api_football_request
     from config import CURRENT_SEASON
 
-    live_picks = await db.picks.find({"status": "live"}, {"_id": 0}).to_list(200)
+    # Settle both "live" picks AND "pending" picks — pending picks can miss the live
+    # promotion step if the user doesn't refresh during the match, leaving them stuck.
+    # Include pending picks created more than 90 minutes ago (match should be over).
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=90)).isoformat()
+    live_picks = await db.picks.find(
+        {"$or": [
+            {"status": "live"},
+            {"status": "pending", "timestamp": {"$lt": cutoff}},
+            {"status": "pending", "createdAt": {"$lt": cutoff}},
+        ]},
+        {"_id": 0}
+    ).to_list(300)
     if not live_picks:
         return
 
@@ -477,17 +488,22 @@ async def _run_auto_settlement():
             try:
                 today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
                 yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+                next_s = CURRENT_SEASON + 1  # MLS and other calendar-year leagues use next year label
 
-                today_fix, yest_fix, last_fix = await asyncio.gather(
-                    api_football_request("fixtures", {"team": tid, "date": today}),
-                    api_football_request("fixtures", {"team": tid, "date": yesterday}),
-                    api_football_request("fixtures", {"team": tid, "last": 3}),
+                (today_fix, yest_fix, last_fix,
+                 today_fix2, yest_fix2, last_fix2) = await asyncio.gather(
+                    api_football_request("fixtures", {"team": tid, "date": today, "season": CURRENT_SEASON}),
+                    api_football_request("fixtures", {"team": tid, "date": yesterday, "season": CURRENT_SEASON}),
+                    api_football_request("fixtures", {"team": tid, "last": 3, "season": CURRENT_SEASON}),
+                    api_football_request("fixtures", {"team": tid, "date": today, "season": next_s}),
+                    api_football_request("fixtures", {"team": tid, "date": yesterday, "season": next_s}),
+                    api_football_request("fixtures", {"team": tid, "last": 3, "season": next_s}),
                     return_exceptions=True
                 )
 
                 all_fixtures = []
                 seen = set()
-                for batch in [today_fix, yest_fix, last_fix]:
+                for batch in [today_fix, yest_fix, last_fix, today_fix2, yest_fix2, last_fix2]:
                     if isinstance(batch, Exception) or not batch:
                         continue
                     for f in batch:
@@ -521,15 +537,20 @@ async def _run_auto_settlement():
 
                     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
                     yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
-                    today_fix, yest_fix, last_fix = await asyncio.gather(
-                        api_football_request("fixtures", {"team": tid, "date": today}),
-                        api_football_request("fixtures", {"team": tid, "date": yesterday}),
-                        api_football_request("fixtures", {"team": tid, "last": 3}),
+                    next_s = CURRENT_SEASON + 1
+                    (today_fix, yest_fix, last_fix,
+                     today_fix2, yest_fix2, last_fix2) = await asyncio.gather(
+                        api_football_request("fixtures", {"team": tid, "date": today, "season": CURRENT_SEASON}),
+                        api_football_request("fixtures", {"team": tid, "date": yesterday, "season": CURRENT_SEASON}),
+                        api_football_request("fixtures", {"team": tid, "last": 3, "season": CURRENT_SEASON}),
+                        api_football_request("fixtures", {"team": tid, "date": today, "season": next_s}),
+                        api_football_request("fixtures", {"team": tid, "date": yesterday, "season": next_s}),
+                        api_football_request("fixtures", {"team": tid, "last": 3, "season": next_s}),
                         return_exceptions=True
                     )
                     all_fixtures = []
                     seen = set()
-                    for batch in [today_fix, yest_fix, last_fix]:
+                    for batch in [today_fix, yest_fix, last_fix, today_fix2, yest_fix2, last_fix2]:
                         if isinstance(batch, Exception) or not batch:
                             continue
                         for f in batch:
@@ -583,13 +604,15 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
         status = f.get("fixture", {}).get("status", {}).get("short", "")
         if status not in ("FT", "AET", "PEN"):
             continue
-        # Timestamp guard: fixture must have occurred AFTER the pick was saved
+        # Timestamp guard: fixture must have ended after the pick was saved.
+        # Allow picks saved up to 3 hours after kickoff (user may save mid-match).
+        # Only skip fixtures that kicked off MORE than 3 hours before the pick.
         fix_date = f.get("fixture", {}).get("date", "")
         if fix_date and pick_created_at:
             try:
                 fix_dt = datetime.fromisoformat(fix_date.replace("Z", "+00:00"))
-                if fix_dt < pick_created_at:
-                    continue  # This game happened before pick was made — skip
+                if fix_dt < (pick_created_at - timedelta(hours=3)):
+                    continue  # This game kicked off well before pick was made — skip
             except Exception:
                 pass
 
@@ -605,22 +628,52 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
 
         # Fallback: fuzzy name match (handles partial names like "Sporting KC" vs "Sporting Kansas City")
         if opponent:
-            opp_lower = strip_accents(opponent.lower())
+            # Resolve common team abbreviations to canonical names
+            _TEAM_ALIASES = {
+                "lafc": "los angeles fc",
+                "la galaxy": "los angeles galaxy",
+                "nycfc": "new york city fc",
+                "nyrb": "new york red bulls",
+                "red bulls": "new york red bulls",
+                "sporting kc": "sporting kansas city",
+                "inter miami": "inter miami cf",
+                "atl utd": "atlanta united",
+                "dc united": "d.c. united",
+                "cf montreal": "cf montreal",
+                "ne revolution": "new england revolution",
+                "psg": "paris saint-germain",
+                "man city": "manchester city",
+                "man utd": "manchester united",
+                "spurs": "tottenham hotspur",
+                "bvb": "borussia dortmund",
+                "mgladbach": "borussia monchengladbach",
+                "m'gladbach": "borussia monchengladbach",
+                "hertha": "hertha berlin",
+                "sociedad": "real sociedad",
+                "betis": "real betis",
+            }
+            opp_raw = strip_accents(opponent.lower().strip())
+            opp_lower = _TEAM_ALIASES.get(opp_raw, opp_raw)
             home_lower = strip_accents(home_name.lower())
             away_lower = strip_accents(away_name.lower())
-            # Substring both ways
-            name_hit = (
-                opp_lower in home_lower or opp_lower in away_lower or
-                home_lower in opp_lower or away_lower in opp_lower
-            )
+            # Also resolve home/away canonical names through alias map (reverse lookup)
+            home_resolved = _TEAM_ALIASES.get(home_lower, home_lower)
+            away_resolved = _TEAM_ALIASES.get(away_lower, away_lower)
+            # Substring both ways (try both raw and resolved)
+            name_hit = any([
+                opp_lower in home_lower, opp_lower in away_lower,
+                home_lower in opp_lower, away_lower in opp_lower,
+                opp_raw in home_lower, opp_raw in away_lower,
+                home_lower in opp_raw, away_lower in opp_raw,
+            ])
             # Also check first word match (e.g. "Sporting" in "Sporting Kansas City")
             if not name_hit:
                 opp_words = set(opp_lower.split())
                 home_words = set(home_lower.split())
                 away_words = set(away_lower.split())
-                # Require at least 2 shared words (or 1 if it's long enough) to avoid false positives
-                home_shared = opp_words & home_words - {"fc", "cf", "sc", "ac", "united", "city", "the"}
-                away_shared = opp_words & away_words - {"fc", "cf", "sc", "ac", "united", "city", "the"}
+                stopwords = {"fc", "cf", "sc", "ac", "united", "city", "the", "de", "1.", "sv", "vfb"}
+                home_shared = (opp_words & home_words) - stopwords
+                away_shared = (opp_words & away_words) - stopwords
                 name_hit = len(home_shared) >= 2 or len(away_shared) >= 2
             if name_hit:
                 matched = f
