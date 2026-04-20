@@ -34,18 +34,10 @@ _MATCH_DOM_TTL = 3600 * 6  # 6 hours
 async def predict(req: PredictionRequest):
     try:
         today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        cache_query = {
-            "player.id": req.playerId,
-            "propType": req.propType,
-            "line": req.line,
-            "_request.opponentId": req.opponentId,
-            "_created": {"$gte": today_str},
-        }
-        if req.playerId and req.playerId != 0:
-            cached = await db.predictions.find_one(cache_query, sort=[("_created", -1)])
-            if cached:
-                cached.pop("_id", None)
-                return cached
+        # Prediction cache REMOVED: returning stale cached predictions caused
+        # contradictions (e.g., wrong possession narrative when match data changed)
+        # and undermined user trust. Every request now runs full fresh analysis.
+        # Results are still stored in db.predictions for analytics/top-props.
 
         async def safe_fetch(endpoint, params, fallback=None):
             try:
@@ -4219,6 +4211,82 @@ Analyze ALL data thoroughly. Return JSON only."""
                     ]:
                         sharp = _re_sharp.sub(_re_sharp.escape(_bad_s), _good_s, sharp, flags=_re_sharp.IGNORECASE)
                     prediction["sharpSummary"] = sharp
+
+        # ── POSSESSION NARRATIVE GUARD: fix AI attributing possession to the wrong team ──
+        # e.g. AI says "Lanús possession mastery" when Lanús actually has 44% possession.
+        # Checks the final possession numbers against the narrative and corrects misattribution.
+        try:
+            import re as _re_poss
+            _poss_home_team   = match_dominance.get("homeTeamName", "")
+            _poss_away_team   = match_dominance.get("awayTeamName", "")
+            _home_poss_pct    = float(match_dominance.get("homePoss", 50) or 50)
+            _away_poss_pct    = float(match_dominance.get("awayPoss", 50) or 50)
+            # Normalise: who is the player's team vs opponent?
+            _player_team_norm = (corrected_team_name or "").lower()
+            _opp_team_norm    = (req.opponentName or "").lower()
+            _player_poss = match_dominance.get("expectedPoss", 50) or 50
+            _opp_poss    = match_dominance.get("oppExpectedPoss", 50) or 50
+            _poss_gap = abs(_player_poss - _opp_poss)
+
+            # Only correct when possession split is meaningful (>5pp gap)
+            if _poss_gap >= 5 and corrected_team_name and req.opponentName:
+                _dom_team  = corrected_team_name if _player_poss > _opp_poss else req.opponentName
+                _sub_team  = req.opponentName    if _player_poss > _opp_poss else corrected_team_name
+                _dom_team_lc = _dom_team.lower()
+                _sub_team_lc = _sub_team.lower()
+
+                # Possession-dominance keywords — phrases the AI uses for the controlling team
+                _dom_keywords = [
+                    "possession mastery", "possession dominance", "possession monster",
+                    "controls possession", "control possession", "controlling possession",
+                    "holds possession", "dominate possession", "possession edge",
+                    "possession advantage", "higher possession", "more possession",
+                    "keep the ball", "keeps the ball", "set the tempo", "sets the tempo",
+                    "dictate play", "dictates play", "possession-heavy",
+                ]
+
+                _tb = prediction.get("tacticalBreakdown", "")
+                if _tb:
+                    _tb_lower = _tb.lower()
+                    for _kw in _dom_keywords:
+                        # Find each occurrence of the keyword
+                        for _m in _re_poss.finditer(_re_poss.escape(_kw), _tb_lower):
+                            # Look at the 60 chars before the keyword to see which team is mentioned
+                            _ctx_start = max(0, _m.start() - 60)
+                            _ctx = _tb_lower[_ctx_start:_m.start()]
+                            # If the subordinate team (lower possession) is in context, that's wrong
+                            if _sub_team_lc in _ctx and _dom_team_lc not in _ctx:
+                                print(f"[POSS GUARD] AI attributed '{_kw}' to '{_sub_team}' ({_sub_team} has {_opp_poss if _sub_team_lc==_opp_team_norm else _player_poss:.0f}%) — correcting narrative.")
+                                # Swap team names in a sentence window around the keyword
+                                _sent_start = _tb_lower.rfind(".", 0, _m.start())
+                                _sent_end   = _tb.find(".", _m.end())
+                                if _sent_start < 0: _sent_start = 0
+                                if _sent_end < 0: _sent_end = len(_tb)
+                                _sent = _tb[_sent_start:_sent_end + 1]
+                                _corrected_sent = _re_poss.sub(
+                                    _re_poss.escape(_sub_team),
+                                    f"{_dom_team}",
+                                    _sent, flags=_re_poss.IGNORECASE
+                                )
+                                _tb = _tb[:_sent_start] + _corrected_sent + _tb[_sent_end + 1:]
+                                _tb_lower = _tb.lower()
+                    prediction["tacticalBreakdown"] = _tb
+
+                # Also check sharpSummary
+                _ss = prediction.get("sharpSummary", "")
+                if _ss:
+                    _ss_lower = _ss.lower()
+                    for _kw in _dom_keywords:
+                        for _m in _re_poss.finditer(_re_poss.escape(_kw), _ss_lower):
+                            _ctx = _ss_lower[max(0, _m.start()-60):_m.start()]
+                            if _sub_team_lc in _ctx and _dom_team_lc not in _ctx:
+                                _ss = _re_poss.sub(
+                                    _re_poss.escape(_sub_team), _dom_team, _ss, flags=_re_poss.IGNORECASE
+                                )
+                                _ss_lower = _ss.lower()
+                    prediction["sharpSummary"] = _ss
+        except Exception as _poss_guard_err:
+            print(f"[POSS GUARD] Error: {_poss_guard_err}")
 
         # ── CONFIDENCE LANGUAGE GUARD: strip overconfident phrasing on low-edge calls ──
         _is_coin_flip = prediction.get("coinFlip", False)
