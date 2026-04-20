@@ -207,6 +207,12 @@ export default function AnalyticsTab() {
               items={data.byPropType}
             />
 
+            <Section
+              title="By League"
+              icon="trophy"
+              items={data.byLeague ?? []}
+            />
+
             <Text style={styles.footer}>
               Based on {overall?.total} settled picks · Refreshes on pull
             </Text>

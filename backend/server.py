@@ -757,11 +757,41 @@ async def owner_analytics():
         else:
             break
 
+    LEAGUE_NAMES = {
+        39: "Premier League", 140: "La Liga", 135: "Serie A",
+        78: "Bundesliga", 61: "Ligue 1", 94: "Primeira Liga",
+        203: "Süper Lig", 253: "MLS", 262: "Liga MX",
+        2: "UEFA Champions League", 3: "UEFA Europa League",
+        848: "UEFA Conference League", 40: "Championship",
+        307: "Saudi Pro League", 128: "Liga Profesional",
+        71: "Brasileirão", 188: "A-League", 13: "UEFA CL Qualifiers",
+        254: "NWSL", 242: "Liga Pro Ecuador",
+    }
+
+    async def group_by_league():
+        pipeline = [
+            {"$match": match_filter},
+            {"$group": {"_id": {"key": "$leagueId", "result": "$result"}, "count": {"$sum": 1}}},
+        ]
+        rows = await db.picks.aggregate(pipeline).to_list(200)
+        buckets: dict = defaultdict(lambda: {"hit": 0, "miss": 0})
+        for r in rows:
+            key = r["_id"].get("key")
+            name = LEAGUE_NAMES.get(key, f"League {key}") if key else "Unknown"
+            buckets[name][r["_id"]["result"]] += r["count"]
+        out = []
+        for k, v in buckets.items():
+            t = v["hit"] + v["miss"]
+            out.append({"label": k, "hits": v["hit"], "misses": v["miss"],
+                        "total": t, "winPct": pct(v["hit"], t)})
+        return sorted(out, key=lambda x: -x["total"])
+
     direction = await group_by("recommendation")
     venue = await group_by("venue")
     position_raw = await group_by("position")
     position = [p for p in position_raw if p["total"] >= 3]
     prop_type = await group_by("propType")
+    league = await group_by_league()
 
     return {
         "overall": {
@@ -776,6 +806,7 @@ async def owner_analytics():
         "byVenue": venue,
         "byPosition": position,
         "byPropType": prop_type,
+        "byLeague": league,
     }
 
 

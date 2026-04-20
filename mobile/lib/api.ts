@@ -706,6 +706,7 @@ export interface AnalyticsData {
   byVenue: AnalyticsBucket[];
   byPosition: AnalyticsBucket[];
   byPropType: AnalyticsBucket[];
+  byLeague: AnalyticsBucket[];
 }
 
 export async function getOwnerAnalytics(): Promise<AnalyticsData> {
