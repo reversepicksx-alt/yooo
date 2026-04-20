@@ -810,6 +810,65 @@ async def owner_analytics():
     }
 
 
+@app.get("/api/admin/top-props-table")
+async def owner_top_props_table():
+    """Owner-only: granular pick aggregation grouped by prop+direction+venue+position+league."""
+    from config import db
+
+    LEAGUE_NAMES = {
+        39: "Premier League", 140: "La Liga", 135: "Serie A",
+        78: "Bundesliga", 61: "Ligue 1", 94: "Primeira Liga",
+        203: "Süper Lig", 253: "MLS", 262: "Liga MX",
+        2: "UEFA CL", 3: "UEFA EL", 848: "UEFA CL Conf",
+        40: "Championship", 307: "Saudi Pro", 128: "Liga Prof.",
+        71: "Brasileirão", 188: "A-League", 13: "UCL Qual.",
+        254: "NWSL", 242: "Liga Pro Ecu",
+    }
+
+    pipeline = [
+        {"$match": {"status": "settled", "result": {"$in": ["hit", "miss"]}}},
+        {"$group": {
+            "_id": {
+                "propType": "$propType",
+                "direction": "$recommendation",
+                "venue": "$venue",
+                "position": "$position",
+                "leagueId": "$leagueId",
+            },
+            "hits": {"$sum": {"$cond": [{"$eq": ["$result", "hit"]}, 1, 0]}},
+            "misses": {"$sum": {"$cond": [{"$eq": ["$result", "miss"]}, 1, 0]}},
+            "total": {"$sum": 1},
+        }},
+        {"$match": {"total": {"$gte": 3}}},
+    ]
+
+    rows = await db.picks.aggregate(pipeline).to_list(1000)
+    result = []
+    for r in rows:
+        gid = r["_id"]
+        hits = r["hits"]
+        misses = r["misses"]
+        total = r["total"]
+        win_pct = round(hits / total * 100, 1) if total > 0 else 0.0
+        league_id = gid.get("leagueId")
+        league_name = LEAGUE_NAMES.get(league_id, f"Lg {league_id}" if league_id else "Unknown")
+        result.append({
+            "propType": gid.get("propType") or "—",
+            "direction": (gid.get("direction") or "—").upper(),
+            "venue": (gid.get("venue") or "—").capitalize(),
+            "position": gid.get("position") or "—",
+            "hitPct": win_pct,
+            "hits": hits,
+            "misses": misses,
+            "total": total,
+            "avgOdds": None,
+            "league": league_name,
+        })
+
+    result.sort(key=lambda x: (-x["hitPct"], -x["total"]))
+    return {"rows": result, "totalRecords": len(result)}
+
+
 @app.post("/api/admin/force-settle")
 async def force_settle():
     """Immediately run the auto-settlement bot — use to unblock stuck picks."""

@@ -713,6 +713,28 @@ export async function getOwnerAnalytics(): Promise<AnalyticsData> {
   return apiCall('/api/admin/analytics');
 }
 
+export interface TopPropsRow {
+  propType: string;
+  direction: string;
+  venue: string;
+  position: string;
+  hitPct: number;
+  hits: number;
+  misses: number;
+  total: number;
+  avgOdds: number | null;
+  league: string;
+}
+
+export interface TopPropsData {
+  rows: TopPropsRow[];
+  totalRecords: number;
+}
+
+export async function getTopPropsTable(): Promise<TopPropsData> {
+  return apiCall('/api/admin/top-props-table');
+}
+
 export const PLAN_OPTIONS = [
   { key: 'weekly', name: 'Weekly', price: '$11/week' },
   { key: 'monthly', name: 'Monthly', price: '$39.99/month' },

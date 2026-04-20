@@ -77,6 +77,13 @@ export default function TabLayout() {
           tabBarIcon: ({ focused }) => <TabIcon name="stats-chart" focused={focused} />,
         } : { href: null }}
       />
+      <Tabs.Screen
+        name="toptable"
+        options={isOwner ? {
+          title: 'Props Table',
+          tabBarIcon: ({ focused }) => <TabIcon name="grid" focused={focused} />,
+        } : { href: null }}
+      />
       <Tabs.Screen name="intel" options={{ href: null }} />
       <Tabs.Screen name="chat" options={{ href: null }} />
     </Tabs>
