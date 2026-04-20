@@ -3632,6 +3632,61 @@ Analyze ALL data thoroughly. Return JSON only."""
                           f"({_pre_edge_conf} → {prediction['confidenceScore']})")
             prediction["edgeZ"] = round(_ez, 2)
 
+        # ── UNDERDOG GK SCORE-EFFECT RISK ────────────────────────────────────
+        # When a GK belongs to a heavy underdog team, losing badly forces constant
+        # ball recycling through the GK: defenders back-pass under pressure, team
+        # chases the game → GK volume EXPLODES above model estimates.
+        # Pattern: heavy underdog GK's ACTUAL passes far exceed UNDER line projections.
+        # Fix: boost the GK's projection upward AND cap UNDER confidence when implied
+        # win probability is very low.
+        #
+        # Thresholds (decimal odds → implied probability):
+        #   < 25% implied probability  = "heavy underdog" → +20% projection boost, UNDER capped 50%
+        #   25-35% implied probability = "clear underdog"  → +10% projection boost, UNDER capped 55%
+        # ─────────────────────────────────────────────────────────────────────
+        if _is_gk_dom and req.propType in {"pass_attempts", "passes"} and match_odds:
+            _bo = (match_odds or {}).get("bookmakerOdds", {})
+            _home_dec = _bo.get("homeWin") or _bo.get("home")
+            _away_dec = _bo.get("awayWin") or _bo.get("away")
+            _gk_venue = (player_venue or req.venue or "home").lower()
+            _team_dec = _home_dec if _gk_venue == "home" else _away_dec
+            if _team_dec:
+                try:
+                    _team_dec_f = float(_team_dec)
+                    _implied_prob = 1.0 / _team_dec_f if _team_dec_f > 0 else None
+                    if _implied_prob is not None:
+                        _current_proj = prediction.get("projectedValue", req.line)
+                        _rec_now = prediction.get("recommendation", "under")
+                        if _implied_prob < 0.25:
+                            # Heavy underdog — GK blow-up risk HIGH
+                            _gk_boost = 1.20
+                            _conf_cap = 50
+                            _risk_label = "HEAVY UNDERDOG"
+                        elif _implied_prob < 0.35:
+                            # Clear underdog — GK blow-up risk MODERATE
+                            _gk_boost = 1.10
+                            _conf_cap = 55
+                            _risk_label = "CLEAR UNDERDOG"
+                        else:
+                            _gk_boost = None
+                            _conf_cap = None
+                            _risk_label = None
+                        if _gk_boost:
+                            _boosted_proj = round(_current_proj * _gk_boost, 1)
+                            prediction["projectedValue"] = _boosted_proj
+                            prediction["recommendation"] = "over" if _boosted_proj > req.line else "under"
+                            if _rec_now == "under" and prediction.get("confidenceScore", 50) > _conf_cap:
+                                prediction["confidenceScore"] = _conf_cap
+                            prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [
+                                f"GK SCORE-EFFECT RISK: Team is a {_risk_label} (implied {_implied_prob:.0%} win prob) — GK volume tends to spike in heavy losses via back-pass recycling"
+                            ]
+                            print(f"[UNDERDOG GK] {_risk_label}: implied_prob={_implied_prob:.2f}, "
+                                  f"boost={_gk_boost}× {_current_proj} → {_boosted_proj} "
+                                  f"(line={req.line}, conf cap={_conf_cap}%)")
+                except (ValueError, TypeError, ZeroDivisionError):
+                    pass
+        # ─────────────────────────────────────────────────────────────────────
+
         # Recalculate confidence level after guards
         cs = prediction.get("confidenceScore", 50)
         prediction["confidenceLevel"] = "Very High" if cs >= 75 else "High" if cs >= 65 else "Medium" if cs >= 50 else "Low"
