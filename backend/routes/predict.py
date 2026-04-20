@@ -3846,6 +3846,17 @@ Analyze ALL data thoroughly. Return JSON only."""
         real_matchup["homeTeam"] = player_team_display if player_venue == "home" else req.opponentName
         real_matchup["awayTeam"] = req.opponentName if player_venue == "home" else player_team_display
 
+        # Expose team/opponent names at the TOP LEVEL of the response so the
+        # frontend can use them directly without digging into matchupOverview.
+        # The frontend checks prediction.opponentName, prediction.teamName,
+        # prediction.homeTeam, and prediction.awayTeam — these were missing,
+        # causing "HOME" / "AWAY" fallback labels in the possession bar.
+        prediction["opponentName"] = req.opponentName or ""
+        prediction["teamName"]     = corrected_team_name or req.teamName or ""
+        prediction["homeTeam"]     = real_matchup["homeTeam"]
+        prediction["awayTeam"]     = real_matchup["awayTeam"]
+        prediction["isHome"]       = (player_venue == "home")
+
         # 5. Deterministic keyMatchupFactor — MUST align with computed possession numbers.
         # Overrides AI-generated text to prevent contradictions like "Liverpool dominates
         # possession" when the model computed PSG at 62% and Liverpool at 38%.
