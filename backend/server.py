@@ -488,7 +488,14 @@ async def _auto_sync_square_payments():
 
 
 async def _auto_sync_whop_memberships():
-    """On startup, sync all active Whop memberships to local DB for fast email lookups."""
+    """
+    Honour existing Whop subscribers until their plan expires — no new Whop members added.
+
+    NEW-SIGNUP FREEZE: upsert=False means we ONLY update records already in our DB.
+    Any email not already present is ignored, so new Whop signups never gain access.
+    Members who cancel/expire on Whop get marked 'expired' here automatically.
+    All new subscribers must go through Stripe.
+    """
     import asyncio, httpx, os
     await asyncio.sleep(8)
     try:
@@ -498,7 +505,7 @@ async def _auto_sync_whop_memberships():
             return
 
         from datetime import datetime, timezone
-        synced = 0
+        still_active_emails: set = set()
         page = 1
 
         async with httpx.AsyncClient(timeout=15.0) as client:
@@ -524,25 +531,34 @@ async def _auto_sync_whop_memberships():
                     is_active = m.get("valid") or m.get("status") == "active"
                     if not is_active:
                         continue
+                    still_active_emails.add(email)
+                    # upsert=False: only update EXISTING records — never create new Whop members
                     await db.whop_subscriptions.update_one(
                         {"email": email},
                         {"$set": {
-                            "email": email,
                             "status": "active",
                             "whop_id": m.get("id"),
                             "plan": m.get("plan"),
                             "updatedAt": datetime.now(timezone.utc).isoformat(),
                         }},
-                        upsert=True,
+                        upsert=False,
                     )
-                    synced += 1
 
                 pagination = data.get("pagination", {})
                 if page >= pagination.get("total_page", 1):
                     break
                 page += 1
 
-        print(f"[WHOP SYNC] Synced {synced} active memberships to local DB")
+        # Expire any existing Whop records whose plans have since cancelled/lapsed on Whop
+        if still_active_emails:
+            expired = await db.whop_subscriptions.update_many(
+                {"email": {"$nin": list(still_active_emails)}, "status": "active"},
+                {"$set": {"status": "expired", "updatedAt": datetime.now(timezone.utc).isoformat()}},
+            )
+            if expired.modified_count:
+                print(f"[WHOP SYNC] Expired {expired.modified_count} lapsed Whop sub(s)")
+
+        print(f"[WHOP SYNC] Honoured {len(still_active_emails)} existing Whop subs. New signups frozen — Stripe only.")
 
     except Exception as e:
         print(f"[WHOP SYNC] Error: {e}")
