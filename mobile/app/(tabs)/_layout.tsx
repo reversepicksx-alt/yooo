@@ -15,6 +15,7 @@ function TabIcon({ name, focused }: { name: keyof typeof Ionicons.glyphMap; focu
 
 export default function TabLayout() {
   const { session, isLoading } = useAuth();
+  const isOwner = session?.accessType?.toLowerCase() === 'owner';
 
   useEffect(() => {
     if (!isLoading && !session) {
@@ -68,6 +69,13 @@ export default function TabLayout() {
           title: 'Account',
           tabBarIcon: ({ focused }) => <TabIcon name="person-circle" focused={focused} />,
         }}
+      />
+      <Tabs.Screen
+        name="analytics"
+        options={isOwner ? {
+          title: 'Lab',
+          tabBarIcon: ({ focused }) => <TabIcon name="flask" focused={focused} />,
+        } : { href: null }}
       />
       <Tabs.Screen name="intel" options={{ href: null }} />
       <Tabs.Screen name="chat" options={{ href: null }} />

@@ -705,6 +705,80 @@ async def trigger_calibration(sport: str = "soccer"):
     return result
 
 
+@app.get("/api/admin/analytics")
+async def owner_analytics():
+    """Owner-only: return bot performance breakdown by direction, venue, position, prop type."""
+    from config import db
+    from collections import defaultdict
+
+    match_filter = {"status": "settled", "result": {"$in": ["hit", "miss"]}}
+
+    def pct(h, t):
+        return round(h / t * 100, 1) if t > 0 else 0.0
+
+    async def group_by(field: str):
+        pipeline = [
+            {"$match": match_filter},
+            {"$group": {"_id": {"key": f"${field}", "result": "$result"}, "count": {"$sum": 1}}},
+        ]
+        rows = await db.picks.aggregate(pipeline).to_list(200)
+        buckets: dict = defaultdict(lambda: {"hit": 0, "miss": 0})
+        for r in rows:
+            key = r["_id"].get("key") or "Unknown"
+            buckets[key][r["_id"]["result"]] += r["count"]
+        out = []
+        for k, v in buckets.items():
+            t = v["hit"] + v["miss"]
+            out.append({"label": k, "hits": v["hit"], "misses": v["miss"],
+                        "total": t, "winPct": pct(v["hit"], t)})
+        return sorted(out, key=lambda x: -x["winPct"])
+
+    total_docs = await db.picks.count_documents(match_filter)
+    total_hits = await db.picks.count_documents({"status": "settled", "result": "hit"})
+
+    # Streak: last N settled picks in chronological order
+    recent_raw = await db.picks.find(
+        match_filter,
+        {"_id": 0, "result": 1, "playerName": 1, "timestamp": 1}
+    ).sort("timestamp", -1).to_list(20)
+    recent_streak = []
+    for p in reversed(recent_raw):
+        recent_streak.append({"result": p.get("result"), "name": p.get("playerName", "")})
+
+    # Current win/loss streak
+    streak_count = 0
+    streak_type = None
+    for p in recent_raw:
+        r = p.get("result")
+        if streak_type is None:
+            streak_type = r
+        if r == streak_type:
+            streak_count += 1
+        else:
+            break
+
+    direction = await group_by("recommendation")
+    venue = await group_by("venue")
+    position_raw = await group_by("position")
+    position = [p for p in position_raw if p["total"] >= 3]
+    prop_type = await group_by("propType")
+
+    return {
+        "overall": {
+            "hits": total_hits,
+            "misses": total_docs - total_hits,
+            "total": total_docs,
+            "winPct": pct(total_hits, total_docs),
+        },
+        "streak": {"type": streak_type, "count": streak_count},
+        "recentForm": recent_streak[:10],
+        "byDirection": direction,
+        "byVenue": venue,
+        "byPosition": position,
+        "byPropType": prop_type,
+    }
+
+
 @app.post("/api/admin/force-settle")
 async def force_settle():
     """Immediately run the auto-settlement bot — use to unblock stuck picks."""

@@ -690,6 +690,28 @@ export async function resubscribeCheckout(email: string, planKey: string, access
   });
 }
 
+export interface AnalyticsBucket {
+  label: string;
+  hits: number;
+  misses: number;
+  total: number;
+  winPct: number;
+}
+
+export interface AnalyticsData {
+  overall: { hits: number; misses: number; total: number; winPct: number };
+  streak: { type: string | null; count: number };
+  recentForm: { result: string; name: string }[];
+  byDirection: AnalyticsBucket[];
+  byVenue: AnalyticsBucket[];
+  byPosition: AnalyticsBucket[];
+  byPropType: AnalyticsBucket[];
+}
+
+export async function getOwnerAnalytics(): Promise<AnalyticsData> {
+  return apiCall('/api/admin/analytics');
+}
+
 export const PLAN_OPTIONS = [
   { key: 'weekly', name: 'Weekly', price: '$11/week' },
   { key: 'monthly', name: 'Monthly', price: '$39.99/month' },
