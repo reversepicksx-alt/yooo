@@ -70,13 +70,7 @@ export default function TabLayout() {
           tabBarIcon: ({ focused }) => <TabIcon name="person-circle" focused={focused} />,
         }}
       />
-      <Tabs.Screen
-        name="analytics"
-        options={isOwner ? {
-          title: 'Data Analysis',
-          tabBarIcon: ({ focused }) => <TabIcon name="stats-chart" focused={focused} />,
-        } : { href: null }}
-      />
+      <Tabs.Screen name="analytics" options={{ href: null }} />
       <Tabs.Screen
         name="toptable"
         options={isOwner ? {

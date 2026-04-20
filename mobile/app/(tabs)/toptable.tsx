@@ -43,7 +43,8 @@ const COLUMNS: ColDef[] = [
   { key: 'hits',      label: 'H',         width: 34,  align: 'center' },
   { key: 'misses',    label: 'M',         width: 34,  align: 'center' },
   { key: 'total',     label: 'Bets',      width: 42,  align: 'center' },
-  { key: 'avgOdds',   label: 'Odds',      width: 48,  align: 'center' },
+  { key: 'avgLine',   label: 'Avg Line',  width: 62,  align: 'center' },
+  { key: 'matchType', label: 'Type',      width: 50,  align: 'center' },
   { key: 'league',    label: 'League',    width: 88,  align: 'left'   },
 ];
 
@@ -100,7 +101,8 @@ export default function TopTableTab() {
   const { data, isLoading, refetch, isRefetching } = useQuery({
     queryKey: ['topPropsTable'],
     queryFn: getTopPropsTable,
-    staleTime: 60_000,
+    staleTime: 30_000,
+    refetchInterval: 30_000,
   });
 
   const rows = data?.rows ?? [];
@@ -245,10 +247,24 @@ export default function TopTableTab() {
                         );
                       }
 
-                      if (col.key === 'avgOdds') {
+                      if (col.key === 'avgLine') {
+                        const lineVal = raw as number | null;
                         return (
                           <View key={col.key} style={[styles.td, { width: col.width, alignItems: 'center' }]}>
-                            <Text style={styles.tdMuted}>—</Text>
+                            <Text style={styles.tdText}>
+                              {lineVal != null ? lineVal.toFixed(1) : '—'}
+                            </Text>
+                          </View>
+                        );
+                      }
+
+                      if (col.key === 'matchType') {
+                        const isCup = String(raw) === 'Cup';
+                        return (
+                          <View key={col.key} style={[styles.td, { width: col.width, alignItems: 'center' }]}>
+                            <Text style={[styles.matchTypeText, { color: isCup ? '#FFCC00' : Colors.textTertiary }]}>
+                              {String(raw ?? '—')}
+                            </Text>
                           </View>
                         );
                       }
@@ -404,6 +420,11 @@ const styles = StyleSheet.create({
   dirText: {
     fontSize: 10,
     fontWeight: '700',
+    letterSpacing: 0.3,
+  },
+  matchTypeText: {
+    fontSize: 10,
+    fontWeight: '600',
     letterSpacing: 0.3,
   },
 

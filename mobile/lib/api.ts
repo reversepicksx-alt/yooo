@@ -722,7 +722,8 @@ export interface TopPropsRow {
   hits: number;
   misses: number;
   total: number;
-  avgOdds: number | null;
+  avgLine: number | null;
+  matchType: string;
   league: string;
 }
 

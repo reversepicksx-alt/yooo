@@ -825,6 +825,8 @@ async def owner_top_props_table():
         254: "NWSL", 242: "Liga Pro Ecu",
     }
 
+    CUP_LEAGUE_IDS = {2, 3, 848, 13}
+
     pipeline = [
         {"$match": {"status": "settled", "result": {"$in": ["hit", "miss"]}}},
         {"$group": {
@@ -835,9 +837,10 @@ async def owner_top_props_table():
                 "position": "$position",
                 "leagueId": "$leagueId",
             },
-            "hits": {"$sum": {"$cond": [{"$eq": ["$result", "hit"]}, 1, 0]}},
-            "misses": {"$sum": {"$cond": [{"$eq": ["$result", "miss"]}, 1, 0]}},
-            "total": {"$sum": 1},
+            "hits":    {"$sum": {"$cond": [{"$eq": ["$result", "hit"]}, 1, 0]}},
+            "misses":  {"$sum": {"$cond": [{"$eq": ["$result", "miss"]}, 1, 0]}},
+            "total":   {"$sum": 1},
+            "avgLine": {"$avg": "$line"},
         }},
         {"$match": {"total": {"$gte": 3}}},
     ]
@@ -852,17 +855,21 @@ async def owner_top_props_table():
         win_pct = round(hits / total * 100, 1) if total > 0 else 0.0
         league_id = gid.get("leagueId")
         league_name = LEAGUE_NAMES.get(league_id, f"Lg {league_id}" if league_id else "Unknown")
+        avg_line_raw = r.get("avgLine")
+        avg_line = round(avg_line_raw, 1) if avg_line_raw is not None else None
+        match_type = "Cup" if league_id in CUP_LEAGUE_IDS else "League"
         result.append({
-            "propType": gid.get("propType") or "—",
+            "propType":  gid.get("propType") or "—",
             "direction": (gid.get("direction") or "—").upper(),
-            "venue": (gid.get("venue") or "—").capitalize(),
-            "position": gid.get("position") or "—",
-            "hitPct": win_pct,
-            "hits": hits,
-            "misses": misses,
-            "total": total,
-            "avgOdds": None,
-            "league": league_name,
+            "venue":     (gid.get("venue") or "—").capitalize(),
+            "position":  gid.get("position") or "—",
+            "hitPct":    win_pct,
+            "hits":      hits,
+            "misses":    misses,
+            "total":     total,
+            "avgLine":   avg_line,
+            "matchType": match_type,
+            "league":    league_name,
         })
 
     result.sort(key=lambda x: (-x["hitPct"], -x["total"]))
