@@ -732,14 +732,6 @@ export default function ScanScreen() {
                           </Text>
                         </View>
                       )}
-                      {pFirst > 0 && (
-                        <View style={styles.gsSummaryPill}>
-                          <Text style={styles.gsSummaryLabel}>OPP SCORES 1ST</Text>
-                          <Text style={[styles.gsSummaryVal, { color: pFirst > 0.5 ? '#F97316' : '#9CA3AF' }]}>
-                            {Math.round(pFirst * 100)}%
-                          </Text>
-                        </View>
-                      )}
                       {infl !== 1 && (
                         <View style={styles.gsSummaryPill}>
                           <Text style={styles.gsSummaryLabel}>TRAIL INFLATION</Text>
@@ -840,6 +832,43 @@ export default function ScanScreen() {
                         </View>
                       );
                     })()}
+
+                    {/* First to Score */}
+                    {(() => {
+                      const pOppFirst = prediction.gameScript?.p_opponent_scores_first;
+                      if (pOppFirst == null) return null;
+                      const pTeamFirst = Math.round((1 - pOppFirst) * 100);
+                      const pOppFirstPct = Math.round(pOppFirst * 100);
+                      const teamShort = (prediction.teamName || 'TEAM').split(' ').pop()?.slice(0, 8).toUpperCase() || 'TEAM';
+                      const oppShort  = (prediction.opponentName || 'OPP').split(' ').pop()?.slice(0, 8).toUpperCase() || 'OPP';
+                      const teamFavoured = pTeamFirst >= pOppFirstPct;
+                      return (
+                        <View style={styles.ftsWrap}>
+                          <View style={styles.ftsHeader}>
+                            <Ionicons name="football-outline" size={12} color={Colors.textSecondary} />
+                            <Text style={styles.ftsLabel}>FIRST TO SCORE</Text>
+                          </View>
+                          <View style={styles.ftsBars}>
+                            <View style={styles.ftsBarRow}>
+                              <Text style={[styles.ftsTeamLabel, { color: teamFavoured ? Colors.success : Colors.textSecondary }]}>{teamShort}</Text>
+                              <View style={styles.ftsBarBg}>
+                                <View style={[styles.ftsBarFill, { width: `${pTeamFirst}%` as any, backgroundColor: teamFavoured ? Colors.success : '#374151' }]} />
+                              </View>
+                              <Text style={[styles.ftsPct, { color: teamFavoured ? Colors.success : Colors.textSecondary }]}>{pTeamFirst}%</Text>
+                            </View>
+                            <View style={styles.ftsBarRow}>
+                              <Text style={[styles.ftsTeamLabel, { color: !teamFavoured ? '#F97316' : Colors.textSecondary }]}>{oppShort}</Text>
+                              <View style={styles.ftsBarBg}>
+                                <View style={[styles.ftsBarFill, { width: `${pOppFirstPct}%` as any, backgroundColor: !teamFavoured ? '#F97316' : '#374151' }]} />
+                              </View>
+                              <Text style={[styles.ftsPct, { color: !teamFavoured ? '#F97316' : Colors.textSecondary }]}>{pOppFirstPct}%</Text>
+                            </View>
+                          </View>
+                          <Text style={styles.ftsNote}>Based on last 15 fixtures · HT score analysis</Text>
+                        </View>
+                      );
+                    })()}
+
                     {prediction.expectedGameType && (
                       <View style={styles.gameTypeWrap}>
                         <Text style={styles.gameTypeLabel}>GAME TYPE</Text>
@@ -1358,44 +1387,6 @@ export default function ScanScreen() {
               </View>
             )}
 
-            {/* ─── POSITION COMPARISON (PROOF) ─── */}
-            {prediction.positionComparison && prediction.positionComparison.players && prediction.positionComparison.players.length > 0 && (() => {
-              const pc = prediction.positionComparison;
-              return (
-                <View style={styles.pcCard}>
-                  <View style={styles.pcHeader}>
-                    <View style={styles.pcTitleRow}>
-                      <Ionicons name="people-outline" size={13} color={Colors.primary} />
-                      <Text style={styles.pcTitle}>OPPONENT PROFILE — WHO WAS SAMPLED</Text>
-                    </View>
-                    <Text style={styles.pcSub}>{pc.positionShort}s vs {pc.opponent} ({(pc.venue || '').toUpperCase()}) · avg {pc.avgStatValue}</Text>
-                  </View>
-                  {pc.players.slice(0, 7).map((p: Record<string, unknown>, i: number) => {
-                    const val = p.statValue as number;
-                    const over = prediction.line != null && val >= (prediction.line as number);
-                    const saveRate = p.saveRate as number | undefined;
-                    const seasonAvg = p.seasonAvgStat as number | undefined;
-                    const isSavesProp = prediction.propType === 'saves';
-                    const isPassProp = ['pass_attempts','passes','key_passes','crosses'].includes(prediction.propType || '');
-                    return (
-                      <View key={i} style={[styles.pcRow, i > 0 && styles.pcRowBorder]}>
-                        <View style={styles.pcLeft}>
-                          <Text style={styles.pcPlayerName} numberOfLines={1}>{p.name as string}</Text>
-                          <Text style={styles.pcMeta} numberOfLines={1}>{p.team as string} · {(p.date as string)?.slice(0, 10) ?? '—'} · {p.minutes as number}'</Text>
-                          {isSavesProp && saveRate != null && (
-                            <Text style={styles.pcStatBadge}>{saveRate.toFixed(1)}% SR</Text>
-                          )}
-                          {isPassProp && seasonAvg != null && (
-                            <Text style={styles.pcStatBadge}>avg {seasonAvg} passes/g</Text>
-                          )}
-                        </View>
-                        <Text style={[styles.pcVal, { color: over ? Colors.success : Colors.error }]}>{val}</Text>
-                      </View>
-                    );
-                  })}
-                </View>
-              );
-            })()}
 
             {saveError && (
               <View style={styles.inlineError}>
@@ -1689,6 +1680,16 @@ const styles = StyleSheet.create({
   moneylineHeader: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   moneylineLabel: { fontSize: 10, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 1.2 },
   mlDisclaimer: { fontSize: 9, color: Colors.textTertiary, marginTop: 4, fontStyle: 'italic' },
+  ftsWrap: { marginTop: 10, gap: 6 },
+  ftsHeader: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  ftsLabel: { fontSize: 10, fontWeight: '700', color: Colors.textTertiary, letterSpacing: 1 },
+  ftsBars: { gap: 5 },
+  ftsBarRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  ftsTeamLabel: { width: 52, fontSize: 9, fontWeight: '700', letterSpacing: 0.5 },
+  ftsBarBg: { flex: 1, height: 6, backgroundColor: '#1a1a1a', borderRadius: 3, overflow: 'hidden' },
+  ftsBarFill: { height: '100%', borderRadius: 3 },
+  ftsPct: { width: 30, fontSize: 10, fontWeight: '800', textAlign: 'right', fontVariant: ['tabular-nums'] as any },
+  ftsNote: { fontSize: 8, color: Colors.textTertiary, fontStyle: 'italic' },
   moneylinePills: { flexDirection: 'row', gap: 6 },
   mlPill: {
     flex: 1, backgroundColor: '#1a1a1a', borderRadius: 8, paddingVertical: 8,

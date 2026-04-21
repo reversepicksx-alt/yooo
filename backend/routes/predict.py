@@ -4636,8 +4636,7 @@ Analyze ALL data thoroughly. Return JSON only."""
             prediction["playerGameLogs"] = historical_data["playerGameLogs"]
         if gk_formula_data:
             prediction["gkFormula"] = gk_formula_data
-        if position_comp_data:
-            prediction["positionComparison"] = position_comp_data
+        # positionComparison removed — not shown in UI
 
         await db.predictions.insert_one(prediction)
         prediction.pop("_id", None)

@@ -416,20 +416,15 @@ async def get_game_script_intel(
     pos_depth = _get_positional_trailing_depth(venue_logs, prop_type, venue)
     result["positional_depth"] = pos_depth
 
-    # ── Run Layer 3 + first-goal prob in parallel ─────────────────────────────
-    pos_code = _api_position_code(player_position)
-    facilitation_task  = _get_opponent_facilitation(opponent_id, pos_code, prop_type)
-    first_goal_task    = _get_opponent_first_goal_prob(opponent_id)
-
-    facilitation, p_opp_first = await asyncio.gather(
-        facilitation_task, first_goal_task, return_exceptions=True
-    )
-    if isinstance(facilitation, Exception):
-        facilitation = {}
-    if isinstance(p_opp_first, Exception):
+    # ── First-goal probability (Layer 3 facilitation removed) ─────────────────
+    pos_code   = _api_position_code(player_position)
+    facilitation = {}
+    try:
+        p_opp_first = await asyncio.wait_for(_get_opponent_first_goal_prob(opponent_id), timeout=12.0)
+    except Exception:
         p_opp_first = None
 
-    result["opponent_facilitation"]    = facilitation or {}
+    result["opponent_facilitation"]    = {}
     result["p_opponent_scores_first"]  = p_opp_first
 
     # ── Script-adjusted projection ───────────────────────────────────────────
@@ -491,12 +486,6 @@ async def get_game_script_intel(
         parts.append(
             f"vs dominant opponents (2+ goals, n={dom_n}): {dom_avg} avg when trailing."
         )
-    if fac_avg and fac_n >= 2 and pos_code:
-        pos_label = {"D": "defenders", "M": "midfielders", "G": "goalkeepers", "F": "forwards"}.get(pos_code, "players")
-        parts.append(
-            f"When leading, opponent allows {fac_avg} passes to opposing {pos_label} (n={fac_n} games) — "
-            f"{'high facilitation' if fac_avg >= 35 else 'moderate facilitation'}."
-        )
     if p_o_pct:
         parts.append(f"Opponent scores first {p_o_pct}% of their games.")
     if result["trailing_near_line"] and infl_proj:
@@ -537,16 +526,6 @@ async def get_game_script_intel(
             "projected_stat": dom_avg,
             "vs_line":        round(dom_avg - line, 1) if line > 0 else None,
             "direction":      "OVER" if line > 0 and dom_avg > line else "UNDER",
-        })
-    # Layer 3 scenario: opponent facilitation when leading
-    if fac_avg is not None and fac_n >= 2:
-        pos_label = {"D": "Defender", "M": "Midfielder", "G": "Goalkeeper", "F": "Forward"}.get(pos_code, "Player")
-        scenarios.append({
-            "label":          f"Opp Allows to {pos_label}s (leading, n={fac_n})",
-            "probability":    None,
-            "projected_stat": fac_avg,
-            "vs_line":        round(fac_avg - line, 1) if line > 0 else None,
-            "direction":      "OVER" if line > 0 and fac_avg > line else "UNDER",
         })
     result["scenarios"] = scenarios
 
