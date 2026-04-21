@@ -1807,8 +1807,31 @@ async def predict(req: PredictionRequest):
                 "crosses": "passes_crosses", "clearances": "tackles_clearances",
                 "duels_won": "duels_won", "yellow_cards": "cards_yellow",
             }
+            # VENUE-SPLIT PRIOR for possession-sensitive props
+            # Pass attempts/passes vary by 10-15 for GKs and 5-10 for outfield players
+            # between home and away games. Using combined logs biases the prior toward
+            # whichever venue had more recent games and systematically over/under-projects.
+            # Fix: use only venue-matching logs as the primary sample when ≥5 are available.
+            # Saves also differ by venue (away GKs face more shots) so apply the same logic.
+            _VENUE_SPLIT_PROPS = {"pass_attempts", "passes", "saves"}
+            _bayes_logs = player_game_logs
+            if req.propType in _VENUE_SPLIT_PROPS and player_venue:
+                _venue_logs = [g for g in player_game_logs if g.get("venue") == player_venue]
+                if len(_venue_logs) >= 5:
+                    _bayes_logs = _venue_logs
+                    print(
+                        f"[VENUE PRIOR] {req.playerName}/{req.propType}: "
+                        f"using {len(_venue_logs)} {player_venue} logs "
+                        f"(dropped {len(player_game_logs) - len(_venue_logs)} opposite-venue logs)"
+                    )
+                else:
+                    print(
+                        f"[VENUE PRIOR] {req.playerName}/{req.propType}: "
+                        f"only {len(_venue_logs)} {player_venue} logs — keeping combined {len(player_game_logs)}"
+                    )
+
             early_bayes = compute_bayesian_projection(
-                game_logs=player_game_logs,
+                game_logs=_bayes_logs,
                 prop_type=req.propType,
                 line=req.line,
                 venue=player_venue,
@@ -1819,7 +1842,7 @@ async def predict(req: PredictionRequest):
                 hyperprior_mean=_bayes_hyperprior,
                 expected_minutes=_exp_mins,
             )
-            print(f"[BAYESIAN] {req.playerName}/{req.propType}: samples={early_bayes.get('priorSamples') if early_bayes else 0}, logs={len(player_game_logs)}")
+            print(f"[BAYESIAN] {req.playerName}/{req.propType}: samples={early_bayes.get('priorSamples') if early_bayes else 0}, logs={len(_bayes_logs)} (venue={player_venue})")
 
             # ── T003: Redistribution model ───────────────────────────────────
             # When a teammate of the same position is absent, the subject player
@@ -2737,10 +2760,13 @@ KEY PRINCIPLE: A GK defending deep = maximum back-pass recycling. A GK on a domi
             opp_avg_shots = round(sum(s["total"] for s in opp_shots_list) / len(opp_shots_list), 1) if opp_shots_list else 0
             opp_avg_sot = round(sum(s["on_target"] for s in opp_shots_list) / len(opp_shots_list), 1) if opp_shots_list else 0
 
-            # 2. GK save rate from LAST 5-7 game logs only (recent form)
+            # 2. GK save rate — prefer venue-specific logs (away GKs face more shots,
+            # mixing home/away inflates the save-rate baseline in the wrong direction).
             gk_saves_list = []
             gk_ga_from_logs = []
-            recent_gk_logs = [g for g in player_game_logs if g.get("goals_saves") is not None and g.get("minutes", 0) > 0][:7]
+            _saves_venue_logs = [g for g in player_game_logs if g.get("venue") == player_venue and g.get("goals_saves") is not None and g.get("minutes", 0) > 0]
+            _saves_pool = _saves_venue_logs if len(_saves_venue_logs) >= 5 else player_game_logs
+            recent_gk_logs = [g for g in _saves_pool if g.get("goals_saves") is not None and g.get("minutes", 0) > 0][:7]
             for g in recent_gk_logs:
                 gk_saves_list.append(g.get("goals_saves"))
                 # Compute GA directly from game score + venue (most reliable source)
@@ -3868,6 +3894,30 @@ Analyze ALL data thoroughly. Return JSON only."""
                 v = s.get("value")
                 if v is not None:
                     s["value"] = int(round(v))
+
+        # ═══════════════════════════════════════════════════════════════════
+        # PASS GATE — Edge too narrow to recommend confidently
+        # If the model's projection is within 8% of the book's line, the
+        # real edge is inside the noise band of the model itself — variance
+        # in a single match easily swings the outcome either way.
+        # Recommending OVER/UNDER in this zone burns more picks than it wins.
+        # ═══════════════════════════════════════════════════════════════════
+        _pass_proj = prediction.get("projectedValue", req.line)
+        if req.line > 0 and _pass_proj is not None:
+            _edge_pct = abs(_pass_proj - req.line) / req.line * 100
+            if _edge_pct < 8.0:
+                _leaning = "over" if _pass_proj > req.line else "under"
+                prediction["recommendation"] = "PASS"
+                prediction["passReason"] = (
+                    f"Projection ({_pass_proj}) is within {_edge_pct:.1f}% of line ({req.line}). "
+                    f"Edge too narrow to call confidently — skip this one."
+                )
+                prediction["passLeaning"] = _leaning.upper()
+                print(
+                    f"[PASS GATE] {req.playerName} {req.propType}: "
+                    f"proj={_pass_proj}, line={req.line}, gap={_edge_pct:.1f}% < 8% → PASS "
+                    f"(leans {_leaning.upper()})"
+                )
 
         prediction.setdefault("probabilityCurve", [])
         prediction.setdefault("reasoning", "Analysis based on available data.")
