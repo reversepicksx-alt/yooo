@@ -619,6 +619,110 @@ export default function ScanScreen() {
                 );
               })()}
 
+              {/* Game Script Intelligence */}
+              {(() => {
+                const gs = prediction.gameScript;
+                if (!gs || (!gs.trailing_avg && !gs.normal_avg)) return null;
+                const infl = gs.inflation_factor ?? 1;
+                const pTrail = gs.p_team_trails ?? 0;
+                const pFirst = gs.p_opponent_scores_first ?? 0;
+                const isInflated = infl >= 1.10;
+                const isDeflated = infl <= 0.90;
+                const accentColor = isInflated ? '#F97316' : isDeflated ? '#60A5FA' : '#9CA3AF';
+                const iconName = isInflated ? 'flame' : isDeflated ? 'snow' : 'analytics';
+                return (
+                  <View style={styles.gsCard}>
+                    <View style={styles.gsHeader}>
+                      <Ionicons name={iconName as any} size={12} color={accentColor} />
+                      <Text style={[styles.gsTitle, { color: accentColor }]}>GAME SCRIPT INTELLIGENCE</Text>
+                    </View>
+
+                    {/* Scenario bars */}
+                    {(gs.scenarios ?? []).map((s, i) => {
+                      const isTrailScenario = s.label.toLowerCase().includes('trail');
+                      const scenarioAccent = isTrailScenario
+                        ? (infl >= 1.10 ? '#F97316' : infl <= 0.90 ? '#60A5FA' : '#9CA3AF')
+                        : '#6B7280';
+                      const prob = s.probability ?? 0;
+                      const barPct = Math.min(100, Math.round(prob * 100));
+                      const vsLine = s.vs_line;
+                      return (
+                        <View key={i} style={styles.gsScenario}>
+                          <View style={styles.gsScenarioHeader}>
+                            <Text style={[styles.gsScenarioLabel, { color: scenarioAccent }]}>
+                              {s.label.toUpperCase()}
+                            </Text>
+                            <Text style={styles.gsScenarioProb}>{Math.round(prob * 100)}% chance</Text>
+                          </View>
+                          <View style={styles.gsBarBg}>
+                            <View style={[styles.gsBarFill, { width: `${barPct}%` as any, backgroundColor: scenarioAccent }]} />
+                          </View>
+                          <View style={styles.gsScenarioStats}>
+                            <Text style={styles.gsStatVal}>
+                              Proj: <Text style={{ color: scenarioAccent }}>{s.projected_stat}</Text>
+                            </Text>
+                            {vsLine !== undefined && vsLine !== null && (
+                              <Text style={[styles.gsStatVal, { color: vsLine >= 0 ? '#4ADE80' : '#F87171' }]}>
+                                {vsLine >= 0 ? `+${vsLine}` : `${vsLine}`} vs line
+                              </Text>
+                            )}
+                            <Text style={[styles.gsStatBadge, {
+                              color: s.direction === 'OVER' ? '#4ADE80' : '#F87171',
+                              borderColor: s.direction === 'OVER' ? '#4ADE80' : '#F87171',
+                            }]}>
+                              {s.direction}
+                            </Text>
+                          </View>
+                        </View>
+                      );
+                    })}
+
+                    {/* Summary row */}
+                    <View style={styles.gsSummaryRow}>
+                      {pTrail > 0 && (
+                        <View style={styles.gsSummaryPill}>
+                          <Text style={styles.gsSummaryLabel}>P(TRAIL)</Text>
+                          <Text style={[styles.gsSummaryVal, { color: pTrail > 0.45 ? '#F97316' : '#9CA3AF' }]}>
+                            {Math.round(pTrail * 100)}%
+                          </Text>
+                        </View>
+                      )}
+                      {pFirst > 0 && (
+                        <View style={styles.gsSummaryPill}>
+                          <Text style={styles.gsSummaryLabel}>OPP SCORES 1ST</Text>
+                          <Text style={[styles.gsSummaryVal, { color: pFirst > 0.5 ? '#F97316' : '#9CA3AF' }]}>
+                            {Math.round(pFirst * 100)}%
+                          </Text>
+                        </View>
+                      )}
+                      {infl !== 1 && (
+                        <View style={styles.gsSummaryPill}>
+                          <Text style={styles.gsSummaryLabel}>TRAIL INFLATION</Text>
+                          <Text style={[styles.gsSummaryVal, { color: accentColor }]}>
+                            {infl >= 1 ? `+${Math.round((infl - 1) * 100)}%` : `${Math.round((infl - 1) * 100)}%`}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+
+                    {/* Knife-edge warning */}
+                    {gs.trailing_near_line && (
+                      <View style={styles.gsWarningBanner}>
+                        <Ionicons name="warning" size={11} color="#FBBF24" />
+                        <Text style={styles.gsWarningText}>
+                          KNIFE EDGE — Trailing scenario lands right on the line. This bet is thin in a chasing game.
+                        </Text>
+                      </View>
+                    )}
+
+                    {/* Key finding */}
+                    {gs.key_finding ? (
+                      <Text style={styles.gsFinding}>{gs.key_finding}</Text>
+                    ) : null}
+                  </View>
+                );
+              })()}
+
               {/* Data Quality Warning */}
               {prediction.dataQuality && prediction.dataQuality.level !== 'good' && prediction.dataQuality.message && (
                 <View style={styles.dataQualityBanner}>
@@ -1896,5 +2000,126 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#aaa',
     lineHeight: 20,
+  },
+
+  // ── Game Script Intelligence ─────────────────────────────────────────────
+  gsCard: {
+    marginHorizontal: 16,
+    marginBottom: 14,
+    padding: 14,
+    backgroundColor: '#080808',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#1a1a1a',
+  },
+  gsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginBottom: 12,
+  },
+  gsTitle: {
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 1.2,
+  },
+  gsScenario: {
+    marginBottom: 10,
+  },
+  gsScenarioHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  gsScenarioLabel: {
+    fontSize: 9,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+  },
+  gsScenarioProb: {
+    fontSize: 10,
+    color: '#6B7280',
+  },
+  gsBarBg: {
+    height: 4,
+    backgroundColor: '#1a1a1a',
+    borderRadius: 2,
+    marginBottom: 5,
+    overflow: 'hidden',
+  },
+  gsBarFill: {
+    height: 4,
+    borderRadius: 2,
+  },
+  gsScenarioStats: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  gsStatVal: {
+    fontSize: 11,
+    color: '#9CA3AF',
+  },
+  gsStatBadge: {
+    fontSize: 9,
+    fontWeight: '700',
+    borderWidth: 1,
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+  },
+  gsSummaryRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 8,
+    marginBottom: 8,
+  },
+  gsSummaryPill: {
+    backgroundColor: '#111',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    alignItems: 'center',
+    minWidth: 70,
+  },
+  gsSummaryLabel: {
+    fontSize: 8,
+    color: '#6B7280',
+    fontWeight: '600',
+    letterSpacing: 0.5,
+    marginBottom: 1,
+  },
+  gsSummaryVal: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  gsFinding: {
+    fontSize: 11,
+    color: '#7B8A99',
+    lineHeight: 17,
+    marginTop: 4,
+    borderTopWidth: 1,
+    borderTopColor: '#111',
+    paddingTop: 8,
+  },
+  gsWarningBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+    backgroundColor: '#1C1400',
+    borderWidth: 1,
+    borderColor: '#FBBF24',
+    borderRadius: 6,
+    padding: 8,
+    marginBottom: 8,
+  },
+  gsWarningText: {
+    fontSize: 10,
+    color: '#FBBF24',
+    fontWeight: '600',
+    flex: 1,
+    lineHeight: 15,
   },
 });

@@ -15,6 +15,7 @@ from config import (
 )
 from models import PredictionRequest
 from utils import api_football_request, get_recent_fixtures_fast, strip_accents, get_soccer_odds, decimal_to_american
+from game_script_intelligence import get_game_script_intel
 
 router = APIRouter(prefix="/api", tags=["predict"])
 
@@ -4578,6 +4579,45 @@ Analyze ALL data thoroughly. Return JSON only."""
 
         if abs(_ai_proj - _fin_proj) >= 1.0:
             print(f"[TEXT NORM] AI proj={_ai_proj:.1f} → final={_fin_proj:.1f} — normalized numeric references in text fields")
+
+        # ── GAME SCRIPT INTELLIGENCE ─────────────────────────────────────────────
+        _gsi_opp_id  = req.opponentId or _resolved_opp_id
+        _gsi_logs    = player_game_logs if player_game_logs else []
+        try:
+            _gsi = await aio.wait_for(
+                get_game_script_intel(
+                    player_game_logs = _gsi_logs,
+                    opponent_id      = _gsi_opp_id,
+                    venue            = player_venue or req.venue or "home",
+                    prop_type        = req.propType,
+                    line             = req.line,
+                    player_id        = req.playerId or _resolved_player_id,
+                    team_id          = actual_team_id or req.teamId or 0,
+                    league_id        = req.leagueId or 0,
+                ),
+                timeout=20.0
+            )
+            prediction["gameScript"] = _gsi
+
+            # Nudge confidence if game-script strongly inflates the projection
+            _gsi_delta = _gsi.get("confidence_delta", 0)
+            if abs(_gsi_delta) >= 3:
+                _cs_before = prediction.get("confidenceScore", 55)
+                _cs_after  = max(45, min(87, _cs_before + _gsi_delta))
+                prediction["confidenceScore"] = _cs_after
+                if _gsi_delta > 0:
+                    prediction.setdefault("tacticalAlerts", []).append(
+                        f"Game script: trailing scenario inflates projected {req.propType.replace('_',' ')} "
+                        f"(+{_gsi_delta}% confidence boost)."
+                    )
+                else:
+                    prediction.setdefault("tacticalAlerts", []).append(
+                        f"Game script: trailing scenario deflates projected {req.propType.replace('_',' ')} "
+                        f"({_gsi_delta}% confidence penalty)."
+                    )
+        except Exception as _gsi_err:
+            print(f"[GAME-SCRIPT] Error: {_gsi_err}")
+            prediction["gameScript"] = {"key_finding": "Game script analysis unavailable.", "scenarios": []}
 
         # Save to MongoDB
         prediction["_created"] = datetime.now(timezone.utc).isoformat()

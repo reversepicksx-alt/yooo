@@ -201,6 +201,26 @@ export interface PredictionResult {
   lineDeviationBand?: string;
   lineDeviationPct?: number;
   lineDeviationHitRate?: number;
+  gameScript?: {
+    p_team_trails?: number;
+    p_opponent_scores_first?: number;
+    trailing_avg?: number;
+    normal_avg?: number;
+    inflation_factor?: number;
+    script_adjusted_proj?: number;
+    confidence_delta?: number;
+    sample_size?: number;
+    trailing_sample_size?: number;
+    key_finding?: string;
+    trailing_near_line?: boolean;
+    scenarios?: Array<{
+      label: string;
+      probability?: number;
+      projected_stat?: number;
+      vs_line?: number;
+      direction?: string;
+    }>;
+  };
   momentumMean?: number;
   momentumEffect?: number;
   momentumLabel?: string;
@@ -489,6 +509,7 @@ export async function predict(request: Record<string, unknown>): Promise<Predict
     scenarioAnalysis: raw.scenarioAnalysis || undefined,
     matchContext: raw.matchContext ? { league: raw.matchContext.league, round: raw.matchContext.round, date: raw.matchContext.date } : undefined,
     gameSituation: raw.gameSituation ?? undefined,
+    gameScript: raw.gameScript ?? undefined,
     lineDeviationBand: raw.lineDeviationBand ?? undefined,
     lineDeviationPct: raw.lineDeviationPct ?? undefined,
     lineDeviationHitRate: raw.lineDeviationHitRate ?? undefined,
