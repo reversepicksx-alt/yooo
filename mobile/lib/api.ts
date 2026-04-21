@@ -213,6 +213,19 @@ export interface PredictionResult {
     trailing_sample_size?: number;
     key_finding?: string;
     trailing_near_line?: boolean;
+    positional_depth?: {
+      vs_dominant_trailing_avg?: number;
+      vs_moderate_trailing_avg?: number;
+      vs_dominant_sample?: number;
+      vs_moderate_sample?: number;
+    };
+    opponent_facilitation?: {
+      avg_allowed?: number;
+      sample_size?: number;
+      fixtures_analysed?: number;
+      facilitates?: boolean;
+      position_label?: string;
+    };
     scenarios?: Array<{
       label: string;
       probability?: number;

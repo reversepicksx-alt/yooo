@@ -4583,6 +4583,7 @@ Analyze ALL data thoroughly. Return JSON only."""
         # ── GAME SCRIPT INTELLIGENCE ─────────────────────────────────────────────
         _gsi_opp_id  = req.opponentId or _resolved_opp_id
         _gsi_logs    = player_game_logs if player_game_logs else []
+        _gsi_pos     = display_position or specific_position or player_position or ""
         try:
             _gsi = await aio.wait_for(
                 get_game_script_intel(
@@ -4594,8 +4595,9 @@ Analyze ALL data thoroughly. Return JSON only."""
                     player_id        = req.playerId or _resolved_player_id,
                     team_id          = actual_team_id or req.teamId or 0,
                     league_id        = req.leagueId or 0,
+                    player_position  = _gsi_pos,
                 ),
-                timeout=20.0
+                timeout=28.0
             )
             prediction["gameScript"] = _gsi
 

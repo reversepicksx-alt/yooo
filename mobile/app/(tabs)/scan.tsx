@@ -637,8 +637,8 @@ export default function ScanScreen() {
                       <Text style={[styles.gsTitle, { color: accentColor }]}>GAME SCRIPT INTELLIGENCE</Text>
                     </View>
 
-                    {/* Scenario bars */}
-                    {(gs.scenarios ?? []).map((s, i) => {
+                    {/* Layer 1: Probability scenario bars */}
+                    {(gs.scenarios ?? []).filter(s => s.probability != null).map((s, i) => {
                       const isTrailScenario = s.label.toLowerCase().includes('trail');
                       const scenarioAccent = isTrailScenario
                         ? (infl >= 1.10 ? '#F97316' : infl <= 0.90 ? '#60A5FA' : '#9CA3AF')
@@ -676,6 +676,45 @@ export default function ScanScreen() {
                         </View>
                       );
                     })}
+
+                    {/* Layer 2 + 3: Deep intel chips (no probability) */}
+                    {(() => {
+                      const intel = (gs.scenarios ?? []).filter(s => s.probability == null);
+                      if (!intel.length) return null;
+                      return (
+                        <View style={styles.gsIntelSection}>
+                          <Text style={styles.gsIntelTitle}>DEEP INTEL</Text>
+                          <View style={styles.gsIntelRow}>
+                            {intel.map((s, i) => {
+                              const isFacilitation = s.label.toLowerCase().includes('allows') || s.label.toLowerCase().includes('opp');
+                              const chipColor = isFacilitation ? '#8B5CF6' : '#EF4444';
+                              const chipEmoji = isFacilitation ? '🎯' : '📊';
+                              const vsLine = s.vs_line;
+                              return (
+                                <View key={i} style={[styles.gsIntelChip, { borderColor: chipColor + '55' }]}>
+                                  <Text style={[styles.gsIntelChipLabel, { color: chipColor }]}>
+                                    {chipEmoji} {isFacilitation ? 'OPP ALLOWS' : 'VS DOM OPP'}
+                                  </Text>
+                                  <Text style={[styles.gsIntelChipVal, { color: chipColor }]}>
+                                    {s.projected_stat}
+                                  </Text>
+                                  <Text style={styles.gsIntelChipSub}>
+                                    {s.label.includes('(') ? s.label.split('(')[1]?.replace(')', '') : s.label}
+                                  </Text>
+                                  {vsLine !== undefined && vsLine !== null && (
+                                    <Text style={[styles.gsIntelChipDir, {
+                                      color: s.direction === 'OVER' ? '#4ADE80' : '#F87171'
+                                    }]}>
+                                      {vsLine >= 0 ? `+${vsLine}` : `${vsLine}`} {s.direction}
+                                    </Text>
+                                  )}
+                                </View>
+                              );
+                            })}
+                          </View>
+                        </View>
+                      );
+                    })()}
 
                     {/* Summary row */}
                     <View style={styles.gsSummaryRow}>
@@ -2103,6 +2142,53 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#111',
     paddingTop: 8,
+  },
+  gsIntelSection: {
+    marginTop: 8,
+    marginBottom: 4,
+    borderTopWidth: 1,
+    borderTopColor: '#1a1a1a',
+    paddingTop: 10,
+  },
+  gsIntelTitle: {
+    fontSize: 8,
+    fontWeight: '700',
+    color: '#4B5563',
+    letterSpacing: 1,
+    marginBottom: 8,
+  },
+  gsIntelRow: {
+    flexDirection: 'row',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  gsIntelChip: {
+    flex: 1,
+    minWidth: 120,
+    backgroundColor: '#0d0d0d',
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 10,
+  },
+  gsIntelChipLabel: {
+    fontSize: 8,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+    marginBottom: 4,
+  },
+  gsIntelChipVal: {
+    fontSize: 22,
+    fontWeight: '900',
+    marginBottom: 2,
+  },
+  gsIntelChipSub: {
+    fontSize: 9,
+    color: '#6B7280',
+    marginBottom: 3,
+  },
+  gsIntelChipDir: {
+    fontSize: 10,
+    fontWeight: '700',
   },
   gsWarningBanner: {
     flexDirection: 'row',
