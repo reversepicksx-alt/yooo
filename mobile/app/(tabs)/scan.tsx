@@ -864,7 +864,7 @@ export default function ScanScreen() {
                               <Text style={[styles.ftsPct, { color: !teamFavoured ? '#F97316' : Colors.textSecondary }]}>{pOppFirstPct}%</Text>
                             </View>
                           </View>
-                          <Text style={styles.ftsNote}>Based on last 15 fixtures · HT score analysis</Text>
+                          <Text style={styles.ftsNote}>Based on last 20 {teamFavoured ? oppShort : teamShort} home fixtures · HT score analysis</Text>
                         </View>
                       );
                     })()}

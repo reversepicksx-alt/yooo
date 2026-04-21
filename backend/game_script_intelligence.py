@@ -275,7 +275,17 @@ def _get_positional_trailing_depth(
 
 # ── Opponent first-goal probability ──────────────────────────────────────────
 
-async def _get_opponent_first_goal_prob(opponent_id: int, limit: int = 15) -> float | None:
+async def _get_opponent_first_goal_prob(
+    opponent_id: int,
+    opponent_venue: str = "",   # "home" or "away" for this specific fixture
+    limit: int = 20,
+) -> float | None:
+    """
+    P(opponent scores first) based on HT lead rate, filtered by the venue
+    the opponent will play in this specific fixture.
+    e.g. if opponent is HOME → only look at their HOME fixtures.
+    This eliminates the venue-mixing bias (away games depress home team's HT lead rate).
+    """
     if not opponent_id:
         return None
     try:
@@ -296,11 +306,19 @@ async def _get_opponent_first_goal_prob(opponent_id: int, limit: int = 15) -> fl
         ht_h, ht_a = ht.get("home"), ht.get("away")
         if ht_h is None or ht_a is None:
             continue
-        total += 1
         home_id = ((fx.get("teams") or {}).get("home") or {}).get("id")
         opp_is_home = (home_id == opponent_id)
+
+        # Venue filter: only count matching venue fixtures for a fair rate
+        if opponent_venue == "home" and not opp_is_home:
+            continue
+        if opponent_venue == "away" and opp_is_home:
+            continue
+
+        total += 1
         if (opp_is_home and int(ht_h) > int(ht_a)) or (not opp_is_home and int(ht_a) > int(ht_h)):
             count += 1
+
     return round(count / total, 2) if total >= 3 else None
 
 
@@ -416,11 +434,16 @@ async def get_game_script_intel(
     pos_depth = _get_positional_trailing_depth(venue_logs, prop_type, venue)
     result["positional_depth"] = pos_depth
 
-    # ── First-goal probability (Layer 3 facilitation removed) ─────────────────
-    pos_code   = _api_position_code(player_position)
-    facilitation = {}
+    # ── First-goal probability (venue-specific: only opponent's home/away games) ─
+    pos_code        = _api_position_code(player_position)
+    facilitation    = {}
+    # opponent's venue = opposite of player's team venue
+    opponent_venue  = "home" if venue == "away" else "away"
     try:
-        p_opp_first = await asyncio.wait_for(_get_opponent_first_goal_prob(opponent_id), timeout=12.0)
+        p_opp_first = await asyncio.wait_for(
+            _get_opponent_first_goal_prob(opponent_id, opponent_venue=opponent_venue),
+            timeout=12.0
+        )
     except Exception:
         p_opp_first = None
 
@@ -511,8 +534,11 @@ async def get_game_script_intel(
         })
 
     if n_avg is not None:
+        # For away defenders/midfielders, "winning" = leading away = defensive block
+        is_defender_away = (venue == "away" and pos_code in ("D", "M"))
+        normal_label = "Leading Away — Defensive Block" if is_defender_away else "Normal / Winning"
         scenarios.append({
-            "label":          "Normal / Winning",
+            "label":          normal_label,
             "probability":    round(1 - p_trail_f, 2),
             "projected_stat": n_avg,
             "vs_line":        round(n_avg - line, 1) if line > 0 else None,
