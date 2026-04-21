@@ -588,17 +588,26 @@ def compute_bayesian_projection(
     if opponent_fixture_stats and prop_type in {"pass_attempts", "passes"}:
         press_intensity_info = compute_press_intensity_score(opponent_fixture_stats)
         if _is_gk:
-            # GK: invert — a pressing opponent forces MORE back-passes to the GK.
-            # Capped at +5% (was +10%) — press boost was stacking with poss boost and
-            # over-inflating GK pass projections across the board.
+            # GK press REDUCTION — same direction as outfield players.
+            #
+            # Previous logic ("invert: pressing → MORE GK passes") was wrong.
+            # Reality: a pressing opponent forces GKs to kick long rather than
+            # recycle short passes through the backline. Each GK possession ends in
+            # one long ball, not 2-3 recycled touches.
+            #
+            # Evidence: Herrera (Osasuna, home) and Simón (Athletic, home) both got
+            # only 26 passes facing heavy-pressing opponents, while Román (Mallorca,
+            # home) got 42 passes facing non-pressing Valencia. Same venue, different
+            # opponent press intensity → opposite outcome.
+            #
+            # Fix: apply the same multiplier direction as outfield (< 1.0 = fewer passes).
             raw_mult = press_intensity_info["multiplier"]
             if raw_mult < 1.0:
-                gk_press_mult = round(min(1.05, 1.0 + (1.0 - raw_mult) * 0.35), 3)
                 raw_before = posterior_mean
-                posterior_mean = round(posterior_mean * gk_press_mult, 1)
-                print(f"[GK PRESS BOOST] {prop_type}: opp_press={press_intensity_info['label']} "
-                      f"(score={press_intensity_info['score']}, raw_mult={raw_mult}) "
-                      f"→ GK boost {gk_press_mult} {raw_before} → {posterior_mean}")
+                posterior_mean = round(posterior_mean * raw_mult, 1)
+                print(f"[GK PRESS REDUCTION] {prop_type}: opp_press={press_intensity_info['label']} "
+                      f"(score={press_intensity_info['score']}, mult={raw_mult}) "
+                      f"→ GK reduced {raw_before} → {posterior_mean}")
         elif press_intensity_info["multiplier"] < 1.0:
             raw_before = posterior_mean
             posterior_mean = round(posterior_mean * press_intensity_info["multiplier"], 1)
