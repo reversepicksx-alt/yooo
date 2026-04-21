@@ -4373,10 +4373,12 @@ Analyze ALL data thoroughly. Return JSON only."""
                 (r"(Reverse Formula\s+(?:nails|projects|lands at|estimates))\s+(\d+\.?\d*)", rf"\1 {_fin_p_str}"),
                 # "projects 52.3 over/under" → "projects 49 over/under"
                 (r"(projects?|projected(?:\s+at)?|projects\s+to\s+be)\s+(\d+\.?\d*)\s+(over|under)", rf"\1 {_fin_p_str} \3"),
+                # "projecting 26.8" (gerund form, any context) → "projecting 24"
+                (r"(projecting\s+)(\d+\.?\d*)(\b)", rf"\g<1>{_fin_p_str}\3"),
                 # "50.1 projected" or "50.1 projection" → "49 projected/projection"
                 (r"(\d+\.?\d*)\s+(project(?:ed|ion)?\b)", rf"{_fin_p_str} \2"),
                 # "projection 60.3" (projection before number) → "projection 62"
-                (r"(project(?:ed|ion)?\s+)(\d+\.?\d*)(\b)", rf"\g<1>{_fin_p_str}\3"),
+                (r"(project(?:ed|ion|ing)?\s+)(\d+\.?\d*)(\b)", rf"\g<1>{_fin_p_str}\3"),
                 # "at 50.1 projected" → "at 49 projected"
                 (r"(at\s+)(\d+\.?\d*)(\s+project(?:ed|ion)?)", rf"\g<1>{_fin_p_str}\3"),
                 # "with 50.1 projection" / "with a 50.1 projection" → "with 49 projection"
@@ -4385,8 +4387,8 @@ Analyze ALL data thoroughly. Return JSON only."""
                 (r"(\blands?\s+at\s+)(\d+\.?\d*)(\b)", rf"\g<1>{_fin_p_str}\3"),
                 # "sits 60.3 under 64.5" → "sits 62 under 64.5" (only when followed by over/under)
                 (r"(\bsits?\s+(?:at\s+)?)(\d+\.?\d*)(\s+(?:over|under)\b)", rf"\g<1>{_fin_p_str}\3"),
-                # "clears X with" / "clears X at" (OVER language in UNDER pick)
-                (r"(clears?\s+[\d.]+\s+(?:with|at)\s+)(\d+\.?\d*)(\b)", rf"\g<1>{_fin_p_str}\3"),
+                # "clears X passes" / "clears X with" / "clears X at" / "clears X:" (OVER language)
+                (r"(clears?\s+[\d.]+\s+(?:passes?|attempts?|with|at|:)\s*)(\d+\.?\d*)(\b)", rf"\g<1>{_fin_p_str}\3"),
                 # "falls short of X.X at Y.Y" / "cruises under X.X at Y.Y"
                 (r"((?:falls short of|cruises (?:over|under))\s+[\d.]+\s+at\s+)(\d+\.?\d*)(\b)", rf"\g<1>{_fin_p_str}\3"),
                 # "sharp +3 edge on Reverse Formula's 50.1 projection"
@@ -4405,12 +4407,37 @@ Analyze ALL data thoroughly. Return JSON only."""
 
             # ── Step B: Number substitution — only when gap is meaningful (≥1.0) ──
             if abs(_ai_proj - _fin_proj) < 1.0:
-                return txt  # Numbers very close — skip substitution, keep cleaned text
+                pass  # Numbers very close — skip number substitution but still run Step D
+            else:
+                # Replace float version (42.8) first, then int (42), to avoid partial matches
+                for _old_num in [_ai_p_float, str(_ai_p_int)]:
+                    # Only replace when it appears as a standalone number (not part of a larger number)
+                    txt = _re_fin.sub(r'(?<!\d)' + _re_fin.escape(_old_num) + r'(?!\d)', _fin_p_str, txt)
 
-            # Replace float version (42.8) first, then int (42), to avoid partial matches
-            for _old_num in [_ai_p_float, str(_ai_p_int)]:
-                # Only replace when it appears as a standalone number (not part of a larger number)
-                txt = _re_fin.sub(r'(?<!\d)' + _re_fin.escape(_old_num) + r'(?!\d)', _fin_p_str, txt)
+            # ── Step D: Direction-conflict correction ──
+            # When AI wrote OVER language but math says UNDER (or vice versa), fix the directional verbs.
+            # Also catches cases where the AI's Grok projection (not the Bayesian anchor) differs.
+            _grok_proj_str = str(int(round(_fin_proj))) if _fin_proj == int(_fin_proj) else f"{_fin_proj:.1f}"
+            if _fin_rec == "under":
+                # Replace OVER-implying phrases with UNDER-appropriate ones
+                # "clears X passes" / "clears X attempts" → "stays near X" (projection is already the correct number)
+                txt = _re_fin.sub(r'\bclears?\s+([\d.]+)\s+(passes?|attempts?|shots?|saves?)',
+                    rf'stays near \1 \2', txt, flags=_re_fin.IGNORECASE)
+                # "clears X" (standalone) → "stays under X"
+                txt = _re_fin.sub(r'\bclears?\s+([\d.]+)(?!\s*(?:passes?|attempts?|shots?|saves?))',
+                    rf'stays under \1', txt, flags=_re_fin.IGNORECASE)
+                # "surpasses/exceeds/hits X+" → "stays below X"
+                txt = _re_fin.sub(r'\b(surpasses?|exceeds?|hits)\s+([\d.]+)\+?',
+                    rf'stays below \2', txt, flags=_re_fin.IGNORECASE)
+                # "+X% edge" when line is UNDER → no change needed (edge direction, not direction word)
+            elif _fin_rec == "over":
+                # Replace UNDER-implying phrases with OVER-appropriate ones
+                # "falls short of X" → "reaches X" 
+                txt = _re_fin.sub(r'\bfalls?\s+short\s+of\s+([\d.]+)',
+                    rf'reaches \1', txt, flags=_re_fin.IGNORECASE)
+                # "stays below/under X" → "reaches X"
+                txt = _re_fin.sub(r'\bstays?\s+(?:below|under)\s+([\d.]+)',
+                    rf'reaches \1', txt, flags=_re_fin.IGNORECASE)
 
             # ── Step C: Patch "narrow edge" language when actual edge is large ──
             _edge_size = abs(_fin_proj - req.line)
