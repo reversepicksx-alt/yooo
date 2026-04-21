@@ -2803,18 +2803,19 @@ KEY PRINCIPLE: A GK defending deep = maximum back-pass recycling. A GK on a domi
                     context_multiplier -= 0.10
                     context_factors.append(f"Team favored ({fav}) → -10% (fewer opponent shots)")
                 else:
-                    context_multiplier += 0.10
-                    context_factors.append("Team underdog → +10% (more opponent shots)")
-            if player_venue == "away":
-                context_multiplier += 0.05
-                context_factors.append("Away GK → +5% (typically face more pressure)")
+                    context_multiplier += 0.07
+                    context_factors.append("Team underdog → +7% (more opponent shots)")
             context_multiplier = round(context_multiplier, 2)
 
             # 4. THE FORMULA: Projected Saves = Opp Avg SoT × GK Save% × Context
-            # Weighted blend: 60% formula (match-specific) + 40% GK average (form)
+            # Weighted blend: 40% formula (match-specific) + 60% GK average (form).
+            # Saves is a high-variance stat — individual-game SOT fluctuates sharply
+            # even when a team's season average looks high. Anchoring more heavily to
+            # the GK's own recent save average reduces formula-driven over-projection
+            # in cagey or low-tempo matchups.
             raw_formula = round(opp_avg_sot * (gk_save_pct / 100) * context_multiplier, 1) if opp_avg_sot > 0 else gk_avg_saves
             if gk_avg_saves > 0 and raw_formula > 0:
-                projected_saves = round(raw_formula * 0.6 + gk_avg_saves * 0.4, 1)
+                projected_saves = round(raw_formula * 0.4 + gk_avg_saves * 0.6, 1)
             else:
                 projected_saves = raw_formula if raw_formula > 0 else gk_avg_saves
 
@@ -2831,7 +2832,7 @@ KEY PRINCIPLE: A GK defending deep = maximum back-pass recycling. A GK on a domi
                 "contextMultiplier": context_multiplier,
                 "contextFactors": context_factors,
                 "formulaProjection": projected_saves,
-                "formula": f"{opp_avg_sot} SoT × {gk_save_pct}% save rate × {context_multiplier} context → {raw_formula} formula, blended with {gk_avg_saves} avg = {projected_saves}",
+                "formula": f"{opp_avg_sot} SoT × {gk_save_pct}% save rate × {context_multiplier} context → {raw_formula} formula (40%) + {gk_avg_saves} avg (60%) = {projected_saves}",
             }
             wave2_supplement["savesAnalysis"] = gk_formula_data
 

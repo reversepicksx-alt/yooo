@@ -496,28 +496,31 @@ def compute_bayesian_projection(
             poss_ratio = expected_poss / team_season_avg_poss
             # Activates at 5%+ below norm — catches moderate mismatches sooner
             # Exponent 1.5 — steeper curve so severe mismatches hit harder
-            # Floor 0.55 — allows up to 45% reduction in extreme cases
+            # Position-aware floor: CBs/DFs are high-volume passers whose output doesn't
+            # collapse proportionally with team possession — they still clear, recycle,
+            # and switch the ball under any game state. Apply a more conservative floor.
+            _pos_upper = (position or "").upper()
+            _is_cb  = _pos_upper in {"CB", "DC", "RCB", "LCB"}
+            _is_def = _pos_upper in {"DEF", "LB", "RB", "WB", "LWB", "RWB", "D"}
+            squeeze_floor = 0.80 if _is_cb else (0.70 if _is_def else 0.55)
             if poss_ratio < 0.95:
-                squeeze_mult = round(max(0.55, poss_ratio ** 1.5), 3)
+                squeeze_mult = round(max(squeeze_floor, poss_ratio ** 1.5), 3)
                 # HOT-STREAK DAMPENING: A player on an upward momentum trend may
                 # retain volume even when team possession dips — tactical discipline,
                 # manager trust, and personal form maintain their involvement.
-                # Dampen the squeeze so we don't fight a clear positive signal.
                 _squeeze_dampened = False
                 if momentum_effect > 5:
-                    # Clearly HOT — player has been significantly above their own avg
                     squeeze_mult = round(min(1.0, squeeze_mult + (1.0 - squeeze_mult) * 0.35), 3)
                     _squeeze_dampened = "HOT"
                 elif momentum_effect > 2:
-                    # WARMING — modest positive trend
                     squeeze_mult = round(min(1.0, squeeze_mult + (1.0 - squeeze_mult) * 0.18), 3)
                     _squeeze_dampened = "WARMING"
                 raw_before_squeeze = posterior_mean
                 posterior_mean = round(posterior_mean * squeeze_mult, 1)
                 _damp_note = f" [dampened for {_squeeze_dampened} streak]" if _squeeze_dampened else ""
                 print(f"[POSS SQUEEZE] {prop_type}: team_avg={team_season_avg_poss:.1f}% "
-                      f"expected={expected_poss:.1f}% ratio={poss_ratio:.2f} "
-                      f"mult={squeeze_mult}{_damp_note} {raw_before_squeeze} → {posterior_mean}")
+                      f"expected={expected_poss:.1f}% ratio={poss_ratio:.2f} pos={_pos_upper} "
+                      f"floor={squeeze_floor} mult={squeeze_mult}{_damp_note} {raw_before_squeeze} → {posterior_mean}")
 
     # ═══════════════════════════════════════════
     # GK INVERTED POSSESSION MODEL
@@ -533,19 +536,16 @@ def compute_bayesian_projection(
         team_season_avg_poss = match_dominance.get("teamSeasonAvg")
         if expected_poss is not None and team_season_avg_poss and team_season_avg_poss > 0:
             poss_ratio = expected_poss / team_season_avg_poss
-            if poss_ratio < 0.93:
+            # Only trigger on meaningful deficit (>13% below norm).
+            # Rationale: teams with slightly less possession don't uniformly recycle
+            # more through the GK — many play direct football (long balls), reducing GK
+            # distribution volume. The inverse-boost only holds in specific press-heavy
+            # scenarios; applying it broadly over-inflates projections.
+            if poss_ratio < 0.87:
                 # TWO REGIMES for GK possession deficit:
-                #
-                # EXTREME deficit (expected < 40%): The team barely has the ball.
-                # Back-pass recycling theory breaks down — GK simply has fewer
-                # distribution opportunities. Apply a SQUEEZE instead of a boost.
-                # Example: Lyon (35%) vs PSG (65%) — Greif barely touches the ball.
-                #
-                # MODERATE deficit (40-93% of avg): Defenders are under pressure and
-                # play it safe back to the GK more frequently → inverse boost applies.
-                # Example: Miami (40%) vs Man City away (60%) — GK recycles constantly.
+                # EXTREME deficit (expected < 40%): GK starved of touches. Squeeze.
+                # MODERATE deficit (40–87% of avg): Some back-pass recycling. Mild boost.
                 if expected_poss < 40.0:
-                    # SQUEEZE — GK starved of ball time in extreme possession imbalance
                     squeeze_mult = round(max(0.70, poss_ratio ** 0.8), 3)
                     raw_before_gk = posterior_mean
                     posterior_mean = round(posterior_mean * squeeze_mult, 1)
@@ -553,25 +553,19 @@ def compute_bayesian_projection(
                           f"possession — GK ball-touch volume drops sharply. "
                           f"mult={squeeze_mult} {raw_before_gk} → {posterior_mean}")
                 else:
-                    # MODERATE deficit — inverse back-pass recycling boost
-                    # Capped at +15% to avoid overcorrection. Exponent 0.5 = gentle curve.
+                    # Capped at +8% (was +15%). Exponent 0.35 = very gentle curve.
                     inverse_ratio = 1.0 / max(poss_ratio, 0.60)
-                    boost_mult = round(min(1.15, inverse_ratio ** 0.5), 3)
+                    boost_mult = round(min(1.08, inverse_ratio ** 0.35), 3)
                     raw_before_gk = posterior_mean
                     posterior_mean = round(posterior_mean * boost_mult, 1)
                     print(f"[GK POSS BOOST] {prop_type}: team_avg={team_season_avg_poss:.1f}% "
                           f"expected={expected_poss:.1f}% ratio={poss_ratio:.2f} "
                           f"inv_mult={boost_mult} {raw_before_gk} → {posterior_mean}")
-            elif poss_ratio > 1.04 and posterior_mean > 27:
+            elif poss_ratio > 1.10 and posterior_mean > 27:
                 # BALL-PLAYING GK IN HIGH-POSSESSION SCENARIO
-                # When a GK with a high pass average (>27/game) sees their team dominate
-                # significantly above their season norm (poss_ratio > 1.08), they are
-                # actively used as build-up starters — short goal kicks, 3rd CB role,
-                # sweeper-keeper distributions initiate attacks. These GKs do NOT sit
-                # idle in high-possession games; they participate at or above their avg.
-                # A 10% possession surge → ~6% more GK touch opportunities (damped).
-                # Cap at +10% to avoid overcorrection; only applies to active builders.
-                buildup_boost = round(min(1.10, 1.0 + (poss_ratio - 1.0) * 0.5), 3)
+                # Only trigger when team significantly above season norm (>10% surplus).
+                # Cap at +6% — small adjustment for active build-up GKs.
+                buildup_boost = round(min(1.06, 1.0 + (poss_ratio - 1.0) * 0.3), 3)
                 raw_before_gk = posterior_mean
                 posterior_mean = round(posterior_mean * buildup_boost, 1)
                 print(f"[GK BUILDUP BOOST] {prop_type}: ball-playing GK (avg={posterior_mean:.1f}>{27}) "
@@ -595,10 +589,11 @@ def compute_bayesian_projection(
         press_intensity_info = compute_press_intensity_score(opponent_fixture_stats)
         if _is_gk:
             # GK: invert — a pressing opponent forces MORE back-passes to the GK.
-            # Only boost (not squeeze) — cap at +10%.
+            # Capped at +5% (was +10%) — press boost was stacking with poss boost and
+            # over-inflating GK pass projections across the board.
             raw_mult = press_intensity_info["multiplier"]
             if raw_mult < 1.0:
-                gk_press_mult = round(min(1.10, 1.0 + (1.0 - raw_mult) * 0.5), 3)
+                gk_press_mult = round(min(1.05, 1.0 + (1.0 - raw_mult) * 0.35), 3)
                 raw_before = posterior_mean
                 posterior_mean = round(posterior_mean * gk_press_mult, 1)
                 print(f"[GK PRESS BOOST] {prop_type}: opp_press={press_intensity_info['label']} "
