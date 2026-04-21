@@ -206,7 +206,9 @@ export interface PredictionResult {
     p_opponent_scores_first?: number;
     trailing_avg?: number;
     normal_avg?: number;
+    overall_avg?: number;
     inflation_factor?: number;
+    inflated_proj?: number;
     script_adjusted_proj?: number;
     confidence_delta?: number;
     sample_size?: number;

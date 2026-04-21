@@ -340,7 +340,9 @@ async def get_game_script_intel(
         "p_opponent_scores_first":  None,
         "trailing_avg":             None,
         "normal_avg":               None,
+        "overall_avg":              None,
         "inflation_factor":         None,
+        "inflated_proj":            None,   # overall_avg × inflation_factor (extreme trailing)
         "script_adjusted_proj":     None,
         "confidence_delta":         0,
         "sample_size":              0,
@@ -384,17 +386,28 @@ async def get_game_script_intel(
         return result
 
     all_chasing = chasing_vals + draw_vals
+    all_vals    = chasing_vals + draw_vals + winning_vals
+
     if all_chasing:
         result["trailing_avg"] = round(sum(all_chasing) / len(all_chasing), 1)
     if winning_vals:
         result["normal_avg"] = round(sum(winning_vals) / len(winning_vals), 1)
     elif draw_vals:
         result["normal_avg"] = round(sum(draw_vals) / len(draw_vals), 1)
+    if all_vals:
+        result["overall_avg"] = round(sum(all_vals) / len(all_vals), 1)
 
-    t_avg = result["trailing_avg"]
-    n_avg = result["normal_avg"]
+    t_avg   = result["trailing_avg"]
+    n_avg   = result["normal_avg"]
+    ov_avg  = result["overall_avg"]
+
+    # Inflation factor: how much does the stat grow in trailing vs winning games?
+    # inflated_proj = overall_avg × inflation  (the key formula the user identified)
+    # e.g. 39 × 1.68 = 65.5 ≈ today's actual 68
     if t_avg and n_avg and n_avg > 0:
         result["inflation_factor"] = round(t_avg / n_avg, 2)
+    if ov_avg and result["inflation_factor"]:
+        result["inflated_proj"] = round(ov_avg * result["inflation_factor"], 1)
 
     p_trail = (trail_count + 0.5 * draw_count) / total_games if total_games else 0
     result["p_team_trails"] = round(min(0.9, max(0.05, p_trail)), 2)
@@ -424,8 +437,10 @@ async def get_game_script_intel(
     p_opp_1st     = p_opp_first or 0.45
     combined_p    = min(0.85, max(p_trail_used, p_opp_1st * 0.75))
 
-    if t_avg is not None and n_avg is not None:
-        script_proj = combined_p * t_avg + (1 - combined_p) * n_avg
+    inflated = result["inflated_proj"]   # overall_avg × inflation (extreme trailing)
+    if inflated is not None and n_avg is not None:
+        # Script proj blends: extreme-trailing projection (if chasing) vs normal avg (if winning)
+        script_proj = combined_p * inflated + (1 - combined_p) * n_avg
         result["script_adjusted_proj"] = round(script_proj, 1)
         if line > 0:
             delta = 0
@@ -434,23 +449,39 @@ async def get_game_script_intel(
             elif script_proj < n_avg * 0.93 and script_proj < line * 0.97:
                 delta = -min(8, round((1 - script_proj / n_avg) * 25))
             result["confidence_delta"] = delta
+    elif t_avg is not None and n_avg is not None:
+        script_proj = combined_p * t_avg + (1 - combined_p) * n_avg
+        result["script_adjusted_proj"] = round(script_proj, 1)
 
-    # ── Danger zone ──────────────────────────────────────────────────────────
-    if line > 0 and t_avg is not None and abs(t_avg - line) / line < 0.08:
+    # ── Danger zone: use inflated_proj for knife-edge check ───────────────────
+    # If inflated_proj (extreme trailing) is near the line, that is a real warning
+    # We also keep the t_avg check as a secondary signal
+    check_val = inflated if inflated is not None else t_avg
+    if line > 0 and check_val is not None and abs(check_val - line) / line < 0.12:
         result["trailing_near_line"] = True
 
     # ── Key finding ──────────────────────────────────────────────────────────
-    infl_val = result["inflation_factor"] or 1
-    p_t_pct  = int((result["p_team_trails"] or 0) * 100)
-    p_o_pct  = int((p_opp_first or 0) * 100) if p_opp_first else None
-    fac_avg  = (facilitation or {}).get("avg_allowed")
-    fac_n    = (facilitation or {}).get("sample_size", 0)
-    dom_avg  = pos_depth.get("vs_dominant_trailing_avg")
-    dom_n    = pos_depth.get("vs_dominant_sample", 0)
+    infl_val  = result["inflation_factor"] or 1
+    infl_proj = result["inflated_proj"]
+    p_t_pct   = int((result["p_team_trails"] or 0) * 100)
+    p_o_pct   = int((p_opp_first or 0) * 100) if p_opp_first else None
+    fac_avg   = (facilitation or {}).get("avg_allowed")
+    fac_n     = (facilitation or {}).get("sample_size", 0)
+    dom_avg   = pos_depth.get("vs_dominant_trailing_avg")
+    dom_n     = pos_depth.get("vs_dominant_sample", 0)
 
     parts = []
-    if t_avg and n_avg:
-        pct = round((infl_val - 1) * 100)
+    if t_avg and n_avg and ov_avg:
+        pct  = round((infl_val - 1) * 100)
+        word = "inflates" if infl_val >= 1.05 else "drops" if infl_val <= 0.95 else "stays flat"
+        # Show the corrected formula: overall_avg × inflation = inflated_proj
+        proj_str = f" → extreme trailing proj: {ov_avg} × {infl_val} = {infl_proj}" if infl_proj else ""
+        parts.append(
+            f"Trailing ({venue}): {t_avg} avg trailing, {n_avg} winning, {ov_avg} overall — "
+            f"stat {word} {abs(pct)}% when chasing ({p_t_pct}% of {venue} games).{proj_str}"
+        )
+    elif t_avg and n_avg:
+        pct  = round((infl_val - 1) * 100)
         word = "inflates" if infl_val >= 1.05 else "drops" if infl_val <= 0.95 else "stays flat"
         parts.append(
             f"Trailing ({venue}): {t_avg} avg vs {n_avg} winning — "
@@ -468,25 +499,28 @@ async def get_game_script_intel(
         )
     if p_o_pct:
         parts.append(f"Opponent scores first {p_o_pct}% of their games.")
-    if result["trailing_near_line"]:
-        gap = round(abs(t_avg - line), 1) if t_avg else "?"
+    if result["trailing_near_line"] and infl_proj:
+        gap = round(abs(infl_proj - line), 1)
         parts.append(
-            f"⚠ KNIFE EDGE: trailing proj {t_avg} vs line {line} (gap={gap}) — "
-            f"bet is on the edge in a chasing game."
+            f"⚠ KNIFE EDGE: extreme trailing proj {infl_proj} vs line {line} (gap={gap})."
         )
     result["key_finding"] = " ".join(parts) if parts else "Game script analysis complete."
 
     # ── Scenarios for frontend ───────────────────────────────────────────────
     p_trail_f = result["p_team_trails"] or 0
     scenarios = []
-    if t_avg is not None:
+
+    # Trailing scenario uses inflated_proj (overall × inflation) — the correct formula
+    trail_proj = infl_proj if infl_proj is not None else t_avg
+    if trail_proj is not None:
         scenarios.append({
             "label":          "Team Trails / Chasing",
             "probability":    round(p_trail_f, 2),
-            "projected_stat": t_avg,
-            "vs_line":        round(t_avg - line, 1) if line > 0 else None,
-            "direction":      "OVER" if line > 0 and t_avg > line else "UNDER",
+            "projected_stat": trail_proj,
+            "vs_line":        round(trail_proj - line, 1) if line > 0 else None,
+            "direction":      "OVER" if line > 0 and trail_proj > line else "UNDER",
         })
+
     if n_avg is not None:
         scenarios.append({
             "label":          "Normal / Winning",

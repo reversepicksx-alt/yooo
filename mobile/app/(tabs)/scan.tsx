@@ -661,6 +661,12 @@ export default function ScanScreen() {
                             <Text style={styles.gsStatVal}>
                               Proj: <Text style={{ color: scenarioAccent }}>{s.projected_stat}</Text>
                             </Text>
+                            {/* Show overall × inflation formula for trailing scenario */}
+                            {isTrailScenario && gs.overall_avg && gs.inflation_factor && gs.inflated_proj && (
+                              <Text style={{ fontSize: 9, color: '#6B7280' }}>
+                                {gs.overall_avg} avg × {gs.inflation_factor}x = {gs.inflated_proj}
+                              </Text>
+                            )}
                             {vsLine !== undefined && vsLine !== null && (
                               <Text style={[styles.gsStatVal, { color: vsLine >= 0 ? '#4ADE80' : '#F87171' }]}>
                                 {vsLine >= 0 ? `+${vsLine}` : `${vsLine}`} vs line
