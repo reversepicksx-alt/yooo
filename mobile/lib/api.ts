@@ -152,13 +152,13 @@ export async function scanProp(imageBase64: string, sport = 'soccer'): Promise<S
       propType: ext.propType,
       line: ext.line,
       venue: ext.venue,
-      opponentName: ext.opponentName || opp.name,
+      opponentName: ext.opponentName || opp.teamName || opp.name,
       playerTeam: ext.playerTeam,
       teamName: res.teamName || ext.playerTeam,
       leagueId: ext.leagueId,
       playerId: res.id || res.playerId,
       teamId: res.teamId,
-      opponentId: opp.id,
+      opponentId: opp.teamId || opp.id,
     };
   }
   return { error: 'No prop data detected. Try a clearer image.' };
