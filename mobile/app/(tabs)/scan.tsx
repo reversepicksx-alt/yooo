@@ -538,7 +538,7 @@ export default function ScanScreen() {
                 </View>
               </View>
 
-              {/* Line vs Season Average */}
+              {/* Line vs Season Average + Edge Explanation */}
               {prediction.priorMean != null && prediction.line != null && (() => {
                 const pct = ((prediction.line - prediction.priorMean) / prediction.priorMean) * 100;
                 const lineBelow = pct < 0;
@@ -548,6 +548,35 @@ export default function ScanScreen() {
                 const band = prediction.lineDeviationBand;
                 const bandAccent = band ? (BAND_ACCENT[band] ?? '#888') : null;
                 const hitRate = prediction.lineDeviationHitRate;
+                const rec = (prediction.recommendation ?? '').toUpperCase();
+                const playerFirst = (prediction.playerName ?? 'This player').split(' ')[0];
+
+                const PROP_AVG_LABEL: Record<string, string> = {
+                  pass_attempts: 'passes per game', shots: 'shots per game',
+                  shots_on_target: 'shots on target per game', saves: 'saves per game',
+                  goals: 'goals per game', assists: 'assists per game',
+                  key_passes: 'key passes per game', tackles: 'tackles per game',
+                  crosses: 'crosses per game', dribbles: 'dribbles per game',
+                };
+                const propAvgLabel = PROP_AVG_LABEL[prediction.propType ?? ''] ?? 'per game';
+
+                const BAND_STRENGTH: Record<string, string> = {
+                  mild: 'mild', moderate: 'significant', elevated: 'strong',
+                  extreme: 'extreme', aligned: 'slight',
+                };
+                const bandStrength = band ? (BAND_STRENGTH[band] ?? '') : '';
+
+                let edgeParagraph = '';
+                if (lineBelow && rec === 'OVER') {
+                  edgeParagraph = `The book set this line ${absPct}% below ${playerFirst}'s season average of ${prediction.priorMean.toFixed(1)} ${propAvgLabel}. That's a ${bandStrength} market underpricing — the sportsbook is essentially betting ${playerFirst} underperforms their own baseline. In ${band ?? ''} deviation cases like this where our model took the OVER, it has hit ${hitRate != null ? hitRate.toFixed(0) + '%' : 'at a strong rate'} historically. The edge is structural: any time a book sets the line meaningfully below a player's proven average, the math favors the over.`;
+                } else if (!lineBelow && rec === 'UNDER') {
+                  edgeParagraph = `The book set this line ${absPct}% above ${playerFirst}'s season average of ${prediction.priorMean.toFixed(1)} ${propAvgLabel}. When sportsbooks overprice a line like this — betting the player outperforms their own baseline — the data says that rarely holds. In ${band ?? ''} deviation UNDER cases, our model has hit ${hitRate != null ? hitRate.toFixed(0) + '%' : 'at a strong rate'} historically. The book is overreacting to recent form while ignoring the season trend.`;
+                } else if (lineBelow && rec === 'UNDER') {
+                  edgeParagraph = `The line is ${absPct}% below season average, yet our model still leans UNDER. This reflects momentum evidence — ${playerFirst}'s recent games have tracked below their season baseline, and the projection expects that trend to continue. The deviation means the book is already pricing in some weakness, but not enough.`;
+                } else if (!lineBelow && rec === 'OVER') {
+                  edgeParagraph = `The line is ${absPct}% above season average, yet our model sees OVER value. This is a high-conviction play — ${playerFirst}'s recent form and match context (possession, opponent profile) project production that justifies beating even an elevated line. ${hitRate != null ? `In similar cases, this has hit ${hitRate.toFixed(0)}%.` : ''}`;
+                }
+
                 return (
                   <>
                     <View style={styles.analysisDivider} />
@@ -577,6 +606,15 @@ export default function ScanScreen() {
                         </View>
                       )}
                     </View>
+                    {edgeParagraph.length > 0 && (
+                      <View style={styles.edgeExplainBox}>
+                        <View style={styles.edgeExplainHeader}>
+                          <Ionicons name="trending-up" size={11} color={deltaColor} />
+                          <Text style={[styles.edgeExplainTitle, { color: deltaColor }]}>WHY THIS MATTERS</Text>
+                        </View>
+                        <Text style={styles.edgeExplainBody}>{edgeParagraph}</Text>
+                      </View>
+                    )}
                   </>
                 );
               })()}
@@ -1831,5 +1869,32 @@ const styles = StyleSheet.create({
   },
   devBandPillHit: {
     fontSize: 9, fontWeight: '700',
+  },
+
+  /* Edge explanation block */
+  edgeExplainBox: {
+    marginHorizontal: 16,
+    marginBottom: 14,
+    padding: 14,
+    backgroundColor: '#0a0a0a',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#1e1e1e',
+  },
+  edgeExplainHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginBottom: 8,
+  },
+  edgeExplainTitle: {
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 1.2,
+  },
+  edgeExplainBody: {
+    fontSize: 13,
+    color: '#aaa',
+    lineHeight: 20,
   },
 });
