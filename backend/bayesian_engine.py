@@ -561,16 +561,13 @@ def compute_bayesian_projection(
                     print(f"[GK POSS BOOST] {prop_type}: team_avg={team_season_avg_poss:.1f}% "
                           f"expected={expected_poss:.1f}% ratio={poss_ratio:.2f} "
                           f"inv_mult={boost_mult} {raw_before_gk} → {posterior_mean}")
-            elif poss_ratio > 1.10 and posterior_mean > 27:
-                # BALL-PLAYING GK IN HIGH-POSSESSION SCENARIO
-                # Only trigger when team significantly above season norm (>10% surplus).
-                # Cap at +6% — small adjustment for active build-up GKs.
-                buildup_boost = round(min(1.06, 1.0 + (poss_ratio - 1.0) * 0.3), 3)
-                raw_before_gk = posterior_mean
-                posterior_mean = round(posterior_mean * buildup_boost, 1)
-                print(f"[GK BUILDUP BOOST] {prop_type}: ball-playing GK (avg={posterior_mean:.1f}>{27}) "
-                      f"team_avg={team_season_avg_poss:.1f}% expected={expected_poss:.1f}% "
-                      f"ratio={poss_ratio:.2f} boost={buildup_boost} {raw_before_gk} → {posterior_mean}")
+            # GK BUILDUP BOOST REMOVED.
+            # Removed because: when a home team has above-average possession,
+            # their GK is LESS involved (team builds in the opponent's half,
+            # defenders push forward, GK rarely gets back-passes).
+            # Evidence: Gazzaniga (Girona HOME, above-avg possession vs Betis) → 26 passes.
+            # Simón (Athletic Club HOME, high possession vs Osasuna) → 26 passes.
+            # The buildup boost was systematically over-projecting home GKs.
 
     # ═══════════════════════════════════════════
     # PRESS INTENSITY — PPDA Proxy (independent of match dominance)
@@ -588,26 +585,25 @@ def compute_bayesian_projection(
     if opponent_fixture_stats and prop_type in {"pass_attempts", "passes"}:
         press_intensity_info = compute_press_intensity_score(opponent_fixture_stats)
         if _is_gk:
-            # GK press REDUCTION — same direction as outfield players.
+            # GK press BOOST — but only for AWAY GKs.
             #
-            # Previous logic ("invert: pressing → MORE GK passes") was wrong.
-            # Reality: a pressing opponent forces GKs to kick long rather than
-            # recycle short passes through the backline. Each GK possession ends in
-            # one long ball, not 2-3 recycled touches.
+            # When a GK is AWAY and the home team presses hard, defenders get
+            # pinned back and play it safe to the GK repeatedly, generating
+            # high back-pass volume → GK distributes more.
+            # Evidence: Valles (Real Betis AWAY at pressing Girona) got 35 passes (OVER 30.5 ✓)
             #
-            # Evidence: Herrera (Osasuna, home) and Simón (Athletic, home) both got
-            # only 26 passes facing heavy-pressing opponents, while Román (Mallorca,
-            # home) got 42 passes facing non-pressing Valencia. Same venue, different
-            # opponent press intensity → opposite outcome.
-            #
-            # Fix: apply the same multiplier direction as outfield (< 1.0 = fewer passes).
+            # For HOME GKs: the pressing effect is murkier and does not reliably
+            # produce more passes (home team has possession, presses don't force
+            # as many back-passes when you control the game).
+            # No boost applied for home GKs — let the baseline and possession model decide.
             raw_mult = press_intensity_info["multiplier"]
-            if raw_mult < 1.0:
+            if raw_mult < 1.0 and venue == "away":
+                gk_press_mult = round(min(1.05, 1.0 + (1.0 - raw_mult) * 0.35), 3)
                 raw_before = posterior_mean
-                posterior_mean = round(posterior_mean * raw_mult, 1)
-                print(f"[GK PRESS REDUCTION] {prop_type}: opp_press={press_intensity_info['label']} "
+                posterior_mean = round(posterior_mean * gk_press_mult, 1)
+                print(f"[GK AWAY PRESS BOOST] {prop_type}: opp_press={press_intensity_info['label']} "
                       f"(score={press_intensity_info['score']}, mult={raw_mult}) "
-                      f"→ GK reduced {raw_before} → {posterior_mean}")
+                      f"→ boost {gk_press_mult} {raw_before} → {posterior_mean}")
         elif press_intensity_info["multiplier"] < 1.0:
             raw_before = posterior_mean
             posterior_mean = round(posterior_mean * press_intensity_info["multiplier"], 1)
