@@ -138,6 +138,30 @@ No Whop integration — access control is:
 - Wave 2 runs with a 40s timeout covering 6 concurrent tasks (team/opp fixture stats, player logs, LLM digest, situation engine, web intel); if LLM is slow the whole batch can be cancelled — cache hits eliminate this risk for player logs
 - Fallback path at line ~1013 in predict.py also checks cache by player fixture ID when Wave 2 player_game_logs is empty
 
+## Line-Deviation Intelligence Engine (calibration.py)
+
+Added April 2026. Replaces hardcoded Guard 5 market-gap thresholds with data-driven calibration.
+
+**Key functions:**
+- `compute_line_deviation_bands(prop_type)` — queries settled picks, buckets by deviation %, returns learned hit rates
+- `get_line_deviation_intel(line, projected_value, rec, prop_type)` — returns band, hit rate, confidence delta, note
+- Cache TTL: 2 hours (`_dev_band_cache`). Min samples to trust learned rate: 8 picks per band.
+
+**Deviation bands:** aligned (0-5%), mild (5-10%), moderate (10-15%), elevated (15-20%), extreme (20%+)
+
+**Key finding from 177 settled pass_attempts picks (April 2026):**
+- UNDER in elevated band (15-20% above model): **91.7% hit rate** (12 picks)
+- UNDER in moderate band (10-15% above model): **88.9% hit rate** (9 picks)
+- UNDER in mild band (5-10%): **73.7% hit rate** (19 picks)
+- UNDER in extreme band (20%+): **63.0% hit rate** (46 picks)
+- OVER in aligned band: **30.4% hit rate** (23 picks) — triggers ALIGNED CAUTION warning
+
+**Confidence delta formula:** `(hit_rate - 50) * 0.5` applied to model's confidence score
+- Moderate UNDER: +19 pts | Elevated UNDER: +21 pts | Extreme UNDER: +6 pts
+- Aligned OVER (below 50% threshold): -10 pts warning
+
+The old hardcoded Guard 5 (penalty for >15% deviation) was backward — data shows those bands are the MOST profitable UNDER situations.
+
 ## LLM Integration Shim
 
 `backend/emergentintegrations/` is a local shim (not on PyPI):

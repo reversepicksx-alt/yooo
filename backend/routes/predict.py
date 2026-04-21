@@ -3632,38 +3632,87 @@ Analyze ALL data thoroughly. Return JSON only."""
                     f"({_pre_conflict} → {prediction['confidenceScore']})"
                 )
 
-        # Guard 5: Market-line information asymmetry — when the book's line sits
-        # significantly ABOVE the player's venue-specific average for a possession-sensitive
-        # prop (pass_attempts, passes), the sportsbook has context the model lacks
-        # (e.g., expected high-possession matchup, recent unreported form change).
-        # A large line-vs-average gap on UNDER picks should reduce our confidence,
-        # because we're betting against the market's informed expectation.
+        # Guard 5: Line-Deviation Intelligence — data-driven market asymmetry guard.
+        # Uses the deviation band system (calibration.py) to adjust confidence
+        # based on how far the book's line is from our model's projection.
+        # The further our rec disagrees with where the book set the line, the more
+        # we trust the book's information over our model's historical baseline.
         #
-        # Uses venueAvg (away/home split) if available — more accurate than overall priorMean.
-        # Threshold: line > 15% above venue avg AND model says UNDER.
-        # Extra penalty if it's a Defender (max possession-sensitivity position).
-        _venue_avg_for_guard = (real_bayes or {}).get("venueAvg") or _prior_m
-        if _venue_avg_for_guard is not None and req.propType in {"pass_attempts", "passes"} and rec == "under" and req.line > 0:
-            _mkt_ratio = req.line / max(_venue_avg_for_guard, 1.0)
-            if _mkt_ratio > 1.15:
-                _mkt_gap_pct = round((_mkt_ratio - 1.0) * 100)
-                _is_def_mkt  = player_position in {"Defender"}
-                _mkt_penalty = min(20, max(10, round((_mkt_ratio - 1.15) * 100 * 1.5 + 10)))
-                if _is_def_mkt:
-                    _mkt_penalty = min(25, _mkt_penalty + 5)
-                _pre_mkt = prediction.get("confidenceScore", 50)
-                prediction["confidenceScore"] = max(45, _pre_mkt - _mkt_penalty)
-                _avg_label = "venue avg" if (real_bayes or {}).get("venueAvg") else "season avg"
-                _mkt_alert = (
-                    f"MARKET GAP: Line {req.line} is {_mkt_gap_pct}% above {_avg_label} {_venue_avg_for_guard:.1f} — "
-                    f"book implies higher involvement than historical norm. "
-                    f"{'Defender pass volume extra-sensitive to possession.' if _is_def_mkt else ''} "
-                    f"UNDER confidence capped."
+        # Hit rates by band are LEARNED from settled picks (self-improving).
+        # When insufficient settled data exists, empirically-researched defaults apply.
+        try:
+            from calibration import get_line_deviation_intel
+            _dev_proj = prediction.get("projectedValue", req.line)
+            if _dev_proj and req.line > 0 and rec in ("over", "under"):
+                _dev_intel = await get_line_deviation_intel(
+                    line=req.line,
+                    projected_value=_dev_proj,
+                    recommendation=rec,
+                    prop_type=req.propType,
                 )
-                prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [_mkt_alert]
-                if _pre_mkt != prediction["confidenceScore"]:
-                    print(f"[GUARD] Market gap: line={req.line} vs {_avg_label}={_venue_avg_for_guard:.1f} ({_mkt_gap_pct}%+ above) "
-                          f"rec=UNDER → -{_mkt_penalty}% conf ({_pre_mkt} → {prediction['confidenceScore']})")
+                _dev_band       = _dev_intel.get("band", "aligned")
+                _dev_pct        = _dev_intel.get("deviationPct", 0)
+                _dev_against    = _dev_intel.get("againstBook", False)
+                _dev_hit_rate   = _dev_intel.get("hitRate", 55)
+                _dev_delta      = _dev_intel.get("confidenceDelta", 0)
+                _dev_note       = _dev_intel.get("note", "")
+                _dev_n          = _dev_intel.get("hitRateN", 0)
+                _dev_src        = _dev_intel.get("hitRateSource", "default")
+
+                # Apply confidence adjustment for non-aligned, against-book bands
+                if _dev_against and _dev_band not in ("aligned",) and abs(_dev_delta) >= 2:
+                    _is_def_dev = player_position in {"Defender"}
+                    # Extra damping for defenders on pass props (extra possession-sensitive)
+                    _dev_extra = 0
+                    if _is_def_dev and req.propType in {"pass_attempts", "passes"} and _dev_band in ("elevated", "extreme"):
+                        _dev_extra = -5  # additional caution for defenders
+                    _pre_dev = prediction.get("confidenceScore", 50)
+                    _adj_dev = max(45, _pre_dev + _dev_delta + _dev_extra)
+                    prediction["confidenceScore"] = _adj_dev
+
+                    _src_note = f"{_dev_n} settled picks" if _dev_src == "learned" else f"default/{_dev_n} picks"
+                    _def_note = " Defender pass extra-sensitive to possession." if _is_def_dev and req.propType in {"pass_attempts", "passes"} else ""
+                    _alert = (
+                        f"LINE DEVIATION [{_dev_band.upper()}]: Line {req.line} is {_dev_pct}% "
+                        f"{'above' if _dev_intel.get('direction') == 'above' else 'below'} model projection {_dev_proj} — "
+                        f"historical {rec.upper()} hit rate in this band: {_dev_hit_rate}% ({_src_note}).{_def_note}"
+                    )
+                    prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [_alert]
+                    prediction["lineDeviationBand"] = _dev_band
+                    prediction["lineDeviationPct"]  = _dev_pct
+                    prediction["lineDeviationHitRate"] = _dev_hit_rate
+
+                    if abs(_adj_dev - _pre_dev) >= 1:
+                        print(f"[DEV GUARD] {req.playerName} {rec.upper()} {req.propType}: "
+                              f"band={_dev_band} dev={_dev_pct}% hit_rate={_dev_hit_rate}% ({_src_note}) "
+                              f"delta={_dev_delta} → conf {_pre_dev}→{_adj_dev}")
+                elif _dev_band == "aligned":
+                    # Line is near our projection — apply historical hit rate nudge
+                    _pre_dev = prediction.get("confidenceScore", 50)
+                    if _dev_delta > 0:
+                        # Book agrees with direction — slight boost
+                        _boost = min(5, _dev_delta)
+                        prediction["confidenceScore"] = min(85, _pre_dev + _boost)
+                        prediction["lineDeviationBand"] = "aligned"
+                        if _boost > 0:
+                            print(f"[DEV GUARD] {req.playerName}: aligned band +{_boost}% ({_pre_dev}→{prediction['confidenceScore']})")
+                    elif _dev_delta <= -5:
+                        # Historical hit rate below 50% — warn and penalize
+                        _penalty = min(10, abs(_dev_delta))
+                        _adj = max(48, _pre_dev - _penalty)
+                        prediction["confidenceScore"] = _adj
+                        prediction["lineDeviationBand"] = "aligned_warn"
+                        _alert_w = (
+                            f"LINE DEVIATION [ALIGNED CAUTION]: Historically this {rec.upper()} "
+                            f"direction hits only {_dev_hit_rate}% ({_dev_n} settled picks) "
+                            f"when line is near model projection."
+                        )
+                        prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [_alert_w]
+                        print(f"[DEV GUARD] {req.playerName}: aligned CAUTION {rec.upper()} "
+                              f"hit_rate={_dev_hit_rate}% → -{_penalty}% ({_pre_dev}→{_adj})")
+
+        except Exception as _dev_e:
+            print(f"[DEV GUARD] Error: {_dev_e}")
 
         # ── Market Edge Calibration ───────────────────────────────────────────
         # edgeZ = (|posteriorMean - line|) / effective_std.
