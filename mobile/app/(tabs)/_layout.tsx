@@ -74,7 +74,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="toptable"
         options={isOwner ? {
-          title: 'Props Table',
+          title: 'Props Intel',
           tabBarIcon: ({ focused }) => <TabIcon name="grid" focused={focused} />,
         } : { href: null }}
       />
