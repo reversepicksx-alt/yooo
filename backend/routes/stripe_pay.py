@@ -163,6 +163,18 @@ async def change_plan(req: ChangePlanRequest):
     if not sub or not sub.get("stripeSubscriptionId"):
         raise HTTPException(status_code=404, detail="No active Stripe subscription found.")
 
+    old_key = sub.get("planKey", "")
+
+    # Guard: don't charge if already on this plan
+    if old_key == plan_key:
+        return {
+            "success": True,
+            "previous_plan": old_key,
+            "new_plan": plan_key,
+            "new_label": STRIPE_PLANS[plan_key]["label"],
+            "message": "Already on this plan — no change made.",
+        }
+
     get_stripe()
     try:
         price_id = _get_or_create_price(plan_key)
@@ -170,9 +182,10 @@ async def change_plan(req: ChangePlanRequest):
         stripe.Subscription.modify(
             sub["stripeSubscriptionId"],
             items=[{"id": stripe_sub["items"]["data"][0]["id"], "price": price_id}],
-            proration_behavior="always_invoice",
+            # "none" = no immediate prorated invoice; new price takes effect at next renewal.
+            # "always_invoice" was causing immediate charges (the $28.99 double-charge bug).
+            proration_behavior="none",
         )
-        old_key = sub.get("planKey", "")
         await db.stripe_subscriptions.update_one(
             {"email": email_lower},
             {"$set": {"planKey": plan_key, "updatedAt": datetime.now(timezone.utc).isoformat()}}
@@ -182,7 +195,7 @@ async def change_plan(req: ChangePlanRequest):
             "previous_plan": old_key,
             "new_plan": plan_key,
             "new_label": STRIPE_PLANS[plan_key]["label"],
-            "message": "Plan updated successfully.",
+            "message": "Plan updated — new rate applies at your next renewal.",
         }
     except stripe.StripeError as e:
         raise HTTPException(status_code=500, detail=str(e))
