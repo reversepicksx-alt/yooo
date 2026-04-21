@@ -1863,6 +1863,9 @@ async def predict(req: PredictionRequest):
                 "defender": {
                     "tackles": 0.10, "clearances": 0.12, "interceptions": 0.09,
                     "blocks": 0.08, "fouls_committed": 0.06, "duels_won": 0.07,
+                    # Pass redistribution: when a fellow defender is absent, the remaining
+                    # defenders take on more build-up passing — especially CBs in possession systems
+                    "pass_attempts": 0.07, "passes": 0.07, "key_passes": 0.06, "crosses": 0.04,
                 },
             }
 
@@ -2543,6 +2546,35 @@ POSITION CLUES: CB=high tackles/blocks/aerial duels, low crosses/key passes/drib
         # Use specific position if available, otherwise fall back to generic
         display_position = specific_position or player_position
         display_role = player_role
+
+        # ── DEFENDER POSSESSION MULTIPLIER OVERRIDE ──────────────────────────
+        # The match-dominance possession multiplier uses poss_ratio = expected/season_avg.
+        # For defenders on pass_attempts, this formula can PENALIZE slightly-below-average
+        # expected possession even when the team is still a neutral-to-dominant possession side.
+        # Root cause: if Huracan avg away = 52% and expected = 50.9%, ratio = 0.979 → multiplier
+        # reduces passes by 2%. But 50.9% is basically neutral, not a deficit.
+        #
+        # Fix: recompute the possession multiplier for defenders using an ABSOLUTE 50% neutral
+        # baseline so that any possession above 50% gives a positive (not relative-neutral) boost.
+        # Also widen the cap to 0.55 (vs 0.35) since defender passes scale tightly with possession.
+        _is_def_pass = (
+            req.propType in {"pass_attempts", "passes"}
+            and player_position in {"Defender"}
+            and match_dominance is not None
+        )
+        if _is_def_pass:
+            _def_exp_poss = match_dominance.get("expectedPoss", 50.0)
+            _def_raw_adj  = (_def_exp_poss - 50.0) / 50.0  # +0.30 at 65%, +0.018 at 50.9%
+            _def_capped   = max(-0.40, min(0.55, _def_raw_adj))
+            _def_new_mult = round(1.0 + _def_capped, 3)
+            _def_old_mult = match_dominance.get("multiplier", 1.0)
+            if abs(_def_new_mult - _def_old_mult) > 0.02:
+                match_dominance["multiplier"] = _def_new_mult
+                match_dominance["notes"].append(
+                    f"Defender pass override: absolute baseline → ×{_def_new_mult} "
+                    f"(was ×{_def_old_mult}, exp poss {_def_exp_poss:.1f}%)"
+                )
+                print(f"[DEF PASS MULT] {req.playerName}: poss={_def_exp_poss:.1f}% → ×{_def_old_mult}→×{_def_new_mult}")
 
         # =============================================
         # MULTI-AI CONSENSUS ENGINE (3 AIs)
@@ -3599,6 +3631,39 @@ Analyze ALL data thoroughly. Return JSON only."""
                     f"rec={rec.upper()}, gap={_conflict_gap:.1f} → -{_conflict_penalty}% conf "
                     f"({_pre_conflict} → {prediction['confidenceScore']})"
                 )
+
+        # Guard 5: Market-line information asymmetry — when the book's line sits
+        # significantly ABOVE the player's venue-specific average for a possession-sensitive
+        # prop (pass_attempts, passes), the sportsbook has context the model lacks
+        # (e.g., expected high-possession matchup, recent unreported form change).
+        # A large line-vs-average gap on UNDER picks should reduce our confidence,
+        # because we're betting against the market's informed expectation.
+        #
+        # Uses venueAvg (away/home split) if available — more accurate than overall priorMean.
+        # Threshold: line > 15% above venue avg AND model says UNDER.
+        # Extra penalty if it's a Defender (max possession-sensitivity position).
+        _venue_avg_for_guard = (real_bayes or {}).get("venueAvg") or _prior_m
+        if _venue_avg_for_guard is not None and req.propType in {"pass_attempts", "passes"} and rec == "under" and req.line > 0:
+            _mkt_ratio = req.line / max(_venue_avg_for_guard, 1.0)
+            if _mkt_ratio > 1.15:
+                _mkt_gap_pct = round((_mkt_ratio - 1.0) * 100)
+                _is_def_mkt  = player_position in {"Defender"}
+                _mkt_penalty = min(20, max(10, round((_mkt_ratio - 1.15) * 100 * 1.5 + 10)))
+                if _is_def_mkt:
+                    _mkt_penalty = min(25, _mkt_penalty + 5)
+                _pre_mkt = prediction.get("confidenceScore", 50)
+                prediction["confidenceScore"] = max(45, _pre_mkt - _mkt_penalty)
+                _avg_label = "venue avg" if (real_bayes or {}).get("venueAvg") else "season avg"
+                _mkt_alert = (
+                    f"MARKET GAP: Line {req.line} is {_mkt_gap_pct}% above {_avg_label} {_venue_avg_for_guard:.1f} — "
+                    f"book implies higher involvement than historical norm. "
+                    f"{'Defender pass volume extra-sensitive to possession.' if _is_def_mkt else ''} "
+                    f"UNDER confidence capped."
+                )
+                prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [_mkt_alert]
+                if _pre_mkt != prediction["confidenceScore"]:
+                    print(f"[GUARD] Market gap: line={req.line} vs {_avg_label}={_venue_avg_for_guard:.1f} ({_mkt_gap_pct}%+ above) "
+                          f"rec=UNDER → -{_mkt_penalty}% conf ({_pre_mkt} → {prediction['confidenceScore']})")
 
         # ── Market Edge Calibration ───────────────────────────────────────────
         # edgeZ = (|posteriorMean - line|) / effective_std.
