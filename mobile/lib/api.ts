@@ -215,6 +215,9 @@ export interface PredictionResult {
     trailing_sample_size?: number;
     key_finding?: string;
     trailing_near_line?: boolean;
+    p_player_team_scores_first?: number;
+    fts_no_goal_pct?: number;
+    fts_sample?: number;
     positional_depth?: {
       vs_dominant_trailing_avg?: number;
       vs_moderate_trailing_avg?: number;

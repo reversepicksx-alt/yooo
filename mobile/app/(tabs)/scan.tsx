@@ -692,14 +692,12 @@ export default function ScanScreen() {
                           <Text style={styles.gsIntelTitle}>DEEP INTEL</Text>
                           <View style={styles.gsIntelRow}>
                             {intel.map((s, i) => {
-                              const isFacilitation = s.label.toLowerCase().includes('allows') || s.label.toLowerCase().includes('opp');
-                              const chipColor = isFacilitation ? '#8B5CF6' : '#EF4444';
-                              const chipEmoji = isFacilitation ? '🎯' : '📊';
+                              const chipColor = '#EF4444';
                               const vsLine = s.vs_line;
                               return (
                                 <View key={i} style={[styles.gsIntelChip, { borderColor: chipColor + '55' }]}>
                                   <Text style={[styles.gsIntelChipLabel, { color: chipColor }]}>
-                                    {chipEmoji} {isFacilitation ? 'OPP ALLOWS' : 'VS DOM OPP'}
+                                    📊 VS DOMINANT OPP
                                   </Text>
                                   <Text style={[styles.gsIntelChipVal, { color: chipColor }]}>
                                     {s.projected_stat}
@@ -833,41 +831,6 @@ export default function ScanScreen() {
                       );
                     })()}
 
-                    {/* First to Score */}
-                    {(() => {
-                      const pOppFirst = prediction.gameScript?.p_opponent_scores_first;
-                      if (pOppFirst == null) return null;
-                      const pTeamFirst = Math.round((1 - pOppFirst) * 100);
-                      const pOppFirstPct = Math.round(pOppFirst * 100);
-                      const teamShort = (prediction.teamName || 'TEAM').split(' ').pop()?.slice(0, 8).toUpperCase() || 'TEAM';
-                      const oppShort  = (prediction.opponentName || 'OPP').split(' ').pop()?.slice(0, 8).toUpperCase() || 'OPP';
-                      const teamFavoured = pTeamFirst >= pOppFirstPct;
-                      return (
-                        <View style={styles.ftsWrap}>
-                          <View style={styles.ftsHeader}>
-                            <Ionicons name="football-outline" size={12} color={Colors.textSecondary} />
-                            <Text style={styles.ftsLabel}>FIRST TO SCORE</Text>
-                          </View>
-                          <View style={styles.ftsBars}>
-                            <View style={styles.ftsBarRow}>
-                              <Text style={[styles.ftsTeamLabel, { color: teamFavoured ? Colors.success : Colors.textSecondary }]}>{teamShort}</Text>
-                              <View style={styles.ftsBarBg}>
-                                <View style={[styles.ftsBarFill, { width: `${pTeamFirst}%` as any, backgroundColor: teamFavoured ? Colors.success : '#374151' }]} />
-                              </View>
-                              <Text style={[styles.ftsPct, { color: teamFavoured ? Colors.success : Colors.textSecondary }]}>{pTeamFirst}%</Text>
-                            </View>
-                            <View style={styles.ftsBarRow}>
-                              <Text style={[styles.ftsTeamLabel, { color: !teamFavoured ? '#F97316' : Colors.textSecondary }]}>{oppShort}</Text>
-                              <View style={styles.ftsBarBg}>
-                                <View style={[styles.ftsBarFill, { width: `${pOppFirstPct}%` as any, backgroundColor: !teamFavoured ? '#F97316' : '#374151' }]} />
-                              </View>
-                              <Text style={[styles.ftsPct, { color: !teamFavoured ? '#F97316' : Colors.textSecondary }]}>{pOppFirstPct}%</Text>
-                            </View>
-                          </View>
-                          <Text style={styles.ftsNote}>Based on last 20 {teamFavoured ? oppShort : teamShort} home fixtures · HT score analysis</Text>
-                        </View>
-                      );
-                    })()}
 
                     {prediction.expectedGameType && (
                       <View style={styles.gameTypeWrap}>

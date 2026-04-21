@@ -275,16 +275,26 @@ def _get_positional_trailing_depth(
 
 # ── Opponent first-goal probability ──────────────────────────────────────────
 
-async def _get_opponent_first_goal_prob(
+async def _get_first_to_score_rates(
     opponent_id: int,
     opponent_venue: str = "",   # "home" or "away" for this specific fixture
     limit: int = 20,
-) -> float | None:
+) -> dict | None:
     """
-    P(opponent scores first) based on HT lead rate, filtered by the venue
-    the opponent will play in this specific fixture.
-    e.g. if opponent is HOME → only look at their HOME fixtures.
-    This eliminates the venue-mixing bias (away games depress home team's HT lead rate).
+    Returns venue-specific first-to-score estimates for both teams.
+
+    Strategy: look at HT scores in the opponent's last N fixtures (filtered to
+    matching venue).  We track THREE outcomes:
+      - opponent leads at HT  (opponent likely scored first)
+      - visitor leads at HT   (player's team equivalent likely scored first)
+      - level at HT           (0-0 or tied — first scorer is ambiguous)
+
+    We then NORMALISE over only the decisive cases (opp-led + visitor-led),
+    which removes the 0-0 / tied-HT games that used to inflate the visitor %.
+    The level rate is returned separately so the UI can show a "No goal" slice.
+
+    Returns {"opponent_pct": float, "player_team_pct": float,
+             "no_goal_pct": float, "sample": int}  or None if insufficient data.
     """
     if not opponent_id:
         return None
@@ -297,7 +307,11 @@ async def _get_opponent_first_goal_prob(
         return None
 
     finished = {"FT", "AET", "PEN", "AWD"}
-    count, total = 0, 0
+    opp_leads = 0
+    visitor_leads = 0
+    level_ht = 0
+    total = 0
+
     for fx in (raw if isinstance(raw, list) else []):
         status = (fx.get("fixture") or {}).get("status", {}).get("short", "")
         if status not in finished:
@@ -306,20 +320,57 @@ async def _get_opponent_first_goal_prob(
         ht_h, ht_a = ht.get("home"), ht.get("away")
         if ht_h is None or ht_a is None:
             continue
+
+        try:
+            ht_h, ht_a = int(ht_h), int(ht_a)
+        except (ValueError, TypeError):
+            continue
+
         home_id = ((fx.get("teams") or {}).get("home") or {}).get("id")
         opp_is_home = (home_id == opponent_id)
 
-        # Venue filter: only count matching venue fixtures for a fair rate
+        # Venue filter: only use the opponent's matching-venue games
         if opponent_venue == "home" and not opp_is_home:
             continue
         if opponent_venue == "away" and opp_is_home:
             continue
 
         total += 1
-        if (opp_is_home and int(ht_h) > int(ht_a)) or (not opp_is_home and int(ht_a) > int(ht_h)):
-            count += 1
 
-    return round(count / total, 2) if total >= 3 else None
+        # Determine who was ahead at HT in this fixture
+        if opp_is_home:
+            if ht_h > ht_a:
+                opp_leads += 1       # opponent (home) leading
+            elif ht_a > ht_h:
+                visitor_leads += 1   # away side leading
+            else:
+                level_ht += 1        # 0-0 or equal
+        else:
+            if ht_a > ht_h:
+                opp_leads += 1       # opponent (away) leading
+            elif ht_h > ht_a:
+                visitor_leads += 1   # home side leading
+            else:
+                level_ht += 1
+
+    if total < 3:
+        return None
+
+    # Normalise over decisive games (exclude ambiguous level-at-HT games)
+    decisive = opp_leads + visitor_leads
+    if decisive == 0:
+        return None
+
+    opp_norm     = round(opp_leads / decisive, 2)
+    visitor_norm = round(visitor_leads / decisive, 2)
+    no_goal_pct  = round(level_ht / total, 2)
+
+    return {
+        "opponent_pct":     opp_norm,      # P(opponent scores first | someone scored)
+        "player_team_pct":  visitor_norm,  # P(player's team scores first | someone scored)
+        "no_goal_pct":      no_goal_pct,   # P(level at HT — no clear first scorer)
+        "sample":           total,
+    }
 
 
 # ── Main function ─────────────────────────────────────────────────────────────
@@ -355,7 +406,10 @@ async def get_game_script_intel(
     """
     result = {
         "p_team_trails":            None,
-        "p_opponent_scores_first":  None,
+        "p_opponent_scores_first":  None,   # normalised: P(opp scores first | someone scored)
+        "p_player_team_scores_first": None, # normalised: P(player's team scores first | someone scored)
+        "fts_no_goal_pct":          None,   # P(level at HT — no clear first scorer)
+        "fts_sample":               None,   # number of fixtures analysed
         "trailing_avg":             None,
         "normal_avg":               None,
         "overall_avg":              None,
@@ -434,21 +488,31 @@ async def get_game_script_intel(
     pos_depth = _get_positional_trailing_depth(venue_logs, prop_type, venue)
     result["positional_depth"] = pos_depth
 
-    # ── First-goal probability (venue-specific: only opponent's home/away games) ─
+    # ── First-to-score rates (venue-specific, normalised, both teams) ────────────
     pos_code        = _api_position_code(player_position)
     facilitation    = {}
-    # opponent's venue = opposite of player's team venue
-    opponent_venue  = "home" if venue == "away" else "away"
+    opponent_venue  = "home" if venue == "away" else "away"   # opp venue = opposite of player's
+    fts_data: dict | None = None
     try:
-        p_opp_first = await asyncio.wait_for(
-            _get_opponent_first_goal_prob(opponent_id, opponent_venue=opponent_venue),
+        fts_data = await asyncio.wait_for(
+            _get_first_to_score_rates(opponent_id, opponent_venue=opponent_venue),
             timeout=12.0
         )
     except Exception:
-        p_opp_first = None
+        fts_data = None
 
-    result["opponent_facilitation"]    = {}
-    result["p_opponent_scores_first"]  = p_opp_first
+    result["opponent_facilitation"]          = {}
+    if fts_data:
+        result["p_opponent_scores_first"]      = fts_data.get("opponent_pct")
+        result["p_player_team_scores_first"]   = fts_data.get("player_team_pct")
+        result["fts_no_goal_pct"]              = fts_data.get("no_goal_pct")
+        result["fts_sample"]                   = fts_data.get("sample")
+    else:
+        result["p_opponent_scores_first"]      = None
+        result["p_player_team_scores_first"]   = None
+
+    # p_opp_first used in script-adjusted projection (keep variable for compat)
+    p_opp_first = result["p_opponent_scores_first"]
 
     # ── Script-adjusted projection ───────────────────────────────────────────
     p_trail_used  = result["p_team_trails"] or 0.4
