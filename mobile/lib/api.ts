@@ -198,6 +198,9 @@ export interface PredictionResult {
   confidenceLevel?: string;
   confidenceInterval?: [number, number];
   priorMean?: number;
+  lineDeviationBand?: string;
+  lineDeviationPct?: number;
+  lineDeviationHitRate?: number;
   momentumMean?: number;
   momentumEffect?: number;
   momentumLabel?: string;
@@ -486,6 +489,9 @@ export async function predict(request: Record<string, unknown>): Promise<Predict
     scenarioAnalysis: raw.scenarioAnalysis || undefined,
     matchContext: raw.matchContext ? { league: raw.matchContext.league, round: raw.matchContext.round, date: raw.matchContext.date } : undefined,
     gameSituation: raw.gameSituation ?? undefined,
+    lineDeviationBand: raw.lineDeviationBand ?? undefined,
+    lineDeviationPct: raw.lineDeviationPct ?? undefined,
+    lineDeviationHitRate: raw.lineDeviationHitRate ?? undefined,
     dataQuality: raw.dataQuality ? { level: raw.dataQuality.level, message: raw.dataQuality.message, gamesWithData: raw.dataQuality.gamesWithData, totalGames: raw.dataQuality.totalGames } : undefined,
     analysisSummary: raw.analysisSummary ?? undefined,
   };

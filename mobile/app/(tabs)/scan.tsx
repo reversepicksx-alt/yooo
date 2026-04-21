@@ -25,6 +25,23 @@ const PROP_LABELS: Record<string, string> = {
   shots_assisted: 'Shot Assists', duels_won: 'Duels Won', passes: 'Passes',
 };
 
+const BAND_ACCENT: Record<string, string> = {
+  aligned:  '#39FF14',
+  aligned_warn: '#39FF14',
+  mild:     '#B5FF14',
+  moderate: '#FFCC00',
+  elevated: '#FF8C00',
+  extreme:  '#FF3B30',
+};
+const BAND_LABEL: Record<string, string> = {
+  aligned:  'ALIGNED',
+  aligned_warn: 'ALIGNED',
+  mild:     'MILD',
+  moderate: 'MODERATE',
+  elevated: 'ELEVATED',
+  extreme:  'EXTREME',
+};
+
 type Mode = 'scan' | 'manual';
 type Phase = 'idle' | 'scanning' | 'detected' | 'analyzing' | 'result' | 'saved';
 
@@ -520,6 +537,49 @@ export default function ScanScreen() {
                   <Text style={styles.analysisStatSub}>{prediction.confidenceLevel?.toUpperCase() || 'SCORE'}</Text>
                 </View>
               </View>
+
+              {/* Line vs Season Average */}
+              {prediction.priorMean != null && prediction.line != null && (() => {
+                const pct = ((prediction.line - prediction.priorMean) / prediction.priorMean) * 100;
+                const lineBelow = pct < 0;
+                const absPct = Math.abs(pct).toFixed(1);
+                const deltaColor = lineBelow ? Colors.success : Colors.error;
+                const arrow = lineBelow ? '↓' : '↑';
+                const band = prediction.lineDeviationBand;
+                const bandAccent = band ? (BAND_ACCENT[band] ?? '#888') : null;
+                const hitRate = prediction.lineDeviationHitRate;
+                return (
+                  <>
+                    <View style={styles.analysisDivider} />
+                    <View style={styles.lineVsAvgRow}>
+                      <View style={styles.lineVsAvgLeft}>
+                        <Text style={styles.lineVsAvgLabel}>SEASON AVG</Text>
+                        <Text style={styles.lineVsAvgVal}>{prediction.priorMean.toFixed(1)}</Text>
+                      </View>
+                      <View style={styles.lineVsAvgMid}>
+                        <Text style={[styles.lineVsAvgDelta, { color: deltaColor }]}>
+                          {arrow} {absPct}%
+                        </Text>
+                        <Text style={styles.lineVsAvgNote}>
+                          line {absPct}% {lineBelow ? 'below' : 'above'} season avg
+                        </Text>
+                      </View>
+                      {bandAccent && (
+                        <View style={[styles.devBandPill, { borderColor: bandAccent + '66', backgroundColor: bandAccent + '15' }]}>
+                          <Text style={[styles.devBandPillText, { color: bandAccent }]}>
+                            {BAND_LABEL[band!] ?? (band ?? '').toUpperCase()}
+                          </Text>
+                          {hitRate != null && (
+                            <Text style={[styles.devBandPillHit, { color: bandAccent }]}>
+                              {hitRate.toFixed(0)}% hit
+                            </Text>
+                          )}
+                        </View>
+                      )}
+                    </View>
+                  </>
+                );
+              })()}
 
               {/* Data Quality Warning */}
               {prediction.dataQuality && prediction.dataQuality.level !== 'good' && prediction.dataQuality.message && (
@@ -1735,5 +1795,41 @@ const styles = StyleSheet.create({
   },
   sharpRowText: {
     fontSize: 13, color: Colors.textSecondary, lineHeight: 19,
+  },
+
+  /* Line vs Season Average */
+  lineVsAvgRow: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 16, paddingVertical: 12, gap: 12,
+  },
+  lineVsAvgLeft: {
+    alignItems: 'center', minWidth: 56,
+  },
+  lineVsAvgLabel: {
+    fontSize: 9, fontWeight: '700', color: Colors.textTertiary,
+    letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 2,
+  },
+  lineVsAvgVal: {
+    fontSize: 18, fontWeight: '800', color: Colors.text,
+  },
+  lineVsAvgMid: {
+    flex: 1, gap: 2,
+  },
+  lineVsAvgDelta: {
+    fontSize: 16, fontWeight: '800',
+  },
+  lineVsAvgNote: {
+    fontSize: 11, color: Colors.textTertiary, letterSpacing: 0.2,
+  },
+  devBandPill: {
+    borderRadius: 8, borderWidth: 1,
+    paddingHorizontal: 10, paddingVertical: 6,
+    alignItems: 'center', gap: 2,
+  },
+  devBandPillText: {
+    fontSize: 10, fontWeight: '800', letterSpacing: 0.8,
+  },
+  devBandPillHit: {
+    fontSize: 9, fontWeight: '700',
   },
 });

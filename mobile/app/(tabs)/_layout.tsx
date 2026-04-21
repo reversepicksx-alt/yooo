@@ -71,13 +71,7 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen name="analytics" options={{ href: null }} />
-      <Tabs.Screen
-        name="toptable"
-        options={isOwner ? {
-          title: 'Props Intel',
-          tabBarIcon: ({ focused }) => <TabIcon name="grid" focused={focused} />,
-        } : { href: null }}
-      />
+      <Tabs.Screen name="toptable" options={{ href: null }} />
       <Tabs.Screen name="intel" options={{ href: null }} />
       <Tabs.Screen name="chat" options={{ href: null }} />
     </Tabs>
