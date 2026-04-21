@@ -3659,6 +3659,11 @@ Analyze ALL data thoroughly. Return JSON only."""
                 _dev_n          = _dev_intel.get("hitRateN", 0)
                 _dev_src        = _dev_intel.get("hitRateSource", "default")
 
+                # Always expose band + deviation for frontend display (regardless of conf adjustment)
+                prediction["lineDeviationBand"]    = _dev_band
+                prediction["lineDeviationPct"]     = _dev_pct
+                prediction["lineDeviationHitRate"] = _dev_hit_rate
+
                 # Apply confidence adjustment for non-aligned, against-book bands
                 if _dev_against and _dev_band not in ("aligned",) and abs(_dev_delta) >= 2:
                     _is_def_dev = player_position in {"Defender"}
