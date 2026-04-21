@@ -713,24 +713,63 @@ export async function getOwnerAnalytics(): Promise<AnalyticsData> {
   return apiCall('/api/admin/analytics');
 }
 
-export interface TopPropsRow {
+export interface PlayerPickRow {
+  playerName: string;
+  position: string;
+  posRaw: string;
   propType: string;
   direction: string;
+  line: number | null;
+  projection: number | null;
+  deviationPct: number | null;
+  band: string;
+  bandOrder: number;
   venue: string;
+  result: string;
+  actual: number | null;
+  opponent: string;
+  teamName: string;
+  league: string;
+  againstBook: boolean;
+  confidence: number | null;
+  date: string;
+}
+
+export interface BandSummaryRow {
+  band: string;
+  bandOrder: number;
+  propType: string;
+  direction: string;
   position: string;
+  venue: string;
   hitPct: number;
   hits: number;
   misses: number;
   total: number;
   avgLine: number | null;
-  matchType: string;
+  uniquePlayers: number;
   league: string;
 }
 
-export interface TopPropsData {
-  rows: TopPropsRow[];
-  totalRecords: number;
+export interface OverallBandRow {
+  band: string;
+  direction: string;
+  hitPct: number;
+  hits: number;
+  total: number;
+  bandOrder: number;
 }
+
+export interface TopPropsData {
+  playerRows: PlayerPickRow[];
+  bandSummary: BandSummaryRow[];
+  overallSummary: OverallBandRow[];
+  totalDeduped: number;
+  totalRaw: number;
+}
+
+// Legacy alias — some old imports may still reference this
+export type TopPropsRow = BandSummaryRow;
 
 export async function getTopPropsTable(): Promise<TopPropsData> {
   return apiCall('/api/admin/top-props-table');

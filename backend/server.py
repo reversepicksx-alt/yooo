@@ -828,7 +828,13 @@ async def owner_analytics():
 
 @app.get("/api/admin/top-props-table")
 async def owner_top_props_table():
-    """Owner-only: granular pick aggregation grouped by prop+direction+venue+position+league."""
+    """
+    Owner-only: dual-view props intelligence table.
+    Returns:
+      - bandSummary: aggregated hit rates by deviation band + position + venue + direction
+      - playerRows:  individual deduped picks (one per unique prediction event via trackingId)
+                     with deviation band computed on-the-fly for older picks
+    """
     from config import db
 
     LEAGUE_NAMES = {
@@ -840,56 +846,208 @@ async def owner_top_props_table():
         71: "Brasileirão", 188: "A-League", 13: "UCL Qual.",
         254: "NWSL", 242: "Liga Pro Ecu",
     }
-
     CUP_LEAGUE_IDS = {2, 3, 848, 13}
 
-    pipeline = [
-        {"$match": {"status": "settled", "result": {"$in": ["hit", "miss"]}}},
-        {"$group": {
-            "_id": {
-                "propType": "$propType",
-                "direction": "$recommendation",
-                "venue": "$venue",
-                "position": "$position",
-                "leagueId": "$leagueId",
-            },
-            "hits":    {"$sum": {"$cond": [{"$eq": ["$result", "hit"]}, 1, 0]}},
-            "misses":  {"$sum": {"$cond": [{"$eq": ["$result", "miss"]}, 1, 0]}},
-            "total":   {"$sum": 1},
-            "avgLine": {"$avg": "$line"},
-        }},
-        {"$match": {"total": {"$gte": 3}}},
-    ]
+    def _deviation_band(line, proj):
+        if not line or not proj or proj <= 0:
+            return None, None
+        try:
+            dev = abs(float(line) - float(proj)) / float(proj)
+        except (TypeError, ValueError):
+            return None, None
+        if dev < 0.05:   return "aligned",  round(dev * 100, 1)
+        if dev < 0.10:   return "mild",     round(dev * 100, 1)
+        if dev < 0.15:   return "moderate", round(dev * 100, 1)
+        if dev < 0.20:   return "elevated", round(dev * 100, 1)
+        return "extreme", round(dev * 100, 1)
 
-    rows = await db.picks.aggregate(pipeline).to_list(1000)
-    result = []
-    for r in rows:
-        gid = r["_id"]
-        hits = r["hits"]
-        misses = r["misses"]
-        total = r["total"]
-        win_pct = round(hits / total * 100, 1) if total > 0 else 0.0
-        league_id = gid.get("leagueId")
-        league_name = LEAGUE_NAMES.get(league_id, f"Lg {league_id}" if league_id else "Unknown")
-        avg_line_raw = r.get("avgLine")
-        avg_line = round(avg_line_raw, 1) if avg_line_raw is not None else None
-        match_type = "Cup" if league_id in CUP_LEAGUE_IDS else "League"
-        result.append({
-            "propType":  gid.get("propType") or "—",
-            "direction": (gid.get("direction") or "—").upper(),
-            "venue":     (gid.get("venue") or "—").capitalize(),
-            "position":  gid.get("position") or "—",
-            "hitPct":    win_pct,
-            "hits":      hits,
-            "misses":    misses,
-            "total":     total,
-            "avgLine":   avg_line,
-            "matchType": match_type,
-            "league":    league_name,
+    BAND_ORDER = {"aligned": 0, "mild": 1, "moderate": 2, "elevated": 3, "extreme": 4}
+
+    # ── Pull all settled picks ────────────────────────────────────────────
+    raw_picks = await db.picks.find(
+        {"status": "settled", "result": {"$in": ["hit", "miss"]}},
+        {
+            "_id": 0, "trackingId": 1, "playerName": 1, "position": 1,
+            "propType": 1, "recommendation": 1, "result": 1,
+            "line": 1, "projectedValue": 1, "actualValue": 1,
+            "venue": 1, "leagueId": 1, "teamName": 1, "opponentName": 1,
+            "lineDeviationBand": 1, "lineDeviationPct": 1,
+            "timestamp": 1, "settledAt": 1, "confidenceScore": 1,
+        }
+    ).to_list(10000)
+
+    # ── Deduplicate by trackingId (multiple users may save same prediction) ──
+    seen_tracking: dict = {}
+    for p in raw_picks:
+        tid = p.get("trackingId") or f"{p.get('playerName','')}|{p.get('propType','')}|{p.get('line','')}|{p.get('recommendation','')}|{p.get('venue','')}"
+        if tid not in seen_tracking:
+            seen_tracking[tid] = p
+
+    deduped = list(seen_tracking.values())
+
+    # ── Build player rows (individual pick view) ──────────────────────────
+    player_rows = []
+    for p in deduped:
+        line     = p.get("line")
+        proj     = p.get("projectedValue")
+        band     = p.get("lineDeviationBand")
+        dev_pct  = p.get("lineDeviationPct")
+
+        # Compute band on-the-fly for older picks without it stored
+        if not band:
+            band, dev_pct = _deviation_band(line, proj)
+
+        rec     = (p.get("recommendation") or "").lower()
+        result  = (p.get("result") or "").lower()
+        lid     = p.get("leagueId")
+        pos_raw = (p.get("position") or "").strip()
+
+        # Normalise position to broad group for display
+        pos_group = pos_raw
+        if pos_raw in {"CB", "LB", "RB", "LWB", "RWB", "SW"}:
+            pos_group = "Defender"
+        elif pos_raw in {"CM", "CDM", "CAM", "DM", "AM", "RM", "LM"}:
+            pos_group = "Midfielder"
+        elif pos_raw in {"LW", "RW", "ST", "CF", "SS", "FW"}:
+            pos_group = "Forward"
+        elif pos_raw in {"GK"}:
+            pos_group = "Goalkeeper"
+
+        # Direction relative to book (line vs projection)
+        if line and proj:
+            try:
+                book_high = float(line) > float(proj)
+                against_book = (rec == "under" and book_high) or (rec == "over" and not book_high)
+            except (TypeError, ValueError):
+                against_book = False
+        else:
+            against_book = False
+
+        ts = p.get("settledAt") or p.get("timestamp")
+        date_str = ""
+        if ts:
+            try:
+                if hasattr(ts, "strftime"):
+                    date_str = ts.strftime("%m/%d")
+                else:
+                    from datetime import datetime, timezone
+                    dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+                    date_str = dt.strftime("%m/%d")
+            except Exception:
+                date_str = ""
+
+        player_rows.append({
+            "playerName":   p.get("playerName") or "—",
+            "position":     pos_group or pos_raw or "—",
+            "posRaw":       pos_raw or "—",
+            "propType":     p.get("propType") or "—",
+            "direction":    rec.upper() if rec else "—",
+            "line":         round(float(line), 1) if line is not None else None,
+            "projection":   round(float(proj), 1) if proj is not None else None,
+            "deviationPct": dev_pct,
+            "band":         band or "—",
+            "bandOrder":    BAND_ORDER.get(band, 9),
+            "venue":        (p.get("venue") or "—").capitalize(),
+            "result":       result.upper() if result else "—",
+            "actual":       round(float(p["actualValue"]), 1) if p.get("actualValue") is not None else None,
+            "opponent":     p.get("opponentName") or "—",
+            "teamName":     p.get("teamName") or "—",
+            "league":       LEAGUE_NAMES.get(lid, f"Lg {lid}" if lid else "—"),
+            "againstBook":  against_book,
+            "confidence":   p.get("confidenceScore"),
+            "date":         date_str,
         })
 
-    result.sort(key=lambda x: (-x["hitPct"], -x["total"]))
-    return {"rows": result, "totalRecords": len(result)}
+    player_rows.sort(key=lambda x: (x["bandOrder"], x["propType"], x["playerName"]))
+
+    # ── Build band summary (aggregated view) ─────────────────────────────
+    # Group deduped picks by: band + propType + direction + position + venue
+    band_buckets: dict = {}
+    for p in player_rows:
+        band    = p["band"]
+        prop    = p["propType"]
+        direc   = p["direction"]
+        pos     = p["position"]
+        venue   = p["venue"]
+        result  = p["result"]
+        lid_raw = p["league"]
+        key = (band, prop, direc, pos, venue)
+        if key not in band_buckets:
+            band_buckets[key] = {
+                "band": band, "bandOrder": p["bandOrder"],
+                "propType": prop, "direction": direc,
+                "position": pos, "venue": venue,
+                "hits": 0, "misses": 0, "total": 0,
+                "lines": [], "players": set(),
+                "league": lid_raw,
+            }
+        b = band_buckets[key]
+        b["total"] += 1
+        if result == "HIT":
+            b["hits"] += 1
+        elif result == "MISS":
+            b["misses"] += 1
+        b["players"].add(p["playerName"])
+        if p["line"] is not None:
+            b["lines"].append(p["line"])
+
+    band_summary = []
+    for key, b in band_buckets.items():
+        total = b["total"]
+        if total < 2:
+            continue
+        hits    = b["hits"]
+        hit_pct = round(hits / total * 100, 1) if total > 0 else 0.0
+        avg_line = round(sum(b["lines"]) / len(b["lines"]), 1) if b["lines"] else None
+        band_summary.append({
+            "band":         b["band"],
+            "bandOrder":    b["bandOrder"],
+            "propType":     b["propType"],
+            "direction":    b["direction"],
+            "position":     b["position"],
+            "venue":        b["venue"],
+            "hitPct":       hit_pct,
+            "hits":         hits,
+            "misses":       b["misses"],
+            "total":        total,
+            "avgLine":      avg_line,
+            "uniquePlayers": len(b["players"]),
+            "league":       b["league"],
+        })
+
+    band_summary.sort(key=lambda x: (x["bandOrder"], -x["hitPct"], -x["total"]))
+
+    # ── Overall band stats (top-level summary cards) ──────────────────────
+    overall_bands: dict = {}
+    for p in player_rows:
+        band   = p["band"]
+        direc  = p["direction"]
+        result = p["result"]
+        k = (band, direc)
+        if k not in overall_bands:
+            overall_bands[k] = {"hits": 0, "total": 0, "bandOrder": p["bandOrder"]}
+        overall_bands[k]["total"] += 1
+        if result == "HIT":
+            overall_bands[k]["hits"] += 1
+
+    overall_summary = []
+    for (band, direc), v in overall_bands.items():
+        total    = v["total"]
+        hit_pct  = round(v["hits"] / total * 100, 1) if total > 0 else 0.0
+        overall_summary.append({
+            "band": band, "direction": direc,
+            "hitPct": hit_pct, "hits": v["hits"],
+            "total": total, "bandOrder": v["bandOrder"],
+        })
+    overall_summary.sort(key=lambda x: (x["bandOrder"], x["direction"]))
+
+    return {
+        "playerRows":    player_rows,
+        "bandSummary":   band_summary,
+        "overallSummary": overall_summary,
+        "totalDeduped":  len(deduped),
+        "totalRaw":      len(raw_picks),
+    }
 
 
 @app.post("/api/admin/force-settle")
