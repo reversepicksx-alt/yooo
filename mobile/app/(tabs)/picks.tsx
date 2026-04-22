@@ -136,7 +136,9 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
       <View style={styles.cardRow2}>
         <View style={styles.cardRow2Left}>
           <Text style={styles.cardMeta} numberOfLines={1}>
-            {[pick.teamName, posLabel || null, pick.opponentName ? `vs ${pick.opponentName}` : null]
+            {[pick.teamName, posLabel || null, pick.opponentName
+              ? (pick.venue === 'away' ? `@ ${pick.opponentName}` : `vs ${pick.opponentName}`)
+              : null]
               .filter(Boolean).join(' · ')}
           </Text>
           {pick.recommendation && (
@@ -506,7 +508,9 @@ export default function PicksScreen() {
             <View style={mStyles.modalPlayerInfo}>
               <Text style={mStyles.modalPlayer} numberOfLines={1}>{analysisModal?.pick.playerName}</Text>
               <Text style={mStyles.modalMeta} numberOfLines={1}>
-                {[analysisModal?.pick.teamName, analysisModal?.pick.opponentName ? `vs ${analysisModal?.pick.opponentName}` : null].filter(Boolean).join(' · ')}
+                {[analysisModal?.pick.teamName, analysisModal?.pick.opponentName
+                  ? (analysisModal?.pick.venue === 'away' ? `@ ${analysisModal?.pick.opponentName}` : `vs ${analysisModal?.pick.opponentName}`)
+                  : null].filter(Boolean).join(' · ')}
               </Text>
             </View>
             <View style={mStyles.modalRight}>
