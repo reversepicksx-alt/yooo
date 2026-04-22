@@ -2618,7 +2618,7 @@ REQUIRED JSON FIELDS:
 
   **Situation** — This is where most analysts fail. Read the MONEYLINE and possession context like a sharp. If this team is a heavy favourite, what does that do to game flow — do they set up to control possession, or do they press high and create an open game? If they're underdogs, are they likely to park the bus (low block = more GK back-passes) or press high (transition-heavy = more touches for attackers, more saves for GKs)? For knockout/2nd legs, explain the aggregate math and EXACTLY how it changes team shape and the prop. For regular-season close-odds games, explain what a balanced/contested game tempo means for this prop.
 
-  **Analysis** — Player's recent output with specific numbers. But frame it: is this player operating in a system that inflates or suppresses their stats? Are they on a hot streak because of specific tactical advantages, or is momentum artificial? Home/away split matters — explain WHY the venue split exists for this player, not just that it exists.
+  **Analysis** — MANDATORY: You MUST reference each recent game BY NAME with its exact number (e.g. "72 vs Villarreal, 43 vs Osasuna"). For every outlier game — high AND low — explain the specific tactical reason WHY that number happened: what did that opponent do defensively/offensively that created or suppressed the stat? Then identify which past game from the log is most tactically similar to TODAY'S OPPONENT and use it as your primary anchor for the projection. Home/away split matters — explain the structural reason WHY, not just that it exists. This section must read like someone who watched every game, not someone reading a spreadsheet.
 
   **Scenarios** — Three tactical scenarios with specific stat ranges and the TRIGGER that makes each one happen:
   Best case: [specific tactical trigger] → [stat range]
@@ -3087,11 +3087,40 @@ Expected possession for {req.opponentName}: {match_dominance['oppExpectedPoss']}
         _team_disambig = _TEAM_DISAMBIGUATION.get((corrected_team_name or "").lower().strip(), "")
         _disambig_note = f"\nTEAM DISAMBIGUATION: {_team_disambig}" if _team_disambig else ""
 
+        # ── FORMATTED RECENT GAME LOG ──────────────────────────────────────────
+        import re as _re_log
+        _recent_log_str = ""
+        _gl_data = wave2_supplement.get("playerGameLogs", {})
+        _gl_games = _gl_data.get("games", [])
+        if _gl_games:
+            _fmt_games = []
+            for _gs in _gl_games[-8:]:
+                # raw format: "2025-03-15 vs Osasuna (away, 90min): 43"
+                _m = _re_log.match(r"(\d{4}-(\d{2})-(\d{2})) vs (.+?) \((.+?), (\d+)min\): (.+)", _gs)
+                if _m:
+                    _date_lbl = f"{int(_m.group(2))}/{int(_m.group(3))}"
+                    _opp_lbl  = _m.group(4).strip()
+                    _venue_lbl = _m.group(5).strip()
+                    _min_lbl  = _m.group(6)
+                    _val_lbl  = _m.group(7).strip()
+                    _fmt_games.append(f"{_val_lbl} vs {_opp_lbl} ({_date_lbl}, {_min_lbl}min, {_venue_lbl})")
+                else:
+                    _fmt_games.append(_gs)
+            _gl_raw_avg  = _gl_data.get("rawAvg", "?")
+            _gl_home_avg = _gl_data.get("homeAvg", "?")
+            _gl_away_avg = _gl_data.get("awayAvg", "?")
+            _gl_sample   = _gl_data.get("sampleSize", len(_fmt_games))
+            _recent_log_str = f"""
+[PLAYER RECENT GAME LOG — {req.propType.upper()} — LAST {len(_fmt_games)} GAMES]
+{" | ".join(_fmt_games)}
+Season avg: {_gl_raw_avg} | Home avg: {_gl_home_avg} | Away avg: {_gl_away_avg} | Sample: {_gl_sample} games
+>>> CRITICAL INSTRUCTION: In your Analysis section you MUST reference each of these games by opponent name and exact number. For every high result AND every low result, explain the specific tactical reason WHY that number happened (opponent style, defensive shape, game state, possession context). Then identify which past game above is most tactically similar to today's opponent ({req.opponentName}) and explicitly name it as your anchor. <<<"""
+
         prompt = f"""{req.playerName} ({display_position}) — plays for {corrected_team_name} ({player_venue.upper()}) | OPPONENT: {req.opponentName} | {req.propType} line {req.line}
 IMPORTANT: This player's current CLUB is {corrected_team_name}. Do NOT reference any national team or previous club in your analysis — use only "{corrected_team_name}" when referring to this player's team.{_disambig_note}
 Odds: {json.dumps(match_odds.get('bookmakerOdds',{}), default=str) if match_odds else 'N/A'}{match_context}
 {pronoun_note}
-recentSamples=[]
+{_recent_log_str}
 {hit_rate_context}
 {bayesian_prompt_anchor}
 {dom_context}
