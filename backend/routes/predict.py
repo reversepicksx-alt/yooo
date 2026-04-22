@@ -3783,16 +3783,12 @@ Analyze ALL data thoroughly. Return JSON only."""
             prediction["edgeZ"] = round(_ez, 2)
 
         # ── UNDERDOG GK SCORE-EFFECT RISK ────────────────────────────────────
-        # When a GK belongs to a heavy underdog team, losing badly forces constant
+        # When a GK belongs to a HEAVY underdog team, losing badly forces constant
         # ball recycling through the GK: defenders back-pass under pressure, team
         # chases the game → GK volume EXPLODES above model estimates.
-        # Pattern: heavy underdog GK's ACTUAL passes far exceed UNDER line projections.
-        # Fix: boost the GK's projection upward AND cap UNDER confidence when implied
-        # win probability is very low.
-        #
-        # Thresholds (decimal odds → implied probability):
-        #   < 25% implied probability  = "heavy underdog" → +20% projection boost, UNDER capped 50%
-        #   25-35% implied probability = "clear underdog"  → +10% projection boost, UNDER capped 55%
+        # Only fires for true heavy underdogs (< 25% implied win probability,
+        # i.e. decimal odds ≥ 4.0). The 25-35% "clear underdog" tier was removed
+        # because it produced false positives (e.g. Borgognono actual=17 vs boost→OVER).
         # ─────────────────────────────────────────────────────────────────────
         if _is_gk_dom and req.propType in {"pass_attempts", "passes"} and match_odds:
             _bo = (match_odds or {}).get("bookmakerOdds", {})
@@ -3808,15 +3804,10 @@ Analyze ALL data thoroughly. Return JSON only."""
                         _current_proj = prediction.get("projectedValue", req.line)
                         _rec_now = prediction.get("recommendation", "under")
                         if _implied_prob < 0.25:
-                            # Heavy underdog — GK blow-up risk HIGH
+                            # Heavy underdog (≥ 4.0 decimal odds) — GK blow-up risk HIGH
                             _gk_boost = 1.20
                             _conf_cap = 50
                             _risk_label = "HEAVY UNDERDOG"
-                        elif _implied_prob < 0.35:
-                            # Clear underdog — GK blow-up risk MODERATE
-                            _gk_boost = 1.10
-                            _conf_cap = 55
-                            _risk_label = "CLEAR UNDERDOG"
                         else:
                             _gk_boost = None
                             _conf_cap = None

@@ -354,11 +354,12 @@ def compute_bayesian_projection(
         # Props where LESS possession = MORE stats (defensive actions)
         inverse_poss_props = {"tackles", "interceptions", "blocks", "clearances"}
 
-        if prop_type in positive_poss_props and dom_mult != 1.0 and not _is_gk:
-            # GKs are excluded here: their possession relationship is INVERTED
-            # (more team possession → fewer GK back-passes) and is handled
-            # separately by the GK INVERTED POSSESSION MODEL below (lines 534+).
-            # Applying the outfield boost here would double-count and inflate GK projections.
+        if prop_type in positive_poss_props and dom_mult != 1.0 and (not _is_gk or dom_mult > 1.10):
+            # GKs: only apply match dominance when mult > 1.10 (team significantly
+            # under-possession → more defensive work → more GK distributions).
+            # Small boosts (mult ≤ 1.10) for GKs near parity are excluded to prevent
+            # inflating projections for home GKs with above-average possession (Gazzaniga, Simón).
+            # The GK INVERTED POSSESSION MODEL below (lines 534+) handles within-band adjustments.
             dom_adj = prior_mean * (dom_mult - 1.0)
             # Cap at ±20% of prior_mean — prevents possession signal from dominating
             # when form/prior already point strongly in one direction.
