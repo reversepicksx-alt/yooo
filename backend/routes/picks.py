@@ -268,6 +268,56 @@ async def list_picks(req: GetPicksRequest):
         except Exception:
             traceback.print_exc()
 
+    # ── FINAL STAT REFRESH ─────────────────────────────────────────────────
+    # For picks settled within the last 8 hours, re-fetch from the fixture API
+    # to get the true final value (API data sometimes lags right after FT).
+    # Skip picks that were manually corrected.
+    try:
+        now_utc = datetime.now(timezone.utc)
+        recently_settled = [
+            p for p in picks
+            if p.get("status") == "settled"
+            and not p.get("correctedManually")
+            and p.get("settledAt")
+            and (now_utc - datetime.fromisoformat(
+                    p["settledAt"].replace("Z", "+00:00")
+                 )).total_seconds() < 8 * 3600
+        ]
+        if recently_settled:
+            # Limit to 6 picks per refresh to avoid rate-limit hammering
+            for p in recently_settled[:6]:
+                try:
+                    team_id   = p.get("teamId") or 0
+                    player_id = p.get("playerId") or 0
+                    opponent  = p.get("opponentName") or ""
+                    prop_type = p.get("propType") or ""
+                    league_id = p.get("leagueId") or 39
+                    if not player_id:
+                        continue
+                    refreshed = await _settle_soccer_pick(
+                        p, team_id, player_id, opponent, prop_type, league_id
+                    )
+                    if refreshed and refreshed.get("actualValue") is not None:
+                        new_val = refreshed["actualValue"]
+                        old_val = p.get("actualValue")
+                        if new_val != old_val:
+                            line    = p.get("line", 0)
+                            rec     = p.get("recommendation", "over")
+                            new_res = _settle_result(new_val, line, rec)
+                            p["actualValue"] = new_val
+                            p["result"]      = new_res
+                            await db.picks.update_one(
+                                {"pickId": p["pickId"], "email": req.email.lower()},
+                                {"$set": {"actualValue": new_val, "result": new_res}}
+                            )
+                            print(f"[FINAL REFRESH] {p.get('playerName')} {prop_type}: "
+                                  f"actualValue {old_val} → {new_val}, result → {new_res}")
+                except Exception as _re:
+                    print(f"[FINAL REFRESH] Error for {p.get('playerName','?')}: {_re}")
+    except Exception as _fe:
+        print(f"[FINAL REFRESH] Outer error: {_fe}")
+    # ───────────────────────────────────────────────────────────────────────
+
     return {"picks": picks}
 
 
