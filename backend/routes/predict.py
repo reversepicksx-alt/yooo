@@ -3987,20 +3987,38 @@ Analyze ALL data thoroughly. Return JSON only."""
         # own noise band.  Empirically these plays land the OPPOSITE direction
         # from the model's lean — so we flip the recommendation rather than
         # passing on the pick or trusting the weak lean.
+        #
+        # HOME GK OVER EXCEPTION — widen threshold to 12%:
+        # Historical data shows home GK OVER recs on pass_attempts hit only
+        # 37.5% of the time (3/8 picks). Root cause: home teams hold more
+        # possession → fewer back-passes to GK → actual runs UNDER the line.
+        # Even after the covariate fix, HOME GK OVER leans within 12% are
+        # considered unreliable and are faded to UNDER.
         # ═══════════════════════════════════════════════════════════════════
         _pass_proj = prediction.get("projectedValue", req.line)
         if req.line > 0 and _pass_proj is not None:
             _edge_pct = abs(_pass_proj - req.line) / req.line * 100
-            if _edge_pct < 8.0:
+
+            # Determine if this is a home GK pass_attempts OVER lean
+            _is_home_gk_over = (
+                req.propType == "pass_attempts"
+                and req.venue == "home"
+                and _bayes_position.upper() in {"GK", "GOALKEEPER"}
+                and _pass_proj > req.line  # leaning OVER
+            )
+            _narrow_threshold = 12.0 if _is_home_gk_over else 8.0
+
+            if _edge_pct < _narrow_threshold:
                 _leaning = "over" if _pass_proj > req.line else "under"
                 _flipped = "UNDER" if _leaning == "over" else "OVER"
                 prediction["recommendation"] = _flipped
                 prediction["passLeaning"] = _leaning.upper()
+                _reason_tag = "[HOME GK OVER FADE]" if _is_home_gk_over else "[NARROW EDGE]"
                 prediction["passReason"] = (
                     f"Edge only {_edge_pct:.1f}% — fading model's {_leaning.upper()} lean → {_flipped}"
                 )
                 print(
-                    f"[NARROW EDGE] {req.playerName} {req.propType}: "
+                    f"{_reason_tag} {req.playerName} {req.propType}: "
                     f"proj={_pass_proj}, line={req.line}, gap={_edge_pct:.1f}% → fading to {_flipped}"
                 )
 

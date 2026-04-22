@@ -556,25 +556,31 @@ def compute_bayesian_projection(
             # distribution volume. The inverse-boost only holds in specific press-heavy
             # scenarios; applying it broadly over-inflates projections.
             if poss_ratio < 0.87:
-                # TWO REGIMES for GK possession deficit:
-                # EXTREME deficit (expected < 40%): GK starved of touches. Squeeze.
-                # MODERATE deficit (40–87% of avg): Some back-pass recycling. Mild boost.
-                if expected_poss < 40.0:
-                    squeeze_mult = round(max(0.70, poss_ratio ** 0.8), 3)
-                    raw_before_gk = posterior_mean
-                    posterior_mean = round(posterior_mean * squeeze_mult, 1)
-                    print(f"[GK EXTREME SQUEEZE] {prop_type}: team expected only {expected_poss:.1f}% "
-                          f"possession — GK ball-touch volume drops sharply. "
-                          f"mult={squeeze_mult} {raw_before_gk} → {posterior_mean}")
-                else:
-                    # Capped at +8% (was +15%). Exponent 0.35 = very gentle curve.
-                    inverse_ratio = 1.0 / max(poss_ratio, 0.60)
-                    boost_mult = round(min(1.08, inverse_ratio ** 0.35), 3)
-                    raw_before_gk = posterior_mean
-                    posterior_mean = round(posterior_mean * boost_mult, 1)
-                    print(f"[GK POSS BOOST] {prop_type}: team_avg={team_season_avg_poss:.1f}% "
-                          f"expected={expected_poss:.1f}% ratio={poss_ratio:.2f} "
-                          f"inv_mult={boost_mult} {raw_before_gk} → {posterior_mean}")
+                # UNIFIED BOOST for all GK possession deficits (>13% below norm).
+                #
+                # PREVIOUS LOGIC (REMOVED — was WRONG):
+                #   "Extreme deficit (< 40% expected poss) = squeeze the GK projection"
+                # WHY IT WAS WRONG:
+                #   Empirical data shows the opposite. Away GKs on defensive teams
+                #   (Alaves @ Madrid ~25% poss, Valles away ~35% poss) consistently
+                #   EXCEEDED their lines — actual pass counts were well above projections.
+                #   Defenders under relentless pressure play it safe to the GK constantly.
+                #   Low possession = high GK back-pass volume. The squeeze was backwards.
+                #
+                # NEW LOGIC: Boost increases with possession deficit, capped at +18%.
+                #   poss_ratio=0.86 → ~+3%   (minor deficit, gentle boost)
+                #   poss_ratio=0.70 → ~+10%  (moderate deficit)
+                #   poss_ratio=0.55 → ~+16%  (extreme deficit, max boost near cap)
+                #
+                # Exponent 0.55 gives a steeper curve than the old 0.35, reflecting
+                # that very low possession scenarios are reliably high-volume for the GK.
+                inverse_ratio = 1.0 / max(poss_ratio, 0.50)
+                boost_mult = round(min(1.18, inverse_ratio ** 0.55), 3)
+                raw_before_gk = posterior_mean
+                posterior_mean = round(posterior_mean * boost_mult, 1)
+                print(f"[GK POSS BOOST] {prop_type}: team_avg={team_season_avg_poss:.1f}% "
+                      f"expected={expected_poss:.1f}% ratio={poss_ratio:.2f} "
+                      f"inv_mult={boost_mult} {raw_before_gk} → {posterior_mean}")
             # GK BUILDUP BOOST REMOVED.
             # Removed because: when a home team has above-average possession,
             # their GK is LESS involved (team builds in the opponent's half,
