@@ -2028,7 +2028,7 @@ async def predict(req: PredictionRequest):
 Season avg: {early_bayes['priorMean']} | Recent form (decay-weighted): {early_bayes['momentumMean']} ({early_bayes['momentumLabel']}) | Context adj: {early_bayes['covariateAdjustment']:+.1f}
 Streak: {early_bayes['streakFlag']} | Volatility: {early_bayes['volatility']} (CV={early_bayes['cv']}) | Reversal: {early_bayes['reversalFlag']}
 IMPORTANT: Never use the word "Bayesian" in your response. Always say "Reverse Formula" instead.
->>> MANDATORY: The math projection is {_pf_proj} {bdir}. This number is ALREADY FINAL. Your role is EXPLANATION ONLY — explain WHY the math arrived at {_pf_proj} {bdir}. When you reference the projection number in your text, write exactly {_pf_proj}. Do NOT write a different number. Do NOT argue against {bdir}. <<<"""
+>>> CONTEXT: The Reverse Formula's preliminary estimate is {_pf_proj} (pointing {bdir} the line of {req.line}). This is based on season logs and momentum — it will be refined by H2H history and opponent position profile after you respond. Do NOT state a final projection number or commit to "OVER" or "UNDER" — that final verdict belongs to the math engine. Your job is to provide the tactical analysis that EXPLAINS the data: the factors that push this stat higher, the factors that suppress it, what the matchup reveals, and what the market misses. Write a balanced analysis. For sharpSummary: describe the KEY TENSION in this matchup (e.g. "Aramburu's 29.7 home avg meets a Getafe defense that concedes high volume to wing-backs — the Reverse Formula weighs this tension"). Do NOT write "OVER" or "UNDER" conclusions in sharpSummary. <<<"""
                 # Inject redistribution context into prompt
                 if _redist_alerts:
                     _redist_mult_pct = round((_redist_multiplier - 1) * 100)
@@ -3516,6 +3516,8 @@ Analyze ALL data thoroughly. Return JSON only."""
                 "note": "projectedValue is determined entirely by the Reverse Formula math engine. Grok writes explanation text only.",
             }
 
+            pass  # Math Lock runs after PASS GATE below — see [MATH LOCK] block
+
         # =============================================
         # POST-PROJECTION DOMINANCE SCALING — SELECTIVE
         # Negative branch: low-possession team facing a possession monster → scale DOWN.
@@ -3942,6 +3944,79 @@ Analyze ALL data thoroughly. Return JSON only."""
                     f"proj={_pass_proj}, line={req.line}, gap={_edge_pct:.1f}% < 8% → PASS "
                     f"(leans {_leaning.upper()})"
                 )
+
+        # ── MATH LOCK: Always align sharpSummary + Verdict to the FINAL math outcome ──
+        # Runs after PASS GATE so we use the true final recommendation (PASS/OVER/UNDER).
+        # Gemini wrote analysis using an early Bayesian estimate. H2H + opponent profile
+        # adjustments may have moved the projection significantly — this ensures the user-
+        # visible text always matches the badge and projection number.
+        import re as _re_lock
+        _lock_final_rec = str(prediction.get("recommendation", "")).upper()  # PASS, OVER, or UNDER
+        _lock_proj_raw  = prediction.get("projectedValue", req.line)
+        _lock_proj_str  = str(int(_lock_proj_raw)) if _lock_proj_raw == int(_lock_proj_raw) else f"{_lock_proj_raw:.1f}"
+        _lock_line_str  = str(int(req.line)) if req.line == int(req.line) else f"{req.line:.1f}"
+
+        # Key evidence phrases from the math pipeline
+        _lock_ev = []
+        if position_comp_data and position_comp_data.get("avgStatValue") and position_comp_data.get("sampleSize", 0) >= 3:
+            _lk_opp_avg = position_comp_data["avgStatValue"]
+            _lk_opp_n   = position_comp_data.get("sampleSize", 0)
+            _lk_opp_pos = position_comp_data.get("positionShort", "same-position players")
+            _lock_ev.append(f"opponent profile ({_lk_opp_pos}s avg {_lk_opp_avg:.1f} in {_lk_opp_n} matchups)")
+        if h2h_data:
+            _h2h_lock_vals = [g.get("stat_value") or g.get("statValue") for g in h2h_data if g.get("stat_value") or g.get("statValue")]
+            if _h2h_lock_vals:
+                _h2h_lock_avg = round(sum(_h2h_lock_vals) / len(_h2h_lock_vals), 1)
+                _lock_ev.append(f"H2H avg {_h2h_lock_avg:.1f} ({len(_h2h_lock_vals)} games)")
+        if early_bayes and early_bayes.get("momentumLabel") in ("HOT", "COOLING"):
+            _lock_ev.append(f"{early_bayes['momentumLabel'].lower()} recent form")
+
+        _lock_season_avg = early_bayes.get("priorMean", "?") if early_bayes else "?"
+        _lock_ev0 = _lock_ev[0] if _lock_ev else "matchup factors"
+
+        if _lock_final_rec == "PASS":
+            _lock_leaning = str(prediction.get("passLeaning", "")).upper() or "EVEN"
+            prediction["sharpSummary"] = (
+                f"Reverse Formula projects {_lock_proj_str} — close to the {_lock_line_str} line (leans {_lock_leaning}). "
+                f"Edge is within the model's noise band — the math sees both sides. Season avg {_lock_season_avg} adjusted by {_lock_ev0}. Skip or use as a secondary pick only."
+            )
+            _lock_verdict = (
+                f"**Verdict** — Reverse Formula projects **{_lock_proj_str}** vs line of {_lock_line_str}. "
+                f"Gap is too narrow for a confident call — PASS. Leans {_lock_leaning} but noise band is too wide to commit."
+            )
+        elif _lock_final_rec == "OVER":
+            _lock_market = f"The market underestimates this matchup — season avg {_lock_season_avg} gets boosted by {_lock_ev0}."
+            prediction["sharpSummary"] = (
+                f"Reverse Formula projects {_lock_proj_str} — OVER the {_lock_line_str} line. {_lock_market}"
+            )
+            _lock_verdict = (
+                f"**Verdict** — Reverse Formula projects **{_lock_proj_str}**, clearing the {_lock_line_str} line (OVER). "
+                f"Key driver: {_lock_ev0}."
+            )
+        else:  # UNDER
+            _lock_market = f"The market overestimates output here — season avg {_lock_season_avg} gets suppressed by {_lock_ev0}."
+            prediction["sharpSummary"] = (
+                f"Reverse Formula projects {_lock_proj_str} — UNDER the {_lock_line_str} line. {_lock_market}"
+            )
+            _lock_verdict = (
+                f"**Verdict** — Reverse Formula projects **{_lock_proj_str}**, falling short of the {_lock_line_str} line (UNDER). "
+                f"Key suppressor: {_lock_ev0}."
+            )
+
+        # Replace the **Verdict** section in tacticalBreakdown
+        _lock_tb = prediction.get("tacticalBreakdown", "")
+        if _lock_tb:
+            _lock_tb = _re_lock.sub(
+                r'\*\*Verdict\*\*.*?(?=\n\n|\n\*\*|\Z)',
+                _lock_verdict,
+                _lock_tb,
+                count=1,
+                flags=_re_lock.DOTALL | _re_lock.IGNORECASE
+            )
+            prediction["tacticalBreakdown"] = _lock_tb
+
+        print(f"[MATH LOCK] sharpSummary + Verdict → {_lock_final_rec} {_lock_proj_str} vs {_lock_line_str}")
+        # ─────────────────────────────────────────────────────────────────────────────
 
         prediction.setdefault("probabilityCurve", [])
         prediction.setdefault("reasoning", "Analysis based on available data.")
