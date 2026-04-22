@@ -1188,13 +1188,18 @@ export default function ScanScreen() {
                     <Text style={styles.rfProjectionVal}>
                       {(prediction.projection ?? prediction.bayesianProjection)?.toFixed(1) ?? '—'}
                     </Text>
-                    {(prediction.pOver != null || prediction.pUnder != null) && (
-                      <Text style={styles.rfProjectionProb}>
-                        {prediction.recommendation === 'UNDER'
-                          ? `P(UNDER) ${prediction.pUnder?.toFixed(1)}%`
-                          : `P(OVER) ${prediction.pOver?.toFixed(1)}%`}
-                      </Text>
-                    )}
+                    {(prediction.pOver != null || prediction.pUnder != null) && (() => {
+                      const pO = prediction.pOver ?? 0;
+                      const pU = prediction.pUnder ?? 0;
+                      const showUnder = prediction.recommendation === 'UNDER' || pU > pO;
+                      return (
+                        <Text style={styles.rfProjectionProb}>
+                          {showUnder
+                            ? `P(UNDER) ${pU.toFixed(1)}%`
+                            : `P(OVER) ${pO.toFixed(1)}%`}
+                        </Text>
+                      );
+                    })()}
                   </View>
                 </View>
               </View>
