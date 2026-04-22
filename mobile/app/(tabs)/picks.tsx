@@ -64,14 +64,14 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
   const hitPct = (pick as { hitPct?: number | null }).hitPct ?? (pick as { hitRate?: number | null }).hitRate ?? (pick as { winRate?: number | null }).winRate;
   const lineValue = typeof pick.line === 'number' ? pick.line : null;
 
-  // Always show OVER or UNDER — never PASS. Derive direction from projection vs line
-  // when the recommendation is PASS (low confidence) or missing.
+  // Always show OVER or UNDER — never PASS. For historical PASS picks,
+  // use the flipped direction (fade the model: lean OVER → show UNDER, lean UNDER → show OVER).
   const rec = pick.recommendation;
   const effectiveDir: 'OVER' | 'UNDER' | null =
     rec === 'OVER' ? 'OVER'
     : rec === 'UNDER' ? 'UNDER'
     : projValue != null && lineValue != null
-      ? (projValue < lineValue ? 'UNDER' : 'OVER')
+      ? (projValue < lineValue ? 'OVER' : 'UNDER')   // flipped: fade the model's lean
       : null;
   const isOver = effectiveDir === 'OVER';
   const isUnder = effectiveDir === 'UNDER';

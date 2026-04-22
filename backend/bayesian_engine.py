@@ -354,20 +354,26 @@ def compute_bayesian_projection(
         # Props where LESS possession = MORE stats (defensive actions)
         inverse_poss_props = {"tackles", "interceptions", "blocks", "clearances"}
 
-        if prop_type in positive_poss_props and dom_mult != 1.0 and (not _is_gk or dom_mult > 1.10):
-            # GKs: only apply match dominance when mult > 1.10 (team significantly
-            # under-possession → more defensive work → more GK distributions).
-            # Small boosts (mult ≤ 1.10) for GKs near parity are excluded to prevent
-            # inflating projections for home GKs with above-average possession (Gazzaniga, Simón).
-            # The GK INVERTED POSSESSION MODEL below (lines 534+) handles within-band adjustments.
-            dom_adj = prior_mean * (dom_mult - 1.0)
-            # Cap at ±20% of prior_mean — prevents possession signal from dominating
-            # when form/prior already point strongly in one direction.
-            # The post-projection dominance scaling in predict.py handles extreme outliers
-            # for low-possession teams, so the covariate only needs to carry the main signal.
-            _dom_cap = prior_mean * 0.20
-            dom_adj = max(-_dom_cap, min(_dom_cap, dom_adj))
-            covariate_adjustment += dom_adj
+        if prop_type in positive_poss_props and dom_mult != 1.0:
+            if _is_gk and prop_type in {"pass_attempts", "passes"}:
+                # GK INVERTED COVARIATE: More team possession → fewer back-passes to GK.
+                # dom_mult > 1.0 = team controls more ball than average → GK LESS involved.
+                # dom_mult < 1.0 = team has less ball → handled by GK INVERTED block below (line 542+).
+                # Only fire when dom_mult > 1.10 (meaningful possession surplus).
+                # Dampened 0.5× since the inverted block below carries the primary adjustment.
+                if dom_mult > 1.10:
+                    dom_adj = prior_mean * (1.0 - dom_mult) * 0.5  # NEGATIVE → reduces GK projection
+                    _dom_cap = prior_mean * 0.15
+                    dom_adj = max(-_dom_cap, min(0.0, dom_adj))  # Only allow reduction, cap at -15%
+                    covariate_adjustment += dom_adj
+            elif not _is_gk:
+                # Outfield players: more possession = more passes/shots
+                dom_adj = prior_mean * (dom_mult - 1.0)
+                # Cap at ±20% of prior_mean — prevents possession signal from dominating
+                # when form/prior already point strongly in one direction.
+                _dom_cap = prior_mean * 0.20
+                dom_adj = max(-_dom_cap, min(_dom_cap, dom_adj))
+                covariate_adjustment += dom_adj
         elif prop_type in inverse_poss_props and dom_mult != 1.0:
             # INVERTED: less possession → more defensive actions
             # dom_mult=0.76 means 24% less possession → ~12% more tackles (dampened 0.5×)

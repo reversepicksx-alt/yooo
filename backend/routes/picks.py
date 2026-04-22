@@ -720,11 +720,6 @@ def _settle_result(current_value, line, recommendation):
     rec = (recommendation or "").lower()
     if current_value == line:
         return "push"
-    elif rec == "pass":
-        # Historical PASS picks had no committed direction — settle as push
-        # so they don't unfairly drag the miss count. Going forward the model
-        # no longer emits PASS (it flips direction on narrow-edge plays).
-        return "push"
     elif (current_value > line and rec == "over") or \
          (current_value < line and rec == "under"):
         return "hit"
