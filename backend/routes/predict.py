@@ -4008,7 +4008,28 @@ Analyze ALL data thoroughly. Return JSON only."""
             )
             _narrow_threshold = 12.0 if _is_home_gk_over else 8.0
 
-            if _edge_pct < _narrow_threshold:
+            # SEASON AVG ANCHOR GUARD — never flip when the season average
+            # independently confirms the model's lean by more than 5%.
+            # Rationale: if both the projection AND the season average sit clearly
+            # on the same side of the line, the lean is genuine, not noise.
+            # Example bug this prevents: Westwood proj=62, avg=62.5, line=57.5 →
+            # 7.8% edge triggered the flip to UNDER despite all evidence pointing OVER.
+            _season_avg = early_bayes.get("priorMean") if early_bayes else None
+            _avg_anchor_blocks_flip = False
+            if _season_avg and req.line > 0:
+                _avg_edge_pct = (_season_avg - req.line) / req.line * 100
+                _model_lean_over = _pass_proj > req.line
+                # If season avg agrees with lean AND avg is >5% beyond line → block flip
+                if _model_lean_over and _avg_edge_pct > 5.0:
+                    _avg_anchor_blocks_flip = True
+                    print(f"[NARROW EDGE BLOCKED] {req.playerName}: season_avg={_season_avg} is "
+                          f"{_avg_edge_pct:.1f}% above line={req.line} — anchor confirms OVER, no flip")
+                elif not _model_lean_over and _avg_edge_pct < -5.0:
+                    _avg_anchor_blocks_flip = True
+                    print(f"[NARROW EDGE BLOCKED] {req.playerName}: season_avg={_season_avg} is "
+                          f"{abs(_avg_edge_pct):.1f}% below line={req.line} — anchor confirms UNDER, no flip")
+
+            if _edge_pct < _narrow_threshold and not _avg_anchor_blocks_flip:
                 _leaning = "over" if _pass_proj > req.line else "under"
                 _flipped = "UNDER" if _leaning == "over" else "OVER"
                 prediction["recommendation"] = _flipped
