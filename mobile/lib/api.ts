@@ -191,6 +191,9 @@ export interface PredictionResult {
   recommendation?: 'OVER' | 'UNDER' | 'PASS';
   reasoning?: string;
   tacticalBreakdown?: string;
+  blendNote?: string;
+  aiProjection?: number;
+  bayesianComponent?: number;
   bayesianProjection?: number;
   edgeScore?: number;
   fixtureDate?: string;
@@ -316,6 +319,9 @@ interface RawPrediction {
   confidenceInterval?: [number, number];
   reasoning?: string;
   tacticalBreakdown?: string;
+  blendNote?: string;
+  aiProjection?: number;
+  bayesianComponent?: number;
   opponent?: string;
   _request?: {
     teamId?: number;
@@ -533,6 +539,10 @@ export async function predict(request: Record<string, unknown>): Promise<Predict
     lineDeviationHitRate: raw.lineDeviationHitRate ?? undefined,
     dataQuality: raw.dataQuality ? { level: raw.dataQuality.level, message: raw.dataQuality.message, gamesWithData: raw.dataQuality.gamesWithData, totalGames: raw.dataQuality.totalGames } : undefined,
     analysisSummary: raw.analysisSummary ?? undefined,
+    tacticalBreakdown: raw.tacticalBreakdown || raw.reasoning || undefined,
+    blendNote: raw.blendNote || undefined,
+    aiProjection: raw.aiProjection || undefined,
+    bayesianComponent: raw.bayesianComponent || undefined,
   };
 }
 
