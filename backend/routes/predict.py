@@ -3152,11 +3152,11 @@ Analyze ALL data thoroughly. Return JSON only."""
                     "contents": [{"role": "user", "parts": [{"text": prompt}]}],
                     "generationConfig": {
                         "temperature": 0.0,
-                        "maxOutputTokens": 3000,
+                        "maxOutputTokens": 8192,
                         "responseMimeType": "application/json",
                     },
                 }
-                async with _httpx.AsyncClient(timeout=_httpx.Timeout(50, connect=10)) as client:
+                async with _httpx.AsyncClient(timeout=_httpx.Timeout(70, connect=10)) as client:
                     resp = await client.post(url, json=payload)
                     if resp.status_code == 200:
                         data = resp.json()
@@ -3229,7 +3229,7 @@ Analyze ALL data thoroughly. Return JSON only."""
         # =============================================
         grok_result = None
         try:
-            grok_result = await aio.wait_for(call_gemini_direct(label="gemini25pro"), timeout=55)
+            grok_result = await aio.wait_for(call_gemini_direct(label="gemini25pro"), timeout=75)
         except Exception as e:
             print(f"[HYBRID] Gemini primary exception: {e}")
 
@@ -4265,9 +4265,9 @@ Analyze ALL data thoroughly. Return JSON only."""
 
             tb_parts.append(f"**TL;DR** — {rec} {line} at {conf}% confidence. Projected: {proj} {pl.lower()}. {consensus_note}")
             prediction["tacticalBreakdown"] = "\n\n".join(tb_parts)
-            print(f"[TIMING] Built tacticalBreakdown from Grok fields: {len(prediction['tacticalBreakdown'])} chars")
+            print(f"[TIMING] Built tacticalBreakdown from AI fields: {len(prediction['tacticalBreakdown'])} chars")
         else:
-            print(f"[TIMING] Using Grok tacticalBreakdown directly: {len(grok_tb)} chars")
+            print(f"[TIMING] Using AI tacticalBreakdown directly ({grok_result.get('_source','?')}): {len(grok_tb)} chars")
 
         # ── DIRECTION GUARD: If math recommendation contradicts AI text, fix ALL text ──
         # The AI generates analysis based on its own projection which may differ from the
