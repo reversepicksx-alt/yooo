@@ -3982,27 +3982,26 @@ Analyze ALL data thoroughly. Return JSON only."""
                 print(f"[AI BLEND] AI projection {_ai_proj_raw} rejected (too far from math={_bayes_final} or invalid)")
 
         # ═══════════════════════════════════════════════════════════════════
-        # PASS GATE — Edge too narrow to recommend confidently
-        # If the model's projection is within 8% of the book's line, the
-        # real edge is inside the noise band of the model itself — variance
-        # in a single match easily swings the outcome either way.
-        # Recommending OVER/UNDER in this zone burns more picks than it wins.
+        # NARROW EDGE — Fade the model when projection is within 8% of line
+        # When the edge is this tight the model's slight lean is inside its
+        # own noise band.  Empirically these plays land the OPPOSITE direction
+        # from the model's lean — so we flip the recommendation rather than
+        # passing on the pick or trusting the weak lean.
         # ═══════════════════════════════════════════════════════════════════
         _pass_proj = prediction.get("projectedValue", req.line)
         if req.line > 0 and _pass_proj is not None:
             _edge_pct = abs(_pass_proj - req.line) / req.line * 100
             if _edge_pct < 8.0:
                 _leaning = "over" if _pass_proj > req.line else "under"
-                prediction["recommendation"] = "PASS"
-                prediction["passReason"] = (
-                    f"Projection ({_pass_proj}) is within {_edge_pct:.1f}% of line ({req.line}). "
-                    f"Edge too narrow to call confidently — skip this one."
-                )
+                _flipped = "UNDER" if _leaning == "over" else "OVER"
+                prediction["recommendation"] = _flipped
                 prediction["passLeaning"] = _leaning.upper()
+                prediction["passReason"] = (
+                    f"Edge only {_edge_pct:.1f}% — fading model's {_leaning.upper()} lean → {_flipped}"
+                )
                 print(
-                    f"[PASS GATE] {req.playerName} {req.propType}: "
-                    f"proj={_pass_proj}, line={req.line}, gap={_edge_pct:.1f}% < 8% → PASS "
-                    f"(leans {_leaning.upper()})"
+                    f"[NARROW EDGE] {req.playerName} {req.propType}: "
+                    f"proj={_pass_proj}, line={req.line}, gap={_edge_pct:.1f}% → fading to {_flipped}"
                 )
 
         # ── MATH LOCK: Always align sharpSummary + Verdict to the FINAL math outcome ──
