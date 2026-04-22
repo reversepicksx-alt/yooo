@@ -3138,10 +3138,10 @@ Analyze ALL data thoroughly. Return JSON only."""
 
         from config import GEMINI_API_KEY as _GEMINI_KEY
         _GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
-        _GEMINI_MODEL = "gemini-2.5-pro"
+        _GEMINI_MODEL = "gemini-2.5-flash"
 
-        async def call_gemini_direct(label="gemini25pro") -> dict | None:
-            """Gemini 2.5 Pro with JSON mode — clean JSON guaranteed, no markdown fences."""
+        async def call_gemini_direct(label="gemini25flash") -> dict | None:
+            """Gemini 2.5 Flash with JSON mode — clean JSON guaranteed, no markdown fences."""
             if not _GEMINI_KEY:
                 return None
             try:
@@ -3154,9 +3154,10 @@ Analyze ALL data thoroughly. Return JSON only."""
                         "temperature": 0.0,
                         "maxOutputTokens": 8192,
                         "responseMimeType": "application/json",
+                        "thinkingConfig": {"thinkingBudget": 0},
                     },
                 }
-                async with _httpx.AsyncClient(timeout=_httpx.Timeout(70, connect=10)) as client:
+                async with _httpx.AsyncClient(timeout=_httpx.Timeout(25, connect=10)) as client:
                     resp = await client.post(url, json=payload)
                     if resp.status_code == 200:
                         data = resp.json()
@@ -3167,7 +3168,7 @@ Analyze ALL data thoroughly. Return JSON only."""
                             if text:
                                 result = json.loads(text)
                                 result["_source"] = label
-                                print(f"[MULTI-AI] Gemini 2.5 Pro OK — summary: {str(result.get('sharpSummary',''))[:80]}")
+                                print(f"[MULTI-AI] Gemini 2.5 Flash OK — summary: {str(result.get('sharpSummary',''))[:80]}")
                                 return result
                     else:
                         print(f"[MULTI-AI] Gemini error {resp.status_code}: {resp.text[:200]}")
@@ -3229,7 +3230,7 @@ Analyze ALL data thoroughly. Return JSON only."""
         # =============================================
         grok_result = None
         try:
-            grok_result = await aio.wait_for(call_gemini_direct(label="gemini25pro"), timeout=75)
+            grok_result = await aio.wait_for(call_gemini_direct(label="gemini25flash"), timeout=30)
         except Exception as e:
             print(f"[HYBRID] Gemini primary exception: {e}")
 
@@ -4005,7 +4006,9 @@ Analyze ALL data thoroughly. Return JSON only."""
 
         # Replace the **Verdict** section in tacticalBreakdown
         _lock_tb = prediction.get("tacticalBreakdown", "")
-        if _lock_tb:
+        if isinstance(_lock_tb, dict):
+            _lock_tb = _lock_tb.get("text", _lock_tb.get("content", ""))
+        if isinstance(_lock_tb, str) and _lock_tb:
             _lock_tb = _re_lock.sub(
                 r'\*\*Verdict\*\*.*?(?=\n\n|\n\*\*|\Z)',
                 _lock_verdict,
