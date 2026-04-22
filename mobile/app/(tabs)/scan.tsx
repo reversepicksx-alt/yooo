@@ -992,83 +992,61 @@ export default function ScanScreen() {
                 );
               })()}
 
-              {/* AI Reasoning */}
-              {prediction.reasoning && (() => {
+              {/* Sharp Verdict Card — extracted from reasoning OR sharpSummary */}
+              {(() => {
                 const isOver = prediction.recommendation === 'OVER';
                 const isUnder = prediction.recommendation === 'UNDER';
                 const recColor = isOver ? Colors.success : isUnder ? Colors.error : Colors.textSecondary;
+                const borderColor = isOver ? Colors.success : isUnder ? Colors.error : '#333';
 
-                const paragraphs = prediction.reasoning.split(/\n\n+/).filter(p => p.trim());
-                const blocks: React.ReactElement[] = [];
+                // Pull verdict text: first try Verdict block from reasoning, then sharpSummary
+                let verdictText = '';
+                if (prediction.reasoning) {
+                  const paragraphs = prediction.reasoning.split(/\n\n+/).filter((p: string) => p.trim());
+                  for (const para of paragraphs) {
+                    const m = para.match(/^\*\*Verdict\*\*\s*([\s\S]*)/);
+                    if (m) { verdictText = m[1].trim().replace(/\*\*/g, ''); break; }
+                  }
+                }
+                if (!verdictText && prediction.sharpSummary) {
+                  verdictText = prediction.sharpSummary;
+                }
 
-                for (let i = 0; i < paragraphs.length; i++) {
-                  const para = paragraphs[i];
-                  const headerMatch = para.match(/^\*\*([^*]+)\*\*\s*([\s\S]*)/);
-                  if (headerMatch) {
-                    const section = headerMatch[1].trim();
-                    const body = headerMatch[2].trim().replace(/\*\*/g, '');
-
-                    // Skip Analysis — raw averages already shown in tiles
-                    if (section === 'Analysis') continue;
-
-                    if (section === 'Verdict') {
-                      blocks.push(
-                        <View key={i} style={styles.aiVerdictBlock}>
-                          <View style={styles.aiVerdictPill}>
-                            <Text style={[styles.aiVerdictLabel, { color: recColor }]}>VERDICT</Text>
-                          </View>
-                          <Text style={[styles.aiVerdictText, { color: Colors.text }]}>{body}</Text>
-                        </View>
-                      );
-                      continue;
-                    }
-
-                    if (section === 'TL;DR') {
-                      blocks.push(
-                        <View key={i} style={styles.aiTldrBlock}>
-                          <Text style={styles.aiTldrText}>{body}</Text>
-                        </View>
-                      );
-                      continue;
-                    }
-
-                    const sectionIcons: Record<string, string> = {
-                      Matchup: 'git-compare-outline',
-                      Situation: 'flag-outline',
-                      Scenarios: 'layers-outline',
-                      Risk: 'warning-outline',
-                      'Risk Radar': 'warning-outline',
-                      'Game Flow': 'trending-up-outline',
-                    };
-                    const iconName = (sectionIcons[section] || 'chevron-forward-outline') as keyof typeof Ionicons.glyphMap;
-
-                    blocks.push(
-                      <View key={i} style={styles.aiSection}>
-                        <View style={styles.aiSectionHeader}>
-                          <Ionicons name={iconName} size={11} color={Colors.primary} />
-                          <Text style={styles.aiSectionTitle}>{section.toUpperCase()}</Text>
-                        </View>
-                        {body ? <Text style={styles.aiSectionBody}>{body}</Text> : null}
-                      </View>
-                    );
-                  } else {
-                    const plainText = para.replace(/\*\*/g, '').trim();
-                    if (plainText) {
-                      blocks.push(<Text key={i} style={styles.aiBodyText}>{plainText}</Text>);
-                    }
+                // Sanity-check: if verdict text contains the WRONG direction word (e.g. says UNDER but math says OVER), suppress it
+                if (verdictText && prediction.recommendation) {
+                  const wrongDir = prediction.recommendation === 'OVER' ? /\bhammer\s+the\s+under\b|\btake\s+the\s+under\b|\bunder\s+is\s+the\s+play\b/i
+                    : prediction.recommendation === 'UNDER' ? /\bhammer\s+the\s+over\b|\btake\s+the\s+over\b|\bover\s+is\s+the\s+play\b/i
+                    : null;
+                  if (wrongDir && wrongDir.test(verdictText)) {
+                    verdictText = '';
                   }
                 }
 
-                if (blocks.length === 0) return null;
+                if (!verdictText) return null;
+
+                const proj = prediction.projection ?? prediction.bayesianProjection;
+                const line = prediction.line;
+                const edgePct = proj != null && line != null && line > 0
+                  ? (((proj - line) / line) * 100)
+                  : null;
+
                 return (
                   <>
                     <View style={styles.analysisDivider} />
-                    <View style={styles.aiAnalysisBox}>
-                      <View style={styles.reasoningHeader}>
-                        <Ionicons name="bulb-outline" size={13} color={Colors.primary} />
-                        <Text style={styles.reasoningLabel}>AI ANALYSIS</Text>
+                    <View style={[styles.sharpVerdictCard, { borderColor }]}>
+                      <View style={styles.sharpVerdictHeader}>
+                        <View style={[styles.sharpVerdictPill, { backgroundColor: borderColor + '22', borderColor }]}>
+                          <Text style={[styles.sharpVerdictPillText, { color: recColor }]}>
+                            {isOver ? 'OVER' : isUnder ? 'UNDER' : 'PASS'} {line ?? ''}
+                          </Text>
+                        </View>
+                        {edgePct != null && (
+                          <Text style={[styles.sharpVerdictEdge, { color: recColor }]}>
+                            {edgePct >= 0 ? '+' : ''}{edgePct.toFixed(1)}% edge
+                          </Text>
+                        )}
                       </View>
-                      <View style={styles.aiBlocks}>{blocks}</View>
+                      <Text style={styles.sharpVerdictText}>{verdictText}</Text>
                     </View>
                   </>
                 );
@@ -1318,37 +1296,97 @@ export default function ScanScreen() {
               );
             })()}
 
-            {/* ─── H2H CARD ─── */}
-            {prediction.h2hPlayerStats && prediction.h2hPlayerStats.matches.length > 0 && (
-              <View style={styles.h2hCard}>
-                <View style={styles.h2hHeader}>
-                  <Ionicons name="swap-horizontal-outline" size={13} color={Colors.primary} />
-                  <Text style={styles.h2hTitle}>
-                    H2H{prediction.opponentName ? ` vs ${prediction.opponentName}` : ''}
-                  </Text>
-                  {prediction.h2hPlayerStats.avgVsOpponent != null && (
-                    <Text style={styles.h2hAvg}>
-                      AVG {prediction.h2hPlayerStats.avgVsOpponent.toFixed(1)}
+            {/* ─── H2H CARD — HOME vs AWAY split ─── */}
+            {prediction.h2hPlayerStats && prediction.h2hPlayerStats.matches.length > 0 && (() => {
+              const allMatches = prediction.h2hPlayerStats.matches;
+              const homeMatches = allMatches.filter((m: any) => m.venue === 'home');
+              const awayMatches = allMatches.filter((m: any) => m.venue === 'away');
+              const homeVals = homeMatches.map((m: any) => m.targetStat).filter((v: any) => v != null);
+              const awayVals = awayMatches.map((m: any) => m.targetStat).filter((v: any) => v != null);
+              const homeAvg = homeVals.length > 0 ? homeVals.reduce((a: number, b: number) => a + b, 0) / homeVals.length : null;
+              const awayAvg = awayVals.length > 0 ? awayVals.reduce((a: number, b: number) => a + b, 0) / awayVals.length : null;
+              const venueKnown = homeMatches.length > 0 || awayMatches.length > 0;
+
+              const renderMatchRow = (m: any, i: number, arr: any[]) => {
+                const over = m.targetStat != null && prediction.line != null && m.targetStat >= prediction.line;
+                const score = m.matchScore || m.score;
+                return (
+                  <View key={i} style={[styles.h2hRow, i < arr.length - 1 && styles.h2hRowBorder]}>
+                    <Text style={styles.h2hDate}>{m.date ? m.date.slice(0, 10) : '—'}</Text>
+                    {score ? <Text style={styles.h2hScore}>{score}</Text> : null}
+                    <View style={styles.h2hRight}>
+                      {(m.minutesPlayed ?? m.minutes) > 0 && (
+                        <Text style={styles.h2hMins}>{m.minutesPlayed ?? m.minutes}'</Text>
+                      )}
+                      <Text style={[styles.h2hStat, { color: m.targetStat != null ? (over ? Colors.success : Colors.error) : Colors.textTertiary }]}>
+                        {m.targetStat != null ? String(m.targetStat) : '—'}
+                      </Text>
+                    </View>
+                  </View>
+                );
+              };
+
+              return (
+                <View style={styles.h2hCard}>
+                  {/* Header */}
+                  <View style={styles.h2hHeader}>
+                    <Ionicons name="swap-horizontal-outline" size={13} color={Colors.primary} />
+                    <Text style={styles.h2hTitle}>
+                      H2H{prediction.opponentName ? ` vs ${prediction.opponentName}` : ''}
                     </Text>
-                  )}
-                </View>
-                {prediction.h2hPlayerStats.matches.map((m, i) => {
-                  const isOver = m.targetStat != null && prediction.line != null && m.targetStat >= prediction.line;
-                  return (
-                    <View key={i} style={[styles.h2hRow, i < prediction.h2hPlayerStats!.matches.length - 1 && styles.h2hRowBorder]}>
-                      <Text style={styles.h2hDate}>{m.date ? m.date.slice(0, 10) : '—'}</Text>
-                      {m.score ? <Text style={styles.h2hScore}>{m.score}</Text> : null}
-                      <View style={styles.h2hRight}>
-                        {m.minutes > 0 && <Text style={styles.h2hMins}>{m.minutes}'</Text>}
-                        <Text style={[styles.h2hStat, { color: m.targetStat != null ? (isOver ? Colors.success : Colors.error) : Colors.textTertiary }]}>
-                          {m.targetStat != null ? String(m.targetStat) : '—'}
+                    {prediction.h2hPlayerStats.avgVsOpponent != null && (
+                      <Text style={styles.h2hAvg}>
+                        ALL AVG {prediction.h2hPlayerStats.avgVsOpponent.toFixed(1)}
+                      </Text>
+                    )}
+                  </View>
+
+                  {/* Home vs Away comparison bar */}
+                  {venueKnown && (homeAvg != null || awayAvg != null) && (
+                    <View style={styles.h2hVenueCompare}>
+                      <View style={styles.h2hVenueSide}>
+                        <Text style={styles.h2hVenueLabel}>🏠 HOME</Text>
+                        <Text style={[styles.h2hVenueAvg, { color: homeAvg != null && prediction.line != null ? (homeAvg >= prediction.line ? Colors.success : Colors.error) : Colors.text }]}>
+                          {homeAvg != null ? homeAvg.toFixed(1) : '—'}
                         </Text>
+                        <Text style={styles.h2hVenueSub}>{homeVals.length} game{homeVals.length !== 1 ? 's' : ''}</Text>
+                      </View>
+                      <View style={styles.h2hVenueDivider} />
+                      <View style={styles.h2hVenueSide}>
+                        <Text style={styles.h2hVenueLabel}>✈️ AWAY</Text>
+                        <Text style={[styles.h2hVenueAvg, { color: awayAvg != null && prediction.line != null ? (awayAvg >= prediction.line ? Colors.success : Colors.error) : Colors.text }]}>
+                          {awayAvg != null ? awayAvg.toFixed(1) : '—'}
+                        </Text>
+                        <Text style={styles.h2hVenueSub}>{awayVals.length} game{awayVals.length !== 1 ? 's' : ''}</Text>
                       </View>
                     </View>
-                  );
-                })}
-              </View>
-            )}
+                  )}
+
+                  {/* HOME matches */}
+                  {homeMatches.length > 0 && (
+                    <>
+                      <View style={styles.h2hVenueSection}>
+                        <Text style={styles.h2hVenueSectionLabel}>HOME H2H</Text>
+                      </View>
+                      {homeMatches.map((m: any, i: number) => renderMatchRow(m, i, homeMatches))}
+                    </>
+                  )}
+
+                  {/* AWAY matches */}
+                  {awayMatches.length > 0 && (
+                    <>
+                      <View style={[styles.h2hVenueSection, homeMatches.length > 0 && { marginTop: 10 }]}>
+                        <Text style={styles.h2hVenueSectionLabel}>AWAY H2H</Text>
+                      </View>
+                      {awayMatches.map((m: any, i: number) => renderMatchRow(m, i, awayMatches))}
+                    </>
+                  )}
+
+                  {/* Fallback: if venue unknown, show all */}
+                  {!venueKnown && allMatches.map((m: any, i: number) => renderMatchRow(m, i, allMatches))}
+                </View>
+              );
+            })()}
 
 
             {saveError && (
@@ -1817,6 +1855,39 @@ const styles = StyleSheet.create({
   h2hRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   h2hMins: { fontSize: 10, color: Colors.textTertiary },
   h2hStat: { fontSize: 16, fontWeight: '800', minWidth: 28, textAlign: 'right' },
+
+  /* H2H venue split */
+  h2hVenueCompare: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: Colors.cardSecondary, borderRadius: 10,
+    marginBottom: 14, paddingVertical: 10,
+  },
+  h2hVenueSide: { flex: 1, alignItems: 'center', gap: 2 },
+  h2hVenueLabel: { fontSize: 10, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.8 },
+  h2hVenueAvg: { fontSize: 22, fontWeight: '900', lineHeight: 26 },
+  h2hVenueSub: { fontSize: 9, color: Colors.textTertiary, fontWeight: '600' },
+  h2hVenueDivider: { width: 1, height: 40, backgroundColor: Colors.borderSubtle },
+  h2hVenueSection: {
+    borderTopWidth: 1, borderTopColor: Colors.borderSubtle,
+    paddingTop: 8, marginTop: 2, marginBottom: 4,
+  },
+  h2hVenueSectionLabel: {
+    fontSize: 9, fontWeight: '800', color: Colors.textTertiary, letterSpacing: 1.2,
+  },
+
+  /* Sharp verdict card */
+  sharpVerdictCard: {
+    borderRadius: Colors.radiusLg, borderWidth: 1.5,
+    padding: 16, gap: 10, marginTop: 4,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+  },
+  sharpVerdictHeader: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  sharpVerdictPill: {
+    borderRadius: 20, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 4,
+  },
+  sharpVerdictPillText: { fontSize: 11, fontWeight: '900', letterSpacing: 0.8 },
+  sharpVerdictEdge: { fontSize: 11, fontWeight: '700', marginLeft: 'auto' as any },
+  sharpVerdictText: { fontSize: 14, color: Colors.text, lineHeight: 21, fontWeight: '500' },
 
   /* Save/New buttons */
   saveBtn: {
