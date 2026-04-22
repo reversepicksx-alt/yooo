@@ -3982,59 +3982,56 @@ Analyze ALL data thoroughly. Return JSON only."""
                 print(f"[AI BLEND] AI projection {_ai_proj_raw} rejected (too far from math={_bayes_final} or invalid)")
 
         # ═══════════════════════════════════════════════════════════════════
-        # NARROW EDGE — Fade the model when projection is within 8% of line
-        # When the edge is this tight the model's slight lean is inside its
-        # own noise band.  Empirically these plays land the OPPOSITE direction
-        # from the model's lean — so we flip the recommendation rather than
-        # passing on the pick or trusting the weak lean.
+        # NARROW EDGE — GK PASS_ATTEMPTS ONLY
+        # Fades the model's lean when the projection is close to the line.
+        # SCOPE: ONLY fires for goalkeepers on pass_attempts props.
+        # The fade pattern (tight lean lands opposite direction) was empirically
+        # validated exclusively on GK pass picks. It must NEVER fire on outfield
+        # players — for them a tight edge just means a close call, not a fade signal.
         #
-        # HOME GK OVER EXCEPTION — widen threshold to 12%:
+        # HOME GK OVER threshold is widened to 12%:
         # Historical data shows home GK OVER recs on pass_attempts hit only
-        # 37.5% of the time (3/8 picks). Root cause: home teams hold more
-        # possession → fewer back-passes to GK → actual runs UNDER the line.
-        # Even after the covariate fix, HOME GK OVER leans within 12% are
-        # considered unreliable and are faded to UNDER.
+        # 37.5% (3/8 picks). Home teams hold more possession → fewer back-passes
+        # to GK → actual runs UNDER the line. All other GKs: 8% threshold.
+        #
+        # SEASON AVG ANCHOR GUARD: even within the GK scope, never flip when
+        # the season average independently confirms the lean by >5% beyond the line.
         # ═══════════════════════════════════════════════════════════════════
         _pass_proj = prediction.get("projectedValue", req.line)
-        if req.line > 0 and _pass_proj is not None:
+        _is_gk_pass = (
+            req.propType == "pass_attempts"
+            and _bayes_position.upper() in {"GK", "GOALKEEPER"}
+        )
+        if _is_gk_pass and req.line > 0 and _pass_proj is not None:
             _edge_pct = abs(_pass_proj - req.line) / req.line * 100
 
-            # Determine if this is a home GK pass_attempts OVER lean
             _is_home_gk_over = (
-                req.propType == "pass_attempts"
-                and req.venue == "home"
-                and _bayes_position.upper() in {"GK", "GOALKEEPER"}
-                and _pass_proj > req.line  # leaning OVER
+                req.venue == "home"
+                and _pass_proj > req.line
             )
             _narrow_threshold = 12.0 if _is_home_gk_over else 8.0
 
-            # SEASON AVG ANCHOR GUARD — never flip when the season average
-            # independently confirms the model's lean by more than 5%.
-            # Rationale: if both the projection AND the season average sit clearly
-            # on the same side of the line, the lean is genuine, not noise.
-            # Example bug this prevents: Westwood proj=62, avg=62.5, line=57.5 →
-            # 7.8% edge triggered the flip to UNDER despite all evidence pointing OVER.
+            # Season avg anchor — block flip if season avg clearly confirms lean
             _season_avg = early_bayes.get("priorMean") if early_bayes else None
             _avg_anchor_blocks_flip = False
             if _season_avg and req.line > 0:
                 _avg_edge_pct = (_season_avg - req.line) / req.line * 100
                 _model_lean_over = _pass_proj > req.line
-                # If season avg agrees with lean AND avg is >5% beyond line → block flip
                 if _model_lean_over and _avg_edge_pct > 5.0:
                     _avg_anchor_blocks_flip = True
-                    print(f"[NARROW EDGE BLOCKED] {req.playerName}: season_avg={_season_avg} is "
-                          f"{_avg_edge_pct:.1f}% above line={req.line} — anchor confirms OVER, no flip")
+                    print(f"[GK NARROW EDGE BLOCKED] {req.playerName}: season_avg={_season_avg} "
+                          f"{_avg_edge_pct:.1f}% above line — anchor confirms OVER, no flip")
                 elif not _model_lean_over and _avg_edge_pct < -5.0:
                     _avg_anchor_blocks_flip = True
-                    print(f"[NARROW EDGE BLOCKED] {req.playerName}: season_avg={_season_avg} is "
-                          f"{abs(_avg_edge_pct):.1f}% below line={req.line} — anchor confirms UNDER, no flip")
+                    print(f"[GK NARROW EDGE BLOCKED] {req.playerName}: season_avg={_season_avg} "
+                          f"{abs(_avg_edge_pct):.1f}% below line — anchor confirms UNDER, no flip")
 
             if _edge_pct < _narrow_threshold and not _avg_anchor_blocks_flip:
                 _leaning = "over" if _pass_proj > req.line else "under"
                 _flipped = "UNDER" if _leaning == "over" else "OVER"
                 prediction["recommendation"] = _flipped
                 prediction["passLeaning"] = _leaning.upper()
-                _reason_tag = "[HOME GK OVER FADE]" if _is_home_gk_over else "[NARROW EDGE]"
+                _reason_tag = "[HOME GK OVER FADE]" if _is_home_gk_over else "[GK NARROW EDGE]"
                 prediction["passReason"] = (
                     f"Edge only {_edge_pct:.1f}% — fading model's {_leaning.upper()} lean → {_flipped}"
                 )
