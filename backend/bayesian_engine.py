@@ -162,6 +162,9 @@ def compute_bayesian_projection(
     # ── Is this a discrete count prop? ──────────────────────────────────────
     is_count_stat = prop_type in COUNT_PROPS
 
+    # ── Position flag — needed early for GK-specific logic ───────────────────
+    _is_gk = (position or "").upper() in {"GK", "GOALKEEPER"}
+
     # ── Per-90 normalization ─────────────────────────────────────────────────
     # Raw stats from games of different durations are not comparable.
     # A player with 40 passes in 60 min is performing better than 40 passes in 90 min.
@@ -351,7 +354,11 @@ def compute_bayesian_projection(
         # Props where LESS possession = MORE stats (defensive actions)
         inverse_poss_props = {"tackles", "interceptions", "blocks", "clearances"}
 
-        if prop_type in positive_poss_props and dom_mult != 1.0:
+        if prop_type in positive_poss_props and dom_mult != 1.0 and not _is_gk:
+            # GKs are excluded here: their possession relationship is INVERTED
+            # (more team possession → fewer GK back-passes) and is handled
+            # separately by the GK INVERTED POSSESSION MODEL below (lines 534+).
+            # Applying the outfield boost here would double-count and inflate GK projections.
             dom_adj = prior_mean * (dom_mult - 1.0)
             # Cap at ±20% of prior_mean — prevents possession signal from dominating
             # when form/prior already point strongly in one direction.

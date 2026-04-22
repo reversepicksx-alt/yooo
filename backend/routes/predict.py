@@ -3325,17 +3325,16 @@ Analyze ALL data thoroughly. Return JSON only."""
 
                 # Weight: 5% per H2H game, max 25% — season data always dominates
                 _h2h_weight = min(_h2h_n_use * 0.05, 0.25)
-                # GK pass_attempts: H2H is highly noisy because GK pass volume is
-                # primarily driven by in-game possession dynamics (already modelled),
-                # not by a fixed opponent-specific tendency. A 4-game H2H where Columbus
-                # dominated will show 24 passes for Schulte — but Columbus dominates most
-                # opponents, so this H2H tells us nothing *extra* vs the possession model.
-                # Cap GK H2H weight at 10% (max 2 games worth) to prevent the H2H from
-                # dragging a ball-playing GK below the line in possession-dominant scenarios.
+                # GK pass_attempts: opponent pressing style is the single most predictive
+                # factor for GK pass volume after venue. When facing Betis (3 home H2H
+                # games → 24.67 avg) vs a general home avg of 35, the H2H is the clearest
+                # signal of how this specific opponent affects this GK's distribution.
+                # Raise GK H2H rate (12% per game, cap 40%) to let opponent-specific
+                # history dominate over the general season baseline.
                 _is_gk_h2h = (specific_position or "").upper() in {"GK", "GOALKEEPER"} or \
                               (player_position or "").lower() == "goalkeeper"
                 if _is_gk_h2h and req.propType in {"pass_attempts", "passes"}:
-                    _h2h_weight = min(_h2h_weight, 0.10)  # GK pass H2H capped at 10%
+                    _h2h_weight = min(_h2h_n_use * 0.13, 0.40)  # GK: 13% per game, cap 40%
                 _old_bp = bayesian_posterior
                 bayesian_posterior = round(
                     _old_bp * (1 - _h2h_weight) + _h2h_avg_use * _h2h_weight, 1
