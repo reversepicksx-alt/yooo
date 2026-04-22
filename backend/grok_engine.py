@@ -1,32 +1,74 @@
 """
-GROK ENGINE — The data backbone powering the ReversePicks prediction system.
-Grok handles: data digestion, predictions, auto-settlement, pre-game scouting, pattern mining, and scan processing.
+AI ENGINE — The data backbone powering the ReversePicks prediction system.
+Primary AI: Gemini 2.5 Pro/Flash. Fallback: Grok.
 """
 import json
 import httpx
 import asyncio
 import traceback
 from datetime import datetime, timezone, timedelta
-from config import db, XAI_API_KEY
+from config import db, XAI_API_KEY, GEMINI_API_KEY
 
 GROK_MODEL = "grok-4-1-fast-non-reasoning"
 GROK_REASONING_MODEL = "grok-4-1-fast-non-reasoning"
-GROK_SEARCH_MODEL = "grok-3"       # Grok 3 supports live web search
+GROK_SEARCH_MODEL = "grok-3"
 GROK_URL = "https://api.x.ai/v1/chat/completions"
+
+GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
+GEMINI_PRO = "gemini-2.5-pro"
+GEMINI_FLASH = "gemini-2.5-flash"
+
+
+async def _gemini_call(
+    prompt: str,
+    system: str = "",
+    temperature: float = 0.0,
+    max_tokens: int = 2000,
+    timeout: int = 40,
+    model: str = GEMINI_FLASH,
+    json_mode: bool = False,
+) -> str:
+    """Core Gemini API call. Returns raw text (or JSON string if json_mode=True)."""
+    if not GEMINI_API_KEY:
+        return ""
+    url = f"{GEMINI_BASE}/{model}:generateContent?key={GEMINI_API_KEY}"
+    payload: dict = {
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "temperature": temperature,
+            "maxOutputTokens": max_tokens,
+        },
+    }
+    if system:
+        payload["systemInstruction"] = {"parts": [{"text": system}]}
+    if json_mode:
+        payload["generationConfig"]["responseMimeType"] = "application/json"
+
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10)) as client:
+            resp = await client.post(url, json=payload)
+            if resp.status_code == 200:
+                data = resp.json()
+                candidates = data.get("candidates", [])
+                if candidates:
+                    parts = candidates[0].get("content", {}).get("parts", [])
+                    if parts:
+                        return parts[0].get("text", "").strip()
+            else:
+                print(f"[GEMINI] API error {resp.status_code}: {resp.text[:200]}")
+    except httpx.TimeoutException:
+        print(f"[GEMINI] Timeout ({model}, {timeout}s)")
+    except Exception as e:
+        print(f"[GEMINI] Call error: {type(e).__name__}: {e}")
+    return ""
 
 
 async def _grok_call(prompt: str, temperature: float = 0, max_tokens: int = 2000, timeout: int = 30, reasoning: bool = False) -> str:
-    """Core Grok API call. Uses reasoning model for analytical tasks, non-reasoning for structured tasks.
-    Retries once on failure with the alternate model."""
+    """Core Grok API call — kept as fallback when Gemini unavailable."""
     if not XAI_API_KEY:
         return ""
     model = GROK_REASONING_MODEL if reasoning else GROK_MODEL
-    models_to_try = [model]
-    # Add fallback model
-    if reasoning:
-        models_to_try.append(GROK_MODEL)  # fall back to fast model for reasoning
-    else:
-        models_to_try.append(GROK_REASONING_MODEL)
+    models_to_try = [model, GROK_MODEL if reasoning else GROK_REASONING_MODEL]
 
     for attempt_model in models_to_try:
         try:
@@ -52,24 +94,30 @@ async def _grok_call(prompt: str, temperature: float = 0, max_tokens: int = 2000
     return ""
 
 
+async def _ai_call(prompt: str, system: str = "", temperature: float = 0, max_tokens: int = 2000, timeout: int = 35) -> str:
+    """Unified AI call: Gemini Flash primary, Grok fallback."""
+    result = await _gemini_call(prompt, system=system, temperature=temperature,
+                                 max_tokens=max_tokens, timeout=timeout, model=GEMINI_FLASH)
+    if result:
+        return result
+    print("[AI] Gemini failed — falling back to Grok")
+    return await _grok_call(prompt, temperature=temperature, max_tokens=max_tokens, timeout=timeout)
+
+
 async def fetch_web_intel(
     player_team: str,
     opponent: str,
     match_date: str,
     match_round: str = "",
     league: str = "",
-    timeout: int = 15,
+    timeout: int = 20,
 ) -> str:
     """
-    WEB INTELLIGENCE: Uses Grok's live search capability to fetch real-time
-    match preview data — injuries, suspensions, lineup news, tactical shifts,
-    manager quotes. Returns a concise text block for injection into AI prompt.
-
-    Falls back silently to empty string if search fails or API key missing.
+    WEB INTELLIGENCE: Fetches real-time match preview data — injuries, suspensions,
+    lineup news, tactical shifts, manager quotes.
+    Primary: Gemini 2.5 Flash with Google Search grounding.
+    Fallback: Grok web search → tactical knowledge.
     """
-    if not XAI_API_KEY:
-        return ""
-
     date_str = match_date[:10] if match_date else ""
     context_str = f"{league} — {match_round}" if (league or match_round) else "upcoming match"
 
@@ -82,92 +130,74 @@ async def fetch_web_intel(
         f"Be factual and specific. Do not make up information. If nothing significant is confirmed, say so briefly."
     )
 
-    headers = {"Authorization": f"Bearer {XAI_API_KEY}", "Content-Type": "application/json"}
-
-    # Strategy 1: xAI Agent Tools API (new web search format post-deprecation of search_parameters)
-    for model in [GROK_SEARCH_MODEL, GROK_REASONING_MODEL]:
+    # Strategy 1: Gemini with Google Search grounding (live web data)
+    if GEMINI_API_KEY:
         try:
+            url = f"{GEMINI_BASE}/{GEMINI_FLASH}:generateContent?key={GEMINI_API_KEY}"
+            payload = {
+                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                "tools": [{"googleSearch": {}}],
+                "generationConfig": {"temperature": 0, "maxOutputTokens": 600},
+            }
             async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10)) as client:
-                # Try Agent Tools web_search_preview (xAI's current search approach)
-                payload = {
-                    "model": model,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0,
-                    "max_tokens": 500,
-                    "tools": [{"type": "web_search_preview"}],
-                    "tool_choice": "auto",
-                }
-                resp = await client.post(GROK_URL, headers=headers, json=payload)
+                resp = await client.post(url, json=payload)
                 if resp.status_code == 200:
                     data = resp.json()
-                    # Handle both direct content and tool-call responses
-                    choice = data["choices"][0]
-                    msg = choice.get("message", {})
-                    content = msg.get("content", "")
-                    # If model returned tool calls, process multi-turn
-                    tool_calls = msg.get("tool_calls", [])
-                    if not content and tool_calls:
-                        # Model wants to search — execute the search turn
-                        messages = [
-                            {"role": "user", "content": prompt},
-                            {"role": "assistant", "tool_calls": tool_calls, "content": None},
-                        ]
-                        for tc in tool_calls:
-                            messages.append({
-                                "role": "tool",
-                                "tool_call_id": tc.get("id", ""),
-                                "content": "[Search results integrated by model]",
-                            })
-                        payload2 = {**payload, "messages": messages}
-                        resp2 = await client.post(GROK_URL, headers=headers, json=payload2)
-                        if resp2.status_code == 200:
-                            content = resp2.json()["choices"][0]["message"].get("content", "")
-                    if content:
-                        print(f"[WEB INTEL] Agent Tools success ({model}): {content[:120]}...")
-                        return content.strip()
-                elif resp.status_code in (400, 404, 422):
-                    # Agent Tools not supported — fall through to non-search
-                    print(f"[WEB INTEL] Agent Tools not supported ({model}), {resp.status_code}")
-                    break
+                    candidates = data.get("candidates", [])
+                    if candidates:
+                        parts = candidates[0].get("content", {}).get("parts", [])
+                        text = " ".join(p.get("text", "") for p in parts if p.get("text")).strip()
+                        if text:
+                            print(f"[WEB INTEL] Gemini Search success: {text[:120]}...")
+                            return text
                 else:
-                    print(f"[WEB INTEL] Agent Tools error {resp.status_code} ({model}): {resp.text[:150]}")
+                    print(f"[WEB INTEL] Gemini Search error {resp.status_code}: {resp.text[:150]}")
         except httpx.TimeoutException:
-            print(f"[WEB INTEL] Timeout ({model})")
+            print("[WEB INTEL] Gemini Search timeout")
         except Exception as e:
-            print(f"[WEB INTEL] Error ({model}): {type(e).__name__}: {e}")
+            print(f"[WEB INTEL] Gemini Search error: {type(e).__name__}: {e}")
 
-    # Strategy 2: Tactical knowledge fallback — extracts what the model knows about
-    # both teams' styles, tendencies, and this competition stage. No live news needed.
+    # Strategy 2: Grok web search fallback
+    if XAI_API_KEY:
+        headers = {"Authorization": f"Bearer {XAI_API_KEY}", "Content-Type": "application/json"}
+        for model in [GROK_SEARCH_MODEL, GROK_REASONING_MODEL]:
+            try:
+                async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10)) as client:
+                    payload = {
+                        "model": model,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": 0,
+                        "max_tokens": 500,
+                        "tools": [{"type": "web_search_preview"}],
+                        "tool_choice": "auto",
+                    }
+                    resp = await client.post(GROK_URL, headers=headers, json=payload)
+                    if resp.status_code == 200:
+                        msg = resp.json()["choices"][0].get("message", {})
+                        content = msg.get("content", "")
+                        if content:
+                            print(f"[WEB INTEL] Grok search ({model}): {content[:120]}...")
+                            return content.strip()
+                    elif resp.status_code in (400, 404, 422):
+                        break
+            except Exception as e:
+                print(f"[WEB INTEL] Grok error ({model}): {e}")
+
+    # Strategy 3: Tactical knowledge (Gemini or Grok, no live search)
     knowledge_prompt = (
         f"You are a professional soccer analyst. Provide a concise tactical briefing (max 180 words) for "
         f"{player_team} vs {opponent}"
         f"{f' in the {league}' if league else ''}"
         f"{f' ({match_round})' if match_round else ''}.\n\n"
         f"Cover: (1) each team's typical tactical shape and possession style, "
-        f"(2) expected game tempo given the stage/competition pressure, "
-        f"(3) which team typically dominates the ball and through what channels, "
-        f"(4) historical head-to-head tendencies or notable patterns between these clubs.\n\n"
-        f"Do NOT mention specific recent match results or current injuries — focus on known tactical identities "
-        f"and what kind of game script is typical for these teams in this context. Be specific and analytical."
+        f"(2) expected game tempo, (3) which team dominates the ball and through what channels, "
+        f"(4) historical head-to-head tendencies. "
+        f"Focus on known tactical identities. Be specific and analytical."
     )
-    for model in [GROK_REASONING_MODEL, GROK_MODEL]:
-        try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10)) as client:
-                payload = {
-                    "model": model,
-                    "messages": [{"role": "user", "content": knowledge_prompt}],
-                    "temperature": 0.1,
-                    "max_tokens": 350,
-                }
-                resp = await client.post(GROK_URL, headers=headers, json=payload)
-                if resp.status_code == 200:
-                    text = resp.json()["choices"][0]["message"]["content"].strip()
-                    print(f"[WEB INTEL] Tactical knowledge ({model}): {text[:120]}...")
-                    return text
-                else:
-                    print(f"[WEB INTEL] Tactical knowledge error {resp.status_code} ({model})")
-        except Exception as e:
-            print(f"[WEB INTEL] Tactical knowledge error ({model}): {e}")
+    result = await _ai_call(knowledge_prompt, timeout=15, max_tokens=350)
+    if result:
+        print(f"[WEB INTEL] Tactical knowledge fallback: {result[:120]}...")
+        return result
 
     return ""
 
@@ -436,8 +466,8 @@ Produce a brief with EXACTLY these sections (keep each to 1-2 sentences max):
 
 Be direct. No hedging. Use numbers, not words like "good" or "bad"."""
 
-    result = await _grok_call(prompt, temperature=0, max_tokens=500, timeout=12, reasoning=False)
-    return result if result else raw_data  # Fallback to raw data if Grok fails
+    result = await _ai_call(prompt, temperature=0, max_tokens=600, timeout=18)
+    return result if result else raw_data  # Fallback to raw data if AI fails
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1013,9 +1043,9 @@ Only JSON, no markdown."""
 # ═══════════════════════════════════════════════════════════════
 
 async def grok_scan_prop(image_base64: str) -> dict:
-    """Use Grok vision to extract prop details from a screenshot.
-    Returns: {"playerName": "...", "propType": "...", "line": 0, "teamName": "...", "opponentName": "...", "leagueName": "..."}
-    Falls back to empty dict on failure."""
+    """Extract prop details from a screenshot using AI vision.
+    Primary: Gemini 2.5 Flash (vision). Fallback: Grok vision.
+    Returns: {"playerName": "...", "propType": "...", "line": 0, "teamName": "...", "opponentName": "...", "leagueName": "..."}"""
 
     prompt = """Extract the FIRST player prop bet from this image. Focus on the top-left or most prominent player card.
 
@@ -1027,47 +1057,76 @@ Extract:
 - Opponent name (the "vs" team)
 - League name (if visible, e.g., Champions League, La Liga, Premier League)
 
-IMPORTANT: Return a SINGLE JSON object (not an array):
-{"playerName":"","propType":"","line":0,"teamName":"","opponentName":"","leagueName":""}
-Only JSON, no markdown."""
+Return ONLY a valid JSON object (not an array):
+{"playerName":"","propType":"","line":0,"teamName":"","opponentName":"","leagueName":""}"""
 
-    if not XAI_API_KEY:
-        return {}
+    def _normalize(result: dict) -> dict:
+        if "teamName" in result and "playerTeam" not in result:
+            result["playerTeam"] = result.pop("teamName")
+        return result
 
-    try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            resp = await client.post(
-                GROK_URL,
-                headers={"Authorization": f"Bearer {XAI_API_KEY}", "Content-Type": "application/json"},
-                json={
-                    "model": "grok-4-1-fast-non-reasoning",
-                    "messages": [{
-                        "role": "user",
-                        "content": [
+    # Strategy 1: Gemini vision (primary)
+    if GEMINI_API_KEY:
+        try:
+            url = f"{GEMINI_BASE}/{GEMINI_FLASH}:generateContent?key={GEMINI_API_KEY}"
+            payload = {
+                "contents": [{"role": "user", "parts": [
+                    {"text": prompt},
+                    {"inlineData": {"mimeType": "image/png", "data": image_base64}}
+                ]}],
+                "generationConfig": {"temperature": 0, "maxOutputTokens": 500, "responseMimeType": "application/json"},
+            }
+            async with httpx.AsyncClient(timeout=20) as client:
+                resp = await client.post(url, json=payload)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    candidates = data.get("candidates", [])
+                    if candidates:
+                        parts = candidates[0].get("content", {}).get("parts", [])
+                        text = "".join(p.get("text", "") for p in parts).strip()
+                        result = _parse_json(text)
+                        if result:
+                            if isinstance(result, list) and len(result) > 0:
+                                result = result[0]
+                            if isinstance(result, dict):
+                                result = _normalize(result)
+                                print(f"[SCAN] Gemini vision: {result.get('playerName','')} {result.get('propType','')} {result.get('line','')}")
+                                return result
+                else:
+                    print(f"[SCAN] Gemini vision error: {resp.status_code} — {resp.text[:200]}")
+        except Exception as e:
+            print(f"[SCAN] Gemini vision error: {e}")
+
+    # Strategy 2: Grok vision fallback
+    if XAI_API_KEY:
+        try:
+            async with httpx.AsyncClient(timeout=20) as client:
+                resp = await client.post(
+                    GROK_URL,
+                    headers={"Authorization": f"Bearer {XAI_API_KEY}", "Content-Type": "application/json"},
+                    json={
+                        "model": "grok-4-1-fast-non-reasoning",
+                        "messages": [{"role": "user", "content": [
                             {"type": "text", "text": prompt},
                             {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_base64}"}}
-                        ]
-                    }],
-                    "temperature": 0,
-                    "max_tokens": 500,
-                }
-            )
-            if resp.status_code == 200:
-                content = resp.json()["choices"][0]["message"]["content"]
-                result = _parse_json(content)
-                if result:
-                    # Handle array response (model may return multiple players)
-                    if isinstance(result, list) and len(result) > 0:
-                        result = result[0]
-                    if isinstance(result, dict):
-                        # Map Grok fields to scan pipeline expected fields
-                        if "teamName" in result and "playerTeam" not in result:
-                            result["playerTeam"] = result.pop("teamName")
-                        print(f"[GROK SCAN] Extracted: {result.get('playerName','')} {result.get('propType','')} {result.get('line','')}")
-                        return result
-            else:
-                print(f"[GROK SCAN] API error: {resp.status_code} — {resp.text[:300]}")
-    except Exception as e:
-        print(f"[GROK SCAN] Error: {e}")
+                        ]}],
+                        "temperature": 0,
+                        "max_tokens": 500,
+                    }
+                )
+                if resp.status_code == 200:
+                    content = resp.json()["choices"][0]["message"]["content"]
+                    result = _parse_json(content)
+                    if result:
+                        if isinstance(result, list) and len(result) > 0:
+                            result = result[0]
+                        if isinstance(result, dict):
+                            result = _normalize(result)
+                            print(f"[SCAN] Grok vision fallback: {result.get('playerName','')} {result.get('propType','')} {result.get('line','')}")
+                            return result
+                else:
+                    print(f"[SCAN] Grok vision error: {resp.status_code} — {resp.text[:300]}")
+        except Exception as e:
+            print(f"[SCAN] Grok vision error: {e}")
 
     return {}

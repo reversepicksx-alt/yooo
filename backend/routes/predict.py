@@ -3136,7 +3136,49 @@ Analyze ALL data thoroughly. Return JSON only."""
                 print(f"[MULTI-AI] {label} failed: {e}")
                 return None
 
+        from config import GEMINI_API_KEY as _GEMINI_KEY
+        _GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
+        _GEMINI_MODEL = "gemini-2.5-pro"
+
+        async def call_gemini_direct(label="gemini25pro") -> dict | None:
+            """Gemini 2.5 Pro with JSON mode — clean JSON guaranteed, no markdown fences."""
+            if not _GEMINI_KEY:
+                return None
+            try:
+                import httpx as _httpx
+                url = f"{_GEMINI_BASE}/{_GEMINI_MODEL}:generateContent?key={_GEMINI_KEY}"
+                payload = {
+                    "systemInstruction": {"parts": [{"text": PREDICTION_SYSTEM}]},
+                    "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                    "generationConfig": {
+                        "temperature": 0.0,
+                        "maxOutputTokens": 3000,
+                        "responseMimeType": "application/json",
+                    },
+                }
+                async with _httpx.AsyncClient(timeout=_httpx.Timeout(50, connect=10)) as client:
+                    resp = await client.post(url, json=payload)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        candidates = data.get("candidates", [])
+                        if candidates:
+                            parts = candidates[0].get("content", {}).get("parts", [])
+                            text = "".join(p.get("text", "") for p in parts).strip()
+                            if text:
+                                result = json.loads(text)
+                                result["_source"] = label
+                                print(f"[MULTI-AI] Gemini 2.5 Pro OK — summary: {str(result.get('sharpSummary',''))[:80]}")
+                                return result
+                    else:
+                        print(f"[MULTI-AI] Gemini error {resp.status_code}: {resp.text[:200]}")
+            except Exception as e:
+                print(f"[MULTI-AI] {label} failed: {type(e).__name__}: {e}")
+            return None
+
         async def call_grok(label="grok", model="grok-4-1-fast-non-reasoning"):
+            """Grok fallback — used only when Gemini fails."""
+            if not XAI_API_KEY:
+                return None
             try:
                 grok_client = OpenAI(api_key=XAI_API_KEY, base_url="https://api.x.ai/v1")
                 grok_messages = [
@@ -3153,15 +3195,12 @@ Analyze ALL data thoroughly. Return JSON only."""
                     )
                 grok_result = await aio.wait_for(loop.run_in_executor(None, _run), timeout=35)
                 text = grok_result.choices[0].message.content.strip()
-                # Strip any markdown code fences (```json ... ``` or ``` ... ```)
                 import re as _re
                 text = _re.sub(r"```(?:json)?\s*", "", text)
                 text = _re.sub(r"```\s*$", "", text, flags=_re.MULTILINE)
                 text = text.strip()
-                # Robust JSON extraction — try full text first, then brace-scan
                 start = text.find("{")
                 if start >= 0:
-                    # Try the whole remaining string first (fastest)
                     candidate = text[start:]
                     try:
                         result = json.loads(candidate)
@@ -3169,7 +3208,6 @@ Analyze ALL data thoroughly. Return JSON only."""
                         return result
                     except json.JSONDecodeError:
                         pass
-                    # Walk backwards to find largest valid JSON block
                     for end_pos in range(len(text), start, -1):
                         if text[end_pos - 1] == "}":
                             try:
@@ -3178,40 +3216,36 @@ Analyze ALL data thoroughly. Return JSON only."""
                                 return result
                             except json.JSONDecodeError:
                                 continue
-                # Log first 300 chars of non-JSON response for debugging
-                print(f"[MULTI-AI] {label} non-JSON response (first 300): {text[:300]!r}")
+                print(f"[MULTI-AI] {label} non-JSON response: {text[:300]!r}")
                 raise ValueError("No valid JSON found in Grok response")
             except Exception as e:
                 print(f"[MULTI-AI] {label} failed: {e}")
                 return None
 
         # =============================================
-        # GROK SYNTHESIS: grok-4-1-fast (primary — reliable, fast)
-        # Falls back to Bayesian-only if model fails
+        # AI SYNTHESIS: Gemini 2.5 Pro (primary) → Grok fallback
+        # Gemini JSON mode guarantees clean parseable output.
+        # Projection comes ONLY from the math engine — AI projectedValue is NEVER used.
         # =============================================
         grok_result = None
         try:
-            grok_result = await aio.wait_for(
-                call_grok(label="grok41fast", model="grok-4-1-fast-non-reasoning"),
-                timeout=35
-            )
+            grok_result = await aio.wait_for(call_gemini_direct(label="gemini25pro"), timeout=55)
         except Exception as e:
-            print(f"[HYBRID] grok-4-1-fast exception: {e}")
+            print(f"[HYBRID] Gemini primary exception: {e}")
 
-        # Projection comes ONLY from the math engine — Grok's projectedValue is never used.
-        # pv is set from early_bayes here as a temporary anchor; real_bayes will overwrite it at line ~3386.
+        # pv is set from early_bayes here as a temporary anchor; real_bayes overwrites it later.
         pv = early_bayes["posteriorMean"] if early_bayes and early_bayes.get("posteriorMean") else req.line
 
-        # If Grok returned a bad/empty response, retry for the TEXT fields only
+        # If Gemini failed, fall back to Grok
         if not grok_result or not isinstance(grok_result, dict) or not grok_result.get("tacticalBreakdown"):
-            print(f"[HYBRID] Grok returned no text — retrying for analysis text")
+            print(f"[HYBRID] Gemini returned no text — falling back to Grok")
             try:
                 grok_result = await aio.wait_for(
-                    call_grok(label="grok41fast_retry", model="grok-4-1-fast-non-reasoning"),
-                    timeout=30
+                    call_grok(label="grok_fallback", model="grok-4-1-fast-non-reasoning"),
+                    timeout=35
                 )
             except Exception as e:
-                print(f"[HYBRID] retry exception: {e}")
+                print(f"[HYBRID] Grok fallback exception: {e}")
 
         # BAYESIAN FALLBACK: If ALL Grok models failed (no text), build minimal result from math
         if not grok_result or not isinstance(grok_result, dict) or not grok_result.get("tacticalBreakdown"):

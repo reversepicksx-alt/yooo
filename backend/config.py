@@ -21,6 +21,7 @@ OWNER_EMAIL = (os.environ.get("OWNER_EMAIL") or "reversepicksx@gmail.com").lower
 # All emails that should receive owner-level access (including personal accounts)
 OWNER_EMAILS = {OWNER_EMAIL, "willmenjivar123@gmail.com"}
 XAI_API_KEY = os.environ.get("XAI_API_KEY")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 SQUARE_ACCESS_TOKEN = os.environ.get("SQUARE_ACCESS_TOKEN")
 SQUARE_APPLICATION_ID = os.environ.get("SQUARE_APPLICATION_ID")
 SQUARE_LOCATION_ID = os.environ.get("SQUARE_LOCATION_ID")

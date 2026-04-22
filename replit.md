@@ -162,6 +162,24 @@ Added April 2026. Replaces hardcoded Guard 5 market-gap thresholds with data-dri
 
 The old hardcoded Guard 5 (penalty for >15% deviation) was backward — data shows those bands are the MOST profitable UNDER situations.
 
+## AI Architecture (April 2026)
+
+**Primary AI: Google Gemini 2.5 Pro** | **Fallback: xAI Grok**
+
+| Pipeline step | Primary | Fallback |
+|---|---|---|
+| Prediction synthesis (sharpSummary, reasoning, tacticalBreakdown) | Gemini 2.5 Pro (JSON mode) | Grok-4-1-fast |
+| Web intel / match context | Gemini Flash + Google Search grounding | Grok web_search_preview |
+| Data digest / preprocessing | Gemini Flash | Grok |
+| Smart scan (prop OCR from image) | Gemini Flash vision | Grok vision |
+| Tactical chat reasoning | Gemini 2.5 Pro | Grok-4-1-fast |
+| Tactical chat synthesis/polish | Gemini Flash (Emergent proxy) | — |
+| Position resolution | Grok + Gemini (dual, both run) | — |
+
+**Key advantage of Gemini JSON mode:** `responseMimeType: "application/json"` guarantees clean parseable output from the prediction synthesis call — no markdown fence stripping needed.
+
+**Keys:** `GEMINI_API_KEY` in `backend/.env` and `config.py`. `XAI_API_KEY` still required for fallback.
+
 ## LLM Integration Shim
 
 `backend/emergentintegrations/` is a local shim (not on PyPI):

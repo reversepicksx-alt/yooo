@@ -13,7 +13,7 @@ from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
 from openai import OpenAI
 
 from config import (
-    db, EMERGENT_LLM_KEY, XAI_API_KEY, CURRENT_SEASON,
+    db, EMERGENT_LLM_KEY, XAI_API_KEY, GEMINI_API_KEY, CURRENT_SEASON,
     SUPPORTED_LEAGUES, PROP_TYPE_ALIASES, INTERNATIONAL_LEAGUES,
 )
 from models import ChatStartRequest, TacticalMessageRequest
@@ -469,32 +469,58 @@ async def tactical_message(req: TacticalMessageRequest):
     if data_context:
         full_context += f"\n\n{data_context}"
 
-    # ── GROK: Tactical reasoning ──
+    # ── PRIMARY: Gemini 2.5 Pro — tactical reasoning ──
+    import httpx as _httpx
     grok_response = ""
-    try:
-        grok_client = OpenAI(api_key=XAI_API_KEY, base_url="https://api.x.ai/v1")
-        grok_messages = [{"role": "system", "content": GROK_SYSTEM}]
-        if history_text:
-            grok_messages.append({"role": "user", "content": f"[CONVERSATION CONTEXT]\n{history_text}\n[END CONTEXT]"})
-            grok_messages.append({"role": "assistant", "content": "Context acknowledged."})
+    _gemini_ok = False
+    if GEMINI_API_KEY:
+        try:
+            _gem_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key={GEMINI_API_KEY}"
+            _gem_contents = []
+            if history_text:
+                _gem_contents.append({"role": "user", "parts": [{"text": f"[CONVERSATION CONTEXT]\n{history_text}\n[END CONTEXT]"}]})
+                _gem_contents.append({"role": "model", "parts": [{"text": "Context acknowledged."}]})
+            _gem_contents.append({"role": "user", "parts": [{"text": user_msg + full_context}]})
+            _gem_payload = {
+                "systemInstruction": {"parts": [{"text": GROK_SYSTEM}]},
+                "contents": _gem_contents,
+                "generationConfig": {"temperature": 0.7, "maxOutputTokens": 2000},
+            }
+            async with _httpx.AsyncClient(timeout=_httpx.Timeout(45, connect=10)) as _client:
+                _resp = await _client.post(_gem_url, json=_gem_payload)
+                if _resp.status_code == 200:
+                    _data = _resp.json()
+                    _parts = _data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+                    grok_response = "".join(p.get("text", "") for p in _parts).strip()
+                    _gemini_ok = bool(grok_response)
+                else:
+                    print(f"[TACTICAL] Gemini error {_resp.status_code}: {_resp.text[:200]}")
+        except Exception as _e:
+            print(f"[TACTICAL] Gemini primary failed: {_e}")
 
-        grok_prompt = user_msg + full_context
-        grok_messages.append({"role": "user", "content": grok_prompt})
-
-        loop = aio.get_event_loop()
-        def _call_grok():
-            return grok_client.chat.completions.create(
-                model="grok-4-1-fast-non-reasoning",
-                messages=grok_messages,
-                max_tokens=2000,
-                temperature=0.7,
-            )
-        grok_result = await aio.wait_for(loop.run_in_executor(None, _call_grok), timeout=45)
-        grok_response = grok_result.choices[0].message.content
-    except aio.TimeoutError:
-        grok_response = "[Primary analysis timed out]"
-    except Exception as e:
-        grok_response = f"[Primary analysis unavailable: {str(e)[:100]}]"
+    # ── FALLBACK: Grok tactical reasoning (if Gemini failed) ──
+    if not _gemini_ok and XAI_API_KEY:
+        try:
+            grok_client = OpenAI(api_key=XAI_API_KEY, base_url="https://api.x.ai/v1")
+            grok_messages = [{"role": "system", "content": GROK_SYSTEM}]
+            if history_text:
+                grok_messages.append({"role": "user", "content": f"[CONVERSATION CONTEXT]\n{history_text}\n[END CONTEXT]"})
+                grok_messages.append({"role": "assistant", "content": "Context acknowledged."})
+            grok_messages.append({"role": "user", "content": user_msg + full_context})
+            loop = aio.get_event_loop()
+            def _call_grok():
+                return grok_client.chat.completions.create(
+                    model="grok-4-1-fast-non-reasoning",
+                    messages=grok_messages,
+                    max_tokens=2000,
+                    temperature=0.7,
+                )
+            grok_result = await aio.wait_for(loop.run_in_executor(None, _call_grok), timeout=45)
+            grok_response = grok_result.choices[0].message.content
+        except aio.TimeoutError:
+            grok_response = "[Primary analysis timed out]"
+        except Exception as e:
+            grok_response = f"[Primary analysis unavailable: {str(e)[:100]}]"
 
     # ── Synthesis layer ──
     try:
