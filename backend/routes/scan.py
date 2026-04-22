@@ -1120,6 +1120,43 @@ async def scan_prop(req: ScanPropRequest):
                 league_id = original_league_id
                 league_name = original_league_name
 
+            # ── CURRENT TEAM REFRESH ─────────────────────────────────────────
+            # Cache may be stale (player transferred). Always verify current
+            # team via live API before using teamId for fixture lookups.
+            if resolved_player and resolved_player.get("playerId") and not is_international:
+                try:
+                    pid = resolved_player["playerId"]
+                    live_stats = None
+                    for s in [CURRENT_SEASON + 1, CURRENT_SEASON]:
+                        data = await api_football_request("players", {"id": pid, "season": s})
+                        if data:
+                            live_stats = data[0]
+                            break
+                    if live_stats:
+                        stats_list = live_stats.get("statistics", [])
+                        if stats_list:
+                            latest = stats_list[-1]
+                            live_team_id = latest.get("team", {}).get("id")
+                            live_team_name = latest.get("team", {}).get("name", "")
+                            live_league_id = latest.get("league", {}).get("id")
+                            live_league_name = latest.get("league", {}).get("name", "")
+                            old_team = resolved_player.get("teamName", "")
+                            if live_team_id and live_team_name:
+                                if live_team_id != resolved_player.get("teamId"):
+                                    print(f"[TEAM REFRESH] {resolved_player['playerName']}: '{old_team}' → '{live_team_name}' (ID {resolved_player.get('teamId')} → {live_team_id})")
+                                    resolved_player["teamId"] = live_team_id
+                                    resolved_player["teamName"] = live_team_name
+                                    player_team_hint = live_team_name.lower()
+                                    original_team_name = live_team_name
+                                    if live_league_id:
+                                        league_id = live_league_id
+                                        league_name = live_league_name
+                                else:
+                                    print(f"[TEAM REFRESH] {resolved_player['playerName']}: team confirmed '{live_team_name}'")
+                except Exception as _te:
+                    print(f"[TEAM REFRESH] Failed for {resolved_player.get('playerName','?')}: {_te}")
+            # ─────────────────────────────────────────────────────────────────
+
             # Resolve opponent
             resolved_opponent = None
             if opponent_hint and resolved_player:
