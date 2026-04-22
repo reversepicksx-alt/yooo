@@ -1205,6 +1205,59 @@ export default function ScanScreen() {
               </View>
             )}
 
+            {/* ─── SCOUT ANALYSIS — full tactical breakdown from AI ─── */}
+            {(() => {
+              const tb = prediction.tacticalBreakdown;
+              if (!tb || typeof tb !== 'string' || tb.length < 80) return null;
+              // Parse sections by **SectionName** or **SectionName —** pattern
+              const parts: { title: string; body: string }[] = [];
+              const re = /\*\*([^*\n]{2,30})\*\*\s*[—\-]?\s*/g;
+              let m: RegExpExecArray | null;
+              let prevTitle = '';
+              let prevEnd = 0;
+              while ((m = re.exec(tb)) !== null) {
+                if (prevTitle && m.index > prevEnd) {
+                  parts.push({ title: prevTitle, body: tb.slice(prevEnd, m.index).trim().replace(/\*\*/g, '') });
+                }
+                prevTitle = m[1].trim();
+                prevEnd = m.index + m[0].length;
+              }
+              if (prevTitle) parts.push({ title: prevTitle, body: tb.slice(prevEnd).trim().replace(/\*\*/g, '') });
+              const SECTION_ORDER = ['Verdict','Matchup','Situation','Analysis','Scenarios','Risk','TL;DR'];
+              const filtered = parts.filter(p => SECTION_ORDER.some(s => p.title.toLowerCase().includes(s.toLowerCase()) && p.body.length > 10));
+              if (filtered.length === 0) return null;
+
+              const sectionColor = (title: string) => {
+                if (/verdict/i.test(title)) return Colors.primary;
+                if (/analysis/i.test(title)) return '#4DA6FF';
+                if (/matchup/i.test(title)) return '#A084E8';
+                if (/scenario/i.test(title)) return '#FF8C42';
+                if (/risk/i.test(title)) return Colors.error;
+                if (/tl;dr|tldr/i.test(title)) return Colors.success;
+                return Colors.textSecondary;
+              };
+
+              return (
+                <View style={styles.scoutCard}>
+                  <View style={styles.scoutHeader}>
+                    <Ionicons name="document-text-outline" size={13} color={Colors.primary} />
+                    <Text style={styles.scoutTitle}>SCOUT REPORT</Text>
+                    {prediction.blendNote && (
+                      <Text style={styles.scoutBlend}>{prediction.blendNote}</Text>
+                    )}
+                  </View>
+                  {filtered.map((sec, i) => (
+                    <View key={i} style={styles.scoutSection}>
+                      <Text style={[styles.scoutSectionTitle, { color: sectionColor(sec.title) }]}>
+                        {sec.title.toUpperCase()}
+                      </Text>
+                      <Text style={styles.scoutSectionBody}>{sec.body}</Text>
+                    </View>
+                  ))}
+                </View>
+              );
+            })()}
+
             {/* ─── GAME LOG GRID ─── */}
             {prediction.gameLogs && prediction.gameLogs.length > 0 && (() => {
               const overCount = prediction.gameLogs.filter(g => g.value != null && prediction.line != null && g.value >= prediction.line).length;
@@ -1726,6 +1779,23 @@ const styles = StyleSheet.create({
   reasoningHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   reasoningLabel: { fontSize: 10, color: Colors.primary, fontWeight: '700', letterSpacing: 1.5 },
   reasoningText: { fontSize: 13, color: Colors.textSecondary, lineHeight: 20 },
+
+  /* Scout Report card */
+  scoutCard: {
+    backgroundColor: '#0E0E0E',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#1E1E1E',
+    padding: 16,
+    gap: 14,
+    marginBottom: 10,
+  },
+  scoutHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  scoutTitle: { fontSize: 10, fontWeight: '800', color: Colors.primary, letterSpacing: 1.8, flex: 1 },
+  scoutBlend: { fontSize: 9, color: Colors.textTertiary, letterSpacing: 0.5 },
+  scoutSection: { gap: 5 },
+  scoutSectionTitle: { fontSize: 10, fontWeight: '800', letterSpacing: 1.5 },
+  scoutSectionBody: { fontSize: 13, color: Colors.textSecondary, lineHeight: 20 },
 
   /* AI section blocks */
   aiBlocks: { gap: 14, marginTop: 4 },

@@ -2028,7 +2028,7 @@ async def predict(req: PredictionRequest):
 Season avg: {early_bayes['priorMean']} | Recent form (decay-weighted): {early_bayes['momentumMean']} ({early_bayes['momentumLabel']}) | Context adj: {early_bayes['covariateAdjustment']:+.1f}
 Streak: {early_bayes['streakFlag']} | Volatility: {early_bayes['volatility']} (CV={early_bayes['cv']}) | Reversal: {early_bayes['reversalFlag']}
 IMPORTANT: Never use the word "Bayesian" in your response. Always say "Reverse Formula" instead.
->>> CONTEXT: The Reverse Formula's preliminary estimate is {_pf_proj} (pointing {bdir} the line of {req.line}). This is based on season logs and momentum — it will be refined by H2H history and opponent position profile after you respond. Do NOT state a final projection number or commit to "OVER" or "UNDER" — that final verdict belongs to the math engine. Your job is to provide the tactical analysis that EXPLAINS the data: the factors that push this stat higher, the factors that suppress it, what the matchup reveals, and what the market misses. Write a balanced analysis. For sharpSummary: describe the KEY TENSION in this matchup (e.g. "Aramburu's 29.7 home avg meets a Getafe defense that concedes high volume to wing-backs — the Reverse Formula weighs this tension"). Do NOT write "OVER" or "UNDER" conclusions in sharpSummary. <<<"""
+>>> CONTEXT: The Reverse Formula's preliminary math estimate is {_pf_proj} (pointing {bdir} the line of {req.line}). Your job: provide BOTH tactical analysis AND your own independent tactical projection. Set "aiProjection" to your best estimate of what this player will produce based on the recent game log, opponent style, and matchup context — this is YOUR tactical read, not a copy of the math estimate. It will be blended at 15% weight with the Reverse Formula math (85%). Write a balanced analysis. For sharpSummary: describe the KEY TENSION in this matchup. Do NOT commit to OVER/UNDER in sharpSummary — state the tension. The final recommendation belongs to the math engine. <<<"""
                 # Inject redistribution context into prompt
                 if _redist_alerts:
                     _redist_mult_pct = round((_redist_multiplier - 1) * 100)
@@ -2608,6 +2608,8 @@ POSITION CLUES: CB=high tackles/blocks/aerial duels, low crosses/key passes/drib
 
 REQUIRED JSON FIELDS:
 
+"aiProjection": YOUR independent tactical projection — a specific number representing your best estimate of what this player will produce based on the recent game log, opponent style, and matchup context. Do NOT copy the math estimate. This is your own read from the data.
+
 "reasoning": 4-6 sentences of sharp analyst thinking. Go beyond averages — explain the TACTICAL CHAIN that produces this stat in this matchup. Why does THIS opponent create THIS outcome for THIS position? What does the betting market not understand about this player's role in their team's system? Cite real numbers from the data but frame them through tactical insight, not data recitation.
 
 "tacticalBreakdown": Rich markdown (~1800 chars) with these MANDATORY sections — each must read like expert analysis, not a stats summary:
@@ -2667,7 +2669,7 @@ CALIBRATION RULES:
 - BINARY LINES (0.5): UNDER 0.5 confidence NEVER exceeds 55%.
 - DEFENDER PASSES: Ball-playing CBs/LBs in possession teams hit 60-90+ per game routinely.
 
-JSON: {"confidenceScore":0,"confidenceLevel":"","sharpSummary":"","reasoning":"","scenarioAnalysis":"","keyEvidence":"","sensitivityTests":"","subRisk":"","gameFlowDynamics":"","uncertaintyNote":"","tacticalBreakdown":"","matchupOverview":{"homeTeam":"","awayTeam":"","favorite":"","moneyline":{"home":"","draw":"","away":""},"expectedPossession":{"home":0,"away":0},"expectedGameType":"","keyMatchupFactor":""},"bayesianMetrics":{"priorMean":0,"momentumEffect":0,"covariateAdjustment":0,"reversalFlag":"stable"},"probabilityCurve":[],"recentSamples":[],"player":{"id":0,"name":"","team":"","position":""},"opponent":"","propType":"","line":0,"confidenceInterval":[0,0],"tacticalAlerts":[]}"""
+JSON: {"confidenceScore":0,"confidenceLevel":"","aiProjection":0,"sharpSummary":"","reasoning":"","scenarioAnalysis":"","keyEvidence":"","sensitivityTests":"","subRisk":"","gameFlowDynamics":"","uncertaintyNote":"","tacticalBreakdown":"","matchupOverview":{"homeTeam":"","awayTeam":"","favorite":"","moneyline":{"home":"","draw":"","away":""},"expectedPossession":{"home":0,"away":0},"expectedGameType":"","keyMatchupFactor":""},"bayesianMetrics":{"priorMean":0,"momentumEffect":0,"covariateAdjustment":0,"reversalFlag":"stable"},"probabilityCurve":[],"recentSamples":[],"player":{"id":0,"name":"","team":"","position":""},"opponent":"","propType":"","line":0,"confidenceInterval":[0,0],"tacticalAlerts":[]}"""
 
         # Build the data payload — use GPT summary as primary + Wave 2 deep data as supplement
         wave2_supplement = {}
@@ -3950,6 +3952,34 @@ Analyze ALL data thoroughly. Return JSON only."""
                 v = s.get("value")
                 if v is not None:
                     s["value"] = int(round(v))
+
+        # ═══════════════════════════════════════════════════════════════════
+        # AI BLEND — 85% Reverse Formula math + 15% AI tactical projection
+        # AI provides an independent tactical read via aiProjection field.
+        # This is blended AFTER all Bayesian adjustments are complete so
+        # the math's full signal (H2H, opponent profile, dominance) is intact.
+        # ═══════════════════════════════════════════════════════════════════
+        # Use aiProjection if set by AI, else fall back to AI's projectedValue (never 0)
+        _ai_proj_raw = None
+        if grok_result:
+            _ai_proj_raw = grok_result.get("aiProjection") or grok_result.get("projectedValue") or None
+        _bayes_final = prediction.get("projectedValue", req.line)
+        if (
+            _ai_proj_raw
+            and isinstance(_ai_proj_raw, (int, float))
+            and 0 < _ai_proj_raw < 500
+            and abs(_ai_proj_raw - _bayes_final) < _bayes_final * 0.60  # sanity: AI can't be >60% off
+        ):
+            _blended = round(0.85 * _bayes_final + 0.15 * _ai_proj_raw)
+            print(f"[AI BLEND 85/15] Math={_bayes_final} × 85% + AI={_ai_proj_raw} × 15% → {_blended}")
+            prediction["projectedValue"] = _blended
+            prediction["bayesianComponent"] = _bayes_final
+            prediction["aiProjection"] = _ai_proj_raw
+            prediction["blendNote"] = f"Reverse Formula {_bayes_final} (85%) + AI tactical {_ai_proj_raw} (15%) = {_blended}"
+        else:
+            prediction["bayesianComponent"] = _bayes_final
+            if _ai_proj_raw:
+                print(f"[AI BLEND] AI projection {_ai_proj_raw} rejected (too far from math={_bayes_final} or invalid)")
 
         # ═══════════════════════════════════════════════════════════════════
         # PASS GATE — Edge too narrow to recommend confidently
