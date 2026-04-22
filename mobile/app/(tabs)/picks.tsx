@@ -45,10 +45,6 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
   const lost = pickLost(pick);
   const live = isLive(pick);
 
-  const isOver = pick.recommendation === 'OVER';
-  const isUnder = pick.recommendation === 'UNDER';
-
-  const recColor = isOver ? Colors.primary : isUnder ? Colors.error : Colors.textSecondary;
   const push = pickPush(pick);
   const statusColor = won ? Colors.success : lost ? Colors.error : push ? Colors.push : Colors.textTertiary;
 
@@ -67,6 +63,19 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
   const paceValue = settled ? projValue : (livePace != null && livePace > 0 ? livePace : projValue);
   const hitPct = (pick as { hitPct?: number | null }).hitPct ?? (pick as { hitRate?: number | null }).hitRate ?? (pick as { winRate?: number | null }).winRate;
   const lineValue = typeof pick.line === 'number' ? pick.line : null;
+
+  // Always show OVER or UNDER — never PASS. Derive direction from projection vs line
+  // when the recommendation is PASS (low confidence) or missing.
+  const rec = pick.recommendation;
+  const effectiveDir: 'OVER' | 'UNDER' | null =
+    rec === 'OVER' ? 'OVER'
+    : rec === 'UNDER' ? 'UNDER'
+    : projValue != null && lineValue != null
+      ? (projValue < lineValue ? 'UNDER' : 'OVER')
+      : null;
+  const isOver = effectiveDir === 'OVER';
+  const isUnder = effectiveDir === 'UNDER';
+  const recColor = isOver ? Colors.primary : isUnder ? Colors.error : Colors.textSecondary;
 
   const trackValue = nowValue ?? paceValue ?? null;
   const trackDistance = lineValue != null && lineValue > 0 && trackValue != null
@@ -141,10 +150,10 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
               : null]
               .filter(Boolean).join(' · ')}
           </Text>
-          {pick.recommendation && (
+          {effectiveDir && (
             <View style={styles.pickRow}>
               <View style={[styles.recPill, { backgroundColor: isOver ? Colors.successDim : isUnder ? Colors.errorDim : Colors.cardSecondary }]}>
-                <Text style={[styles.recPillText, { color: recColor }]}>{pick.recommendation}</Text>
+                <Text style={[styles.recPillText, { color: recColor }]}>{effectiveDir}</Text>
               </View>
               <Text style={styles.pickDetail} numberOfLines={1}>
                 {propLabel} · {pick.line}
