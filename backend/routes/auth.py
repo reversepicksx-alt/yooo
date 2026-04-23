@@ -236,6 +236,11 @@ async def verify_session(req: VerifySessionRequest):
         return {"valid": False}
     access_type = await _check_access_local(email_lower)
     if not access_type:
+        # Local DB has no record — webhook may have been missed.
+        # Check Stripe live before revoking the session; this preserves access
+        # for users whose purchase webhook failed to reach the server.
+        access_type = await _check_stripe_live(email_lower)
+    if not access_type:
         await db.sessions.delete_one({"email": email_lower, "session_token": req.session_token})
         return {"valid": False}
     return {"valid": True, "access_type": access_type}
