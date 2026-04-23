@@ -3979,33 +3979,22 @@ Analyze ALL data thoroughly. Return JSON only."""
                 if v is not None:
                     s["value"] = int(round(v))
 
-        # ═══════════════════════════════════════════════════════════════════
-        # AI BLEND — 85% Reverse Formula math + 15% AI tactical projection
-        # AI provides an independent tactical read via aiProjection field.
-        # This is blended AFTER all Bayesian adjustments are complete so
-        # the math's full signal (H2H, opponent profile, dominance) is intact.
-        # ═══════════════════════════════════════════════════════════════════
-        # Use aiProjection if set by AI, else fall back to AI's projectedValue (never 0)
+        # ── BAYESIAN IS FINAL — AI IS ANALYSIS ONLY ──────────────────────────
+        # The Bayesian math projection is the sole source of truth for both the
+        # projectedValue and the OVER/UNDER recommendation. The AI tactical
+        # projection is stored for display context only and never moves the number.
+        # Rationale: the 85/15 blend was causing the final projected value to cross
+        # the line when the AI disagreed, silently flipping the recommendation
+        # against the math. The user's money follows the math — the math decides.
         _ai_proj_raw = None
         if grok_result:
             _ai_proj_raw = grok_result.get("aiProjection") or grok_result.get("projectedValue") or None
         _bayes_final = prediction.get("projectedValue", req.line)
-        if (
-            _ai_proj_raw
-            and isinstance(_ai_proj_raw, (int, float))
-            and 0 < _ai_proj_raw < 500
-            and abs(_ai_proj_raw - _bayes_final) < _bayes_final * 0.60  # sanity: AI can't be >60% off
-        ):
-            _blended = round(0.85 * _bayes_final + 0.15 * _ai_proj_raw)
-            print(f"[AI BLEND 85/15] Math={_bayes_final} × 85% + AI={_ai_proj_raw} × 15% → {_blended}")
-            prediction["projectedValue"] = _blended
-            prediction["bayesianComponent"] = _bayes_final
+        prediction["bayesianComponent"] = _bayes_final
+        if _ai_proj_raw and isinstance(_ai_proj_raw, (int, float)) and 0 < _ai_proj_raw < 500:
             prediction["aiProjection"] = _ai_proj_raw
-            prediction["blendNote"] = f"Reverse Formula {_bayes_final} (85%) + AI tactical {_ai_proj_raw} (15%) = {_blended}"
-        else:
-            prediction["bayesianComponent"] = _bayes_final
-            if _ai_proj_raw:
-                print(f"[AI BLEND] AI projection {_ai_proj_raw} rejected (too far from math={_bayes_final} or invalid)")
+            prediction["blendNote"] = f"Reverse Formula {_bayes_final} (math only) | AI tactical read: {_ai_proj_raw} (context only, not applied)"
+            print(f"[MATH ONLY] Bayes={_bayes_final} locked. AI={_ai_proj_raw} stored for display only — not applied to projection.")
 
         # ═══════════════════════════════════════════════════════════════════
         # NARROW EDGE — GK PASS_ATTEMPTS ONLY
