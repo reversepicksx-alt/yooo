@@ -1312,6 +1312,13 @@ export default function ScanScreen() {
                             const oppShort = oppRaw.replace(/^(al-?|fc |cf |rc |sc |cd |ud |sd |rcd |as |ss |ac |us |ac |sp |ca |cp |ue |ue |ce |cm |se |sk )/i, '').slice(0, 3).toUpperCase();
                             const scoreStr = g.score || '';
                             const rankStr = g.oppRank != null ? `#${g.oppRank}` : '';
+                            const propT = prediction.propType || '';
+                            const defSecondary: { val: number | null; label: string } | null =
+                              propT === 'blocks' ? { val: g.blocks ?? null, label: 'BLK' }
+                              : propT === 'interceptions' ? { val: g.interceptions ?? null, label: 'INT' }
+                              : propT === 'tackles' ? { val: g.tackles ?? null, label: 'TKL' }
+                              : propT === 'clearances' ? { val: g.clearances ?? null, label: 'CLR' }
+                              : null;
                             return (
                               <View
                                 key={i}
@@ -1342,6 +1349,18 @@ export default function ScanScreen() {
                                 {rankStr ? (
                                   <Text style={styles.glTileRank}>{rankStr}</Text>
                                 ) : null}
+                                {/* Opponent possession */}
+                                {g.opponentPossession != null && (
+                                  <Text style={styles.glTilePoss}>
+                                    OPP {g.opponentPossession}%
+                                  </Text>
+                                )}
+                                {/* Secondary defensive stat for relevant prop types */}
+                                {defSecondary && defSecondary.val != null && (
+                                  <Text style={styles.glTileSecStat}>
+                                    {defSecondary.label} {defSecondary.val}
+                                  </Text>
+                                )}
                               </View>
                             );
                           })}
@@ -1364,6 +1383,40 @@ export default function ScanScreen() {
                       )}
                     </View>
                   )}
+
+                  {/* Defensive stats summary across game logs */}
+                  {(() => {
+                    const logsWithDef = prediction.gameLogs!.filter(
+                      g => g.blocks != null || g.interceptions != null || g.tackles != null || g.clearances != null
+                    );
+                    if (logsWithDef.length === 0) return null;
+                    const avg = (key: keyof typeof logsWithDef[0]) => {
+                      const vals = logsWithDef.map(g => g[key] as number | null).filter(v => v != null) as number[];
+                      return vals.length > 0 ? (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1) : null;
+                    };
+                    const avgBlocks = avg('blocks');
+                    const avgInt = avg('interceptions');
+                    const avgTkl = avg('tackles');
+                    const avgClr = avg('clearances');
+                    const items = [
+                      avgTkl && { label: 'TKL', val: avgTkl },
+                      avgBlocks && { label: 'BLK', val: avgBlocks },
+                      avgInt && { label: 'INT', val: avgInt },
+                      avgClr && { label: 'CLR', val: avgClr },
+                    ].filter(Boolean) as { label: string; val: string }[];
+                    if (items.length === 0) return null;
+                    return (
+                      <View style={styles.defStatsRow}>
+                        <Text style={styles.defStatsLabel}>DEF AVG</Text>
+                        {items.map((item, idx) => (
+                          <View key={idx} style={styles.defStatChip}>
+                            <Text style={styles.defStatChipLabel}>{item.label}</Text>
+                            <Text style={styles.defStatChipVal}>{item.val}</Text>
+                          </View>
+                        ))}
+                      </View>
+                    );
+                  })()}
                 </View>
               );
             })()}
@@ -2030,6 +2083,12 @@ const styles = StyleSheet.create({
   glTileScore: { fontSize: 8, color: Colors.textSecondary, fontWeight: '600' },
   glOppRow: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   glTileRank: { fontSize: 7, color: Colors.textTertiary, fontWeight: '700' },
+  glTilePoss: {
+    fontSize: 7, color: '#4A8FFF', fontWeight: '700', letterSpacing: 0.3, marginTop: 2,
+  },
+  glTileSecStat: {
+    fontSize: 7, color: Colors.textSecondary, fontWeight: '700', letterSpacing: 0.3, marginTop: 1,
+  },
 
   /* Game log header right (avg possession badge) */
   glHeaderRight: { flexDirection: 'row', alignItems: 'center', gap: 6 },
@@ -2044,6 +2103,18 @@ const styles = StyleSheet.create({
 
   avgRow: { flexDirection: 'row', gap: 16 },
   avgText: { fontSize: 10, color: Colors.textSecondary, fontWeight: '600', letterSpacing: 0.5 },
+  defStatsRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8,
+    paddingTop: 8, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)',
+  },
+  defStatsLabel: { fontSize: 9, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 0.5, marginRight: 2 },
+  defStatChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 6,
+    paddingHorizontal: 6, paddingVertical: 3,
+  },
+  defStatChipLabel: { fontSize: 8, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 0.4 },
+  defStatChipVal: { fontSize: 10, color: Colors.text, fontWeight: '800' },
 
   /* ─── H2H CARD ─── */
   h2hCard: {

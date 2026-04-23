@@ -572,6 +572,27 @@ async def predict(req: PredictionRequest):
                         home_goals = fix_raw.get("goals", {}).get("home", 0) or 0
                         away_goals = fix_raw.get("goals", {}).get("away", 0) or 0
 
+                        # Helper: enrich game log with team possession from team stats cache
+                        async def _enrich_possession(gl_dict: dict) -> dict:
+                            try:
+                                team_cache_key = f"fxt_{fid}_{actual_team_id}"
+                                team_cached = await db.fixture_player_cache.find_one(
+                                    {"_k": team_cache_key}, {"_id": 0, "d.possession": 1}
+                                )
+                                if team_cached and team_cached.get("d"):
+                                    raw_poss = team_cached["d"].get("possession", "")
+                                    if raw_poss:
+                                        poss_str = str(raw_poss).replace("%", "").strip()
+                                        try:
+                                            team_poss = int(poss_str)
+                                            gl_dict["teamPossession"] = team_poss
+                                            gl_dict["opponentPossession"] = 100 - team_poss
+                                        except (ValueError, TypeError):
+                                            pass
+                            except Exception:
+                                pass
+                            return gl_dict
+
                         # Check prefetch cache first — avoids extra API call if already cached
                         cache_key = f"fxp_{fid}_{player_id}"
                         cached_doc = await db.fixture_player_cache.find_one({"_k": cache_key}, {"_id": 0, "d": 1})
@@ -593,6 +614,7 @@ async def predict(req: PredictionRequest):
                                 raw_val = gl.get(stat_field_map.get(req.propType, ""), None)
                                 if raw_val is not None and minutes > 0:
                                     gl["targetStatPer90"] = round((raw_val / minutes) * 90, 2)
+                                gl = await _enrich_possession(gl)
                                 return gl
                             # Fall through to live API fetch for saves
 
@@ -639,6 +661,7 @@ async def predict(req: PredictionRequest):
                         raw_val = gl.get(stat_field_map.get(req.propType, ""), None)
                         if raw_val is not None and minutes > 0:
                             gl["targetStatPer90"] = round((raw_val / minutes) * 90, 2)
+                        gl = await _enrich_possession(gl)
                         return gl
                     except Exception:
                         return None

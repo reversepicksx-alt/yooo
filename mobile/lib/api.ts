@@ -172,6 +172,12 @@ export interface GameLog {
   minutes: number;
   score?: string;
   oppRank?: number | null;
+  teamPossession?: number | null;
+  opponentPossession?: number | null;
+  blocks?: number | null;
+  interceptions?: number | null;
+  tackles?: number | null;
+  clearances?: number | null;
 }
 
 export interface H2HMatch {
@@ -453,6 +459,12 @@ export async function predict(request: Record<string, unknown>): Promise<Predict
             minutes: (g.minutes as number) || 0,
             score: (g.score as string) || undefined,
             oppRank: (g.oppRank as number | null) ?? undefined,
+            teamPossession: (g.teamPossession as number | null) ?? null,
+            opponentPossession: (g.opponentPossession as number | null) ?? null,
+            blocks: (g.tackles_blocks as number | null) ?? null,
+            interceptions: (g.tackles_interceptions as number | null) ?? null,
+            tackles: (g.tackles_total as number | null) ?? null,
+            clearances: (g.tackles_clearances as number | null) ?? null,
           };
         })
         .filter(g => g.value != null)
