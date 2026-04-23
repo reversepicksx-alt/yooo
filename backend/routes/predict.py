@@ -1705,6 +1705,24 @@ async def predict(req: PredictionRequest):
                     "total": len(values),
                 }
 
+            # ── Annotate each game log with opponent league rank ────────────────
+            # Build a quick lookup: lowercased team name → rank from standings.
+            # This lets the tile UI show "#7" without extra API calls.
+            if standings:
+                _rank_map: dict = {}
+                for _s in standings:
+                    _tname = (_s.get("team") or {}).get("name", "") if isinstance(_s.get("team"), dict) else str(_s.get("team", ""))
+                    _rank = _s.get("rank")
+                    if _tname and _rank:
+                        _rank_map[_tname.lower().strip()] = _rank
+                for _gl in game_log_summary["games"]:
+                    _opp = (_gl.get("opponent") or "").lower().strip()
+                    if _opp and _rank_map:
+                        # Try exact match first, then fuzzy prefix match
+                        _gl["oppRank"] = _rank_map.get(_opp) or next(
+                            (v for k, v in _rank_map.items() if _opp in k or k in _opp), None
+                        )
+
             historical_data["playerGameLogs"] = game_log_summary
 
         # =============================================

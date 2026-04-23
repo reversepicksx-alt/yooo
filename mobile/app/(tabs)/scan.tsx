@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   TextInput, ActivityIndicator, Alert, Platform, Modal, Image, Dimensions,
@@ -73,6 +73,38 @@ export default function ScanScreen() {
   const [showLeaguePicker, setShowLeaguePicker] = useState(false);
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
+  const analysisRef = useRef<any>(null);
+  const [savingImage, setSavingImage] = useState(false);
+
+  const handleSaveImage = async () => {
+    if (!prediction) return;
+    setSavingImage(true);
+    try {
+      if (Platform.OS === 'web') {
+        const html2canvas = (await import('html2canvas')).default;
+        const node = analysisRef.current;
+        if (!node) { setSavingImage(false); return; }
+        const canvas = await html2canvas(node, {
+          backgroundColor: '#000000',
+          scale: 2,
+          useCORS: true,
+          allowTaint: true,
+          scrollY: 0,
+          windowWidth: node.scrollWidth,
+          windowHeight: node.scrollHeight,
+          height: node.scrollHeight,
+        });
+        const dataUrl = canvas.toDataURL('image/png');
+        const link = document.createElement('a');
+        link.download = `${prediction.playerName || 'pick'}-analysis.png`;
+        link.href = dataUrl;
+        link.click();
+      }
+    } catch (e) {
+      console.warn('Save image error:', e);
+    }
+    setSavingImage(false);
+  };
 
   const reset = () => {
     setPhase('idle');
@@ -240,22 +272,32 @@ export default function ScanScreen() {
         {/* ─── SCAN MODE ─── */}
         {mode === 'scan' && (
           <>
-            {/* Idle: upload box */}
+            {/* Idle: hero upload box */}
             {phase === 'idle' && (
-              <View style={styles.uploadBox}>
-                <Ionicons name="image-outline" size={44} color={Colors.textTertiary} />
-                <Text style={styles.uploadTitle}>Scan a Prop Slip</Text>
-                <Text style={styles.uploadSub}>Upload a screenshot of any soccer prop slip</Text>
-                <TouchableOpacity style={styles.galleryBtnBig} onPress={handleGallery} activeOpacity={0.8}>
-                  <Ionicons name="images-outline" size={18} color="#000" />
-                  <Text style={styles.galleryBtnBigText}>Choose from Photos</Text>
-                </TouchableOpacity>
-                {analyzeError && (
-                  <View style={styles.inlineError}>
-                    <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />
-                    <Text style={styles.inlineErrorText}>{analyzeError}</Text>
-                  </View>
-                )}
+              <View style={styles.heroUploadBox}>
+                <Image
+                  source={require('../../assets/soccer-hero.png')}
+                  style={styles.heroImage}
+                  resizeMode="cover"
+                />
+                <View style={styles.heroOverlay} />
+                <View style={styles.heroContent}>
+                  <Ionicons name="image-outline" size={36} color={Colors.primary} />
+                  <Text style={styles.heroTitle}>Scan a Prop Slip</Text>
+                  <Text style={styles.heroSub}>
+                    Upload a screenshot of any soccer prop slip{'\n'}and get AI-powered insights in seconds.
+                  </Text>
+                  <TouchableOpacity style={styles.heroBtnBig} onPress={handleGallery} activeOpacity={0.8}>
+                    <Ionicons name="images-outline" size={18} color="#000" />
+                    <Text style={styles.heroBtnBigText}>Choose from Photos</Text>
+                  </TouchableOpacity>
+                  {analyzeError && (
+                    <View style={styles.inlineError}>
+                      <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />
+                      <Text style={styles.inlineErrorText}>{analyzeError}</Text>
+                    </View>
+                  )}
+                </View>
               </View>
             )}
 
@@ -481,6 +523,7 @@ export default function ScanScreen() {
         {/* ─── RESULT: Full Analysis ─── */}
         {phase === 'result' && prediction && (
           <>
+            <View ref={analysisRef} collapsable={false} style={styles.captureContainer}>
             <View style={styles.analysisCard}>
               {/* Header */}
               <View style={styles.analysisHeader}>
@@ -1205,83 +1248,40 @@ export default function ScanScreen() {
               </View>
             )}
 
-            {/* ─── SCOUT ANALYSIS — full tactical breakdown from AI ─── */}
-            {(() => {
-              const tb = prediction.tacticalBreakdown;
-              if (!tb || typeof tb !== 'string' || tb.length < 80) return null;
-              // Parse sections by **SectionName** or **SectionName —** pattern
-              const parts: { title: string; body: string }[] = [];
-              const re = /\*\*([^*\n]{2,30})\*\*\s*[—\-]?\s*/g;
-              let m: RegExpExecArray | null;
-              let prevTitle = '';
-              let prevEnd = 0;
-              while ((m = re.exec(tb)) !== null) {
-                if (prevTitle && m.index > prevEnd) {
-                  parts.push({ title: prevTitle, body: tb.slice(prevEnd, m.index).trim().replace(/\*\*/g, '') });
-                }
-                prevTitle = m[1].trim();
-                prevEnd = m.index + m[0].length;
-              }
-              if (prevTitle) parts.push({ title: prevTitle, body: tb.slice(prevEnd).trim().replace(/\*\*/g, '') });
-              const SECTION_ORDER = ['Verdict','Matchup','Situation','Analysis','Scenarios','Risk','TL;DR'];
-              const filtered = parts.filter(p => SECTION_ORDER.some(s => p.title.toLowerCase().includes(s.toLowerCase()) && p.body.length > 10));
-              if (filtered.length === 0) return null;
-
-              const sectionColor = (title: string) => {
-                if (/verdict/i.test(title)) return Colors.primary;
-                if (/analysis/i.test(title)) return '#4DA6FF';
-                if (/matchup/i.test(title)) return '#A084E8';
-                if (/scenario/i.test(title)) return '#FF8C42';
-                if (/risk/i.test(title)) return Colors.error;
-                if (/tl;dr|tldr/i.test(title)) return Colors.success;
-                return Colors.textSecondary;
-              };
-
-              return (
-                <View style={styles.scoutCard}>
-                  <View style={styles.scoutHeader}>
-                    <Ionicons name="document-text-outline" size={13} color={Colors.primary} />
-                    <Text style={styles.scoutTitle}>SCOUT REPORT</Text>
-                    {prediction.blendNote && (
-                      <Text style={styles.scoutBlend}>{prediction.blendNote}</Text>
-                    )}
-                  </View>
-                  {filtered.map((sec, i) => (
-                    <View key={i} style={styles.scoutSection}>
-                      <Text style={[styles.scoutSectionTitle, { color: sectionColor(sec.title) }]}>
-                        {sec.title.toUpperCase()}
-                      </Text>
-                      <Text style={styles.scoutSectionBody}>{sec.body}</Text>
-                    </View>
-                  ))}
-                </View>
-              );
-            })()}
-
             {/* ─── GAME LOG GRID ─── */}
             {prediction.gameLogs && prediction.gameLogs.length > 0 && (() => {
               const overCount = prediction.gameLogs.filter(g => g.value != null && prediction.line != null && g.value >= prediction.line).length;
               const filteredLogs = prediction.gameLogs.filter(g =>
                 gameLogFilter === 'all' ? true : g.venue === gameLogFilter
               );
-              const tileW = (SCREEN_W - 40 - 32 - 18) / 4;
+              const COLS = 5;
+              const tileW = (SCREEN_W - 40 - 16 - (COLS - 1) * 5) / COLS;
+              const oppPoss = prediction.possessionOppAvg;
               return (
                 <View style={styles.gameLogsCard}>
-                  {/* Header */}
+                  {/* Header row */}
                   <View style={styles.gameLogsHeader}>
                     <View style={styles.glHeaderLeft}>
-                      <Ionicons name="pulse" size={11} color={Colors.textTertiary} />
+                      <Ionicons name="pulse" size={10} color={Colors.textTertiary} />
                       <Text style={styles.gameLogsTitle}>
                         RECENT FORM ({prediction.gameLogs.length} GAMES)
                       </Text>
                     </View>
-                    {prediction.hitRates != null && (
-                      <View style={styles.hitRateBadge}>
-                        <Text style={styles.hitRateBadgeText}>
-                          {overCount} / {prediction.gameLogs.length} HIT RATE
-                        </Text>
-                      </View>
-                    )}
+                    <View style={styles.glHeaderRight}>
+                      {oppPoss != null && (
+                        <View style={styles.glOppPossBadge}>
+                          <Text style={styles.glOppPossLabel}>OPP POSS</Text>
+                          <Text style={styles.glOppPossVal}>{oppPoss}%</Text>
+                        </View>
+                      )}
+                      {prediction.hitRates != null && (
+                        <View style={styles.hitRateBadge}>
+                          <Text style={styles.hitRateBadgeText}>
+                            {overCount}/{prediction.gameLogs.length} HIT
+                          </Text>
+                        </View>
+                      )}
+                    </View>
                   </View>
 
                   {/* ALL / HOME / AWAY tabs */}
@@ -1299,17 +1299,19 @@ export default function ScanScreen() {
                     ))}
                   </View>
 
-                  {/* 4-column grid — pad last row to always fill 4 columns */}
+                  {/* 5-column compact grid */}
                   <View style={styles.glGrid}>
                     {(() => {
-                      const remainder = filteredLogs.length % 4;
-                      const padCount = remainder === 0 ? 0 : 4 - remainder;
+                      const remainder = filteredLogs.length % COLS;
+                      const padCount = remainder === 0 ? 0 : COLS - remainder;
                       return (
                         <>
                           {filteredLogs.map((g, i) => {
                             const isOver = g.value != null && prediction.line != null && g.value >= prediction.line;
                             const oppRaw = g.opponent || '?';
                             const oppShort = oppRaw.replace(/^(al-?|fc |cf |rc |sc |cd |ud |sd |rcd |as |ss |ac |us |ac |sp |ca |cp |ue |ue |ce |cm |se |sk )/i, '').slice(0, 3).toUpperCase();
+                            const scoreStr = g.score || '';
+                            const rankStr = g.oppRank != null ? `#${g.oppRank}` : '';
                             return (
                               <View
                                 key={i}
@@ -1320,14 +1322,26 @@ export default function ScanScreen() {
                                 ]}
                               >
                                 {isOver && <View style={styles.glDot} />}
+                                {/* Main stat */}
                                 <Text style={[styles.glTileVal, { color: isOver ? Colors.success : Colors.error }]}>
                                   {g.value != null ? String(g.value) : '—'}
                                 </Text>
-                                <Text style={styles.glTileMins}>{g.minutes > 0 ? `${g.minutes}'` : '—'}</Text>
-                                <View style={styles.glVenueBadge}>
-                                  <Text style={styles.glVenueText}>{g.venue === 'home' ? 'H' : 'A'}</Text>
+                                {/* Final score */}
+                                {scoreStr ? (
+                                  <Text style={styles.glTileScore}>{scoreStr}</Text>
+                                ) : (
+                                  <Text style={styles.glTileMins}>{g.minutes > 0 ? `${g.minutes}'` : '—'}</Text>
+                                )}
+                                {/* Opp + rank row */}
+                                <View style={styles.glOppRow}>
+                                  <View style={styles.glVenueBadge}>
+                                    <Text style={styles.glVenueText}>{g.venue === 'home' ? 'H' : 'A'}</Text>
+                                  </View>
+                                  <Text style={styles.glTileOpp} numberOfLines={1}>{oppShort}</Text>
                                 </View>
-                                <Text style={styles.glTileOpp} numberOfLines={1}>{oppShort}</Text>
+                                {rankStr ? (
+                                  <Text style={styles.glTileRank}>{rankStr}</Text>
+                                ) : null}
                               </View>
                             );
                           })}
@@ -1446,6 +1460,55 @@ export default function ScanScreen() {
               );
             })()}
 
+            {/* ─── SCOUT ANALYSIS — full tactical breakdown from AI ─── */}
+            {(() => {
+              const tb = prediction.tacticalBreakdown;
+              if (!tb || typeof tb !== 'string' || tb.length < 80) return null;
+              const parts: { title: string; body: string }[] = [];
+              const re = /\*\*([^*\n]{2,30})\*\*\s*[—\-]?\s*/g;
+              let m: RegExpExecArray | null;
+              let prevTitle = '';
+              let prevEnd = 0;
+              while ((m = re.exec(tb)) !== null) {
+                if (prevTitle && m.index > prevEnd) {
+                  parts.push({ title: prevTitle, body: tb.slice(prevEnd, m.index).trim().replace(/\*\*/g, '') });
+                }
+                prevTitle = m[1].trim();
+                prevEnd = m.index + m[0].length;
+              }
+              if (prevTitle) parts.push({ title: prevTitle, body: tb.slice(prevEnd).trim().replace(/\*\*/g, '') });
+              const SECTION_ORDER = ['Verdict','Matchup','Situation','Analysis','Scenarios','Risk','TL;DR'];
+              const filtered = parts.filter(p => SECTION_ORDER.some(s => p.title.toLowerCase().includes(s.toLowerCase()) && p.body.length > 10));
+              if (filtered.length === 0) return null;
+              const sectionColor = (title: string) => {
+                if (/verdict/i.test(title)) return Colors.primary;
+                if (/analysis/i.test(title)) return '#4DA6FF';
+                if (/matchup/i.test(title)) return '#A084E8';
+                if (/scenario/i.test(title)) return '#FF8C42';
+                if (/risk/i.test(title)) return Colors.error;
+                if (/tl;dr|tldr/i.test(title)) return Colors.success;
+                return Colors.textSecondary;
+              };
+              return (
+                <View style={styles.scoutCard}>
+                  <View style={styles.scoutHeader}>
+                    <Ionicons name="document-text-outline" size={13} color={Colors.primary} />
+                    <Text style={styles.scoutTitle}>SCOUT REPORT</Text>
+                    {prediction.blendNote && (
+                      <Text style={styles.scoutBlend}>{prediction.blendNote}</Text>
+                    )}
+                  </View>
+                  {filtered.map((sec, i) => (
+                    <View key={i} style={styles.scoutSection}>
+                      <Text style={[styles.scoutSectionTitle, { color: sectionColor(sec.title) }]}>
+                        {sec.title.toUpperCase()}
+                      </Text>
+                      <Text style={styles.scoutSectionBody}>{sec.body}</Text>
+                    </View>
+                  ))}
+                </View>
+              );
+            })()}
 
             {saveError && (
               <View style={styles.inlineError}>
@@ -1453,6 +1516,8 @@ export default function ScanScreen() {
                 <Text style={styles.inlineErrorText}>{saveError}</Text>
               </View>
             )}
+
+            </View>{/* end captureContainer */}
 
             <TouchableOpacity
               style={[styles.saveBtn, saving && { opacity: 0.6 }]}
@@ -1465,6 +1530,21 @@ export default function ScanScreen() {
                 : <>
                     <Ionicons name="bookmark" size={16} color="#000" />
                     <Text style={styles.saveBtnText}>Save to My Picks</Text>
+                  </>
+              }
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.saveImgBtn, savingImage && { opacity: 0.6 }]}
+              onPress={handleSaveImage}
+              disabled={savingImage}
+              activeOpacity={0.85}
+            >
+              {savingImage
+                ? <ActivityIndicator color={Colors.primary} size="small" />
+                : <>
+                    <Ionicons name="download-outline" size={16} color={Colors.primary} />
+                    <Text style={styles.saveImgBtnText}>Save to Images</Text>
                   </>
               }
             </TouchableOpacity>
@@ -1584,6 +1664,44 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.4, shadowRadius: 10, elevation: 6,
   },
   galleryBtnBigText: { color: '#000', fontWeight: '800', fontSize: 15 },
+
+  /* ─── HERO UPLOAD BOX (Scan idle state) ─── */
+  heroUploadBox: {
+    borderRadius: Colors.radiusLg, overflow: 'hidden',
+    borderWidth: 2, borderColor: Colors.primary,
+    borderStyle: 'dashed', minHeight: 420,
+  },
+  heroImage: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    width: '100%', height: '100%',
+  },
+  heroOverlay: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.60)',
+  },
+  heroContent: {
+    position: 'relative', alignItems: 'center',
+    paddingTop: 48, paddingBottom: 40, paddingHorizontal: 24, gap: 12,
+  },
+  heroTitle: {
+    fontSize: 24, fontWeight: '800', color: Colors.text, textAlign: 'center',
+    textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 6,
+  },
+  heroSub: {
+    fontSize: 14, color: 'rgba(255,255,255,0.75)', textAlign: 'center',
+    lineHeight: 20, marginBottom: 8,
+  },
+  heroBtnBig: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: Colors.primary, paddingVertical: 15, paddingHorizontal: 32,
+    borderRadius: Colors.radius,
+    shadowColor: Colors.primary, shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.5, shadowRadius: 12, elevation: 8,
+  },
+  heroBtnBigText: { color: '#000', fontWeight: '800', fontSize: 16 },
+
+  /* Capture container (wraps analysis content for html2canvas) */
+  captureContainer: { backgroundColor: '#000' },
 
   /* Inline error */
   inlineError: {
@@ -1901,14 +2019,29 @@ const styles = StyleSheet.create({
     position: 'absolute', top: 6, right: 6,
     width: 6, height: 6, borderRadius: 3, backgroundColor: '#FF8C42',
   },
-  glTileVal: { fontSize: 18, fontWeight: '900', lineHeight: 22 },
-  glTileMins: { fontSize: 9, color: Colors.textSecondary, fontWeight: '600' },
+  glTileVal: { fontSize: 16, fontWeight: '900', lineHeight: 20 },
+  glTileMins: { fontSize: 8, color: Colors.textSecondary, fontWeight: '600' },
   glVenueBadge: {
     backgroundColor: '#1a1a1a', borderRadius: 4,
     paddingHorizontal: 5, paddingVertical: 2,
   },
-  glVenueText: { fontSize: 9, fontWeight: '800', color: Colors.textSecondary, letterSpacing: 0.5 },
-  glTileOpp: { fontSize: 9, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 0.5 },
+  glVenueText: { fontSize: 8, fontWeight: '800', color: Colors.textSecondary, letterSpacing: 0.5 },
+  glTileOpp: { fontSize: 8, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 0.3 },
+  glTileScore: { fontSize: 8, color: Colors.textSecondary, fontWeight: '600' },
+  glOppRow: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  glTileRank: { fontSize: 7, color: Colors.textTertiary, fontWeight: '700' },
+
+  /* Game log header right (avg possession badge) */
+  glHeaderRight: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  glOppPossBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: 'rgba(74,108,255,0.10)', borderRadius: 20,
+    paddingHorizontal: 8, paddingVertical: 3,
+    borderWidth: 1, borderColor: 'rgba(74,108,255,0.25)',
+  },
+  glOppPossLabel: { fontSize: 8, fontWeight: '700', color: '#4A6CFF', letterSpacing: 0.5 },
+  glOppPossVal: { fontSize: 9, fontWeight: '800', color: '#4A6CFF' },
+
   avgRow: { flexDirection: 'row', gap: 16 },
   avgText: { fontSize: 10, color: Colors.textSecondary, fontWeight: '600', letterSpacing: 0.5 },
 
@@ -1973,6 +2106,13 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3, shadowRadius: 10, elevation: 6,
   },
   saveBtnText: { color: '#000', fontWeight: '800', fontSize: 16 },
+  saveImgBtn: {
+    height: 48, borderRadius: Colors.radius, borderWidth: 1.5,
+    borderColor: Colors.primary, flexDirection: 'row', alignItems: 'center',
+    justifyContent: 'center', gap: 8, marginBottom: 10,
+    backgroundColor: 'rgba(57,255,20,0.07)',
+  },
+  saveImgBtnText: { color: Colors.primary, fontWeight: '700', fontSize: 15 },
   newBtn: { alignItems: 'center', paddingVertical: 14 },
   newBtnText: { color: Colors.textSecondary, fontSize: 14, fontWeight: '600' },
 

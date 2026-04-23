@@ -170,6 +170,8 @@ export interface GameLog {
   venue: string;
   value: number | null;
   minutes: number;
+  score?: string;
+  oppRank?: number | null;
 }
 
 export interface H2HMatch {
@@ -449,6 +451,8 @@ export async function predict(request: Record<string, unknown>): Promise<Predict
             venue: (g.venue as string) || '',
             value,
             minutes: (g.minutes as number) || 0,
+            score: (g.score as string) || undefined,
+            oppRank: (g.oppRank as number | null) ?? undefined,
           };
         })
         .filter(g => g.value != null)
