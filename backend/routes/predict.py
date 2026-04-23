@@ -4013,9 +4013,15 @@ Analyze ALL data thoroughly. Return JSON only."""
         # the season average independently confirms the lean by >5% beyond the line.
         # ═══════════════════════════════════════════════════════════════════
         _pass_proj = prediction.get("projectedValue", req.line)
+        # Both position systems must agree on GK — _bayes_position is the early
+        # DB-lookup estimate (can misfire for outfield players who have goals_saves=0
+        # in logs); specific_position is the authoritative POS RESOLVE result.
+        # Requiring both to agree prevents the narrow-edge flip from ever touching
+        # outfield players like Victor Braga who are RBs, not GKs.
         _is_gk_pass = (
             req.propType == "pass_attempts"
             and _bayes_position.upper() in {"GK", "GOALKEEPER"}
+            and specific_position.upper() in {"GK", "GOALKEEPER", "G"}
         )
         if _is_gk_pass and req.line > 0 and _pass_proj is not None:
             _edge_pct = abs(_pass_proj - req.line) / req.line * 100
@@ -4474,8 +4480,12 @@ Analyze ALL data thoroughly. Return JSON only."""
             # Grok is explanation-only now (no projectedValue/recommendation), but it may
             # still accidentally write the wrong direction. Catch it by checking the text.
             import re as _re_scan
-            _tb_raw = prediction.get("tacticalBreakdown", "")
-            _sharp_raw = prediction.get("sharpSummary", "")
+            _tb_raw = prediction.get("tacticalBreakdown", "") or ""
+            if isinstance(_tb_raw, dict):
+                _tb_raw = " ".join(str(v) for v in _tb_raw.values())
+            _sharp_raw = prediction.get("sharpSummary", "") or ""
+            if isinstance(_sharp_raw, dict):
+                _sharp_raw = str(_sharp_raw)
             # Look for definitive wrong-direction conclusion phrases in body/sharp
             _wrong_conclusion_patterns = [
                 rf'(?i)(smash|bang|hammer|pound|back|take|play|fade)\s+the\s+{wrong_dir}',
