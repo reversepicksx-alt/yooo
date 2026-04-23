@@ -1021,13 +1021,28 @@ async def apply_learned_offsets(
     if not prop_type or posterior is None:
         return posterior, ""
 
-    candidates = [
-        ("prop_venue",  f"{prop_type}|{venue}"),
-        ("prop_rec",    f"{prop_type}|{recommendation}"),
-        ("prop",        prop_type),
-    ]
+    # Validate recommendation — only 'over' or 'under' are valid direction keys.
+    # Stray values like 'pass' would match buggy calibration keys (e.g. pass_attempts|pass)
+    # and produce large incorrect corrections. Guard against this.
+    _safe_rec = recommendation if recommendation in {"over", "under"} else None
+
+    # Priority order — most diagnostic first:
+    #   1. prop_rec    (direction bias — STRONGEST signal, e.g. UNDER over-projects by 4.85)
+    #   2. prop_league (league-specific bias)
+    #   3. prop_venue  (venue bias — average across directions, less specific than rec)
+    #   4. prop        (overall prop bias — most general)
+    #
+    # Only one offset is applied (the most specific matching one).
+    # Evidence: applying direction offset fixes the biggest hit-rate gaps:
+    #   OVER 47% → direction offset -1.14 reduces over-projections
+    #   UNDER 61% but direction offset +1.94 raises projections → fewer bad UNDER calls
+    candidates = []
+    if _safe_rec:
+        candidates.append(("prop_rec", f"{prop_type}|{_safe_rec}"))
     if league_id:
-        candidates.insert(1, ("prop_league", f"{prop_type}|{str(league_id)}"))
+        candidates.append(("prop_league", f"{prop_type}|{str(league_id)}"))
+    candidates.append(("prop_venue", f"{prop_type}|{venue}"))
+    candidates.append(("prop",       prop_type))
 
     for dimension, key in candidates:
         doc = await db.calibration_offsets.find_one(

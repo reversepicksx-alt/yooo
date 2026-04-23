@@ -516,7 +516,12 @@ def compute_bayesian_projection(
             _pos_upper = (position or "").upper()
             _is_cb  = _pos_upper in {"CB", "DC", "RCB", "LCB"}
             _is_def = _pos_upper in {"DEF", "LB", "RB", "WB", "LWB", "RWB", "D"}
-            squeeze_floor = 0.80 if _is_cb else (0.70 if _is_def else 0.55)
+            # MID: deep midfielders (CDM/CM/CAM) stay involved regardless of possession.
+            # Evidence: 55-pick sample shows mean_err=-9.2 for MID — we're dramatically
+            # under-projecting when the squeeze fires hard at 0.55 floor.
+            # Raise to 0.75: max 25% cut (was up to 45% — caused Kimmich/Xhaka/Burgess failures).
+            _is_mid = _pos_upper in {"MF", "CM", "CDM", "CAM", "DM", "AM", "MC", "DMF", "OMF", "CMF"}
+            squeeze_floor = 0.80 if _is_cb else (0.75 if _is_mid else (0.70 if _is_def else 0.60))
             if poss_ratio < 0.95:
                 squeeze_mult = round(max(squeeze_floor, poss_ratio ** 1.5), 3)
                 # HOT-STREAK DAMPENING: A player on an upward momentum trend may

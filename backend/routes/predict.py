@@ -20,9 +20,11 @@ from utils import api_football_request, get_recent_fixtures_fast, strip_accents,
 router = APIRouter(prefix="/api", tags=["predict"])
 
 # ── CALIBRATION TOGGLE ────────────────────────────────────────────────────────
-# Set to True to re-enable nightly-learned bias offsets.
-# OFF by default — only turn on when explicitly requested.
-CALIBRATION_ENABLED = False
+# Nightly-learned bias offsets from historical pick outcomes.
+# Priority: prop_rec (direction) > prop_league > prop_venue > prop (general).
+# Direction offsets are the strongest signal — applied first.
+# Each offset is dampened to 40% of raw mean error and capped at ±20% of posterior.
+CALIBRATION_ENABLED = True
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Match dominance cache: keyed by (home_team_id, away_team_id)
@@ -3608,15 +3610,27 @@ Analyze ALL data thoroughly. Return JSON only."""
             print(f"[PROJECTION] Bayesian={bayesian_posterior}({bayesian_rec}, {bayesian_prob:.0%}) | Early estimate={early_proj}({early_rec}) — MATH IS FINAL. Grok = explanation only.")
 
             # ── Apply nightly-learned bias offsets ──────────────────────────
+            # GK pass_attempts UNDER: the GK inverted possession model already achieves
+            # 70% UNDER hit rate through position-specific logic. The general UNDER offset
+            # (+1.94) is driven by MID UNDER failures and must NOT be applied to GKs —
+            # it would push correct GK UNDER projections above the line and flip them to OVER.
+            # GK pass_attempts OVER still benefits from the direction correction (-1.14).
+            _is_gk_pass_under = (
+                req.propType == "pass_attempts"
+                and bayesian_rec == "under"
+                and (specific_position or "").upper() in {"GK", "GOALKEEPER"}
+            )
             if CALIBRATION_ENABLED:
                 try:
                     from calibration import apply_learned_offsets
                     _offset_venue = player_venue or req.venue or "home"
+                    # For GK UNDER: skip direction offset, fall through to venue/league
+                    _cal_rec = None if _is_gk_pass_under else bayesian_rec
                     bayesian_posterior, _offset_note = await apply_learned_offsets(
                         posterior=bayesian_posterior,
                         prop_type=req.propType,
                         venue=_offset_venue,
-                        recommendation=bayesian_rec,
+                        recommendation=_cal_rec,
                         league_id=req.leagueId,
                         sport="soccer",
                     )
