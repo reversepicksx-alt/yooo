@@ -2738,13 +2738,39 @@ JSON: {"confidenceScore":0,"confidenceLevel":"","aiProjection":0,"sharpSummary":
                 _gk_scenario = "HIGH POSSESSION — LOW GK VOLUME: Team controls the ball through midfield. Fewer back-passes to the GK. Model LOWERS projection for this scenario."
             else:
                 _gk_scenario = "BALANCED POSSESSION — normal GK pass volume expected."
+            # Blowout risk: if the GK's team is a heavy favourite, flag the
+            # game-script risk that a large winning margin suppresses second-half
+            # GK distribution. Defenders stop recycling and just clear it long
+            # to kill the clock when up 3+. This is irreducible variance that the
+            # model cannot project in advance — user must be aware of the risk.
+            _gk_blowout_warning = ""
+            try:
+                _bk_odds = (odds or {}).get("bookmakerOdds", {})
+                _team_win_odds = float(_bk_odds.get("homeWin" if player_venue == "home" else "awayWin", 99))
+                _opp_win_odds  = float(_bk_odds.get("awayWin" if player_venue == "home" else "homeWin", 99))
+                if _team_win_odds <= 1.50:
+                    _gk_blowout_warning = (
+                        f"\n⚠️ BLOWOUT RISK: {req.teamName} are heavy favourites ({_team_win_odds:.2f}). "
+                        f"If they lead by 3+ goals, defenders stop recycling and the GK's second-half "
+                        f"distribution collapses — actual passes can finish 30-40% below first-half pace. "
+                        f"This is irreducible game-script variance. Flag this in your analysis."
+                    )
+                elif _opp_win_odds <= 1.50:
+                    _gk_blowout_warning = (
+                        f"\n⚠️ COMEBACK PRESSURE RISK: {req.opponentName} are heavy favourites ({_opp_win_odds:.2f}). "
+                        f"If the opponent leads big, the GK's team may chase the game — more open play, "
+                        f"fewer back-passes as defenders push forward. GK distribution can drop late."
+                    )
+            except Exception:
+                pass
+
             gk_pass_context = f"""
 [GK PASS VOLUME CONTEXT — INVERTED POSSESSION MODEL]
 {req.playerName} is a GOALKEEPER. Pass volume rules are INVERTED vs outfield players.
 Venue: {_gk_venue_lbl} | Expected possession: {_gk_exp_poss}% (team season avg: {_gk_team_avg}%, gap: {_gk_poss_gap:+.1f}pp)
 Opponent expected possession: {_gk_opp_poss}%
 Scenario: {_gk_scenario}
-KEY PRINCIPLE: A GK defending deep = maximum back-pass recycling. A GK on a dominant team = barely touched. This is the single most important factor for GK pass props."""
+KEY PRINCIPLE: A GK defending deep = maximum back-pass recycling. A GK on a dominant team = barely touched. This is the single most important factor for GK pass props.{_gk_blowout_warning}"""
 
         # SAVES-SPECIFIC: Elite GK Formula
         # Projected Saves = Opponent Avg SoT × GK Save% × Match Context Multiplier
