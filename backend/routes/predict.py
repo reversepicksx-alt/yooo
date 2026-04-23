@@ -1089,6 +1089,19 @@ async def predict(req: PredictionRequest):
                 _player_fixtures_raw = await api_football_request(
                     "fixtures", {"player": req.playerId, "last": 20}
                 )
+                if _player_fixtures_raw and actual_team_id:
+                    # Filter to ONLY fixtures where the player's club team appears.
+                    # Fetching by player ID returns ALL competitions including national
+                    # team games — strip those out so we only analyse club fixtures.
+                    _before_filter = len(_player_fixtures_raw)
+                    _player_fixtures_raw = [
+                        fx for fx in _player_fixtures_raw
+                        if (fx.get("teams", {}).get("home", {}).get("id") == actual_team_id
+                            or fx.get("teams", {}).get("away", {}).get("id") == actual_team_id)
+                    ]
+                    if len(_player_fixtures_raw) < _before_filter:
+                        print(f"[PLAYER-DIRECT] {req.playerName}: filtered {_before_filter} → {len(_player_fixtures_raw)} club fixtures (dropped national-team games)")
+
                 if _player_fixtures_raw:
                     # For each fixture, fetch per-game stats
                     _sem2 = aio.Semaphore(5)
@@ -4101,6 +4114,23 @@ Analyze ALL data thoroughly. Return JSON only."""
                     f"{_reason_tag} {req.playerName} {req.propType}: "
                     f"proj={_pass_proj}, line={req.line}, gap={_edge_pct:.1f}% → fading to {_flipped}"
                 )
+
+        # ── PROJECTION CONSISTENCY GUARD ─────────────────────────────────────────────────
+        # Ensure projectedValue and recommendation can never contradict each other.
+        # Any gate (GK narrow edge, home-GK fade, etc.) may flip the recommendation
+        # without touching projectedValue — this guard realigns the number so the UI
+        # never shows "Projection: 30, Line: 29.5 — UNDER" or vice-versa.
+        _cg_rec  = str(prediction.get("recommendation", "")).lower()
+        _cg_proj = prediction.get("projectedValue")
+        if _cg_proj is not None and req.line and req.line > 0:
+            if _cg_rec == "under" and _cg_proj > req.line:
+                _cg_fixed = round((req.line - 0.5) * 2) / 2
+                prediction["projectedValue"] = _cg_fixed
+                print(f"[CONSISTENCY GUARD] {req.playerName}: projectedValue {_cg_proj} → {_cg_fixed} (rec=UNDER, was above line {req.line})")
+            elif _cg_rec == "over" and _cg_proj < req.line:
+                _cg_fixed = round((req.line + 0.5) * 2) / 2
+                prediction["projectedValue"] = _cg_fixed
+                print(f"[CONSISTENCY GUARD] {req.playerName}: projectedValue {_cg_proj} → {_cg_fixed} (rec=OVER, was below line {req.line})")
 
         # ── MATH LOCK: Always align sharpSummary + Verdict to the FINAL math outcome ──
         # Runs after PASS GATE so we use the true final recommendation (PASS/OVER/UNDER).

@@ -282,13 +282,13 @@ export default function ScanScreen() {
                 />
                 <View style={styles.heroOverlay} />
                 <View style={styles.heroContent}>
-                  <Ionicons name="image-outline" size={36} color={Colors.primary} />
+                  <Ionicons name="image-outline" size={22} color={Colors.primary} />
                   <Text style={styles.heroTitle}>Scan a Prop Slip</Text>
                   <Text style={styles.heroSub}>
-                    Upload a screenshot of any soccer prop slip{'\n'}and get AI-powered insights in seconds.
+                    Upload a screenshot of any soccer prop slip and get AI-powered insights in seconds.
                   </Text>
                   <TouchableOpacity style={styles.heroBtnBig} onPress={handleGallery} activeOpacity={0.8}>
-                    <Ionicons name="images-outline" size={18} color="#000" />
+                    <Ionicons name="images-outline" size={15} color="#000" />
                     <Text style={styles.heroBtnBigText}>Choose from Photos</Text>
                   </TouchableOpacity>
                   {analyzeError && (
@@ -1722,7 +1722,7 @@ const styles = StyleSheet.create({
   heroUploadBox: {
     borderRadius: Colors.radiusLg, overflow: 'hidden',
     borderWidth: 2, borderColor: Colors.primary,
-    borderStyle: 'dashed', minHeight: 420,
+    borderStyle: 'dashed', minHeight: 170,
   },
   heroImage: {
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
@@ -1734,24 +1734,24 @@ const styles = StyleSheet.create({
   },
   heroContent: {
     position: 'relative', alignItems: 'center',
-    paddingTop: 48, paddingBottom: 40, paddingHorizontal: 24, gap: 12,
+    paddingTop: 18, paddingBottom: 18, paddingHorizontal: 20, gap: 8,
   },
   heroTitle: {
-    fontSize: 24, fontWeight: '800', color: Colors.text, textAlign: 'center',
+    fontSize: 17, fontWeight: '800', color: Colors.text, textAlign: 'center',
     textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 6,
   },
   heroSub: {
-    fontSize: 14, color: 'rgba(255,255,255,0.75)', textAlign: 'center',
-    lineHeight: 20, marginBottom: 8,
+    fontSize: 12, color: 'rgba(255,255,255,0.70)', textAlign: 'center',
+    lineHeight: 17, marginBottom: 4,
   },
   heroBtnBig: {
-    flexDirection: 'row', alignItems: 'center', gap: 10,
-    backgroundColor: Colors.primary, paddingVertical: 15, paddingHorizontal: 32,
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: Colors.primary, paddingVertical: 10, paddingHorizontal: 22,
     borderRadius: Colors.radius,
-    shadowColor: Colors.primary, shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.5, shadowRadius: 12, elevation: 8,
+    shadowColor: Colors.primary, shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.45, shadowRadius: 8, elevation: 6,
   },
-  heroBtnBigText: { color: '#000', fontWeight: '800', fontSize: 16 },
+  heroBtnBigText: { color: '#000', fontWeight: '800', fontSize: 14 },
 
   /* Capture container (wraps analysis content for html2canvas) */
   captureContainer: { backgroundColor: '#000' },
