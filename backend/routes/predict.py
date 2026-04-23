@@ -4106,9 +4106,9 @@ Analyze ALL data thoroughly. Return JSON only."""
             # Season avg anchor — block flip if season avg clearly confirms lean
             _season_avg = early_bayes.get("priorMean") if early_bayes else None
             _avg_anchor_blocks_flip = False
+            _model_lean_over = _pass_proj > req.line
             if _season_avg and req.line > 0:
                 _avg_edge_pct = (_season_avg - req.line) / req.line * 100
-                _model_lean_over = _pass_proj > req.line
                 if _model_lean_over and _avg_edge_pct > 5.0:
                     _avg_anchor_blocks_flip = True
                     print(f"[GK NARROW EDGE BLOCKED] {req.playerName}: season_avg={_season_avg} "
@@ -4117,6 +4117,22 @@ Analyze ALL data thoroughly. Return JSON only."""
                     _avg_anchor_blocks_flip = True
                     print(f"[GK NARROW EDGE BLOCKED] {req.playerName}: season_avg={_season_avg} "
                           f"{abs(_avg_edge_pct):.1f}% below line — anchor confirms UNDER, no flip")
+
+            # Possession context anchor: if the model is leaning UNDER because the team
+            # has above-average expected possession (GK DOM POSS PENALTY fired), block the
+            # narrow edge from flipping UNDER → OVER even when the season avg is over the line.
+            # Example: Escandell (Oviedo HOME, 55.7% poss / 52.4% avg = ratio 1.063) → UNDER.
+            # The season avg (35.3) is above the 33.5 line, but the possession context is real.
+            if not _model_lean_over and match_dominance:
+                _ne_exp_poss  = match_dominance.get("expectedPoss")
+                _ne_team_avg  = match_dominance.get("teamSeasonAvg")
+                if _ne_exp_poss and _ne_team_avg and _ne_team_avg > 0:
+                    _ne_poss_ratio = _ne_exp_poss / _ne_team_avg
+                    if _ne_poss_ratio > 1.05:
+                        _avg_anchor_blocks_flip = True
+                        print(f"[GK POSS ANCHOR] {req.playerName}: possession context "
+                              f"({_ne_exp_poss:.1f}% > avg {_ne_team_avg:.1f}%, ratio={_ne_poss_ratio:.2f}) "
+                              f"confirms UNDER lean — blocking flip to OVER")
 
             if _edge_pct < _narrow_threshold and not _avg_anchor_blocks_flip:
                 _leaning = "over" if _pass_proj > req.line else "under"
@@ -4558,6 +4574,9 @@ Analyze ALL data thoroughly. Return JSON only."""
         final_rec = prediction.get("recommendation", "").lower()
         final_proj = prediction.get("projectedValue", req.line)
         tb = prediction.get("tacticalBreakdown", "")
+        if isinstance(tb, dict):
+            tb = " ".join(str(v) for v in tb.values())
+            prediction["tacticalBreakdown"] = tb
         if tb and final_rec:
             wrong_dir = "under" if final_rec == "over" else "over"
             right_dir = final_rec          # lowercase

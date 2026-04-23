@@ -361,7 +361,7 @@ def compute_bayesian_projection(
                 # dom_mult < 1.0 = team has less ball → handled by GK INVERTED block below (line 542+).
                 # Only fire when dom_mult > 1.10 (meaningful possession surplus).
                 # Dampened 0.5× since the inverted block below carries the primary adjustment.
-                if dom_mult > 1.10:
+                if dom_mult > 1.05:
                     dom_adj = prior_mean * (1.0 - dom_mult) * 0.5  # NEGATIVE → reduces GK projection
                     _dom_cap = prior_mean * 0.15
                     dom_adj = max(-_dom_cap, min(0.0, dom_adj))  # Only allow reduction, cap at -15%
@@ -581,7 +581,7 @@ def compute_bayesian_projection(
                 print(f"[GK POSS BOOST] {prop_type}: team_avg={team_season_avg_poss:.1f}% "
                       f"expected={expected_poss:.1f}% ratio={poss_ratio:.2f} "
                       f"inv_mult={boost_mult} {raw_before_gk} → {posterior_mean}")
-            elif poss_ratio > 1.08:
+            elif poss_ratio > 1.05:
                 # GK DOMINANT POSSESSION PENALTY
                 # When a team is expected to significantly out-possess the opponent,
                 # their defenders push high and do NOT recycle the ball through the GK.
@@ -590,11 +590,12 @@ def compute_bayesian_projection(
                 # Evidence (all UNDER despite high season avg):
                 #   Gazzaniga (Girona HOME, above-avg possession vs Betis) → 26 passes.
                 #   Simón (Athletic Club HOME, high possession vs Osasuna) → 26 passes.
-                #   Escandel (Villarreal, 58% expected / ~50% avg = ratio 1.16) → 29 vs 35.5 line.
+                #   Escandell (Oviedo HOME, 55.7% expected / 52.4% avg = ratio 1.063) → UNDER 33.5.
                 #
                 # Scale (symmetric ceiling 18% — matches the low-poss boost cap):
-                #   ratio=1.08 → ~6% reduction  (mild dominance)
-                #   ratio=1.16 → ~12% reduction (clear dominance, e.g. Villarreal 58%)
+                #   ratio=1.05 → ~3-4% reduction (mild dominance)
+                #   ratio=1.10 → ~7% reduction
+                #   ratio=1.16 → ~12% reduction (clear dominance)
                 #   ratio=1.24 → ~18% reduction (extreme dominance, capped)
                 dom_penalty = min(0.18, (poss_ratio - 1.0) * 0.75)
                 shrink_mult = round(1.0 - dom_penalty, 3)
