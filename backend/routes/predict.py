@@ -2290,6 +2290,21 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                                     "yellow_cards": stats.get("cards", {}).get("yellow"),
                                     "fouls_committed": stats.get("fouls", {}).get("committed"),
                                 }
+                                # Enrich with possession from team fixture cache
+                                _h2h_poss_team = None
+                                _h2h_poss_opp  = None
+                                try:
+                                    _h2h_ck = f"fxt_{fid}_{actual_team_id}"
+                                    _h2h_poss_doc = await db.fixture_player_cache.find_one(
+                                        {"_k": _h2h_ck}, {"_id": 0, "d.possession": 1}
+                                    )
+                                    if _h2h_poss_doc and _h2h_poss_doc.get("d"):
+                                        _raw = str(_h2h_poss_doc["d"].get("possession", "")).replace("%", "").strip()
+                                        if _raw:
+                                            _h2h_poss_team = int(_raw)
+                                            _h2h_poss_opp  = 100 - _h2h_poss_team
+                                except Exception:
+                                    pass
                                 return {
                                     "date": fixture_info.get("fixture", {}).get("date", ""),
                                     "opponent": opponent_name,
@@ -2299,6 +2314,8 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                                     "targetStat": stat_key_map_h2h.get(req.propType),
                                     "targetStatPer90": round((stat_key_map_h2h.get(req.propType, 0) or 0) / minutes_played * 90, 2) if minutes_played > 0 and stat_key_map_h2h.get(req.propType) else None,
                                     "matchScore": f"{home_goals}-{away_goals}",
+                                    "teamPossession": _h2h_poss_team,
+                                    "opponentPossession": _h2h_poss_opp,
                                 }
                     return None
                 except Exception:

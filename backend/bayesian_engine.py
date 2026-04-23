@@ -581,13 +581,28 @@ def compute_bayesian_projection(
                 print(f"[GK POSS BOOST] {prop_type}: team_avg={team_season_avg_poss:.1f}% "
                       f"expected={expected_poss:.1f}% ratio={poss_ratio:.2f} "
                       f"inv_mult={boost_mult} {raw_before_gk} → {posterior_mean}")
-            # GK BUILDUP BOOST REMOVED.
-            # Removed because: when a home team has above-average possession,
-            # their GK is LESS involved (team builds in the opponent's half,
-            # defenders push forward, GK rarely gets back-passes).
-            # Evidence: Gazzaniga (Girona HOME, above-avg possession vs Betis) → 26 passes.
-            # Simón (Athletic Club HOME, high possession vs Osasuna) → 26 passes.
-            # The buildup boost was systematically over-projecting home GKs.
+            elif poss_ratio > 1.08:
+                # GK DOMINANT POSSESSION PENALTY
+                # When a team is expected to significantly out-possess the opponent,
+                # their defenders push high and do NOT recycle the ball through the GK.
+                # The GK receives fewer back-passes and distribution volume drops.
+                #
+                # Evidence (all UNDER despite high season avg):
+                #   Gazzaniga (Girona HOME, above-avg possession vs Betis) → 26 passes.
+                #   Simón (Athletic Club HOME, high possession vs Osasuna) → 26 passes.
+                #   Escandel (Villarreal, 58% expected / ~50% avg = ratio 1.16) → 29 vs 35.5 line.
+                #
+                # Scale (symmetric ceiling 18% — matches the low-poss boost cap):
+                #   ratio=1.08 → ~6% reduction  (mild dominance)
+                #   ratio=1.16 → ~12% reduction (clear dominance, e.g. Villarreal 58%)
+                #   ratio=1.24 → ~18% reduction (extreme dominance, capped)
+                dom_penalty = min(0.18, (poss_ratio - 1.0) * 0.75)
+                shrink_mult = round(1.0 - dom_penalty, 3)
+                raw_before_dom = posterior_mean
+                posterior_mean = round(posterior_mean * shrink_mult, 1)
+                print(f"[GK DOM POSS PENALTY] {prop_type}: team_avg={team_season_avg_poss:.1f}% "
+                      f"expected={expected_poss:.1f}% ratio={poss_ratio:.2f} "
+                      f"shrink={shrink_mult} {raw_before_dom} → {posterior_mean}")
 
     # ═══════════════════════════════════════════
     # PRESS INTENSITY — PPDA Proxy (independent of match dominance)

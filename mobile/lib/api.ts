@@ -187,6 +187,8 @@ export interface H2HMatch {
   minutes: number;
   targetStat: number | null;
   opponent: string;
+  teamPossession?: number | null;
+  opponentPossession?: number | null;
 }
 
 export interface PredictionResult {
@@ -512,11 +514,13 @@ export async function predict(request: Record<string, unknown>): Promise<Predict
       ? {
           matches: raw.h2hPlayerStats.matches.map(m => ({
             date: m.date || '',
-            score: m.score || '',
+            score: m.score || m.matchScore || '',
             venue: m.venue || '',
-            minutes: m.minutes || 0,
+            minutes: m.minutesPlayed || m.minutes || 0,
             targetStat: m.targetStat ?? null,
             opponent: m.opponent || '',
+            teamPossession: (m.teamPossession as number | null) ?? null,
+            opponentPossession: (m.opponentPossession as number | null) ?? null,
           })),
           avgVsOpponent: raw.h2hPlayerStats.avgVsOpponent,
           sampleSize: raw.h2hPlayerStats.sampleSize || 0,

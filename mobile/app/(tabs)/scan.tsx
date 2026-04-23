@@ -84,24 +84,36 @@ export default function ScanScreen() {
         const html2canvas = (await import('html2canvas')).default;
         const node = analysisRef.current;
         if (!node) { setSavingImage(false); return; }
-        const canvas = await html2canvas(node, {
+        const domNode = (node as any)?.getNativeScrollRef?.() ?? node;
+        const canvas = await html2canvas(domNode, {
           backgroundColor: '#000000',
           scale: 2,
           useCORS: true,
           allowTaint: true,
-          scrollY: 0,
-          windowWidth: node.scrollWidth,
-          windowHeight: node.scrollHeight,
-          height: node.scrollHeight,
+          scrollY: -window.scrollY,
+          windowWidth: document.documentElement.scrollWidth,
+          windowHeight: document.documentElement.scrollHeight,
+          height: domNode.scrollHeight,
         });
         const dataUrl = canvas.toDataURL('image/png');
-        const link = document.createElement('a');
-        link.download = `${prediction.playerName || 'pick'}-analysis.png`;
-        link.href = dataUrl;
-        link.click();
+        // iOS Safari ignores link.download — open in new tab so user can long-press save
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+        if (isIOS) {
+          const win = window.open('', '_blank');
+          if (win) {
+            win.document.write(`<html><body style="margin:0;background:#000"><img src="${dataUrl}" style="max-width:100%"/></body></html>`);
+            win.document.close();
+          }
+        } else {
+          const link = document.createElement('a');
+          link.download = `${prediction.playerName || 'pick'}-analysis.png`;
+          link.href = dataUrl;
+          link.click();
+        }
       }
     } catch (e) {
       console.warn('Save image error:', e);
+      Alert.alert('Save failed', 'Could not capture the analysis. Try scrolling to the top and trying again.');
     }
     setSavingImage(false);
   };
@@ -206,16 +218,16 @@ export default function ScanScreen() {
   };
 
   const handleSavePick = async () => {
-    if (!session || !prediction || !scanResult) return;
+    if (!session || !prediction) return;
     setSaving(true);
     setSaveError(null);
     try {
       await savePick(session.email, session.token, {
-        playerName: prediction.playerName || scanResult.playerName || playerQuery,
-        teamName: prediction.teamName || scanResult.teamName || scanResult.playerTeam,
-        opponentName: prediction.opponentName || scanResult.opponentName,
-        propType: prediction.propType || scanResult.propType || propType,
-        line: prediction.line ?? scanResult.line ?? parseFloat(line),
+        playerName: prediction.playerName || scanResult?.playerName || playerQuery,
+        teamName: prediction.teamName || scanResult?.teamName || scanResult?.playerTeam,
+        opponentName: prediction.opponentName || scanResult?.opponentName,
+        propType: prediction.propType || scanResult?.propType || propType,
+        line: prediction.line ?? scanResult?.line ?? parseFloat(line),
         projection: prediction.projection ?? prediction.bayesianProjection,
         recommendation: prediction.recommendation,
         confidence: prediction.confidence,
@@ -225,15 +237,15 @@ export default function ScanScreen() {
         sport: 'soccer',
         player: {
           id: prediction.playerId || 0,
-          name: prediction.playerName || scanResult.playerName || playerQuery,
-          team: prediction.teamName || scanResult.teamName || scanResult.playerTeam || '',
+          name: prediction.playerName || scanResult?.playerName || playerQuery,
+          team: prediction.teamName || scanResult?.teamName || scanResult?.playerTeam || '',
           position: prediction.playerPosition || undefined,
           role: prediction.playerRole || undefined,
         },
         _request: {
-          teamId: prediction.teamId || scanResult.teamId || 0,
-          opponentId: prediction.opponentId || scanResult.opponentId || 0,
-          leagueId: prediction.leagueId || scanResult.leagueId || leagueId || 0,
+          teamId: prediction.teamId || scanResult?.teamId || 0,
+          opponentId: prediction.opponentId || scanResult?.opponentId || 0,
+          leagueId: prediction.leagueId || scanResult?.leagueId || leagueId || 0,
           venue: venueOverride || 'home',
         },
       });
@@ -1439,6 +1451,9 @@ export default function ScanScreen() {
                   <View key={i} style={[styles.h2hRow, i < arr.length - 1 && styles.h2hRowBorder]}>
                     <Text style={styles.h2hDate}>{m.date ? m.date.slice(0, 10) : '—'}</Text>
                     {score ? <Text style={styles.h2hScore}>{score}</Text> : null}
+                    {m.opponentPossession != null && (
+                      <Text style={styles.h2hPoss}>OPP {m.opponentPossession}%</Text>
+                    )}
                     <View style={styles.h2hRight}>
                       {(m.minutesPlayed ?? m.minutes) > 0 && (
                         <Text style={styles.h2hMins}>{m.minutesPlayed ?? m.minutes}'</Text>
@@ -2131,6 +2146,7 @@ const styles = StyleSheet.create({
   h2hRowBorder: { borderBottomWidth: 1, borderBottomColor: Colors.borderSubtle },
   h2hDate: { fontSize: 11, color: Colors.textTertiary, fontWeight: '600', width: 72 },
   h2hScore: { fontSize: 12, color: Colors.textSecondary, fontWeight: '600', flex: 1 },
+  h2hPoss: { fontSize: 9, color: Colors.textTertiary, fontWeight: '600', marginRight: 4 },
   h2hRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   h2hMins: { fontSize: 10, color: Colors.textTertiary },
   h2hStat: { fontSize: 16, fontWeight: '800', minWidth: 28, textAlign: 'right' },
