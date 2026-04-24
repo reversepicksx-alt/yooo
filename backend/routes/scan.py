@@ -1198,28 +1198,34 @@ async def scan_prop(req: ScanPropRequest):
                         stats_list = live_stats.get("statistics", [])
                         if stats_list:
                             # Prefer domestic club stats over national team stats.
-                            # stats_list[-1] is often a national team entry for dual-eligible players
-                            # (e.g. Luke Brattan → Australia national team as last entry).
+                            # For players like Luke Brattan who also play internationally,
+                            # the season query (e.g. 2025) may only return national team entries
+                            # (friendlies) while his club season (A-League) is logged under 2024.
+                            # If no domestic entries are found, do NOT fall back to stats_list[-1]
+                            # (which is typically the national team entry) — keep the cached club team.
                             _domestic_ids = {sl["id"] for sl in SUPPORTED_LEAGUES if sl.get("type") == "Domestic"}
                             _domestic_entries = [s for s in stats_list if s.get("league", {}).get("id") in _domestic_ids]
-                            latest = _domestic_entries[-1] if _domestic_entries else stats_list[-1]
-                            live_team_id = latest.get("team", {}).get("id")
-                            live_team_name = latest.get("team", {}).get("name", "")
-                            live_league_id = latest.get("league", {}).get("id")
-                            live_league_name = latest.get("league", {}).get("name", "")
-                            old_team = resolved_player.get("teamName", "")
-                            if live_team_id and live_team_name:
-                                if live_team_id != resolved_player.get("teamId"):
-                                    print(f"[TEAM REFRESH] {resolved_player['playerName']}: '{old_team}' → '{live_team_name}' (ID {resolved_player.get('teamId')} → {live_team_id})")
-                                    resolved_player["teamId"] = live_team_id
-                                    resolved_player["teamName"] = live_team_name
-                                    player_team_hint = live_team_name.lower()
-                                    original_team_name = live_team_name
-                                    if live_league_id:
-                                        league_id = live_league_id
-                                        league_name = live_league_name
-                                else:
-                                    print(f"[TEAM REFRESH] {resolved_player['playerName']}: team confirmed '{live_team_name}'")
+                            if not _domestic_entries:
+                                print(f"[TEAM REFRESH] No domestic entries found for {resolved_player.get('playerName','?')} in season query — keeping cached team '{resolved_player.get('teamName','?')}'")
+                            else:
+                                latest = _domestic_entries[-1]
+                                live_team_id = latest.get("team", {}).get("id")
+                                live_team_name = latest.get("team", {}).get("name", "")
+                                live_league_id = latest.get("league", {}).get("id")
+                                live_league_name = latest.get("league", {}).get("name", "")
+                                old_team = resolved_player.get("teamName", "")
+                                if live_team_id and live_team_name:
+                                    if live_team_id != resolved_player.get("teamId"):
+                                        print(f"[TEAM REFRESH] {resolved_player['playerName']}: '{old_team}' → '{live_team_name}' (ID {resolved_player.get('teamId')} → {live_team_id})")
+                                        resolved_player["teamId"] = live_team_id
+                                        resolved_player["teamName"] = live_team_name
+                                        player_team_hint = live_team_name.lower()
+                                        original_team_name = live_team_name
+                                        if live_league_id:
+                                            league_id = live_league_id
+                                            league_name = live_league_name
+                                    else:
+                                        print(f"[TEAM REFRESH] {resolved_player['playerName']}: team confirmed '{live_team_name}'")
                 except Exception as _te:
                     print(f"[TEAM REFRESH] Failed for {resolved_player.get('playerName','?')}: {_te}")
             # ─────────────────────────────────────────────────────────────────
