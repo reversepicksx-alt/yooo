@@ -104,6 +104,7 @@ async def _check_stripe_live(email_lower: str):
     Called only when the local DB has no record — e.g. webhook was missed.
     If an active subscription is found, we write it to the DB immediately
     so future logins are instant without hitting Stripe again.
+    Uses attribute-style access for Stripe SDK v7+.
     """
     try:
         key = os.environ.get("STRIPE_SECRET_KEY", "")
@@ -111,46 +112,55 @@ async def _check_stripe_live(email_lower: str):
             return None
         _stripe.api_key = key
 
-        customers = _stripe.Customer.list(email=email_lower, limit=1)
-        cust_list = customers["data"]
-        if not cust_list:
+        customers = _stripe.Customer.list(email=email_lower, limit=10)
+        if not customers.data:
             return None
 
-        cust_id = cust_list[0]["id"]
-        subs = _stripe.Subscription.list(customer=cust_id, status="active", limit=5)
-        active_subs = subs["data"]
-        if not active_subs:
-            # Also check trialing
-            subs_trial = _stripe.Subscription.list(customer=cust_id, status="trialing", limit=5)
-            active_subs = subs_trial["data"]
-        if not active_subs:
-            # Also check past_due — Stripe retries before canceling; user is still within paid period
-            subs_past_due = _stripe.Subscription.list(customer=cust_id, status="past_due", limit=5)
-            for pd_sub in subs_past_due["data"]:
-                cpe = pd_sub.get("current_period_end", 0)
-                if cpe and cpe > datetime.now(timezone.utc).timestamp():
-                    active_subs = [pd_sub]
-                    print(f"[STRIPE LIVE FALLBACK] past_due sub found for {email_lower}, period ends {datetime.fromtimestamp(cpe, tz=timezone.utc).date()}")
-                    break
-        if not active_subs:
+        # Search all customers for this email (handles duplicate customer records)
+        best_sub = None
+        best_status_priority = {"active": 0, "trialing": 1, "past_due": 2}
+        now_ts = datetime.now(timezone.utc).timestamp()
+
+        for cust in customers.data:
+            cust_id = cust.id
+            for st in ["active", "trialing", "past_due"]:
+                subs_result = _stripe.Subscription.list(customer=cust_id, status=st, limit=5)
+                for sub in subs_result.data:
+                    sub_data = sub._data if hasattr(sub, '_data') else {}
+                    cpe = sub_data.get("current_period_end", 0) or 0
+                    if st == "past_due" and cpe and cpe <= now_ts:
+                        continue  # Period already ended — not valid
+                    priority = best_status_priority.get(st, 99)
+                    if best_sub is None or priority < best_status_priority.get(best_sub[0], 99):
+                        best_sub = (st, sub, sub_data, cust_id)
+
+        if not best_sub:
             return None
 
-        sub = active_subs[0]
-        sub_id = sub["id"]
-        status = sub["status"]
+        st, sub, sub_data, cust_id = best_sub
+        sub_id = sub_data.get("id", "") or sub.id
+        status = st
+
+        if st == "past_due":
+            cpe = sub_data.get("current_period_end", 0)
+            if cpe:
+                print(f"[STRIPE LIVE FALLBACK] past_due sub found for {email_lower}, period ends {datetime.fromtimestamp(cpe, tz=timezone.utc).date()}")
+            else:
+                print(f"[STRIPE LIVE FALLBACK] past_due sub (no period end) for {email_lower} — granting access")
 
         # Determine plan key from price
         plan_key = "monthly"
         try:
-            items = sub["items"]["data"]
-            if items:
-                price = items[0]["price"]
+            items_data = sub_data.get("items", {}).get("data", [])
+            if items_data:
+                price = items_data[0].get("price", {})
                 lk = price.get("lookup_key") or ""
                 if lk.startswith("reversepicks_"):
                     plan_key = lk.replace("reversepicks_", "")
                 else:
-                    interval = (price.get("recurring") or {}).get("interval", "month")
-                    interval_count = (price.get("recurring") or {}).get("interval_count", 1)
+                    rec = price.get("recurring") or {}
+                    interval = rec.get("interval", "month")
+                    interval_count = rec.get("interval_count", 1)
                     if interval == "week":
                         plan_key = "weekly"
                     elif interval == "month" and interval_count >= 3:
@@ -161,7 +171,7 @@ async def _check_stripe_live(email_lower: str):
         # Get period end
         end_iso = ""
         try:
-            ts = sub.get("current_period_end")
+            ts = sub_data.get("current_period_end")
             if ts:
                 end_iso = datetime.fromtimestamp(int(ts), tz=timezone.utc).isoformat()
         except Exception:

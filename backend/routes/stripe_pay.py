@@ -52,6 +52,36 @@ class CheckoutRequest(BaseModel):
     redirectUrl: str = ""
 
 
+def _get_or_create_stripe_customer(email: str) -> str:
+    """
+    Return the existing Stripe customer ID for this email, or create a new one.
+    Prevents duplicate customer records when a user subscribes more than once.
+    Uses the customer with the most recent active/paid subscription to avoid
+    returning a stale/incomplete duplicate.
+    """
+    email_lower = email.lower().strip()
+    customers = stripe.Customer.list(email=email_lower, limit=10)
+    best_cust_id = None
+    best_ts = 0
+    for cust in customers.data:
+        # Prefer customers that have at least one paid subscription
+        subs = stripe.Subscription.list(customer=cust.id, status="active", limit=1)
+        if subs.data:
+            if cust.created > best_ts:
+                best_ts = cust.created
+                best_cust_id = cust.id
+    if not best_cust_id and customers.data:
+        # Fall back to most recently created customer
+        best_cust_id = sorted(customers.data, key=lambda c: c.created, reverse=True)[0].id
+    if best_cust_id:
+        print(f"[STRIPE] Reusing existing customer {best_cust_id} for {email_lower}")
+        return best_cust_id
+    # No existing customer — create one
+    new_cust = stripe.Customer.create(email=email_lower, metadata={"email": email_lower})
+    print(f"[STRIPE] Created new customer {new_cust.id} for {email_lower}")
+    return new_cust.id
+
+
 @router.post("/create-checkout")
 async def create_checkout(req: CheckoutRequest):
     plan_key = req.planKey.lower()
@@ -65,21 +95,25 @@ async def create_checkout(req: CheckoutRequest):
 
     try:
         price_id = _get_or_create_price(plan_key)
+        email_lower = req.email.lower().strip()
+
+        # Reuse existing Stripe customer to prevent duplicate accounts
+        customer_id = _get_or_create_stripe_customer(email_lower)
 
         session = stripe.checkout.Session.create(
             mode="subscription",
-            customer_email=req.email.lower().strip(),
+            customer=customer_id,
             line_items=[{"price": price_id, "quantity": 1}],
             success_url=success_url + "?stripe_success=1",
             cancel_url=cancel_url,
             subscription_data={
                 "metadata": {
-                    "email": req.email.lower().strip(),
+                    "email": email_lower,
                     "plan_key": plan_key,
                 }
             },
             metadata={
-                "email": req.email.lower().strip(),
+                "email": email_lower,
                 "plan_key": plan_key,
             },
             allow_promotion_codes=True,
