@@ -90,7 +90,7 @@ async def _check_access_local(email_lower: str):
                 updated_dt = datetime.fromisoformat(str(updated_raw).replace(" ", "T"))
                 if updated_dt.tzinfo is None:
                     updated_dt = updated_dt.replace(tzinfo=timezone.utc)
-                grace_end = updated_dt + timedelta(days=10)
+                grace_end = updated_dt + timedelta(days=1)
                 if datetime.now(timezone.utc) < grace_end:
                     print(f"[AUTH] past_due grace window active for {email_lower} (until {grace_end.date()})")
                     return "Premium (Stripe)"
