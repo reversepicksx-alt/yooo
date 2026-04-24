@@ -2,6 +2,7 @@ import os
 import uuid
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 import stripe as _stripe
 
@@ -249,3 +250,83 @@ async def verify_session(req: VerifySessionRequest):
 async def logout(req: VerifySessionRequest):
     await db.sessions.delete_one({"email": req.email.lower().strip(), "session_token": req.session_token})
     return {"success": True}
+
+
+class LinkPaymentRequest(BaseModel):
+    login_email: str
+    payment_email: str
+
+
+@router.post("/link-payment")
+async def link_payment(req: LinkPaymentRequest):
+    """
+    Allows a user who paid with a different email to gain access.
+    Looks up the payment_email in Stripe (or local DB), and if an active sub
+    is found, grants access to login_email by creating a mirrored sub record.
+    """
+    login_email = req.login_email.lower().strip()
+    payment_email = req.payment_email.lower().strip()
+
+    if not login_email or not payment_email:
+        raise HTTPException(status_code=400, detail="Both emails are required.")
+    if login_email == payment_email:
+        # Same email — just do a normal verify
+        access_type = await check_access(login_email)
+        if not access_type:
+            return {"verified": False, "message": "No active membership found for that email."}
+        token = await create_session(login_email, access_type)
+        return {"verified": True, "email": login_email, "session_token": token, "access_type": access_type}
+
+    # 1. Check if payment_email has an active sub in local DB
+    from datetime import datetime, timezone
+    payment_access = await _check_access_local(payment_email)
+
+    # 2. If not in local DB, check Stripe live
+    stripe_sub_doc = None
+    if not payment_access:
+        payment_access = await _check_stripe_live(payment_email)
+
+    if not payment_access:
+        return {"verified": False, "message": "No active subscription found for the payment email. Please check the email you used at checkout."}
+
+    # 3. Copy the sub record to login_email so they can log in going forward
+    existing_sub = await db.stripe_subscriptions.find_one({"email": payment_email}, {"_id": 0})
+    now = datetime.now(timezone.utc).isoformat()
+
+    if existing_sub:
+        # Mirror the stripe subscription to the login email
+        mirrored = {k: v for k, v in existing_sub.items() if k != "_id"}
+        mirrored["email"] = login_email
+        mirrored["linkedFrom"] = payment_email
+        mirrored["linkedAt"] = now
+        mirrored["updatedAt"] = now
+        await db.stripe_subscriptions.update_one(
+            {"email": login_email},
+            {"$set": mirrored},
+            upsert=True,
+        )
+    else:
+        # No stripe record (Square / Whop / Manual) — create a manual grant
+        await db.manual_access_grants.update_one(
+            {"email": login_email},
+            {"$set": {
+                "email": login_email,
+                "access_type": "Manual",
+                "linkedFrom": payment_email,
+                "grantedAt": now,
+                "note": f"Payment verified via {payment_email}",
+            }},
+            upsert=True,
+        )
+
+    print(f"[LINK PAYMENT] {payment_email} → {login_email} (access={payment_access})")
+
+    # 4. Create session for the login email
+    token = await create_session(login_email, payment_access)
+    return {
+        "verified": True,
+        "email": login_email,
+        "session_token": token,
+        "access_type": payment_access,
+        "message": "Payment verified! Access granted.",
+    }

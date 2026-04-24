@@ -10,7 +10,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@/contexts/AuthContext';
 import Colors from '@/constants/colors';
 import {
-  verifyAccess, setPassword as apiSetPassword, authLogin, createCheckout,
+  verifyAccess, setPassword as apiSetPassword, authLogin, createCheckout, linkPayment,
 } from '@/lib/api';
 
 type Step = 'email' | 'pricing';
@@ -33,6 +33,8 @@ export default function AuthScreen() {
   const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
+  const [showPaymentEmail, setShowPaymentEmail] = useState(false);
+  const [paymentEmail, setPaymentEmail] = useState('');
 
   // When Stripe redirects back with ?stripe_success=1, pre-fill the email
   // (saved before redirect) and auto-trigger verification so the user lands
@@ -160,6 +162,36 @@ export default function AuthScreen() {
   const handleAlreadyPaid = async () => {
     const trimmed = email.trim().toLowerCase();
     if (!trimmed) { setError('Enter your email address.'); return; }
+
+    // If user has entered a different payment email, use link-payment flow
+    const payTrimmed = paymentEmail.trim().toLowerCase();
+    if (showPaymentEmail && payTrimmed && payTrimmed !== trimmed) {
+      setLoading(true);
+      setError('');
+      setInfo('');
+      try {
+        const result = await linkPayment(trimmed, payTrimmed);
+        if (result.verified && result.session_token && result.email) {
+          await loginWithResponse({
+            email: result.email,
+            session_token: result.session_token,
+            access_type: result.access_type,
+          });
+          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          router.replace('/(tabs)/scan');
+        } else {
+          setError(result.message || 'No active subscription found for that payment email.');
+          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        }
+      } catch (e: unknown) {
+        setError(e instanceof Error ? e.message : 'Could not verify. Check your connection and try again.');
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
     setLoading(true);
     setError('');
     setInfo('');
@@ -174,10 +206,15 @@ export default function AuthScreen() {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         router.replace('/(tabs)/scan');
       } else {
-        setError('Payment not yet confirmed. It may take a minute — try again shortly.');
+        // Access not found — prompt for the email used at checkout
+        setShowPaymentEmail(true);
+        setError('No membership found. Enter the email you used at checkout below.');
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       }
     } catch {
-      setError('Could not verify. Check your connection and try again.');
+      setShowPaymentEmail(true);
+      setError('Could not verify. Enter the email you used at checkout below.');
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
       setLoading(false);
     }
@@ -311,10 +348,35 @@ export default function AuthScreen() {
                 </View>
               </TouchableOpacity>
 
+              {showPaymentEmail && (
+                <View style={styles.paymentEmailBlock}>
+                  <Text style={styles.paymentEmailLabel}>What email did you use at checkout?</Text>
+                  <View style={styles.inputRow}>
+                    <Ionicons name="receipt-outline" size={17} color={Colors.textSecondary} style={styles.icon} />
+                    <TextInput
+                      style={[styles.input, INPUT_STYLE]}
+                      placeholder="Payment email"
+                      placeholderTextColor={Colors.textTertiary}
+                      value={paymentEmail}
+                      onChangeText={v => { setPaymentEmail(v); setError(''); }}
+                      keyboardType="email-address"
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      autoComplete="email"
+                      textContentType="emailAddress"
+                      onSubmitEditing={handleAlreadyPaid}
+                      returnKeyType="go"
+                    />
+                  </View>
+                </View>
+              )}
+
               <TouchableOpacity onPress={handleAlreadyPaid} disabled={loading} style={styles.alreadyPaidRow}>
                 {loading
                   ? <ActivityIndicator color={Colors.primary} size="small" />
-                  : <Text style={styles.alreadyPaid}>Already paid? Verify your payment</Text>
+                  : <Text style={styles.alreadyPaid}>
+                      {showPaymentEmail ? 'Verify with payment email' : 'Already paid? Verify your payment'}
+                    </Text>
                 }
               </TouchableOpacity>
             </View>
@@ -435,6 +497,13 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     textDecorationLine: 'underline',
+  },
+  paymentEmailBlock: { gap: 8 },
+  paymentEmailLabel: {
+    color: Colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '500',
+    textAlign: 'center',
   },
   forgotRow: { alignItems: 'center', paddingVertical: 6 },
   forgotText: {

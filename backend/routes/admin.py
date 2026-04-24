@@ -237,3 +237,69 @@ async def generate_checkout_link(req: CheckoutLinkRequest):
         }
     except stripe.StripeError as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─── ADMIN: Manually grant / revoke access for any email ────────────────────
+
+class GrantAccessRequest(BaseModel):
+    adminEmail: str
+    sessionToken: str
+    targetEmail: str
+    accessType: str = "Manual"
+    note: str = ""
+    durationDays: int = 0  # 0 = unlimited
+
+
+class RevokeAccessRequest(BaseModel):
+    adminEmail: str
+    sessionToken: str
+    targetEmail: str
+
+
+@router.post("/grant-access")
+async def grant_access(req: GrantAccessRequest):
+    """
+    Instantly grant access to any email.
+    Writes a manual_access_grants record so the user can log in immediately.
+    """
+    await verify_owner(req.adminEmail, req.sessionToken)
+    target = req.targetEmail.lower().strip()
+    if not target:
+        raise HTTPException(status_code=400, detail="targetEmail is required.")
+
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc)
+    doc = {
+        "email": target,
+        "access_type": req.accessType or "Manual",
+        "grantedAt": now.isoformat(),
+        "grantedBy": req.adminEmail.lower().strip(),
+        "note": req.note or "",
+    }
+    if req.durationDays and req.durationDays > 0:
+        doc["expiresAt"] = (now + timedelta(days=req.durationDays)).isoformat()
+
+    await db.manual_access_grants.update_one(
+        {"email": target},
+        {"$set": doc},
+        upsert=True,
+    )
+    return {"success": True, "email": target, "accessType": doc["access_type"], "message": f"Access granted to {target}."}
+
+
+@router.post("/revoke-access")
+async def revoke_access(req: RevokeAccessRequest):
+    """Remove manual access grant for a user (owner only)."""
+    await verify_owner(req.adminEmail, req.sessionToken)
+    target = req.targetEmail.lower().strip()
+    await db.manual_access_grants.delete_one({"email": target})
+    await db.sessions.delete_many({"email": target})
+    return {"success": True, "email": target, "message": f"Access revoked for {target}."}
+
+
+@router.post("/list-grants")
+async def list_grants(req: AdminSettingsRequest):
+    """List all manual access grants (owner only)."""
+    await verify_owner(req.email, req.token)
+    grants = await db.manual_access_grants.find({}, {"_id": 0}).sort("grantedAt", -1).to_list(None)
+    return {"grants": grants}

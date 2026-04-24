@@ -87,6 +87,13 @@ export async function verifySession(email: string, session_token: string) {
   });
 }
 
+export async function linkPayment(loginEmail: string, paymentEmail: string): Promise<AccessCheckResponse> {
+  return apiCall<AccessCheckResponse>('/api/auth/link-payment', {
+    method: 'POST',
+    body: JSON.stringify({ login_email: loginEmail, payment_email: paymentEmail }),
+  });
+}
+
 export async function createCheckout(email: string, planKey: string): Promise<{ checkoutUrl?: string; checkout_url?: string; redirect_url?: string; error?: string }> {
   const redirectUrl = typeof window !== 'undefined'
     ? `${window.location.origin}/auth`
