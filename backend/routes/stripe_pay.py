@@ -295,19 +295,26 @@ async def stripe_webhook(request: Request):
 async def _upsert_stripe_sub(email: str, stripe_sub_id: str, plan_key: str, status: str, current_period_end: str = ""):
     plan_info = STRIPE_PLANS.get(plan_key, {})
     now = datetime.now(timezone.utc).isoformat()
+    # Core fields always written
+    set_fields: dict = {
+        "email": email,
+        "stripeSubscriptionId": stripe_sub_id,
+        "planKey": plan_key,
+        "planName": plan_info.get("name", plan_key),
+        "status": status,
+        "updatedAt": now,
+        "source": "stripe",
+    }
+    # Only update currentPeriodEnd when we have a real value — never blank it out
+    if current_period_end:
+        set_fields["currentPeriodEnd"] = current_period_end
     await db.stripe_subscriptions.update_one(
         {"email": email},
-        {"$set": {
-            "email": email,
-            "stripeSubscriptionId": stripe_sub_id,
-            "planKey": plan_key,
-            "planName": plan_info.get("name", plan_key),
-            "status": status,
-            "currentPeriodEnd": current_period_end,
-            "subscribedAt": now,
-            "updatedAt": now,
-            "source": "stripe",
-        }},
+        {
+            "$set": set_fields,
+            # subscribedAt is only written on insert (first time this email appears)
+            "$setOnInsert": {"subscribedAt": now},
+        },
         upsert=True,
     )
 

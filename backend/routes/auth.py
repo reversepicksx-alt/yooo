@@ -1,6 +1,6 @@
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -66,7 +66,8 @@ async def _check_access_local(email_lower: str):
     )
     if stripe_sub:
         return "Premium (Stripe)"
-    # Stripe: past_due — still give a short grace window (webhook may be delayed)
+    # Stripe: past_due — still give access while Stripe retries the renewal.
+    # Only customer.subscription.deleted should revoke access.
     stripe_past_due = await db.stripe_subscriptions.find_one(
         {"email": email_lower, "status": "past_due"}, {"_id": 0}
     )
@@ -78,6 +79,20 @@ async def _check_access_local(email_lower: str):
                 if end_dt.tzinfo is None:
                     end_dt = end_dt.replace(tzinfo=timezone.utc)
                 if datetime.now(timezone.utc) < end_dt:
+                    return "Premium (Stripe)"
+            except Exception:
+                pass
+        # currentPeriodEnd missing or already passed — give a 10-day grace from
+        # when the past_due status was set (covers Stripe's full retry window).
+        updated_raw = stripe_past_due.get("updatedAt") or stripe_past_due.get("subscribedAt", "")
+        if updated_raw:
+            try:
+                updated_dt = datetime.fromisoformat(str(updated_raw).replace(" ", "T"))
+                if updated_dt.tzinfo is None:
+                    updated_dt = updated_dt.replace(tzinfo=timezone.utc)
+                grace_end = updated_dt + timedelta(days=10)
+                if datetime.now(timezone.utc) < grace_end:
+                    print(f"[AUTH] past_due grace window active for {email_lower} (until {grace_end.date()})")
                     return "Premium (Stripe)"
             except Exception:
                 pass
@@ -108,6 +123,15 @@ async def _check_stripe_live(email_lower: str):
             # Also check trialing
             subs_trial = _stripe.Subscription.list(customer=cust_id, status="trialing", limit=5)
             active_subs = subs_trial["data"]
+        if not active_subs:
+            # Also check past_due — Stripe retries before canceling; user is still within paid period
+            subs_past_due = _stripe.Subscription.list(customer=cust_id, status="past_due", limit=5)
+            for pd_sub in subs_past_due["data"]:
+                cpe = pd_sub.get("current_period_end", 0)
+                if cpe and cpe > datetime.now(timezone.utc).timestamp():
+                    active_subs = [pd_sub]
+                    print(f"[STRIPE LIVE FALLBACK] past_due sub found for {email_lower}, period ends {datetime.fromtimestamp(cpe, tz=timezone.utc).date()}")
+                    break
         if not active_subs:
             return None
 
