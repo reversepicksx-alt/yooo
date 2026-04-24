@@ -64,6 +64,10 @@ export default function ScanScreen() {
   const [venueOverride, setVenueOverride] = useState<'home' | 'away'>('home');
   const [gameLogFilter, setGameLogFilter] = useState<'all' | 'home' | 'away'>('all');
 
+  // Manual team override — user can tap the team badge to change it
+  const [showTeamEdit, setShowTeamEdit] = useState(false);
+  const [teamEditValue, setTeamEditValue] = useState('');
+
   // Manual mode fields
   const [playerQuery, setPlayerQuery] = useState('');
   const [propType, setPropType] = useState(PROP_TYPES[0].value);
@@ -343,11 +347,60 @@ export default function ScanScreen() {
                     <View style={styles.detectedInfo}>
                       <Text style={styles.detectedName}>{scanResult.playerName}</Text>
                       <View style={styles.badgeRow}>
-                        {(scanResult.teamName || scanResult.playerTeam) && (
-                          <View style={styles.teamBadge}>
+                        {!showTeamEdit ? (
+                          <TouchableOpacity
+                            style={styles.teamBadgeTouchable}
+                            onPress={() => {
+                              setTeamEditValue(scanResult.teamName || scanResult.playerTeam || '');
+                              setShowTeamEdit(true);
+                              Haptics.selectionAsync();
+                            }}
+                            activeOpacity={0.7}
+                          >
                             <Text style={styles.teamBadgeText}>
-                              {scanResult.teamName || scanResult.playerTeam}
+                              {scanResult.teamName || scanResult.playerTeam || '—'}
                             </Text>
+                            <Ionicons name="pencil-outline" size={10} color="#aaa" style={{ marginLeft: 4 }} />
+                          </TouchableOpacity>
+                        ) : (
+                          <View style={styles.teamEditRow}>
+                            <TextInput
+                              style={[styles.teamEditInput, INPUT_STYLE]}
+                              value={teamEditValue}
+                              onChangeText={setTeamEditValue}
+                              placeholder="Enter team name"
+                              placeholderTextColor="#555"
+                              autoFocus
+                              autoCapitalize="words"
+                              returnKeyType="done"
+                              onSubmitEditing={() => {
+                                const v = teamEditValue.trim();
+                                if (v) {
+                                  setScanResult(prev => prev ? { ...prev, teamName: v, teamId: 0 } : prev);
+                                }
+                                setShowTeamEdit(false);
+                                Haptics.selectionAsync();
+                              }}
+                            />
+                            <TouchableOpacity
+                              onPress={() => {
+                                const v = teamEditValue.trim();
+                                if (v) {
+                                  setScanResult(prev => prev ? { ...prev, teamName: v, teamId: 0 } : prev);
+                                }
+                                setShowTeamEdit(false);
+                                Haptics.selectionAsync();
+                              }}
+                              style={styles.teamEditConfirm}
+                            >
+                              <Ionicons name="checkmark" size={14} color={Colors.primary} />
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              onPress={() => setShowTeamEdit(false)}
+                              style={styles.teamEditCancel}
+                            >
+                              <Ionicons name="close" size={14} color="#888" />
+                            </TouchableOpacity>
                           </View>
                         )}
                         <View style={styles.matchedBadge}>
@@ -1807,7 +1860,20 @@ const styles = StyleSheet.create({
   detectedName: { fontSize: 18, fontWeight: '800', color: Colors.text },
   badgeRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap', alignItems: 'center' },
   teamBadge: { backgroundColor: Colors.cardSecondary, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4 },
+  teamBadgeTouchable: {
+    backgroundColor: Colors.cardSecondary, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4,
+    flexDirection: 'row', alignItems: 'center',
+    borderWidth: 1, borderColor: '#333',
+  },
   teamBadgeText: { fontSize: 12, color: Colors.textSecondary, fontWeight: '600' },
+  teamEditRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  teamEditInput: {
+    backgroundColor: Colors.cardSecondary, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4,
+    fontSize: 12, color: Colors.text, fontWeight: '600', minWidth: 100, maxWidth: 160,
+    borderWidth: 1, borderColor: Colors.primary,
+  },
+  teamEditConfirm: { padding: 5, backgroundColor: Colors.primaryDim, borderRadius: 6 },
+  teamEditCancel: { padding: 5 },
   matchedBadge: {
     backgroundColor: Colors.primaryDim, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4,
     borderWidth: 1, borderColor: Colors.border,

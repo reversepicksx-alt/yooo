@@ -1008,10 +1008,9 @@ async def scan_prop(req: ScanPropRequest):
             # COUNTRY NAME GUARD ──────────────────────────────────────────────
             # The AI OCR sometimes returns the player's nationality (e.g. "Australia",
             # "France", "Germany") as their team instead of their actual club name.
-            # When league_id is domestic (inferred from the opponent's club league) but
-            # player_team_hint is a country name, clear the team hint so we don't look up
-            # the national team ID — which would pull international fixtures instead of
-            # club fixtures (the exact bug: Luke Brattan → Australia → Friendly International).
+            # When the opponent is a known domestic club, force club context regardless
+            # of what is_international is set to (the AI may mis-classify the league as
+            # international when it sees a country name as team).
             _NATIONAL_TEAM_NAMES = {
                 "australia", "england", "france", "germany", "spain", "italy",
                 "usa", "united states", "united states of america", "brazil",
@@ -1028,7 +1027,7 @@ async def scan_prop(req: ScanPropRequest):
                 "algeria", "tunisia", "ivory coast", "mali", "guinea",
                 "finland", "slovakia", "slovenia", "albania", "georgia",
             }
-            if not is_international and player_team_hint in _NATIONAL_TEAM_NAMES:
+            if player_team_hint in _NATIONAL_TEAM_NAMES:
                 opp_lower_check = opponent_hint.lower().strip() if opponent_hint else ""
                 # Confirm the opponent IS a domestic club (not another country)
                 opp_is_club = opp_lower_check in TEAM_LEAGUE_MAP or any(
@@ -1036,8 +1035,13 @@ async def scan_prop(req: ScanPropRequest):
                     for k in TEAM_LEAGUE_MAP if len(k) > 4
                 )
                 if opp_is_club:
-                    print(f"[SCAN] COUNTRY GUARD: '{player_team_hint}' is a national team name but '{opponent_hint}' is a domestic club — clearing team hint to find club context")
+                    print(f"[SCAN] COUNTRY GUARD: '{player_team_hint}' is a national team name but '{opponent_hint}' is a domestic club — forcing club context (was is_international={is_international})")
                     player_team_hint = ""
+                    # Critical: reset is_international and nat_team_id so the prediction
+                    # doesn't use national team game logs (the root cause of the Australia bug)
+                    is_international = False
+                    nat_team_id = None
+                    nat_team_canonical = None
             # ─────────────────────────────────────────────────────────────────
 
             # PRIMARY: Resolve player via MongoDB cache
