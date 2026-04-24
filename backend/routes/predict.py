@@ -1869,6 +1869,18 @@ async def predict(req: PredictionRequest):
             # whichever venue had more recent games and systematically over/under-projects.
             # Fix: use only venue-matching logs as the primary sample when ≥5 are available.
             # Saves also differ by venue (away GKs face more shots) so apply the same logic.
+            # Sort game logs newest-first so the Bayesian engine's momentum layer
+            # (recent_5 = all_vals[:5]) correctly captures the most recent games.
+            # The API returns fixtures in ascending date order; without this sort the
+            # engine would apply the highest decay weight to the OLDEST game — completely
+            # reversing the momentum signal (e.g. Cáceres showed COLD -11.5 momentum
+            # when his true recent form was HOT +8.8, causing a wrong UNDER call).
+            player_game_logs = sorted(
+                player_game_logs,
+                key=lambda g: g.get("date", ""),
+                reverse=True,
+            )
+
             _VENUE_SPLIT_PROPS = {"pass_attempts", "passes", "saves"}
             _bayes_logs = player_game_logs
             if req.propType in _VENUE_SPLIT_PROPS and player_venue:

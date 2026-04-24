@@ -180,6 +180,20 @@ The old hardcoded Guard 5 (penalty for >15% deviation) was backward — data sho
 
 **Keys:** `GEMINI_API_KEY` in `backend/.env` and `config.py`. `XAI_API_KEY` still required for fallback.
 
+## Critical Bug Fix: Bayesian Momentum Ordering (April 2026)
+
+**Root cause identified and fixed:** The 3-layer Bayesian engine (`bayesian_engine.py`) expects game logs sorted **newest-first** (most recent game = index 0) because `recent_5 = all_vals[:5]` takes the first 5 entries for momentum calculation.
+
+However, `fetch_player_game_logs` in `predict.py` collected logs in the same order as the API fixture list, which the API returns in **ascending date order** (oldest first). This meant:
+- `recent_5` was capturing the 5 **oldest** games, not the 5 most recent
+- Decay weights `[1.0, 0.82, 0.67, 0.55, 0.45]` were applied with **highest weight to the oldest game** — completely backwards
+- Example impact on Cáceres (CDM, home, 8 home games): momentum showed COLD (-11.54) when actual recent trend was HOT (+8.84), causing wrong UNDER projection of 42.8 vs correct OVER at 49.3 (actual: 59 passes)
+- Similarly caused Oluwayemi GK away projection to go OVER when correct (after fix) is UNDER
+
+**Fix (predict.py ~line 1875):** Added a `sorted(..., key=lambda g: g.get("date",""), reverse=True)` on `player_game_logs` right before the VENUE PRIOR filtering and Bayesian call. This ensures the momentum layer always sees the most recent games first.
+
+**Calibration impact:** The nightly calibration offsets were learned from picks made with the buggy ordering. They will self-correct over 1-2 weeks of newly settled picks. The offsets are dampened (40%) so immediate impact is mild.
+
 ## LLM Integration Shim
 
 `backend/emergentintegrations/` is a local shim (not on PyPI):
