@@ -882,12 +882,15 @@ async def scan_prop(req: ScanPropRequest):
                 team1_name = (combo_players[0].get("team") or "").strip()
                 team2_name = (combo_players[1].get("team") or "").strip()
                 league_id = await _infer_league_id(team1_name, team2_name, ai_league_id)
-                league_name = entry.get("league")
+                # Always use canonical league name from our data — AI guesses are unreliable
+                # (e.g. returns country name "Australia" instead of "A-League")
+                league_name = None
+                for sl in SUPPORTED_LEAGUES:
+                    if sl["id"] == league_id:
+                        league_name = sl["name"]
+                        break
                 if not league_name:
-                    for sl in SUPPORTED_LEAGUES:
-                        if sl["id"] == league_id:
-                            league_name = sl["name"]
-                            break
+                    league_name = entry.get("league")
 
                 is_international = league_id in INTERNATIONAL_LEAGUES
 
@@ -964,12 +967,16 @@ async def scan_prop(req: ScanPropRequest):
             player_team_hint = (entry.get("playerTeam") or "").lower().strip()
             opponent_hint = (entry.get("opponentName") or "").strip()
             league_id = await _infer_league_id(entry.get("playerTeam"), opponent_hint, ai_league_id)
-            league_name = entry.get("league")
+            # Always use canonical league name from our data — AI guesses are unreliable
+            # (e.g. returns country name "Australia" instead of "A-League",
+            # "Germany" instead of "Bundesliga", "France" instead of "Ligue 1", etc.)
+            league_name = None
+            for sl in SUPPORTED_LEAGUES:
+                if sl["id"] == league_id:
+                    league_name = sl["name"]
+                    break
             if not league_name:
-                for sl in SUPPORTED_LEAGUES:
-                    if sl["id"] == league_id:
-                        league_name = sl["name"]
-                        break
+                league_name = entry.get("league")
 
             venue = (entry.get("venue") or "home").lower().strip()
             if venue not in ("home", "away"):
