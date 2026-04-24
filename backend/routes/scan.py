@@ -1035,13 +1035,29 @@ async def scan_prop(req: ScanPropRequest):
                     for k in TEAM_LEAGUE_MAP if len(k) > 4
                 )
                 if opp_is_club:
-                    print(f"[SCAN] COUNTRY GUARD: '{player_team_hint}' is a national team name but '{opponent_hint}' is a domestic club — forcing club context (was is_international={is_international})")
+                    # Find the exact opponent key for the league lookup
+                    opp_key = opp_lower_check if opp_lower_check in TEAM_LEAGUE_MAP else next(
+                        (k for k in TEAM_LEAGUE_MAP if len(k) > 4 and (k in opp_lower_check or opp_lower_check in k)), None
+                    )
+                    opp_league_id = TEAM_LEAGUE_MAP.get(opp_key) if opp_key else None
+                    opp_league_name = ""
+                    if opp_league_id:
+                        for sl in SUPPORTED_LEAGUES:
+                            if sl["id"] == opp_league_id:
+                                opp_league_name = sl["name"]
+                                break
+                    print(f"[SCAN] COUNTRY GUARD: '{player_team_hint}' is a national team name but '{opponent_hint}' is a domestic club "
+                          f"(league={opp_league_name or opp_league_id}) — forcing club context (was is_international={is_international})")
                     player_team_hint = ""
-                    # Critical: reset is_international and nat_team_id so the prediction
-                    # doesn't use national team game logs (the root cause of the Australia bug)
+                    # Reset ALL international context so the prediction uses domestic club data
                     is_international = False
                     nat_team_id = None
                     nat_team_canonical = None
+                    # CRITICAL: reset league_id to the opponent's domestic league so the
+                    # API fallback searches the right league (not the international league)
+                    if opp_league_id:
+                        league_id = opp_league_id
+                        league_name = opp_league_name
             # ─────────────────────────────────────────────────────────────────
 
             # PRIMARY: Resolve player via MongoDB cache
