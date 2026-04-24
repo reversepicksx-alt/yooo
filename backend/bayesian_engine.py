@@ -722,11 +722,17 @@ def compute_bayesian_projection(
     # Venue avg — denormalise to match raw units
     _venue_avg_raw = round(sum(venue_vals) / len(venue_vals) * _denorm, 1) if venue_vals else None
 
+    # Use Monte Carlo probability as the recommendation signal, not just mean vs line.
+    # For count stats (negative binomial, right-skewed), the mean can sit above the line
+    # while the MAJORITY of probability mass is below it — in that case, UNDER is correct.
+    # This prevents contradictory picks like "Projection 24.0 OVER line 23.5 — P(UNDER) 60.6%".
+    _rec_by_prob = "over" if p_over >= p_under else "under"
+
     return {
         # Core output — all values in RAW units (de-normalised from per-90)
         "posteriorMean": round(_posterior_mean_raw, 1),
         "posteriorStd": round(posterior_std * _denorm, 2),
-        "recommendation": "over" if _posterior_mean_raw > line else "under",
+        "recommendation": _rec_by_prob,
         "pOver": round(p_over * 100, 1),
         "pUnder": round(p_under * 100, 1),
         "confidenceInterval": [ci_low, ci_high],

@@ -2083,7 +2083,15 @@ async def predict(req: PredictionRequest):
                 # Note: early_bayes['posteriorMean'] may already include _redist_multiplier if it was applied above.
                 # _pf_proj uses early_bayes['posteriorMean'] which is the post-redist value.
 
-                _pf_rec  = "OVER" if _pf_proj > req.line else "UNDER"
+                # Use Monte Carlo P values for direction — not just mean vs line.
+                # When P(UNDER) > P(OVER), recommend UNDER even if posteriorMean > line.
+                _pf_p_over  = early_bayes.get("pOver", 50)
+                _pf_p_under = early_bayes.get("pUnder", 50)
+                _pf_rec_by_mean = "OVER" if _pf_proj > req.line else "UNDER"
+                _pf_rec_by_prob = "OVER" if _pf_p_over >= _pf_p_under else "UNDER"
+                _pf_rec = _pf_rec_by_prob
+                if _pf_rec != _pf_rec_by_mean:
+                    print(f"[PROB DIRECTION] {req.playerName}: mean→{_pf_rec_by_mean} but P(OVER)={_pf_p_over}%/P(UNDER)={_pf_p_under}% → using {_pf_rec}")
                 _pf_bprob = early_bayes['pOver'] if _pf_rec == 'OVER' else early_bayes['pUnder']
                 bdir = _pf_rec  # Use preflight direction as the anchor direction
                 bprob = _pf_bprob
@@ -3647,7 +3655,22 @@ Analyze ALL data thoroughly. Return JSON only."""
                         sport="soccer",
                     )
                     if _offset_note:
-                        bayesian_rec = "over" if bayesian_posterior > req.line else "under"
+                        # Recalculate direction from calibrated posterior, then apply
+                        # probability override: when P(UNDER) > P(OVER), prefer UNDER
+                        # even if the calibrated mean is slightly above the line.
+                        _cal_rec_by_mean = "over" if bayesian_posterior > req.line else "under"
+                        _rb_p_over  = real_bayes.get("pOver", 50)
+                        _rb_p_under = real_bayes.get("pUnder", 50)
+                        if _cal_rec_by_mean == "over" and _rb_p_under > _rb_p_over:
+                            bayesian_rec = "under"
+                            print(f"[PROB DIRECTION] {req.playerName}: post-cal mean={bayesian_posterior} (OVER) "
+                                  f"but P(UNDER)={_rb_p_under}%>P(OVER)={_rb_p_over}% → UNDER")
+                        elif _cal_rec_by_mean == "under" and _rb_p_over > _rb_p_under:
+                            bayesian_rec = "over"
+                            print(f"[PROB DIRECTION] {req.playerName}: post-cal mean={bayesian_posterior} (UNDER) "
+                                  f"but P(OVER)={_rb_p_over}%>P(UNDER)={_rb_p_under}% → OVER")
+                        else:
+                            bayesian_rec = _cal_rec_by_mean
                         real_bayes["posteriorMean"] = bayesian_posterior
                 except Exception as _oe:
                     print(f"[NIGHTLY CAL APPLY] Error applying offsets: {_oe}")
