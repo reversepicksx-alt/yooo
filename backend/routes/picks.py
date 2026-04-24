@@ -182,7 +182,7 @@ async def list_picks(req: GetPicksRequest):
     session = await db.sessions.find_one({"email": req.email.lower(), "session_token": req.token}, {"_id": 0})
     if not session:
         raise HTTPException(status_code=401, detail="Invalid session")
-    picks = await db.picks.find({"email": req.email.lower()}, {"_id": 0}).sort("timestamp", -1).to_list(100)
+    picks = await db.picks.find({"email": req.email.lower()}, {"_id": 0}).sort("timestamp", -1).to_list(None)
 
     for p in picks:
         updates = {}
