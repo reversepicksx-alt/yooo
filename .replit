@@ -77,4 +77,4 @@ externalPort = 3000
 [deployment]
 deploymentTarget = "vm"
 run = ["bash", "start.sh"]
-build = ["echo", "Using pre-built dist/"]
+build = ["bash", "-c", "cd mobile && ([ -d node_modules ] || npm install --legacy-peer-deps --silent 2>&1 | tail -3) && npx expo export -p web --output-dir dist 2>&1 | tail -8 && echo '[BUILD] dist ready.'"]

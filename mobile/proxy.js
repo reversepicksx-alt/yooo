@@ -59,13 +59,18 @@ if (IS_PRODUCTION) {
     <link rel="apple-touch-icon" href="/rp-icon.png" />
     <link rel="manifest" href="/manifest.json" />`;
   app.use((req, res) => {
+    const indexPath = path.join(distPath, 'index.html');
+    if (!fs.existsSync(indexPath)) {
+      res.status(503).send('<html><body style="font-family:sans-serif;padding:2rem"><h2>Starting up…</h2><p>The app is initialising. Please refresh in a few seconds.</p><script>setTimeout(()=>location.reload(),5000)</script></body></html>');
+      return;
+    }
     try {
-      let html = fs.readFileSync(path.join(distPath, 'index.html'), 'utf8');
+      let html = fs.readFileSync(indexPath, 'utf8');
       html = html.replace('</head>', `${PWA_TAGS}\n  </head>`);
       res.setHeader('Content-Type', 'text/html');
       res.send(html);
     } catch {
-      res.sendFile(path.join(distPath, 'index.html'));
+      res.sendFile(indexPath);
     }
   });
 

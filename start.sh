@@ -24,13 +24,34 @@ mongod \
   --fork --quiet 2>/dev/null || true
 sleep 4
 
+# ── Build frontend if dist is missing or empty ──────────────────────────────
+DIST_INDEX="/home/runner/workspace/mobile/dist/index.html"
+if [ ! -f "$DIST_INDEX" ]; then
+  echo "[START] dist/index.html not found — building Expo web export now..."
+  cd /home/runner/workspace/mobile
+  if [ ! -d node_modules ]; then
+    echo "[START] Installing node_modules (--legacy-peer-deps)..."
+    npm install --legacy-peer-deps --silent 2>&1 | tail -5
+  fi
+  npx expo export -p web --output-dir dist 2>&1 | tail -10
+  if [ -f "$DIST_INDEX" ]; then
+    echo "[START] Frontend build complete."
+  else
+    echo "[START] WARNING: build failed — site may not load correctly."
+  fi
+  cd /home/runner/workspace
+else
+  echo "[START] dist/index.html found — skipping build."
+fi
+# ───────────────────────────────────────────────────────────────────────────
+
 # Start FastAPI backend on port 8000 (in background)
 echo "[START] Starting backend on port 8000..."
 cd /home/runner/workspace/backend
 python -m uvicorn server:app --host 0.0.0.0 --port 8000 --workers 1 &
 cd /home/runner/workspace
 
-# Start production proxy on port 5000 immediately (dist/ is pre-built and committed)
+# Start production proxy on port 5000
 echo "[START] Starting production proxy on port 5000..."
 cd /home/runner/workspace/mobile
 PRODUCTION=true node proxy.js
