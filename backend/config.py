@@ -140,6 +140,7 @@ SUPPORTED_LEAGUES = [
     {"id": 242, "name": "Liga Pro Ecuador", "type": "Domestic"},
     {"id": 307, "name": "Saudi Pro League", "type": "Domestic"},
     {"id": 254, "name": "NWSL", "type": "Domestic"},
+    {"id": 667, "name": "Singapore Premier League", "type": "Domestic"},
     {"id": 2, "name": "Champions League", "type": "International Club"},
     {"id": 3, "name": "Europa League", "type": "International Club"},
     {"id": 13, "name": "Copa Libertadores", "type": "International Club"},

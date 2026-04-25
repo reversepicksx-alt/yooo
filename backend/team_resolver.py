@@ -35,6 +35,7 @@ LEAGUE_PRIORITY: dict = {
     253: 60,   # MLS
     254: 60,   # NWSL
     188: 55,   # A-League
+    667: 50,   # Singapore Premier League
 }
 
 
@@ -550,6 +551,25 @@ SCAN_ALIASES = {
     "bri": "brisbane roar",
     "syd": "sydney fc",
     "nmp": "north melbourne",
+    # Singapore Premier League (SPL)
+    "tpu": "tanjong pagar united",
+    "tpg": "tanjong pagar united",
+    "tanjong": "tanjong pagar united",
+    "lcs": "lion city sailors",
+    "lion city": "lion city sailors",
+    "sailors": "lion city sailors",
+    "tam": "tampines rovers",
+    "tampines": "tampines rovers",
+    "alb": "albirex niigata",
+    "albirex": "albirex niigata",
+    "gey": "geylang international",
+    "geylang": "geylang international",
+    "hou": "hougang united",
+    "hougang": "hougang united",
+    "bal": "balestier khalsa",
+    "balestier": "balestier khalsa",
+    "ylo": "young lions",
+    "dpmm": "brunei dpmm",
     # Bundesliga short
     "fcb": "fc bayern munchen",
     "bay": "fc bayern munchen",

@@ -334,7 +334,7 @@ export default function ScanScreen() {
                 )}
                 <View style={styles.loadingRow}>
                   <ActivityIndicator color={Colors.primary} size="small" />
-                  <Text style={styles.loadingText}>Grok Vision reading prop slip…</Text>
+                  <Text style={styles.loadingText}>ReverseScan reading prop slip…</Text>
                 </View>
               </View>
             )}
