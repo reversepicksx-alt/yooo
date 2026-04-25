@@ -108,6 +108,21 @@ No Whop integration — access control is:
 - **Player stats per fixture**: `fixtures/players?fixture={id}` — gives passes.total, shots.total, goals.saves, etc.
 - **Count stats** (pass_attempts, shots, tackles, etc.) must ALWAYS be whole numbers — never decimals
 
+## Scan / Predict Screen (scan.tsx)
+
+- Tab label: "Predict" (file: `mobile/app/(tabs)/scan.tsx`)
+- Two modes via toggle at top: **Scan** (upload image OCR via Grok) and **Manual** (type player name)
+- Mode toggle appears when `phase === 'idle'` or in manual mode
+- Manual mode player search: uses `FuzzySearchInput` with **no leagueId filter** so it searches all leagues; after player selection, `leagueId` auto-sets from the player's `leagueId`
+- Player fuzzy search endpoint: `POST /api/players/search` — `league_id` omitted means all leagues
+
+## Player Search (backend/routes/players.py)
+
+- `extract_player()` returns `leagueId` and `position` from MongoDB player docs
+- `_search_players_cache()` — MongoDB cache-first lookup before hitting API-Sports
+- `league_id=None` or `league_id=0` → searches all leagues in cache (no filter)
+- API quota circuit breaker: if `/tmp/.api_sports_quota_exhausted` file matches today's date, all API-Sports calls return `[]` immediately
+
 ## Prediction Data Integrity
 
 - Game logs MUST come from real API-Football fixture data (`fixtures/players` endpoint)

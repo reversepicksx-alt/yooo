@@ -1,12 +1,50 @@
 import asyncio as aio
+import re
 import unicodedata
 from fastapi import APIRouter
 
-from config import CURRENT_SEASON
+from config import CURRENT_SEASON, db
 from models import PlayerSearchRequest
 from utils import api_football_request
 
 router = APIRouter(prefix="/api", tags=["players"])
+
+
+async def _search_players_cache(query: str, league_id: int = None) -> list:
+    """Fast MongoDB cache lookup for player search. Returns list of player dicts."""
+    from cache import COL_PLAYERS
+    from utils import strip_accents
+    query_clean = strip_accents(query.lower().strip())
+    parts = query_clean.split()
+    last_name = parts[-1] if parts else query_clean
+
+    filt: dict = {"nameClean": {"$regex": re.escape(last_name)}}
+    if league_id:
+        filt["leagueId"] = league_id
+
+    docs = await db[COL_PLAYERS].find(filt, {"_id": 0}).limit(20).to_list(20)
+
+    if not docs and len(parts) >= 2:
+        filt2: dict = {"nameClean": {"$regex": re.escape(last_name)}}
+        docs = await db[COL_PLAYERS].find(filt2, {"_id": 0}).limit(20).to_list(20)
+
+    results = []
+    for d in docs:
+        name = d.get("name", "")
+        results.append({
+            "id": d.get("playerId", 0),
+            "name": name,
+            "firstname": name.split()[0] if name.split() else "",
+            "lastname": name.split()[-1] if name.split() else "",
+            "age": 0,
+            "nationality": "",
+            "photo": "",
+            "teamId": d.get("teamId", 0),
+            "teamName": d.get("teamName", ""),
+            "leagueId": d.get("leagueId", 0),
+            "position": d.get("position", ""),
+        })
+    return results
 
 
 @router.post("/players/search")
@@ -21,6 +59,8 @@ async def search_players(req: PlayerSearchRequest):
         stats = item.get("statistics", [])
         team_id = stats[-1]["team"]["id"] if stats else 0
         team_name = stats[-1]["team"]["name"] if stats else ""
+        league_id = stats[-1]["league"]["id"] if stats else 0
+        position = p.get("position", "") or ""
         firstname = p.get("firstname", "") or ""
         lastname = p.get("lastname", "") or ""
         display_name = f"{firstname} {lastname}".strip() if firstname and lastname else p.get("name", "")
@@ -34,7 +74,17 @@ async def search_players(req: PlayerSearchRequest):
             "photo": "",
             "teamId": team_id,
             "teamName": team_name,
+            "leagueId": league_id,
+            "position": position,
         }
+
+    # Strategy 0: MongoDB cache-first (fast, no quota usage)
+    try:
+        cache_results = await _search_players_cache(req.query, req.league_id)
+        if cache_results:
+            return {"players": cache_results[:15]}
+    except Exception:
+        pass
 
     all_players = []
 
