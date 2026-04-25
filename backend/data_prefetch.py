@@ -210,8 +210,12 @@ async def data_prefetch_loop():
 
     while True:
         try:
-            # Recent pass: last 60 days, cap 300 fixtures
-            await bulk_prefetch_run(days_back=60, max_fixtures_per_run=300)
+            from utils import is_quota_exhausted
+            if is_quota_exhausted():
+                print("[PREFETCH] Quota exhausted — skipping prefetch run, will retry in 24h")
+            else:
+                # Recent pass: last 60 days, cap 300 fixtures
+                await bulk_prefetch_run(days_back=60, max_fixtures_per_run=300)
         except Exception as e:
             print(f"[PREFETCH] Loop error: {e}")
 

@@ -2,17 +2,90 @@ import json
 import httpx
 import asyncio as aio
 import unicodedata
+from datetime import datetime, timezone
 from fastapi import HTTPException
 from config import API_FOOTBALL_BASE, api_semaphore, get_dynamic_api_key
 
+# ── Quota circuit breaker ─────────────────────────────────────────────────────
+# Once the daily quota is confirmed exhausted, we stop ALL outbound API calls
+# immediately instead of letting every background loop hammer the API with
+# hundreds of rejected requests. The breaker resets at midnight UTC.
+# State is persisted to disk so server restarts on the same day don't re-burn calls.
+import os as _os
+
+_BREAKER_FILE = "/tmp/.api_sports_quota_exhausted"
+_quota_exhausted_date: str | None = None  # in-memory cache of the breaker date
+
+
+def _load_breaker_from_disk() -> str | None:
+    """Read persisted breaker date from disk (survives process restart)."""
+    try:
+        if _os.path.exists(_BREAKER_FILE):
+            with open(_BREAKER_FILE) as f:
+                return f.read().strip() or None
+    except Exception:
+        pass
+    return None
+
+
+def _quota_tripped() -> bool:
+    """Return True if the breaker is active for today (UTC date)."""
+    global _quota_exhausted_date
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    # Check in-memory first, then disk (covers restarts)
+    date = _quota_exhausted_date or _load_breaker_from_disk()
+    if date is None:
+        return False
+    if date != today:
+        # New UTC day — quota has reset, clear everything
+        _quota_exhausted_date = None
+        try:
+            _os.remove(_BREAKER_FILE)
+        except Exception:
+            pass
+        return False
+    _quota_exhausted_date = date  # populate in-memory from disk if needed
+    return True
+
+
+def _trip_quota_breaker(error_msg: str):
+    """Mark quota as exhausted for today and persist to disk."""
+    global _quota_exhausted_date
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if _quota_exhausted_date != today:
+        _quota_exhausted_date = today
+        try:
+            with open(_BREAKER_FILE, "w") as f:
+                f.write(today)
+        except Exception:
+            pass
+        print(f"[API-SPORTS] Daily quota exhausted — circuit breaker tripped for {today}. All API calls suspended until midnight UTC.")
+    # Only log if this is a fresh trip (not redundant noise)
+    else:
+        return  # Already tripped and logged — stay silent
+    print(f"[API-SPORTS] Quota error detail: {error_msg}")
+
+
+def is_quota_exhausted() -> bool:
+    """Public helper — lets background loops check before attempting calls."""
+    return _quota_tripped()
+
 
 async def api_football_request(endpoint: str, params: dict = None):
+    # Short-circuit immediately if today's quota is already known to be gone
+    if _quota_tripped():
+        return []
+
     key = get_dynamic_api_key()
     headers = {
         "x-apisports-key": key,
         "x-rapidapi-key": key,
     }
     async with api_semaphore:
+        # Re-check inside the semaphore — if a concurrent call just tripped
+        # the breaker while we were waiting, bail out immediately.
+        if _quota_tripped():
+            return []
         for attempt in range(3):
             try:
                 async with httpx.AsyncClient(timeout=15.0) as client:
@@ -26,11 +99,7 @@ async def api_football_request(endpoint: str, params: dict = None):
                     if data.get("errors") and len(data["errors"]) > 0:
                         error_msg = json.dumps(data["errors"])
                         if "Too many requests" in error_msg or "rate limit" in error_msg.lower() or "request limit" in error_msg.lower() or "reached the request limit" in error_msg.lower():
-                            if attempt < 2:
-                                await aio.sleep(1.5 * (attempt + 1))
-                                continue
-                            # Daily quota exhausted — return empty instead of crashing
-                            print(f"[API-SPORTS] Daily quota exhausted: {error_msg}")
+                            _trip_quota_breaker(error_msg)
                             return []
                         raise HTTPException(status_code=400, detail=f"API-Sports error: {error_msg}")
                     return data.get("response", [])

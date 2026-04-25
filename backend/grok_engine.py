@@ -490,8 +490,11 @@ async def auto_settlement_loop():
 
 async def _run_auto_settlement():
     """Check all live picks and settle any finished games."""
-    from utils import api_football_request
+    from utils import api_football_request, is_quota_exhausted
     from config import CURRENT_SEASON
+
+    if is_quota_exhausted():
+        return  # Don't burn quota on settlement checks when there's nothing left
 
     # Settle both "live" picks AND "pending" picks — pending picks can miss the live
     # promotion step if the user doesn't refresh during the match, leaving them stuck.
@@ -847,7 +850,11 @@ async def auto_scout_loop():
 
     while True:
         try:
-            await _run_auto_scout()
+            from utils import is_quota_exhausted
+            if is_quota_exhausted():
+                print("[AUTO-SCOUT] Quota exhausted — skipping run, will retry in 6h")
+            else:
+                await _run_auto_scout()
         except Exception as e:
             print(f"[AUTO-SCOUT] Error: {e}")
         await asyncio.sleep(21600)  # Every 6 hours
