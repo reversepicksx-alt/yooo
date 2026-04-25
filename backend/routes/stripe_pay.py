@@ -93,19 +93,14 @@ async def create_checkout(req: CheckoutRequest):
     success_url = req.redirectUrl or "https://reversepicks.com/auth"
     cancel_url = req.redirectUrl or "https://reversepicks.com/auth"
 
-    try:
-        price_id = _get_or_create_price(plan_key)
-        email_lower = req.email.lower().strip()
-
-        # Reuse existing Stripe customer to prevent duplicate accounts
-        customer_id = _get_or_create_stripe_customer(email_lower)
-
-        session = stripe.checkout.Session.create(
+    def _build_session(payment_method_types: list[str]) -> stripe.checkout.Session:
+        return stripe.checkout.Session.create(
             mode="subscription",
             customer=customer_id,
             line_items=[{"price": price_id, "quantity": 1}],
             success_url=success_url + "?stripe_success=1",
             cancel_url=cancel_url,
+            payment_method_types=payment_method_types,
             subscription_data={
                 "metadata": {
                     "email": email_lower,
@@ -118,6 +113,24 @@ async def create_checkout(req: CheckoutRequest):
             },
             allow_promotion_codes=True,
         )
+
+    try:
+        price_id = _get_or_create_price(plan_key)
+        email_lower = req.email.lower().strip()
+
+        # Reuse existing Stripe customer to prevent duplicate accounts
+        customer_id = _get_or_create_stripe_customer(email_lower)
+
+        # Try with expanded payment methods first (Cash App Pay + Stripe Link).
+        # Cash App Pay / Link let users pay even if their bank blocks card subscriptions.
+        # Fall back to card-only if the Stripe account doesn't have those methods enabled.
+        try:
+            session = _build_session(["card", "cashapp", "link"])
+            print(f"[STRIPE] Checkout created with card+cashapp+link for {email_lower}")
+        except stripe.InvalidRequestError as _pmt_err:
+            print(f"[STRIPE] Extended payment methods unavailable ({_pmt_err}), falling back to card-only")
+            session = _build_session(["card"])
+
         return {"checkoutUrl": session.url}
     except stripe.StripeError as e:
         raise HTTPException(status_code=500, detail=str(e))

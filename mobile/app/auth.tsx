@@ -147,7 +147,7 @@ export default function AuthScreen() {
         } else {
           await Linking.openURL(url);
         }
-        setInfo('Complete payment in the browser, then tap "Already paid?" below to verify.');
+        setInfo('Complete payment in the browser. If your card is declined, try a different card or use Cash App Pay / Link in the checkout. Then tap "Already paid?" below.');
         setStep('email');
       } else {
         setError(result.error || 'Could not create checkout. Try again.');
