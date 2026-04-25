@@ -2199,7 +2199,7 @@ const styles = StyleSheet.create({
   oppEditRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
   teamEditInput: {
     backgroundColor: Colors.cardSecondary, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4,
-    fontSize: 12, color: Colors.text, fontWeight: '600', minWidth: 100, maxWidth: 160,
+    fontSize: 16, color: Colors.text, fontWeight: '600', minWidth: 100, maxWidth: 160,
     borderWidth: 1, borderColor: Colors.primary,
   },
   teamEditConfirm: { padding: 5, backgroundColor: Colors.primaryDim, borderRadius: 6 },
@@ -2262,7 +2262,7 @@ const styles = StyleSheet.create({
   },
   textInput: {
     backgroundColor: Colors.card, borderRadius: Colors.radius, borderWidth: 1,
-    borderColor: Colors.borderSubtle, color: Colors.text, fontSize: 15,
+    borderColor: Colors.borderSubtle, color: Colors.text, fontSize: 16,
     paddingHorizontal: 14, height: 48,
   },
   pickerBtn: {

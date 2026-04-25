@@ -619,7 +619,7 @@ const styles = StyleSheet.create({
     height: 54,
   },
   icon: { marginRight: 10 },
-  input: { flex: 1, color: Colors.text, fontSize: 15 },
+  input: { flex: 1, color: Colors.text, fontSize: 16 },
   eye: { padding: 4 },
   btn: {
     backgroundColor: Colors.primary,
@@ -834,7 +834,7 @@ const styles = StyleSheet.create({
   supportInput: {
     flex: 1,
     color: Colors.text,
-    fontSize: 14,
+    fontSize: 16,
   },
   supportTextArea: {
     backgroundColor: Colors.card,
@@ -843,9 +843,9 @@ const styles = StyleSheet.create({
     borderColor: Colors.borderSubtle,
     padding: 12,
     color: Colors.text,
-    fontSize: 14,
+    fontSize: 16,
     minHeight: 120,
-    lineHeight: 20,
+    lineHeight: 22,
   },
   supportSendBtn: {
     flexDirection: 'row',

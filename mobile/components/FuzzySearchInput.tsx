@@ -276,7 +276,7 @@ const styles = StyleSheet.create({
     flex: 1,
     height: 40,
     color: Colors.text,
-    fontSize: 14,
+    fontSize: 16,
     fontFamily: 'Inter_400Regular',
   },
   spinner: {
