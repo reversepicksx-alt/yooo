@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   TextInput, ActivityIndicator, Alert, Platform, Modal, Image, Dimensions,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
@@ -11,7 +12,7 @@ import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import { useQueryClient } from '@tanstack/react-query';
 import { scanProp, predict, savePick, PROP_TYPES, LEAGUES, PredictionResult, ScanResult } from '@/lib/api';
-import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult } from '@/components/FuzzySearchInput';
+import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult, FuzzyLeagueResult } from '@/components/FuzzySearchInput';
 import { useAuth } from '@/contexts/AuthContext';
 
 const SCREEN_W = Dimensions.get('window').width;
@@ -91,9 +92,12 @@ export default function ScanScreen() {
   // Manual mode fields
   const [playerQuery, setPlayerQuery] = useState('');
   const [resolvedPlayer, setResolvedPlayer] = useState<FuzzyPlayerResult | null>(null);
+  const [manualOpponentQuery, setManualOpponentQuery] = useState('');
+  const [resolvedManualOpponent, setResolvedManualOpponent] = useState<FuzzyTeamResult | null>(null);
   const [propType, setPropType] = useState(PROP_TYPES[0].value);
   const [line, setLine] = useState('');
   const [leagueId, setLeagueId] = useState(39);
+  const [leagueQuery, setLeagueQuery] = useState('Premier League');
   const [showPropPicker, setShowPropPicker] = useState(false);
   const [showLeaguePicker, setShowLeaguePicker] = useState(false);
 
@@ -152,6 +156,8 @@ export default function ScanScreen() {
     setManualError(null);
     setSaveError(null);
     setPlayerQuery('');
+    setManualOpponentQuery('');
+    setResolvedManualOpponent(null);
     setLine('');
     setVenueOverride('home');
     setGameLogFilter('all');
@@ -256,6 +262,8 @@ export default function ScanScreen() {
       playerId: resolvedPlayer?.playerId || 0,
       teamId: resolvedPlayer?.teamId || 0,
       teamName: resolvedPlayer?.teamName || '',
+      opponentId: resolvedManualOpponent?.teamId || 0,
+      opponentName: resolvedManualOpponent?.teamName || manualOpponentQuery.trim() || '',
     };
     setScanResult(data);
     await runPredict(data, true);
@@ -312,6 +320,11 @@ export default function ScanScreen() {
     : null;
 
   return (
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
+    >
     <View style={[styles.root, { paddingTop: topPad }]}>
       <View style={styles.header}>
         <Image source={require('../../assets/logo.png')} style={styles.logoImg} resizeMode="contain" />
@@ -741,7 +754,11 @@ export default function ScanScreen() {
               onSelectPlayer={(p) => {
                 setPlayerQuery(p.playerName);
                 setResolvedPlayer(p);
-                if (p.leagueId) setLeagueId(p.leagueId);
+                if (p.leagueId) {
+                  setLeagueId(p.leagueId);
+                  const lg = LEAGUES.find(l => l.id === p.leagueId);
+                  setLeagueQuery(lg?.name || '');
+                }
                 Haptics.selectionAsync();
               }}
             />
@@ -751,11 +768,38 @@ export default function ScanScreen() {
               </Text>
             )}
 
+            <Text style={styles.fieldLabel}>Opponent Team <Text style={styles.fieldLabelOpt}>(optional)</Text></Text>
+            <FuzzySearchInput
+              value={manualOpponentQuery}
+              onChangeText={(t) => { setManualOpponentQuery(t); if (!t) setResolvedManualOpponent(null); }}
+              searchType="teams"
+              placeholder="e.g. Real Madrid"
+              style={{ marginBottom: 2 }}
+              onSelectTeam={(t) => {
+                setManualOpponentQuery(t.teamName);
+                setResolvedManualOpponent(t);
+                Haptics.selectionAsync();
+              }}
+            />
+            {resolvedManualOpponent && (
+              <Text style={{ color: Colors.primary, fontSize: 11, marginBottom: 4, marginLeft: 2 }}>
+                ✓ {resolvedManualOpponent.teamName}
+              </Text>
+            )}
+
             <Text style={styles.fieldLabel}>League</Text>
-            <TouchableOpacity style={styles.pickerBtn} onPress={() => setShowLeaguePicker(true)}>
-              <Text style={styles.pickerBtnText}>{LEAGUES.find(l => l.id === leagueId)?.name || 'Select'}</Text>
-              <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
-            </TouchableOpacity>
+            <FuzzySearchInput
+              value={leagueQuery}
+              onChangeText={(t) => setLeagueQuery(t)}
+              searchType="leagues"
+              placeholder="Search league…"
+              style={{ marginBottom: 2 }}
+              onSelectLeague={(l: FuzzyLeagueResult) => {
+                setLeagueId(l.id);
+                setLeagueQuery(l.name);
+                Haptics.selectionAsync();
+              }}
+            />
 
             <Text style={styles.fieldLabel}>Prop Type</Text>
             <TouchableOpacity style={styles.pickerBtn} onPress={() => setShowPropPicker(true)}>
@@ -2024,6 +2068,7 @@ export default function ScanScreen() {
         </TouchableOpacity>
       </Modal>
     </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -2211,6 +2256,9 @@ const styles = StyleSheet.create({
   fieldLabel: {
     fontSize: 11, color: Colors.textSecondary, fontWeight: '700',
     letterSpacing: 0.8, marginBottom: 4, marginTop: 8, textTransform: 'uppercase',
+  },
+  fieldLabelOpt: {
+    fontSize: 10, color: Colors.textTertiary, fontWeight: '400', textTransform: 'none', letterSpacing: 0,
   },
   textInput: {
     backgroundColor: Colors.card, borderRadius: Colors.radius, borderWidth: 1,

@@ -5,9 +5,9 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/colors';
-import { searchTeams, searchPlayersQuick, TeamSearchResult, PlayerSearchResult, LEAGUES } from '@/lib/api';
+import { searchTeams, searchPlayersQuick, searchLeagues, TeamSearchResult, PlayerSearchResult, LeagueSearchResult, LEAGUES } from '@/lib/api';
 
-type SearchType = 'teams' | 'players';
+type SearchType = 'teams' | 'players' | 'leagues';
 
 export interface FuzzyTeamResult {
   teamId: number;
@@ -24,11 +24,18 @@ export interface FuzzyPlayerResult {
   position?: string;
 }
 
+export interface FuzzyLeagueResult {
+  id: number;
+  name: string;
+  country: string;
+}
+
 interface FuzzySearchInputProps {
   value: string;
   onChangeText: (text: string) => void;
   onSelectTeam?: (result: FuzzyTeamResult) => void;
   onSelectPlayer?: (result: FuzzyPlayerResult) => void;
+  onSelectLeague?: (result: FuzzyLeagueResult) => void;
   searchType: SearchType;
   leagueId?: number;
   placeholder?: string;
@@ -51,6 +58,7 @@ export default function FuzzySearchInput({
   onChangeText,
   onSelectTeam,
   onSelectPlayer,
+  onSelectLeague,
   searchType,
   leagueId,
   placeholder = 'Search...',
@@ -60,7 +68,7 @@ export default function FuzzySearchInput({
   returnKeyType = 'done',
   onSubmitEditing,
 }: FuzzySearchInputProps) {
-  const [results, setResults] = useState<(TeamSearchResult | PlayerSearchResult)[]>([]);
+  const [results, setResults] = useState<(TeamSearchResult | PlayerSearchResult | LeagueSearchResult)[]>([]);
   const [loading, setLoading] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -78,6 +86,10 @@ export default function FuzzySearchInput({
         const data = await searchTeams(q, leagueId);
         setResults(data.results || []);
         setShowDropdown((data.results || []).length > 0);
+      } else if (searchType === 'leagues') {
+        const data = await searchLeagues(q);
+        setResults(data.leagues || []);
+        setShowDropdown((data.leagues || []).length > 0);
       } else {
         const data = await searchPlayersQuick(q, leagueId);
         const mapped = (data.players || []).map((p: Record<string, unknown>) => ({
@@ -133,6 +145,13 @@ export default function FuzzySearchInput({
     onSelectPlayer?.(item);
   };
 
+  const handleSelectLeague = (item: LeagueSearchResult) => {
+    onChangeText(item.name);
+    setShowDropdown(false);
+    setResults([]);
+    onSelectLeague?.(item);
+  };
+
   const renderTeamItem = ({ item }: { item: TeamSearchResult }) => {
     const lg = leagueName(item.leagueId);
     return (
@@ -158,6 +177,16 @@ export default function FuzzySearchInput({
       </TouchableOpacity>
     );
   };
+
+  const renderLeagueItem = ({ item }: { item: LeagueSearchResult }) => (
+    <TouchableOpacity style={styles.dropdownItem} onPress={() => handleSelectLeague(item)} activeOpacity={0.7}>
+      <Ionicons name="trophy-outline" size={13} color={Colors.primary} style={styles.dropdownIcon} />
+      <View style={styles.dropdownTextWrap}>
+        <Text style={styles.dropdownMain} numberOfLines={1}>{item.name}</Text>
+        {item.country ? <Text style={styles.dropdownSub} numberOfLines={1}>{item.country}</Text> : null}
+      </View>
+    </TouchableOpacity>
+  );
 
   return (
     <View style={[styles.container, style]}>
@@ -200,6 +229,15 @@ export default function FuzzySearchInput({
               data={results as TeamSearchResult[]}
               keyExtractor={(_, i) => String(i)}
               renderItem={renderTeamItem}
+              keyboardShouldPersistTaps="always"
+              scrollEnabled={results.length > 4}
+              style={{ maxHeight: 220 }}
+            />
+          ) : searchType === 'leagues' ? (
+            <FlatList
+              data={results as LeagueSearchResult[]}
+              keyExtractor={(_, i) => String(i)}
+              renderItem={renderLeagueItem}
               keyboardShouldPersistTaps="always"
               scrollEnabled={results.length > 4}
               style={{ maxHeight: 220 }}

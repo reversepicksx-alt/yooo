@@ -203,6 +203,29 @@ async def search_players(req: PlayerSearchRequest):
     return {"players": players[:15]}
 
 
+@router.get("/leagues/search")
+async def search_leagues(search: str = ""):
+    """Search leagues by name from the MongoDB cache (1200+ leagues)."""
+    q = search.strip()
+    if len(q) < 2:
+        return {"leagues": []}
+    try:
+        from cache import COL_LEAGUES
+        q_lower = q.lower()
+        docs = await db[COL_LEAGUES].find(
+            {"nameLower": {"$regex": re.escape(q_lower)}},
+            {"_id": 0, "leagueId": 1, "name": 1, "country": 1}
+        ).limit(20).to_list(20)
+        results = [
+            {"id": d["leagueId"], "name": d["name"], "country": d.get("country", "")}
+            for d in docs if d.get("leagueId") and d.get("name")
+        ]
+        return {"leagues": results}
+    except Exception as e:
+        print(f"[LEAGUE SEARCH] Error: {e}")
+        return {"leagues": []}
+
+
 @router.get("/player/{player_id}/stats")
 async def get_player_stats(player_id: int, season: int = CURRENT_SEASON):
     for s in [season + 1, season, season - 1, season - 2]:

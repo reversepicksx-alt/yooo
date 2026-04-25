@@ -717,6 +717,18 @@ export async function searchTeams(query: string, leagueId?: number): Promise<{ r
   return apiCall(`/api/search/teams?${params.toString()}`);
 }
 
+export interface LeagueSearchResult {
+  id: number;
+  name: string;
+  country: string;
+  logo?: string;
+}
+
+export async function searchLeagues(query: string): Promise<{ leagues: LeagueSearchResult[] }> {
+  const params = new URLSearchParams({ search: query });
+  return apiCall(`/api/leagues/search?${params.toString()}`);
+}
+
 export interface PlayerSearchResult {
   playerId: number;
   playerName: string;
