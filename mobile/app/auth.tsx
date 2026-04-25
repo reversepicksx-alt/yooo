@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  Platform, ActivityIndicator, Image, Linking,
+  Platform, ActivityIndicator, Image, Linking, Modal, ScrollView, KeyboardAvoidingView,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -35,6 +35,10 @@ export default function AuthScreen() {
   const [info, setInfo] = useState('');
   const [showPaymentEmail, setShowPaymentEmail] = useState(false);
   const [paymentEmail, setPaymentEmail] = useState('');
+  const [showSupport, setShowSupport] = useState(false);
+  const [supportName, setSupportName] = useState('');
+  const [supportMessage, setSupportMessage] = useState('');
+  const [supportSent, setSupportSent] = useState(false);
 
   // When Stripe redirects back with ?stripe_success=1, pre-fill the email
   // (saved before redirect) and auto-trigger verification so the user lands
@@ -220,6 +224,25 @@ export default function AuthScreen() {
     }
   };
 
+  const handleSendSupport = async () => {
+    const userEmail = email.trim() || 'Not provided';
+    const name = supportName.trim() || 'ReversePicks User';
+    const message = supportMessage.trim();
+    if (!message) return;
+    const subject = encodeURIComponent(`[ReversePicks Support] Message from ${name}`);
+    const body = encodeURIComponent(
+      `Name: ${name}\nEmail: ${userEmail}\n\nMessage:\n${message}`
+    );
+    const mailUrl = `mailto:reversepicksx@gmail.com?subject=${subject}&body=${body}`;
+    try {
+      await Linking.openURL(mailUrl);
+      setSupportSent(true);
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch {
+      await Linking.openURL('mailto:reversepicksx@gmail.com');
+    }
+  };
+
   const goBack = () => {
     setStep('email');
     setError('');
@@ -379,11 +402,120 @@ export default function AuthScreen() {
                     </Text>
                 }
               </TouchableOpacity>
+
+              <View style={styles.supportRow}>
+                <View style={styles.dividerLine} />
+                <TouchableOpacity
+                  onPress={() => { setSupportSent(false); setSupportName(''); setSupportMessage(''); setShowSupport(true); }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.supportLink}>Contact Support</Text>
+                </TouchableOpacity>
+                <View style={styles.dividerLine} />
+              </View>
             </View>
           )}
 
         </View>
       </View>
+
+      {/* ─── Contact Support Modal ─── */}
+      <Modal
+        visible={showSupport}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowSupport(false)}
+      >
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
+          <View style={styles.supportModal}>
+            <View style={styles.supportModalHeader}>
+              <Ionicons name="headset-outline" size={20} color={Colors.primary} />
+              <Text style={styles.supportModalTitle}>Contact Support</Text>
+              <TouchableOpacity onPress={() => setShowSupport(false)} style={styles.supportCloseBtn} activeOpacity={0.7}>
+                <Ionicons name="close" size={20} color={Colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            {supportSent ? (
+              <View style={styles.supportSentWrap}>
+                <Ionicons name="checkmark-circle" size={48} color={Colors.primary} />
+                <Text style={styles.supportSentTitle}>Message Ready!</Text>
+                <Text style={styles.supportSentSub}>
+                  Your mail app opened with your message pre-filled. Just tap Send to reach us at reversepicksx@gmail.com.
+                </Text>
+                <TouchableOpacity
+                  style={[styles.supportSendBtn, { marginTop: 20 }]}
+                  onPress={() => setShowSupport(false)}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.supportSendBtnText}>Done</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+                <Text style={styles.supportSubtitle}>
+                  We'll get back to you at reversepicksx@gmail.com as soon as possible.
+                </Text>
+
+                <Text style={styles.supportLabel}>Your Name (optional)</Text>
+                <View style={styles.supportInputRow}>
+                  <Ionicons name="person-outline" size={16} color={Colors.textSecondary} style={styles.supportInputIcon} />
+                  <TextInput
+                    style={[styles.supportInput, INPUT_STYLE]}
+                    placeholder="e.g. John Doe"
+                    placeholderTextColor={Colors.textTertiary}
+                    value={supportName}
+                    onChangeText={setSupportName}
+                    autoCapitalize="words"
+                    autoCorrect={false}
+                  />
+                </View>
+
+                <Text style={styles.supportLabel}>Your Email</Text>
+                <View style={styles.supportInputRow}>
+                  <Ionicons name="mail-outline" size={16} color={Colors.textSecondary} style={styles.supportInputIcon} />
+                  <TextInput
+                    style={[styles.supportInput, INPUT_STYLE]}
+                    placeholder="your@email.com"
+                    placeholderTextColor={Colors.textTertiary}
+                    value={email}
+                    onChangeText={v => { setEmail(v); setError(''); }}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                </View>
+
+                <Text style={styles.supportLabel}>Message</Text>
+                <TextInput
+                  style={[styles.supportTextArea, INPUT_STYLE]}
+                  placeholder="Describe your issue or question..."
+                  placeholderTextColor={Colors.textTertiary}
+                  value={supportMessage}
+                  onChangeText={setSupportMessage}
+                  multiline
+                  numberOfLines={5}
+                  textAlignVertical="top"
+                  autoCorrect
+                />
+
+                <TouchableOpacity
+                  style={[styles.supportSendBtn, !supportMessage.trim() && styles.supportSendBtnDisabled]}
+                  onPress={handleSendSupport}
+                  disabled={!supportMessage.trim()}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="send-outline" size={16} color="#000" />
+                  <Text style={styles.supportSendBtnText}>Open Mail App to Send</Text>
+                </TouchableOpacity>
+              </ScrollView>
+            )}
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 }
@@ -607,4 +739,123 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   backBtnText: { color: Colors.text, fontSize: 14, fontWeight: '600' },
+
+  supportRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 4,
+  },
+  supportLink: {
+    color: Colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '500',
+    textDecorationLine: 'underline',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    justifyContent: 'flex-end',
+  },
+  supportModal: {
+    backgroundColor: '#111',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: 24,
+    paddingBottom: 40,
+    maxHeight: '90%',
+  },
+  supportModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 16,
+  },
+  supportModalTitle: {
+    flex: 1,
+    color: Colors.text,
+    fontSize: 17,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+  },
+  supportCloseBtn: {
+    padding: 4,
+  },
+  supportSubtitle: {
+    color: Colors.textSecondary,
+    fontSize: 13,
+    lineHeight: 19,
+    marginBottom: 20,
+  },
+  supportLabel: {
+    color: Colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    marginBottom: 6,
+    marginTop: 14,
+  },
+  supportInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.card,
+    borderRadius: Colors.radius,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+    paddingHorizontal: 12,
+    height: 46,
+  },
+  supportInputIcon: { marginRight: 8 },
+  supportInput: {
+    flex: 1,
+    color: Colors.text,
+    fontSize: 14,
+  },
+  supportTextArea: {
+    backgroundColor: Colors.card,
+    borderRadius: Colors.radius,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+    padding: 12,
+    color: Colors.text,
+    fontSize: 14,
+    minHeight: 120,
+    lineHeight: 20,
+  },
+  supportSendBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: Colors.primary,
+    borderRadius: Colors.radius,
+    height: 52,
+    marginTop: 20,
+    shadowColor: Colors.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+    elevation: 6,
+  },
+  supportSendBtnDisabled: { opacity: 0.4 },
+  supportSendBtnText: { color: '#000', fontWeight: '800', fontSize: 15, letterSpacing: 0.3 },
+  supportSentWrap: {
+    alignItems: 'center',
+    paddingVertical: 24,
+    gap: 12,
+  },
+  supportSentTitle: {
+    color: Colors.text,
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  supportSentSub: {
+    color: Colors.textSecondary,
+    fontSize: 14,
+    textAlign: 'center',
+    lineHeight: 21,
+  },
 });
