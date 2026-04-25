@@ -914,3 +914,10 @@ export const LEAGUES = [
   { id: 3, name: 'Europa League' },
   { id: 253, name: 'MLS' },
 ];
+
+export async function contactSupport(name: string, email: string, message: string): Promise<{ success: boolean; error?: string }> {
+  return apiCall('/api/support/contact', {
+    method: 'POST',
+    body: JSON.stringify({ name, email, message }),
+  });
+}

@@ -10,7 +10,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@/contexts/AuthContext';
 import Colors from '@/constants/colors';
 import {
-  verifyAccess, setPassword as apiSetPassword, authLogin, createCheckout, linkPayment,
+  verifyAccess, setPassword as apiSetPassword, authLogin, createCheckout, linkPayment, contactSupport,
 } from '@/lib/api';
 
 type Step = 'email' | 'pricing';
@@ -39,6 +39,8 @@ export default function AuthScreen() {
   const [supportName, setSupportName] = useState('');
   const [supportMessage, setSupportMessage] = useState('');
   const [supportSent, setSupportSent] = useState(false);
+  const [supportLoading, setSupportLoading] = useState(false);
+  const [supportError, setSupportError] = useState('');
 
   // When Stripe redirects back with ?stripe_success=1, pre-fill the email
   // (saved before redirect) and auto-trigger verification so the user lands
@@ -225,21 +227,28 @@ export default function AuthScreen() {
   };
 
   const handleSendSupport = async () => {
-    const userEmail = email.trim() || 'Not provided';
-    const name = supportName.trim() || 'ReversePicks User';
     const message = supportMessage.trim();
     if (!message) return;
-    const subject = encodeURIComponent(`[ReversePicks Support] Message from ${name}`);
-    const body = encodeURIComponent(
-      `Name: ${name}\nEmail: ${userEmail}\n\nMessage:\n${message}`
-    );
-    const mailUrl = `mailto:reversepicksx@gmail.com?subject=${subject}&body=${body}`;
+    setSupportLoading(true);
+    setSupportError('');
     try {
-      await Linking.openURL(mailUrl);
-      setSupportSent(true);
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      const result = await contactSupport(
+        supportName.trim(),
+        email.trim(),
+        message,
+      );
+      if (result.success) {
+        setSupportSent(true);
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } else {
+        setSupportError(result.error || 'Failed to send. Please try again.');
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      }
     } catch {
-      await Linking.openURL('mailto:reversepicksx@gmail.com');
+      setSupportError('Could not send message. Check your connection and try again.');
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    } finally {
+      setSupportLoading(false);
     }
   };
 
@@ -406,7 +415,7 @@ export default function AuthScreen() {
               <View style={styles.supportRow}>
                 <View style={styles.dividerLine} />
                 <TouchableOpacity
-                  onPress={() => { setSupportSent(false); setSupportName(''); setSupportMessage(''); setShowSupport(true); }}
+                  onPress={() => { setSupportSent(false); setSupportName(''); setSupportMessage(''); setSupportError(''); setShowSupport(true); }}
                   activeOpacity={0.7}
                 >
                   <Text style={styles.supportLink}>Contact Support</Text>
@@ -442,9 +451,9 @@ export default function AuthScreen() {
             {supportSent ? (
               <View style={styles.supportSentWrap}>
                 <Ionicons name="checkmark-circle" size={48} color={Colors.primary} />
-                <Text style={styles.supportSentTitle}>Message Ready!</Text>
+                <Text style={styles.supportSentTitle}>Message Sent!</Text>
                 <Text style={styles.supportSentSub}>
-                  Your mail app opened with your message pre-filled. Just tap Send to reach us at reversepicksx@gmail.com.
+                  We received your message and will get back to you at reversepicksx@gmail.com as soon as possible.
                 </Text>
                 <TouchableOpacity
                   style={[styles.supportSendBtn, { marginTop: 20 }]}
@@ -502,14 +511,27 @@ export default function AuthScreen() {
                   autoCorrect
                 />
 
+                {!!supportError && (
+                  <View style={styles.supportErrorBox}>
+                    <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />
+                    <Text style={styles.supportErrorText}>{supportError}</Text>
+                  </View>
+                )}
+
                 <TouchableOpacity
-                  style={[styles.supportSendBtn, !supportMessage.trim() && styles.supportSendBtnDisabled]}
+                  style={[styles.supportSendBtn, (!supportMessage.trim() || supportLoading) && styles.supportSendBtnDisabled]}
                   onPress={handleSendSupport}
-                  disabled={!supportMessage.trim()}
+                  disabled={!supportMessage.trim() || supportLoading}
                   activeOpacity={0.85}
                 >
-                  <Ionicons name="send-outline" size={16} color="#000" />
-                  <Text style={styles.supportSendBtnText}>Open Mail App to Send</Text>
+                  {supportLoading ? (
+                    <ActivityIndicator color="#000" size="small" />
+                  ) : (
+                    <>
+                      <Ionicons name="send-outline" size={16} color="#000" />
+                      <Text style={styles.supportSendBtnText}>Send Message</Text>
+                    </>
+                  )}
                 </TouchableOpacity>
               </ScrollView>
             )}
@@ -857,5 +879,19 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: 'center',
     lineHeight: 21,
+  },
+  supportErrorBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.errorDim,
+    borderRadius: Colors.radius,
+    padding: 10,
+    gap: 8,
+    marginTop: 12,
+  },
+  supportErrorText: {
+    color: Colors.error,
+    fontSize: 13,
+    flex: 1,
   },
 });
