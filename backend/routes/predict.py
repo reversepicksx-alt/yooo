@@ -1814,6 +1814,7 @@ async def predict(req: PredictionRequest):
                 "goals":           ("goals",           0.40),
                 "assists":         ("goals",           0.25),
                 "saves":           ("shotsOnTarget",   0.70),
+                "goalie_saves":    ("shotsOnTarget",   0.70),
                 "tackles":         ("totalPasses",     0.015),
                 "key_passes":      ("keyPasses",       0.28),
                 "crosses":         ("totalCrosses",    0.35),
@@ -1854,9 +1855,11 @@ async def predict(req: PredictionRequest):
             _sfm = {
                 "goals": "goals_total", "assists": "goals_assists",
                 "shots_assisted": "passes_key",
-                "pass_attempts": "passes_total", "shots": "shots_total",
+                "pass_attempts": "passes_total", "passes_attempted": "passes_total",
+                "shots": "shots_total",
                 "shots_on_target": "shots_on", "tackles": "tackles_total",
                 "key_passes": "passes_key", "saves": "goals_saves",
+                "goalie_saves": "goals_saves",
                 "interceptions": "tackles_interceptions", "blocks": "tackles_blocks",
                 "dribbles": "dribbles_attempts", "dribbles_success": "dribbles_success",
                 "fouls_drawn": "fouls_drawn", "fouls_committed": "fouls_committed",
@@ -1881,7 +1884,7 @@ async def predict(req: PredictionRequest):
                 reverse=True,
             )
 
-            _VENUE_SPLIT_PROPS = {"pass_attempts", "passes", "saves"}
+            _VENUE_SPLIT_PROPS = {"pass_attempts", "passes", "saves", "goalie_saves"}
             _bayes_logs = player_game_logs
             if req.propType in _VENUE_SPLIT_PROPS and player_venue:
                 _venue_logs = [g for g in player_game_logs if g.get("venue") == player_venue]
@@ -3441,9 +3444,9 @@ Analyze ALL data thoroughly. Return JSON only."""
         else:
             prediction["confidenceScore"] = 50
 
-        prediction["consensusNote"] = f"Reverse Formula projection. Grok provides tactical analysis only."
+        prediction["consensusNote"] = f"Reverse Formula projection. Tactical analysis powered by ReverseScan."
         prediction["modelBreakdown"] = [{
-            "model": source_model,
+            "model": "ReverseScan",
             "recommendation": prediction["recommendation"],
             "projectedValue": pv,
             "confidenceScore": prediction["confidenceScore"],

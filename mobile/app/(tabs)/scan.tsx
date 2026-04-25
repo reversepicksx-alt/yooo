@@ -285,7 +285,7 @@ export default function ScanScreen() {
       <View style={styles.header}>
         <Image source={require('../../assets/logo.png')} style={styles.logoImg} resizeMode="contain" />
         <Text style={styles.logoText}>ReversePicks</Text>
-        <Text style={styles.tagline}>AI Soccer Prop Analytics</Text>
+        <Text style={styles.tagline}>Soccer Prop Analytics</Text>
       </View>
 
 
@@ -310,7 +310,7 @@ export default function ScanScreen() {
                   <Ionicons name="image-outline" size={22} color={Colors.primary} />
                   <Text style={styles.heroTitle}>Scan a Prop Slip</Text>
                   <Text style={styles.heroSub}>
-                    Upload a screenshot of any soccer prop slip and get AI-powered insights in seconds.
+                    Upload a screenshot of any soccer prop slip and get ReverseScan insights in seconds.
                   </Text>
                   <TouchableOpacity style={styles.heroBtnBig} onPress={handleGallery} activeOpacity={0.8}>
                     <Ionicons name="images-outline" size={15} color="#000" />
