@@ -1,0 +1,121 @@
+"""
+Fuzzy search endpoints for teams and players.
+Powers the autocomplete dropdowns in the scan screen.
+"""
+import re
+from fastapi import APIRouter, Query
+from team_resolver import find_team, _normalize, COL_TEAMS_MASTER, SCAN_ALIASES, _pick_best
+from config import db
+
+router = APIRouter(prefix="/api/search", tags=["search"])
+
+
+def _to_result(doc: dict) -> dict:
+    return {
+        "teamId": doc.get("teamId", 0),
+        "teamName": doc.get("name", ""),
+        "leagueId": doc.get("leagueId", 0),
+    }
+
+
+@router.get("/teams")
+async def search_teams(
+    q: str = Query(..., min_length=1, max_length=60),
+    league_id: int = Query(None),
+):
+    """Fuzzy team search — returns up to 8 candidates sorted by match quality."""
+    norm = _normalize(q)
+    if not norm:
+        return {"results": []}
+
+    seen = set()
+    results = []
+
+    def _add(r: dict):
+        key = r.get("teamId", 0)
+        if key and key not in seen:
+            seen.add(key)
+            results.append(r)
+
+    # Strategy 0: SCAN_ALIASES exact hit
+    if norm in SCAN_ALIASES:
+        canonical = _normalize(SCAN_ALIASES[norm])
+        # Try exact then alias match, with and without league filter
+        for use_league in ([True, False] if league_id else [False]):
+            for field in ("nameNormalized", "aliases"):
+                filt: dict = {field: canonical}
+                if use_league and league_id:
+                    filt["leagueId"] = league_id
+                docs = await db[COL_TEAMS_MASTER].find(filt, {"_id": 0}).to_list(5)
+                best = _pick_best(docs)
+                if best:
+                    _add(_to_result(best))
+            if results:
+                break
+        # Fallback: canonical might be stored with different suffix (e.g. "charlotte" vs "charlotte fc")
+        # Try prefix substring match on the FIRST significant word of canonical
+        if not results:
+            canon_words = canonical.split()
+            # Use first word if it's long enough, else first two words
+            prefix = canon_words[0] if len(canon_words[0]) >= 5 else " ".join(canon_words[:2])
+            filt = {"nameNormalized": {"$regex": f"^{re.escape(prefix)}"}}
+            docs = await db[COL_TEAMS_MASTER].find(filt, {"_id": 0}).to_list(10)
+            if docs:
+                # Score by how closely canonical matches the full name
+                def _canon_score(d: dict) -> int:
+                    nn = d.get("nameNormalized", "")
+                    score = len(set(canonical.split()) & set(nn.split())) * 100
+                    score += d.get("leaguePriority", 30)
+                    return score
+                docs.sort(key=_canon_score, reverse=True)
+                _add(_to_result(docs[0]))
+
+    # Strategy 1: find_team (best single match)
+    main = await find_team(q, league_id)
+    if main:
+        _add(main)
+
+    # Strategy 2: Multi-result regex on normalized name + aliases
+    if len(norm) >= 2:
+        patterns = [re.escape(norm)]
+        # also try each word >= 3 chars
+        for w in norm.split():
+            if len(w) >= 3:
+                patterns.append(re.escape(w))
+
+        for pat in patterns[:3]:
+            filt_list = [
+                {"nameNormalized": {"$regex": pat}},
+                {"aliases": {"$regex": pat}},
+            ]
+            base_filt = {"$or": filt_list}
+            if league_id:
+                base_filt["leagueId"] = league_id  # type: ignore[assignment]
+            docs = await db[COL_TEAMS_MASTER].find(base_filt, {"_id": 0}).limit(15).to_list(15)
+            # Score by match quality
+            scored = []
+            for d in docs:
+                name_n = d.get("nameNormalized", "")
+                aliases = d.get("aliases", [])
+                # Exact start match gets highest score
+                score = 0
+                if name_n.startswith(norm):
+                    score += 200
+                elif norm in name_n:
+                    score += 100
+                # Alias exact
+                if norm in aliases:
+                    score += 150
+                # Word coverage
+                for w in norm.split():
+                    if any(w in a for a in aliases) or w in name_n:
+                        score += 20
+                score += d.get("leaguePriority", 30)
+                scored.append((score, d))
+            scored.sort(key=lambda x: x[0], reverse=True)
+            for _, d in scored:
+                _add(_to_result(d))
+            if len(results) >= 8:
+                break
+
+    return {"results": results[:8]}

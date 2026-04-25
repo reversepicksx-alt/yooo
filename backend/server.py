@@ -31,6 +31,7 @@ from routes.admin import router as admin_router
 from routes.miss_analysis import router as miss_router
 from routes.manual_search import router as manual_router
 from routes.intel import router as intel_router
+from routes.search import router as search_router
 from cache import seed_cache, background_refresh_loop
 
 app.include_router(auth_router)
@@ -49,6 +50,7 @@ app.include_router(admin_router)
 app.include_router(miss_router)
 app.include_router(manual_router)
 app.include_router(intel_router)
+app.include_router(search_router)
 
 
 # ── Startup: seed grants for lifetime VIPs ──

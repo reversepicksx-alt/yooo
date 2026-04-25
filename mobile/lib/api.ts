@@ -705,6 +705,34 @@ export async function searchPlayers(query: string, leagueId?: number) {
   });
 }
 
+export interface TeamSearchResult {
+  teamId: number;
+  teamName: string;
+  leagueId: number;
+}
+
+export async function searchTeams(query: string, leagueId?: number): Promise<{ results: TeamSearchResult[] }> {
+  const params = new URLSearchParams({ q: query });
+  if (leagueId) params.set('league_id', String(leagueId));
+  return apiCall(`/api/search/teams?${params.toString()}`);
+}
+
+export interface PlayerSearchResult {
+  playerId: number;
+  playerName: string;
+  teamId: number;
+  teamName: string;
+  leagueId: number;
+  position?: string;
+}
+
+export async function searchPlayersQuick(query: string, leagueId?: number): Promise<{ players: PlayerSearchResult[] }> {
+  return apiCall('/api/players/search', {
+    method: 'POST',
+    body: JSON.stringify({ query, league_id: leagueId }),
+  });
+}
+
 export interface SubscriptionStatus {
   active: boolean;
   plan?: string;

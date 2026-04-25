@@ -11,6 +11,7 @@ import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import { useQueryClient } from '@tanstack/react-query';
 import { scanProp, predict, savePick, PROP_TYPES, LEAGUES, PredictionResult, ScanResult } from '@/lib/api';
+import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult } from '@/components/FuzzySearchInput';
 import { useAuth } from '@/contexts/AuthContext';
 
 const SCREEN_W = Dimensions.get('window').width;
@@ -68,8 +69,13 @@ export default function ScanScreen() {
   const [showTeamEdit, setShowTeamEdit] = useState(false);
   const [teamEditValue, setTeamEditValue] = useState('');
 
+  // Opponent edit with fuzzy search
+  const [showOppEdit, setShowOppEdit] = useState(false);
+  const [oppEditValue, setOppEditValue] = useState('');
+
   // Manual mode fields
   const [playerQuery, setPlayerQuery] = useState('');
+  const [resolvedPlayer, setResolvedPlayer] = useState<FuzzyPlayerResult | null>(null);
   const [propType, setPropType] = useState(PROP_TYPES[0].value);
   const [line, setLine] = useState('');
   const [leagueId, setLeagueId] = useState(39);
@@ -215,7 +221,10 @@ export default function ScanScreen() {
       playerName: playerQuery.trim(),
       propType,
       line: parseFloat(line),
-      leagueId,
+      leagueId: resolvedPlayer?.leagueId || leagueId,
+      playerId: resolvedPlayer?.playerId || 0,
+      teamId: resolvedPlayer?.teamId || 0,
+      teamName: resolvedPlayer?.teamName || '',
     };
     setScanResult(data);
     await runPredict(data, true);
@@ -363,21 +372,25 @@ export default function ScanScreen() {
                             <Ionicons name="pencil-outline" size={10} color="#aaa" style={{ marginLeft: 4 }} />
                           </TouchableOpacity>
                         ) : (
-                          <View style={styles.teamEditRow}>
-                            <TextInput
-                              style={[styles.teamEditInput, INPUT_STYLE]}
+                          <View style={[styles.teamEditRow, { flex: 1 }]}>
+                            <FuzzySearchInput
                               value={teamEditValue}
                               onChangeText={setTeamEditValue}
-                              placeholder="Enter team name"
-                              placeholderTextColor="#555"
+                              searchType="teams"
+                              leagueId={scanResult?.leagueId}
+                              placeholder="Search team…"
                               autoFocus
-                              autoCapitalize="words"
+                              style={{ flex: 1 }}
+                              inputStyle={styles.teamEditInput}
                               returnKeyType="done"
                               onSubmitEditing={() => {
                                 const v = teamEditValue.trim();
-                                if (v) {
-                                  setScanResult(prev => prev ? { ...prev, teamName: v, teamId: 0 } : prev);
-                                }
+                                if (v) setScanResult(prev => prev ? { ...prev, teamName: v, teamId: 0 } : prev);
+                                setShowTeamEdit(false);
+                                Haptics.selectionAsync();
+                              }}
+                              onSelectTeam={(t) => {
+                                setScanResult(prev => prev ? { ...prev, teamName: t.teamName, teamId: t.teamId, leagueId: t.leagueId } : prev);
                                 setShowTeamEdit(false);
                                 Haptics.selectionAsync();
                               }}
@@ -385,9 +398,7 @@ export default function ScanScreen() {
                             <TouchableOpacity
                               onPress={() => {
                                 const v = teamEditValue.trim();
-                                if (v) {
-                                  setScanResult(prev => prev ? { ...prev, teamName: v, teamId: 0 } : prev);
-                                }
+                                if (v) setScanResult(prev => prev ? { ...prev, teamName: v, teamId: 0 } : prev);
                                 setShowTeamEdit(false);
                                 Haptics.selectionAsync();
                               }}
@@ -395,10 +406,7 @@ export default function ScanScreen() {
                             >
                               <Ionicons name="checkmark" size={14} color={Colors.primary} />
                             </TouchableOpacity>
-                            <TouchableOpacity
-                              onPress={() => setShowTeamEdit(false)}
-                              style={styles.teamEditCancel}
-                            >
+                            <TouchableOpacity onPress={() => setShowTeamEdit(false)} style={styles.teamEditCancel}>
                               <Ionicons name="close" size={14} color="#888" />
                             </TouchableOpacity>
                           </View>
@@ -407,8 +415,59 @@ export default function ScanScreen() {
                           <Text style={styles.matchedText}>MATCHED</Text>
                         </View>
                       </View>
-                      {scanResult.opponentName && (
-                        <Text style={styles.vsText}>vs {scanResult.opponentName}</Text>
+                      {/* Opponent — tappable to edit with fuzzy search */}
+                      {!showOppEdit ? (
+                        <TouchableOpacity
+                          onPress={() => {
+                            setOppEditValue(scanResult.opponentName || '');
+                            setShowOppEdit(true);
+                            Haptics.selectionAsync();
+                          }}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={styles.vsText}>
+                            {scanResult.opponentName ? `vs ${scanResult.opponentName}` : '+ Add opponent'}
+                            <Text style={{ color: '#555', fontSize: 10 }}>  ✎</Text>
+                          </Text>
+                        </TouchableOpacity>
+                      ) : (
+                        <View style={styles.oppEditRow}>
+                          <FuzzySearchInput
+                            value={oppEditValue}
+                            onChangeText={setOppEditValue}
+                            searchType="teams"
+                            leagueId={scanResult?.leagueId}
+                            placeholder="Search opponent…"
+                            autoFocus
+                            style={{ flex: 1 }}
+                            returnKeyType="done"
+                            onSubmitEditing={() => {
+                              const v = oppEditValue.trim();
+                              if (v) setScanResult(prev => prev ? { ...prev, opponentName: v, opponentId: 0 } : prev);
+                              setShowOppEdit(false);
+                              Haptics.selectionAsync();
+                            }}
+                            onSelectTeam={(t) => {
+                              setScanResult(prev => prev ? { ...prev, opponentName: t.teamName, opponentId: t.teamId } : prev);
+                              setShowOppEdit(false);
+                              Haptics.selectionAsync();
+                            }}
+                          />
+                          <TouchableOpacity
+                            onPress={() => {
+                              const v = oppEditValue.trim();
+                              if (v) setScanResult(prev => prev ? { ...prev, opponentName: v, opponentId: 0 } : prev);
+                              setShowOppEdit(false);
+                              Haptics.selectionAsync();
+                            }}
+                            style={styles.teamEditConfirm}
+                          >
+                            <Ionicons name="checkmark" size={14} color={Colors.primary} />
+                          </TouchableOpacity>
+                          <TouchableOpacity onPress={() => setShowOppEdit(false)} style={styles.teamEditCancel}>
+                            <Ionicons name="close" size={14} color="#888" />
+                          </TouchableOpacity>
+                        </View>
                       )}
                     </View>
                   </View>
@@ -508,14 +567,25 @@ export default function ScanScreen() {
         {mode === 'manual' && phase !== 'result' && phase !== 'saved' && (
           <View style={styles.manualForm}>
             <Text style={styles.fieldLabel}>Player Name</Text>
-            <TextInput
-              style={[styles.textInput, INPUT_STYLE]}
-              placeholder="e.g. Kevin De Bruyne"
-              placeholderTextColor={Colors.textTertiary}
+            <FuzzySearchInput
               value={playerQuery}
-              onChangeText={setPlayerQuery}
-              autoCorrect={false}
+              onChangeText={(t) => { setPlayerQuery(t); if (!t) setResolvedPlayer(null); }}
+              searchType="players"
+              leagueId={leagueId}
+              placeholder="e.g. Kevin De Bruyne"
+              style={{ marginBottom: 2 }}
+              onSelectPlayer={(p) => {
+                setPlayerQuery(p.playerName);
+                setResolvedPlayer(p);
+                if (p.leagueId) setLeagueId(p.leagueId);
+                Haptics.selectionAsync();
+              }}
             />
+            {resolvedPlayer && (
+              <Text style={{ color: Colors.primary, fontSize: 11, marginBottom: 4, marginLeft: 2 }}>
+                ✓ {resolvedPlayer.teamName}{resolvedPlayer.position ? ` · ${resolvedPlayer.position}` : ''}
+              </Text>
+            )}
 
             <Text style={styles.fieldLabel}>League</Text>
             <TouchableOpacity style={styles.pickerBtn} onPress={() => setShowLeaguePicker(true)}>
@@ -1867,6 +1937,7 @@ const styles = StyleSheet.create({
   },
   teamBadgeText: { fontSize: 12, color: Colors.textSecondary, fontWeight: '600' },
   teamEditRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  oppEditRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
   teamEditInput: {
     backgroundColor: Colors.cardSecondary, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4,
     fontSize: 12, color: Colors.text, fontWeight: '600', minWidth: 100, maxWidth: 160,
