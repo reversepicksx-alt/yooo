@@ -73,6 +73,21 @@ export default function ScanScreen() {
   const [showOppEdit, setShowOppEdit] = useState(false);
   const [oppEditValue, setOppEditValue] = useState('');
 
+  // Player name edit (scan mode)
+  const [showPlayerEdit, setShowPlayerEdit] = useState(false);
+  const [playerEditValue, setPlayerEditValue] = useState('');
+  const [resolvedScanPlayer, setResolvedScanPlayer] = useState<FuzzyPlayerResult | null>(null);
+
+  // Prop type edit (scan mode)
+  const [showPropEditScan, setShowPropEditScan] = useState(false);
+
+  // Line edit (scan mode)
+  const [showLineEdit, setShowLineEdit] = useState(false);
+  const [lineEditValue, setLineEditValue] = useState('');
+
+  // League edit (scan mode)
+  const [showLeagueEditScan, setShowLeagueEditScan] = useState(false);
+
   // Manual mode fields
   const [playerQuery, setPlayerQuery] = useState('');
   const [resolvedPlayer, setResolvedPlayer] = useState<FuzzyPlayerResult | null>(null);
@@ -140,6 +155,13 @@ export default function ScanScreen() {
     setLine('');
     setVenueOverride('home');
     setGameLogFilter('all');
+    setShowPlayerEdit(false);
+    setShowTeamEdit(false);
+    setShowOppEdit(false);
+    setShowPropEditScan(false);
+    setShowLineEdit(false);
+    setShowLeagueEditScan(false);
+    setResolvedScanPlayer(null);
   };
 
   const processImage = async (base64: string, uri: string) => {
@@ -149,8 +171,17 @@ export default function ScanScreen() {
     try {
       const scanned = await scanProp(base64, 'soccer');
       if (scanned.error || !scanned.playerName) {
-        setAnalyzeError(scanned.error || 'Could not read prop slip. Try a clearer screenshot.');
-        setPhase('idle');
+        // If we got partial data, show the detected screen so the user can correct fields
+        const hasPartialData = scanned.propType || scanned.line || scanned.playerTeam || scanned.opponentName;
+        if (hasPartialData) {
+          setScanResult(scanned);
+          setAnalyzeError('Some fields could not be read — please correct below and run prediction.');
+          setPhase('detected');
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+        } else {
+          setAnalyzeError(scanned.error || 'Could not read prop slip. Try a clearer screenshot.');
+          setPhase('idle');
+        }
         return;
       }
       // Set venue override from scan result, defaulting to 'home'
@@ -354,7 +385,69 @@ export default function ScanScreen() {
                       <Ionicons name="person-outline" size={22} color={Colors.textSecondary} />
                     </View>
                     <View style={styles.detectedInfo}>
-                      <Text style={styles.detectedName}>{scanResult.playerName}</Text>
+                      {/* Player name — tappable to edit with fuzzy search */}
+                      {!showPlayerEdit ? (
+                        <TouchableOpacity
+                          onPress={() => {
+                            setPlayerEditValue(scanResult.playerName || '');
+                            setShowPlayerEdit(true);
+                            Haptics.selectionAsync();
+                          }}
+                          activeOpacity={0.7}
+                          style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}
+                        >
+                          <Text style={[styles.detectedName, !scanResult.playerName && { color: Colors.error }]}>
+                            {scanResult.playerName || 'Tap to set player name'}
+                          </Text>
+                          <Ionicons name="pencil-outline" size={11} color="#aaa" style={{ marginLeft: 5 }} />
+                        </TouchableOpacity>
+                      ) : (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                          <FuzzySearchInput
+                            value={playerEditValue}
+                            onChangeText={(t) => { setPlayerEditValue(t); if (!t) setResolvedScanPlayer(null); }}
+                            searchType="players"
+                            leagueId={scanResult?.leagueId}
+                            placeholder="Search player…"
+                            autoFocus
+                            style={{ flex: 1 }}
+                            returnKeyType="done"
+                            onSubmitEditing={() => {
+                              const v = playerEditValue.trim();
+                              if (v) setScanResult(prev => prev ? { ...prev, playerName: v } : prev);
+                              setShowPlayerEdit(false);
+                              Haptics.selectionAsync();
+                            }}
+                            onSelectPlayer={(p) => {
+                              setScanResult(prev => prev ? {
+                                ...prev,
+                                playerName: p.playerName,
+                                playerId: p.playerId,
+                                teamName: p.teamName,
+                                teamId: p.teamId,
+                                leagueId: p.leagueId,
+                              } : prev);
+                              setResolvedScanPlayer(p);
+                              setShowPlayerEdit(false);
+                              Haptics.selectionAsync();
+                            }}
+                          />
+                          <TouchableOpacity
+                            onPress={() => {
+                              const v = playerEditValue.trim();
+                              if (v) setScanResult(prev => prev ? { ...prev, playerName: v } : prev);
+                              setShowPlayerEdit(false);
+                              Haptics.selectionAsync();
+                            }}
+                            style={styles.teamEditConfirm}
+                          >
+                            <Ionicons name="checkmark" size={14} color={Colors.primary} />
+                          </TouchableOpacity>
+                          <TouchableOpacity onPress={() => setShowPlayerEdit(false)} style={styles.teamEditCancel}>
+                            <Ionicons name="close" size={14} color="#888" />
+                          </TouchableOpacity>
+                        </View>
+                      )}
                       <View style={styles.badgeRow}>
                         {!showTeamEdit ? (
                           <TouchableOpacity
@@ -506,24 +599,74 @@ export default function ScanScreen() {
                   </View>
 
                   <View style={styles.detectedStats}>
-                    <View style={styles.detectedStat}>
-                      <Text style={styles.detectedStatLabel}>PROP</Text>
-                      <Text style={styles.detectedStatVal}>
-                        {PROP_LABELS[scanResult.propType || ''] || scanResult.propType?.replace(/_/g, ' ') || '—'}
+                    {/* PROP — tappable */}
+                    <TouchableOpacity
+                      style={styles.detectedStat}
+                      onPress={() => { setShowPropEditScan(true); Haptics.selectionAsync(); }}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.detectedStatLabel}>PROP <Ionicons name="pencil-outline" size={9} color="#555" /></Text>
+                      <Text style={[styles.detectedStatVal, !scanResult.propType && { color: Colors.error }]} numberOfLines={1}>
+                        {PROP_LABELS[scanResult.propType || ''] || scanResult.propType?.replace(/_/g, ' ') || 'Tap to set'}
                       </Text>
-                    </View>
+                    </TouchableOpacity>
                     <View style={styles.detectedStatDivider} />
-                    <View style={styles.detectedStat}>
-                      <Text style={styles.detectedStatLabel}>LINE</Text>
-                      <Text style={styles.detectedStatVal}>{scanResult.line ?? '—'}</Text>
-                    </View>
+                    {/* LINE — tappable inline edit */}
+                    {!showLineEdit ? (
+                      <TouchableOpacity
+                        style={styles.detectedStat}
+                        onPress={() => { setLineEditValue(String(scanResult.line ?? '')); setShowLineEdit(true); Haptics.selectionAsync(); }}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.detectedStatLabel}>LINE <Ionicons name="pencil-outline" size={9} color="#555" /></Text>
+                        <Text style={[styles.detectedStatVal, !scanResult.line && { color: Colors.error }]}>
+                          {scanResult.line ?? 'Tap to set'}
+                        </Text>
+                      </TouchableOpacity>
+                    ) : (
+                      <View style={[styles.detectedStat, { flex: 1 }]}>
+                        <Text style={styles.detectedStatLabel}>LINE</Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                          <TextInput
+                            style={[styles.detectedStatVal, { borderBottomWidth: 1, borderBottomColor: Colors.primary, minWidth: 40, padding: 0 }, INPUT_STYLE]}
+                            value={lineEditValue}
+                            onChangeText={setLineEditValue}
+                            keyboardType="decimal-pad"
+                            autoFocus
+                            returnKeyType="done"
+                            onSubmitEditing={() => {
+                              const v = parseFloat(lineEditValue);
+                              if (!isNaN(v) && v > 0) setScanResult(prev => prev ? { ...prev, line: v } : prev);
+                              setShowLineEdit(false);
+                              Haptics.selectionAsync();
+                            }}
+                          />
+                          <TouchableOpacity
+                            onPress={() => {
+                              const v = parseFloat(lineEditValue);
+                              if (!isNaN(v) && v > 0) setScanResult(prev => prev ? { ...prev, line: v } : prev);
+                              setShowLineEdit(false);
+                              Haptics.selectionAsync();
+                            }}
+                            style={{ marginLeft: 4 }}
+                          >
+                            <Ionicons name="checkmark" size={14} color={Colors.primary} />
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    )}
                     <View style={styles.detectedStatDivider} />
-                    <View style={styles.detectedStat}>
-                      <Text style={styles.detectedStatLabel}>LEAGUE</Text>
+                    {/* LEAGUE — tappable */}
+                    <TouchableOpacity
+                      style={styles.detectedStat}
+                      onPress={() => { setShowLeagueEditScan(true); Haptics.selectionAsync(); }}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.detectedStatLabel}>LEAGUE <Ionicons name="pencil-outline" size={9} color="#555" /></Text>
                       <Text style={styles.detectedStatVal} numberOfLines={1}>
                         {LEAGUES.find(l => l.id === scanResult.leagueId)?.name || 'Auto'}
                       </Text>
-                    </View>
+                    </TouchableOpacity>
                   </View>
                 </View>
 
@@ -1768,7 +1911,57 @@ export default function ScanScreen() {
         )}
       </ScrollView>
 
-      {/* Prop Picker Modal */}
+      {/* Prop Picker Modal — SCAN mode correction */}
+      <Modal visible={showPropEditScan} transparent animationType="slide">
+        <TouchableOpacity style={styles.modalOverlay} onPress={() => setShowPropEditScan(false)}>
+          <View style={styles.modalSheet}>
+            <Text style={styles.modalTitle}>Select Prop Type</Text>
+            <ScrollView>
+              {PROP_TYPES.map(p => (
+                <TouchableOpacity
+                  key={p.value}
+                  style={[styles.modalItem, p.value === scanResult?.propType && styles.modalItemActive]}
+                  onPress={() => {
+                    setScanResult(prev => prev ? { ...prev, propType: p.value } : prev);
+                    setShowPropEditScan(false);
+                    Haptics.selectionAsync();
+                  }}
+                >
+                  <Text style={[styles.modalItemText, p.value === scanResult?.propType && styles.modalItemTextActive]}>{p.label}</Text>
+                  {p.value === scanResult?.propType && <Ionicons name="checkmark" size={16} color={Colors.primary} />}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* League Picker Modal — SCAN mode correction */}
+      <Modal visible={showLeagueEditScan} transparent animationType="slide">
+        <TouchableOpacity style={styles.modalOverlay} onPress={() => setShowLeagueEditScan(false)}>
+          <View style={styles.modalSheet}>
+            <Text style={styles.modalTitle}>Select League</Text>
+            <ScrollView>
+              {LEAGUES.map(l => (
+                <TouchableOpacity
+                  key={l.id}
+                  style={[styles.modalItem, l.id === scanResult?.leagueId && styles.modalItemActive]}
+                  onPress={() => {
+                    setScanResult(prev => prev ? { ...prev, leagueId: l.id } : prev);
+                    setShowLeagueEditScan(false);
+                    Haptics.selectionAsync();
+                  }}
+                >
+                  <Text style={[styles.modalItemText, l.id === scanResult?.leagueId && styles.modalItemTextActive]}>{l.name}</Text>
+                  {l.id === scanResult?.leagueId && <Ionicons name="checkmark" size={16} color={Colors.primary} />}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Prop Picker Modal — MANUAL mode */}
       <Modal visible={showPropPicker} transparent animationType="slide">
         <TouchableOpacity style={styles.modalOverlay} onPress={() => setShowPropPicker(false)}>
           <View style={styles.modalSheet}>
