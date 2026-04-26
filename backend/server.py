@@ -85,7 +85,8 @@ async def seed_grants():
     # Build master team cache for smart opponent resolution
     # force=True ensures Portugal/Turkey + leaguePriority field are included
     from team_resolver import build_teams_cache
-    asyncio.create_task(build_teams_cache(force=True))
+    # force=False so we use cached teams if recent (saves ~26 API calls per startup)
+    asyncio.create_task(build_teams_cache(force=False))
     # Start 24h auto-refresh loop for transfers + data freshness
     asyncio.create_task(background_refresh_loop())
     asyncio.create_task(_auto_sync_square_payments())
@@ -102,8 +103,8 @@ async def seed_grants():
     # predictions never hit "no data". Runs on startup then every 24h.
     from data_prefetch import data_prefetch_loop, backfill_fixture_metadata
     asyncio.create_task(data_prefetch_loop())
-    # Backfill home/away metadata for existing cached fixtures (runs once, non-blocking)
-    asyncio.create_task(backfill_fixture_metadata(max_fixtures=5000))
+    # Backfill home/away metadata for any uncovered fixtures (no-op if already done)
+    asyncio.create_task(backfill_fixture_metadata(max_fixtures=500))
     # Nightly calibration — analyses settled picks and persists bias offsets
     # to MongoDB at midnight UTC. First run fires 60 s after startup.
     from calibration import nightly_calibration_loop

@@ -304,19 +304,39 @@ async def bulk_prefetch_run(days_back: int = 60, max_fixtures_per_run: int = 300
 
 async def data_prefetch_loop():
     """
-    Background loop: runs once on startup (after 60s warmup),
-    then every 24h to pull new completed fixtures.
+    Background loop: runs every 24h to pull new completed fixtures.
+    Skips startup run if last successful run was within the past 24h
+    (avoids burning API quota on every server restart).
     """
     await asyncio.sleep(60)  # let the server finish warming up first
 
     while True:
         try:
             from utils import is_quota_exhausted
-            if is_quota_exhausted():
-                print("[PREFETCH] Quota exhausted — skipping prefetch run, will retry in 24h")
-            else:
-                # Recent pass: last 60 days, cap 300 fixtures
-                await bulk_prefetch_run(days_back=60, max_fixtures_per_run=300)
+            # Check when we last ran — skip if less than 24h ago
+            meta = await db.cache_meta.find_one({"_key": "data_prefetch_last_run"})
+            should_run = True
+            if meta and meta.get("ts"):
+                last_ts = meta["ts"]
+                if last_ts.tzinfo is None:
+                    last_ts = last_ts.replace(tzinfo=timezone.utc)
+                age_hrs = (datetime.now(timezone.utc) - last_ts).total_seconds() / 3600
+                if age_hrs < 24:
+                    print(f"[PREFETCH] Last run was {age_hrs:.1f}h ago — skipping (next due in {24-age_hrs:.1f}h)")
+                    should_run = False
+
+            if should_run:
+                if is_quota_exhausted():
+                    print("[PREFETCH] Quota exhausted — skipping prefetch run, will retry in 24h")
+                else:
+                    # Recent pass: last 60 days, cap 300 fixtures
+                    await bulk_prefetch_run(days_back=60, max_fixtures_per_run=300)
+                    # Mark this run as completed
+                    await db.cache_meta.update_one(
+                        {"_key": "data_prefetch_last_run"},
+                        {"$set": {"_key": "data_prefetch_last_run", "ts": datetime.now(timezone.utc)}},
+                        upsert=True
+                    )
         except Exception as e:
             print(f"[PREFETCH] Loop error: {e}")
 

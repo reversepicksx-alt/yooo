@@ -476,16 +476,19 @@ Be direct. No hedging. Use numbers, not words like "good" or "bad"."""
 # ═══════════════════════════════════════════════════════════════
 
 async def auto_settlement_loop():
-    """Background loop: check and settle finished games every 2 minutes."""
-    await asyncio.sleep(30)  # Initial delay
-    print("[GROK ENGINE] Auto-settlement bot started")
+    """Background loop: check and settle finished games every 15 minutes.
+    Each run fires 6+ API calls per unique team in pending picks, so frequent
+    runs burn quota fast. 15 min is plenty since picks resolve after the match.
+    """
+    await asyncio.sleep(60)  # Initial delay
+    print("[GROK ENGINE] Auto-settlement bot started (15 min interval)")
 
     while True:
         try:
             await _run_auto_settlement()
         except Exception as e:
             print(f"[AUTO-SETTLE] Error: {e}")
-        await asyncio.sleep(120)  # Check every 2 minutes
+        await asyncio.sleep(900)  # Check every 15 minutes
 
 
 async def _run_auto_settlement():
@@ -857,7 +860,7 @@ async def auto_scout_loop():
                 await _run_auto_scout()
         except Exception as e:
             print(f"[AUTO-SCOUT] Error: {e}")
-        await asyncio.sleep(21600)  # Every 6 hours
+        await asyncio.sleep(43200)  # Every 12 hours
 
 
 async def _run_auto_scout():
