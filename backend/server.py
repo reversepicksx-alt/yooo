@@ -105,10 +105,11 @@ async def seed_grants():
     asyncio.create_task(data_prefetch_loop())
     # Backfill home/away metadata for any uncovered fixtures (no-op if already done)
     asyncio.create_task(backfill_fixture_metadata(max_fixtures=500))
-    # Nightly calibration — analyses settled picks and persists bias offsets
-    # to MongoDB at midnight UTC. First run fires 60 s after startup.
-    from calibration import nightly_calibration_loop
-    asyncio.create_task(nightly_calibration_loop())
+    # Nightly calibration loop DISABLED — raw Bayesian projections proved more
+    # accurate than the learned-offset corrections. Keep import available for
+    # admin endpoints but don't auto-run.
+    # from calibration import nightly_calibration_loop
+    # asyncio.create_task(nightly_calibration_loop())
 
 
 async def _auto_backfill_positions():

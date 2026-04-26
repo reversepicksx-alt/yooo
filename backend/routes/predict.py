@@ -24,7 +24,7 @@ router = APIRouter(prefix="/api", tags=["predict"])
 # Priority: prop_rec (direction) > prop_league > prop_venue > prop (general).
 # Direction offsets are the strongest signal — applied first.
 # Each offset is dampened to 40% of raw mean error and capped at ±20% of posterior.
-CALIBRATION_ENABLED = True
+CALIBRATION_ENABLED = False  # Disabled — raw Bayesian projections proved more accurate than the learned-offset corrections
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Match dominance cache: keyed by (home_team_id, away_team_id)
