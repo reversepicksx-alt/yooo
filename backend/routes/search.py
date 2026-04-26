@@ -76,9 +76,11 @@ async def search_teams(
         _add(main)
 
     # Strategy 2: Multi-result regex on normalized name + aliases
+    # We do NOT filter strictly by leagueId because teams can be cached under a
+    # different league than expected (e.g. Charlotte FC stored as league 667 instead of 253).
+    # Instead we boost same-league teams in the score.
     if len(norm) >= 2:
         patterns = [re.escape(norm)]
-        # also try each word >= 3 chars
         for w in norm.split():
             if len(w) >= 3:
                 patterns.append(re.escape(w))
@@ -88,29 +90,26 @@ async def search_teams(
                 {"nameNormalized": {"$regex": pat}},
                 {"aliases": {"$regex": pat}},
             ]
-            base_filt = {"$or": filt_list}
-            if league_id:
-                base_filt["leagueId"] = league_id  # type: ignore[assignment]
-            docs = await db[COL_TEAMS_MASTER].find(base_filt, {"_id": 0}).limit(15).to_list(15)
-            # Score by match quality
+            base_filt: dict = {"$or": filt_list}
+            docs = await db[COL_TEAMS_MASTER].find(base_filt, {"_id": 0}).limit(30).to_list(30)
             scored = []
             for d in docs:
                 name_n = d.get("nameNormalized", "")
                 aliases = d.get("aliases", [])
-                # Exact start match gets highest score
                 score = 0
                 if name_n.startswith(norm):
                     score += 200
                 elif norm in name_n:
                     score += 100
-                # Alias exact
                 if norm in aliases:
                     score += 150
-                # Word coverage
                 for w in norm.split():
                     if any(w in a for a in aliases) or w in name_n:
                         score += 20
                 score += d.get("leaguePriority", 30)
+                # Boost teams whose leagueId matches the requested league
+                if league_id and d.get("leagueId") == league_id:
+                    score += 500
                 scored.append((score, d))
             scored.sort(key=lambda x: x[0], reverse=True)
             for _, d in scored:
