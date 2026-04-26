@@ -185,6 +185,7 @@ export interface GameLog {
   interceptions?: number | null;
   tackles?: number | null;
   clearances?: number | null;
+  synthetic?: boolean;
 }
 
 export interface H2HMatch {
@@ -474,6 +475,7 @@ export async function predict(request: Record<string, unknown>): Promise<Predict
             interceptions: (g.tackles_interceptions as number | null) ?? null,
             tackles: (g.tackles_total as number | null) ?? null,
             clearances: (g.tackles_clearances as number | null) ?? null,
+            synthetic: !!(g.synthetic),
           };
         })
         .filter(g => g.value != null)

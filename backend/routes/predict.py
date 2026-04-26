@@ -626,15 +626,39 @@ async def predict(req: PredictionRequest):
 
                         matched_stats = None
                         all_player_logs = {}
+                        # Build a name→stats map for fallback matching
+                        name_stats_map: dict = {}
+                        _target_name_norm = req.playerName.lower().strip() if req.playerName else ""
                         for team_data in fix_data:
                             for p in team_data.get("players", []):
                                 pid = p.get("player", {}).get("id")
+                                pname = (p.get("player", {}).get("name") or "").lower().strip()
                                 stats = p.get("statistics", [{}])[0] if p.get("statistics") else {}
                                 mins = stats.get("games", {}).get("minutes") or 0
                                 if pid:
                                     all_player_logs[pid] = _build_game_log(stats)
                                     if pid == player_id and mins > 0:
                                         matched_stats = stats
+                                if pname and mins > 0:
+                                    name_stats_map[pname] = stats
+
+                        # Fallback: name-based match when ID lookup misses
+                        if not matched_stats and _target_name_norm and name_stats_map:
+                            # Try exact name match first
+                            if _target_name_norm in name_stats_map:
+                                matched_stats = name_stats_map[_target_name_norm]
+                                print(f"[NAME-MATCH] fid={fid}: matched '{req.playerName}' by exact name")
+                            else:
+                                # Try partial match: target surname in API name or vice versa
+                                target_parts = set(_target_name_norm.split())
+                                for api_name, s in name_stats_map.items():
+                                    api_parts = set(api_name.split())
+                                    # At least one word must match and names share >50% of tokens
+                                    common = target_parts & api_parts
+                                    if common and len(common) / max(len(target_parts), len(api_parts)) >= 0.5:
+                                        matched_stats = s
+                                        print(f"[NAME-MATCH] fid={fid}: matched '{req.playerName}' → '{api_name}' (partial)")
+                                        break
 
                         # Cache all players from this fixture (fire-and-forget, for position comparisons)
                         async def _cache_fix(fid_c, logs_c):
@@ -1164,6 +1188,26 @@ async def predict(req: PredictionRequest):
                                             all_player_logs_inner[pid] = built
                                             if pid == req.playerId and mins > 0:
                                                 gl = built
+                                # Name-based fallback for Stage 2
+                                if gl is None and req.playerName:
+                                    _tname = req.playerName.lower().strip()
+                                    _tparts = set(_tname.split())
+                                    for team_data2 in fix_data:
+                                        for p2 in team_data2.get("players", []):
+                                            p2name = (p2.get("player", {}).get("name") or "").lower().strip()
+                                            p2stats = p2.get("statistics", [{}])[0] if p2.get("statistics") else {}
+                                            p2mins = p2stats.get("games", {}).get("minutes") or 0
+                                            if not p2name or not p2mins:
+                                                continue
+                                            p2parts = set(p2name.split())
+                                            common2 = _tparts & p2parts
+                                            if common2 and len(common2) / max(len(_tparts), len(p2parts)) >= 0.5:
+                                                gl = all_player_logs_inner.get(p2.get("player", {}).get("id"))
+                                                if gl:
+                                                    print(f"[NAME-MATCH-S2] fid={fid}: matched '{req.playerName}' → '{p2name}' (partial)")
+                                                    break
+                                        if gl:
+                                            break
                                 # Cache all players from this fixture
                                 async def _cache_all_inner(fid_inner, logs_inner):
                                     ops = [

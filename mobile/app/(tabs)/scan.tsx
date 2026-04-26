@@ -1593,8 +1593,11 @@ export default function ScanScreen() {
 
             {/* ─── GAME LOG GRID ─── */}
             {prediction.gameLogs && prediction.gameLogs.length > 0 && (() => {
-              const overCount = prediction.gameLogs.filter(g => g.value != null && prediction.line != null && g.value >= prediction.line).length;
-              const filteredLogs = prediction.gameLogs.filter(g =>
+              const realLogs = prediction.gameLogs.filter(g => !g.synthetic);
+              const allSynthetic = realLogs.length === 0;
+              const displayLogs = allSynthetic ? [] : realLogs;
+              const overCount = displayLogs.filter(g => g.value != null && prediction.line != null && g.value >= prediction.line).length;
+              const filteredLogs = displayLogs.filter(g =>
                 gameLogFilter === 'all' ? true : g.venue === gameLogFilter
               );
               const COLS = 5;
@@ -1607,27 +1610,40 @@ export default function ScanScreen() {
                     <View style={styles.glHeaderLeft}>
                       <Ionicons name="pulse" size={10} color={Colors.textTertiary} />
                       <Text style={styles.gameLogsTitle}>
-                        RECENT FORM ({prediction.gameLogs.length} GAMES)
+                        {allSynthetic
+                          ? 'RECENT FORM'
+                          : `RECENT FORM (${displayLogs.length} GAMES)`}
                       </Text>
                     </View>
                     <View style={styles.glHeaderRight}>
-                      {oppPoss != null && (
+                      {!allSynthetic && oppPoss != null && (
                         <View style={styles.glOppPossBadge}>
                           <Text style={styles.glOppPossLabel}>OPP POSS</Text>
                           <Text style={styles.glOppPossVal}>{oppPoss}%</Text>
                         </View>
                       )}
-                      {prediction.hitRates != null && (
+                      {!allSynthetic && prediction.hitRates != null && (
                         <View style={styles.hitRateBadge}>
                           <Text style={styles.hitRateBadgeText}>
-                            {overCount}/{prediction.gameLogs.length} HIT
+                            {overCount}/{displayLogs.length} HIT
                           </Text>
                         </View>
                       )}
                     </View>
                   </View>
 
-                  {/* ALL / HOME / AWAY tabs */}
+                  {/* Synthetic fallback notice — shown instead of tile grid */}
+                  {allSynthetic && (
+                    <View style={styles.syntheticNotice}>
+                      <Ionicons name="information-circle-outline" size={14} color={Colors.textSecondary} />
+                      <Text style={styles.syntheticNoticeText}>
+                        Per-game data unavailable for this player. Analysis is based on season averages only.
+                      </Text>
+                    </View>
+                  )}
+
+                  {/* ALL / HOME / AWAY tabs — only when real data exists */}
+                  {!allSynthetic && (
                   <View style={styles.glTabRow}>
                     {(['all', 'home', 'away'] as const).map(f => (
                       <TouchableOpacity
@@ -1641,8 +1657,10 @@ export default function ScanScreen() {
                       </TouchableOpacity>
                     ))}
                   </View>
+                  )}
 
-                  {/* 5-column compact grid */}
+                  {/* 5-column compact grid — only when real data exists */}
+                  {!allSynthetic && (
                   <View style={styles.glGrid}>
                     {(() => {
                       const remainder = filteredLogs.length % COLS;
@@ -1714,9 +1732,10 @@ export default function ScanScreen() {
                       );
                     })()}
                   </View>
+                  )}
 
-                  {/* Home/Away splits */}
-                  {(prediction.homeAvg != null || prediction.awayAvg != null) && (
+                  {/* Home/Away splits — only for real data */}
+                  {!allSynthetic && (prediction.homeAvg != null || prediction.awayAvg != null) && (
                     <View style={styles.avgRow}>
                       {prediction.homeAvg != null && (
                         <Text style={styles.avgText}>HOME AVG  {prediction.homeAvg.toFixed(1)}</Text>
@@ -1727,9 +1746,9 @@ export default function ScanScreen() {
                     </View>
                   )}
 
-                  {/* Defensive stats summary across game logs */}
-                  {(() => {
-                    const logsWithDef = prediction.gameLogs!.filter(
+                  {/* Defensive stats summary — only for real data */}
+                  {!allSynthetic && (() => {
+                    const logsWithDef = displayLogs.filter(
                       g => g.blocks != null || g.interceptions != null || g.tackles != null || g.clearances != null
                     );
                     if (logsWithDef.length === 0) return null;
@@ -2454,6 +2473,14 @@ const styles = StyleSheet.create({
   gameLogsCard: {
     backgroundColor: Colors.card, borderRadius: Colors.radiusLg,
     padding: 16, borderWidth: 1, borderColor: Colors.borderSubtle, marginTop: 12, gap: 12,
+  },
+  syntheticNotice: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 8,
+    backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 8,
+    padding: 12, borderWidth: 1, borderColor: Colors.borderSubtle,
+  },
+  syntheticNoticeText: {
+    flex: 1, fontSize: 12, color: Colors.textSecondary, lineHeight: 17,
   },
   gameLogsHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   glHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 6 },
