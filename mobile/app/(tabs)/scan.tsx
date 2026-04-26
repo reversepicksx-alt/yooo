@@ -2197,7 +2197,8 @@ const styles = StyleSheet.create({
   },
   detectedCard: {
     backgroundColor: Colors.card, borderRadius: Colors.radiusLg,
-    borderWidth: 1, borderColor: Colors.borderSubtle, overflow: 'hidden', marginBottom: 14,
+    borderWidth: 1, borderColor: Colors.borderSubtle, marginBottom: 14,
+    zIndex: 50,
   },
   detectedTop: { flexDirection: 'row', alignItems: 'flex-start', padding: 16, gap: 12 },
   playerAvatarWrap: {

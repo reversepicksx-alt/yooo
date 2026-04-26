@@ -73,6 +73,21 @@ export default function FuzzySearchInput({
   const [showDropdown, setShowDropdown] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastQueryRef = useRef('');
+  const containerRef = useRef<View>(null);
+
+  // For web: track the input's position for fixed dropdown placement
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null);
+
+  const measureContainer = useCallback(() => {
+    if (Platform.OS !== 'web') return;
+    if (containerRef.current) {
+      (containerRef.current as any).measure(
+        (_x: number, _y: number, width: number, _height: number, pageX: number, pageY: number) => {
+          setDropdownPos({ top: pageY + 44, left: pageX, width });
+        }
+      );
+    }
+  }, []);
 
   const doSearch = useCallback(async (q: string) => {
     if (q.length < 2) {
@@ -188,8 +203,39 @@ export default function FuzzySearchInput({
     </TouchableOpacity>
   );
 
+  const dropdownList = showDropdown && results.length > 0 ? (
+    searchType === 'teams' ? (
+      <FlatList
+        data={results as TeamSearchResult[]}
+        keyExtractor={(_, i) => String(i)}
+        renderItem={renderTeamItem}
+        keyboardShouldPersistTaps="always"
+        scrollEnabled={results.length > 4}
+        style={{ maxHeight: 220 }}
+      />
+    ) : searchType === 'leagues' ? (
+      <FlatList
+        data={results as LeagueSearchResult[]}
+        keyExtractor={(_, i) => String(i)}
+        renderItem={renderLeagueItem}
+        keyboardShouldPersistTaps="always"
+        scrollEnabled={results.length > 4}
+        style={{ maxHeight: 220 }}
+      />
+    ) : (
+      <FlatList
+        data={results as FuzzyPlayerResult[]}
+        keyExtractor={(_, i) => String(i)}
+        renderItem={renderPlayerItem}
+        keyboardShouldPersistTaps="always"
+        scrollEnabled={results.length > 4}
+        style={{ maxHeight: 220 }}
+      />
+    )
+  ) : null;
+
   return (
-    <View style={[styles.container, style]}>
+    <View ref={containerRef} style={[styles.container, style]}>
       <View style={styles.inputRow}>
         <TextInput
           style={[styles.input, inputStyle, INPUT_STYLE]}
@@ -206,6 +252,7 @@ export default function FuzzySearchInput({
             onSubmitEditing?.();
           }}
           onFocus={() => {
+            measureContainer();
             if (value.length >= 2 && results.length > 0) setShowDropdown(true);
           }}
           onBlur={() => {
@@ -222,38 +269,27 @@ export default function FuzzySearchInput({
         )}
       </View>
 
-      {showDropdown && results.length > 0 && (
-        <View style={styles.dropdown}>
-          {searchType === 'teams' ? (
-            <FlatList
-              data={results as TeamSearchResult[]}
-              keyExtractor={(_, i) => String(i)}
-              renderItem={renderTeamItem}
-              keyboardShouldPersistTaps="always"
-              scrollEnabled={results.length > 4}
-              style={{ maxHeight: 220 }}
-            />
-          ) : searchType === 'leagues' ? (
-            <FlatList
-              data={results as LeagueSearchResult[]}
-              keyExtractor={(_, i) => String(i)}
-              renderItem={renderLeagueItem}
-              keyboardShouldPersistTaps="always"
-              scrollEnabled={results.length > 4}
-              style={{ maxHeight: 220 }}
-            />
-          ) : (
-            <FlatList
-              data={results as FuzzyPlayerResult[]}
-              keyExtractor={(_, i) => String(i)}
-              renderItem={renderPlayerItem}
-              keyboardShouldPersistTaps="always"
-              scrollEnabled={results.length > 4}
-              style={{ maxHeight: 220 }}
-            />
-          )}
+      {/* On web: fixed-position dropdown to escape any overflow:hidden parent */}
+      {Platform.OS === 'web' && showDropdown && results.length > 0 && dropdownPos ? (
+        <View
+          style={[
+            styles.dropdown,
+            {
+              position: 'fixed' as any,
+              top: dropdownPos.top,
+              left: dropdownPos.left,
+              width: dropdownPos.width,
+              zIndex: 99999,
+            },
+          ]}
+        >
+          {dropdownList}
         </View>
-      )}
+      ) : Platform.OS !== 'web' && showDropdown && results.length > 0 ? (
+        <View style={styles.dropdown}>
+          {dropdownList}
+        </View>
+      ) : null}
     </View>
   );
 }
