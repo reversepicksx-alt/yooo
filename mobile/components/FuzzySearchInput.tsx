@@ -53,6 +53,24 @@ function leagueName(leagueId: number): string {
   return LEAGUES.find(l => l.id === leagueId)?.name || '';
 }
 
+// Get DOM element from a React Native Web ref
+function getDOMNode(ref: React.RefObject<View | null>): HTMLElement | null {
+  if (!ref.current) return null;
+  try {
+    // React Native Web exposes the underlying DOM node this way
+    const node = (ref.current as any);
+    if (node.getBoundingClientRect) return node as unknown as HTMLElement;
+    // Try accessing via internal RN Web APIs
+    if (node._nativeTag) {
+      const el = document.querySelector(`[data-testid]`) || null;
+      return el as HTMLElement;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export default function FuzzySearchInput({
   value,
   onChangeText,
@@ -74,18 +92,28 @@ export default function FuzzySearchInput({
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastQueryRef = useRef('');
   const containerRef = useRef<View>(null);
+  const inputRowRef = useRef<View>(null);
 
-  // For web: track the input's position for fixed dropdown placement
+  // For web fixed dropdown positioning
   const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null);
 
-  const measureContainer = useCallback(() => {
+  const measureForWeb = useCallback(() => {
     if (Platform.OS !== 'web') return;
-    if (containerRef.current) {
-      (containerRef.current as any).measure(
-        (_x: number, _y: number, width: number, _height: number, pageX: number, pageY: number) => {
-          setDropdownPos({ top: pageY + 44, left: pageX, width });
-        }
-      );
+    if (!inputRowRef.current) return;
+    try {
+      // React Native Web host components expose getBoundingClientRect directly
+      const node = inputRowRef.current as unknown as HTMLElement;
+      if (typeof node.getBoundingClientRect === 'function') {
+        const rect = node.getBoundingClientRect();
+        // position:fixed coords are viewport-relative — same as getBoundingClientRect, no scroll offset needed
+        setDropdownPos({
+          top: rect.bottom,
+          left: rect.left,
+          width: rect.width,
+        });
+      }
+    } catch {
+      // fallback: keep previous pos
     }
   }, []);
 
@@ -145,6 +173,15 @@ export default function FuzzySearchInput({
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
   }, []);
+
+  // Re-measure when dropdown becomes visible (keyboard may have shifted layout)
+  useEffect(() => {
+    if (showDropdown && Platform.OS === 'web') {
+      // Small delay to let the keyboard open and layout stabilise
+      const t = setTimeout(measureForWeb, 50);
+      return () => clearTimeout(t);
+    }
+  }, [showDropdown, measureForWeb]);
 
   const handleSelectTeam = (item: TeamSearchResult) => {
     onChangeText(item.teamName);
@@ -234,9 +271,31 @@ export default function FuzzySearchInput({
     )
   ) : null;
 
+  // Web: use fixed positioning anchored to measured input position
+  const webDropdownStyle: any = Platform.OS === 'web' && dropdownPos ? {
+    position: 'fixed',
+    top: dropdownPos.top,
+    left: dropdownPos.left,
+    width: dropdownPos.width,
+    zIndex: 99999,
+    backgroundColor: '#111',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#2a2a2a',
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.5,
+    shadowRadius: 6,
+    elevation: 8,
+  } : null;
+
   return (
     <View ref={containerRef} style={[styles.container, style]}>
-      <View style={styles.inputRow}>
+      <View
+        ref={inputRowRef}
+        style={styles.inputRow}
+      >
         <TextInput
           style={[styles.input, inputStyle, INPUT_STYLE]}
           value={value}
@@ -252,7 +311,7 @@ export default function FuzzySearchInput({
             onSubmitEditing?.();
           }}
           onFocus={() => {
-            measureContainer();
+            measureForWeb();
             if (value.length >= 2 && results.length > 0) setShowDropdown(true);
           }}
           onBlur={() => {
@@ -269,27 +328,19 @@ export default function FuzzySearchInput({
         )}
       </View>
 
-      {/* On web: fixed-position dropdown to escape any overflow:hidden parent */}
-      {Platform.OS === 'web' && showDropdown && results.length > 0 && dropdownPos ? (
-        <View
-          style={[
-            styles.dropdown,
-            {
-              position: 'fixed' as any,
-              top: dropdownPos.top,
-              left: dropdownPos.left,
-              width: dropdownPos.width,
-              zIndex: 99999,
-            },
-          ]}
-        >
+      {/* Web: fixed-position dropdown using getBoundingClientRect coordinates */}
+      {Platform.OS === 'web' && showDropdown && results.length > 0 && dropdownPos && (
+        <View style={webDropdownStyle}>
           {dropdownList}
         </View>
-      ) : Platform.OS !== 'web' && showDropdown && results.length > 0 ? (
+      )}
+
+      {/* Native: standard absolute dropdown */}
+      {Platform.OS !== 'web' && showDropdown && results.length > 0 && (
         <View style={styles.dropdown}>
           {dropdownList}
         </View>
-      ) : null}
+      )}
     </View>
   );
 }
