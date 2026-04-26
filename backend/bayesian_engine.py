@@ -469,6 +469,35 @@ def compute_bayesian_projection(
     covariate_precision = min(raw_cov_prec, (prior_precision + momentum_precision) * MAX_COVARIATE_RATIO)
 
     # ═══════════════════════════════════════════
+    # MOMENTUM-vs-STRUCTURE GUARD
+    # ═══════════════════════════════════════════
+    # When recent-form momentum points one direction but the structural matchup
+    # signals (venue split, opponent allowed, H2H — captured in covariate_adjustment)
+    # point the OTHER direction, dampen momentum's weight. This stops a 3-game
+    # cold streak from steamrolling a structurally favorable matchup.
+    #
+    # Both momentum_effect and covariate_adjustment are in per-90 units, so we
+    # gate on absolute magnitudes that scale with prior_std (a player-relative
+    # threshold avoids over-firing on count stats with small means).
+    #
+    # Disagreement = both signals exceed their thresholds AND they have opposite signs.
+    # Strong disagreement → halve momentum weight; mild disagreement → ¾ momentum weight.
+    _mom_thresh = max(0.5, 0.30 * prior_std)
+    _cov_thresh = max(0.3, 0.20 * prior_std)
+    if abs(momentum_effect) > _mom_thresh and abs(covariate_adjustment) > _cov_thresh:
+        if (momentum_effect > 0) != (covariate_adjustment > 0):
+            disagreement_mag = min(abs(momentum_effect), abs(covariate_adjustment))
+            if disagreement_mag > max(1.5, 0.60 * prior_std):
+                _scale = 0.5
+            else:
+                _scale = 0.75
+            _orig_mom_prec = momentum_precision
+            momentum_precision *= _scale
+            print(f"[MOMENTUM GUARD] mom_effect={momentum_effect:.2f} vs cov_adj={covariate_adjustment:.2f} "
+                  f"(disagree, mag={disagreement_mag:.2f}, prior_std={prior_std:.2f}) → "
+                  f"momentum precision {_orig_mom_prec:.2f} × {_scale} = {momentum_precision:.2f}")
+
+    # ═══════════════════════════════════════════
     # POSTERIOR — Precision-weighted combination
     # ═══════════════════════════════════════════
     total_precision = prior_precision + momentum_precision + covariate_precision
@@ -611,47 +640,75 @@ def compute_bayesian_projection(
                       f"shrink={shrink_mult} {raw_before_dom} → {posterior_mean}")
 
     # ═══════════════════════════════════════════
-    # PRESS INTENSITY — PPDA Proxy (independent of match dominance)
-    # Applied AFTER posterior for pass_attempts/passes props only.
-    #
-    # For OUTFIELD players: heavy opponent pressing → fewer passes (dispossessed)
-    # For GKs: heavy opponent pressing → MORE back-passes (defenders under pressure
-    #   play it safe back to the GK constantly) → INVERTED multiplier for GKs.
+    # PRESS INTENSITY — Position & Prop Aware
     # ═══════════════════════════════════════════
+    # Press signal is computed for any prop where opponent pressing meaningfully
+    # changes player workload (passes, saves, defensive actions, etc.) — not just
+    # pass_attempts. Direction is decided by position + prop, magnitude scales
+    # with the press score (0–1), and the cap is ±20% (was ±10%) so elite-press
+    # matchups can actually move the projection enough to matter.
+    #
+    # Direction matrix (high opponent press →):
+    #   • GK saves                       → BOOST  (turnovers high up → keeper bombarded)
+    #   • GK pass_attempts (away only)   → BOOST  (defenders pinned back, more back-passes)
+    #   • Defender pass_attempts         → BOOST  (rushed recycling — attempted ≠ completed)
+    #   • Defender tackles/interceptions → BOOST  (more defensive workload under chaos)
+    #   • Midfielder defensive actions   → BOOST  (more reclaim attempts)
+    #   • Midfielder/Attacker passes     → NEUTRAL (effects mixed in real data)
+    #
+    # We deliberately do NOT apply blanket suppression to outfield pass_attempts
+    # anymore — empirically that direction proved wrong for build-up positions
+    # against teams like Rayo Vallecano (high press → MORE attempted passes from
+    # pressed CBs/FBs, not fewer).
+    # ═══════════════════════════════════════════
+    PRESS_AFFECTED_PROPS = {
+        "pass_attempts", "passes", "saves",
+        "tackles", "interceptions", "clearances", "blocks",
+    }
     press_intensity_info = {
         "score": 0.0, "multiplier": 1.0, "label": "Unknown", "signal_used": None,
         "avg_defensive_actions": None, "avg_tackles": None, "avg_interceptions": None,
         "avg_poss": None, "avg_passes": None,
     }
-    if opponent_fixture_stats and prop_type in {"pass_attempts", "passes"}:
+    if opponent_fixture_stats and prop_type in PRESS_AFFECTED_PROPS:
         press_intensity_info = compute_press_intensity_score(opponent_fixture_stats)
+        press_score = press_intensity_info.get("score", 0.0) or 0.0
+        press_label = press_intensity_info.get("label", "Unknown")
+
+        # Boost cap (positive = boost, negative = suppress) — scaled by press_score
+        boost_cap = 0.0
         if _is_gk:
-            # GK press BOOST — but only for AWAY GKs.
-            #
-            # When a GK is AWAY and the home team presses hard, defenders get
-            # pinned back and play it safe to the GK repeatedly, generating
-            # high back-pass volume → GK distributes more.
-            # Evidence: Valles (Real Betis AWAY at pressing Girona) got 35 passes (OVER 30.5 ✓)
-            #
-            # For HOME GKs: the pressing effect is murkier and does not reliably
-            # produce more passes (home team has possession, presses don't force
-            # as many back-passes when you control the game).
-            # No boost applied for home GKs — let the baseline and possession model decide.
-            raw_mult = press_intensity_info["multiplier"]
-            if raw_mult < 1.0 and venue == "away":
-                gk_press_mult = round(min(1.05, 1.0 + (1.0 - raw_mult) * 0.35), 3)
-                raw_before = posterior_mean
-                posterior_mean = round(posterior_mean * gk_press_mult, 1)
-                print(f"[GK AWAY PRESS BOOST] {prop_type}: opp_press={press_intensity_info['label']} "
-                      f"(score={press_intensity_info['score']}, mult={raw_mult}) "
-                      f"→ boost {gk_press_mult} {raw_before} → {posterior_mean}")
-        elif press_intensity_info["multiplier"] < 1.0:
+            if prop_type == "saves":
+                boost_cap = 0.20   # up to +20% at elite press
+            elif prop_type in {"pass_attempts", "passes"} and venue == "away":
+                boost_cap = 0.12   # away GK back-pass boost (was capped at +5%)
+        elif _pos_group == "defender":
+            if prop_type in {"pass_attempts", "passes"}:
+                boost_cap = 0.15
+            elif prop_type in {"tackles", "interceptions", "clearances", "blocks"}:
+                boost_cap = 0.10
+        elif _pos_group == "midfielder":
+            if prop_type in {"tackles", "interceptions"}:
+                boost_cap = 0.08
+            # midfielder pass_attempts intentionally neutral (mixed empirical signal)
+        # attacker props intentionally neutral — press effect is too matchup-specific
+
+        if press_score > 0 and boost_cap != 0.0:
+            adj = boost_cap * press_score
+            applied_mult = round(1.0 + adj, 3)
+            press_intensity_info["multiplier"] = applied_mult
             raw_before = posterior_mean
-            posterior_mean = round(posterior_mean * press_intensity_info["multiplier"], 1)
-            print(f"[PRESS] {prop_type}: signal={press_intensity_info['signal_used']} label={press_intensity_info['label']} "
-                  f"(score={press_intensity_info['score']}, mult={press_intensity_info['multiplier']}) "
-                  f"da={press_intensity_info.get('avg_defensive_actions')} tkl={press_intensity_info.get('avg_tackles')} "
-                  f"int={press_intensity_info.get('avg_interceptions')} → {raw_before} → {posterior_mean}")
+            posterior_mean = round(posterior_mean * applied_mult, 1)
+            tag = "BOOST" if adj > 0 else "SUPPRESS"
+            print(f"[PRESS {tag}] {prop_type} pos={_pos_group} venue={venue} "
+                  f"opp={press_label}(score={press_score}, signal={press_intensity_info['signal_used']}) "
+                  f"da={press_intensity_info.get('avg_defensive_actions')} → "
+                  f"mult={applied_mult} : {raw_before} → {posterior_mean}")
+        else:
+            # Press info captured for transparency but no posterior change applied
+            press_intensity_info["multiplier"] = 1.0
+            print(f"[PRESS NEUTRAL] {prop_type} pos={_pos_group} venue={venue} "
+                  f"opp={press_label}(score={press_score}) — no directional adjustment for this combo")
 
     # ═══════════════════════════════════════════
     # REVERSAL FLAG — Mean Reversion Detection

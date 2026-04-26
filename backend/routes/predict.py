@@ -1889,10 +1889,17 @@ async def predict(req: PredictionRequest):
 
             # ── Quick position cache lookup (fast indexed read) ──────────────
             # We look up the cached position so the engine can apply the correct
-            # momentum decay table (attackers decay faster, GKs decay slower).
+            # momentum decay table AND the position-aware press multiplier
+            # (attackers decay faster, GKs decay slower; defenders get press boost).
+            #
+            # The cache is written by the [POS RESOLVE] block keyed on playerId,
+            # but legacy entries may only have playerName — try both so the
+            # Bayesian engine never falls back to "midfielder" by accident.
             _bayes_position = ""
             try:
-                _pos_doc = await db.player_positions.find_one({"playerName": req.playerName})
+                _pos_doc = await db.player_positions.find_one(
+                    {"$or": [{"playerId": req.playerId}, {"playerName": req.playerName}]}
+                )
                 if _pos_doc:
                     _bayes_position = _pos_doc.get("specificPosition", "")
             except Exception:
