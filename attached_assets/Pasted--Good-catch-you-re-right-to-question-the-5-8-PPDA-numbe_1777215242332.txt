@@ -1,0 +1,19 @@
+✅ Good catch — you’re right to question the 5.8 PPDA number. It does sound extremely aggressive at first glance.
+Quick PPDA primer (for context)
+PPDA = Passes Per Defensive Action
+Lower number = more intense pressing (opponent completes fewer passes before you tackle, intercept, or force a turnover).
+•  League average in La Liga: usually 10–12
+•  Aggressive/elite pressing teams: 7.0–9.0 (think peak Atlético, Bilbao, or high-pressing sides like Arsenal/Barcelona in recent seasons)
+•  Anything under ~7 is basically historic territory for a full 90 minutes.
+A 5.8 PPDA would be one of the lowest ever sustained numbers — almost superhuman pressing intensity.
+So does Rayo actually press that much?
+Yes, Rayo Vallecano are legitimately an elite pressing side — but not quite 5.8 elite on a season-long basis.
+•  Current 2025/26 data (DataMB radar across Europe’s top 7 leagues): Rayo rank 92nd percentile in Pressing → top ~8% of all teams. They are one of the most intense pressers in La Liga.
+•  Their style under Iñigo Pérez is direct, high-energy, and aggressive (especially at home in Vallecas). They force turnovers high up the pitch and live on transitions.
+•  However, their actual season-average PPDA sits more in the 8–10 range (elite, but not record-breaking).
+The 5.8 is almost certainly context-specific, not their full-season average. In the Agent’s model it likely represents:
+•  Projected PPDA for this exact matchup (Rayo home vs possession-oriented Real Sociedad)
+•  Recent rolling/short-term form
+•  Or a high-press trigger in the opponent’s half only
+That’s why the new logic flipped Oyarzabal to Over 21.5 passes (and it hit). Rayo’s aggressive press + Real Sociedad’s build-up style created extra passing opportunities for attackers like Oyarzabal, even if the raw “press boost” on attackers is usually kept neutral in the model.
+Bottom line: Rayo do press at a genuinely elite level (top-tier in La Liga), which is why the signal helped catch the Oyarzabal spot. But 5.8 is an extreme game-day projection, not their everyday number. The new system is correctly identifying high-press spots; it’s just using a very aggressive threshold in this instance.

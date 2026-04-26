@@ -407,7 +407,7 @@ async def fetch_ai_press_intensity(
     if not XAI_API_KEY or not opponent:
         return None
 
-    cache_key = (opponent.lower().strip(), (league or "").lower().strip())
+    cache_key = (opponent.lower().strip(), (league or "").lower().strip(), (season or "").strip())
     now = datetime.now(timezone.utc).timestamp()
     cached = _PRESS_INTENSITY_CACHE.get(cache_key)
     if cached and cached[0] > now:
@@ -435,17 +435,23 @@ async def _fetch_ai_press_intensity_inner(
     import re as _re
     league_str = league or "their league"
     prompt = (
-        f"You are a tactical football analyst. Rate {opponent}'s pressing intensity "
+        f"You are a tactical football analyst. Rate {opponent}'s SEASON-AVERAGE pressing intensity "
         f"in {league_str} for the {season} season on a STRICT 0.0 to 1.0 scale.\n\n"
         f"Anchors (calibrate against these):\n"
-        f"  0.00–0.25 LOW     — deep block, drops off, low PPDA-equivalent (Atlético '14 era, Burnley, Getafe)\n"
-        f"  0.25–0.50 MODERATE— mid-block, situational pressing (mid-table EPL/LaLiga sides)\n"
-        f"  0.50–0.75 HIGH    — aggressive press, hunts in opponent half (Liverpool Klopp era, Brighton)\n"
-        f"  0.75–1.00 ELITE   — relentless high press, suffocating (Bielsa Leeds, Rayo Vallecano '24/25, Bayer Leverkusen Xabi)\n\n"
-        f"Use understat PPDA if you find it: PPDA<6=elite (~0.85), 6–8=high (~0.65), "
-        f"8–11=moderate (~0.40), 11+=low (~0.15).\n\n"
+        f"  0.00–0.25 LOW     — deep block, drops off (Burnley Dyche, Getafe, Diego Simeone late-era)\n"
+        f"  0.25–0.50 MODERATE— mid-block, situational pressing (mid-table sides)\n"
+        f"  0.50–0.75 HIGH    — aggressive press, hunts in opponent half (Liverpool Klopp, Brighton, Bilbao)\n"
+        f"  0.75–1.00 ELITE   — relentless high press (Bielsa Leeds, peak Rayo Vallecano, Bayer Leverkusen Xabi)\n\n"
+        f"PPDA RULES — READ CAREFULLY:\n"
+        f"  • Report the team's SEASON-AVERAGE PPDA only (not single-game, not rolling 5-game, not opponent-specific projection).\n"
+        f"  • La Liga league average PPDA ≈ 10–12. EPL ≈ 10–12. Bundesliga ≈ 9–11.\n"
+        f"  • Elite pressers historically sit 7.5–9.0 over a full season. Examples: Klopp Liverpool '18/19 (7.9), "
+        f"Bielsa Leeds '20/21 (7.4), Rayo Vallecano (typically 8–10).\n"
+        f"  • PPDA below 7.5 over a full season is HISTORIC territory and requires explicit evidence — "
+        f"do NOT guess sub-7.5 values. If unsure between 7.5 and 9, pick the higher end.\n"
+        f"  • Score-to-PPDA mapping: 0.85+ ≈ PPDA 7.5–8.5; 0.70 ≈ PPDA 8.5–9.5; 0.50 ≈ PPDA 10–11; 0.25 ≈ PPDA 12+.\n\n"
         f"Reply ONLY with strict JSON, no markdown:\n"
-        f'{{"score": <0.0-1.0 float>, "ppda": <float or null>, "reasoning": "<one short sentence with concrete evidence>"}}\n'
+        f'{{"score": <0.0-1.0 float>, "ppda": <season-avg float or null>, "reasoning": "<one short sentence with concrete evidence>"}}\n'
         f"If you cannot make a confident assessment, reply: {{\"score\": null}}"
     )
 
@@ -531,6 +537,16 @@ async def _fetch_ai_press_intensity_inner(
     if ppda is not None and not (3.0 <= ppda <= 30.0):
         ppda = None
 
+    # Sanity guard: season-average PPDA below 7.5 is implausible.
+    # Real-world historic-elite pressers (Klopp '18/19=7.9, Bielsa Leeds '20/21=7.4) bottom out near 7.5.
+    # If Grok returns sub-7.5, floor to 7.5 (matches the documented score-to-PPDA mapping at the elite tier)
+    # and log so we know the model is over-stating.
+    ppda_warning = None
+    if ppda is not None and ppda < 7.5:
+        ppda_warning = f"PPDA {ppda} implausibly low — floored to 7.5"
+        print(f"[AI PRESS] {opponent}: {ppda_warning}")
+        ppda = 7.5
+
     result = {
         "score": round(score, 3),
         "label": _label_from_score(score),
@@ -538,6 +554,8 @@ async def _fetch_ai_press_intensity_inner(
         "reasoning": str(parsed.get("reasoning", ""))[:300],
         "source": used_source or "ai_knowledge",
     }
+    if ppda_warning:
+        result["ppda_note"] = ppda_warning
     _PRESS_INTENSITY_CACHE[cache_key] = (now + _PRESS_TTL_SECONDS, result)
     print(f"[AI PRESS] {opponent} ({league}): score={result['score']} label={result['label']} "
           f"ppda={result['ppda']} source={result['source']} — {result['reasoning'][:100]}")
