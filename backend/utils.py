@@ -98,8 +98,24 @@ async def api_football_request(endpoint: str, params: dict = None):
                     data = resp.json()
                     if data.get("errors") and len(data["errors"]) > 0:
                         error_msg = json.dumps(data["errors"])
-                        if "Too many requests" in error_msg or "rate limit" in error_msg.lower() or "request limit" in error_msg.lower() or "reached the request limit" in error_msg.lower():
+                        error_lower = error_msg.lower()
+                        # Only trip the DAILY quota breaker for true daily-limit exhaustion.
+                        # "Too many requests" alone is a per-minute rate limit — do NOT trip
+                        # the all-day breaker for that; just back off and retry instead.
+                        is_daily_quota = (
+                            "daily" in error_lower
+                            or "day limit" in error_lower
+                            or ("reached" in error_lower and ("limit" in error_lower or "quota" in error_lower))
+                            or "requests quota" in error_lower
+                        )
+                        if is_daily_quota:
                             _trip_quota_breaker(error_msg)
+                            return []
+                        # Per-minute rate limit — wait and retry rather than killing the day
+                        if "too many requests" in error_lower or "rate limit" in error_lower:
+                            if attempt < 2:
+                                await aio.sleep(3.0 * (attempt + 1))
+                                continue
                             return []
                         raise HTTPException(status_code=400, detail=f"API-Sports error: {error_msg}")
                     return data.get("response", [])
