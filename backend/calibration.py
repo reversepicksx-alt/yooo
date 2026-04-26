@@ -866,8 +866,9 @@ async def apply_elite_calibration(
 # automatically correct for learned errors.
 # =====================================================================
 
-MIN_SAMPLES_NIGHTLY = 5    # minimum picks before we trust a bias estimate
-CORRECTION_DAMPEN   = 0.40  # apply 40% of the learned bias (conservative)
+MIN_SAMPLES_NIGHTLY = 10   # minimum picks before we trust a bias estimate
+CORRECTION_DAMPEN   = 0.65  # apply 65% of the learned bias (was 0.40 — too conservative
+                            # with 100+ samples per category; under-corrected systemic biases)
 
 
 async def run_nightly_calibration(sport: str = "soccer") -> dict:
