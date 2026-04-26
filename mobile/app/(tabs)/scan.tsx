@@ -1642,8 +1642,8 @@ export default function ScanScreen() {
                     </View>
                   )}
 
-                  {/* ALL / HOME / AWAY tabs — only when real data exists */}
-                  {!allSynthetic && (
+                  {/* ALL / HOME / AWAY tabs — only when real data exists with venue info */}
+                  {!allSynthetic && displayLogs.some(g => g.venue === 'home' || g.venue === 'away') && (
                   <View style={styles.glTabRow}>
                     {(['all', 'home', 'away'] as const).map(f => (
                       <TouchableOpacity

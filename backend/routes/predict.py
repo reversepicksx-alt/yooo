@@ -548,6 +548,39 @@ async def predict(req: PredictionRequest):
             if not player_id or not actual_team_id:
                 return collected
 
+            # ── STAGE 0: Read per-game stats directly from MongoDB cache ──────────
+            # This fires first and avoids ANY API call. Key pattern: fxp_{fid}_{player_id}
+            try:
+                cached_games = await db.fixture_player_cache.find(
+                    {"_k": {"$regex": f"_{player_id}$"}}
+                ).sort("_k", -1).limit(30).to_list(30)
+                if cached_games:
+                    print(f"[CACHE-STAGE0] {req.playerName}: {len(cached_games)} cached game logs from MongoDB")
+                    target_field = stat_field_map.get(req.propType, "")
+                    for entry in cached_games:
+                        d = entry.get("d", {})
+                        if not d:
+                            continue
+                        minutes = d.get("minutes") or 0
+                        if not minutes:
+                            continue
+                        gl = dict(d)
+                        gl["date"] = ""
+                        gl["opponent"] = ""
+                        gl["venue"] = ""
+                        gl["score"] = ""
+                        gl["league"] = ""
+                        gl["round"] = ""
+                        raw_val = gl.get(target_field) if target_field else None
+                        if raw_val is not None and minutes > 0:
+                            gl["targetStatPer90"] = round((raw_val / minutes) * 90, 2)
+                        collected.append(gl)
+                    if collected:
+                        print(f"[CACHE-STAGE0] Returning {len(collected)} real (cached) game logs — skipping API")
+                        return collected
+            except Exception as _ce:
+                print(f"[CACHE-STAGE0] Error: {_ce}")
+
             try:
                 # Fetch the team's last 20 finished fixtures across ALL competitions from API
                 team_fixtures_raw = await api_football_request(
