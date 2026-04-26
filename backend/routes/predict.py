@@ -1076,7 +1076,7 @@ async def predict(req: PredictionRequest):
         match_dominance = {"expectedPoss": 50.0, "oppExpectedPoss": 50.0, "multiplier": 1.0, "notes": []}
 
         # Wave 2: Fetch deep fixture data + Grok digest + Situation Engine + Web Intel in parallel
-        from grok_engine import build_grok_digest, fetch_web_intel
+        from grok_engine import build_grok_digest, fetch_web_intel, fetch_ai_press_intensity
         from situation_engine import build_game_situation
         grok_digest_task = build_grok_digest(
             player_name=req.playerName, team_name=corrected_team_name or "",
@@ -1123,15 +1123,22 @@ async def predict(req: PredictionRequest):
             league=_sit_match_league,
         )
 
+        # AI press intensity — Grok rates opponent press on 0–1 scale.
+        # Bayesian uses this directly when present, falls back to heuristic otherwise.
+        ai_press_task = fetch_ai_press_intensity(
+            opponent=req.opponentName or "",
+            league=_sit_match_league or "",
+        )
+
         all_wave2 = aio.gather(
             team_fixture_stats_task, opponent_fixture_stats_task, player_game_logs_task,
-            grok_digest_task, situation_task, web_intel_task,
+            grok_digest_task, situation_task, web_intel_task, ai_press_task,
             return_exceptions=True
         )
         try:
             results = await aio.wait_for(all_wave2, timeout=40)
         except aio.TimeoutError:
-            results = [None, None, None, None, None, None]
+            results = [None, None, None, None, None, None, None]
             print(f"[WAVE2 TIMEOUT] Wave 2 exceeded 40s for {req.playerName}")
 
         team_fixture_stats = results[0] if not isinstance(results[0], (Exception, type(None))) else []
@@ -1140,6 +1147,7 @@ async def predict(req: PredictionRequest):
         grok_digest = results[3] if len(results) > 3 and not isinstance(results[3], (Exception, type(None))) else ""
         game_situation = results[4] if len(results) > 4 and not isinstance(results[4], (Exception, type(None))) else {}
         web_intel = results[5] if len(results) > 5 and not isinstance(results[5], (Exception, type(None))) else ""
+        ai_press_intensity = results[6] if len(results) > 6 and not isinstance(results[6], (Exception, type(None))) else None
         if not game_situation:
             game_situation = {"isKnockout": False, "isSecondLeg": False, "aggregate": {}, "multipliers": {}, "injuries": {}, "contextBlock": ""}
 
@@ -2028,6 +2036,7 @@ async def predict(req: PredictionRequest):
                 position=_bayes_position,
                 hyperprior_mean=_bayes_hyperprior,
                 expected_minutes=_exp_mins,
+                ai_press_intensity=ai_press_intensity,
             )
             print(f"[BAYESIAN] {req.playerName}/{req.propType}: samples={early_bayes.get('priorSamples') if early_bayes else 0}, logs={len(_bayes_logs)} (venue={player_venue})")
 

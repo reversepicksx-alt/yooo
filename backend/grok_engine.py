@@ -357,6 +357,193 @@ async def fetch_opponent_ppda(opponent: str, league: str = "", timeout: int = 20
     return None
 
 
+# ═══════════════════════════════════════════════════════════════
+# AI PRESS INTENSITY — Universal opponent press rating (any league)
+# ═══════════════════════════════════════════════════════════════
+# Replaces the heuristic compute_press_intensity_score for opponents
+# whose press style isn't well captured by raw tackles+interceptions.
+# Asks Grok to rate opponent on 0–1 press scale using web search +
+# tactical knowledge, returns a structured score the Bayesian engine
+# uses directly (same direction matrix and ±20% caps still apply).
+# ═══════════════════════════════════════════════════════════════
+
+# Simple in-memory TTL cache: { (opponent_lower, league_lower): (expires_at, result) }
+_PRESS_INTENSITY_CACHE: dict = {}
+_PRESS_INTENSITY_LOCKS: dict = {}  # in-flight dedupe: { key: asyncio.Lock }
+_PRESS_TTL_SECONDS = 6 * 3600  # 6 hours — press style doesn't change game-to-game
+
+
+def _label_from_score(s: float) -> str:
+    if s >= 0.75:
+        return "Elite"
+    if s >= 0.50:
+        return "High"
+    if s >= 0.25:
+        return "Moderate"
+    return "Low"
+
+
+async def fetch_ai_press_intensity(
+    opponent: str,
+    league: str = "",
+    season: str = "2025/2026",
+    timeout: int = 18,
+) -> dict | None:
+    """
+    Ask Grok to rate the opponent's pressing intensity on a 0–1 scale.
+
+    Returns dict with:
+      score      : 0.0 – 1.0  (0 = deep block, 1 = elite high press)
+      label      : "Low" / "Moderate" / "High" / "Elite"
+      ppda       : float | None   (if Grok found/knew it)
+      reasoning  : short string from Grok
+      source     : "ai_web" or "ai_knowledge"
+    Returns None if AI couldn't produce a confident answer.
+
+    Works for ALL leagues (not just understat-covered five). The heuristic
+    `compute_press_intensity_score` stays as a structural fallback.
+    """
+    import re as _re
+    if not XAI_API_KEY or not opponent:
+        return None
+
+    cache_key = (opponent.lower().strip(), (league or "").lower().strip())
+    now = datetime.now(timezone.utc).timestamp()
+    cached = _PRESS_INTENSITY_CACHE.get(cache_key)
+    if cached and cached[0] > now:
+        return cached[1]
+
+    # In-flight dedupe — concurrent predictions for the same opponent share one Grok call
+    lock = _PRESS_INTENSITY_LOCKS.get(cache_key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _PRESS_INTENSITY_LOCKS[cache_key] = lock
+
+    async with lock:
+        # Re-check cache after acquiring the lock — winner of the race populated it
+        cached = _PRESS_INTENSITY_CACHE.get(cache_key)
+        if cached and cached[0] > now:
+            return cached[1]
+        return await _fetch_ai_press_intensity_inner(opponent, league, season, timeout, cache_key, now)
+
+
+async def _fetch_ai_press_intensity_inner(
+    opponent: str, league: str, season: str, timeout: int,
+    cache_key: tuple, now: float,
+) -> dict | None:
+    """Inner fetch routine — caller holds the per-key lock."""
+    import re as _re
+    league_str = league or "their league"
+    prompt = (
+        f"You are a tactical football analyst. Rate {opponent}'s pressing intensity "
+        f"in {league_str} for the {season} season on a STRICT 0.0 to 1.0 scale.\n\n"
+        f"Anchors (calibrate against these):\n"
+        f"  0.00–0.25 LOW     — deep block, drops off, low PPDA-equivalent (Atlético '14 era, Burnley, Getafe)\n"
+        f"  0.25–0.50 MODERATE— mid-block, situational pressing (mid-table EPL/LaLiga sides)\n"
+        f"  0.50–0.75 HIGH    — aggressive press, hunts in opponent half (Liverpool Klopp era, Brighton)\n"
+        f"  0.75–1.00 ELITE   — relentless high press, suffocating (Bielsa Leeds, Rayo Vallecano '24/25, Bayer Leverkusen Xabi)\n\n"
+        f"Use understat PPDA if you find it: PPDA<6=elite (~0.85), 6–8=high (~0.65), "
+        f"8–11=moderate (~0.40), 11+=low (~0.15).\n\n"
+        f"Reply ONLY with strict JSON, no markdown:\n"
+        f'{{"score": <0.0-1.0 float>, "ppda": <float or null>, "reasoning": "<one short sentence with concrete evidence>"}}\n'
+        f"If you cannot make a confident assessment, reply: {{\"score\": null}}"
+    )
+
+    headers = {"Authorization": f"Bearer {XAI_API_KEY}", "Content-Type": "application/json"}
+
+    # Strategy 1: Grok web search (live tactical reports + understat)
+    parsed = None
+    used_source = None
+    for model in [GROK_SEARCH_MODEL]:
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=8)) as client:
+                payload = {
+                    "model": model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0,
+                    "max_tokens": 200,
+                    "tools": [{"type": "web_search_preview"}],
+                    "tool_choice": "required",
+                }
+                resp = await client.post(GROK_URL, headers=headers, json=payload)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    msg = data["choices"][0].get("message", {})
+                    content = msg.get("content", "")
+                    tool_calls = msg.get("tool_calls", [])
+                    if not content and tool_calls:
+                        messages = [
+                            {"role": "user", "content": prompt},
+                            {"role": "assistant", "tool_calls": tool_calls, "content": None},
+                        ]
+                        for tc in tool_calls:
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": tc.get("id", ""),
+                                "content": "[Search results integrated by model]",
+                            })
+                        payload2 = {**payload, "messages": messages, "tool_choice": "auto", "max_tokens": 200}
+                        resp2 = await client.post(GROK_URL, headers=headers, json=payload2)
+                        if resp2.status_code == 200:
+                            content = resp2.json()["choices"][0]["message"].get("content", "")
+                    if content:
+                        parsed = _parse_json(content)
+                        if parsed and isinstance(parsed, dict) and parsed.get("score") is not None:
+                            used_source = "ai_web"
+                            break
+                elif resp.status_code in (400, 404, 422):
+                    print(f"[AI PRESS] Web search not available ({resp.status_code}) — trying knowledge fallback")
+                    break
+                else:
+                    print(f"[AI PRESS] Web search error {resp.status_code}: {resp.text[:120]}")
+        except asyncio.TimeoutError:
+            print(f"[AI PRESS] Web search timeout ({model})")
+        except Exception as e:
+            print(f"[AI PRESS] Web search exception: {e}")
+
+    # Strategy 2: Grok knowledge fallback (no web search)
+    if not parsed or parsed.get("score") is None:
+        try:
+            txt = await _grok_call(prompt, temperature=0, max_tokens=200, timeout=15, reasoning=True)
+            if txt:
+                parsed = _parse_json(txt)
+                if parsed and isinstance(parsed, dict) and parsed.get("score") is not None:
+                    used_source = "ai_knowledge"
+        except Exception as e:
+            print(f"[AI PRESS] Knowledge fallback exception: {e}")
+
+    if not parsed or parsed.get("score") is None:
+        print(f"[AI PRESS] No confident assessment for {opponent} ({league})")
+        # Cache the negative result briefly so we don't hammer the API on retries
+        _PRESS_INTENSITY_CACHE[cache_key] = (now + 600, None)
+        return None
+
+    try:
+        score = float(parsed.get("score"))
+    except (TypeError, ValueError):
+        return None
+    score = max(0.0, min(1.0, score))
+    ppda_raw = parsed.get("ppda")
+    try:
+        ppda = float(ppda_raw) if ppda_raw is not None else None
+    except (TypeError, ValueError):
+        ppda = None
+    if ppda is not None and not (3.0 <= ppda <= 30.0):
+        ppda = None
+
+    result = {
+        "score": round(score, 3),
+        "label": _label_from_score(score),
+        "ppda": ppda,
+        "reasoning": str(parsed.get("reasoning", ""))[:300],
+        "source": used_source or "ai_knowledge",
+    }
+    _PRESS_INTENSITY_CACHE[cache_key] = (now + _PRESS_TTL_SECONDS, result)
+    print(f"[AI PRESS] {opponent} ({league}): score={result['score']} label={result['label']} "
+          f"ppda={result['ppda']} source={result['source']} — {result['reasoning'][:100]}")
+    return result
+
+
 def _parse_json(raw: str) -> dict | list | None:
     """Parse JSON from Grok response, stripping markdown wrappers."""
     raw = raw.strip()

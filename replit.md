@@ -209,6 +209,18 @@ However, `fetch_player_game_logs` in `predict.py` collected logs in the same ord
 
 **Calibration impact:** The nightly calibration offsets were learned from picks made with the buggy ordering. They will self-correct over 1-2 weeks of newly settled picks. The offsets are dampened (40%) so immediate impact is mild.
 
+## AI-Driven Press Intensity (April 2026)
+
+**Problem:** The structural press heuristic (`compute_press_intensity_score` in `bayesian_engine.py`) inverted on elite-press teams — Rayo Vallecano scored "Low press" because their relentless pressing prevents opponents from holding the ball, suppressing the raw tackles+interceptions counter. Result: predictions against Rayo missed in ways the heuristic could not see.
+
+**Fix:** Added `fetch_ai_press_intensity(opponent, league)` in `grok_engine.py`. Grok rates the opponent's press on a strict 0.0–1.0 scale (with PPDA when known), using web search first then knowledge fallback. Works for all leagues, not just understat-covered ones.
+
+The score is fed to `compute_bayesian_projection` via the new `ai_press_intensity` parameter and **overrides** the heuristic when present. The directional matrix (GK saves +20%, defender passes +15%, etc.) and ±20% caps are unchanged — only the input signal improved.
+
+**Caching:** 6-hour in-memory TTL per `(opponent, league)`. Per-key `asyncio.Lock` deduplicates concurrent fetches so multiple props for the same opponent share one Grok call (no thundering herd). Negative results cached 10 minutes to avoid retry storms.
+
+**Schema:** `pressIntensity` dict in the response always carries the same keys (`score, multiplier, label, signal_used, ppda, reasoning, avg_*`) regardless of which signal source produced it.
+
 ## LLM Integration Shim
 
 `backend/emergentintegrations/` is a local shim (not on PyPI):

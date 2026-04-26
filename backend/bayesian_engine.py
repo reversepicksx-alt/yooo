@@ -151,6 +151,7 @@ def compute_bayesian_projection(
     position: str = "",
     hyperprior_mean: float = None,
     expected_minutes: float = 90.0,
+    ai_press_intensity: dict = None,
 ) -> dict:
     """
     Compute a 3-layer Bayesian projection from raw game data.
@@ -665,13 +666,36 @@ def compute_bayesian_projection(
         "pass_attempts", "passes", "saves",
         "tackles", "interceptions", "clearances", "blocks",
     }
+    # Canonical empty/default schema — every path below MUST keep these keys
     press_intensity_info = {
         "score": 0.0, "multiplier": 1.0, "label": "Unknown", "signal_used": None,
+        "ppda": None, "reasoning": "",
         "avg_defensive_actions": None, "avg_tackles": None, "avg_interceptions": None,
         "avg_poss": None, "avg_passes": None,
     }
-    if opponent_fixture_stats and prop_type in PRESS_AFFECTED_PROPS:
-        press_intensity_info = compute_press_intensity_score(opponent_fixture_stats)
+    if prop_type in PRESS_AFFECTED_PROPS:
+        # ── PRIMARY: AI-supplied press intensity (Grok web search + tactical knowledge) ──
+        # This is opponent-specific and works for ALL leagues. The structural heuristic
+        # (tackles+interceptions) only fires as a fallback when AI couldn't produce a
+        # confident answer, because it inverts for elite-press teams (more press → fewer
+        # tackles_total when opponent never gets the ball back).
+        if ai_press_intensity and isinstance(ai_press_intensity, dict) \
+                and ai_press_intensity.get("score") is not None:
+            _ai_score = max(0.0, min(1.0, float(ai_press_intensity.get("score", 0.0))))
+            press_intensity_info = {
+                "score": round(_ai_score, 3),
+                "multiplier": 1.0,
+                "label": ai_press_intensity.get("label", "Unknown"),
+                "signal_used": ai_press_intensity.get("source", "ai"),
+                "ppda": ai_press_intensity.get("ppda"),
+                "reasoning": ai_press_intensity.get("reasoning", ""),
+                "avg_defensive_actions": None, "avg_tackles": None,
+                "avg_interceptions": None, "avg_poss": None, "avg_passes": None,
+            }
+        elif opponent_fixture_stats:
+            press_intensity_info = compute_press_intensity_score(opponent_fixture_stats)
+        # else: keep canonical default — already initialised above
+
         press_score = press_intensity_info.get("score", 0.0) or 0.0
         press_label = press_intensity_info.get("label", "Unknown")
 
@@ -849,6 +873,12 @@ def _empty_metrics(line: float) -> dict:
         "streakFlag": "NONE",
         "volatility": "UNKNOWN",
         "cv": 0,
+        "pressIntensity": {
+            "score": 0.0, "multiplier": 1.0, "label": "Unknown", "signal_used": None,
+            "ppda": None, "reasoning": "",
+            "avg_defensive_actions": None, "avg_tackles": None, "avg_interceptions": None,
+            "avg_poss": None, "avg_passes": None,
+        },
     }
 
 
@@ -907,6 +937,7 @@ def compute_press_intensity_score(opp_fixture_stats: list) -> dict:
     unknown = {
         "score": 0.0, "multiplier": 1.0, "label": "Unknown",
         "signal_used": None,
+        "ppda": None, "reasoning": "",
         "avg_defensive_actions": None, "avg_tackles": None, "avg_interceptions": None,
         "avg_poss": None, "avg_passes": None,
     }
@@ -937,6 +968,8 @@ def compute_press_intensity_score(opp_fixture_stats: list) -> dict:
             "multiplier":            multiplier,
             "label":                 label,
             "signal_used":           "tackles",
+            "ppda":                  None,
+            "reasoning":             "",
             "avg_defensive_actions": round(avg_da, 1),
             "avg_tackles":           round(avg_tkl, 1),
             "avg_interceptions":     round(avg_int, 1),
@@ -996,6 +1029,8 @@ def compute_press_intensity_score(opp_fixture_stats: list) -> dict:
         "multiplier":            multiplier,
         "label":                 label,
         "signal_used":           "possession",
+        "ppda":                  None,
+        "reasoning":             "",
         "avg_defensive_actions": None,
         "avg_tackles":           None,
         "avg_interceptions":     None,
