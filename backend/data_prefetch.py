@@ -9,6 +9,7 @@ cache all players, run on startup + every 24h.
 import asyncio
 import time
 from datetime import datetime, timezone, timedelta
+from pymongo import UpdateOne
 from utils import api_football_request
 from config import db, CURRENT_SEASON
 
@@ -178,36 +179,49 @@ async def backfill_fixture_metadata(max_fixtures: int = 200) -> int:
             print(f"[BACKFILL-FXM] All {len(fid_set)} fixtures already have metadata")
             return 0
 
-        print(f"[BACKFILL-FXM] Backfilling metadata for {len(missing)} fixtures (of {len(fid_set)} total)")
+        print(f"[BACKFILL-FXM] Backfilling metadata for {len(missing)} fixtures (of {len(fid_set)} total) in batches of 20")
         created = 0
+        batch_size = 20
+        int_ids = []
         for fid_str in missing:
             try:
-                fid = int(fid_str)
+                int_ids.append(int(fid_str))
             except ValueError:
-                continue
+                pass
+
+        for i in range(0, len(int_ids), batch_size):
+            batch = int_ids[i:i + batch_size]
             try:
-                data = await api_football_request("fixtures/players", {"fixture": fid})
-                if data and len(data) >= 2:
-                    home_id = data[0].get("team", {}).get("id")
-                    away_id = data[1].get("team", {}).get("id")
-                    home_name = data[0].get("team", {}).get("name", "")
-                    away_name = data[1].get("team", {}).get("name", "")
-                    if home_id and away_id:
-                        fxm_key = f"fxm_{fid}"
-                        await db.fixture_player_cache.update_one(
-                            {"_k": fxm_key},
-                            {"$set": {"_k": fxm_key, "d": {
-                                "home_id": home_id, "away_id": away_id,
-                                "home_name": home_name, "away_name": away_name,
-                            }}},
-                            upsert=True
-                        )
-                        created += 1
-                await asyncio.sleep(0.15)  # gentle rate limiting
+                ids_param = "-".join(str(f) for f in batch)
+                fixtures_data = await api_football_request("fixtures", {"ids": ids_param})
+                if fixtures_data:
+                    ops = []
+                    for fix in fixtures_data:
+                        fid = fix.get("fixture", {}).get("id")
+                        home_id = fix.get("teams", {}).get("home", {}).get("id")
+                        away_id = fix.get("teams", {}).get("away", {}).get("id")
+                        home_name = fix.get("teams", {}).get("home", {}).get("name", "")
+                        away_name = fix.get("teams", {}).get("away", {}).get("name", "")
+                        if fid and home_id and away_id:
+                            fxm_key = f"fxm_{fid}"
+                            ops.append(UpdateOne(
+                                {"_k": fxm_key},
+                                {"$set": {"_k": fxm_key, "d": {
+                                    "home_id": home_id, "away_id": away_id,
+                                    "home_name": home_name, "away_name": away_name,
+                                }}},
+                                upsert=True
+                            ))
+                    if ops:
+                        result = await db.fixture_player_cache.bulk_write(ops, ordered=False)
+                        created += result.upserted_count + result.modified_count
+                await asyncio.sleep(0.3)
             except Exception as _e:
+                print(f"[BACKFILL-FXM] Batch error at offset {i}: {_e}")
+                await asyncio.sleep(1)
                 continue
 
-        print(f"[BACKFILL-FXM] Done — {created} metadata docs created")
+        print(f"[BACKFILL-FXM] Done — {created} metadata docs written")
         return created
     except Exception as e:
         print(f"[BACKFILL-FXM] Error: {e}")
