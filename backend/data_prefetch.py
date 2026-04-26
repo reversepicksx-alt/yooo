@@ -97,6 +97,25 @@ async def _prefetch_fixture(fixture_id: int) -> int:
 
             ops = []
             cached_count = 0
+
+            # Store fixture metadata (home/away team IDs) so Stage 0 can determine venue
+            # The fixtures/players API returns teams in [home, away] order
+            if len(data) >= 2:
+                home_id = data[0].get("team", {}).get("id")
+                away_id = data[1].get("team", {}).get("id")
+                home_name = data[0].get("team", {}).get("name", "")
+                away_name = data[1].get("team", {}).get("name", "")
+                if home_id and away_id:
+                    fxm_key = f"fxm_{fixture_id}"
+                    ops.append(db.fixture_player_cache.update_one(
+                        {"_k": fxm_key},
+                        {"$set": {"_k": fxm_key, "d": {
+                            "home_id": home_id, "away_id": away_id,
+                            "home_name": home_name, "away_name": away_name,
+                        }}},
+                        upsert=True
+                    ))
+
             for team_data in data:
                 for p in team_data.get("players", []):
                     pid = p.get("player", {}).get("id")
@@ -125,6 +144,74 @@ async def _prefetch_fixture(fixture_id: int) -> int:
                 print(f"[PREFETCH] API quota hit — pausing 60s")
                 await asyncio.sleep(60)
             return 0
+
+
+async def backfill_fixture_metadata(max_fixtures: int = 200) -> int:
+    """
+    One-time backfill: find cached fxp_* entries that have no fxm_* metadata doc,
+    fetch /fixtures/players for those fixture IDs to create fxm_ docs with home/away team IDs.
+    Returns count of metadata docs created.
+    """
+    try:
+        # Get all distinct fixture IDs from existing fxp_ keys
+        all_fxp = await db.fixture_player_cache.distinct(
+            "_k", {"_k": {"$regex": "^fxp_"}}
+        )
+        # Extract fixture IDs: fxp_{fid}_{pid} → fid
+        fid_set = set()
+        for key in all_fxp:
+            parts = key.split("_")
+            if len(parts) >= 3:
+                fid_set.add(parts[1])
+
+        if not fid_set:
+            return 0
+
+        # Find which ones already have fxm_ docs
+        existing_fxm = await db.fixture_player_cache.distinct(
+            "_k", {"_k": {"$regex": "^fxm_"}}
+        )
+        existing_fids = {k[4:] for k in existing_fxm}  # strip "fxm_"
+        missing = list(fid_set - existing_fids)[:max_fixtures]
+
+        if not missing:
+            print(f"[BACKFILL-FXM] All {len(fid_set)} fixtures already have metadata")
+            return 0
+
+        print(f"[BACKFILL-FXM] Backfilling metadata for {len(missing)} fixtures (of {len(fid_set)} total)")
+        created = 0
+        for fid_str in missing:
+            try:
+                fid = int(fid_str)
+            except ValueError:
+                continue
+            try:
+                data = await api_football_request("fixtures/players", {"fixture": fid})
+                if data and len(data) >= 2:
+                    home_id = data[0].get("team", {}).get("id")
+                    away_id = data[1].get("team", {}).get("id")
+                    home_name = data[0].get("team", {}).get("name", "")
+                    away_name = data[1].get("team", {}).get("name", "")
+                    if home_id and away_id:
+                        fxm_key = f"fxm_{fid}"
+                        await db.fixture_player_cache.update_one(
+                            {"_k": fxm_key},
+                            {"$set": {"_k": fxm_key, "d": {
+                                "home_id": home_id, "away_id": away_id,
+                                "home_name": home_name, "away_name": away_name,
+                            }}},
+                            upsert=True
+                        )
+                        created += 1
+                await asyncio.sleep(0.15)  # gentle rate limiting
+            except Exception as _e:
+                continue
+
+        print(f"[BACKFILL-FXM] Done — {created} metadata docs created")
+        return created
+    except Exception as e:
+        print(f"[BACKFILL-FXM] Error: {e}")
+        return 0
 
 
 async def _get_finished_fixture_ids(league_id: int, season: int, days_back: int) -> list:

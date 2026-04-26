@@ -100,8 +100,10 @@ async def seed_grants():
     asyncio.create_task(pattern_mining_loop())
     # Bulk player-stats prefetch — caches all players from recent fixtures so
     # predictions never hit "no data". Runs on startup then every 24h.
-    from data_prefetch import data_prefetch_loop
+    from data_prefetch import data_prefetch_loop, backfill_fixture_metadata
     asyncio.create_task(data_prefetch_loop())
+    # Backfill home/away metadata for existing cached fixtures (runs once, non-blocking)
+    asyncio.create_task(backfill_fixture_metadata(max_fixtures=200))
     # Nightly calibration — analyses settled picks and persists bias offsets
     # to MongoDB at midnight UTC. First run fires 60 s after startup.
     from calibration import nightly_calibration_loop

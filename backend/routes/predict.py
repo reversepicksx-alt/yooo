@@ -557,7 +557,28 @@ async def predict(req: PredictionRequest):
                 if cached_games:
                     print(f"[CACHE-STAGE0] {req.playerName}: {len(cached_games)} cached game logs from MongoDB")
                     target_field = stat_field_map.get(req.propType, "")
+
+                    # Extract fixture IDs from keys (fxp_{fid}_{player_id})
+                    fid_map: dict = {}  # fid_str -> entry
                     for entry in cached_games:
+                        key = entry.get("_k", "")
+                        parts = key.split("_")
+                        # key format: fxp_{fid}_{pid} — parts[0]="fxp", parts[1]=fid, parts[2]=pid
+                        if len(parts) >= 3:
+                            fid_map[parts[1]] = entry
+
+                    # Batch-fetch fixture metadata (home/away team IDs) stored by prefetch
+                    fxm_docs: dict = {}
+                    if fid_map:
+                        meta_keys = [f"fxm_{fid}" for fid in fid_map]
+                        meta_results = await db.fixture_player_cache.find(
+                            {"_k": {"$in": meta_keys}}, {"_id": 0}
+                        ).to_list(len(meta_keys))
+                        for meta in meta_results:
+                            fid_str = meta.get("_k", "")[4:]  # strip "fxm_"
+                            fxm_docs[fid_str] = meta.get("d", {})
+
+                    for fid_str, entry in fid_map.items():
                         d = entry.get("d", {})
                         if not d:
                             continue
@@ -566,15 +587,26 @@ async def predict(req: PredictionRequest):
                             continue
                         gl = dict(d)
                         gl["date"] = ""
-                        gl["opponent"] = ""
-                        gl["venue"] = ""
                         gl["score"] = ""
                         gl["league"] = ""
                         gl["round"] = ""
+
+                        # Populate venue and opponent from fixture metadata if available
+                        meta = fxm_docs.get(fid_str, {})
+                        if meta:
+                            home_id_meta = meta.get("home_id")
+                            is_home = (home_id_meta == actual_team_id)
+                            gl["venue"] = "home" if is_home else "away"
+                            gl["opponent"] = meta.get("away_name", "") if is_home else meta.get("home_name", "")
+                        else:
+                            gl["venue"] = ""
+                            gl["opponent"] = ""
+
                         raw_val = gl.get(target_field) if target_field else None
                         if raw_val is not None and minutes > 0:
                             gl["targetStatPer90"] = round((raw_val / minutes) * 90, 2)
                         collected.append(gl)
+
                     if collected:
                         print(f"[CACHE-STAGE0] Returning {len(collected)} real (cached) game logs — skipping API")
                         return collected

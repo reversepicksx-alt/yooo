@@ -1703,7 +1703,9 @@ export default function ScanScreen() {
                                 {/* Opp + rank row */}
                                 <View style={styles.glOppRow}>
                                   <View style={styles.glVenueBadge}>
-                                    <Text style={styles.glVenueText}>{g.venue === 'home' ? 'H' : 'A'}</Text>
+                                    <Text style={styles.glVenueText}>
+                                      {g.venue === 'home' ? 'H' : g.venue === 'away' ? 'A' : '—'}
+                                    </Text>
                                   </View>
                                   <Text style={styles.glTileOpp} numberOfLines={1}>{oppShort}</Text>
                                 </View>
