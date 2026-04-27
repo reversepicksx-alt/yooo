@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity, FlatList,
-  StyleSheet, ActivityIndicator, Platform,
+  View, Text, TextInput, TouchableOpacity,
+  StyleSheet, ActivityIndicator, Platform, ScrollView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/colors';
@@ -74,77 +74,6 @@ export default function FuzzySearchInput({
   const [showDropdown, setShowDropdown] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastQueryRef = useRef('');
-  const inputRowRef = useRef<View>(null);
-  // Web: fixed-position coords measured via measureInWindow + visual-viewport aware sizing.
-  // `placement: 'below'` opens under the input; 'above' flips it on top when the keyboard /
-  // iOS Safari URL pill leaves no usable room below. `maxHeight` is clamped to whatever the
-  // visible viewport can actually show so no list item ever lands under the keyboard or URL bar.
-  const [fixedPos, setFixedPos] = useState<{
-    top?: number;
-    bottom?: number;
-    left: number;
-    width: number;
-    maxHeight: number;
-    placement: 'below' | 'above';
-  } | null>(null);
-  // Tracks whether `measureInputRow` has run at least once for the current open
-  // dropdown. Lets us tell "measurement pending" (use absolute fallback) apart
-  // from "measured but no usable space" (hide entirely).
-  const [measured, setMeasured] = useState(false);
-
-  const measureInputRow = useCallback(() => {
-    if (!IS_WEB || !inputRowRef.current) return;
-    inputRowRef.current.measureInWindow((x: number, y: number, width: number, height: number) => {
-      // visualViewport reflects the area NOT covered by the on-screen keyboard. Fall back to
-      // window.innerHeight on browsers without it (older Android, some embedded webviews).
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const vv: any = typeof window !== 'undefined' ? (window as any).visualViewport : null;
-      const winH = typeof window !== 'undefined' ? window.innerHeight : 800;
-      const vvHeight = vv?.height ?? winH;
-      const vvOffsetTop = vv?.offsetTop ?? 0;
-      // Detect keyboard-open: visualViewport shrinks substantially when iOS/Android show the
-      // soft keyboard. When open, iOS Safari ALSO adds a ~56px form accessory bar (the
-      // up/down/AutoFill pill) on top of the page that visualViewport does NOT subtract.
-      // We pad bottom space accordingly so the dropdown never lands behind that bar.
-      const keyboardOpen = winH - vvHeight > 100;
-      const TOP_PAD = 16;                     // breathing room from URL bar / status area
-      const BOTTOM_PAD = keyboardOpen ? 64 : 16; // covers iOS form accessory bar when keyboard up
-      const inputTopInVV = y - vvOffsetTop;
-      const inputBottomInVV = inputTopInVV + height;
-      const spaceBelow = vvHeight - inputBottomInVV - BOTTOM_PAD;
-      const spaceAbove = inputTopInVV - TOP_PAD;
-      const MIN_USABLE = 80; // below this, even one row + scroll handle can't fit cleanly
-      const MIN_BELOW = 96; // prefer below if at least ~2 rows fit
-      // True clamp — never let maxHeight exceed the actual visible space.
-      const heightBelow = Math.min(260, Math.max(0, spaceBelow));
-      const heightAbove = Math.min(260, Math.max(0, spaceAbove));
-      const useBelow = spaceBelow >= MIN_BELOW || spaceBelow >= spaceAbove;
-      if (useBelow && heightBelow >= MIN_USABLE) {
-        setFixedPos({
-          top: y + height,
-          left: x,
-          width,
-          maxHeight: heightBelow,
-          placement: 'below',
-        });
-      } else if (heightAbove >= MIN_USABLE) {
-        // Flip above: anchor the dropdown's BOTTOM just above the input.
-        const bottomFromTop = vvHeight + vvOffsetTop - y + 4;
-        setFixedPos({
-          bottom: bottomFromTop,
-          left: x,
-          width,
-          maxHeight: heightAbove,
-          placement: 'above',
-        });
-      } else {
-        // Viewport too cramped (split-screen, tiny landscape) — don't position the
-        // dropdown into a region that would be obscured. Hide until layout recovers.
-        setFixedPos(null);
-      }
-      setMeasured(true);
-    });
-  }, []);
 
   const doSearch = useCallback(async (q: string) => {
     if (q.length < 2) { setResults([]); setShowDropdown(false); return; }
@@ -192,49 +121,6 @@ export default function FuzzySearchInput({
 
   useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
 
-  // Re-measure aggressively while the dropdown is open. iOS Safari auto-scrolls
-  // the page after focus to bring the input into view; that shift fires neither
-  // visualViewport.resize nor (reliably) any scroll event in time, so the
-  // initial measurement points at the input's PRE-scroll location and the
-  // dropdown ends up far away. We use a short rAF loop to follow the input
-  // through that animation, then settle into pure event-driven re-measures.
-  useEffect(() => {
-    if (!showDropdown || !IS_WEB) {
-      setMeasured(false);
-      return;
-    }
-    measureInputRow();
-    let rafId: number | null = null;
-    const start = Date.now();
-    const tick = () => {
-      // Track for ~900ms after open — covers iOS scroll-into-view (~600ms).
-      if (Date.now() - start > 900) return;
-      measureInputRow();
-      rafId = typeof window !== 'undefined' ? window.requestAnimationFrame(tick) : null;
-    };
-    rafId = typeof window !== 'undefined' ? window.requestAnimationFrame(tick) : null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const vv: any = typeof window !== 'undefined' ? (window as any).visualViewport : null;
-    const onChange = () => measureInputRow();
-    vv?.addEventListener?.('resize', onChange);
-    vv?.addEventListener?.('scroll', onChange);
-    if (typeof window !== 'undefined') {
-      window.addEventListener('resize', onChange);
-      // Capture-phase scroll listener catches scrolls inside any nested container,
-      // so the dropdown follows the input even when the parent ScrollView moves.
-      window.addEventListener('scroll', onChange, true);
-    }
-    return () => {
-      if (rafId != null && typeof window !== 'undefined') window.cancelAnimationFrame(rafId);
-      vv?.removeEventListener?.('resize', onChange);
-      vv?.removeEventListener?.('scroll', onChange);
-      if (typeof window !== 'undefined') {
-        window.removeEventListener('resize', onChange);
-        window.removeEventListener('scroll', onChange, true);
-      }
-    };
-  }, [showDropdown, measureInputRow]);
-
   const handleSelectTeam = (item: TeamSearchResult) => {
     onChangeText(item.teamName); setShowDropdown(false); setResults([]); onSelectTeam?.(item);
   };
@@ -281,21 +167,30 @@ export default function FuzzySearchInput({
     </TouchableOpacity>
   );
 
-  const renderList = (maxH: number = 220) => {
-    if (searchType === 'teams') return (
-      <FlatList data={results as TeamSearchResult[]} keyExtractor={(_, i) => String(i)}
-        renderItem={renderTeamItem} keyboardShouldPersistTaps="always"
-        scrollEnabled style={{ maxHeight: maxH }} />
-    );
-    if (searchType === 'leagues') return (
-      <FlatList data={results as LeagueSearchResult[]} keyExtractor={(_, i) => String(i)}
-        renderItem={renderLeagueItem} keyboardShouldPersistTaps="always"
-        scrollEnabled style={{ maxHeight: maxH }} />
+  const renderList = () => {
+    // ScrollView (not FlatList) so the dropdown sits inline as a normal block
+    // element. iOS Safari's auto-scroll-into-view on focus then naturally keeps
+    // the input + dropdown visible together, with no viewport math required.
+    const items = (searchType === 'teams'
+      ? (results as TeamSearchResult[]).map((it, i) => (
+          <View key={i}>{renderTeamItem({ item: it })}</View>
+        ))
+      : searchType === 'leagues'
+      ? (results as LeagueSearchResult[]).map((it, i) => (
+          <View key={i}>{renderLeagueItem({ item: it })}</View>
+        ))
+      : (results as FuzzyPlayerResult[]).map((it, i) => (
+          <View key={i}>{renderPlayerItem({ item: it })}</View>
+        ))
     );
     return (
-      <FlatList data={results as FuzzyPlayerResult[]} keyExtractor={(_, i) => String(i)}
-        renderItem={renderPlayerItem} keyboardShouldPersistTaps="always"
-        scrollEnabled style={{ maxHeight: maxH }} />
+      <ScrollView
+        style={styles.dropdownScroll}
+        keyboardShouldPersistTaps="always"
+        nestedScrollEnabled
+      >
+        {items}
+      </ScrollView>
     );
   };
 
@@ -303,7 +198,7 @@ export default function FuzzySearchInput({
 
   return (
     <View style={[styles.container, style]}>
-      <View ref={inputRowRef} style={styles.inputRow}>
+      <View style={styles.inputRow}>
         <TextInput
           style={[styles.input, inputStyle, INPUT_STYLE]}
           value={value}
@@ -316,7 +211,6 @@ export default function FuzzySearchInput({
           returnKeyType={returnKeyType}
           onSubmitEditing={() => { setShowDropdown(false); onSubmitEditing?.(); }}
           onFocus={() => {
-            measureInputRow();
             if (value.length >= 2 && results.length > 0) setShowDropdown(true);
           }}
           onBlur={() => { setTimeout(() => setShowDropdown(false), 200); }}
@@ -329,34 +223,13 @@ export default function FuzzySearchInput({
         )}
       </View>
 
-      {/* Web: render with position:fixed so it escapes overflow:hidden/scroll parents */}
-      {IS_WEB && shouldShow && fixedPos && (
-        <View style={[styles.dropdownBase, {
-          position: 'fixed' as any,
-          left: fixedPos.left,
-          width: fixedPos.width,
-          maxHeight: fixedPos.maxHeight,
-          zIndex: 99999,
-          ...(fixedPos.placement === 'below'
-            ? { top: fixedPos.top }
-            : { bottom: fixedPos.bottom }),
-        }]}>
-          {renderList(fixedPos.maxHeight)}
-        </View>
-      )}
-
-      {/* Web fallback only while measurement is pending; if measurement returned
-          null (cramped viewport) we deliberately render nothing so the list never
-          lands in a region hidden by the keyboard or URL pill. */}
-      {IS_WEB && shouldShow && !fixedPos && !measured && (
-        <View style={[styles.dropdownBase, styles.dropdownAbsolute]}>
-          {renderList()}
-        </View>
-      )}
-
-      {/* Native: always absolute */}
-      {!IS_WEB && shouldShow && (
-        <View style={[styles.dropdownBase, styles.dropdownAbsolute]}>
+      {/* Inline dropdown, directly under the input — no fixed/absolute positioning.
+          On web, react-native-web's transform ancestors can break position:fixed,
+          and on mobile the keyboard makes absolute overlays a guessing game. By
+          living in normal layout flow, the dropdown is ALWAYS visually attached
+          to the input it belongs to, and the host ScrollView handles scrolling. */}
+      {shouldShow && (
+        <View style={styles.dropdownInline}>
           {renderList()}
         </View>
       )}
@@ -377,15 +250,16 @@ const styles = StyleSheet.create({
   },
   spinner: { marginLeft: 6 },
   clearBtn: { marginLeft: 4, padding: 2 },
-  dropdownBase: {
+  dropdownInline: {
+    marginTop: 6,
     backgroundColor: '#111', borderRadius: 8,
     borderWidth: 1, borderColor: '#2a2a2a',
     overflow: 'hidden',
     shadowColor: '#000', shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.6, shadowRadius: 8, elevation: 12,
   },
-  dropdownAbsolute: {
-    position: 'absolute', top: 44, left: 0, right: 0, zIndex: 200,
+  dropdownScroll: {
+    maxHeight: 240,
   },
   dropdownItem: {
     flexDirection: 'row', alignItems: 'center',
