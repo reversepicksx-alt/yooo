@@ -192,27 +192,46 @@ export default function FuzzySearchInput({
 
   useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
 
-  // Re-measure every time the dropdown becomes visible so coords stay accurate.
-  // Also listen to visualViewport resize/scroll so we react instantly when the
-  // iOS keyboard opens/closes or the Safari URL pill expands/collapses.
+  // Re-measure aggressively while the dropdown is open. iOS Safari auto-scrolls
+  // the page after focus to bring the input into view; that shift fires neither
+  // visualViewport.resize nor (reliably) any scroll event in time, so the
+  // initial measurement points at the input's PRE-scroll location and the
+  // dropdown ends up far away. We use a short rAF loop to follow the input
+  // through that animation, then settle into pure event-driven re-measures.
   useEffect(() => {
     if (!showDropdown || !IS_WEB) {
       setMeasured(false);
       return;
     }
     measureInputRow();
-    const t = setTimeout(measureInputRow, 300);
+    let rafId: number | null = null;
+    const start = Date.now();
+    const tick = () => {
+      // Track for ~900ms after open — covers iOS scroll-into-view (~600ms).
+      if (Date.now() - start > 900) return;
+      measureInputRow();
+      rafId = typeof window !== 'undefined' ? window.requestAnimationFrame(tick) : null;
+    };
+    rafId = typeof window !== 'undefined' ? window.requestAnimationFrame(tick) : null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const vv: any = typeof window !== 'undefined' ? (window as any).visualViewport : null;
     const onChange = () => measureInputRow();
     vv?.addEventListener?.('resize', onChange);
     vv?.addEventListener?.('scroll', onChange);
-    if (typeof window !== 'undefined') window.addEventListener('resize', onChange);
+    if (typeof window !== 'undefined') {
+      window.addEventListener('resize', onChange);
+      // Capture-phase scroll listener catches scrolls inside any nested container,
+      // so the dropdown follows the input even when the parent ScrollView moves.
+      window.addEventListener('scroll', onChange, true);
+    }
     return () => {
-      clearTimeout(t);
+      if (rafId != null && typeof window !== 'undefined') window.cancelAnimationFrame(rafId);
       vv?.removeEventListener?.('resize', onChange);
       vv?.removeEventListener?.('scroll', onChange);
-      if (typeof window !== 'undefined') window.removeEventListener('resize', onChange);
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('resize', onChange);
+        window.removeEventListener('scroll', onChange, true);
+      }
     };
   }, [showDropdown, measureInputRow]);
 
