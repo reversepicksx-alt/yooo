@@ -75,13 +75,54 @@ export default function FuzzySearchInput({
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastQueryRef = useRef('');
   const inputRowRef = useRef<View>(null);
-  // Web: fixed-position coords measured via measureInWindow
-  const [fixedPos, setFixedPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  // Web: fixed-position coords measured via measureInWindow + visual-viewport aware sizing.
+  // `placement: 'below'` opens under the input; 'above' flips it on top when the keyboard /
+  // iOS Safari URL pill leaves no usable room below. `maxHeight` is clamped to whatever the
+  // visible viewport can actually show so no list item ever lands under the keyboard or URL bar.
+  const [fixedPos, setFixedPos] = useState<{
+    top?: number;
+    bottom?: number;
+    left: number;
+    width: number;
+    maxHeight: number;
+    placement: 'below' | 'above';
+  } | null>(null);
 
   const measureInputRow = useCallback(() => {
     if (!IS_WEB || !inputRowRef.current) return;
     inputRowRef.current.measureInWindow((x: number, y: number, width: number, height: number) => {
-      setFixedPos({ top: y + height, left: x, width });
+      // visualViewport reflects the area NOT covered by the on-screen keyboard. Fall back to
+      // window.innerHeight on browsers without it (older Android, some embedded webviews).
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const vv: any = typeof window !== 'undefined' ? (window as any).visualViewport : null;
+      const vvHeight = vv?.height ?? (typeof window !== 'undefined' ? window.innerHeight : 800);
+      const vvOffsetTop = vv?.offsetTop ?? 0;
+      // iOS Safari floats a URL pill ~56px tall above the keyboard; leave headroom for it.
+      const URL_BAR_PAD = 72;
+      const inputTopInVV = y - vvOffsetTop;
+      const inputBottomInVV = inputTopInVV + height;
+      const spaceBelow = vvHeight - inputBottomInVV - URL_BAR_PAD;
+      const spaceAbove = inputTopInVV - URL_BAR_PAD;
+      const MIN_BELOW = 96; // need at least ~2 rows visible to bother opening downward
+      if (spaceBelow >= MIN_BELOW || spaceBelow >= spaceAbove) {
+        setFixedPos({
+          top: y + height,
+          left: x,
+          width,
+          maxHeight: Math.max(96, Math.min(260, spaceBelow)),
+          placement: 'below',
+        });
+      } else {
+        // Flip above: anchor the dropdown's BOTTOM just above the input.
+        const bottomFromTop = vvHeight + vvOffsetTop - y + 4;
+        setFixedPos({
+          bottom: bottomFromTop,
+          left: x,
+          width,
+          maxHeight: Math.max(96, Math.min(260, spaceAbove)),
+          placement: 'above',
+        });
+      }
     });
   }, []);
 
@@ -131,14 +172,25 @@ export default function FuzzySearchInput({
 
   useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
 
-  // Re-measure every time the dropdown becomes visible so coords stay accurate
+  // Re-measure every time the dropdown becomes visible so coords stay accurate.
+  // Also listen to visualViewport resize/scroll so we react instantly when the
+  // iOS keyboard opens/closes or the Safari URL pill expands/collapses.
   useEffect(() => {
-    if (showDropdown && IS_WEB) {
-      measureInputRow();
-      // Re-measure again after a short delay in case the keyboard shifted layout
-      const t = setTimeout(measureInputRow, 300);
-      return () => clearTimeout(t);
-    }
+    if (!showDropdown || !IS_WEB) return;
+    measureInputRow();
+    const t = setTimeout(measureInputRow, 300);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const vv: any = typeof window !== 'undefined' ? (window as any).visualViewport : null;
+    const onChange = () => measureInputRow();
+    vv?.addEventListener?.('resize', onChange);
+    vv?.addEventListener?.('scroll', onChange);
+    if (typeof window !== 'undefined') window.addEventListener('resize', onChange);
+    return () => {
+      clearTimeout(t);
+      vv?.removeEventListener?.('resize', onChange);
+      vv?.removeEventListener?.('scroll', onChange);
+      if (typeof window !== 'undefined') window.removeEventListener('resize', onChange);
+    };
   }, [showDropdown, measureInputRow]);
 
   const handleSelectTeam = (item: TeamSearchResult) => {
@@ -187,21 +239,21 @@ export default function FuzzySearchInput({
     </TouchableOpacity>
   );
 
-  const renderList = () => {
+  const renderList = (maxH: number = 220) => {
     if (searchType === 'teams') return (
       <FlatList data={results as TeamSearchResult[]} keyExtractor={(_, i) => String(i)}
         renderItem={renderTeamItem} keyboardShouldPersistTaps="always"
-        scrollEnabled={results.length > 4} style={{ maxHeight: 220 }} />
+        scrollEnabled style={{ maxHeight: maxH }} />
     );
     if (searchType === 'leagues') return (
       <FlatList data={results as LeagueSearchResult[]} keyExtractor={(_, i) => String(i)}
         renderItem={renderLeagueItem} keyboardShouldPersistTaps="always"
-        scrollEnabled={results.length > 4} style={{ maxHeight: 220 }} />
+        scrollEnabled style={{ maxHeight: maxH }} />
     );
     return (
       <FlatList data={results as FuzzyPlayerResult[]} keyExtractor={(_, i) => String(i)}
         renderItem={renderPlayerItem} keyboardShouldPersistTaps="always"
-        scrollEnabled={results.length > 4} style={{ maxHeight: 220 }} />
+        scrollEnabled style={{ maxHeight: maxH }} />
     );
   };
 
@@ -239,12 +291,15 @@ export default function FuzzySearchInput({
       {IS_WEB && shouldShow && fixedPos && (
         <View style={[styles.dropdownBase, {
           position: 'fixed' as any,
-          top: fixedPos.top,
           left: fixedPos.left,
           width: fixedPos.width,
+          maxHeight: fixedPos.maxHeight,
           zIndex: 99999,
+          ...(fixedPos.placement === 'below'
+            ? { top: fixedPos.top }
+            : { bottom: fixedPos.bottom }),
         }]}>
-          {renderList()}
+          {renderList(fixedPos.maxHeight)}
         </View>
       )}
 
