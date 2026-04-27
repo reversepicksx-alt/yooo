@@ -87,6 +87,10 @@ export default function FuzzySearchInput({
     maxHeight: number;
     placement: 'below' | 'above';
   } | null>(null);
+  // Tracks whether `measureInputRow` has run at least once for the current open
+  // dropdown. Lets us tell "measurement pending" (use absolute fallback) apart
+  // from "measured but no usable space" (hide entirely).
+  const [measured, setMeasured] = useState(false);
 
   const measureInputRow = useCallback(() => {
     if (!IS_WEB || !inputRowRef.current) return;
@@ -103,26 +107,36 @@ export default function FuzzySearchInput({
       const inputBottomInVV = inputTopInVV + height;
       const spaceBelow = vvHeight - inputBottomInVV - URL_BAR_PAD;
       const spaceAbove = inputTopInVV - URL_BAR_PAD;
-      const MIN_BELOW = 96; // need at least ~2 rows visible to bother opening downward
-      if (spaceBelow >= MIN_BELOW || spaceBelow >= spaceAbove) {
+      const MIN_USABLE = 80; // below this, even one row + scroll handle can't fit cleanly
+      const MIN_BELOW = 96; // prefer below if at least ~2 rows fit
+      // True clamp — never let maxHeight exceed the actual visible space.
+      const heightBelow = Math.min(260, Math.max(0, spaceBelow));
+      const heightAbove = Math.min(260, Math.max(0, spaceAbove));
+      const useBelow = spaceBelow >= MIN_BELOW || spaceBelow >= spaceAbove;
+      if (useBelow && heightBelow >= MIN_USABLE) {
         setFixedPos({
           top: y + height,
           left: x,
           width,
-          maxHeight: Math.max(96, Math.min(260, spaceBelow)),
+          maxHeight: heightBelow,
           placement: 'below',
         });
-      } else {
+      } else if (heightAbove >= MIN_USABLE) {
         // Flip above: anchor the dropdown's BOTTOM just above the input.
         const bottomFromTop = vvHeight + vvOffsetTop - y + 4;
         setFixedPos({
           bottom: bottomFromTop,
           left: x,
           width,
-          maxHeight: Math.max(96, Math.min(260, spaceAbove)),
+          maxHeight: heightAbove,
           placement: 'above',
         });
+      } else {
+        // Viewport too cramped (split-screen, tiny landscape) — don't position the
+        // dropdown into a region that would be obscured. Hide until layout recovers.
+        setFixedPos(null);
       }
+      setMeasured(true);
     });
   }, []);
 
@@ -176,7 +190,10 @@ export default function FuzzySearchInput({
   // Also listen to visualViewport resize/scroll so we react instantly when the
   // iOS keyboard opens/closes or the Safari URL pill expands/collapses.
   useEffect(() => {
-    if (!showDropdown || !IS_WEB) return;
+    if (!showDropdown || !IS_WEB) {
+      setMeasured(false);
+      return;
+    }
     measureInputRow();
     const t = setTimeout(measureInputRow, 300);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -303,8 +320,10 @@ export default function FuzzySearchInput({
         </View>
       )}
 
-      {/* Web fallback if measureInWindow hasn't fired yet: absolute positioning */}
-      {IS_WEB && shouldShow && !fixedPos && (
+      {/* Web fallback only while measurement is pending; if measurement returned
+          null (cramped viewport) we deliberately render nothing so the list never
+          lands in a region hidden by the keyboard or URL pill. */}
+      {IS_WEB && shouldShow && !fixedPos && !measured && (
         <View style={[styles.dropdownBase, styles.dropdownAbsolute]}>
           {renderList()}
         </View>
