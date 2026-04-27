@@ -2025,6 +2025,69 @@ async def predict(req: PredictionRequest):
                         f"only {len(_venue_logs)} {player_venue} logs — keeping combined {len(player_game_logs)}"
                     )
 
+            # ── LEAGUE-EMPIRICAL CALIBRATION lookup ──────────────────────
+            # Returns a small, well-shrunken multiplicative nudge on the
+            # posterior, derived from settled-pick history of this exact
+            # (league, position, prop, side) bucket.
+            _league_calib = None
+            try:
+                from league_priors import lookup as _league_lookup, ensure_loaded as _ensure_lp
+                # Make sure the cache is warm (no-op if already loaded recently)
+                await _ensure_lp(db)
+                # Recommendation is unknown until AFTER the engine runs, so we
+                # look up BOTH sides and pick the one that matches whichever
+                # side the prior currently favours. The engine then applies the
+                # multiplier; if the side flips later, the calibration still
+                # fits because (over) and (under) buckets are mirror images.
+                _crude_pred_side = "over" if (sum(g.get(_sfm.get(req.propType, "passes_total"), 0) or 0
+                                                  for g in _bayes_logs) / max(len(_bayes_logs), 1)) >= req.line else "under"
+                _league_calib = _league_lookup(
+                    league_id=req.leagueId or league_id,
+                    position=_bayes_position,
+                    prop_type=req.propType,
+                    recommendation=_crude_pred_side,
+                    posterior_mean=req.line,  # use line as scale baseline
+                )
+            except Exception as _lc_err:
+                print(f"[LEAGUE CALIB] lookup failed: {_lc_err}")
+
+            # ── GAME-SCRIPT extraction from Vegas odds (already fetched) ─
+            # We derive expected_total_goals + expected_goal_diff so the engine
+            # can apply chase-mode / nailbiter nudges (cheat-sheet patterns).
+            _game_script = None
+            try:
+                if match_odds and match_odds.get("bookmakerOdds"):
+                    _bo = match_odds["bookmakerOdds"]
+                    _home_odds = float(_bo.get("homeWin", 3.0))
+                    _away_odds = float(_bo.get("awayWin", 3.0))
+                    _draw_odds = float(_bo.get("draw", 3.5)) if _bo.get("draw") else 3.5
+                    # Implied probabilities (overround-normalised)
+                    _ph = 1.0 / _home_odds
+                    _pa = 1.0 / _away_odds
+                    _pd = 1.0 / _draw_odds
+                    _z = _ph + _pa + _pd
+                    if _z > 0:
+                        _ph /= _z; _pa /= _z; _pd /= _z
+                    # Approximate expected goal differential from win probs
+                    # (positive = home favoured, negative = away favoured)
+                    _expected_diff = (_ph - _pa) * 2.5  # scaling factor empirically reasonable
+                    # Total goals: prefer model's own estimate if present
+                    _expected_total = None
+                    try:
+                        _expected_total = float(prediction.get("game_tempo", {}).get("expectedTotalGoals")) if "prediction" in dir() else None
+                    except Exception:
+                        _expected_total = None
+                    if _expected_total is None:
+                        _expected_total = 2.6  # league-average fallback
+                    _game_script = {
+                        "expected_total_goals": _expected_total,
+                        "expected_goal_diff":   round(_expected_diff, 2),
+                        "implied_home":         round(_ph, 3),
+                        "implied_away":         round(_pa, 3),
+                    }
+            except Exception as _gs_err:
+                print(f"[GAME SCRIPT] extraction failed: {_gs_err}")
+
             early_bayes = compute_bayesian_projection(
                 game_logs=_bayes_logs,
                 prop_type=req.propType,
@@ -2037,6 +2100,8 @@ async def predict(req: PredictionRequest):
                 hyperprior_mean=_bayes_hyperprior,
                 expected_minutes=_exp_mins,
                 ai_press_intensity=ai_press_intensity,
+                league_calibration=_league_calib,
+                game_script=_game_script,
             )
             print(f"[BAYESIAN] {req.playerName}/{req.propType}: samples={early_bayes.get('priorSamples') if early_bayes else 0}, logs={len(_bayes_logs)} (venue={player_venue})")
 

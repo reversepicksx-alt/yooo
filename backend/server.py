@@ -99,6 +99,10 @@ async def seed_grants():
     asyncio.create_task(auto_settlement_loop())
     asyncio.create_task(auto_scout_loop())
     asyncio.create_task(pattern_mining_loop())
+    # League-aware empirical calibration: load on startup, refresh every 6h
+    from league_priors import ensure_loaded as ensure_league_priors_loaded
+    asyncio.create_task(ensure_league_priors_loaded(db))
+
     # Bulk player-stats prefetch — caches all players from recent fixtures so
     # predictions never hit "no data". Runs on startup then every 24h.
     from data_prefetch import data_prefetch_loop, backfill_fixture_metadata

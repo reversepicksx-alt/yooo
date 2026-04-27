@@ -152,6 +152,8 @@ def compute_bayesian_projection(
     hyperprior_mean: float = None,
     expected_minutes: float = 90.0,
     ai_press_intensity: dict = None,
+    league_calibration: dict = None,
+    game_script: dict = None,
 ) -> dict:
     """
     Compute a 3-layer Bayesian projection from raw game data.
@@ -735,6 +737,90 @@ def compute_bayesian_projection(
                   f"opp={press_label}(score={press_score}) — no directional adjustment for this combo")
 
     # ═══════════════════════════════════════════
+    # GAME-SCRIPT NUDGE (Vegas-derived chase / nailbiter signals)
+    # ═══════════════════════════════════════════
+    # Inspired by the cheat-sheet contextual breakdown:
+    #   * Home CDM OVER passes hits 100% when their team LOSES (chase mode).
+    #   * Away GK UNDER passes hits 80% in 0–1 goal games, but only 29%
+    #     in 4+ goal goal-fests.
+    #   * Home GK UNDER passes hits 100% in blowouts/draws but only 53%
+    #     in 1-goal nailbiters — i.e. close games are coin flips.
+    #
+    # We accept a `game_script` dict with two optional keys:
+    #   expected_total_goals : float (Vegas line for game total)
+    #   expected_goal_diff   : float (positive = home favoured, negative = away favoured)
+    #
+    # The nudge is small (cap ±5%) and only fires when the script signal
+    # aligns with the position/prop pattern. Always informative, never
+    # the dominant signal.
+    # ═══════════════════════════════════════════
+    game_script_info = {"applied": False, "multiplier": 1.0, "reason": ""}
+    if game_script and isinstance(game_script, dict):
+        expected_total = game_script.get("expected_total_goals")
+        expected_diff = game_script.get("expected_goal_diff")
+        gs_mult = 1.0
+        gs_reason = []
+        _pos_upper = (position or "").upper()
+        # Home CDM OVER passes — chase-mode boost when team is underdog
+        if (prop_type in {"pass_attempts", "passes"} and venue == "home"
+                and _pos_upper in {"CDM", "DM", "DMF"}
+                and expected_diff is not None and expected_diff < -0.5):
+            chase_boost = min(0.05, abs(expected_diff) * 0.025)
+            gs_mult *= (1.0 + chase_boost)
+            gs_reason.append(f"home CDM chase-mode boost +{chase_boost*100:.1f}% (diff={expected_diff:.1f})")
+        # Away GK UNDER passes — high-scoring game suppression (boost projection up)
+        if (prop_type in {"pass_attempts", "passes"} and venue == "away" and _is_gk
+                and expected_total is not None and expected_total >= 3.0):
+            highscore_boost = min(0.05, (expected_total - 2.5) * 0.025)
+            gs_mult *= (1.0 + highscore_boost)
+            gs_reason.append(f"away GK high-scoring boost +{highscore_boost*100:.1f}% (total={expected_total:.1f})")
+        # Defenders UNDER passes (away) — extra confidence cut in low-scoring games
+        # i.e. push projection lower so the UNDER stays UNDER
+        if (prop_type in {"pass_attempts", "passes"} and venue == "away"
+                and _pos_upper in {"CB", "LB", "RB", "LCB", "RCB"}
+                and expected_total is not None and expected_total <= 2.0):
+            lowscore_cut = min(0.04, (2.5 - expected_total) * 0.02)
+            gs_mult *= (1.0 - lowscore_cut)
+            gs_reason.append(f"away DEF low-scoring cut -{lowscore_cut*100:.1f}% (total={expected_total:.1f})")
+        if gs_mult != 1.0:
+            raw_before_gs = posterior_mean
+            posterior_mean = round(posterior_mean * gs_mult, 1)
+            game_script_info = {"applied": True,
+                                "multiplier": round(gs_mult, 4),
+                                "reason": "; ".join(gs_reason)}
+            print(f"[GAME SCRIPT] {prop_type} pos={_pos_upper} venue={venue} "
+                  f"mult={gs_mult:.3f} {raw_before_gs} → {posterior_mean} ({'; '.join(gs_reason)})")
+
+    # ═══════════════════════════════════════════
+    # LEAGUE-EMPIRICAL CALIBRATION (post-posterior nudge)
+    # ═══════════════════════════════════════════
+    # `league_calibration` is a small dict produced by league_priors.py:
+    #   { "multiplier": 1.0±0.06, "bias": float, "hit_rate": 0.0-1.0,
+    #     "n": sample_size, "direction": "boost"|"cut"|"neutral", "found": bool }
+    # When the bucket has enough settled picks, this captures the
+    # systematic over/under-projection bias the engine displays for
+    # this exact (league, position, prop, side) combo.
+    # ═══════════════════════════════════════════
+    league_calib_info = {"applied": False, "multiplier": 1.0, "n": 0,
+                         "hit_rate": None, "bias": 0.0}
+    if league_calibration and isinstance(league_calibration, dict) and league_calibration.get("found"):
+        lmult = float(league_calibration.get("multiplier", 1.0))
+        if abs(lmult - 1.0) > 0.001:
+            raw_before_lc = posterior_mean
+            posterior_mean = round(posterior_mean * lmult, 1)
+            print(f"[LEAGUE CALIB] {prop_type} {position} {venue}: n={league_calibration.get('n')}, "
+                  f"hit={league_calibration.get('hit_rate')}, bias={league_calibration.get('bias')}, "
+                  f"mult={lmult:.4f} {raw_before_lc} → {posterior_mean}")
+        league_calib_info = {
+            "applied":  True,
+            "multiplier": round(lmult, 4),
+            "n":        int(league_calibration.get("n", 0)),
+            "hit_rate": league_calibration.get("hit_rate"),
+            "bias":     league_calibration.get("bias", 0.0),
+            "direction": league_calibration.get("direction", "neutral"),
+        }
+
+    # ═══════════════════════════════════════════
     # REVERSAL FLAG — Mean Reversion Detection
     # ═══════════════════════════════════════════
     if prior_std > 0 and abs(momentum_mean - prior_mean) > 1.5 * prior_std:
@@ -784,6 +870,20 @@ def compute_bayesian_projection(
 
     # Edge = how far DENORMALISED posterior is from line as % of denormalised std
     edge_z = round(abs(_posterior_mean_raw - line) / _effective_std_raw, 2) if _effective_std_raw > 0 else 0
+
+    # Projection-vs-line gap (raw + relative). Surfaced so the UI can show
+    # "deep edge" / "razor thin" labels — picks with |edgeGapPct| >= 15%
+    # historically convert at much higher rates than thin-edge picks.
+    edge_gap_abs = round(_posterior_mean_raw - line, 2)
+    edge_gap_pct = round((edge_gap_abs / line) * 100, 1) if line and line > 0 else 0.0
+    if abs(edge_gap_pct) >= 20:
+        edge_gap_band = "DEEP"
+    elif abs(edge_gap_pct) >= 10:
+        edge_gap_band = "STRONG"
+    elif abs(edge_gap_pct) >= 5:
+        edge_gap_band = "MODERATE"
+    else:
+        edge_gap_band = "THIN"
 
     # Layer weights (for transparency)
     w_prior = round(prior_precision / total_precision * 100)
@@ -843,6 +943,17 @@ def compute_bayesian_projection(
         "pressIntensity": press_intensity_info,
         "expectedMinutes": round(_exp_min, 0),
         "isCountStat": is_count_stat,
+
+        # New: edge-gap surfacing for the UI
+        "edgeGapAbs": edge_gap_abs,
+        "edgeGapPct": edge_gap_pct,
+        "edgeGapBand": edge_gap_band,
+
+        # New: empirical league calibration applied (post-posterior)
+        "leagueCalibration": league_calib_info,
+
+        # New: game-script nudge applied (chase mode / nailbiter avoidance)
+        "gameScript": game_script_info,
     }
 
 
