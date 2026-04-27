@@ -99,14 +99,20 @@ export default function FuzzySearchInput({
       // window.innerHeight on browsers without it (older Android, some embedded webviews).
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const vv: any = typeof window !== 'undefined' ? (window as any).visualViewport : null;
-      const vvHeight = vv?.height ?? (typeof window !== 'undefined' ? window.innerHeight : 800);
+      const winH = typeof window !== 'undefined' ? window.innerHeight : 800;
+      const vvHeight = vv?.height ?? winH;
       const vvOffsetTop = vv?.offsetTop ?? 0;
-      // iOS Safari floats a URL pill ~56px tall above the keyboard; leave headroom for it.
-      const URL_BAR_PAD = 72;
+      // Detect keyboard-open: visualViewport shrinks substantially when iOS/Android show the
+      // soft keyboard. When open, iOS Safari ALSO adds a ~56px form accessory bar (the
+      // up/down/AutoFill pill) on top of the page that visualViewport does NOT subtract.
+      // We pad bottom space accordingly so the dropdown never lands behind that bar.
+      const keyboardOpen = winH - vvHeight > 100;
+      const TOP_PAD = 16;                     // breathing room from URL bar / status area
+      const BOTTOM_PAD = keyboardOpen ? 64 : 16; // covers iOS form accessory bar when keyboard up
       const inputTopInVV = y - vvOffsetTop;
       const inputBottomInVV = inputTopInVV + height;
-      const spaceBelow = vvHeight - inputBottomInVV - URL_BAR_PAD;
-      const spaceAbove = inputTopInVV - URL_BAR_PAD;
+      const spaceBelow = vvHeight - inputBottomInVV - BOTTOM_PAD;
+      const spaceAbove = inputTopInVV - TOP_PAD;
       const MIN_USABLE = 80; // below this, even one row + scroll handle can't fit cleanly
       const MIN_BELOW = 96; // prefer below if at least ~2 rows fit
       // True clamp — never let maxHeight exceed the actual visible space.
