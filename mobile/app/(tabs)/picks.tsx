@@ -546,6 +546,46 @@ export default function PicksScreen() {
             )}
           </View>
 
+          {/* Edge-gap pill row — surfaces how far projection sits from the line
+              and whether league calibration / game-script informed the call. */}
+          {(() => {
+            const bm: any = (analysisModal?.data as any)?.bayesianMetrics ?? {};
+            const gapPct = bm.edgeGapPct;
+            const gapBand = bm.edgeGapBand;
+            const lcal = bm.leagueCalibration;
+            const gs = bm.gameScript;
+            if (gapPct == null && !lcal?.applied && !gs?.applied) return null;
+            const bandColor = gapBand === 'DEEP' ? Colors.success
+              : gapBand === 'STRONG' ? Colors.success
+              : gapBand === 'MODERATE' ? Colors.primary
+              : Colors.textSecondary;
+            return (
+              <View style={mStyles.modalEdgeRow}>
+                {gapPct != null && (
+                  <View style={[mStyles.edgePill, { borderColor: bandColor }]}>
+                    <Text style={[mStyles.edgePillText, { color: bandColor }]}>
+                      {gapBand ?? 'EDGE'} · {gapPct > 0 ? '+' : ''}{Number(gapPct).toFixed(1)}%
+                    </Text>
+                  </View>
+                )}
+                {lcal?.applied && lcal?.n > 0 && (
+                  <View style={[mStyles.edgePill, { borderColor: Colors.borderSubtle }]}>
+                    <Text style={[mStyles.edgePillText, { color: Colors.textSecondary }]}>
+                      League calib · n={lcal.n} · {Math.round((lcal.hit_rate ?? 0) * 100)}% hit
+                    </Text>
+                  </View>
+                )}
+                {gs?.applied && (
+                  <View style={[mStyles.edgePill, { borderColor: Colors.borderSubtle }]}>
+                    <Text style={[mStyles.edgePillText, { color: Colors.textSecondary }]}>
+                      Game-script · ×{Number(gs.multiplier).toFixed(3)}
+                    </Text>
+                  </View>
+                )}
+              </View>
+            );
+          })()}
+
           <View style={mStyles.modalDivider} />
 
           {/* Body */}
@@ -606,6 +646,16 @@ const mStyles = StyleSheet.create({
   },
   modalPropText: { fontSize: 13, color: Colors.textSecondary },
   modalProjText: { fontSize: 14, fontWeight: '700' },
+  modalEdgeRow: {
+    flexDirection: 'row', flexWrap: 'wrap', gap: 6,
+    paddingHorizontal: 18, paddingTop: 4, paddingBottom: 8,
+  },
+  edgePill: {
+    paddingHorizontal: 8, paddingVertical: 3,
+    borderRadius: 6, borderWidth: 1,
+    backgroundColor: Colors.cardSecondary,
+  },
+  edgePillText: { fontSize: 11, fontWeight: '700', letterSpacing: 0.3 },
   modalDivider: { height: 1, backgroundColor: Colors.borderSubtle },
   modalScroll: { flex: 0 },
   modalScrollContent: { padding: 18, paddingBottom: 40 },

@@ -82,7 +82,7 @@ async def run_prediction(client: httpx.AsyncClient, pick: dict) -> dict:
         "venue":        pick.get("venue") or "home",
     }
     try:
-        r = await client.post(f"{API_URL}/api/predict", json=payload, timeout=90)
+        r = await client.post(f"{API_URL}/api/predict", json=payload, timeout=110)
         if r.status_code == 200:
             return r.json()
         return {"error": f"HTTP {r.status_code}: {r.text[:300]}"}
@@ -92,9 +92,14 @@ async def run_prediction(client: httpx.AsyncClient, pick: dict) -> dict:
 
 def _hit(rec: str, line: float, actual: float) -> bool:
     if actual is None: return False
+    rec = (rec or "").lower()
     if rec == "over":  return actual > line
     if rec == "under": return actual < line
     return False
+
+
+def _norm(rec: str) -> str:
+    return (rec or "").lower().strip()
 
 
 async def main():
@@ -108,11 +113,15 @@ async def main():
         print("No missed picks found in Mongo. Aborting.")
         return
 
-    print(f"\nPulled {len(candidates)} candidate missed picks. Running through engine...\n")
+    print(f"\nPulled {len(candidates)} candidate missed picks. Running them THROUGH IN PARALLEL...\n")
 
     results = []
     async with httpx.AsyncClient() as client:
-        for i, pick in enumerate(candidates, 1):
+        # Fire all predict calls concurrently — backend handles them in parallel
+        tasks = [run_prediction(client, p) for p in candidates]
+        responses = await asyncio.gather(*tasks)
+
+        for i, (pick, res) in enumerate(zip(candidates, responses), 1):
             name = pick.get("playerName") or "?"
             pos  = pick.get("position") or "?"
             ven  = pick.get("venue") or "?"
@@ -124,8 +133,6 @@ async def main():
 
             print(f"[{i}/{len(candidates)}] {name} ({pos}, {ven}) — league {league}")
             print(f"          OLD: {old_rec.upper()} {line} → projected {old_proj}, actual {actual} → MISS")
-
-            res = await run_prediction(client, pick)
             if "error" in res:
                 print(f"          ENGINE ERROR: {res['error'][:150]}")
                 results.append({"pick": pick, "error": res["error"]})
@@ -141,7 +148,7 @@ async def main():
             lcal      = bayes.get("leagueCalibration", {}) or {}
             gscript   = bayes.get("gameScript", {}) or {}
 
-            flipped  = new_rec != old_rec
+            flipped  = _norm(new_rec) != _norm(old_rec)
             would_hit = _hit(new_rec, line, actual)
 
             print(f"          NEW: {new_rec.upper()} {line} → projected {new_proj}, conf {new_conf}%")

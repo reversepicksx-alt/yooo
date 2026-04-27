@@ -794,30 +794,41 @@ def compute_bayesian_projection(
     # ═══════════════════════════════════════════
     # LEAGUE-EMPIRICAL CALIBRATION (post-posterior nudge)
     # ═══════════════════════════════════════════
-    # `league_calibration` is a small dict produced by league_priors.py:
-    #   { "multiplier": 1.0±0.06, "bias": float, "hit_rate": 0.0-1.0,
-    #     "n": sample_size, "direction": "boost"|"cut"|"neutral", "found": bool }
-    # When the bucket has enough settled picks, this captures the
-    # systematic over/under-projection bias the engine displays for
-    # this exact (league, position, prop, side) combo.
+    # `league_calibration` may be either:
+    #   * a dict with `found` (single side, legacy form), OR
+    #   * a dict {"over": <bucket>, "under": <bucket>} so we can pick the
+    #     correct bucket *after* the posterior tells us which side we'll
+    #     recommend. The OVER and UNDER buckets are independently
+    #     estimated from settled picks, so we MUST apply the side that
+    #     matches the eventual recommendation (otherwise we apply a
+    #     bucket that measures a different population).
     # ═══════════════════════════════════════════
     league_calib_info = {"applied": False, "multiplier": 1.0, "n": 0,
                          "hit_rate": None, "bias": 0.0}
-    if league_calibration and isinstance(league_calibration, dict) and league_calibration.get("found"):
-        lmult = float(league_calibration.get("multiplier", 1.0))
+    _selected_calib = None
+    if league_calibration and isinstance(league_calibration, dict):
+        if "over" in league_calibration or "under" in league_calibration:
+            # Two-sided form — choose bucket matching what we'd recommend now
+            _post_side = "over" if posterior_mean >= line else "under"
+            _selected_calib = league_calibration.get(_post_side)
+        elif league_calibration.get("found"):
+            _selected_calib = league_calibration
+
+    if _selected_calib and _selected_calib.get("found"):
+        lmult = float(_selected_calib.get("multiplier", 1.0))
         if abs(lmult - 1.0) > 0.001:
             raw_before_lc = posterior_mean
             posterior_mean = round(posterior_mean * lmult, 1)
-            print(f"[LEAGUE CALIB] {prop_type} {position} {venue}: n={league_calibration.get('n')}, "
-                  f"hit={league_calibration.get('hit_rate')}, bias={league_calibration.get('bias')}, "
+            print(f"[LEAGUE CALIB] {prop_type} {position} {venue}: n={_selected_calib.get('n')}, "
+                  f"hit={_selected_calib.get('hit_rate')}, bias={_selected_calib.get('bias')}, "
                   f"mult={lmult:.4f} {raw_before_lc} → {posterior_mean}")
         league_calib_info = {
             "applied":  True,
             "multiplier": round(lmult, 4),
-            "n":        int(league_calibration.get("n", 0)),
-            "hit_rate": league_calibration.get("hit_rate"),
-            "bias":     league_calibration.get("bias", 0.0),
-            "direction": league_calibration.get("direction", "neutral"),
+            "n":        int(_selected_calib.get("n", 0)),
+            "hit_rate": _selected_calib.get("hit_rate"),
+            "bias":     _selected_calib.get("bias", 0.0),
+            "direction": _selected_calib.get("direction", "neutral"),
         }
 
     # ═══════════════════════════════════════════

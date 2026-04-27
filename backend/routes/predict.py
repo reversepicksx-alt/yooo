@@ -2034,20 +2034,25 @@ async def predict(req: PredictionRequest):
                 from league_priors import lookup as _league_lookup, ensure_loaded as _ensure_lp
                 # Make sure the cache is warm (no-op if already loaded recently)
                 await _ensure_lp(db)
-                # Recommendation is unknown until AFTER the engine runs, so we
-                # look up BOTH sides and pick the one that matches whichever
-                # side the prior currently favours. The engine then applies the
-                # multiplier; if the side flips later, the calibration still
-                # fits because (over) and (under) buckets are mirror images.
-                _crude_pred_side = "over" if (sum(g.get(_sfm.get(req.propType, "passes_total"), 0) or 0
-                                                  for g in _bayes_logs) / max(len(_bayes_logs), 1)) >= req.line else "under"
-                _league_calib = _league_lookup(
-                    league_id=req.leagueId or league_id,
-                    position=_bayes_position,
-                    prop_type=req.propType,
-                    recommendation=_crude_pred_side,
-                    posterior_mean=req.line,  # use line as scale baseline
-                )
+                # Pass BOTH sides of the bucket — over/under are independently
+                # estimated populations, so we let the engine pick the bucket
+                # that matches the side we end up recommending.
+                _league_calib = {
+                    "over":  _league_lookup(
+                        league_id=req.leagueId or league_id,
+                        position=_bayes_position,
+                        prop_type=req.propType,
+                        recommendation="over",
+                        posterior_mean=req.line,
+                    ),
+                    "under": _league_lookup(
+                        league_id=req.leagueId or league_id,
+                        position=_bayes_position,
+                        prop_type=req.propType,
+                        recommendation="under",
+                        posterior_mean=req.line,
+                    ),
+                }
             except Exception as _lc_err:
                 print(f"[LEAGUE CALIB] lookup failed: {_lc_err}")
 
@@ -2071,10 +2076,15 @@ async def predict(req: PredictionRequest):
                     # Approximate expected goal differential from win probs
                     # (positive = home favoured, negative = away favoured)
                     _expected_diff = (_ph - _pa) * 2.5  # scaling factor empirically reasonable
-                    # Total goals: prefer model's own estimate if present
+                    # Total goals: prefer the engine's own pre-computed estimate
+                    # (set on `game_tempo` ~line 1754) when it's available,
+                    # otherwise fall back to a global 2.6 league average.
                     _expected_total = None
                     try:
-                        _expected_total = float(prediction.get("game_tempo", {}).get("expectedTotalGoals")) if "prediction" in dir() else None
+                        _gt_local = locals().get("game_tempo") or {}
+                        _expected_total = _gt_local.get("expectedTotalGoals")
+                        if _expected_total is not None:
+                            _expected_total = float(_expected_total)
                     except Exception:
                         _expected_total = None
                     if _expected_total is None:
@@ -5223,6 +5233,32 @@ Analyze ALL data thoroughly. Return JSON only."""
         if gk_formula_data:
             prediction["gkFormula"] = gk_formula_data
         # positionComparison removed — not shown in UI
+
+        # ── FINAL EDGE-GAP RECOMPUTE ─────────────────────────────────────
+        # The engine computes edgeGap from its own posterior, but several
+        # post-engine guards (dominance, consistency, GK risk) can still
+        # mutate `prediction["projectedValue"]`. Refresh the surfaced
+        # gap/band so the UI pills always reflect the FINAL projection.
+        try:
+            _final_pv = prediction.get("projectedValue")
+            _final_line = prediction.get("line") or req.line
+            if _final_pv is not None and _final_line and _final_line > 0:
+                _gap_abs = round(float(_final_pv) - float(_final_line), 2)
+                _gap_pct = round((_gap_abs / float(_final_line)) * 100, 1)
+                if abs(_gap_pct) >= 20:
+                    _band = "DEEP"
+                elif abs(_gap_pct) >= 10:
+                    _band = "STRONG"
+                elif abs(_gap_pct) >= 5:
+                    _band = "MODERATE"
+                else:
+                    _band = "THIN"
+                bm = prediction.setdefault("bayesianMetrics", {})
+                bm["edgeGapAbs"]  = _gap_abs
+                bm["edgeGapPct"]  = _gap_pct
+                bm["edgeGapBand"] = _band
+        except Exception as _eg_err:
+            print(f"[EDGE GAP RECOMPUTE] failed: {_eg_err}")
 
         await db.predictions.insert_one(prediction)
         prediction.pop("_id", None)
