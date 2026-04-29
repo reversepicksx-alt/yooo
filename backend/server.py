@@ -103,6 +103,10 @@ async def seed_grants():
     from league_priors import ensure_loaded as ensure_league_priors_loaded
     asyncio.create_task(ensure_league_priors_loaded(db))
 
+    # Self-updating cheat sheet — re-renders attached_assets/cheat_sheet_2_1.png
+    # from settled picks every few hours so it never goes stale.
+    asyncio.create_task(_cheat_sheet_loop())
+
     # Bulk player-stats prefetch — caches all players from recent fixtures so
     # predictions never hit "no data". Runs on startup then every 24h.
     from data_prefetch import data_prefetch_loop, backfill_fixture_metadata
@@ -114,6 +118,25 @@ async def seed_grants():
     # admin endpoints but don't auto-run.
     # from calibration import nightly_calibration_loop
     # asyncio.create_task(nightly_calibration_loop())
+
+
+async def _cheat_sheet_loop():
+    """Periodically re-render attached_assets/cheat_sheet_2_1.png from settled
+    picks so the marketing/intel asset stays in sync with the live data without
+    manual `python scripts/build_cheat_sheet.py` runs."""
+    import asyncio
+    # Wait a bit so seed_cache / settle loops have a chance to populate first.
+    await asyncio.sleep(60)
+    INTERVAL_SECS = 6 * 3600  # every 6 hours, matches scenario_priors refresh cadence
+    while True:
+        try:
+            from scripts.build_cheat_sheet import render_cheat_sheet
+            result = await render_cheat_sheet(db=db)
+            print(f"[CHEAT SHEET] Re-rendered: {result.get('total_picks', 0)} picks "
+                  f"→ {result.get('path')}")
+        except Exception as e:
+            print(f"[CHEAT SHEET] Render failed: {e}")
+        await asyncio.sleep(INTERVAL_SECS)
 
 
 async def _auto_backfill_positions():

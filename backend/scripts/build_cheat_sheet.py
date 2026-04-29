@@ -1,6 +1,11 @@
 """
 Generate ReversePicks Cheat Sheet 2.1 image from live settled-pick data.
-Run:  cd backend && python scripts/build_cheat_sheet.py
+
+Two ways to run it:
+  1. Standalone CLI:  cd backend && python scripts/build_cheat_sheet.py
+  2. In-process from the FastAPI server (see cheat_sheet_loop in server.py),
+     which calls render_cheat_sheet(db) on the live Motor connection.
+
 Outputs: attached_assets/cheat_sheet_2_1.png
 """
 import asyncio
@@ -11,6 +16,11 @@ from PIL import Image, ImageDraw, ImageFont
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from motor.motor_asyncio import AsyncIOMotorClient
+
+OUTPUT_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    'attached_assets', 'cheat_sheet_2_1.png',
+)
 
 POS_BUCKET = {
     'GK': 'GK',
@@ -56,12 +66,18 @@ def f(size, bold=False, mono=False):
     return ImageFont.truetype(path, size)
 
 
-async def gather_stats():
-    cli = AsyncIOMotorClient(os.environ['MONGO_URL'])
-    db = cli[os.environ['DB_NAME']]
-    rows = []
-    async for d in db.picks.find({'status': 'settled', 'result': {'$in': ['hit', 'miss']}}):
-        rows.append(d)
+async def gather_stats(db=None):
+    cli = None
+    if db is None:
+        cli = AsyncIOMotorClient(os.environ['MONGO_URL'])
+        db = cli[os.environ['DB_NAME']]
+    try:
+        rows = []
+        async for d in db.picks.find({'status': 'settled', 'result': {'$in': ['hit', 'miss']}}):
+            rows.append(d)
+    finally:
+        if cli is not None:
+            cli.close()
     bucket = defaultdict(lambda: [0, 0])
     league_bucket = defaultdict(lambda: [0, 0])
     for d in rows:
@@ -121,8 +137,18 @@ def draw_play(draw, x, y, w, label, hits, n, sub_lines, accent=GREEN):
         yy += 17
 
 
-def main():
-    rows, bucket, league_bucket = asyncio.run(gather_stats())
+async def render_cheat_sheet(db=None, output_path=None):
+    """Render the cheat-sheet PNG from settled-pick data.
+
+    Args:
+        db: optional Motor AsyncIOMotorDatabase. If None, builds its own
+            client from MONGO_URL/DB_NAME (CLI use).
+        output_path: optional override for the PNG output path.
+
+    Returns:
+        dict with {'path', 'total_picks', 'bytes'} on success.
+    """
+    rows, bucket, league_bucket = await gather_stats(db=db)
     total_picks = len(rows)
 
     W, H = 1280, 1600
@@ -281,10 +307,24 @@ def main():
               fill=GREEN_DIM, font=f(12, bold=True))
     draw.text((W - 200, H - 25), '© REVERSEPICKS', fill=GREEN_DIM, font=f(12, bold=True))
 
-    out_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-                            'attached_assets', 'cheat_sheet_2_1.png')
-    img.save(out_path, 'PNG')
-    print(f'Wrote: {out_path}')
+    out_path = output_path or OUTPUT_PATH
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    # Atomic write: render to temp file then rename so a concurrent reader
+    # never sees a half-written PNG.
+    tmp_path = out_path + '.tmp'
+    img.save(tmp_path, 'PNG')
+    os.replace(tmp_path, out_path)
+    try:
+        size = os.path.getsize(out_path)
+    except OSError:
+        size = 0
+    print(f'Wrote: {out_path} ({size} bytes, {total_picks} settled picks)')
+    return {'path': out_path, 'total_picks': total_picks, 'bytes': size}
+
+
+def main():
+    """CLI entrypoint — runs its own event loop."""
+    return asyncio.run(render_cheat_sheet())
 
 
 if __name__ == '__main__':
