@@ -154,6 +154,8 @@ def compute_bayesian_projection(
     ai_press_intensity: dict = None,
     league_calibration: dict = None,
     game_script: dict = None,
+    scenario_priors_result: dict = None,
+    scenario_priors_mode: str = "off",
 ) -> dict:
     """
     Compute a 3-layer Bayesian projection from raw game data.
@@ -832,6 +834,43 @@ def compute_bayesian_projection(
         }
 
     # ═══════════════════════════════════════════
+    # SCENARIO PRIORS (cheat-sheet, scenario-conditional)
+    # ═══════════════════════════════════════════
+    # `scenario_priors_result` arrives pre-computed by the caller as
+    # Σ P(scenario_i) × scenario_priors.lookup(scenario_i, ...).
+    # We apply it as a final small multiplicative nudge that lives
+    # alongside league_calibration but is conditioned on the predicted
+    # game script (draw / blowout / low-scoring / etc.) instead of the
+    # league. Two operating modes:
+    #   * "off"    : no-op (legacy behaviour)
+    #   * "shadow" : compute & log only — multiplier NOT applied
+    #   * "live"   : compute, log, AND apply
+    # Default is "off" so any caller that doesn't pass scenario_priors_mode
+    # behaves exactly as before.
+    scenario_priors_info = {"applied": False, "multiplier": 1.0,
+                            "mode": scenario_priors_mode, "components": []}
+    if (scenario_priors_result and isinstance(scenario_priors_result, dict)
+            and scenario_priors_result.get("found")
+            and scenario_priors_mode in {"shadow", "live"}):
+        sp_mult = float(scenario_priors_result.get("multiplier", 1.0))
+        scenario_priors_info["multiplier"] = round(sp_mult, 4)
+        scenario_priors_info["components"] = scenario_priors_result.get("components", [])
+        scenario_priors_info["coverage"]   = scenario_priors_result.get("coverage")
+        scenario_priors_info["direction"]  = scenario_priors_result.get("direction", "neutral")
+        scenario_priors_info["n"]          = scenario_priors_result.get("n", 0)
+        if scenario_priors_mode == "live" and abs(sp_mult - 1.0) > 0.001:
+            raw_before_sp = posterior_mean
+            posterior_mean = round(posterior_mean * sp_mult, 1)
+            scenario_priors_info["applied"] = True
+            print(f"[SCENARIO PRIORS LIVE] {prop_type} {position} {venue}: "
+                  f"mult={sp_mult:.4f} {raw_before_sp} → {posterior_mean} "
+                  f"(coverage={scenario_priors_info['coverage']}, n={scenario_priors_info['n']})")
+        else:
+            print(f"[SCENARIO PRIORS SHADOW] {prop_type} {position} {venue}: "
+                  f"would_mult={sp_mult:.4f} (coverage={scenario_priors_info.get('coverage')}, "
+                  f"n={scenario_priors_info['n']}, components={len(scenario_priors_info['components'])})")
+
+    # ═══════════════════════════════════════════
     # REVERSAL FLAG — Mean Reversion Detection
     # ═══════════════════════════════════════════
     if prior_std > 0 and abs(momentum_mean - prior_mean) > 1.5 * prior_std:
@@ -965,6 +1004,11 @@ def compute_bayesian_projection(
 
         # New: game-script nudge applied (chase mode / nailbiter avoidance)
         "gameScript": game_script_info,
+
+        # Scenario-aware priors (cheat-sheet conditional on predicted game script)
+        # Always emitted so shadow-mode logs and admin inspector can see what
+        # the layer would have / did do.
+        "scenarioPriors": scenario_priors_info,
     }
 
 

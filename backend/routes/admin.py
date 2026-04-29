@@ -303,3 +303,32 @@ async def list_grants(req: AdminSettingsRequest):
     await verify_owner(req.email, req.token)
     grants = await db.manual_access_grants.find({}, {"_id": 0}).sort("grantedAt", -1).to_list(None)
     return {"grants": grants}
+
+
+class _ScenarioPriorsRequest(BaseModel):
+    email: str
+    token: str
+
+
+@router.post("/scenario-priors")
+async def scenario_priors_inspector(req: _ScenarioPriorsRequest):
+    """Inspect the scenario_priors cache (owner only).
+
+    Returns the loaded buckets, sample sizes, hit rates, and bias for
+    every (scenario × position × prop × side) cell that has crossed the
+    minimum sample threshold.
+    """
+    await verify_owner(req.email, req.token)
+    from scenario_priors import ensure_loaded as _ensure_scen, stats as _scen_stats
+    await _ensure_scen(db)
+    return {"mode": os.environ.get("SCENARIO_PRIORS_MODE", "shadow"),
+            **_scen_stats()}
+
+
+@router.post("/scenario-priors/refresh")
+async def scenario_priors_refresh(req: _ScenarioPriorsRequest):
+    """Force-refresh the scenario_priors cache (owner only)."""
+    await verify_owner(req.email, req.token)
+    from scenario_priors import _refresh as _refresh_scen, stats as _scen_stats
+    await _refresh_scen(db)
+    return {"success": True, "stats": _scen_stats()}

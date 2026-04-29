@@ -668,11 +668,20 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str) -> dict:
         # Store hitPct so settled pick cards show 100%/0%/50% instead of "—"
         settled_hit_pct = 100 if result_str == "hit" else (0 if result_str == "miss" else 50)
         update["hitPct"] = settled_hit_pct
+        # Capture final score + scenario bucket for scenario_priors mining
+        try:
+            from game_script_engine import bucket_from_final_score
+            _scen_bucket = bucket_from_final_score(home_goals, away_goals)
+        except Exception:
+            _scen_bucket = None
         await db.picks.update_one(
             {"pickId": pick["pickId"], "email": email},
             {"$set": {"status": "settled", "result": result_str, "actualValue": current_value,
                       "hitPct": settled_hit_pct, "matchScore": match_score,
                       "minutesPlayed": minutes_played,
+                      "finalHomeGoals": home_goals,
+                      "finalAwayGoals": away_goals,
+                      "scenarioBucket": _scen_bucket,
                       "settledAt": datetime.now(timezone.utc).isoformat()}}
         )
     return update

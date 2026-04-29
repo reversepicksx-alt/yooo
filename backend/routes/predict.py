@@ -2059,44 +2059,60 @@ async def predict(req: PredictionRequest):
             # ── GAME-SCRIPT extraction from Vegas odds (already fetched) ─
             # We derive expected_total_goals + expected_goal_diff so the engine
             # can apply chase-mode / nailbiter nudges (cheat-sheet patterns).
+            # ALSO produce a scenario probability vector (P_draw, P_low_scoring,
+            # ...) used by the new scenario_priors layer.
             _game_script = None
+            _scenario_probs = None
             try:
-                if match_odds and match_odds.get("bookmakerOdds"):
-                    _bo = match_odds["bookmakerOdds"]
-                    _home_odds = float(_bo.get("homeWin", 3.0))
-                    _away_odds = float(_bo.get("awayWin", 3.0))
-                    _draw_odds = float(_bo.get("draw", 3.5)) if _bo.get("draw") else 3.5
-                    # Implied probabilities (overround-normalised)
-                    _ph = 1.0 / _home_odds
-                    _pa = 1.0 / _away_odds
-                    _pd = 1.0 / _draw_odds
-                    _z = _ph + _pa + _pd
-                    if _z > 0:
-                        _ph /= _z; _pa /= _z; _pd /= _z
-                    # Approximate expected goal differential from win probs
-                    # (positive = home favoured, negative = away favoured)
-                    _expected_diff = (_ph - _pa) * 2.5  # scaling factor empirically reasonable
-                    # Total goals: prefer the engine's own pre-computed estimate
-                    # (set on `game_tempo` ~line 1754) when it's available,
-                    # otherwise fall back to a global 2.6 league average.
-                    _expected_total = None
-                    try:
-                        _gt_local = locals().get("game_tempo") or {}
-                        _expected_total = _gt_local.get("expectedTotalGoals")
-                        if _expected_total is not None:
-                            _expected_total = float(_expected_total)
-                    except Exception:
-                        _expected_total = None
-                    if _expected_total is None:
-                        _expected_total = 2.6  # league-average fallback
+                from game_script_engine import compute_scenario_probs, expected_total_from_game_tempo
+                _bo = (match_odds or {}).get("bookmakerOdds") if match_odds else None
+                _gt_local = locals().get("game_tempo") or {}
+                _expected_total = expected_total_from_game_tempo(_gt_local) or 2.6
+                _scenario_probs = compute_scenario_probs(_bo, _expected_total)
+                if _bo and _scenario_probs.get("available"):
+                    _expected_diff = (_scenario_probs["impliedHome"]
+                                      - _scenario_probs["impliedAway"]) * 2.5
                     _game_script = {
-                        "expected_total_goals": _expected_total,
+                        "expected_total_goals": _scenario_probs["expectedTotal"],
                         "expected_goal_diff":   round(_expected_diff, 2),
-                        "implied_home":         round(_ph, 3),
-                        "implied_away":         round(_pa, 3),
+                        "implied_home":         _scenario_probs["impliedHome"],
+                        "implied_away":         _scenario_probs["impliedAway"],
                     }
             except Exception as _gs_err:
                 print(f"[GAME SCRIPT] extraction failed: {_gs_err}")
+
+            # ── SCENARIO PRIORS lookup (cheat-sheet conditional layer) ────
+            # Mode controlled by env var SCENARIO_PRIORS_MODE: off|shadow|live
+            # Default = shadow (compute & log, do NOT change projection).
+            _scenario_priors_result = None
+            _scen_mode = os.environ.get("SCENARIO_PRIORS_MODE", "shadow").lower()
+            if _scen_mode not in {"off", "shadow", "live"}:
+                _scen_mode = "shadow"
+            if _scen_mode != "off" and _scenario_probs and _scenario_probs.get("available"):
+                try:
+                    from scenario_priors import (lookup_weighted as _scen_lookup,
+                                                 ensure_loaded as _ensure_scen)
+                    await _ensure_scen(db)
+                    # Look up BOTH sides; the engine has already chosen which
+                    # to apply by the time scenario_priors runs in shadow/live.
+                    # We emit both so the inspector and downstream consumers
+                    # can see what each side would have done.
+                    _scen_over = _scen_lookup(_scenario_probs, _bayes_position,
+                                              req.propType, "over",
+                                              posterior_mean=req.line)
+                    _scen_under = _scen_lookup(_scenario_probs, _bayes_position,
+                                               req.propType, "under",
+                                               posterior_mean=req.line)
+                    # Pick the bucket that matches the side we'll likely
+                    # recommend (compare line vs. baseline). The engine itself
+                    # will not re-choose — it consumes whatever we hand it.
+                    _scenario_priors_result = (_scen_over if _scen_over.get("found")
+                                               else _scen_under)
+                    if _scenario_priors_result and _scenario_priors_result.get("found"):
+                        _scenario_priors_result["sideOver"]  = _scen_over
+                        _scenario_priors_result["sideUnder"] = _scen_under
+                except Exception as _sp_err:
+                    print(f"[SCENARIO PRIORS] lookup failed: {_sp_err}")
 
             early_bayes = compute_bayesian_projection(
                 game_logs=_bayes_logs,
@@ -2112,6 +2128,8 @@ async def predict(req: PredictionRequest):
                 ai_press_intensity=ai_press_intensity,
                 league_calibration=_league_calib,
                 game_script=_game_script,
+                scenario_priors_result=_scenario_priors_result,
+                scenario_priors_mode=_scen_mode,
             )
             print(f"[BAYESIAN] {req.playerName}/{req.propType}: samples={early_bayes.get('priorSamples') if early_bayes else 0}, logs={len(_bayes_logs)} (venue={player_venue})")
 

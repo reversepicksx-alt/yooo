@@ -997,6 +997,11 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
             _venue = (pick.get("venue") or "home").lower()
             _player_goals = home_goals if _venue == "home" else away_goals
             _opp_goals    = away_goals if _venue == "home" else home_goals
+            try:
+                from game_script_engine import bucket_from_final_score
+                _scen_bucket = bucket_from_final_score(home_goals, away_goals)
+            except Exception:
+                _scen_bucket = None
             await db.picks.update_one(
                 {"pickId": pick["pickId"]},
                 {"$set": {
@@ -1005,6 +1010,9 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
                     "actualValue": actual_value,
                     "minutesPlayed": minutes_played,
                     "matchScore": f"{_player_goals}-{_opp_goals}",
+                    "finalHomeGoals": home_goals,
+                    "finalAwayGoals": away_goals,
+                    "scenarioBucket": _scen_bucket,
                     "settledAt": datetime.now(timezone.utc).isoformat(),
                     "voidReason": f"Player only played {minutes_played} min (min {MIN_MINUTES} required)",
                 }}
@@ -1028,6 +1036,11 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
         _player_goals = home_goals if _venue == "home" else away_goals
         _opp_goals    = away_goals if _venue == "home" else home_goals
 
+        try:
+            from game_script_engine import bucket_from_final_score
+            _scen_bucket = bucket_from_final_score(home_goals, away_goals)
+        except Exception:
+            _scen_bucket = None
         await db.picks.update_one(
             {"pickId": pick["pickId"]},
             {"$set": {
@@ -1036,6 +1049,9 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
                 "actualValue": actual_value,
                 "minutesPlayed": minutes_played,
                 "matchScore": f"{_player_goals}-{_opp_goals}",
+                "finalHomeGoals": home_goals,
+                "finalAwayGoals": away_goals,
+                "scenarioBucket": _scen_bucket,
                 "settledAt": datetime.now(timezone.utc).isoformat(),
             }}
         )
