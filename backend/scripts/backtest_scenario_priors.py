@@ -98,6 +98,50 @@ def grade(actual, line, recommendation):
     return "push"
 
 
+async def run_full_backtest(all_picks):
+    """Same logic, run silently across the entire dataset."""
+    summary = {"flipped_to_hit": 0, "flipped_to_miss": 0,
+               "kept_hit": 0, "kept_miss": 0, "no_data": 0,
+               "tested": 0}
+    flips_detail = []
+    for pick in all_picks:
+        loo = compute_loo_nudge(pick, all_picks)
+        if not loo or not loo.get("available"):
+            summary["no_data"] += 1
+            continue
+        try:
+            proj = float(pick["projectedValue"])
+            line = float(pick["line"])
+            actual = float(pick["actualValue"])
+        except (KeyError, TypeError, ValueError):
+            summary["no_data"] += 1
+            continue
+        summary["tested"] += 1
+        orig_rec = pick["recommendation"]
+        orig_result = pick["result"]
+        new_proj = proj * loo["multiplier"]
+        if new_proj > line:
+            new_rec = "over"
+        elif new_proj < line:
+            new_rec = "under"
+        else:
+            new_rec = orig_rec
+        if new_rec == orig_rec:
+            if orig_result == "hit":
+                summary["kept_hit"] += 1
+            else:
+                summary["kept_miss"] += 1
+        else:
+            new_result = grade(actual, line, new_rec)
+            if orig_result == "miss" and new_result == "hit":
+                summary["flipped_to_hit"] += 1
+                flips_detail.append((pick, loo, "MISS→HIT", proj, new_proj, line))
+            elif orig_result == "hit" and new_result == "miss":
+                summary["flipped_to_miss"] += 1
+                flips_detail.append((pick, loo, "HIT→MISS", proj, new_proj, line))
+    return summary, flips_detail
+
+
 async def main():
     db = AsyncIOMotorClient(os.environ.get("MONGO_URL", "mongodb://localhost:27017"))[
         os.environ.get("DB_NAME", "test_database")
@@ -216,14 +260,54 @@ async def main():
 
     print()
     print("=" * 110)
-    print("SUMMARY:")
+    print("5-PICK SAMPLE SUMMARY:")
     for k, v in summary.items():
         print(f"  {k:20s} {v}")
     flips_helped = summary["flipped_to_hit"]
     flips_hurt   = summary["flipped_to_miss"]
     net = flips_helped - flips_hurt
-    print(f"\n  NET: {net:+d}  (would have flipped {flips_helped} miss→hit, "
+    print(f"  NET: {net:+d}  (would have flipped {flips_helped} miss→hit, "
           f"{flips_hurt} hit→miss)")
+
+    # ───── Full-population backtest ─────
+    print()
+    print("=" * 110)
+    print("FULL POPULATION BACKTEST (all settled picks, leave-one-out)")
+    print("=" * 110)
+    full, flips = await run_full_backtest(all_picks)
+    orig_hits = sum(1 for p in all_picks if p["result"] == "hit")
+    orig_n = len(all_picks)
+    orig_rate = orig_hits / orig_n if orig_n else 0
+    new_hits = full["kept_hit"] + full["flipped_to_hit"]
+    new_n = full["tested"]
+    # picks that didn't fire keep their original result
+    inert_hits = sum(1 for p in all_picks
+                     if p["result"] == "hit"
+                     and (compute_loo_nudge(p, all_picks) is None
+                          or not compute_loo_nudge(p, all_picks).get("available")))
+    total_new_hits = new_hits + inert_hits
+    new_rate_overall = total_new_hits / orig_n if orig_n else 0
+
+    print(f"  total picks            {orig_n}")
+    print(f"  picks where layer fires {new_n}  ({new_n/orig_n*100:.1f}%)")
+    print(f"  picks where layer inert {full['no_data']}")
+    print()
+    print(f"  ORIG  hits/total = {orig_hits}/{orig_n}   = {orig_rate*100:.2f}%")
+    print(f"  NEW   hits/total = {total_new_hits}/{orig_n}   = {new_rate_overall*100:.2f}%")
+    delta_pp = (new_rate_overall - orig_rate) * 100
+    print(f"  DELTA hit-rate       = {delta_pp:+.2f} percentage points")
+    print()
+    print(f"  flipped MISS → HIT  {full['flipped_to_hit']}")
+    print(f"  flipped HIT  → MISS {full['flipped_to_miss']}")
+    print(f"  NET FLIPS           {full['flipped_to_hit'] - full['flipped_to_miss']:+d}")
+    print()
+    if flips:
+        print("  ─ Flip details ─")
+        for pick, loo, kind, proj, new_proj, line in flips:
+            print(f"   {kind:10s} {pick.get('playerName','?'):22s} "
+                  f"{pick['propType']:14s} {pick.get('scenarioBucket'):14s} "
+                  f"line={line:5.1f} proj={proj:5.1f} → {new_proj:5.1f} "
+                  f"mult={loo['multiplier']:.4f}")
 
 
 if __name__ == "__main__":
