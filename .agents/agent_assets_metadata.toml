@@ -1,8 +1,13 @@
 uploads = []
-outputs = []
 
 [[generated]]
 id = "BL2QWIoKs8CqCcOg12ciT"
 uri = "file://mobile/assets/images/icon.png"
 type = "image"
 title = "reversepicks app icon"
+
+[[outputs]]
+id = "IdBO4fXLAJGGVIzxE-3A1"
+uri = "file://attached_assets/cheat_sheet_2_1.png"
+type = "image"
+title = "Cheat Sheet 2.1 — built from 497 live settled picks"
