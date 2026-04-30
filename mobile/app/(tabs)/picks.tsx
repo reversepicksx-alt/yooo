@@ -12,6 +12,13 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import ReanimatedSwipeable, {
   SwipeableMethods,
 } from 'react-native-gesture-handler/ReanimatedSwipeable';
+// Critical: use the gesture-handler's own RectButton for the swipe action.
+// A vanilla react-native TouchableOpacity does NOT receive press events on
+// iOS when nested inside a ReanimatedSwipeable — the parent gesture handler
+// claims the touch and the child's onPress never fires (this is exactly why
+// "tap DELETE does nothing" was happening). RectButton is built on top of
+// gesture-handler so it cooperates with the swipe gesture properly.
+import { RectButton } from 'react-native-gesture-handler';
 import Reanimated, {
   SharedValue,
   useAnimatedStyle,
@@ -64,10 +71,9 @@ function SwipeLeftAction({
     return { transform: [{ scale }], opacity };
   });
   return (
-    <TouchableOpacity
+    <RectButton
       style={styles.swipeAction}
       onPress={onPress}
-      activeOpacity={0.85}
       accessibilityRole="button"
       accessibilityLabel="Delete pick"
     >
@@ -75,7 +81,7 @@ function SwipeLeftAction({
         <Ionicons name="trash" size={22} color="#fff" />
         <Text style={styles.swipeActionText}>DELETE</Text>
       </Reanimated.View>
-    </TouchableOpacity>
+    </RectButton>
   );
 }
 
