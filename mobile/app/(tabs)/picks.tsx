@@ -102,28 +102,54 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
   const nowLabel = (won || lost || push) ? 'FINAL' : (hasLiveData ? 'NOW' : null);
   const paceLabel = settled ? 'PROJ' : (livePace != null && livePace > 0 ? 'PACE' : 'PROJ');
 
-  // Determine home/away team labels — prefer fixture-derived names, fall back to venue inference.
-  // When venue is missing/unknown, default to subject team on the home side so we never display
-  // the opponent name on both sides of the score line.
+  // Determine home/away team labels.
+  // PREFERRED path: backend resolved fixture → both `homeTeam` and `awayTeam` set.
+  // FALLBACK path: legacy picks may only have `teamName`/`opponentName`/`venue`/`matchScore`.
+  //   We orient using `venue` ('home' = subject team is home; 'away' = subject is away).
+  //   If `venue` is missing/unknown we cannot trust orientation, so we hide the score line
+  //   (prevents showing wrong winner color or flipping goals).
   const venueLower = (pick.venue || '').toLowerCase();
+  const venueKnown = venueLower === 'home' || venueLower === 'away';
+  const hasFixtureNames = !!(pick.homeTeam && pick.awayTeam);
   const homeTeamName = pick.homeTeam
-    || (venueLower === 'away' ? pick.opponentName : pick.teamName)
+    || (venueKnown ? (venueLower === 'away' ? pick.opponentName : pick.teamName) : '')
     || '';
   const awayTeamName = pick.awayTeam
-    || (venueLower === 'away' ? pick.teamName : pick.opponentName)
+    || (venueKnown ? (venueLower === 'away' ? pick.teamName : pick.opponentName) : '')
     || '';
-  const finalHome = pick.finalHomeGoals;
-  const finalAway = pick.finalAwayGoals;
+  // Resolve final goals — prefer explicit fields, otherwise parse legacy `matchScore` string.
+  // Note: `matchScore` is stored player-perspective ("subject_goals-opp_goals"), NOT home-away.
+  // We can only re-orient correctly when venue is known.
+  let finalHome: number | null | undefined = pick.finalHomeGoals;
+  let finalAway: number | null | undefined = pick.finalAwayGoals;
+  if ((finalHome == null || finalAway == null)
+      && venueKnown
+      && typeof pick.matchScore === 'string') {
+    const m = pick.matchScore.match(/^(\d+)\s*[-–]\s*(\d+)$/);
+    if (m) {
+      const subject = parseInt(m[1], 10);
+      const opp = parseInt(m[2], 10);
+      if (!Number.isNaN(subject) && !Number.isNaN(opp)) {
+        if (venueLower === 'away') {
+          finalHome = opp; finalAway = subject;
+        } else {
+          finalHome = subject; finalAway = opp;
+        }
+      }
+    }
+  }
   const homePoss = pick.homePoss;
   const awayPoss = pick.awayPoss;
+  // Only render the score line when we trust orientation:
+  //   either backend gave us fixture-derived home/away names, or pick has a known venue.
   const showScoreLine = (settled || (live && hasLiveData))
     && finalHome != null && finalAway != null
-    && (homeTeamName || awayTeamName);
-  const subjectWon = settled && finalHome != null && finalAway != null && (
+    && (hasFixtureNames || venueKnown);
+  const subjectWon = settled && finalHome != null && finalAway != null && venueKnown && (
     (venueLower === 'home' && finalHome > finalAway) ||
     (venueLower === 'away' && finalAway > finalHome)
   );
-  const subjectLost = settled && finalHome != null && finalAway != null && (
+  const subjectLost = settled && finalHome != null && finalAway != null && venueKnown && (
     (venueLower === 'home' && finalHome < finalAway) ||
     (venueLower === 'away' && finalAway < finalHome)
   );
