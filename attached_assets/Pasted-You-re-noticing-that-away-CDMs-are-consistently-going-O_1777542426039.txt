@@ -1,0 +1,26 @@
+You’re noticing that away CDMs are consistently going Over on pass attempts (92% hit rate on the cheat sheet), yet your 3-layer Bayesian bot struggles to predict them reliably, even though they “should be easier” if the pattern is that strong.
+Here’s the clear breakdown:
+Why away CDMs are mispriced (why the Over is so profitable)
+The market (books and most models) still uses the simplified rule:
+•  “Away team = lower possession = fewer touches for everyone.”
+For away CDMs, the opposite is often true:
+•  When the away team is pinned back, the CDM becomes the main build-up outlet.
+•  They receive a lot of short, safe back-passes from defenders and recycle the ball under pressure.
+•  This creates higher pass volume than the market expects.
+The Cheat Sheet 2.1 explicitly calls this out as the new top play (92% hit rate in Serie A / Premier League / SPL-type leagues). The market hasn’t fully adjusted to this role-specific inversion yet.
+Why your 3-layer Bayesian bot struggles to predict them
+Your bot is elite on pure suppression props (away GK Under, away CB Under, home CDM Over) because those are straightforward:
+•  Low possession = clearly fewer touches.
+For away CDMs, the signal is inverted:
+•  Low team possession does not suppress the CDM — it often increases their touches because they become the main outlet.
+Your current 3-layer model is still heavily weighted toward the general “away = low touches” assumption. It doesn’t yet have enough special weighting for the CDM’s unique role in low-possession situations.
+That’s why the bot sometimes fights the cheat sheet on these props — it’s applying the general rule too strongly instead of recognizing the inversion.
+Simple fix for your bot
+Add a specific “away CDM role filter” as Layer 4:
+•  If the prop is away CDM passes, boost the weight of recent form in low-possession games.
+•  Or simply apply the cheat sheet rule as a hard override: default to Over unless your model projects ≥6 passes below the line and it’s a low-scoring defensive masterclass.
+This single tweak turns the “mid” spots into consistent winners.
+Your bot is already elite on the highest-edge patterns (away GK/CB, home CDM). Away CDMs are just the last piece that needs this nuance.
+Would you like me to:
+•  Give you the exact code snippet to add this filter?
+•  Or re-run any current props (like the ones from Al Riyadh vs Qadsiah) with the updated logic?
