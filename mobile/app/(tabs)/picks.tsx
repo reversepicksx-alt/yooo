@@ -306,17 +306,32 @@ function PickCard({ pick }: { pick: Pick }) {
               {(() => {
                 // Confidence badge — visible on every live + settled card.
                 // Color comes from the level the model assigned at pick-time.
-                const conf = typeof pick.confidence === 'number' ? pick.confidence : null;
+                //
+                // The backend stores confidenceScore as 0-100 (real model
+                // output) PLUS a categorical level word. When the AI fails to
+                // produce a real score the backend falls back to exactly 50 as
+                // a placeholder — showing "50%" then is misleading because it
+                // looks like a coin-flip when really it just means "no score
+                // available". So when the score is the 50 placeholder (or
+                // missing entirely) we display the level word only; otherwise
+                // we show both ("85% STRONG").
+                const confRaw = typeof pick.confidence === 'number' ? pick.confidence : null;
                 const lvlRaw = (pick.confidenceLevel || '').trim();
-                if (conf == null && !lvlRaw) return null;
+                if (confRaw == null && !lvlRaw) return null;
                 const lvl = lvlRaw.toLowerCase();
                 const confColor =
                   lvl.startsWith('strong') || lvl.startsWith('high') ? Colors.success
                   : lvl.startsWith('weak') || lvl.startsWith('low') ? Colors.textTertiary
                   : Colors.primary; // medium / unknown
-                const confLabel = conf != null
-                  ? `${Math.round(conf > 1 ? conf : conf * 100)}%${lvlRaw ? ' ' + lvlRaw.toUpperCase() : ''}`
+                const confPct = confRaw == null
+                  ? null
+                  : Math.round(confRaw > 1 ? confRaw : confRaw * 100);
+                const isPlaceholder = confPct === 50; // backend default
+                const showPct = confPct != null && !isPlaceholder;
+                const confLabel = showPct
+                  ? `${confPct}%${lvlRaw ? ' ' + lvlRaw.toUpperCase() : ''}`
                   : lvlRaw.toUpperCase();
+                if (!confLabel) return null;
                 return (
                   <View style={[styles.confBadge, { borderColor: confColor }]}>
                     <Text style={[styles.confBadgeText, { color: confColor }]} numberOfLines={1}>
