@@ -1,14 +1,15 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
   ActivityIndicator, Alert, Platform, RefreshControl,
-  Modal, ScrollView, Pressable,
+  Modal, ScrollView, Pressable, Animated as RNAnimated,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Swipeable } from 'react-native-gesture-handler';
 import Colors from '@/constants/colors';
 import { listPicks, deletePick, fetchPickAnalysis, Pick } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
@@ -40,7 +41,70 @@ function pickPush(p: Pick) {
   return p.result === 'push';
 }
 
-function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
+function SwipeableRow({
+  onDelete,
+  children,
+}: {
+  onDelete: () => void;
+  children: React.ReactNode;
+}) {
+  const swipeRef = useRef<Swipeable | null>(null);
+
+  const renderLeftActions = (
+    progress: RNAnimated.AnimatedInterpolation<number>,
+    dragX: RNAnimated.AnimatedInterpolation<number>,
+  ) => {
+    // Subtle scale/fade so the action grows in from the left edge as you drag.
+    const scale = dragX.interpolate({
+      inputRange: [0, 60, 120],
+      outputRange: [0.6, 0.95, 1],
+      extrapolate: 'clamp',
+    });
+    const opacity = progress.interpolate({
+      inputRange: [0, 0.5, 1],
+      outputRange: [0, 0.7, 1],
+      extrapolate: 'clamp',
+    });
+    return (
+      <View
+        style={styles.swipeAction}
+        accessible
+        accessibilityRole="button"
+        accessibilityLabel="Delete pick"
+      >
+        <RNAnimated.View style={[styles.swipeActionInner, { transform: [{ scale }], opacity }]}>
+          <Ionicons name="trash" size={20} color="#fff" />
+          <Text style={styles.swipeActionText}>DELETE</Text>
+        </RNAnimated.View>
+      </View>
+    );
+  };
+
+  // Snap row closed immediately when it opens, then trigger the parent's confirm
+  // dialog. We don't track an "open" state ourselves — Swipeable's own state
+  // machine prevents re-entry while it's animating, and `onDelete` already
+  // gates with a Cancel/Delete confirm before mutating.
+  return (
+    <Swipeable
+      ref={swipeRef}
+      renderLeftActions={renderLeftActions}
+      friction={2}
+      leftThreshold={64}
+      overshootLeft={false}
+      onSwipeableOpen={() => {
+        try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {}
+        // Close immediately so the swipe doesn't stay open behind the confirm
+        // dialog (and so re-renders/recycling can't leave it half-open).
+        swipeRef.current?.close();
+        onDelete();
+      }}
+    >
+      {children}
+    </Swipeable>
+  );
+}
+
+function PickCard({ pick }: { pick: Pick }) {
   const won = pickWon(pick);
   const lost = pickLost(pick);
   const live = isLive(pick);
@@ -276,10 +340,6 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
           )}
         </View>
       )}
-
-      <TouchableOpacity style={styles.trashBtn} onPress={onDelete} hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }} activeOpacity={0.5}>
-        <Ionicons name="trash-outline" size={12} color="rgba(255,255,255,0.3)" />
-      </TouchableOpacity>
 
       {live && !won && !lost && (
         <View style={styles.tapHint}>
@@ -549,20 +609,24 @@ export default function PicksScreen() {
           keyExtractor={(item, i) => item.pickId || item._id || item.id || String(i)}
           renderItem={({ item }) => {
             const tappable = isLive(item) && !pickWon(item) && !pickLost(item);
-            if (tappable) {
-              return (
-                <Pressable
-                  onPress={() => {
-                    try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
-                    handlePickPress(item);
-                  }}
-                  style={({ pressed }) => [{ opacity: pressed ? 0.88 : 1 }]}
-                >
-                  <PickCard pick={item} onDelete={() => handleDelete(item)} />
-                </Pressable>
-              );
-            }
-            return <PickCard pick={item} onDelete={() => handleDelete(item)} />;
+            const card = tappable ? (
+              <Pressable
+                onPress={() => {
+                  try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+                  handlePickPress(item);
+                }}
+                style={({ pressed }) => [{ opacity: pressed ? 0.88 : 1 }]}
+              >
+                <PickCard pick={item} />
+              </Pressable>
+            ) : (
+              <PickCard pick={item} />
+            );
+            return (
+              <SwipeableRow onDelete={() => handleDelete(item)}>
+                {card}
+              </SwipeableRow>
+            );
           }}
           contentContainerStyle={styles.list}
           refreshControl={
@@ -863,28 +927,28 @@ const styles = StyleSheet.create({
   coinFlipText: { fontSize: 8, fontWeight: '800', color: Colors.textTertiary },
 
   trackBarOuter: {
-    height: 2,
+    height: 5,
     backgroundColor: Colors.cardSecondary,
-    borderRadius: 1,
+    borderRadius: 3,
     overflow: 'hidden',
     position: 'relative',
-    marginTop: 2,
+    marginTop: 4,
   },
   trackBarFill: {
     position: 'absolute',
     left: 0,
     top: 0,
     height: '100%' as unknown as number,
-    borderRadius: 1,
+    borderRadius: 3,
   },
   trackBarMarker: {
     position: 'absolute',
     left: '50%' as unknown as number,
     top: 0,
-    width: 1,
+    width: 1.5,
     height: '100%' as unknown as number,
-    backgroundColor: 'rgba(255,255,255,0.4)',
-    transform: [{ translateX: -0.5 }],
+    backgroundColor: 'rgba(255,255,255,0.5)',
+    transform: [{ translateX: -0.75 }],
   },
 
   scoreLine: {
@@ -908,7 +972,20 @@ const styles = StyleSheet.create({
   scoreDash: { color: Colors.textTertiary, fontWeight: '600' },
   possText: { fontSize: 10, color: Colors.textSecondary, fontWeight: '600' },
 
-  trashBtn: { position: 'absolute', right: 6, bottom: 6, padding: 6 },
+  swipeAction: {
+    backgroundColor: Colors.error,
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: 84,
+    borderRadius: 12,
+  },
+  swipeActionInner: { alignItems: 'center', justifyContent: 'center', gap: 3 },
+  swipeActionText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
   tapHint: {
     flexDirection: 'row', alignItems: 'center', gap: 3,
     paddingTop: 4, borderTopWidth: 1, borderTopColor: Colors.borderSubtle,
