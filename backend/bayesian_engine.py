@@ -20,6 +20,7 @@ Layer 3: COVARIATE — Match context adjustments (venue, opponent, dominance) �
 Posterior = Precision-weighted combination with adaptive floors
 """
 import math
+import os
 import random
 import statistics as stats_mod
 from typing import Optional
@@ -645,6 +646,66 @@ def compute_bayesian_projection(
                       f"shrink={shrink_mult} {raw_before_dom} → {posterior_mean}")
 
     # ═══════════════════════════════════════════
+    # CDM INVERTED POSSESSION MODEL  (Layer A of CDM-inversion fix)
+    # ═══════════════════════════════════════════
+    # Mirror of the GK Inverted Possession Model above, but for deep midfielders.
+    # Mechanism: when an away team is pinned back (low expected possession), the
+    # CDM becomes the primary build-up outlet — defenders constantly recycle the
+    # ball through them under press, generating MORE pass attempts, not fewer.
+    # The general "low possession → suppress everyone" assumption is wrong for
+    # this position, exactly as it is wrong for keepers.
+    #
+    # Cap: ±6% (intentionally smaller than GK's 18% — the inversion is real but
+    # less extreme than the GK case, and the empirical sample is still modest).
+    # Trigger: poss_ratio < 0.90 (more conservative than GK's 0.87).
+    #
+    # Mode controlled by env var CDM_INVERSION_MODE: off|shadow|live
+    # Default = shadow → compute and log, do NOT change projection.
+    # ═══════════════════════════════════════════
+    cdm_inversion_info = {"applied": False, "multiplier": 1.0, "mode": "off",
+                          "shadow_multiplier": 1.0, "reason": ""}
+    _cdm_mode = os.environ.get("CDM_INVERSION_MODE", "shadow").lower()
+    if _cdm_mode not in {"off", "shadow", "live"}:
+        _cdm_mode = "shadow"
+    _cdm_pos_set = {"CDM", "DM", "DMF", "CM", "MC", "CMF"}
+    _pos_upper_for_cdm = (position or "").upper()
+    if (_cdm_mode != "off" and match_dominance
+            and prop_type in {"pass_attempts", "passes"}
+            and _pos_upper_for_cdm in _cdm_pos_set):
+        expected_poss = match_dominance.get("expectedPoss")
+        team_season_avg_poss = match_dominance.get("teamSeasonAvg")
+        if (expected_poss is not None and team_season_avg_poss
+                and team_season_avg_poss > 0):
+            poss_ratio = expected_poss / team_season_avg_poss
+            if poss_ratio < 0.90:
+                # Same shape as GK boost but flatter ceiling.
+                # poss_ratio=0.89 → ~+1.5%
+                # poss_ratio=0.75 → ~+4%
+                # poss_ratio=0.55 → ~+6% (capped)
+                inverse_ratio = 1.0 / max(poss_ratio, 0.50)
+                cdm_boost_mult = round(min(1.06, inverse_ratio ** 0.30), 3)
+                cdm_inversion_info["shadow_multiplier"] = cdm_boost_mult
+                cdm_inversion_info["mode"] = _cdm_mode
+                cdm_inversion_info["reason"] = (
+                    f"pinned-back outlet boost "
+                    f"(ratio={poss_ratio:.2f}, mult={cdm_boost_mult})"
+                )
+                if _cdm_mode == "live":
+                    raw_before_cdm = posterior_mean
+                    posterior_mean = round(posterior_mean * cdm_boost_mult, 1)
+                    cdm_inversion_info["applied"] = True
+                    cdm_inversion_info["multiplier"] = cdm_boost_mult
+                    print(f"[CDM POSS BOOST live] {prop_type} pos={_pos_upper_for_cdm} "
+                          f"venue={venue}: team_avg={team_season_avg_poss:.1f}% "
+                          f"expected={expected_poss:.1f}% ratio={poss_ratio:.2f} "
+                          f"mult={cdm_boost_mult} {raw_before_cdm} → {posterior_mean}")
+                else:
+                    print(f"[CDM POSS BOOST shadow] {prop_type} pos={_pos_upper_for_cdm} "
+                          f"venue={venue}: team_avg={team_season_avg_poss:.1f}% "
+                          f"expected={expected_poss:.1f}% ratio={poss_ratio:.2f} "
+                          f"would_mult={cdm_boost_mult} (NOT APPLIED)")
+
+    # ═══════════════════════════════════════════
     # PRESS INTENSITY — Position & Prop Aware
     # ═══════════════════════════════════════════
     # Press signal is computed for any prop where opponent pressing meaningfully
@@ -770,6 +831,40 @@ def compute_bayesian_projection(
             chase_boost = min(0.05, abs(expected_diff) * 0.025)
             gs_mult *= (1.0 + chase_boost)
             gs_reason.append(f"home CDM chase-mode boost +{chase_boost*100:.1f}% (diff={expected_diff:.1f})")
+        # Away CDM OVER passes — symmetric pinned-back boost (Layer B of CDM-inversion fix).
+        # When the home team is favoured (expected_diff > 0), the away team is expected
+        # to be pinned back / chase the game — and per the cheat-sheet observation, the
+        # away CDM becomes the build-up outlet under that pressure (more attempted
+        # passes, not fewer). Cap +6%, gated by CDM_INVERSION_MODE so it can ship
+        # in shadow alongside Layer A.
+        if (_cdm_mode != "off"
+                and prop_type in {"pass_attempts", "passes"} and venue == "away"
+                and _pos_upper in {"CDM", "DM", "DMF", "CM", "MC", "CMF"}
+                and expected_diff is not None and expected_diff > 0.5):
+            away_chase_boost = min(0.06, abs(expected_diff) * 0.025)
+            cdm_inversion_info["mode"] = _cdm_mode
+            cdm_inversion_info["shadow_multiplier"] = round(
+                cdm_inversion_info.get("shadow_multiplier", 1.0) * (1.0 + away_chase_boost), 4)
+            if _cdm_mode == "live":
+                gs_mult *= (1.0 + away_chase_boost)
+                gs_reason.append(
+                    f"away CDM pinned-back boost +{away_chase_boost*100:.1f}% "
+                    f"(diff={expected_diff:.1f})")
+                cdm_inversion_info["applied"] = True
+                cdm_inversion_info["multiplier"] = round(
+                    cdm_inversion_info.get("multiplier", 1.0) * (1.0 + away_chase_boost), 4)
+                cdm_inversion_info["reason"] = (
+                    (cdm_inversion_info.get("reason") or "")
+                    + f"; away pinned-back boost +{away_chase_boost*100:.1f}% (diff={expected_diff:.1f})"
+                ).lstrip("; ")
+            else:
+                print(f"[CDM SCRIPT BOOST shadow] {prop_type} pos={_pos_upper} venue=away "
+                      f"expected_diff={expected_diff:.2f} would_boost=+{away_chase_boost*100:.1f}% "
+                      f"(NOT APPLIED)")
+                cdm_inversion_info["reason"] = (
+                    (cdm_inversion_info.get("reason") or "")
+                    + f"; away pinned-back boost +{away_chase_boost*100:.1f}% (diff={expected_diff:.1f}) [shadow]"
+                ).lstrip("; ")
         # Away GK UNDER passes — high-scoring game suppression (boost projection up)
         if (prop_type in {"pass_attempts", "passes"} and venue == "away" and _is_gk
                 and expected_total is not None and expected_total >= 3.0):
@@ -1009,6 +1104,11 @@ def compute_bayesian_projection(
         # Always emitted so shadow-mode logs and admin inspector can see what
         # the layer would have / did do.
         "scenarioPriors": scenario_priors_info,
+
+        # CDM inverted-possession + pinned-back script boost (away CDM passes).
+        # Always emitted; `mode` reports off|shadow|live and `applied` shows
+        # whether the projection was actually nudged this call.
+        "cdmInversion": cdm_inversion_info,
     }
 
 

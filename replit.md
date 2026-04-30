@@ -44,6 +44,7 @@ The project is structured into `backend/` (FastAPI, MongoDB) and `mobile/` (Expo
     - **Position Resolution**: Both Grok and Gemini are used concurrently.
     - Uses Gemini's JSON mode for reliable output parsing.
 - **Bayesian Momentum Engine**: The `bayesian_engine.py` is configured to correctly process game logs sorted newest-first, applying decay weights accurately.
+- **CDM Inversion Layer (away CDM pass_attempts)**: Mirror of the GK Inverted Possession Model for deep midfielders — when the away team is pinned back (low expected possession) and/or expected to chase (home team favoured), the CDM becomes the build-up outlet and pass volume rises rather than falls. Stacks two effects (possession-based, cap +6%; game-script-based, cap +6%). Mode controlled by `CDM_INVERSION_MODE` env var (`off|shadow|live`, default `shadow`); shadow logs the would-be multiplier without changing the projection. Surfaces in the response under `bayesianMetrics.cdmInversion`.
 - **AI-Driven Press Intensity**: `grok_engine.py` fetches an AI-rated press intensity score (0.0-1.0) for opponents using web search and knowledge, overriding heuristic methods for more accurate projections. This score is cached to optimize performance.
 - **Player Team Resolution**: Prioritizes `statistics[-1].team.name` from API-Football for current team data.
 - **Caching**: Player search results and fixture player stats are cached in MongoDB (`fixture_player_cache` collection) to reduce API calls and improve performance for pre-fetched leagues like A-League.
