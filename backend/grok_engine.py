@@ -997,25 +997,41 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
             _venue = (pick.get("venue") or "home").lower()
             _player_goals = home_goals if _venue == "home" else away_goals
             _opp_goals    = away_goals if _venue == "home" else home_goals
+            home_team_name = matched.get("teams", {}).get("home", {}).get("name", "") or ""
+            away_team_name = matched.get("teams", {}).get("away", {}).get("name", "") or ""
+            home_team_id   = matched.get("teams", {}).get("home", {}).get("id")
+            away_team_id   = matched.get("teams", {}).get("away", {}).get("id")
+            try:
+                from routes.picks import _fetch_fixture_possession
+                home_poss, away_poss = await _fetch_fixture_possession(fid, home_team_id, away_team_id)
+            except Exception:
+                home_poss, away_poss = None, None
             try:
                 from game_script_engine import bucket_from_final_score
                 _scen_bucket = bucket_from_final_score(home_goals, away_goals)
             except Exception:
                 _scen_bucket = None
+            _push_set = {
+                "status": "settled",
+                "result": "push",
+                "actualValue": actual_value,
+                "minutesPlayed": minutes_played,
+                "matchScore": f"{_player_goals}-{_opp_goals}",
+                "finalHomeGoals": home_goals,
+                "finalAwayGoals": away_goals,
+                "homeTeam": home_team_name,
+                "awayTeam": away_team_name,
+                "scenarioBucket": _scen_bucket,
+                "settledAt": datetime.now(timezone.utc).isoformat(),
+                "voidReason": f"Player only played {minutes_played} min (min {MIN_MINUTES} required)",
+            }
+            if home_poss is not None:
+                _push_set["homePoss"] = home_poss
+            if away_poss is not None:
+                _push_set["awayPoss"] = away_poss
             await db.picks.update_one(
                 {"pickId": pick["pickId"]},
-                {"$set": {
-                    "status": "settled",
-                    "result": "push",
-                    "actualValue": actual_value,
-                    "minutesPlayed": minutes_played,
-                    "matchScore": f"{_player_goals}-{_opp_goals}",
-                    "finalHomeGoals": home_goals,
-                    "finalAwayGoals": away_goals,
-                    "scenarioBucket": _scen_bucket,
-                    "settledAt": datetime.now(timezone.utc).isoformat(),
-                    "voidReason": f"Player only played {minutes_played} min (min {MIN_MINUTES} required)",
-                }}
+                {"$set": _push_set}
             )
             print(f"[AUTO-SETTLE] {pick.get('playerName','')} {prop_type} → VOID/PUSH (only {minutes_played} min played)")
             return True
@@ -1035,25 +1051,41 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
         _venue = (pick.get("venue") or "home").lower()
         _player_goals = home_goals if _venue == "home" else away_goals
         _opp_goals    = away_goals if _venue == "home" else home_goals
+        home_team_name = matched.get("teams", {}).get("home", {}).get("name", "") or ""
+        away_team_name = matched.get("teams", {}).get("away", {}).get("name", "") or ""
+        home_team_id   = matched.get("teams", {}).get("home", {}).get("id")
+        away_team_id   = matched.get("teams", {}).get("away", {}).get("id")
+        try:
+            from routes.picks import _fetch_fixture_possession
+            home_poss, away_poss = await _fetch_fixture_possession(fid, home_team_id, away_team_id)
+        except Exception:
+            home_poss, away_poss = None, None
 
         try:
             from game_script_engine import bucket_from_final_score
             _scen_bucket = bucket_from_final_score(home_goals, away_goals)
         except Exception:
             _scen_bucket = None
+        _settle_set = {
+            "status": "settled",
+            "result": result,
+            "actualValue": actual_value,
+            "minutesPlayed": minutes_played,
+            "matchScore": f"{_player_goals}-{_opp_goals}",
+            "finalHomeGoals": home_goals,
+            "finalAwayGoals": away_goals,
+            "homeTeam": home_team_name,
+            "awayTeam": away_team_name,
+            "scenarioBucket": _scen_bucket,
+            "settledAt": datetime.now(timezone.utc).isoformat(),
+        }
+        if home_poss is not None:
+            _settle_set["homePoss"] = home_poss
+        if away_poss is not None:
+            _settle_set["awayPoss"] = away_poss
         await db.picks.update_one(
             {"pickId": pick["pickId"]},
-            {"$set": {
-                "status": "settled",
-                "result": result,
-                "actualValue": actual_value,
-                "minutesPlayed": minutes_played,
-                "matchScore": f"{_player_goals}-{_opp_goals}",
-                "finalHomeGoals": home_goals,
-                "finalAwayGoals": away_goals,
-                "scenarioBucket": _scen_bucket,
-                "settledAt": datetime.now(timezone.utc).isoformat(),
-            }}
+            {"$set": _settle_set}
         )
         print(f"[AUTO-SETTLE] {pick.get('playerName','')} {prop_type} {line} → actual {actual_value} ({minutes_played}min) = {result}")
         return True

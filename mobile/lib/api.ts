@@ -606,6 +606,13 @@ export interface Pick {
   position?: string;
   role?: string;
   coinFlip?: boolean;
+  matchScore?: string;
+  finalHomeGoals?: number | null;
+  finalAwayGoals?: number | null;
+  homeTeam?: string;
+  awayTeam?: string;
+  homePoss?: number | null;
+  awayPoss?: number | null;
 }
 
 export async function listPicks(email: string, token: string): Promise<Pick[]> {
@@ -647,6 +654,13 @@ export async function listPicks(email: string, token: string): Promise<Pick[]> {
     position: (p.position as string) || undefined,
     role: (p.role as string) || undefined,
     coinFlip: (p.coinFlip as boolean) || undefined,
+    matchScore: (p.matchScore as string) || undefined,
+    finalHomeGoals: (p.finalHomeGoals as number) ?? null,
+    finalAwayGoals: (p.finalAwayGoals as number) ?? null,
+    homeTeam: (p.homeTeam as string) || undefined,
+    awayTeam: (p.awayTeam as string) || undefined,
+    homePoss: (p.homePoss as number) ?? null,
+    awayPoss: (p.awayPoss as number) ?? null,
   }));
 }
 

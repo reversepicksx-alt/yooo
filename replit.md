@@ -54,6 +54,7 @@ The project is structured into `backend/` (FastAPI, MongoDB) and `mobile/` (Expo
 - **Scan / Predict Screen**: Two modes: "Scan" (image OCR via AI) and "Manual" (player name input).
 - **Subscription Support**: Weekly, Monthly, Quarterly plans managed via Square.
 - **Access Control**: Owner email, `LIFETIME_SUB_EMAILS` env var, manual MongoDB grants, and Square subscription webhooks.
+- **Pick Card Match Context**: Live and history pick cards display the final/live score and ball possession with explicit home/away team labels (e.g. `Bologna 0 – 4 Aston Villa`, `Poss 38% – 62%`). Backend persists `homeTeam`/`awayTeam`/`homePoss`/`awayPoss` on settle (and refreshes during live updates) via `_fetch_fixture_possession()` in `backend/routes/picks.py`, called from both `_build_soccer_update` and `grok_engine.py` auto-settle paths. The subject team's name is colored green/red on settled picks to show win/loss at a glance. Possession is fetched from API-Football's `fixtures/statistics` "Ball Possession" stat in parallel with player stats — no extra latency on the critical path.
 
 ## External Dependencies
 

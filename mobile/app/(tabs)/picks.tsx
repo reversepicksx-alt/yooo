@@ -102,6 +102,38 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
   const nowLabel = (won || lost || push) ? 'FINAL' : (hasLiveData ? 'NOW' : null);
   const paceLabel = settled ? 'PROJ' : (livePace != null && livePace > 0 ? 'PACE' : 'PROJ');
 
+  // Determine home/away team labels — prefer fixture-derived names, fall back to venue inference.
+  // When venue is missing/unknown, default to subject team on the home side so we never display
+  // the opponent name on both sides of the score line.
+  const venueLower = (pick.venue || '').toLowerCase();
+  const homeTeamName = pick.homeTeam
+    || (venueLower === 'away' ? pick.opponentName : pick.teamName)
+    || '';
+  const awayTeamName = pick.awayTeam
+    || (venueLower === 'away' ? pick.teamName : pick.opponentName)
+    || '';
+  const finalHome = pick.finalHomeGoals;
+  const finalAway = pick.finalAwayGoals;
+  const homePoss = pick.homePoss;
+  const awayPoss = pick.awayPoss;
+  const showScoreLine = (settled || (live && hasLiveData))
+    && finalHome != null && finalAway != null
+    && (homeTeamName || awayTeamName);
+  const subjectWon = settled && finalHome != null && finalAway != null && (
+    (venueLower === 'home' && finalHome > finalAway) ||
+    (venueLower === 'away' && finalAway > finalHome)
+  );
+  const subjectLost = settled && finalHome != null && finalAway != null && (
+    (venueLower === 'home' && finalHome < finalAway) ||
+    (venueLower === 'away' && finalAway < finalHome)
+  );
+  const homeColor = subjectWon && venueLower === 'home' ? Colors.success
+    : subjectLost && venueLower === 'home' ? Colors.error
+    : Colors.text;
+  const awayColor = subjectWon && venueLower === 'away' ? Colors.success
+    : subjectLost && venueLower === 'away' ? Colors.error
+    : Colors.text;
+
   return (
     <View style={[styles.card, won && styles.cardWon, lost && styles.cardLost]}>
       {/* Row 1: player name left | badge right */}
@@ -199,6 +231,25 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete: () => void }) {
           </View>
         );
       })()}
+
+      {/* Match score + possession — clearly labels home (left) vs away (right) */}
+      {showScoreLine && (
+        <View style={styles.scoreLine}>
+          <Text style={styles.scoreLabel}>{settled ? 'FT' : 'LIVE'}</Text>
+          <Text style={styles.scoreText} numberOfLines={1} ellipsizeMode="middle">
+            <Text style={[styles.scoreTeamName, { color: homeColor }]}>{homeTeamName || 'Home'}</Text>
+            <Text style={[styles.scoreNum, { color: homeColor }]}>{`  ${finalHome}`}</Text>
+            <Text style={styles.scoreDash}>{'  –  '}</Text>
+            <Text style={[styles.scoreNum, { color: awayColor }]}>{`${finalAway}  `}</Text>
+            <Text style={[styles.scoreTeamName, { color: awayColor }]}>{awayTeamName || 'Away'}</Text>
+          </Text>
+          {homePoss != null && awayPoss != null && (
+            <Text style={styles.possText} numberOfLines={1}>
+              Poss {homePoss}% – {awayPoss}%
+            </Text>
+          )}
+        </View>
+      )}
 
       <TouchableOpacity style={styles.trashBtn} onPress={onDelete} hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }} activeOpacity={0.5}>
         <Ionicons name="trash-outline" size={12} color="rgba(255,255,255,0.3)" />
@@ -809,6 +860,27 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.4)',
     transform: [{ translateX: -0.5 }],
   },
+
+  scoreLine: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 6,
+    paddingTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: Colors.borderSubtle,
+  },
+  scoreLabel: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: Colors.textTertiary,
+    letterSpacing: 0.5,
+  },
+  scoreText: { flex: 1, fontSize: 11 },
+  scoreTeamName: { fontWeight: '700' },
+  scoreNum: { fontWeight: '800' },
+  scoreDash: { color: Colors.textTertiary, fontWeight: '600' },
+  possText: { fontSize: 10, color: Colors.textSecondary, fontWeight: '600' },
 
   trashBtn: { position: 'absolute', right: 6, bottom: 6, padding: 6 },
   tapHint: {

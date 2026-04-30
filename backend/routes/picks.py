@@ -261,6 +261,18 @@ async def list_picks(req: GetPicksRequest):
                     p["matchScore"] = upd.get("matchScore")
                     p["fixtureId"] = upd.get("fixtureId")
                     p["minutesPlayed"] = upd.get("minutesPlayed")
+                    if upd.get("homeTeam"):
+                        p["homeTeam"] = upd.get("homeTeam")
+                    if upd.get("awayTeam"):
+                        p["awayTeam"] = upd.get("awayTeam")
+                    if upd.get("finalHomeGoals") is not None:
+                        p["finalHomeGoals"] = upd.get("finalHomeGoals")
+                    if upd.get("finalAwayGoals") is not None:
+                        p["finalAwayGoals"] = upd.get("finalAwayGoals")
+                    if upd.get("homePoss") is not None:
+                        p["homePoss"] = upd.get("homePoss")
+                    if upd.get("awayPoss") is not None:
+                        p["awayPoss"] = upd.get("awayPoss")
                     if upd.get("result") and upd["result"] != "pending":
                         p["status"] = "settled"
                         p["result"] = upd["result"]
@@ -300,18 +312,31 @@ async def list_picks(req: GetPicksRequest):
                     if refreshed and refreshed.get("actualValue") is not None:
                         new_val = refreshed["actualValue"]
                         old_val = p.get("actualValue")
+                        # Always backfill any newly-available match metadata (score, teams, possession),
+                        # even if actualValue did not change. Costs nothing and lets older settled
+                        # picks pick up the new home/away team + possession fields gradually.
+                        meta_set = {}
+                        for fld in ("homeTeam", "awayTeam", "finalHomeGoals", "finalAwayGoals",
+                                     "homePoss", "awayPoss"):
+                            v = refreshed.get(fld)
+                            if v is not None and v != "" and p.get(fld) != v:
+                                meta_set[fld] = v
+                                p[fld] = v
                         if new_val != old_val:
                             line    = p.get("line", 0)
                             rec     = p.get("recommendation", "over")
                             new_res = _settle_result(new_val, line, rec)
                             p["actualValue"] = new_val
                             p["result"]      = new_res
-                            await db.picks.update_one(
-                                {"pickId": p["pickId"], "email": req.email.lower()},
-                                {"$set": {"actualValue": new_val, "result": new_res}}
-                            )
+                            meta_set["actualValue"] = new_val
+                            meta_set["result"] = new_res
                             print(f"[FINAL REFRESH] {p.get('playerName')} {prop_type}: "
                                   f"actualValue {old_val} → {new_val}, result → {new_res}")
+                        if meta_set:
+                            await db.picks.update_one(
+                                {"pickId": p["pickId"], "email": req.email.lower()},
+                                {"$set": meta_set}
+                            )
                 except Exception as _re:
                     print(f"[FINAL REFRESH] Error for {p.get('playerName','?')}: {_re}")
     except Exception as _fe:
@@ -573,6 +598,32 @@ def _match_soccer_fixture(fixtures: list, opponent_name: str, pick_ts) -> dict:
     return None
 
 
+async def _fetch_fixture_possession(fixture_id: int, home_id: int, away_id: int) -> tuple:
+    """Return (home_poss, away_poss) from fixtures/statistics, or (None, None) on failure."""
+    try:
+        stats_data = await api_football_request("fixtures/statistics", {"fixture": fixture_id})
+        if not stats_data:
+            return (None, None)
+        h_poss, a_poss = None, None
+        for team_stats in stats_data:
+            tid = team_stats.get("team", {}).get("id")
+            for stat in team_stats.get("statistics", []):
+                if stat.get("type") == "Ball Possession":
+                    raw = str(stat.get("value", "")).replace("%", "").strip()
+                    try:
+                        val = int(raw)
+                    except (ValueError, TypeError):
+                        val = None
+                    if val is not None:
+                        if tid == home_id:
+                            h_poss = val
+                        elif tid == away_id:
+                            a_poss = val
+        return (h_poss, a_poss)
+    except Exception:
+        return (None, None)
+
+
 async def _build_soccer_update(pick: dict, fixture: dict, email: str) -> dict:
     """Build the live update response for a soccer pick."""
     fixture_id = fixture.get("fixture", {}).get("id")
@@ -580,6 +631,10 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str) -> dict:
     elapsed = fixture.get("fixture", {}).get("status", {}).get("elapsed") or 0
     home_goals = fixture.get("goals", {}).get("home", 0) or 0
     away_goals = fixture.get("goals", {}).get("away", 0) or 0
+    home_team_name = fixture.get("teams", {}).get("home", {}).get("name", "") or ""
+    away_team_name = fixture.get("teams", {}).get("away", {}).get("name", "") or ""
+    home_team_id = fixture.get("teams", {}).get("home", {}).get("id")
+    away_team_id = fixture.get("teams", {}).get("away", {}).get("id")
     # Store from player's team perspective: player_goals-opponent_goals
     # so "Rennes 3-0 Strasbourg" shows correctly even when Rennes is away
     _pick_venue = (pick.get("venue") or "home").lower()
@@ -595,8 +650,11 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str) -> dict:
     if not is_live and not is_finished:
         return {"pickId": pick["pickId"], "matchStatus": "scheduled", "fixtureId": fixture_id}
 
-    # Fetch player stats
-    player_stats_data = await api_football_request("fixtures/players", {"fixture": fixture_id})
+    # Fetch player stats + fixture possession in parallel
+    player_stats_data, (home_poss, away_poss) = await aio.gather(
+        api_football_request("fixtures/players", {"fixture": fixture_id}),
+        _fetch_fixture_possession(fixture_id, home_team_id, away_team_id),
+    )
     current_value = None
     minutes_played = 0
 
@@ -659,6 +717,12 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str) -> dict:
         "pace": pace,
         "hitPct": hit_pct,
         "matchScore": match_score,
+        "homeTeam": home_team_name,
+        "awayTeam": away_team_name,
+        "finalHomeGoals": home_goals,
+        "finalAwayGoals": away_goals,
+        "homePoss": home_poss,
+        "awayPoss": away_poss,
     }
 
     if is_finished:
@@ -674,15 +738,22 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str) -> dict:
             _scen_bucket = bucket_from_final_score(home_goals, away_goals)
         except Exception:
             _scen_bucket = None
-        await db.picks.update_one(
-            {"pickId": pick["pickId"], "email": email},
-            {"$set": {"status": "settled", "result": result_str, "actualValue": current_value,
+        _settle_set = {"status": "settled", "result": result_str, "actualValue": current_value,
                       "hitPct": settled_hit_pct, "matchScore": match_score,
                       "minutesPlayed": minutes_played,
                       "finalHomeGoals": home_goals,
                       "finalAwayGoals": away_goals,
+                      "homeTeam": home_team_name,
+                      "awayTeam": away_team_name,
                       "scenarioBucket": _scen_bucket,
-                      "settledAt": datetime.now(timezone.utc).isoformat()}}
+                      "settledAt": datetime.now(timezone.utc).isoformat()}
+        if home_poss is not None:
+            _settle_set["homePoss"] = home_poss
+        if away_poss is not None:
+            _settle_set["awayPoss"] = away_poss
+        await db.picks.update_one(
+            {"pickId": pick["pickId"], "email": email},
+            {"$set": _settle_set}
         )
     return update
 
@@ -827,13 +898,26 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
         line = pick.get("line", 0)
         recommendation = pick.get("recommendation", "over")
         result_str = _settle_result(actual_value, line, recommendation)
+        home_goals = recent.get("goals", {}).get("home", 0) or 0
+        away_goals = recent.get("goals", {}).get("away", 0) or 0
+        home_team_name = recent.get("teams", {}).get("home", {}).get("name", "") or ""
+        away_team_name = recent.get("teams", {}).get("away", {}).get("name", "") or ""
+        home_team_id = recent.get("teams", {}).get("home", {}).get("id")
+        away_team_id = recent.get("teams", {}).get("away", {}).get("id")
+        home_poss, away_poss = await _fetch_fixture_possession(fixture_id, home_team_id, away_team_id)
         return {
             "pickId": pick.get("id"),
             "status": "settled",
             "result": result_str,
             "actualValue": actual_value,
             "fixtureDate": fixture_date,
-            "matchScore": f"{recent.get('goals',{}).get('home',0)}-{recent.get('goals',{}).get('away',0)}",
+            "matchScore": f"{home_goals}-{away_goals}",
+            "homeTeam": home_team_name,
+            "awayTeam": away_team_name,
+            "finalHomeGoals": home_goals,
+            "finalAwayGoals": away_goals,
+            "homePoss": home_poss,
+            "awayPoss": away_poss,
         }
 
     return None
