@@ -12,13 +12,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import ReanimatedSwipeable, {
   SwipeableMethods,
 } from 'react-native-gesture-handler/ReanimatedSwipeable';
-// Critical: use the gesture-handler's own RectButton for the swipe action.
-// A vanilla react-native TouchableOpacity does NOT receive press events on
-// iOS when nested inside a ReanimatedSwipeable — the parent gesture handler
-// claims the touch and the child's onPress never fires (this is exactly why
-// "tap DELETE does nothing" was happening). RectButton is built on top of
-// gesture-handler so it cooperates with the swipe gesture properly.
-import { RectButton } from 'react-native-gesture-handler';
 import Reanimated, {
   SharedValue,
   useAnimatedStyle,
@@ -70,10 +63,54 @@ function SwipeLeftAction({
     const opacity = interpolate(drag.value, [0, 30, 80], [0, 0.6, 1], Extrapolation.CLAMP);
     return { transform: [{ scale }], opacity };
   });
+
+  // WEB: render a native <button> so the click is handled by the browser
+  // directly — bypasses every quirk of react-native-web's Pressable, RNGH's
+  // RectButton, and ReanimatedSwipeable's gesture detection. Tap-to-delete
+  // is now identical to clicking any other HTML button on the page.
+  if (Platform.OS === 'web') {
+    return (
+      <View style={styles.swipeAction} pointerEvents="box-none">
+        {/* @ts-ignore react-native-web accepts raw DOM elements when wrapped
+            — we deliberately use a real <button> for reliability. */}
+        <button
+          type="button"
+          onClick={(e: React.MouseEvent) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onPress();
+          }}
+          style={{
+            all: 'unset',
+            cursor: 'pointer',
+            width: '100%',
+            height: '100%',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 3,
+          }}
+          aria-label="Delete pick"
+        >
+          <Reanimated.View style={[styles.swipeActionInner, animatedStyle]} pointerEvents="none">
+            <Ionicons name="trash" size={22} color="#fff" />
+            <Text style={styles.swipeActionText}>DELETE</Text>
+          </Reanimated.View>
+        </button>
+      </View>
+    );
+  }
+
+  // NATIVE iOS/Android: TouchableOpacity from react-native works fine here
+  // because the swipe gesture is in its idle state (open) and isn't actively
+  // capturing touches. Earlier breakage was specifically a web rendering
+  // path issue, not a native gesture-conflict issue.
   return (
-    <RectButton
+    <TouchableOpacity
       style={styles.swipeAction}
       onPress={onPress}
+      activeOpacity={0.85}
       accessibilityRole="button"
       accessibilityLabel="Delete pick"
     >
@@ -81,7 +118,7 @@ function SwipeLeftAction({
         <Ionicons name="trash" size={22} color="#fff" />
         <Text style={styles.swipeActionText}>DELETE</Text>
       </Reanimated.View>
-    </RectButton>
+    </TouchableOpacity>
   );
 }
 
