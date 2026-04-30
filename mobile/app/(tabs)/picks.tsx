@@ -2,14 +2,22 @@ import React, { useState, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
   ActivityIndicator, Alert, Platform, RefreshControl,
-  Modal, ScrollView, Pressable, Animated as RNAnimated,
+  Modal, ScrollView, Pressable,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Swipeable } from 'react-native-gesture-handler';
+import ReanimatedSwipeable, {
+  SwipeableMethods,
+} from 'react-native-gesture-handler/ReanimatedSwipeable';
+import Reanimated, {
+  SharedValue,
+  useAnimatedStyle,
+  interpolate,
+  Extrapolation,
+} from 'react-native-reanimated';
 import Colors from '@/constants/colors';
 import { listPicks, deletePick, fetchPickAnalysis, Pick } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
@@ -41,6 +49,36 @@ function pickPush(p: Pick) {
   return p.result === 'push';
 }
 
+function SwipeLeftAction({
+  drag,
+  onPress,
+}: {
+  drag: SharedValue<number>;
+  onPress: () => void;
+}) {
+  // The action sits behind the card on the LEFT side. As the card is dragged
+  // to the right, `drag` increases from 0 → +N. We grow the icon/text in.
+  const animatedStyle = useAnimatedStyle(() => {
+    const scale = interpolate(drag.value, [0, 60, 120], [0.5, 0.9, 1], Extrapolation.CLAMP);
+    const opacity = interpolate(drag.value, [0, 30, 80], [0, 0.6, 1], Extrapolation.CLAMP);
+    return { transform: [{ scale }], opacity };
+  });
+  return (
+    <TouchableOpacity
+      style={styles.swipeAction}
+      onPress={onPress}
+      activeOpacity={0.85}
+      accessibilityRole="button"
+      accessibilityLabel="Delete pick"
+    >
+      <Reanimated.View style={[styles.swipeActionInner, animatedStyle]}>
+        <Ionicons name="trash" size={22} color="#fff" />
+        <Text style={styles.swipeActionText}>DELETE</Text>
+      </Reanimated.View>
+    </TouchableOpacity>
+  );
+}
+
 function SwipeableRow({
   onDelete,
   children,
@@ -48,59 +86,35 @@ function SwipeableRow({
   onDelete: () => void;
   children: React.ReactNode;
 }) {
-  const swipeRef = useRef<Swipeable | null>(null);
+  const swipeRef = useRef<SwipeableMethods | null>(null);
 
-  const renderLeftActions = (
-    progress: RNAnimated.AnimatedInterpolation<number>,
-    dragX: RNAnimated.AnimatedInterpolation<number>,
-  ) => {
-    // Subtle scale/fade so the action grows in from the left edge as you drag.
-    const scale = dragX.interpolate({
-      inputRange: [0, 60, 120],
-      outputRange: [0.6, 0.95, 1],
-      extrapolate: 'clamp',
-    });
-    const opacity = progress.interpolate({
-      inputRange: [0, 0.5, 1],
-      outputRange: [0, 0.7, 1],
-      extrapolate: 'clamp',
-    });
-    return (
-      <View
-        style={styles.swipeAction}
-        accessible
-        accessibilityRole="button"
-        accessibilityLabel="Delete pick"
-      >
-        <RNAnimated.View style={[styles.swipeActionInner, { transform: [{ scale }], opacity }]}>
-          <Ionicons name="trash" size={20} color="#fff" />
-          <Text style={styles.swipeActionText}>DELETE</Text>
-        </RNAnimated.View>
-      </View>
-    );
-  };
-
-  // Snap row closed immediately when it opens, then trigger the parent's confirm
-  // dialog. We don't track an "open" state ourselves — Swipeable's own state
-  // machine prevents re-entry while it's animating, and `onDelete` already
-  // gates with a Cancel/Delete confirm before mutating.
+  // iOS Mail / Messages pattern: swipe to reveal a persistent DELETE button,
+  // then tap that button to confirm. We deliberately do NOT auto-fire delete
+  // on `onSwipeableOpen` — that would dismiss the action immediately after
+  // any swipe, leaving the user unable to back out by swiping closed.
   return (
-    <Swipeable
+    <ReanimatedSwipeable
       ref={swipeRef}
-      renderLeftActions={renderLeftActions}
-      friction={2}
-      leftThreshold={64}
+      friction={1.5}
+      leftThreshold={40}
+      dragOffsetFromLeftEdge={6}
       overshootLeft={false}
-      onSwipeableOpen={() => {
-        try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {}
-        // Close immediately so the swipe doesn't stay open behind the confirm
-        // dialog (and so re-renders/recycling can't leave it half-open).
-        swipeRef.current?.close();
-        onDelete();
+      enableTrackpadTwoFingerGesture
+      renderLeftActions={(_progress, drag) => (
+        <SwipeLeftAction
+          drag={drag}
+          onPress={() => {
+            swipeRef.current?.close();
+            onDelete();
+          }}
+        />
+      )}
+      onSwipeableWillOpen={() => {
+        try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
       }}
     >
       {children}
-    </Swipeable>
+    </ReanimatedSwipeable>
   );
 }
 
@@ -927,28 +941,28 @@ const styles = StyleSheet.create({
   coinFlipText: { fontSize: 8, fontWeight: '800', color: Colors.textTertiary },
 
   trackBarOuter: {
-    height: 5,
+    height: 10,
     backgroundColor: Colors.cardSecondary,
-    borderRadius: 3,
+    borderRadius: 5,
     overflow: 'hidden',
     position: 'relative',
-    marginTop: 4,
+    marginTop: 6,
   },
   trackBarFill: {
     position: 'absolute',
     left: 0,
     top: 0,
     height: '100%' as unknown as number,
-    borderRadius: 3,
+    borderRadius: 5,
   },
   trackBarMarker: {
     position: 'absolute',
     left: '50%' as unknown as number,
     top: 0,
-    width: 1.5,
+    width: 2,
     height: '100%' as unknown as number,
-    backgroundColor: 'rgba(255,255,255,0.5)',
-    transform: [{ translateX: -0.75 }],
+    backgroundColor: 'rgba(255,255,255,0.55)',
+    transform: [{ translateX: -1 }],
   },
 
   scoreLine: {
