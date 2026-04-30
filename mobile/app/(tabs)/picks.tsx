@@ -131,10 +131,16 @@ function SwipeableRow({
 }) {
   const swipeRef = useRef<SwipeableMethods | null>(null);
 
-  // iOS Mail / Messages pattern: swipe to reveal a persistent DELETE button,
-  // then tap that button to confirm. We deliberately do NOT auto-fire delete
-  // on `onSwipeableOpen` — that would dismiss the action immediately after
-  // any swipe, leaving the user unable to back out by swiping closed.
+  // WEB: don't wrap in a swipeable at all. The browser doesn't have native
+  // swipe-to-delete UX, the gesture-handler web shim is flaky, and we now
+  // surface the trash bin directly inside PickCard for web users. Just
+  // render children straight through.
+  if (Platform.OS === 'web') {
+    return <>{children}</>;
+  }
+
+  // NATIVE iOS/Android: keep the iOS-Mail-style swipe-to-reveal action.
+  // Tapping DELETE confirms; swiping closed dismisses without action.
   return (
     <ReanimatedSwipeable
       ref={swipeRef}
@@ -161,7 +167,7 @@ function SwipeableRow({
   );
 }
 
-function PickCard({ pick }: { pick: Pick }) {
+function PickCard({ pick, onDelete }: { pick: Pick; onDelete?: () => void }) {
   const won = pickWon(pick);
   const lost = pickLost(pick);
   const live = isLive(pick);
@@ -481,10 +487,43 @@ function PickCard({ pick }: { pick: Pick }) {
         </View>
       )}
 
-      {live && !won && !lost && (
-        <View style={styles.tapHint}>
-          <Ionicons name="analytics-outline" size={9} color={Colors.primary} />
-          <Text style={styles.tapHintText}>Tap for analysis</Text>
+      {/* WEB-ONLY trash bin in the bottom-right corner. We render a real
+          HTML <button> so the click is handled by the browser directly —
+          no react-native-web Pressable, no gesture handler, no synthetic
+          event system. stopPropagation prevents the card's outer Pressable
+          (analysis modal) from firing on the same click. */}
+      {Platform.OS === 'web' && onDelete && (
+        <View style={styles.cardFooterWeb}>
+          {/* @ts-ignore raw DOM button is intentional for click reliability */}
+          <button
+            type="button"
+            onClick={(e: React.MouseEvent) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onDelete();
+            }}
+            // Stop pointer/mouse/touch events at the start as well, so the
+            // parent Pressable (for the analysis modal) never starts a press
+            // sequence on this trash button. Without these, react-native-web's
+            // Pressable can still fire onPress because it uses pointer events
+            // which fire before click.
+            onPointerDown={(e: React.PointerEvent) => e.stopPropagation()}
+            onMouseDown={(e: React.MouseEvent) => e.stopPropagation()}
+            onTouchStart={(e: React.TouchEvent) => e.stopPropagation()}
+            style={{
+              all: 'unset',
+              cursor: 'pointer',
+              padding: '6px 8px',
+              borderRadius: 6,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+            }}
+            aria-label="Delete pick"
+            title="Delete pick"
+          >
+            <Ionicons name="trash-outline" size={14} color={Colors.error} />
+          </button>
         </View>
       )}
     </View>
@@ -749,6 +788,7 @@ export default function PicksScreen() {
           keyExtractor={(item, i) => item.pickId || item._id || item.id || String(i)}
           renderItem={({ item }) => {
             const tappable = isLive(item) && !pickWon(item) && !pickLost(item);
+            const onDeleteForItem = () => handleDelete(item);
             const card = tappable ? (
               <Pressable
                 onPress={() => {
@@ -757,13 +797,13 @@ export default function PicksScreen() {
                 }}
                 style={({ pressed }) => [{ opacity: pressed ? 0.88 : 1 }]}
               >
-                <PickCard pick={item} />
+                <PickCard pick={item} onDelete={onDeleteForItem} />
               </Pressable>
             ) : (
-              <PickCard pick={item} />
+              <PickCard pick={item} onDelete={onDeleteForItem} />
             );
             return (
-              <SwipeableRow onDelete={() => handleDelete(item)}>
+              <SwipeableRow onDelete={onDeleteForItem}>
                 {card}
               </SwipeableRow>
             );
@@ -1143,6 +1183,12 @@ const styles = StyleSheet.create({
   tapHint: {
     flexDirection: 'row', alignItems: 'center', gap: 3,
     paddingTop: 4, borderTopWidth: 1, borderTopColor: Colors.borderSubtle,
+  },
+  cardFooterWeb: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    marginTop: 6,
   },
   tapHintText: { fontSize: 9, color: Colors.primary, fontWeight: '600', letterSpacing: 0.3 },
 });
