@@ -24,11 +24,27 @@ async function apiCall<T = unknown>(endpoint: string, options: RequestInit = {})
     throw new Error('Cannot reach server. Please try again.');
   }
   if (!resp.ok) {
-    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-    const detail = (err as { detail?: string | Array<{ msg?: string }> }).detail;
-    const message = Array.isArray(detail)
-      ? detail.map((d) => d.msg || 'Validation error').join(', ')
-      : (typeof detail === 'string' ? detail : 'Request failed');
+    const err = await resp.json().catch(() => null);
+    const detail = (err as { detail?: string | Array<{ msg?: string }> } | null)?.detail;
+    let message: string;
+    if (Array.isArray(detail)) {
+      message = detail.map((d) => d.msg || 'Validation error').join(', ');
+    } else if (typeof detail === 'string' && detail.trim()) {
+      message = detail;
+    } else if (resp.status === 404) {
+      message = `Endpoint missing (${endpoint}). Please refresh and try again.`;
+    } else if (resp.status === 502 || resp.status === 503 || resp.status === 504) {
+      message = 'Server is unreachable right now. Please try again in a moment.';
+    } else if (resp.status === 401 || resp.status === 403) {
+      message = 'Your session expired. Please sign in again.';
+    } else if (resp.status >= 500) {
+      message = `Server error (${resp.status}). Please try again.`;
+    } else {
+      message = `Request failed (${resp.status}).`;
+    }
+    if (typeof console !== 'undefined') {
+      console.warn('[apiCall] failed', { endpoint, status: resp.status, detail });
+    }
     throw new Error(message);
   }
   return resp.json() as Promise<T>;
