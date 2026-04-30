@@ -77,6 +77,20 @@ async def save_pick(req: SavePickRequest):
         "settledAt": None,
     }
 
+    # Persist the model's projected ball-possession split so we can compare
+    # projected vs actual once the match settles. Comes from the predict
+    # response's `matchupOverview.expectedPossession` (mobile passes it through
+    # as projHomePoss / projAwayPoss). Stored as numeric percentages 0-100.
+    proj_home = pick.get("projHomePoss")
+    proj_away = pick.get("projAwayPoss")
+    try:
+        if proj_home is not None:
+            doc["projHomePoss"] = round(float(proj_home), 1)
+        if proj_away is not None:
+            doc["projAwayPoss"] = round(float(proj_away), 1)
+    except (TypeError, ValueError):
+        pass
+
     # Grok-powered position resolution if position is missing
     if not doc["position"] or doc["position"] in ("Unknown", "unknown"):
         try:

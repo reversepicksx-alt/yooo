@@ -218,11 +218,20 @@ function PickCard({ pick }: { pick: Pick }) {
   }
   const homePoss = pick.homePoss;
   const awayPoss = pick.awayPoss;
-  // Only render the score line when we trust orientation:
-  //   either backend gave us fixture-derived home/away names, or pick has a known venue.
-  const showScoreLine = (settled || (live && hasLiveData))
-    && finalHome != null && finalAway != null
-    && (hasFixtureNames || venueKnown);
+  const projHomePoss = pick.projHomePoss;
+  const projAwayPoss = pick.projAwayPoss;
+  const hasActualPoss = homePoss != null && awayPoss != null;
+  const hasProjPoss = projHomePoss != null && projAwayPoss != null;
+  // Render the match-context block when we have either a trustable score OR a
+  // possession projection to compare against. Projected possession alone is
+  // enough to surface the "model said 60% — real was 48%" edge story.
+  const trustOrient = hasFixtureNames || venueKnown;
+  const showScoreLine = trustOrient && (
+    ((settled || (live && hasLiveData)) && finalHome != null && finalAway != null)
+    || hasActualPoss
+    || hasProjPoss
+  );
+  const haveScoreNumbers = finalHome != null && finalAway != null;
   const subjectWon = settled && finalHome != null && finalAway != null && venueKnown && (
     (venueLower === 'home' && finalHome > finalAway) ||
     (venueLower === 'away' && finalAway > finalHome)
@@ -294,6 +303,28 @@ function PickCard({ pick }: { pick: Pick }) {
               <Text style={styles.pickDetail} numberOfLines={1}>
                 {propLabel} · {pick.line}
               </Text>
+              {(() => {
+                // Confidence badge — visible on every live + settled card.
+                // Color comes from the level the model assigned at pick-time.
+                const conf = typeof pick.confidence === 'number' ? pick.confidence : null;
+                const lvlRaw = (pick.confidenceLevel || '').trim();
+                if (conf == null && !lvlRaw) return null;
+                const lvl = lvlRaw.toLowerCase();
+                const confColor =
+                  lvl.startsWith('strong') || lvl.startsWith('high') ? Colors.success
+                  : lvl.startsWith('weak') || lvl.startsWith('low') ? Colors.textTertiary
+                  : Colors.primary; // medium / unknown
+                const confLabel = conf != null
+                  ? `${Math.round(conf > 1 ? conf : conf * 100)}%${lvlRaw ? ' ' + lvlRaw.toUpperCase() : ''}`
+                  : lvlRaw.toUpperCase();
+                return (
+                  <View style={[styles.confBadge, { borderColor: confColor }]}>
+                    <Text style={[styles.confBadgeText, { color: confColor }]} numberOfLines={1}>
+                      {confLabel}
+                    </Text>
+                  </View>
+                );
+              })()}
               {pick.coinFlip && (
                 <View style={styles.coinFlipBadge}>
                   <Text style={styles.coinFlipText}>~</Text>
@@ -336,22 +367,59 @@ function PickCard({ pick }: { pick: Pick }) {
         );
       })()}
 
-      {/* Match score + possession — clearly labels home (left) vs away (right) */}
+      {/* Match score + possession block — clearly labels home (left) vs away
+          (right). Shows actual final/live possession when available AND the
+          model's pre-match projected possession on its own line — so the user
+          can spot when the projection was off (a directional edge signal). */}
       {showScoreLine && (
-        <View style={styles.scoreLine}>
-          <Text style={styles.scoreLabel}>{settled ? 'FT' : 'LIVE'}</Text>
-          <Text style={styles.scoreText} numberOfLines={1} ellipsizeMode="middle">
-            <Text style={[styles.scoreTeamName, { color: homeColor }]}>{homeTeamName || 'Home'}</Text>
-            <Text style={[styles.scoreNum, { color: homeColor }]}>{`  ${finalHome}`}</Text>
-            <Text style={styles.scoreDash}>{'  –  '}</Text>
-            <Text style={[styles.scoreNum, { color: awayColor }]}>{`${finalAway}  `}</Text>
-            <Text style={[styles.scoreTeamName, { color: awayColor }]}>{awayTeamName || 'Away'}</Text>
-          </Text>
-          {homePoss != null && awayPoss != null && (
+        <View style={styles.matchCtxBlock}>
+          <View style={styles.matchCtxScoreRow}>
+            {haveScoreNumbers ? (
+              <>
+                <Text style={styles.scoreLabel}>{settled ? 'FT' : 'LIVE'}</Text>
+                <Text style={styles.scoreText} numberOfLines={1} ellipsizeMode="middle">
+                  <Text style={[styles.scoreTeamName, { color: homeColor }]}>{homeTeamName || 'Home'}</Text>
+                  <Text style={[styles.scoreNum, { color: homeColor }]}>{`  ${finalHome}`}</Text>
+                  <Text style={styles.scoreDash}>{'  –  '}</Text>
+                  <Text style={[styles.scoreNum, { color: awayColor }]}>{`${finalAway}  `}</Text>
+                  <Text style={[styles.scoreTeamName, { color: awayColor }]}>{awayTeamName || 'Away'}</Text>
+                </Text>
+              </>
+            ) : (
+              // No score yet (pre-match / pending): still show team labels so
+              // the user can read the possession figures below.
+              <Text style={styles.scoreText} numberOfLines={1} ellipsizeMode="middle">
+                <Text style={[styles.scoreTeamName, { color: Colors.textSecondary }]}>{homeTeamName || 'Home'}</Text>
+                <Text style={styles.scoreDash}>{'   vs   '}</Text>
+                <Text style={[styles.scoreTeamName, { color: Colors.textSecondary }]}>{awayTeamName || 'Away'}</Text>
+              </Text>
+            )}
+          </View>
+          {hasActualPoss && (
             <Text style={styles.possText} numberOfLines={1}>
-              Poss {homePoss}% – {awayPoss}%
+              {settled ? 'Poss' : 'Live'} {homePoss}% – {awayPoss}%
             </Text>
           )}
+          {hasProjPoss && (() => {
+            // Compute delta vs actual when available — green if model was
+            // within 3pts (good projection), red if off by 8+pts (edge signal).
+            let deltaTag: { color: string; label: string } | null = null;
+            if (hasActualPoss) {
+              const delta = Math.abs((projHomePoss as number) - (homePoss as number));
+              const color = delta <= 3 ? Colors.success : delta >= 8 ? Colors.error : Colors.textSecondary;
+              deltaTag = { color, label: `Δ ${delta.toFixed(0)}pt` };
+            }
+            return (
+              <View style={styles.projPossRow}>
+                <Text style={styles.projPossText} numberOfLines={1}>
+                  Proj {Math.round(projHomePoss as number)}% – {Math.round(projAwayPoss as number)}%
+                </Text>
+                {deltaTag && (
+                  <Text style={[styles.projDeltaText, { color: deltaTag.color }]}>{deltaTag.label}</Text>
+                )}
+              </View>
+            );
+          })()}
         </View>
       )}
 
@@ -939,40 +1007,51 @@ const styles = StyleSheet.create({
   pickDetail: { fontSize: 11, color: Colors.textSecondary },
   coinFlipBadge: { backgroundColor: Colors.cardSecondary, paddingHorizontal: 4, paddingVertical: 1, borderRadius: 4 },
   coinFlipText: { fontSize: 8, fontWeight: '800', color: Colors.textTertiary },
+  confBadge: {
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 4,
+    borderWidth: 1,
+    backgroundColor: 'transparent',
+  },
+  confBadgeText: { fontSize: 9, fontWeight: '800', letterSpacing: 0.3 },
 
   trackBarOuter: {
-    height: 10,
+    height: 6.5,
     backgroundColor: Colors.cardSecondary,
-    borderRadius: 5,
+    borderRadius: 3.5,
     overflow: 'hidden',
     position: 'relative',
-    marginTop: 6,
+    marginTop: 5,
   },
   trackBarFill: {
     position: 'absolute',
     left: 0,
     top: 0,
     height: '100%' as unknown as number,
-    borderRadius: 5,
+    borderRadius: 3.5,
   },
   trackBarMarker: {
     position: 'absolute',
     left: '50%' as unknown as number,
     top: 0,
-    width: 2,
+    width: 1.5,
     height: '100%' as unknown as number,
     backgroundColor: 'rgba(255,255,255,0.55)',
-    transform: [{ translateX: -1 }],
+    transform: [{ translateX: -0.75 }],
   },
 
-  scoreLine: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+  matchCtxBlock: {
     marginTop: 6,
     paddingTop: 6,
     borderTopWidth: 1,
     borderTopColor: Colors.borderSubtle,
+    gap: 2,
+  },
+  matchCtxScoreRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   scoreLabel: {
     fontSize: 9,
@@ -985,6 +1064,9 @@ const styles = StyleSheet.create({
   scoreNum: { fontWeight: '800' },
   scoreDash: { color: Colors.textTertiary, fontWeight: '600' },
   possText: { fontSize: 10, color: Colors.textSecondary, fontWeight: '600' },
+  projPossRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  projPossText: { fontSize: 10, color: Colors.textTertiary, fontWeight: '600', fontStyle: 'italic' },
+  projDeltaText: { fontSize: 9, fontWeight: '800', letterSpacing: 0.3 },
 
   swipeAction: {
     backgroundColor: Colors.error,

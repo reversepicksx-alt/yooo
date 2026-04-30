@@ -613,6 +613,8 @@ export interface Pick {
   awayTeam?: string;
   homePoss?: number | null;
   awayPoss?: number | null;
+  projHomePoss?: number | null;
+  projAwayPoss?: number | null;
 }
 
 export async function listPicks(email: string, token: string): Promise<Pick[]> {
@@ -661,6 +663,8 @@ export async function listPicks(email: string, token: string): Promise<Pick[]> {
     awayTeam: (p.awayTeam as string) || undefined,
     homePoss: (p.homePoss as number) ?? null,
     awayPoss: (p.awayPoss as number) ?? null,
+    projHomePoss: (p.projHomePoss as number) ?? null,
+    projAwayPoss: (p.projAwayPoss as number) ?? null,
   }));
 }
 

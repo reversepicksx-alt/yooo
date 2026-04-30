@@ -13,6 +13,7 @@ import Colors from '@/constants/colors';
 import { useQueryClient } from '@tanstack/react-query';
 import { scanProp, predict, savePick, PROP_TYPES, LEAGUES, PredictionResult, ScanResult } from '@/lib/api';
 import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult, FuzzyLeagueResult } from '@/components/FuzzySearchInput';
+import LeaguePickerModal from '@/components/LeaguePickerModal';
 import { useAuth } from '@/contexts/AuthContext';
 
 const SCREEN_W = Dimensions.get('window').width;
@@ -274,6 +275,10 @@ export default function ScanScreen() {
     setSaving(true);
     setSaveError(null);
     try {
+      // Snapshot projected possession (model's pre-match guess) so the pick
+      // can later be compared to actual settled possession to find an edge.
+      const projHomePoss = prediction.expectedPossession?.home;
+      const projAwayPoss = prediction.expectedPossession?.away;
       await savePick(session.email, session.token, {
         playerName: prediction.playerName || scanResult?.playerName || playerQuery,
         teamName: prediction.teamName || scanResult?.teamName || scanResult?.playerTeam,
@@ -287,6 +292,8 @@ export default function ScanScreen() {
         position: prediction.playerPosition || undefined,
         role: prediction.playerRole || undefined,
         sport: 'soccer',
+        projHomePoss: Number.isFinite(projHomePoss) ? projHomePoss : undefined,
+        projAwayPoss: Number.isFinite(projAwayPoss) ? projAwayPoss : undefined,
         player: {
           id: prediction.playerId || 0,
           name: prediction.playerName || scanResult?.playerName || playerQuery,
@@ -2022,30 +2029,18 @@ export default function ScanScreen() {
         </TouchableOpacity>
       </Modal>
 
-      {/* League Picker Modal — SCAN mode correction */}
-      <Modal visible={showLeagueEditScan} transparent animationType="slide">
-        <TouchableOpacity style={styles.modalOverlay} onPress={() => setShowLeagueEditScan(false)}>
-          <View style={styles.modalSheet}>
-            <Text style={styles.modalTitle}>Select League</Text>
-            <ScrollView>
-              {LEAGUES.map(l => (
-                <TouchableOpacity
-                  key={l.id}
-                  style={[styles.modalItem, l.id === scanResult?.leagueId && styles.modalItemActive]}
-                  onPress={() => {
-                    setScanResult(prev => prev ? { ...prev, leagueId: l.id } : prev);
-                    setShowLeagueEditScan(false);
-                    Haptics.selectionAsync();
-                  }}
-                >
-                  <Text style={[styles.modalItemText, l.id === scanResult?.leagueId && styles.modalItemTextActive]}>{l.name}</Text>
-                  {l.id === scanResult?.leagueId && <Ionicons name="checkmark" size={16} color={Colors.primary} />}
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-        </TouchableOpacity>
-      </Modal>
+      {/* League Picker Modal — SCAN mode correction. Backed by full 1228-league
+          fuzzy search so users can pick women's leagues, lower divisions, etc. */}
+      <LeaguePickerModal
+        visible={showLeagueEditScan}
+        onClose={() => setShowLeagueEditScan(false)}
+        selectedId={scanResult?.leagueId}
+        onSelect={(l) => {
+          setScanResult(prev => prev ? { ...prev, leagueId: l.id } : prev);
+          Haptics.selectionAsync();
+        }}
+        title="Correct League"
+      />
 
       {/* Prop Picker Modal — MANUAL mode */}
       <Modal visible={showPropPicker} transparent animationType="slide">
@@ -2068,26 +2063,17 @@ export default function ScanScreen() {
         </TouchableOpacity>
       </Modal>
 
-      {/* League Picker Modal */}
-      <Modal visible={showLeaguePicker} transparent animationType="slide">
-        <TouchableOpacity style={styles.modalOverlay} onPress={() => setShowLeaguePicker(false)}>
-          <View style={styles.modalSheet}>
-            <Text style={styles.modalTitle}>League</Text>
-            <ScrollView>
-              {LEAGUES.map(l => (
-                <TouchableOpacity
-                  key={l.id}
-                  style={[styles.modalItem, l.id === leagueId && styles.modalItemActive]}
-                  onPress={() => { setLeagueId(l.id); setShowLeaguePicker(false); }}
-                >
-                  <Text style={[styles.modalItemText, l.id === leagueId && styles.modalItemTextActive]}>{l.name}</Text>
-                  {l.id === leagueId && <Ionicons name="checkmark" size={16} color={Colors.primary} />}
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-        </TouchableOpacity>
-      </Modal>
+      {/* League Picker Modal — MANUAL mode. Same full-cache fuzzy search. */}
+      <LeaguePickerModal
+        visible={showLeaguePicker}
+        onClose={() => setShowLeaguePicker(false)}
+        selectedId={leagueId}
+        onSelect={(l) => {
+          setLeagueId(l.id);
+          setLeagueQuery(l.name);
+        }}
+        title="League"
+      />
     </View>
     </KeyboardAvoidingView>
   );
