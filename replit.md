@@ -18,6 +18,7 @@ ReversePicks is a premium soccer player props analytics platform designed to pro
 - The AI architecture should primarily leverage Google Gemini 2.5 Pro, with xAI Grok as a fallback, especially for prediction synthesis and tactical chat. Gemini's JSON mode is preferred for guaranteeing parseable output.
 - The Bayesian engine for momentum calculation must always process game logs sorted newest-first to ensure accurate decay weighting.
 - AI-driven press intensity scores from Grok should override heuristic methods when available, providing more accurate input for bayesian projections.
+- **Bayesian probability is the source of truth** for both recommendation direction AND displayed confidence. A `[BAYESIAN TRUTH]` override in `backend/routes/predict.py` runs after all upstream adjustments (CONSISTENCY GUARD) and before MATH LOCK / calibration: it sets `recommendation = "over" if pOver >= pUnder else "under"`, sets `confidenceScore = round(max(pOver, pUnder))`, and sets `confidenceLevel` (High≥70 / Medium≥60 / Low). It also flips the projected value across the line if the direction reverses. This prevents the historical bug where the badge said OVER while P(UNDER) > 50%.
 
 ## System Architecture
 

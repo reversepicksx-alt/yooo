@@ -4460,6 +4460,50 @@ Analyze ALL data thoroughly. Return JSON only."""
                 prediction["projectedValue"] = _cg_fixed
                 print(f"[CONSISTENCY GUARD] {req.playerName}: projectedValue {_cg_proj} → {_cg_fixed} (rec=OVER, was below line {req.line})")
 
+        # ── BAYESIAN TRUTH OVERRIDE ──────────────────────────────────────────
+        # By user directive: the Bayesian Monte-Carlo probability is the
+        # source of truth for both direction AND displayed confidence.
+        # Eight upstream branches set `recommendation` from `projection > line`,
+        # which ignores the posterior distribution's variance/skew. Result: the
+        # badge can say OVER while P(UNDER) > 50% (real example: Tielemans
+        # 51.0 vs 50.5 line, P(UNDER)=59.4%, badge said OVER, actual landed 40).
+        #
+        # This block runs AFTER all upstream adjustments and BEFORE the MATH
+        # LOCK + calibration so that downstream consumers (lock text, calibrator,
+        # mobile UI) all see the corrected values.
+        _bt_src = real_bayes if isinstance(real_bayes, dict) else (early_bayes if isinstance(early_bayes, dict) else None)
+        if prediction.get("recommendation", "").upper() != "PASS" and _bt_src is not None and "pOver" in _bt_src and "pUnder" in _bt_src:
+            _bt_p_over  = _bt_src["pOver"]
+            _bt_p_under = _bt_src["pUnder"]
+            _bt_max_pct = max(_bt_p_over, _bt_p_under)
+            _bt_dir     = "over" if _bt_p_over >= _bt_p_under else "under"
+            _bt_old_rec  = str(prediction.get("recommendation", "")).lower()
+            _bt_old_conf = prediction.get("confidenceScore")
+            _bt_new_conf = int(round(_bt_max_pct))
+            _bt_new_lvl  = "High" if _bt_max_pct >= 70 else ("Medium" if _bt_max_pct >= 60 else "Low")
+
+            prediction["recommendation"] = _bt_dir
+            prediction["confidenceScore"] = _bt_new_conf
+            prediction["rawConfidence"] = _bt_new_conf
+            prediction["confidenceLevel"] = _bt_new_lvl
+
+            # If direction flipped, the projected value must be on the right
+            # side of the line for visual consistency. Use the closer half-
+            # integer offset like CONSISTENCY GUARD did.
+            if _bt_old_rec != _bt_dir:
+                _bt_proj = prediction.get("projectedValue", req.line)
+                if _bt_dir == "under" and _bt_proj > req.line:
+                    prediction["projectedValue"] = round((req.line - 0.5) * 2) / 2
+                elif _bt_dir == "over" and _bt_proj < req.line:
+                    prediction["projectedValue"] = round((req.line + 0.5) * 2) / 2
+
+            print(
+                f"[BAYESIAN TRUTH] {req.playerName}/{req.propType}: "
+                f"P(OVER)={_bt_p_over}% P(UNDER)={_bt_p_under}% → "
+                f"{_bt_dir.upper()} {_bt_new_conf}% ({_bt_new_lvl})"
+                + (f" [FLIPPED from {_bt_old_rec.upper()} {_bt_old_conf}%]" if _bt_old_rec != _bt_dir else f" [confidence {_bt_old_conf}→{_bt_new_conf}]")
+            )
+
         # ── MATH LOCK: Always align sharpSummary + Verdict to the FINAL math outcome ──
         # Runs after PASS GATE so we use the true final recommendation (PASS/OVER/UNDER).
         # Gemini wrote analysis using an early Bayesian estimate. H2H + opponent profile
@@ -5304,19 +5348,21 @@ Analyze ALL data thoroughly. Return JSON only."""
             print(f"[EDGE GAP RECOMPUTE] failed: {_eg_err}")
 
         # ── EMPIRICAL CONFIDENCE CALIBRATION ──────────────────────────
-        # Map the raw confidenceScore to the empirical hit rate observed in
-        # settled picks for this propType + bucket. Pass-through when the
-        # bucket has fewer than 30 settled picks (avoids noise-amplification).
-        # `rawConfidence` preserves the pre-calibration value for debugging.
+        # Per user directive, the Bayesian probability is the SOURCE OF TRUTH
+        # for the displayed `confidenceScore`, so we no longer overwrite it.
+        # We still compute the empirical-hit-rate calibration for logging /
+        # future analysis and store it in `calibratedConfidence` alongside
+        # `rawConfidence` so the two views can be compared, but the displayed
+        # confidence remains the Bayesian-truth value set above.
         try:
             from confidence_calibration import calibrate as _calibrate
             _raw_conf = prediction.get("confidenceScore")
             if _raw_conf is not None:
-                prediction["rawConfidence"] = _raw_conf
+                prediction.setdefault("rawConfidence", _raw_conf)
                 _calibrated = _calibrate(req.propType, float(_raw_conf))
                 if _calibrated is not None:
-                    prediction["confidenceScore"] = round(_calibrated)
-                    print(f"[CONF CALIB] {req.propType}: raw={_raw_conf} → calibrated={round(_calibrated)}")
+                    prediction["calibratedConfidence"] = round(_calibrated)
+                    print(f"[CONF CALIB] {req.propType}: bayesian={_raw_conf}, empirical-calibrated={round(_calibrated)} (display stays bayesian)")
         except Exception as _calib_err:
             print(f"[CONF CALIB] application failed: {_calib_err}")
 
