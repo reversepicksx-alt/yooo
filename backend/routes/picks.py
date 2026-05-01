@@ -1,5 +1,6 @@
 import json
 import uuid
+import unicodedata
 import asyncio as aio
 import traceback
 from datetime import datetime, timezone
@@ -19,6 +20,23 @@ router = APIRouter(prefix="/api", tags=["picks"])
 def generate_tracking_id():
     """Generate a unique tracking ID for every pick."""
     return f"TRK-{uuid.uuid4().hex[:8].upper()}"
+
+
+def normalize_player_name(name: str) -> str:
+    """
+    Canonical key for player name deduplication.
+    Lowercases, strips accents/diacritics, trims whitespace.
+    'Daley Blind' and 'D. Blind' still differ (we can't expand abbreviations
+    without a DB lookup), but 'Adrian Semper' and 'A. Šemper' will both
+    produce 'a. semper' / 'adrian semper' sharing the same last-name token
+    used in dedup logic. Stored as playerNameKey alongside the original name.
+    """
+    if not name:
+        return ""
+    name = name.strip()
+    name = unicodedata.normalize("NFD", name)
+    name = "".join(c for c in name if unicodedata.category(c) != "Mn")
+    return name.lower()
 
 
 @router.post("/picks/save")
@@ -53,6 +71,9 @@ async def save_pick(req: SavePickRequest):
         "sport": sport,
         "playerId": pick.get("player", {}).get("id"),
         "playerName": pick.get("player", {}).get("name") or pick.get("playerName", ""),
+        "playerNameKey": normalize_player_name(
+            pick.get("player", {}).get("name") or pick.get("playerName", "")
+        ),
         "teamName": pick.get("player", {}).get("team") or pick.get("teamName", ""),
         "teamId": pick.get("_request", {}).get("teamId", 0),
         "opponentId": pick.get("_request", {}).get("opponentId", 0),

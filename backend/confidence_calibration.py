@@ -85,11 +85,37 @@ async def refresh_calibration(db) -> dict:
         }},
         {"$addFields": {
             "_trainScore": {"$ifNull": ["$rawConfidence", "$confidenceScore"]},
+            # Date portion of settledAt for same-day dedup
+            "_dateKey": {"$substr": [{"$ifNull": ["$settledAt", "$timestamp"]}, 0, 10]},
+            # Canonical player key: prefer numeric playerId, fall back to
+            # normalized name key (strips diacritics/case), fall back to raw name
+            "_playerKey": {"$ifNull": [
+                {"$toString": "$playerId"},
+                {"$ifNull": ["$playerNameKey", "$playerName"]},
+            ]},
         }},
         {"$match": {"_trainScore": {"$ne": None, "$gt": 0}}},
+        # ── DEDUP ──────────────────────────────────────────────────────────────
+        # Each unique prediction (same player + prop + line + direction + day)
+        # should count as ONE data point regardless of how many users saved it.
+        # Without this, a single Daley Blind miss saved by 6 users would
+        # register as 6 consecutive misses and badly skew the calibration.
+        {"$group": {
+            "_id": {
+                "playerKey":     "$_playerKey",
+                "propType":      "$propType",
+                "line":          "$line",
+                "recommendation":"$recommendation",
+                "date":          "$_dateKey",
+            },
+            "propType":    {"$first": "$propType"},
+            "_trainScore": {"$first": "$_trainScore"},
+            "result":      {"$first": "$result"},
+        }},
+        # ── CALIBRATION BUCKETS ────────────────────────────────────────────────
         {"$group": {
             "_id": {"propType": "$propType", "score": "$_trainScore"},
-            "n": {"$sum": 1},
+            "n":    {"$sum": 1},
             "hits": {"$sum": {"$cond": [{"$eq": ["$result", "hit"]}, 1, 0]}},
         }},
     ]
