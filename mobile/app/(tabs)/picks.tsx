@@ -459,25 +459,27 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete?: () => void }) {
               </Text>
             )}
           </View>
-          {hasActualPoss && (
-            <Text style={styles.possText} numberOfLines={1}>
-              {settled ? 'Poss' : 'Live'} {homePoss}% – {awayPoss}%
-            </Text>
-          )}
-          {hasProjPoss && (() => {
-            // Compute delta vs actual when available — green if model was
-            // within 3pts (good projection), red if off by 8+pts (edge signal).
+          {(hasActualPoss || hasProjPoss) && (() => {
+            // Compact single line: actual + projection + delta together
+            // (was 2 stacked lines — collapsed to save vertical space).
             let deltaTag: { color: string; label: string } | null = null;
-            if (hasActualPoss) {
+            if (hasActualPoss && hasProjPoss) {
               const delta = Math.abs((projHomePoss as number) - (homePoss as number));
               const color = delta <= 3 ? Colors.success : delta >= 8 ? Colors.error : Colors.textSecondary;
-              deltaTag = { color, label: `Δ ${delta.toFixed(0)}pt` };
+              deltaTag = { color, label: `Δ${delta.toFixed(0)}` };
             }
             return (
               <View style={styles.projPossRow}>
-                <Text style={styles.projPossText} numberOfLines={1}>
-                  Proj {Math.round(projHomePoss as number)}% – {Math.round(projAwayPoss as number)}%
-                </Text>
+                {hasActualPoss && (
+                  <Text style={styles.possText} numberOfLines={1}>
+                    {settled ? 'Poss' : 'Live'} {homePoss}/{awayPoss}
+                  </Text>
+                )}
+                {hasProjPoss && (
+                  <Text style={styles.projPossText} numberOfLines={1}>
+                    Proj {Math.round(projHomePoss as number)}/{Math.round(projAwayPoss as number)}
+                  </Text>
+                )}
                 {deltaTag && (
                   <Text style={[styles.projDeltaText, { color: deltaTag.color }]}>{deltaTag.label}</Text>
                 )}
@@ -1042,27 +1044,27 @@ const styles = StyleSheet.create({
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, paddingHorizontal: 40 },
   emptyTitle: { fontSize: 18, fontWeight: '700', color: Colors.text },
   emptySub: { fontSize: 14, color: Colors.textSecondary, textAlign: 'center', lineHeight: 21 },
-  list: { paddingHorizontal: 16, paddingBottom: 40, gap: 6 },
+  list: { paddingHorizontal: 16, paddingBottom: 40, gap: 4 },
 
   card: {
-    backgroundColor: Colors.card, borderRadius: 12,
-    paddingHorizontal: 12, paddingVertical: 9,
-    borderWidth: 1, borderColor: Colors.borderSubtle, gap: 4,
+    backgroundColor: Colors.card, borderRadius: 10,
+    paddingHorizontal: 10, paddingVertical: 6,
+    borderWidth: 1, borderColor: Colors.borderSubtle, gap: 2,
   },
   cardWon: { borderColor: 'rgba(57,255,20,0.3)' },
   cardLost: { borderColor: 'rgba(255,59,48,0.25)' },
 
   cardTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  cardRight: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 0 },
-  cardPlayer: { fontSize: 14, fontWeight: '700', color: Colors.text, flex: 1 },
-  cardMeta: { fontSize: 10, color: Colors.textTertiary, letterSpacing: 0.2, marginBottom: 3 },
+  cardRight: { flexDirection: 'row', alignItems: 'center', gap: 5, flexShrink: 0 },
+  cardPlayer: { fontSize: 13, fontWeight: '700', color: Colors.text, flex: 1 },
+  cardMeta: { fontSize: 9, color: Colors.textTertiary, letterSpacing: 0.2, marginBottom: 1 },
 
   cardRow2: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
-  cardRow2Left: { flex: 1, gap: 2 },
-  inlineStats: { flexDirection: 'row', alignItems: 'center', gap: 10, flexShrink: 0 },
-  inlineStat: { alignItems: 'center', gap: 1 },
-  inlineVal: { fontSize: 14, fontWeight: '700', color: Colors.text },
-  inlineLbl: { fontSize: 8, color: Colors.textTertiary, fontWeight: '600', letterSpacing: 0.8 },
+  cardRow2Left: { flex: 1, gap: 1 },
+  inlineStats: { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 },
+  inlineStat: { alignItems: 'center', gap: 0 },
+  inlineVal: { fontSize: 12, fontWeight: '700', color: Colors.text },
+  inlineLbl: { fontSize: 7, color: Colors.textTertiary, fontWeight: '600', letterSpacing: 0.6 },
 
   liveBadge: {
     flexDirection: 'row', alignItems: 'center', gap: 3,
@@ -1115,56 +1117,56 @@ const styles = StyleSheet.create({
   confBadgeText: { fontSize: 9, fontWeight: '800', letterSpacing: 0.3 },
 
   trackBarOuter: {
-    height: 6.5,
+    height: 4,
     backgroundColor: Colors.cardSecondary,
-    borderRadius: 3.5,
+    borderRadius: 2,
     overflow: 'hidden',
     position: 'relative',
-    marginTop: 5,
+    marginTop: 3,
   },
   trackBarFill: {
     position: 'absolute',
     left: 0,
     top: 0,
     height: '100%' as unknown as number,
-    borderRadius: 3.5,
+    borderRadius: 2,
   },
   trackBarMarker: {
     position: 'absolute',
     left: '50%' as unknown as number,
     top: 0,
-    width: 1.5,
+    width: 1,
     height: '100%' as unknown as number,
     backgroundColor: 'rgba(255,255,255,0.55)',
-    transform: [{ translateX: -0.75 }],
+    transform: [{ translateX: -0.5 }],
   },
 
   matchCtxBlock: {
-    marginTop: 6,
-    paddingTop: 6,
+    marginTop: 4,
+    paddingTop: 3,
     borderTopWidth: 1,
     borderTopColor: Colors.borderSubtle,
-    gap: 2,
+    gap: 1,
   },
   matchCtxScoreRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 6,
   },
   scoreLabel: {
-    fontSize: 9,
+    fontSize: 8,
     fontWeight: '800',
     color: Colors.textTertiary,
     letterSpacing: 0.5,
   },
-  scoreText: { flex: 1, fontSize: 11 },
+  scoreText: { flex: 1, fontSize: 10 },
   scoreTeamName: { fontWeight: '700' },
   scoreNum: { fontWeight: '800' },
   scoreDash: { color: Colors.textTertiary, fontWeight: '600' },
-  possText: { fontSize: 10, color: Colors.textSecondary, fontWeight: '600' },
-  projPossRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  projPossText: { fontSize: 10, color: Colors.textTertiary, fontWeight: '600', fontStyle: 'italic' },
-  projDeltaText: { fontSize: 9, fontWeight: '800', letterSpacing: 0.3 },
+  possText: { fontSize: 9, color: Colors.textSecondary, fontWeight: '600' },
+  projPossRow: { flexDirection: 'row', alignItems: 'center', gap: 5, flexWrap: 'wrap' },
+  projPossText: { fontSize: 9, color: Colors.textTertiary, fontWeight: '600', fontStyle: 'italic', flexShrink: 1 },
+  projDeltaText: { fontSize: 8, fontWeight: '800', letterSpacing: 0.3, flexShrink: 0 },
 
   swipeAction: {
     backgroundColor: Colors.error,
