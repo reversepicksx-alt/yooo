@@ -62,7 +62,11 @@ async def save_pick(req: SavePickRequest):
         "line": pick.get("line", 0),
         "recommendation": (pick.get("recommendation") or "over").lower(),
         "projectedValue": pick.get("projectedValue") or pick.get("projection") or 0,
-        "confidenceScore": pick.get("confidenceScore", 50),
+        "confidenceScore": pick.get("confidenceScore") or pick.get("confidence") or 50,
+        # rawConfidence preserves the engine's pre-calibration confidence so the
+        # calibrator can train against raw values, not its own (calibrated) output.
+        # Falls back to the displayed score when raw isn't sent (legacy clients).
+        "rawConfidence": pick.get("rawConfidence") or pick.get("confidenceScore") or pick.get("confidence") or 50,
         "confidenceLevel": pick.get("confidenceLevel", "Medium"),
         "confidenceInterval": pick.get("confidenceInterval", []),
         "venue": pick.get("_request", {}).get("venue", "home"),

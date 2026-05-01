@@ -222,6 +222,7 @@ export interface PredictionResult {
   line?: number;
   projection?: number;
   confidence?: number;
+  rawConfidence?: number;
   recommendation?: 'OVER' | 'UNDER' | 'PASS';
   reasoning?: string;
   tacticalBreakdown?: string;
@@ -505,6 +506,7 @@ export async function predict(request: Record<string, unknown>): Promise<Predict
     line: raw.line ?? (request.line as number) ?? 0,
     projection: raw.projectedValue,
     confidence: raw.confidenceScore,
+    rawConfidence: raw.rawConfidence ?? raw.confidenceScore,
     recommendation: rec,
     reasoning: raw.tacticalBreakdown || raw.reasoning,
     confidenceLevel: raw.confidenceLevel,

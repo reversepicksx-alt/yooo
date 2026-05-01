@@ -2026,6 +2026,30 @@ async def predict(req: PredictionRequest):
                         f"only {len(_venue_logs)} {player_venue} logs — keeping combined {len(player_game_logs)}"
                     )
 
+            # ── SAMPLE-QUALITY FILTER (luck strip) ───────────────────────
+            # Drop garbage-time cameos and severe blowouts when we have
+            # abundance — these samples are distorted by game state, not
+            # representative of the player's normal output. Conservative:
+            # never reduces sample size below 6.
+            #
+            # Gated behind env flag LUCK_STRIP_ENABLED=1 because we don't yet
+            # have an empirical backtest proving it improves hit rate on this
+            # specific dataset. When enabled, every filter event is logged so
+            # the impact can be measured against settled outcomes over time.
+            if os.environ.get("LUCK_STRIP_ENABLED") == "1":
+                try:
+                    from sample_quality import filter_low_quality_samples
+                    _pre_n = len(_bayes_logs)
+                    _bayes_logs, _drop_reasons = filter_low_quality_samples(_bayes_logs)
+                    if _drop_reasons:
+                        print(
+                            f"[LUCK STRIP] {req.playerName}/{req.propType}: "
+                            f"dropped {len(_drop_reasons)}/{_pre_n} samples "
+                            f"({'; '.join(_drop_reasons[:3])}{'...' if len(_drop_reasons) > 3 else ''})"
+                        )
+                except Exception as _e:
+                    print(f"[LUCK STRIP] skipped due to error: {_e}")
+
             # ── LEAGUE-EMPIRICAL CALIBRATION lookup ──────────────────────
             # Returns a small, well-shrunken multiplicative nudge on the
             # posterior, derived from settled-pick history of this exact
@@ -5278,6 +5302,23 @@ Analyze ALL data thoroughly. Return JSON only."""
                 bm["edgeGapBand"] = _band
         except Exception as _eg_err:
             print(f"[EDGE GAP RECOMPUTE] failed: {_eg_err}")
+
+        # ── EMPIRICAL CONFIDENCE CALIBRATION ──────────────────────────
+        # Map the raw confidenceScore to the empirical hit rate observed in
+        # settled picks for this propType + bucket. Pass-through when the
+        # bucket has fewer than 30 settled picks (avoids noise-amplification).
+        # `rawConfidence` preserves the pre-calibration value for debugging.
+        try:
+            from confidence_calibration import calibrate as _calibrate
+            _raw_conf = prediction.get("confidenceScore")
+            if _raw_conf is not None:
+                prediction["rawConfidence"] = _raw_conf
+                _calibrated = _calibrate(req.propType, float(_raw_conf))
+                if _calibrated is not None:
+                    prediction["confidenceScore"] = round(_calibrated)
+                    print(f"[CONF CALIB] {req.propType}: raw={_raw_conf} → calibrated={round(_calibrated)}")
+        except Exception as _calib_err:
+            print(f"[CONF CALIB] application failed: {_calib_err}")
 
         await db.predictions.insert_one(prediction)
         prediction.pop("_id", None)

@@ -103,6 +103,21 @@ async def seed_grants():
     from league_priors import ensure_loaded as ensure_league_priors_loaded
     asyncio.create_task(ensure_league_priors_loaded(db))
 
+    # Confidence calibration: refresh on startup + every 6h. Maps the engine's
+    # raw confidence to empirical hit rate. Until any (propType, bucket) reaches
+    # n>=30 settled picks the calibrator passes raw values through untouched.
+    async def _conf_calib_loop():
+        from confidence_calibration import refresh_calibration
+        import asyncio as _a
+        while True:
+            try:
+                summary = await refresh_calibration(db)
+                print(f"[CONF CALIB] refreshed: props={summary['props']} buckets={summary['totalBuckets']} (min n={summary['minBucketN']})")
+            except Exception as _e:
+                print(f"[CONF CALIB] refresh failed: {_e}")
+            await _a.sleep(6 * 60 * 60)
+    asyncio.create_task(_conf_calib_loop())
+
     # Self-updating cheat sheet — re-renders attached_assets/cheat_sheet_2_1.png
     # from settled picks every few hours so it never goes stale.
     asyncio.create_task(_cheat_sheet_loop())
