@@ -131,6 +131,7 @@ export interface ScanResult {
   teamId?: number;
   opponentId?: number;
   leagueId?: number;
+  leagueName?: string;
   venue?: string;
   error?: string;
 }

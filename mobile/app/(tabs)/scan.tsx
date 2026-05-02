@@ -709,7 +709,7 @@ export default function ScanScreen() {
                     >
                       <Text style={styles.detectedStatLabel}>LEAGUE <Ionicons name="pencil-outline" size={9} color="#555" /></Text>
                       <Text style={styles.detectedStatVal} numberOfLines={1}>
-                        {LEAGUES.find(l => l.id === scanResult.leagueId)?.name || 'Auto'}
+                        {scanResult.leagueName || LEAGUES.find(l => l.id === scanResult.leagueId)?.name || 'Auto'}
                       </Text>
                     </TouchableOpacity>
                   </View>
@@ -2039,7 +2039,7 @@ export default function ScanScreen() {
         onClose={() => setShowLeagueEditScan(false)}
         selectedId={scanResult?.leagueId}
         onSelect={(l) => {
-          setScanResult(prev => prev ? { ...prev, leagueId: l.id } : prev);
+          setScanResult(prev => prev ? { ...prev, leagueId: l.id, leagueName: l.name } : prev);
           Haptics.selectionAsync();
         }}
         title="Correct League"
