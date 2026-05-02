@@ -110,7 +110,7 @@ async def _prefetch_fixture(fixture_id: int) -> int:
                     fxm_key = f"fxm_{fixture_id}"
                     ops.append(db.fixture_player_cache.update_one(
                         {"_k": fxm_key},
-                        {"$set": {"_k": fxm_key, "d": {
+                        {"$set": {"_k": fxm_key, "_ts": datetime.now(timezone.utc), "d": {
                             "home_id": home_id, "away_id": away_id,
                             "home_name": home_name, "away_name": away_name,
                         }}},
@@ -129,7 +129,7 @@ async def _prefetch_fixture(fixture_id: int) -> int:
                     gl = _build_game_log(stats)
                     k = f"fxp_{fixture_id}_{pid}"
                     ops.append(db.fixture_player_cache.update_one(
-                        {"_k": k}, {"$set": {"_k": k, "d": gl}}, upsert=True
+                        {"_k": k}, {"$set": {"_k": k, "_ts": datetime.now(timezone.utc), "d": gl}}, upsert=True
                     ))
                     cached_count += 1
 

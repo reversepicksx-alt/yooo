@@ -486,7 +486,7 @@ async def predict(req: PredictionRequest):
 
                     # Cache the enriched result
                     await db.fixture_player_cache.update_one(
-                        {"_k": cache_key}, {"$set": {"_k": cache_key, "d": result}}, upsert=True
+                        {"_k": cache_key}, {"$set": {"_k": cache_key, "_ts": datetime.now(timezone.utc), "d": result}}, upsert=True
                     )
                     result["date"]     = fix.get("date", "")[:10]
                     result["opponent"] = fix.get("opponent", "")
@@ -731,7 +731,7 @@ async def predict(req: PredictionRequest):
                             ops = [
                                 db.fixture_player_cache.update_one(
                                     {"_k": f"fxp_{fid_c}_{pk}"},
-                                    {"$set": {"_k": f"fxp_{fid_c}_{pk}", "d": lv}},
+                                    {"$set": {"_k": f"fxp_{fid_c}_{pk}", "_ts": datetime.now(timezone.utc), "d": lv}},
                                     upsert=True
                                 ) for pk, lv in logs_c.items()
                             ]
@@ -1287,7 +1287,7 @@ async def predict(req: PredictionRequest):
                                     ops = [
                                         db.fixture_player_cache.update_one(
                                             {"_k": f"fxp_{fid_inner}_{pid_k}"},
-                                            {"$set": {"_k": f"fxp_{fid_inner}_{pid_k}", "d": gl_v}},
+                                            {"$set": {"_k": f"fxp_{fid_inner}_{pid_k}", "_ts": datetime.now(timezone.utc), "d": gl_v}},
                                             upsert=True
                                         ) for pid_k, gl_v in logs_inner.items()
                                     ]

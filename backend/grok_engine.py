@@ -1157,7 +1157,7 @@ async def _run_auto_scout():
                     if recent:
                         await db.fixture_player_cache.update_one(
                             {"_k": cache_key},
-                            {"$set": {"_k": cache_key, "d": [r.get("fixture", {}).get("id") for r in recent], "ts": datetime.now(timezone.utc).isoformat()}},
+                            {"$set": {"_k": cache_key, "_ts": datetime.now(timezone.utc), "d": [r.get("fixture", {}).get("id") for r in recent]}},
                             upsert=True
                         )
                         total_cached += 1
