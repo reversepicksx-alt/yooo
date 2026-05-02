@@ -108,9 +108,10 @@ async def _prefetch_fixture(fixture_id: int) -> int:
                 away_name = data[1].get("team", {}).get("name", "")
                 if home_id and away_id:
                     fxm_key = f"fxm_{fixture_id}"
+                    # No _ts — fxm_ docs must never expire via TTL (venue metadata is permanent)
                     ops.append(db.fixture_player_cache.update_one(
                         {"_k": fxm_key},
-                        {"$set": {"_k": fxm_key, "_ts": datetime.now(timezone.utc), "d": {
+                        {"$set": {"_k": fxm_key, "d": {
                             "home_id": home_id, "away_id": away_id,
                             "home_name": home_name, "away_name": away_name,
                         }}},

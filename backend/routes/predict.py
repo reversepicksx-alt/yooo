@@ -608,9 +608,15 @@ async def predict(req: PredictionRequest):
                             gl["targetStatPer90"] = round((raw_val / minutes) * 90, 2)
                         collected.append(gl)
 
-                    if collected:
+                    # Only short-circuit if we have enough games with venue data.
+                    # If fewer than 5 games (or most lack venue), fall through to Stage 1
+                    # so the live API fills in the gaps and resolves venue/opponent correctly.
+                    good = [g for g in collected if g.get("venue")]
+                    if len(collected) >= 5 and len(good) >= len(collected) // 2:
                         print(f"[CACHE-STAGE0] Returning {len(collected)} real (cached) game logs — skipping API")
                         return collected
+                    elif collected:
+                        print(f"[CACHE-STAGE0] Only {len(collected)} games (venue ok: {len(good)}) — falling through to Stage 1 for more data")
             except Exception as _ce:
                 print(f"[CACHE-STAGE0] Error: {_ce}")
 
@@ -727,7 +733,12 @@ async def predict(req: PredictionRequest):
                                         break
 
                         # Cache all players from this fixture (fire-and-forget, for position comparisons)
-                        async def _cache_fix(fid_c, logs_c):
+                        # Also write/refresh fxm_ doc (no _ts so it never expires via TTL)
+                        _fix_home_id = fix_raw.get("teams", {}).get("home", {}).get("id")
+                        _fix_away_id = fix_raw.get("teams", {}).get("away", {}).get("id")
+                        _fix_home_name = fix_raw.get("teams", {}).get("home", {}).get("name", "")
+                        _fix_away_name = fix_raw.get("teams", {}).get("away", {}).get("name", "")
+                        async def _cache_fix(fid_c, logs_c, fhid=_fix_home_id, faid=_fix_away_id, fhn=_fix_home_name, fan=_fix_away_name):
                             ops = [
                                 db.fixture_player_cache.update_one(
                                     {"_k": f"fxp_{fid_c}_{pk}"},
@@ -735,6 +746,17 @@ async def predict(req: PredictionRequest):
                                     upsert=True
                                 ) for pk, lv in logs_c.items()
                             ]
+                            # Refresh fxm_ without _ts so venue metadata is permanent (not TTL-expired)
+                            if fhid and faid:
+                                fxm_k = f"fxm_{fid_c}"
+                                ops.append(db.fixture_player_cache.update_one(
+                                    {"_k": fxm_k},
+                                    {"$set": {"_k": fxm_k, "d": {
+                                        "home_id": fhid, "away_id": faid,
+                                        "home_name": fhn, "away_name": fan,
+                                    }}},
+                                    upsert=True
+                                ))
                             if ops:
                                 await aio.gather(*ops, return_exceptions=True)
                         aio.ensure_future(_cache_fix(fid, all_player_logs))
