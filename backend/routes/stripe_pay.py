@@ -305,6 +305,13 @@ async def stripe_webhook(request: Request):
             plan_key = await _plan_key_from_sub(sub_obj)
         status = sub_obj.get("status", "active")
         current_period_end = sub_obj.get("current_period_end")
+        # Some Stripe plan types (e.g. weekly) store current_period_end only inside
+        # items.data[0], not at the subscription top level. Fall back there.
+        if not current_period_end:
+            items_data = (sub_obj.get("items") or {})
+            items_list = items_data.get("data", []) if isinstance(items_data, dict) else []
+            if items_list:
+                current_period_end = items_list[0].get("current_period_end")
         end_iso = datetime.fromtimestamp(current_period_end, tz=timezone.utc).isoformat() if current_period_end else ""
         sub_id = sub_obj.get("id", "")
         # If cancel_at_period_end is true, the user has already canceled.
@@ -360,6 +367,9 @@ async def _upsert_stripe_sub(email: str, stripe_sub_id: str, plan_key: str, stat
     # Only update currentPeriodEnd when we have a real value — never blank it out
     if current_period_end:
         set_fields["currentPeriodEnd"] = current_period_end
+    # Track when a subscription was first marked canceled (don't overwrite if already set)
+    if status == "canceled":
+        set_fields.setdefault("canceledAt", now)
     await db.stripe_subscriptions.update_one(
         {"email": email},
         {
