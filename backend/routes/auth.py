@@ -122,6 +122,27 @@ async def _check_stripe_live(email_lower: str):
     Uses attribute-style access for Stripe SDK v7+.
     """
     try:
+        # Hard gate: if we have a local record with canceledAt set and no future
+        # currentPeriodEnd, NEVER call Stripe — it would just re-activate them.
+        existing = await db.stripe_subscriptions.find_one(
+            {"email": email_lower, "canceledAt": {"$exists": True}}, {"_id": 0}
+        )
+        if existing:
+            cpe_raw = existing.get("currentPeriodEnd", "")
+            if not cpe_raw:
+                print(f"[STRIPE LIVE] Blocked for {email_lower}: canceledAt set, no period end")
+                return None
+            try:
+                cpe_dt = datetime.fromisoformat(str(cpe_raw).replace(" ", "T"))
+                if cpe_dt.tzinfo is None:
+                    cpe_dt = cpe_dt.replace(tzinfo=timezone.utc)
+                if datetime.now(timezone.utc) >= cpe_dt:
+                    print(f"[STRIPE LIVE] Blocked for {email_lower}: canceledAt set, period ended {cpe_dt.date()}")
+                    return None
+            except Exception:
+                print(f"[STRIPE LIVE] Blocked for {email_lower}: canceledAt set, period end unparseable")
+                return None
+
         key = os.environ.get("STRIPE_SECRET_KEY", "")
         if not key:
             return None
@@ -320,12 +341,10 @@ async def verify_session(req: VerifySessionRequest):
     session = await db.sessions.find_one({"email": email_lower, "session_token": req.session_token}, {"_id": 0})
     if not session:
         return {"valid": False}
-    access_type = await _check_access_local(email_lower)
-    if not access_type:
-        # Local DB has no record — webhook may have been missed.
-        # Check Stripe live before revoking the session; this preserves access
-        # for users whose purchase webhook failed to reach the server.
-        access_type = await _check_stripe_live(email_lower)
+    # Use check_access (not bare _check_access_local) so all guards apply —
+    # including the canceledAt block that prevents _check_stripe_live from
+    # re-activating expired/canceled subscribers.
+    access_type = await check_access(email_lower)
     if not access_type:
         await db.sessions.delete_one({"email": email_lower, "session_token": req.session_token})
         return {"valid": False}
