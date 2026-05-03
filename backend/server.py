@@ -632,9 +632,9 @@ async def _overdue_subscription_sweep():
 
             if billing_disabled:
                 # ── DB-only sweep: expire anyone whose accessHonoredThrough has passed ──
-                # These are the users whose paid Square time was honored after billing shutdown.
+                # Includes CANCELED subs — they must not get perpetual free access
                 active_subs = await db.square_subscriptions.find(
-                    {"status": {"$in": ["ACTIVE", "PENDING"]}}, {"_id": 0, "email": 1, "expiresAt": 1, "accessHonoredThrough": 1}
+                    {"status": {"$in": ["ACTIVE", "PENDING", "CANCELED"]}}, {"_id": 0, "email": 1, "expiresAt": 1, "accessHonoredThrough": 1}
                 ).to_list(200)
 
                 for sub in active_subs:

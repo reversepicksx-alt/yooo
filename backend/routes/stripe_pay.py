@@ -307,6 +307,11 @@ async def stripe_webhook(request: Request):
         current_period_end = sub_obj.get("current_period_end")
         end_iso = datetime.fromtimestamp(current_period_end, tz=timezone.utc).isoformat() if current_period_end else ""
         sub_id = sub_obj.get("id", "")
+        # If cancel_at_period_end is true, the user has already canceled.
+        # Stripe keeps status="active" until the period ends, but we track it as "canceled"
+        # so our auth check can enforce expiry via currentPeriodEnd.
+        if sub_obj.get("cancel_at_period_end"):
+            status = "canceled"
         if email and sub_id:
             await _upsert_stripe_sub(email, sub_id, plan_key, status, end_iso)
 

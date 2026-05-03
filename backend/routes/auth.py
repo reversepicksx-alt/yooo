@@ -34,19 +34,18 @@ async def _check_access_local(email_lower: str):
                 except Exception:
                     pass
         return access_type
-    # Active/pending/canceled subs always have access
+    # Active/pending subs always have access (Square handles renewal enforcement)
     square_sub = await db.square_subscriptions.find_one(
-        {"email": email_lower, "status": {"$in": ["ACTIVE", "PENDING", "CANCELED"]}}, {"_id": 0}
+        {"email": email_lower, "status": {"$in": ["ACTIVE", "PENDING"]}}, {"_id": 0}
     )
     if square_sub:
         return "Premium (Square)"
-    # EXPIRED subs: grant access if still within the paid billing window (expiresAt in future)
-    # This handles: Square marks sub EXPIRED on renewal day but user already paid for the period
-    expired_sub = await db.square_subscriptions.find_one(
-        {"email": email_lower, "status": "EXPIRED"}, {"_id": 0}
+    # CANCELED or EXPIRED subs: only grant access if still within the paid billing window
+    lapsed_sub = await db.square_subscriptions.find_one(
+        {"email": email_lower, "status": {"$in": ["CANCELED", "EXPIRED"]}}, {"_id": 0}
     )
-    if expired_sub:
-        expires_at_raw = expired_sub.get("expiresAt")
+    if lapsed_sub:
+        expires_at_raw = lapsed_sub.get("expiresAt")
         if expires_at_raw:
             try:
                 exp_str = str(expires_at_raw).replace(" ", "T")
@@ -57,6 +56,7 @@ async def _check_access_local(email_lower: str):
                     return "Premium (Square)"  # paid period not yet over
             except Exception:
                 pass
+        # No expiresAt, or already past it — access denied
     whop_sub = await db.whop_subscriptions.find_one({"email": email_lower, "status": "active"}, {"_id": 0})
     if whop_sub:
         return "Whop Member"
@@ -66,6 +66,21 @@ async def _check_access_local(email_lower: str):
     )
     if stripe_sub:
         return "Premium (Stripe)"
+    # Stripe: canceled but still within paid period (cancel_at_period_end flow)
+    stripe_canceled = await db.stripe_subscriptions.find_one(
+        {"email": email_lower, "status": "canceled"}, {"_id": 0}
+    )
+    if stripe_canceled:
+        cpe_raw = stripe_canceled.get("currentPeriodEnd")
+        if cpe_raw:
+            try:
+                cpe_dt = datetime.fromisoformat(str(cpe_raw).replace(" ", "T"))
+                if cpe_dt.tzinfo is None:
+                    cpe_dt = cpe_dt.replace(tzinfo=timezone.utc)
+                if datetime.now(timezone.utc) < cpe_dt:
+                    return "Premium (Stripe)"  # paid period not yet over
+            except Exception:
+                pass
     # Stripe: past_due — still give access while Stripe retries the renewal.
     # Only customer.subscription.deleted should revoke access.
     stripe_past_due = await db.stripe_subscriptions.find_one(
@@ -141,6 +156,34 @@ async def _check_stripe_live(email_lower: str):
         sub_id = sub_data.get("id", "") or sub.id
         status = st
 
+        # If cancel_at_period_end is true the user has canceled — we store as "canceled"
+        # and only grant access while current_period_end is still in the future.
+        if sub_data.get("cancel_at_period_end"):
+            cpe = sub_data.get("current_period_end", 0) or 0
+            end_iso_tmp = datetime.fromtimestamp(int(cpe), tz=timezone.utc).isoformat() if cpe else ""
+            if cpe and cpe > now_ts:
+                print(f"[STRIPE LIVE FALLBACK] cancel_at_period_end for {email_lower} — access until {datetime.fromtimestamp(cpe, tz=timezone.utc).date()}")
+                # Write canceled record with currentPeriodEnd so local auth can use it
+                now_str = datetime.now(timezone.utc).isoformat()
+                await db.stripe_subscriptions.update_one(
+                    {"email": email_lower},
+                    {"$set": {
+                        "email": email_lower,
+                        "stripeSubscriptionId": sub_id,
+                        "status": "canceled",
+                        "canceledAt": now_str,
+                        "currentPeriodEnd": end_iso_tmp,
+                        "updatedAt": now_str,
+                        "source": "stripe",
+                        "autoRestored": True,
+                    }},
+                    upsert=True,
+                )
+                return "Premium (Stripe)"
+            else:
+                print(f"[STRIPE LIVE FALLBACK] cancel_at_period_end and period ended for {email_lower} — no access")
+                return None
+
         if st == "past_due":
             cpe = sub_data.get("current_period_end", 0)
             if cpe:
@@ -205,6 +248,14 @@ async def check_access(email_lower: str):
     result = await _check_access_local(email_lower)
     if result:
         return result
+    # If there's already an explicit canceled Stripe record, skip the live Stripe check.
+    # The live fallback would just re-read Stripe's "still technically active" state and
+    # write it back, overriding our canceled status. Trust the DB when canceledAt is set.
+    canceled_record = await db.stripe_subscriptions.find_one(
+        {"email": email_lower, "status": "canceled", "canceledAt": {"$exists": True}}, {"_id": 0}
+    )
+    if canceled_record:
+        return None  # definitively no access — don't go to Stripe
     # Webhook may have failed — check Stripe directly as a safety net
     return await _check_stripe_live(email_lower)
 
