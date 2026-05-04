@@ -9,9 +9,17 @@ from config import db
 router = APIRouter(prefix="/api/stripe", tags=["stripe"])
 
 STRIPE_PLANS = {
-    "weekly":    {"name": "Weekly",    "amount": 1100,  "interval": "week",  "interval_count": 1, "label": "$11/week"},
-    "monthly":   {"name": "Monthly",   "amount": 3999,  "interval": "month", "interval_count": 1, "label": "$39.99/month"},
+    "weekly":    {"name": "Weekly",    "amount": 1500,  "interval": "week",  "interval_count": 1, "label": "$15/week"},
+    "monthly":   {"name": "Monthly",   "amount": 4999,  "interval": "month", "interval_count": 1, "label": "$49.99/month"},
     "quarterly": {"name": "Quarterly", "amount": 9999,  "interval": "month", "interval_count": 3, "label": "$99.99/3 months"},
+}
+
+# Versioned lookup keys — increment version when price changes so a new Stripe
+# price is created rather than reusing the old (now-archived) one.
+STRIPE_LOOKUP_KEY_VERSION = {
+    "weekly":    "reversepicks_weekly_v2",
+    "monthly":   "reversepicks_monthly_v2",
+    "quarterly": "reversepicks_quarterly",
 }
 
 
@@ -26,8 +34,9 @@ def get_stripe():
 def _get_or_create_price(plan_key: str) -> str:
     """Return Stripe Price ID for plan_key, creating it if needed."""
     plan = STRIPE_PLANS[plan_key]
+    lookup_key = STRIPE_LOOKUP_KEY_VERSION.get(plan_key, f"reversepicks_{plan_key}")
     prices = stripe.Price.list(
-        lookup_keys=[f"reversepicks_{plan_key}"],
+        lookup_keys=[lookup_key],
         expand=["data.product"],
     )
     if prices.data:
@@ -41,7 +50,7 @@ def _get_or_create_price(plan_key: str) -> str:
             "interval_count": plan["interval_count"],
         },
         product_data={"name": f"ReversePicks {plan['name']}"},
-        lookup_key=f"reversepicks_{plan_key}",
+        lookup_key=lookup_key,
     )
     return price.id
 
