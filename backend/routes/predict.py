@@ -4097,6 +4097,19 @@ Analyze ALL data thoroughly. Return JSON only."""
         edge = abs(proj_val - req.line)
         rec = prediction.get("recommendation", "over")
 
+        # Guard 0: Blocked prop types — permanently unreliable
+        # clearances: 3/9 = 33% hit rate over 30 days, well below random.
+        # The stat is too volatile and context-dependent for reliable modeling.
+        # Force coin-flip / 45% confidence so it never shows as a strong pick.
+        _BLOCKED_PROPS = {"clearances"}
+        if req.propType in _BLOCKED_PROPS:
+            prediction["confidenceScore"] = 45
+            prediction["coinFlip"] = True
+            prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [
+                f"BLOCKED PROP: {req.propType} has insufficient model signal (33% historical hit rate) — not recommended"
+            ]
+            print(f"[GUARD 0] Blocked prop type: {req.propType} → forced to 45% coin-flip")
+
         # Guard 1: Binary line (0.5) — UNDER means zero, very risky
         if req.line <= 0.5 and rec == "under" and conf > 55:
             prediction["confidenceScore"] = 55
@@ -4131,15 +4144,28 @@ Analyze ALL data thoroughly. Return JSON only."""
             ]
             print(f"[GUARD] Coin-flip zone: edge={edge:.1f}, Bayesian P={_bayes_conf_g3}% → capped at 52% (was {old_conf})")
 
-        # Guard 3: UNDER skew penalty — stats have positive skew (outlier games pull mean up).
-        # Penalty scales with edge: close lines get 3%, large gaps get up to 10%.
-        # This prevents inflated confidence on aggressive UNDER calls like "proj=30, line=38.5".
-        if rec == "under":
+        # Guard 3a: OVER lean penalty — 30-day data shows OVER hits at 52.2% vs UNDER
+        # at 64.8%. The model has a systematic upward projection bias. Apply a flat
+        # -6% confidence penalty to all OVER picks to reflect this structural gap.
+        # For aggressive OVERs (edge > 10), add an extra -3% since those are most
+        # likely anchored to outlier-inflated averages.
+        if rec == "over":
             adj_conf = prediction.get("confidenceScore", 50)
-            penalty = min(10, max(3, round(edge * 0.9)))  # 3-10% penalty based on edge size
+            over_penalty = 6 + (3 if edge > 10 else 0)
+            prediction["confidenceScore"] = max(45, adj_conf - over_penalty)
+            if adj_conf != prediction["confidenceScore"]:
+                print(f"[GUARD] OVER lean penalty: -{over_penalty}% confidence ({adj_conf} → {prediction['confidenceScore']})")
+
+        # Guard 3b (legacy UNDER skew): keep only for very aggressive UNDER calls
+        # (edge > 12) where positive stat skew genuinely risks outlier blowout.
+        # Removed the blanket 3% minimum since data shows UNDER is systematically
+        # MORE accurate — the old penalty was working against good picks.
+        if rec == "under" and edge > 12:
+            adj_conf = prediction.get("confidenceScore", 50)
+            penalty = min(8, round((edge - 12) * 0.5))
             prediction["confidenceScore"] = max(45, adj_conf - penalty)
             if adj_conf != prediction["confidenceScore"]:
-                print(f"[GUARD] UNDER skew penalty: -{penalty}% confidence ({adj_conf} → {prediction['confidenceScore']})")
+                print(f"[GUARD] Aggressive UNDER penalty: -{penalty}% (edge={edge:.1f}) ({adj_conf} → {prediction['confidenceScore']})")
 
         # Guard 3b: High-scoring game CB pass volatility
         # CBs in high expected-total games (Vegas line ≥ 4.0 goals) show extreme
@@ -4162,6 +4188,38 @@ Analyze ALL data thoroughly. Return JSON only."""
                 ]
                 if _pre_hs != prediction["confidenceScore"]:
                     print(f"[GUARD] High-scoring CB volatility: total={_gs_total_g3b} -{_hs_penalty}% ({_pre_hs}→{prediction['confidenceScore']})")
+
+        # Guard 3c: open_close scenario — high confidence picks in close-game scenarios
+        # hit at only 31% (8/26) in 30-day backtest. When the pre-game model assigns
+        # >35% probability to an open/close (1-goal game) result, the outcome is
+        # too random for high-confidence calls. Cap these at 62%.
+        _p_open_close = (_scenario_probs or {}).get("P_open_close", 0)
+        if _p_open_close > 0.35:
+            _oc_conf = prediction.get("confidenceScore", 50)
+            if _oc_conf >= 70:
+                _oc_penalty = min(22, round(_p_open_close * 35))
+                prediction["confidenceScore"] = max(52, _oc_conf - _oc_penalty)
+                prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [
+                    f"OPEN/CLOSE SCENARIO ({_p_open_close*100:.0f}% game probability): High-confidence picks in close-game scenarios hit at only 31% — confidence reduced"
+                ]
+                if _oc_conf != prediction["confidenceScore"]:
+                    print(f"[GUARD 3c] open_close scenario: P={_p_open_close:.2f}, -{_oc_penalty}% ({_oc_conf}→{prediction['confidenceScore']})")
+
+        # Guard 3d: draw scenario — low confidence picks in draw-probability games
+        # hit at only 50% (75/149) — indistinguishable from random.
+        # When draw probability > 30% and the model has low confidence anyway (<60%),
+        # the pick has no edge. Cap at 50%.
+        _p_draw = (_scenario_probs or {}).get("P_draw", 0)
+        if _p_draw > 0.30:
+            _draw_conf = prediction.get("confidenceScore", 50)
+            if _draw_conf < 60:
+                _draw_penalty = min(10, round(_p_draw * 20))
+                prediction["confidenceScore"] = max(45, _draw_conf - _draw_penalty)
+                prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [
+                    f"DRAW SCENARIO ({_p_draw*100:.0f}% probability): Low-confidence picks in draw-likely games are near-random — confidence reduced"
+                ]
+                if _draw_conf != prediction["confidenceScore"]:
+                    print(f"[GUARD 3d] draw scenario: P={_p_draw:.2f}, -{_draw_penalty}% ({_draw_conf}→{prediction['confidenceScore']})")
 
         # Guard 4: Base-rate conflict — model recommendation fights the player's own season average.
         # When the season average sits on the OPPOSITE side of the line from the recommendation,
