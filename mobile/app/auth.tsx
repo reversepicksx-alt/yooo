@@ -18,8 +18,8 @@ type Step = 'email' | 'pricing';
 const INPUT_STYLE = Platform.OS === 'web' ? { outlineWidth: 0, outlineStyle: 'none' } : {};
 
 const PLANS = [
-  { key: 'weekly',    label: 'Weekly',   sub: 'Billed weekly',  price: '$11',    unit: '/week',  popular: false },
-  { key: 'monthly',   label: 'Monthly',  sub: 'Save 9%',        price: '$39.99', unit: '/month', popular: true  },
+  { key: 'weekly',    label: 'Weekly',   sub: 'Billed weekly',  price: '$15',    unit: '/week',  popular: false },
+  { key: 'monthly',   label: 'Monthly',  sub: 'Save 8%',        price: '$49.99', unit: '/month', popular: true  },
   { key: 'quarterly', label: '3 Months', sub: 'Save 24%',       price: '$99.99', unit: '/3mo',   popular: false },
 ];
 
