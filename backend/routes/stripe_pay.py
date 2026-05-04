@@ -9,13 +9,12 @@ from config import db
 router = APIRouter(prefix="/api/stripe", tags=["stripe"])
 
 STRIPE_PLANS = {
-    "weekly":    {"name": "Weekly",    "amount": 1500,  "interval": "week",  "interval_count": 1, "label": "$15/week"},
-    "monthly":   {"name": "Monthly",   "amount": 4999,  "interval": "month", "interval_count": 1, "label": "$49.99/month"},
-    "quarterly": {"name": "Quarterly", "amount": 9999,  "interval": "month", "interval_count": 3, "label": "$99.99/3 months"},
+    "weekly":    {"name": "Weekly",    "amount": 1500,  "interval": "week",  "interval_count": 1, "label": "$15/week",        "price_id": "price_1TTPgOE5jSGb860HYBTZ6emm"},
+    "monthly":   {"name": "Monthly",   "amount": 4999,  "interval": "month", "interval_count": 1, "label": "$49.99/month",    "price_id": "price_1TTPgOE5jSGb860Hco39c7bc"},
+    "quarterly": {"name": "Quarterly", "amount": 9999,  "interval": "month", "interval_count": 3, "label": "$99.99/3 months", "price_id": None},
 }
 
-# Versioned lookup keys — increment version when price changes so a new Stripe
-# price is created rather than reusing the old (now-archived) one.
+# Versioned lookup keys — used as fallback when no price_id is hardcoded.
 STRIPE_LOOKUP_KEY_VERSION = {
     "weekly":    "reversepicks_weekly_v2",
     "monthly":   "reversepicks_monthly_v2",
@@ -34,6 +33,10 @@ def get_stripe():
 def _get_or_create_price(plan_key: str) -> str:
     """Return Stripe Price ID for plan_key, creating it if needed."""
     plan = STRIPE_PLANS[plan_key]
+    # Use hardcoded price ID when available — avoids any lookup key ambiguity.
+    if plan.get("price_id"):
+        return plan["price_id"]
+    # Fallback: find or create via versioned lookup key (used for quarterly).
     lookup_key = STRIPE_LOOKUP_KEY_VERSION.get(plan_key, f"reversepicks_{plan_key}")
     prices = stripe.Price.list(
         lookup_keys=[lookup_key],
