@@ -2177,8 +2177,34 @@ async def predict(req: PredictionRequest):
                 game_script=_game_script,
                 scenario_priors_result=_scenario_priors_result,
                 scenario_priors_mode=_scen_mode,
+                role=player_role or "",
             )
-            print(f"[BAYESIAN] {req.playerName}/{req.propType}: samples={early_bayes.get('priorSamples') if early_bayes else 0}, logs={len(_bayes_logs)} (venue={player_venue})")
+            _eb_samples = early_bayes.get("priorSamples", 0) if early_bayes else 0
+            print(f"[BAYESIAN] {req.playerName}/{req.propType}: samples={_eb_samples}, logs={len(_bayes_logs)} (venue={player_venue})")
+
+            # ── LOW-SAMPLE MID/CAM UNDER GUARD ───────────────────────────────
+            # Evidence: CM/DLP UNDER picks have 0% win rate (4 picks, avg_err=+27.5).
+            # CM/Mezzala UNDER: 33% win rate. CDM/Ball Winner UNDER: 54% (borderline).
+            # When the engine has < 4 game logs AND projects significantly below the
+            # line for a midfielder/attacker, the UNDER recommendation is unreliable —
+            # the model is mostly anchored to the hyperprior, which is often too low.
+            # Guard: cap pUnder at 65 in this scenario so the UI shows "Medium" not "High".
+            _guard_positions = {"CM", "CDM", "CAM", "DM", "AM", "MF", "DMF", "OMF"}
+            if (early_bayes
+                    and req.propType in {"pass_attempts", "passes"}
+                    and _bayes_position.upper() in _guard_positions
+                    and early_bayes.get("recommendation") == "under"
+                    and _eb_samples < 4):
+                _proj = early_bayes.get("posteriorMean", req.line)
+                _proj_ratio = _proj / req.line if req.line > 0 else 1.0
+                if _proj_ratio < 0.88:
+                    _old_pu = early_bayes.get("pUnder", 50)
+                    if _old_pu > 65:
+                        early_bayes["pUnder"] = 65.0
+                        early_bayes["pOver"]  = 35.0
+                        print(f"[LOW-SAMPLE UNDER GUARD] {req.playerName}/{req.propType}: "
+                              f"samples={_eb_samples}, proj/line={_proj_ratio:.2f} "
+                              f"pUnder {_old_pu:.1f}→65.0 (low data, mid UNDER unreliable)")
 
             # ── T003: Redistribution model ───────────────────────────────────
             # When a teammate of the same position is absent, the subject player

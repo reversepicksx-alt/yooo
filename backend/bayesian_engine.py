@@ -157,6 +157,7 @@ def compute_bayesian_projection(
     game_script: dict = None,
     scenario_priors_result: dict = None,
     scenario_priors_mode: str = "off",
+    role: str = "",
 ) -> dict:
     """
     Compute a 3-layer Bayesian projection from raw game data.
@@ -552,11 +553,23 @@ def compute_bayesian_projection(
             _is_cb  = _pos_upper in {"CB", "DC", "RCB", "LCB"}
             _is_def = _pos_upper in {"DEF", "LB", "RB", "WB", "LWB", "RWB", "D"}
             # MID: deep midfielders (CDM/CM/CAM) stay involved regardless of possession.
-            # Evidence: 55-pick sample shows mean_err=-9.2 for MID — we're dramatically
-            # under-projecting when the squeeze fires hard at 0.55 floor.
-            # Raise to 0.75: max 25% cut (was up to 45% — caused Kimmich/Xhaka/Burgess failures).
+            # Evidence: 60-pick CDM/Ball Winner sample shows avg_err=+9.6 (model under-projects).
+            # Raise general mid floor 0.75→0.82 (max 18% cut).
+            # High-volume roles (DLP, Mezzala, Box-to-Box, Ball Winner) get 0.88 — they are
+            # volume passers by design and maintain output even when team possession dips.
             _is_mid = _pos_upper in {"MF", "CM", "CDM", "CAM", "DM", "AM", "MC", "DMF", "OMF", "CMF"}
-            squeeze_floor = 0.80 if _is_cb else (0.75 if _is_mid else (0.70 if _is_def else 0.60))
+            _role_lower = (role or "").lower()
+            _is_high_vol_mid = _is_mid and any(r in _role_lower for r in (
+                "deep-lying", "mezzala", "box-to-box", "ball winner",
+                "holding", "regista", "advanced playmaker",
+            ))
+            squeeze_floor = (
+                0.88 if _is_high_vol_mid else
+                0.80 if _is_cb else
+                0.82 if _is_mid else
+                0.70 if _is_def else
+                0.60
+            )
             if poss_ratio < 0.95:
                 squeeze_mult = round(max(squeeze_floor, poss_ratio ** 1.5), 3)
                 # HOT-STREAK DAMPENING: A player on an upward momentum trend may
@@ -652,7 +665,7 @@ def compute_bayesian_projection(
     # ═══════════════════════════════════════════
     cdm_inversion_info = {"applied": False, "multiplier": 1.0, "mode": "off",
                           "shadow_multiplier": 1.0, "reason": ""}
-    _cdm_mode = os.environ.get("CDM_INVERSION_MODE", "shadow").lower()
+    _cdm_mode = os.environ.get("CDM_INVERSION_MODE", "live").lower()
     if _cdm_mode not in {"off", "shadow", "live"}:
         _cdm_mode = "shadow"
     _cdm_pos_set = {"CDM", "DM", "DMF", "CM", "MC", "CMF"}
