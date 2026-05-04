@@ -122,10 +122,11 @@ async def _check_stripe_live(email_lower: str):
     Uses attribute-style access for Stripe SDK v7+.
     """
     try:
-        # Hard gate: if we have a local record with canceledAt set and no future
-        # currentPeriodEnd, NEVER call Stripe — it would just re-activate them.
+        # Hard gate: if we have a local CANCELED record with canceledAt set and no
+        # future currentPeriodEnd, NEVER call Stripe — it would just re-activate them.
+        # Only applies when status == "canceled" — active resubscribers are not blocked.
         existing = await db.stripe_subscriptions.find_one(
-            {"email": email_lower, "canceledAt": {"$exists": True}}, {"_id": 0}
+            {"email": email_lower, "status": "canceled", "canceledAt": {"$exists": True}}, {"_id": 0}
         )
         if existing:
             cpe_raw = existing.get("currentPeriodEnd", "")

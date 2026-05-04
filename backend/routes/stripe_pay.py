@@ -382,13 +382,20 @@ async def _upsert_stripe_sub(email: str, stripe_sub_id: str, plan_key: str, stat
     # Track when a subscription was first marked canceled (don't overwrite if already set)
     if status == "canceled":
         set_fields.setdefault("canceledAt", now)
+
+    update_op: dict = {
+        "$set": set_fields,
+        # subscribedAt is only written on insert (first time this email appears)
+        "$setOnInsert": {"subscribedAt": now},
+    }
+    # When a subscription becomes active/trialing again, clear any stale canceledAt
+    # so the auth hard-gate doesn't block users who have since resubscribed.
+    if status in ("active", "trialing"):
+        update_op["$unset"] = {"canceledAt": ""}
+
     await db.stripe_subscriptions.update_one(
         {"email": email},
-        {
-            "$set": set_fields,
-            # subscribedAt is only written on insert (first time this email appears)
-            "$setOnInsert": {"subscribedAt": now},
-        },
+        update_op,
         upsert=True,
     )
 
