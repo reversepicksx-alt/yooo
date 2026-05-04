@@ -4144,28 +4144,27 @@ Analyze ALL data thoroughly. Return JSON only."""
             ]
             print(f"[GUARD] Coin-flip zone: edge={edge:.1f}, Bayesian P={_bayes_conf_g3}% → capped at 52% (was {old_conf})")
 
-        # Guard 3a: OVER lean penalty — 30-day data shows OVER hits at 52.2% vs UNDER
-        # at 64.8%. The model has a systematic upward projection bias. Apply a flat
-        # -6% confidence penalty to all OVER picks to reflect this structural gap.
-        # For aggressive OVERs (edge > 10), add an extra -3% since those are most
-        # likely anchored to outlier-inflated averages.
+        # Guard 3a: High-confidence OVER coin-flip flag.
+        # 30-day backtest: OVER ≥70% confidence hits at only 45.7% (32/70) — WORSE
+        # than random. Breakdown by prop: pass_attempts OVER ≥70% = 22/55 = 40%.
+        # The model's upward projection bias is most extreme at high confidence.
+        # When the model is very "certain" about an OVER, the upward bias has pulled
+        # the projection far above the line — exactly where the model is most wrong.
+        #
+        # Fix: flag all OVER picks at ≥70% confidence as coin flips (capped at 55%).
+        # They remain visible in the app but are clearly marked as uncertain.
+        # UNDER picks are NOT penalized — UNDER 50-59% hits at 65.8% (better than
+        # high-confidence OVER), so the confidence score for UNDER is already
+        # mis-calibrated low and should not be penalised further.
         if rec == "over":
-            adj_conf = prediction.get("confidenceScore", 50)
-            over_penalty = 6 + (3 if edge > 10 else 0)
-            prediction["confidenceScore"] = max(45, adj_conf - over_penalty)
-            if adj_conf != prediction["confidenceScore"]:
-                print(f"[GUARD] OVER lean penalty: -{over_penalty}% confidence ({adj_conf} → {prediction['confidenceScore']})")
-
-        # Guard 3b (legacy UNDER skew): keep only for very aggressive UNDER calls
-        # (edge > 12) where positive stat skew genuinely risks outlier blowout.
-        # Removed the blanket 3% minimum since data shows UNDER is systematically
-        # MORE accurate — the old penalty was working against good picks.
-        if rec == "under" and edge > 12:
-            adj_conf = prediction.get("confidenceScore", 50)
-            penalty = min(8, round((edge - 12) * 0.5))
-            prediction["confidenceScore"] = max(45, adj_conf - penalty)
-            if adj_conf != prediction["confidenceScore"]:
-                print(f"[GUARD] Aggressive UNDER penalty: -{penalty}% (edge={edge:.1f}) ({adj_conf} → {prediction['confidenceScore']})")
+            _over_conf = prediction.get("confidenceScore", 50)
+            if _over_conf >= 70:
+                prediction["confidenceScore"] = min(_over_conf, 55)
+                prediction["coinFlip"] = True
+                prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [
+                    f"OVER BIAS: High-confidence OVER picks hit at only 45.7% in 30-day data — model's upward projection bias is strongest here. Treat as coin flip."
+                ]
+                print(f"[GUARD 3a] High-conf OVER ({_over_conf}%) flagged as coin flip → 55%")
 
         # Guard 3b: High-scoring game CB pass volatility
         # CBs in high expected-total games (Vegas line ≥ 4.0 goals) show extreme
