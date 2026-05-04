@@ -628,7 +628,7 @@ def _match_soccer_fixture(fixtures: list, opponent_name: str, pick_ts) -> dict:
                     pick_dt = datetime.fromtimestamp(pick_ts / 1000, tz=timezone.utc)
                 fix_dt = datetime.fromisoformat(f.get("fixture", {}).get("date", "").replace("Z", "+00:00"))
                 diff_hours = abs((fix_dt - pick_dt).total_seconds()) / 3600
-                if diff_hours > 48:
+                if diff_hours > 336:  # 14 days — picks created after a delayed game still settle
                     continue
             except Exception:
                 pass

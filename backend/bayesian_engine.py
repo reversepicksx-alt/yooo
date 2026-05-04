@@ -596,26 +596,16 @@ def compute_bayesian_projection(
             # distribution volume. The inverse-boost only holds in specific press-heavy
             # scenarios; applying it broadly over-inflates projections.
             if poss_ratio < 0.87:
-                # UNIFIED BOOST for all GK possession deficits (>13% below norm).
-                #
-                # PREVIOUS LOGIC (REMOVED — was WRONG):
-                #   "Extreme deficit (< 40% expected poss) = squeeze the GK projection"
-                # WHY IT WAS WRONG:
-                #   Empirical data shows the opposite. Away GKs on defensive teams
-                #   (Alaves @ Madrid ~25% poss, Valles away ~35% poss) consistently
-                #   EXCEEDED their lines — actual pass counts were well above projections.
-                #   Defenders under relentless pressure play it safe to the GK constantly.
-                #   Low possession = high GK back-pass volume. The squeeze was backwards.
-                #
-                # NEW LOGIC: Boost increases with possession deficit, capped at +18%.
-                #   poss_ratio=0.86 → ~+3%   (minor deficit, gentle boost)
-                #   poss_ratio=0.70 → ~+10%  (moderate deficit)
-                #   poss_ratio=0.55 → ~+16%  (extreme deficit, max boost near cap)
-                #
-                # Exponent 0.55 gives a steeper curve than the old 0.35, reflecting
-                # that very low possession scenarios are reliably high-volume for the GK.
+                # LOW POSSESSION BOOST — GK gets more back-passes when team defends deep.
+                # Evidence: away GKs on low-possession sides consistently exceed projections.
+                # Cap reduced to +10% (was +18%) — the old cap over-inflated projections
+                # in chaotic high-scoring games (e.g. Pickford 52 proj vs 36 actual in 3-3).
+                # Exponent lowered from 0.55→0.30 for a flatter, more conservative curve.
+                #   poss_ratio=0.86 → ~+2%   (minor deficit)
+                #   poss_ratio=0.77 → ~+7%   (moderate deficit, e.g. Everton vs Man City)
+                #   poss_ratio=0.50 → +10%   (extreme deficit, capped)
                 inverse_ratio = 1.0 / max(poss_ratio, 0.50)
-                boost_mult = round(min(1.18, inverse_ratio ** 0.55), 3)
+                boost_mult = round(min(1.10, inverse_ratio ** 0.30), 3)
                 raw_before_gk = posterior_mean
                 posterior_mean = round(posterior_mean * boost_mult, 1)
                 print(f"[GK POSS BOOST] {prop_type}: team_avg={team_season_avg_poss:.1f}% "
@@ -623,21 +613,19 @@ def compute_bayesian_projection(
                       f"inv_mult={boost_mult} {raw_before_gk} → {posterior_mean}")
             elif poss_ratio > 1.05:
                 # GK DOMINANT POSSESSION PENALTY
-                # When a team is expected to significantly out-possess the opponent,
-                # their defenders push high and do NOT recycle the ball through the GK.
-                # The GK receives fewer back-passes and distribution volume drops.
+                # When a team heavily out-possesses the opponent, their GK barely touches
+                # the ball — defenders push high and recycle possession among themselves.
+                # Evidence:
+                #   Donnarumma (Man City away, 75% poss): 12 actual vs 27 proj — huge miss.
+                #   Donnarumma (Man City away vs Burnley, 65% poss): 20 actual vs 27 proj.
+                #   Gazzaniga (Girona HOME, above-avg poss vs Betis): 26 actual.
                 #
-                # Evidence (all UNDER despite high season avg):
-                #   Gazzaniga (Girona HOME, above-avg possession vs Betis) → 26 passes.
-                #   Simón (Athletic Club HOME, high possession vs Osasuna) → 26 passes.
-                #   Escandell (Oviedo HOME, 55.7% expected / 52.4% avg = ratio 1.063) → UNDER 33.5.
-                #
-                # Scale (symmetric ceiling 18% — matches the low-poss boost cap):
-                #   ratio=1.05 → ~3-4% reduction (mild dominance)
-                #   ratio=1.10 → ~7% reduction
-                #   ratio=1.16 → ~12% reduction (clear dominance)
-                #   ratio=1.24 → ~18% reduction (extreme dominance, capped)
-                dom_penalty = min(0.18, (poss_ratio - 1.0) * 0.75)
+                # Scale (cap raised to 50%, multiplier raised 0.75→2.5 to match evidence):
+                #   ratio=1.05 → ~12% reduction
+                #   ratio=1.10 → ~25% reduction (e.g. Man City 65% poss → GK loses ~25%)
+                #   ratio=1.14 → ~35% reduction (e.g. Man City 75% poss)
+                #   ratio=1.20 → 50% reduction (extreme dominance, capped)
+                dom_penalty = min(0.50, (poss_ratio - 1.0) * 2.5)
                 shrink_mult = round(1.0 - dom_penalty, 3)
                 raw_before_dom = posterior_mean
                 posterior_mean = round(posterior_mean * shrink_mult, 1)
