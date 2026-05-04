@@ -3220,6 +3220,25 @@ KEY PRINCIPLE: A GK defending deep = maximum back-pass recycling. A GK on a domi
                 else:
                     context_multiplier += 0.07
                     context_factors.append("Team underdog → +7% (more opponent shots)")
+
+            # POSSESSION DOMINANCE PENALTY for saves
+            # When the GK's team dominates possession, opponents have less ball
+            # → fewer shots on target → fewer saves. Ann-Katrin Berger (62% poss,
+            # won 1-0) projected OVER 2 saves but actual was 1 — classic dominance miss.
+            if match_dominance and isinstance(match_dominance, dict):
+                _saves_exp_poss = match_dominance.get("expectedPoss")
+                _saves_avg_poss = match_dominance.get("teamSeasonAvg")
+                if (_saves_exp_poss and _saves_avg_poss and _saves_avg_poss > 0):
+                    _saves_poss_ratio = _saves_exp_poss / _saves_avg_poss
+                    if _saves_poss_ratio > 1.08:
+                        # Team significantly more dominant than usual → opponent barely touches ball
+                        _poss_save_penalty = min(0.20, (_saves_poss_ratio - 1.0) * 1.0)
+                        context_multiplier = round(context_multiplier * (1.0 - _poss_save_penalty), 2)
+                        context_factors.append(
+                            f"Possession dominance ({_saves_exp_poss:.0f}% vs {_saves_avg_poss:.0f}% avg) "
+                            f"→ -{_poss_save_penalty*100:.0f}% saves (opponent less ball)"
+                        )
+
             context_multiplier = round(context_multiplier, 2)
 
             # 4. THE FORMULA: Projected Saves = Opp Avg SoT × GK Save% × Context
@@ -4094,17 +4113,23 @@ Analyze ALL data thoroughly. Return JSON only."""
             ]
             print(f"[GUARD] Tight edge ({edge:.1f}): confidence capped at 58% (was {conf})")
 
-        # Guard 3: Coin-flip zone — projection within ±3 of line AND Bayesian confidence < 60%
-        if edge < 3.0 and real_bayes:
-            bayes_conf = max(real_bayes.get("pOver", 50), real_bayes.get("pUnder", 50))
-            if bayes_conf < 60:
-                old_conf = prediction.get("confidenceScore", 50)
-                prediction["confidenceScore"] = min(old_conf, 52)
-                prediction["coinFlip"] = True
-                prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [
-                    f"COIN FLIP: Math projects {real_bayes.get('posteriorMean')} vs line {req.line} (edge {edge:.1f}). Bayesian P={bayes_conf}%. This is a variance-driven outcome."
-                ]
-                print(f"[GUARD] Coin-flip zone: edge={edge:.1f}, Bayesian P={bayes_conf}% → capped at 52% (was {old_conf})")
+        # Guard 3: Coin-flip zone
+        # Hard threshold: any pick with edge < 2.0 is a coin flip regardless of
+        # Bayesian probability — the projected value is so close to the line that
+        # market noise dominates. Previously gated by bayes_conf < 60% which
+        # allowed near-zero edge picks (e.g. proj=66 vs line=65.5) to slip through
+        # as full-confidence picks.
+        _bayes_conf_g3 = 50
+        if real_bayes:
+            _bayes_conf_g3 = max(real_bayes.get("pOver", 50), real_bayes.get("pUnder", 50))
+        if edge < 2.0 or (edge < 3.0 and _bayes_conf_g3 < 60):
+            old_conf = prediction.get("confidenceScore", 50)
+            prediction["confidenceScore"] = min(old_conf, 52)
+            prediction["coinFlip"] = True
+            prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [
+                f"COIN FLIP: Edge only {edge:.1f} vs line {req.line} (proj={prediction.get('projectedValue','?')}). Bayesian P={_bayes_conf_g3}%. Near-line picks are variance-driven."
+            ]
+            print(f"[GUARD] Coin-flip zone: edge={edge:.1f}, Bayesian P={_bayes_conf_g3}% → capped at 52% (was {old_conf})")
 
         # Guard 3: UNDER skew penalty — stats have positive skew (outlier games pull mean up).
         # Penalty scales with edge: close lines get 3%, large gaps get up to 10%.
@@ -4115,6 +4140,28 @@ Analyze ALL data thoroughly. Return JSON only."""
             prediction["confidenceScore"] = max(45, adj_conf - penalty)
             if adj_conf != prediction["confidenceScore"]:
                 print(f"[GUARD] UNDER skew penalty: -{penalty}% confidence ({adj_conf} → {prediction['confidenceScore']})")
+
+        # Guard 3b: High-scoring game CB pass volatility
+        # CBs in high expected-total games (Vegas line ≥ 4.0 goals) show extreme
+        # pass variance — goals create chaos, shape changes kill steady build-up.
+        # Moussa Niakhaté (Lyon 4-2 Rennes): two OVER picks both missed badly.
+        # Reduce confidence so users aren't overexposed to volatile defender props
+        # in goal-fests.
+        _cb_volatile_pos = {"CB", "LB", "RB", "LCB", "RCB", "WB", "WBL", "WBR"}
+        _pos_upper_g3b = (player_position or "").upper()
+        if (_pos_upper_g3b in _cb_volatile_pos
+                and req.propType in {"pass_attempts", "passes"}
+                and _game_script and isinstance(_game_script, dict)):
+            _gs_total_g3b = _game_script.get("expected_total_goals", 0) or 0
+            if _gs_total_g3b >= 4.0:
+                _hs_penalty = min(14, round((_gs_total_g3b - 3.5) * 5))
+                _pre_hs = prediction.get("confidenceScore", 50)
+                prediction["confidenceScore"] = max(47, _pre_hs - _hs_penalty)
+                prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [
+                    f"HIGH-SCORING GAME: Defender pass volume highly volatile in {_gs_total_g3b}-goal expected games — confidence reduced"
+                ]
+                if _pre_hs != prediction["confidenceScore"]:
+                    print(f"[GUARD] High-scoring CB volatility: total={_gs_total_g3b} -{_hs_penalty}% ({_pre_hs}→{prediction['confidenceScore']})")
 
         # Guard 4: Base-rate conflict — model recommendation fights the player's own season average.
         # When the season average sits on the OPPOSITE side of the line from the recommendation,

@@ -14,6 +14,8 @@ DB_NAME = "reversepicks"
 PORT = "8000"
 REACT_APP_BACKEND_URL = ""
 EXPO_PUBLIC_API_URL = "http://localhost:8000"
+CDM_INVERSION_MODE = "live"
+SCENARIO_PRIORS_MODE = "live"
 
 [workflows]
 runButton = "Project"

@@ -824,22 +824,23 @@ def compute_bayesian_projection(
         gs_mult = 1.0
         gs_reason = []
         _pos_upper = (position or "").upper()
-        # Home CDM OVER passes — chase-mode boost when team is underdog
+        # Home CDM/CAM OVER passes — chase-mode boost when team is underdog.
+        # Extends to attacking mids (CAM/AM) — they become the primary build-up
+        # outlet when their team chases a deficit at home.
         if (prop_type in {"pass_attempts", "passes"} and venue == "home"
-                and _pos_upper in {"CDM", "DM", "DMF"}
+                and _pos_upper in {"CDM", "DM", "DMF", "CAM", "AM", "OM", "ACM"}
                 and expected_diff is not None and expected_diff < -0.5):
-            chase_boost = min(0.05, abs(expected_diff) * 0.025)
+            chase_boost = min(0.07, abs(expected_diff) * 0.030)
             gs_mult *= (1.0 + chase_boost)
-            gs_reason.append(f"home CDM chase-mode boost +{chase_boost*100:.1f}% (diff={expected_diff:.1f})")
-        # Away CDM OVER passes — symmetric pinned-back boost (Layer B of CDM-inversion fix).
+            gs_reason.append(f"home MID chase-mode boost +{chase_boost*100:.1f}% (diff={expected_diff:.1f})")
+        # Away CDM/CAM OVER passes — symmetric pinned-back boost (Layer B of CDM-inversion fix).
         # When the home team is favoured (expected_diff > 0), the away team is expected
         # to be pinned back / chase the game — and per the cheat-sheet observation, the
-        # away CDM becomes the build-up outlet under that pressure (more attempted
-        # passes, not fewer). Cap +6%, gated by CDM_INVERSION_MODE so it can ship
-        # in shadow alongside Layer A.
+        # away CDM/CAM becomes the build-up outlet under that pressure. Extends to CAM/AM
+        # whose pass volume also rises when their team must chase on the road.
         if (_cdm_mode != "off"
                 and prop_type in {"pass_attempts", "passes"} and venue == "away"
-                and _pos_upper in {"CDM", "DM", "DMF", "CM", "MC", "CMF"}
+                and _pos_upper in {"CDM", "DM", "DMF", "CM", "MC", "CMF", "CAM", "AM", "OM", "ACM"}
                 and expected_diff is not None and expected_diff > 0.5):
             away_chase_boost = min(0.06, abs(expected_diff) * 0.025)
             cdm_inversion_info["mode"] = _cdm_mode
@@ -871,14 +872,26 @@ def compute_bayesian_projection(
             highscore_boost = min(0.05, (expected_total - 2.5) * 0.025)
             gs_mult *= (1.0 + highscore_boost)
             gs_reason.append(f"away GK high-scoring boost +{highscore_boost*100:.1f}% (total={expected_total:.1f})")
-        # Defenders UNDER passes (away) — extra confidence cut in low-scoring games
-        # i.e. push projection lower so the UNDER stays UNDER
-        if (prop_type in {"pass_attempts", "passes"} and venue == "away"
-                and _pos_upper in {"CB", "LB", "RB", "LCB", "RCB"}
-                and expected_total is not None and expected_total <= 2.0):
-            lowscore_cut = min(0.04, (2.5 - expected_total) * 0.02)
-            gs_mult *= (1.0 - lowscore_cut)
-            gs_reason.append(f"away DEF low-scoring cut -{lowscore_cut*100:.1f}% (total={expected_total:.1f})")
+        # CB MANAGING-LEAD BOOST — when a team is clearly favoured to win,
+        # their CBs accumulate passes managing the lead (build-out from the back,
+        # waste time, recycle under reduced pressure).
+        # Home CB on clear home favourite, or away CB on clear away favourite.
+        # Empirical pattern: Micky van de Ven (Spurs away, won 2-1) hit 61 actual
+        # vs 42-54 projected UNDER — model was suppressing a lead-managing CB.
+        _cb_set = {"CB", "LB", "RB", "LCB", "RCB", "WB", "WBL", "WBR"}
+        if (prop_type in {"pass_attempts", "passes"}
+                and _pos_upper in _cb_set
+                and expected_diff is not None):
+            # Home CB: home team is clear favourite
+            if venue == "home" and expected_diff > 0.8:
+                cb_lead_boost = min(0.08, (expected_diff - 0.8) * 0.04)
+                gs_mult *= (1.0 + cb_lead_boost)
+                gs_reason.append(f"home CB lead-manage boost +{cb_lead_boost*100:.1f}% (diff={expected_diff:.1f})")
+            # Away CB: away team is clear favourite (negative expected_diff = away fav)
+            elif venue == "away" and expected_diff < -0.8:
+                cb_lead_boost = min(0.08, (abs(expected_diff) - 0.8) * 0.04)
+                gs_mult *= (1.0 + cb_lead_boost)
+                gs_reason.append(f"away CB lead-manage boost +{cb_lead_boost*100:.1f}% (diff={expected_diff:.1f})")
         if gs_mult != 1.0:
             raw_before_gs = posterior_mean
             posterior_mean = round(posterior_mean * gs_mult, 1)
