@@ -612,11 +612,24 @@ async def predict(req: PredictionRequest):
                     # If fewer than 5 games (or most lack venue), fall through to Stage 1
                     # so the live API fills in the gaps and resolves venue/opponent correctly.
                     good = [g for g in collected if g.get("venue")]
-                    if len(collected) >= 5 and len(good) >= len(collected) // 2:
+                    # For saves prop: also require that at least SOME cached logs actually
+                    # have goals_saves data. The prefetch cache often stores a game log
+                    # entry with goals_saves=None (the stat was null at cache time).
+                    # If Stage 0 returns early with 17 logs all having goals_saves=None,
+                    # the Bayesian engine gets an empty series, falls back to _empty_metrics
+                    # (posteriorMean=line, P=50/50), and the coin-flip guard pins the
+                    # result to UNDER — exactly the Oblak bug.
+                    _saves_ok = True
+                    if req.propType in {"saves", "goalie_saves"}:
+                        target_f = stat_field_map.get(req.propType, "")
+                        _saves_ok = any(g.get(target_f) is not None for g in collected)
+                        if not _saves_ok:
+                            print(f"[CACHE-STAGE0] {req.playerName}/saves: 0 of {len(collected)} cached logs have goals_saves — falling through to Stage 1")
+                    if len(collected) >= 5 and len(good) >= len(collected) // 2 and _saves_ok:
                         print(f"[CACHE-STAGE0] Returning {len(collected)} real (cached) game logs — skipping API")
                         return collected
                     elif collected:
-                        print(f"[CACHE-STAGE0] Only {len(collected)} games (venue ok: {len(good)}) — falling through to Stage 1 for more data")
+                        print(f"[CACHE-STAGE0] Only {len(collected)} games (venue ok: {len(good)}, saves_ok={_saves_ok}) — falling through to Stage 1 for more data")
             except Exception as _ce:
                 print(f"[CACHE-STAGE0] Error: {_ce}")
 
@@ -1942,14 +1955,16 @@ async def predict(req: PredictionRequest):
             except Exception:
                 pass
 
-            # ── GK detection fallback (position cache miss) ─────────────────
-            # If the position cache doesn't know this player yet, detect GK from
-            # game logs (saves data present) or from the propType being "saves".
-            # This prevents the outfield possession squeeze from firing on GKs.
-            if not _bayes_position:
-                if req.propType == "saves":
-                    _bayes_position = "GK"
-                elif req.propType in {"pass_attempts", "passes"}:
+            # ── GK detection — always override for saves prop ────────────────
+            # "saves" is an exclusively GK stat. If the position cache has a
+            # stale/wrong outfield entry (e.g. Oblak cached as "RB"), every
+            # downstream GK-specific branch misfires: opponent-concession cap,
+            # press boost, venue-split threshold, inverted possession model.
+            # Guard: always force GK when propType is saves, regardless of cache.
+            if req.propType in {"saves", "goalie_saves"}:
+                _bayes_position = "GK"
+            elif not _bayes_position:
+                if req.propType in {"pass_attempts", "passes"}:
                     # Any saves value in logs = goalkeeper
                     if any(g.get("goals_saves") is not None and g.get("goals_saves", -1) >= 0
                            for g in player_game_logs):
@@ -2195,7 +2210,7 @@ async def predict(req: PredictionRequest):
                 game_script=_game_script,
                 scenario_priors_result=_scenario_priors_result,
                 scenario_priors_mode=_scen_mode,
-                role=player_role or "",
+                role=locals().get("player_role", ""),
             )
             _eb_samples = early_bayes.get("priorSamples", 0) if early_bayes else 0
             print(f"[BAYESIAN] {req.playerName}/{req.propType}: samples={_eb_samples}, logs={len(_bayes_logs)} (venue={player_venue})")
