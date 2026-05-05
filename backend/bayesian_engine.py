@@ -392,6 +392,16 @@ def compute_bayesian_projection(
         opp_conceded = _estimate_opponent_concession(opponent_fixture_stats, prop_type)
         if opp_conceded is not None:
             opp_adj = opp_conceded - prior_mean
+            # GK saves: the formula (opp SOT × 0.70) systematically underestimates
+            # saves because it uses season-average SOT (which smooths out home-game
+            # spikes) and ignores press intensity, game state, and the actual
+            # observed GK performance against this specific opponent.
+            # When the formula pulls the adjustment negative, cap suppression at
+            # 10% of the venue-specific prior — otherwise a prior of 5.8 (away avg)
+            # gets crushed by a formula yielding 2.94, creating a false UNDER call
+            # even when every observable signal points to OVER the line.
+            if _is_gk and prop_type in {"saves", "goalie_saves"} and opp_adj < 0:
+                opp_adj = max(opp_adj, -prior_mean * 0.10)
             covariate_adjustment += opp_adj * 0.15
 
     # 3d. xG covariate — opponent's expected goals allowed (shot props only)

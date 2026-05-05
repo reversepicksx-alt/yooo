@@ -2035,12 +2035,24 @@ async def predict(req: PredictionRequest):
             _bayes_logs = player_game_logs
             if req.propType in _VENUE_SPLIT_PROPS and player_venue:
                 _venue_logs = [g for g in player_game_logs if g.get("venue") == player_venue]
-                if len(_venue_logs) >= 5:
+                # GK saves are HIGHLY venue-dependent (away GKs face far more shots
+                # than home GKs — e.g. Oblak home avg 2.3 vs away avg 5.8). Using
+                # combined logs when away samples exist biases the prior toward home
+                # game values and systematically under-projects away GK saves.
+                # Lower the threshold to 3 for GK saves so 4 away samples activate
+                # the venue split instead of falling back to the combined pool.
+                _is_gk_saves = (
+                    req.propType in {"saves", "goalie_saves"}
+                    and _bayes_position.upper() in {"GK", "GOALKEEPER"}
+                )
+                _venue_min = 3 if _is_gk_saves else 5
+                if len(_venue_logs) >= _venue_min:
                     _bayes_logs = _venue_logs
                     print(
                         f"[VENUE PRIOR] {req.playerName}/{req.propType}: "
                         f"using {len(_venue_logs)} {player_venue} logs "
-                        f"(dropped {len(player_game_logs) - len(_venue_logs)} opposite-venue logs)"
+                        f"(dropped {len(player_game_logs) - len(_venue_logs)} opposite-venue logs, "
+                        f"threshold={_venue_min})"
                     )
                 else:
                     print(
@@ -3180,7 +3192,10 @@ KEY PRINCIPLE: A GK defending deep = maximum back-pass recycling. A GK on a domi
             gk_saves_list = []
             gk_ga_from_logs = []
             _saves_venue_logs = [g for g in player_game_logs if g.get("venue") == player_venue and g.get("goals_saves") is not None and g.get("minutes", 0) > 0]
-            _saves_pool = _saves_venue_logs if len(_saves_venue_logs) >= 5 else player_game_logs
+            # Lower threshold to 3 for GK saves (same as Bayesian venue-split fix):
+            # away GK save averages are radically different from home averages.
+            # 3 venue-specific samples are enough to anchor the gk_avg_saves here.
+            _saves_pool = _saves_venue_logs if len(_saves_venue_logs) >= 3 else player_game_logs
             recent_gk_logs = [g for g in _saves_pool if g.get("goals_saves") is not None and g.get("minutes", 0) > 0][:7]
             for g in recent_gk_logs:
                 gk_saves_list.append(g.get("goals_saves"))
