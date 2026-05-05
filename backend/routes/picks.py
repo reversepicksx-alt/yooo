@@ -619,7 +619,8 @@ def _match_soccer_fixture(fixtures: list, opponent_name: str, pick_ts) -> dict:
             if not (opp_lower in home_name.lower() or opp_lower in away_name.lower()):
                 continue
 
-        # Check time proximity
+        # Check time proximity — DIRECTIONAL (not abs) to prevent settling picks
+        # with results from a game that was already OVER when the pick was made.
         if pick_ts:
             try:
                 if isinstance(pick_ts, str):
@@ -627,8 +628,13 @@ def _match_soccer_fixture(fixtures: list, opponent_name: str, pick_ts) -> dict:
                 else:
                     pick_dt = datetime.fromtimestamp(pick_ts / 1000, tz=timezone.utc)
                 fix_dt = datetime.fromisoformat(f.get("fixture", {}).get("date", "").replace("Z", "+00:00"))
-                diff_hours = abs((fix_dt - pick_dt).total_seconds()) / 3600
-                if diff_hours > 336:  # 14 days — picks created after a delayed game still settle
+                hours_pick_after_kickoff = (pick_dt - fix_dt).total_seconds() / 3600
+                # Pick made more than 3h after kickoff → game was over when pick was created.
+                # A typical match (90 min + extra time + result delay) is < 3h from kickoff.
+                if hours_pick_after_kickoff > 3:
+                    continue
+                # Pick made more than 14 days before fixture → wrong direction
+                if hours_pick_after_kickoff < -336:
                     continue
             except Exception:
                 pass
@@ -906,6 +912,18 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
                         continue
                     if not (opponent.lower() in home.lower() or opponent.lower() in away.lower()):
                         continue
+                    # Time guard: don't settle with a game that was already over when
+                    # the pick was made. A pick made 3+ hours after kickoff means the
+                    # game finished before the user picked — this is a different fixture.
+                    fix_date_str = f.get("fixture", {}).get("date", "")
+                    if fix_date_str and pick_created != datetime.min.replace(tzinfo=timezone.utc):
+                        try:
+                            fix_dt = datetime.fromisoformat(fix_date_str.replace("Z", "+00:00"))
+                            hours_after_kickoff = (pick_created - fix_dt).total_seconds() / 3600
+                            if hours_after_kickoff > 3:
+                                continue  # Game was over before pick was made
+                        except Exception:
+                            pass
                     recent = f
                     break
                 if recent:
