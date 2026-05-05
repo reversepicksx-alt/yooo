@@ -116,34 +116,12 @@ async def _check_access_local(email_lower: str):
 async def _check_stripe_live(email_lower: str):
     """
     Live fallback: query Stripe directly.
-    Called only when the local DB has no record — e.g. webhook was missed.
-    If an active subscription is found, we write it to the DB immediately
-    so future logins are instant without hitting Stripe again.
-    Uses attribute-style access for Stripe SDK v7+.
+    Called when the local DB has no active record — e.g. webhook was missed or DB
+    has a stale/wrong canceledAt. Always checks Stripe to self-heal bad DB state.
+    If Stripe confirms an active sub, we write it to DB and clear stale canceledAt.
+    If Stripe confirms cancellation with no future period, we block access.
     """
     try:
-        # Hard gate: if we have a local CANCELED record with canceledAt set and no
-        # future currentPeriodEnd, NEVER call Stripe — it would just re-activate them.
-        # Only applies when status == "canceled" — active resubscribers are not blocked.
-        existing = await db.stripe_subscriptions.find_one(
-            {"email": email_lower, "status": "canceled", "canceledAt": {"$exists": True}}, {"_id": 0}
-        )
-        if existing:
-            cpe_raw = existing.get("currentPeriodEnd", "")
-            if not cpe_raw:
-                print(f"[STRIPE LIVE] Blocked for {email_lower}: canceledAt set, no period end")
-                return None
-            try:
-                cpe_dt = datetime.fromisoformat(str(cpe_raw).replace(" ", "T"))
-                if cpe_dt.tzinfo is None:
-                    cpe_dt = cpe_dt.replace(tzinfo=timezone.utc)
-                if datetime.now(timezone.utc) >= cpe_dt:
-                    print(f"[STRIPE LIVE] Blocked for {email_lower}: canceledAt set, period ended {cpe_dt.date()}")
-                    return None
-            except Exception:
-                print(f"[STRIPE LIVE] Blocked for {email_lower}: canceledAt set, period end unparseable")
-                return None
-
         key = os.environ.get("STRIPE_SECRET_KEY", "")
         if not key:
             return None
@@ -242,7 +220,9 @@ async def _check_stripe_live(email_lower: str):
         except Exception:
             pass
 
-        # Write to DB so webhook is no longer needed for this user
+        # Write to DB so webhook is no longer needed for this user.
+        # Always clear canceledAt when Stripe confirms an active/trialing/past_due sub
+        # without cancel_at_period_end — this self-heals stale DB records.
         now = datetime.now(timezone.utc).isoformat()
         await db.stripe_subscriptions.update_one(
             {"email": email_lower},
@@ -256,10 +236,11 @@ async def _check_stripe_live(email_lower: str):
                 "updatedAt": now,
                 "source": "stripe",
                 "autoRestored": True,
-            }},
+            },
+            "$unset": {"canceledAt": ""}},
             upsert=True,
         )
-        print(f"[STRIPE LIVE FALLBACK] Restored access for {email_lower}: sub={sub_id} plan={plan_key}")
+        print(f"[STRIPE LIVE FALLBACK] Restored access for {email_lower}: sub={sub_id} plan={plan_key} (cleared any stale canceledAt)")
         return "Premium (Stripe)"
     except Exception as e:
         print(f"[STRIPE LIVE FALLBACK] Error for {email_lower}: {e}")
@@ -270,15 +251,8 @@ async def check_access(email_lower: str):
     result = await _check_access_local(email_lower)
     if result:
         return result
-    # If there's already an explicit canceled Stripe record, skip the live Stripe check.
-    # The live fallback would just re-read Stripe's "still technically active" state and
-    # write it back, overriding our canceled status. Trust the DB when canceledAt is set.
-    canceled_record = await db.stripe_subscriptions.find_one(
-        {"email": email_lower, "status": "canceled", "canceledAt": {"$exists": True}}, {"_id": 0}
-    )
-    if canceled_record:
-        return None  # definitively no access — don't go to Stripe
-    # Webhook may have failed — check Stripe directly as a safety net
+    # Always fall through to live Stripe check — it handles the canceledAt guard
+    # internally and self-heals stale/wrong canceledAt records.
     return await _check_stripe_live(email_lower)
 
 async def create_session(email: str, access_type: str):

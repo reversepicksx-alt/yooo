@@ -324,13 +324,25 @@ async def stripe_webhook(request: Request):
             items_list = items_data.get("data", []) if isinstance(items_data, dict) else []
             if items_list:
                 current_period_end = items_list[0].get("current_period_end")
+        # Also check cancel_at as a period-end fallback (used when Stripe schedules
+        # a hard cancellation date instead of end-of-period).
+        if not current_period_end:
+            current_period_end = sub_obj.get("cancel_at")
         end_iso = datetime.fromtimestamp(current_period_end, tz=timezone.utc).isoformat() if current_period_end else ""
         sub_id = sub_obj.get("id", "")
+        cancel_at_period_end = sub_obj.get("cancel_at_period_end", False)
         # If cancel_at_period_end is true, the user has already canceled.
         # Stripe keeps status="active" until the period ends, but we track it as "canceled"
         # so our auth check can enforce expiry via currentPeriodEnd.
-        if sub_obj.get("cancel_at_period_end"):
-            status = "canceled"
+        # Guard: only mark canceled if we have a period-end date to enforce — otherwise
+        # keep the Stripe status so the user isn't wrongly locked out.
+        if cancel_at_period_end:
+            if end_iso:
+                status = "canceled"
+            else:
+                # No period end available — don't mark canceled; let next webhook or
+                # live Stripe check sort it out when a valid end date is present.
+                print(f"[STRIPE WEBHOOK] cancel_at_period_end=True for {email} but no period end found — keeping status={status}")
         if email and sub_id:
             await _upsert_stripe_sub(email, sub_id, plan_key, status, end_iso)
 
