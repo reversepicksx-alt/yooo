@@ -554,7 +554,7 @@ async def predict(req: PredictionRequest):
             try:
                 cached_games = await db.fixture_player_cache.find(
                     {"_k": {"$regex": f"_{player_id}$"}}
-                ).sort("_k", -1).limit(30).to_list(30)
+                ).sort("_k", -1).limit(60).to_list(60)
                 if cached_games:
                     print(f"[CACHE-STAGE0] {req.playerName}: {len(cached_games)} cached game logs from MongoDB")
                     target_field = stat_field_map.get(req.propType, "")
@@ -621,9 +621,13 @@ async def predict(req: PredictionRequest):
                 print(f"[CACHE-STAGE0] Error: {_ce}")
 
             try:
-                # Fetch the team's last 20 finished fixtures across ALL competitions from API
+                # Fetch the team's last 40 finished fixtures across ALL competitions from API.
+                # 20 was too shallow — for GKs (and any player on a busy team), 20 games
+                # may only yield 6-8 venue-specific samples once home/away are split,
+                # causing the venue-split prior to fall back to combined and mix
+                # home/away stats. 40 games gives enough coverage for proper venue splits.
                 team_fixtures_raw = await api_football_request(
-                    "fixtures", {"team": actual_team_id, "last": 20, "status": "FT"}
+                    "fixtures", {"team": actual_team_id, "last": 40, "status": "FT"}
                 )
                 if not team_fixtures_raw:
                     print(f"[API-DIRECT] No fixtures found for teamId={actual_team_id}")
@@ -1205,11 +1209,13 @@ async def predict(req: PredictionRequest):
             }
             _gl_key2 = _gl_field_map2.get(req.propType, "passes_total")
 
-            # Stage 1: Pull the player's last 20 fixtures directly from API by player ID
+            # Stage 1: Pull the player's last 40 fixtures directly from API by player ID.
+            # Increased from 20: shallow windows cut venue-specific samples in half once
+            # home/away are split, making the engine fall back to combined stats.
             try:
                 print(f"[PLAYER-DIRECT] {req.playerName}: fetching fixtures directly by playerId={req.playerId}")
                 _player_fixtures_raw = await api_football_request(
-                    "fixtures", {"player": req.playerId, "last": 20}
+                    "fixtures", {"player": req.playerId, "last": 40}
                 )
                 if _player_fixtures_raw and actual_team_id:
                     # Filter to ONLY fixtures where the player's club team appears.
