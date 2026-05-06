@@ -1721,12 +1721,13 @@ async def predict(req: PredictionRequest):
                 match_dominance["expectedPoss"] = new_away_poss
                 match_dominance["oppExpectedPoss"] = new_home_poss
             match_dominance["notes"].extend(_sit_mults.get("notes", []))
-            # Also update the in-process cache with boosted values
-            if _dom_cache_key:
-                _ce = _match_dom_cache.get(_dom_cache_key, {}).get("dom", {})
-                if _ce:
-                    _ce["homePoss"] = new_home_poss
-                    _ce["awayPoss"] = new_away_poss
+            # NOTE: do NOT write boosted values back into _match_dom_cache.
+            # The cache holds the clean season-stats-derived possession.
+            # The situation boost is applied fresh each call from that clean base.
+            # Writing boosted values into the cache causes a compounding spiral:
+            # each subsequent call for the same fixture reads the already-boosted
+            # value as its new baseline and adds the boost again, e.g.
+            # 63% → 72% → 81% → capped 80% across 3 requests.
 
         # =============================================
         # GAME TEMPO ESTIMATION — Expected match intensity
