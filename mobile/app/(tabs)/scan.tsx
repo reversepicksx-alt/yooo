@@ -925,6 +925,8 @@ export default function ScanScreen() {
                 };
                 const ec = EDGE_CFG[prediction.edgeRating] ?? EDGE_CFG['NO EDGE'];
                 const sc = SAFETY_CFG[prediction.safetyRating ?? ''] ?? { color: '#888' };
+                const histRate = prediction.propHistoricalRate;
+                const histN    = prediction.propHistoricalN;
                 return (
                   <View style={styles.edgeSafetyBanner}>
                     <View style={[styles.edgeSafetyPill, { backgroundColor: ec.bg, borderColor: ec.color + '55' }]}>
@@ -934,8 +936,11 @@ export default function ScanScreen() {
                     </View>
                     <View style={[styles.edgeSafetyPill, { backgroundColor: sc.color + '11', borderColor: sc.color + '55' }]}>
                       <Ionicons name="shield-outline" size={11} color={sc.color} />
-                      <Text style={[styles.edgeSafetyPillLabel, { color: Colors.textTertiary }]}>RISK  </Text>
-                      <Text style={[styles.edgeSafetyPillValue, { color: sc.color }]}>{prediction.safetyRating ?? '—'}</Text>
+                      <Text style={[styles.edgeSafetyPillLabel, { color: Colors.textTertiary }]}>HIST  </Text>
+                      <Text style={[styles.edgeSafetyPillValue, { color: sc.color }]}>
+                        {histRate != null ? `${histRate}%` : prediction.safetyRating ?? '—'}
+                        {histN != null && histN > 0 ? ` (${histN})` : ''}
+                      </Text>
                     </View>
                   </View>
                 );

@@ -120,6 +120,20 @@ async def seed_grants():
             await _a.sleep(6 * 60 * 60)
     asyncio.create_task(_conf_calib_loop())
 
+    # Prop safety cache: refresh on startup + every 6h. Computes empirical
+    # hit rates per (propType, direction) bucket from settled picks so the
+    # edge/safety rating on every prediction is always data-driven, never hardcoded.
+    async def _prop_safety_loop():
+        from prop_safety_cache import refresh_prop_safety
+        import asyncio as _a
+        while True:
+            try:
+                await refresh_prop_safety(db)
+            except Exception as _e:
+                print(f"[PROP SAFETY] refresh failed: {_e}")
+            await _a.sleep(6 * 60 * 60)
+    asyncio.create_task(_prop_safety_loop())
+
     # Self-updating cheat sheet — re-renders attached_assets/cheat_sheet_2_1.png
     # from settled picks every few hours so it never goes stale.
     asyncio.create_task(_cheat_sheet_loop())

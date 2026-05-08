@@ -343,6 +343,8 @@ export interface PredictionResult {
   };
   edgeRating?: 'SHARP EDGE' | 'EDGE' | 'MARGINAL' | 'NO EDGE';
   safetyRating?: 'SAFE' | 'MODERATE' | 'RISKY' | 'AVOID';
+  propHistoricalRate?: number;
+  propHistoricalN?: number;
   coinFlip?: boolean;
   error?: string;
 }
@@ -604,6 +606,8 @@ export async function predict(request: Record<string, unknown>): Promise<Predict
     bayesianComponent: raw.bayesianComponent || undefined,
     edgeRating: raw.edgeRating as PredictionResult['edgeRating'] ?? undefined,
     safetyRating: raw.safetyRating as PredictionResult['safetyRating'] ?? undefined,
+    propHistoricalRate: (raw as any).propHistoricalRate ?? undefined,
+    propHistoricalN: (raw as any).propHistoricalN ?? undefined,
     coinFlip: raw.coinFlip ?? undefined,
   };
 }
