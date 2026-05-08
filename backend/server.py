@@ -34,6 +34,7 @@ from routes.manual_search import router as manual_router
 from routes.intel import router as intel_router
 from routes.search import router as search_router
 from routes.support import router as support_router
+from routes.push import router as push_router
 from cache import seed_cache, background_refresh_loop
 
 app.include_router(auth_router)
@@ -55,6 +56,7 @@ app.include_router(manual_router)
 app.include_router(intel_router)
 app.include_router(search_router)
 app.include_router(support_router)
+app.include_router(push_router)
 
 
 # ── Startup: seed grants for lifetime VIPs ──

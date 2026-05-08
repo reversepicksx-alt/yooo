@@ -1052,3 +1052,26 @@ export async function fetchCommunityParticipants(): Promise<
 > {
   return apiCall('/api/community/participants');
 }
+
+// ─── Push Notifications ────────────────────────────────────────────────────────
+
+export async function registerPushToken(payload: {
+  email: string;
+  token: string;
+  platform: string;
+}): Promise<void> {
+  await apiCall('/api/push/register', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function unregisterPushToken(payload: {
+  email: string;
+  token?: string;
+}): Promise<void> {
+  await apiCall('/api/push/unregister', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}

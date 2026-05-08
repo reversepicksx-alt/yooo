@@ -111,6 +111,36 @@ async def send_message(req: SendMessageRequest):
     except Exception:
         pass
 
+    # ── Push notifications ────────────────────────────────────────────────────
+    try:
+        import asyncio as _aio
+        from routes.push import send_notifications, send_everyone
+
+        text_body = req.text.strip()
+        sender_name = display_name
+        notif_title = f"Reverse Chat — {sender_name}"
+
+        is_everyone = "@everyone" in text_body.lower()
+
+        if is_everyone:
+            _aio.create_task(send_everyone(
+                sender_email=req.email.lower().strip(),
+                title=notif_title,
+                body=text_body[:200],
+                data={"screen": "community"},
+            ))
+        elif req.mentions:
+            mentioned_emails = [m.lower() for m in req.mentions if m]
+            if mentioned_emails:
+                _aio.create_task(send_notifications(
+                    emails=mentioned_emails,
+                    title=notif_title,
+                    body=text_body[:200],
+                    data={"screen": "community"},
+                ))
+    except Exception as _pe:
+        print(f"[PUSH] notification dispatch error: {_pe}")
+
     return _serialize(msg)
 
 
