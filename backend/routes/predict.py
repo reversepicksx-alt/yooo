@@ -4797,6 +4797,82 @@ Analyze ALL data thoroughly. Return JSON only."""
         print(f"[MATH LOCK] sharpSummary + Verdict → {_lock_final_rec} {_lock_proj_str} vs {_lock_line_str}")
         # ─────────────────────────────────────────────────────────────────────────────
 
+        # ── EDGE & SAFETY RATING ─────────────────────────────────────────────────
+        # Computed AFTER BAYESIAN TRUTH + MATH LOCK — all values are final here.
+        # edgeRating  : SHARP EDGE | EDGE | MARGINAL | NO EDGE
+        # safetyRating: SAFE | MODERATE | RISKY | AVOID
+        #
+        # Built from the backtest (n=1,306):
+        #   UNDER overall 66%, OVER overall 53%
+        #   pass_attempts UNDER 65%, shots UNDER 68%
+        #   shots OVER 22%, clearances OVER 0%
+        #   OVER reliable only with edge ≥6 (62-65%) — below that ≤48%
+        #   OVER props with proven track record: crosses 88%, tackles 63%, dribbles 60%
+        _er_rec   = prediction.get("recommendation", "").upper()
+        _er_prop  = req.propType or ""
+        _er_conf  = prediction.get("confidenceScore", 50)
+        _er_proj  = prediction.get("projectedValue", req.line)
+        _er_line  = req.line or 0
+        _er_coin  = prediction.get("coinFlip", False)
+
+        try:
+            _er_margin = abs(float(_er_proj) - float(_er_line)) if _er_line > 0 else 0
+        except (TypeError, ValueError):
+            _er_margin = 0
+
+        # Props with proven UNDER track records from backtest (≥65% hit rate)
+        _SAFE_UNDER_PROPS    = {"pass_attempts", "passes", "shots", "clearances"}
+        # Props where OVER historically works with a big projection edge
+        _RELIABLE_OVER_PROPS = {"crosses", "tackles", "dribbles", "key_passes", "goals"}
+        # Props where OVER is unreliable regardless of edge — backtest confirms
+        _RISKY_OVER_PROPS    = {"pass_attempts", "passes", "shots", "saves"}
+
+        if _er_rec == "PASS":
+            _edge_rating   = "NO EDGE"
+            _safety_rating = "AVOID"
+        elif _er_coin:
+            _edge_rating   = "NO EDGE"
+            _safety_rating = "RISKY"
+        elif _er_rec == "UNDER":
+            if _er_margin >= 5 and _er_prop in _SAFE_UNDER_PROPS and _er_conf >= 60:
+                _edge_rating = "SHARP EDGE"
+            elif _er_margin >= 3 and _er_conf >= 55:
+                _edge_rating = "EDGE"
+            elif _er_margin >= 2:
+                _edge_rating = "MARGINAL"
+            else:
+                _edge_rating = "NO EDGE"
+
+            if _er_prop in _SAFE_UNDER_PROPS and _er_conf >= 60 and _er_margin >= 3:
+                _safety_rating = "SAFE"
+            elif _er_margin >= 2 and _er_conf >= 55:
+                _safety_rating = "MODERATE"
+            else:
+                _safety_rating = "RISKY"
+        else:  # OVER
+            if _er_margin >= 8 and _er_prop in _RELIABLE_OVER_PROPS and _er_conf >= 65:
+                _edge_rating = "SHARP EDGE"
+            elif _er_margin >= 6 and (_er_prop in _RELIABLE_OVER_PROPS or _er_conf >= 70):
+                _edge_rating = "EDGE"
+            elif _er_margin >= 4 and _er_conf >= 65:
+                _edge_rating = "MARGINAL"
+            else:
+                _edge_rating = "NO EDGE"
+
+            if _er_prop in _RISKY_OVER_PROPS:
+                _safety_rating = "AVOID" if _er_prop == "shots" else "RISKY"
+            elif _er_prop in _RELIABLE_OVER_PROPS and _er_margin >= 6 and _er_conf >= 60:
+                _safety_rating = "MODERATE"
+            elif _er_margin >= 10 and _er_conf >= 65:
+                _safety_rating = "MODERATE"
+            else:
+                _safety_rating = "RISKY"
+
+        prediction["edgeRating"]   = _edge_rating
+        prediction["safetyRating"] = _safety_rating
+        print(f"[EDGE/SAFETY] {_er_rec} {_er_prop}: margin={_er_margin:.1f} conf={_er_conf} → {_edge_rating} / {_safety_rating}")
+        # ─────────────────────────────────────────────────────────────────────────────
+
         prediction.setdefault("probabilityCurve", [])
         prediction.setdefault("reasoning", "Analysis based on available data.")
         prediction.setdefault("tacticalInsights", "")

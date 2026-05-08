@@ -341,6 +341,9 @@ export interface PredictionResult {
     goalkeeperSaveSample?: number | null;
     opponentShotsOnTarget?: number | null;
   };
+  edgeRating?: 'SHARP EDGE' | 'EDGE' | 'MARGINAL' | 'NO EDGE';
+  safetyRating?: 'SAFE' | 'MODERATE' | 'RISKY' | 'AVOID';
+  coinFlip?: boolean;
   error?: string;
 }
 
@@ -436,6 +439,14 @@ interface RawPrediction {
     goalkeeperSaveSample?: number | null;
     opponentShotsOnTarget?: number | null;
   };
+  edgeRating?: string;
+  safetyRating?: string;
+  coinFlip?: boolean;
+  rawConfidence?: number;
+  lineDeviationBand?: string;
+  lineDeviationPct?: number;
+  lineDeviationHitRate?: number;
+  gameScript?: Record<string, unknown>;
   error?: string;
 }
 
@@ -591,6 +602,9 @@ export async function predict(request: Record<string, unknown>): Promise<Predict
     blendNote: raw.blendNote || undefined,
     aiProjection: raw.aiProjection || undefined,
     bayesianComponent: raw.bayesianComponent || undefined,
+    edgeRating: raw.edgeRating as PredictionResult['edgeRating'] ?? undefined,
+    safetyRating: raw.safetyRating as PredictionResult['safetyRating'] ?? undefined,
+    coinFlip: raw.coinFlip ?? undefined,
   };
 }
 

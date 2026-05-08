@@ -909,6 +909,38 @@ export default function ScanScreen() {
 
               <View style={styles.analysisDivider} />
 
+              {/* Edge & Safety Rating Banner */}
+              {prediction.edgeRating && prediction.recommendation !== 'PASS' && (() => {
+                const EDGE_CFG: Record<string, { color: string; icon: string; bg: string }> = {
+                  'SHARP EDGE': { color: '#39FF14', icon: 'flash',                bg: 'rgba(57,255,20,0.10)' },
+                  'EDGE':       { color: '#7CFF50', icon: 'trending-up',          bg: 'rgba(124,255,80,0.08)' },
+                  'MARGINAL':   { color: '#FFA500', icon: 'remove-circle-outline', bg: 'rgba(255,165,0,0.08)' },
+                  'NO EDGE':    { color: '#666666', icon: 'remove',               bg: 'rgba(102,102,102,0.08)' },
+                };
+                const SAFETY_CFG: Record<string, { color: string }> = {
+                  'SAFE':     { color: '#39FF14' },
+                  'MODERATE': { color: '#FFA500' },
+                  'RISKY':    { color: '#FF6B35' },
+                  'AVOID':    { color: '#FF3B30' },
+                };
+                const ec = EDGE_CFG[prediction.edgeRating] ?? EDGE_CFG['NO EDGE'];
+                const sc = SAFETY_CFG[prediction.safetyRating ?? ''] ?? { color: '#888' };
+                return (
+                  <View style={styles.edgeSafetyBanner}>
+                    <View style={[styles.edgeSafetyPill, { backgroundColor: ec.bg, borderColor: ec.color + '55' }]}>
+                      <Ionicons name={ec.icon as any} size={11} color={ec.color} />
+                      <Text style={[styles.edgeSafetyPillLabel, { color: Colors.textTertiary }]}>EDGE  </Text>
+                      <Text style={[styles.edgeSafetyPillValue, { color: ec.color }]}>{prediction.edgeRating}</Text>
+                    </View>
+                    <View style={[styles.edgeSafetyPill, { backgroundColor: sc.color + '11', borderColor: sc.color + '55' }]}>
+                      <Ionicons name="shield-outline" size={11} color={sc.color} />
+                      <Text style={[styles.edgeSafetyPillLabel, { color: Colors.textTertiary }]}>RISK  </Text>
+                      <Text style={[styles.edgeSafetyPillValue, { color: sc.color }]}>{prediction.safetyRating ?? '—'}</Text>
+                    </View>
+                  </View>
+                );
+              })()}
+
               {/* Stats Row */}
               <View style={styles.analysisStats}>
                 <View style={styles.analysisStat}>
@@ -2442,6 +2474,17 @@ const styles = StyleSheet.create({
   rfBarFill: { height: '100%', borderRadius: 3 },
   rfPct: { fontSize: 11, fontWeight: '700', width: 34, textAlign: 'right' },
   rfVal: { fontSize: 13, fontWeight: '800', width: 52, textAlign: 'right' },
+  edgeSafetyBanner: {
+    flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingTop: 10, paddingBottom: 2,
+  },
+  edgeSafetyPill: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    paddingHorizontal: 10, paddingVertical: 6,
+    borderRadius: 20, borderWidth: 1, flex: 1, justifyContent: 'center',
+  },
+  edgeSafetyPillLabel: { fontSize: 9, fontWeight: '600', letterSpacing: 0.8 },
+  edgeSafetyPillValue: { fontSize: 11, fontWeight: '800', letterSpacing: 0.5 },
+
   rfBadgeRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 2 },
   rfBadge: {
     paddingHorizontal: 10, paddingVertical: 5,
