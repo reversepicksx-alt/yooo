@@ -16,6 +16,7 @@ from config import (
 )
 from models import PredictionRequest
 from utils import api_football_request, get_recent_fixtures_fast, strip_accents, get_soccer_odds, decimal_to_american
+from prop_safety_cache import get_prop_safety as _get_prop_safety
 # game_script_intelligence removed — was distorting confidence scores for GK pass picks
 
 router = APIRouter(prefix="/api", tags=["predict"])
@@ -4806,8 +4807,6 @@ Analyze ALL data thoroughly. Return JSON only."""
         # picks in MongoDB, computing empirical hit rates per (propType, direction).
         # Cache refreshes every 6h — always reflects the latest real data.
         # Edge is projection-margin-based, gated by the historical safety.
-        from prop_safety_cache import get_prop_safety
-
         _er_rec   = prediction.get("recommendation", "").upper()
         _er_prop  = req.propType or ""
         _er_conf  = prediction.get("confidenceScore", 50)
@@ -4830,7 +4829,7 @@ Analyze ALL data thoroughly. Return JSON only."""
             _er_hit_rate   = None
             _er_n          = 0
         else:
-            _ps = get_prop_safety(_er_prop, _er_rec)
+            _ps = _get_prop_safety(_er_prop, _er_rec)
             if _ps:
                 _safety_rating = _ps["safety"]
                 _er_hit_rate   = _ps["hitRate"]

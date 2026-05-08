@@ -912,10 +912,10 @@ export default function ScanScreen() {
               {/* Edge & Safety Rating Banner */}
               {prediction.edgeRating && prediction.recommendation !== 'PASS' && (() => {
                 const EDGE_CFG: Record<string, { color: string; icon: string; bg: string }> = {
-                  'SHARP EDGE': { color: '#39FF14', icon: 'flash',                bg: 'rgba(57,255,20,0.10)' },
-                  'EDGE':       { color: '#7CFF50', icon: 'trending-up',          bg: 'rgba(124,255,80,0.08)' },
+                  'SHARP EDGE': { color: '#39FF14', icon: 'flash',                 bg: 'rgba(57,255,20,0.10)' },
+                  'EDGE':       { color: '#7CFF50', icon: 'trending-up',           bg: 'rgba(124,255,80,0.08)' },
                   'MARGINAL':   { color: '#FFA500', icon: 'remove-circle-outline', bg: 'rgba(255,165,0,0.08)' },
-                  'NO EDGE':    { color: '#666666', icon: 'remove',               bg: 'rgba(102,102,102,0.08)' },
+                  'NO EDGE':    { color: '#666666', icon: 'remove',                bg: 'rgba(102,102,102,0.08)' },
                 };
                 const SAFETY_CFG: Record<string, { color: string }> = {
                   'SAFE':     { color: '#39FF14' },
@@ -923,25 +923,86 @@ export default function ScanScreen() {
                   'RISKY':    { color: '#FF6B35' },
                   'AVOID':    { color: '#FF3B30' },
                 };
-                const ec = EDGE_CFG[prediction.edgeRating] ?? EDGE_CFG['NO EDGE'];
-                const sc = SAFETY_CFG[prediction.safetyRating ?? ''] ?? { color: '#888' };
-                const histRate = prediction.propHistoricalRate;
-                const histN    = prediction.propHistoricalN;
+                const ec  = EDGE_CFG[prediction.edgeRating] ?? EDGE_CFG['NO EDGE'];
+                const sr  = prediction.safetyRating ?? 'RISKY';
+                const sc  = SAFETY_CFG[sr] ?? { color: '#888' };
+                const er  = prediction.edgeRating ?? 'NO EDGE';
+                const rate = prediction.propHistoricalRate;
+                const n    = prediction.propHistoricalN ?? 0;
+                const dir  = (prediction.recommendation ?? '').toUpperCase();
+                const propLabel = PROP_LABELS[prediction.propType ?? ''] ?? prediction.propType ?? 'prop';
+                const proj = prediction.projection ?? prediction.bayesianProjection ?? prediction.line ?? 0;
+                const line = prediction.line ?? 0;
+                const margin = Math.abs((proj as number) - (line as number));
+
+                // Build a specific, plain-English reason for each combination
+                let whyText = '';
+                const histClause = rate != null && n > 0
+                  ? `${propLabel} ${dir} hits ${rate}% from ${n} picks`
+                  : null;
+                const marginClause = `+${margin.toFixed(1)} projection gap`;
+
+                if (er === 'SHARP EDGE') {
+                  whyText = histClause
+                    ? `${marginClause} · ${histClause} — strong, data-backed signal`
+                    : `${marginClause} — model has strong conviction here`;
+                } else if (er === 'EDGE') {
+                  whyText = histClause
+                    ? `${marginClause} with ${histClause} — solid edge`
+                    : `${marginClause} — meaningful gap vs the book's line`;
+                } else if (er === 'MARGINAL') {
+                  whyText = histClause
+                    ? `Thin ${marginClause} · ${histClause} — lean only`
+                    : `${marginClause} — not enough separation for a confident play`;
+                } else {
+                  // NO EDGE — be specific about which reason killed it
+                  if (sr === 'AVOID') {
+                    whyText = histClause
+                      ? `${propLabel} ${dir} wins only ${rate}% from ${n} picks — book has the edge on this prop`
+                      : 'This prop+direction has a losing historical record — skip it';
+                  } else if (sr === 'RISKY' && margin < 2) {
+                    whyText = histClause
+                      ? `Only ${marginClause} AND ${histClause} — two strikes against this pick`
+                      : `Only ${marginClause} between projection and line — no real gap`;
+                  } else if (sr === 'RISKY') {
+                    whyText = histClause
+                      ? `${histClause} — near coin flip, the margin alone can't save it`
+                      : 'Historically unreliable prop+direction — not enough data edge';
+                  } else if (margin < 2) {
+                    whyText = `Only ${marginClause} between projection and line — book and model are basically agreeing`;
+                  } else {
+                    whyText = histClause
+                      ? `Projection gap exists but ${histClause} — history limits conviction`
+                      : `No clear structural advantage over the book here`;
+                  }
+                }
+
+                // Accent color for the why-box: use safety color if no edge, edge color otherwise
+                const whyColor = er === 'NO EDGE' || er === 'MARGINAL' ? sc.color : ec.color;
+
                 return (
-                  <View style={styles.edgeSafetyBanner}>
-                    <View style={[styles.edgeSafetyPill, { backgroundColor: ec.bg, borderColor: ec.color + '55' }]}>
-                      <Ionicons name={ec.icon as any} size={11} color={ec.color} />
-                      <Text style={[styles.edgeSafetyPillLabel, { color: Colors.textTertiary }]}>EDGE  </Text>
-                      <Text style={[styles.edgeSafetyPillValue, { color: ec.color }]}>{prediction.edgeRating}</Text>
+                  <View style={styles.edgeSafetyWrapper}>
+                    {/* Pills row */}
+                    <View style={styles.edgeSafetyBanner}>
+                      <View style={[styles.edgeSafetyPill, { backgroundColor: ec.bg, borderColor: ec.color + '55' }]}>
+                        <Ionicons name={ec.icon as any} size={11} color={ec.color} />
+                        <Text style={[styles.edgeSafetyPillLabel, { color: Colors.textTertiary }]}>EDGE  </Text>
+                        <Text style={[styles.edgeSafetyPillValue, { color: ec.color }]}>{er}</Text>
+                      </View>
+                      <View style={[styles.edgeSafetyPill, { backgroundColor: sc.color + '11', borderColor: sc.color + '55' }]}>
+                        <Ionicons name="shield-outline" size={11} color={sc.color} />
+                        <Text style={[styles.edgeSafetyPillLabel, { color: Colors.textTertiary }]}>HIST  </Text>
+                        <Text style={[styles.edgeSafetyPillValue, { color: sc.color }]}>
+                          {rate != null ? `${rate}%` : sr}{n > 0 ? ` (${n})` : ''}
+                        </Text>
+                      </View>
                     </View>
-                    <View style={[styles.edgeSafetyPill, { backgroundColor: sc.color + '11', borderColor: sc.color + '55' }]}>
-                      <Ionicons name="shield-outline" size={11} color={sc.color} />
-                      <Text style={[styles.edgeSafetyPillLabel, { color: Colors.textTertiary }]}>HIST  </Text>
-                      <Text style={[styles.edgeSafetyPillValue, { color: sc.color }]}>
-                        {histRate != null ? `${histRate}%` : prediction.safetyRating ?? '—'}
-                        {histN != null && histN > 0 ? ` (${histN})` : ''}
-                      </Text>
-                    </View>
+                    {/* Why explanation */}
+                    {whyText.length > 0 && (
+                      <View style={[styles.edgeSafetyWhy, { borderLeftColor: whyColor + '88' }]}>
+                        <Text style={[styles.edgeSafetyWhyText, { color: Colors.textSecondary }]}>{whyText}</Text>
+                      </View>
+                    )}
                   </View>
                 );
               })()}
@@ -2479,8 +2540,11 @@ const styles = StyleSheet.create({
   rfBarFill: { height: '100%', borderRadius: 3 },
   rfPct: { fontSize: 11, fontWeight: '700', width: 34, textAlign: 'right' },
   rfVal: { fontSize: 13, fontWeight: '800', width: 52, textAlign: 'right' },
+  edgeSafetyWrapper: {
+    paddingTop: 10, paddingBottom: 4, gap: 8,
+  },
   edgeSafetyBanner: {
-    flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingTop: 10, paddingBottom: 2,
+    flexDirection: 'row', gap: 8, paddingHorizontal: 16,
   },
   edgeSafetyPill: {
     flexDirection: 'row', alignItems: 'center', gap: 5,
@@ -2489,6 +2553,15 @@ const styles = StyleSheet.create({
   },
   edgeSafetyPillLabel: { fontSize: 9, fontWeight: '600', letterSpacing: 0.8 },
   edgeSafetyPillValue: { fontSize: 11, fontWeight: '800', letterSpacing: 0.5 },
+  edgeSafetyWhy: {
+    marginHorizontal: 16,
+    borderLeftWidth: 2,
+    paddingLeft: 10,
+    paddingVertical: 4,
+  },
+  edgeSafetyWhyText: {
+    fontSize: 12, lineHeight: 17, fontWeight: '500',
+  },
 
   rfBadgeRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 2 },
   rfBadge: {
