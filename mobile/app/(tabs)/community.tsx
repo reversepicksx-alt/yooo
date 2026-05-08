@@ -519,8 +519,7 @@ export default function CommunityScreen() {
       {/* ── Header ──────────────────────────────────────────────────────── */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <Text style={styles.headerHash}>#</Text>
-          <Text style={styles.headerTitle}>picks-talk</Text>
+          <Text style={styles.headerTitle}>Reverse Chat</Text>
         </View>
         <View style={styles.onlineBadge}>
           <View style={styles.onlineDot} />
@@ -538,12 +537,12 @@ export default function CommunityScreen() {
         {loading ? (
           <View style={styles.loadingWrap}>
             <ActivityIndicator color={Colors.primary} size="large" />
-            <Text style={styles.loadingText}>Loading channel…</Text>
+            <Text style={styles.loadingText}>Loading messages…</Text>
           </View>
         ) : messages.length === 0 ? (
           <View style={styles.emptyWrap}>
-            <Text style={styles.emptyIcon}>#</Text>
-            <Text style={styles.emptyTitle}>Welcome to picks-talk</Text>
+            <Text style={styles.emptyIcon}>💬</Text>
+            <Text style={styles.emptyTitle}>Welcome to Reverse Chat</Text>
             <Text style={styles.emptyBody}>
               Share picks, tag teammates, discuss matchups. Be the first to post.
             </Text>
@@ -618,7 +617,7 @@ export default function CommunityScreen() {
             style={[styles.input, Platform.OS === 'web' && ({ outlineWidth: 0 } as object)]}
             value={inputText}
             onChangeText={handleTextChange}
-            placeholder="Message #picks-talk"
+            placeholder="Message Reverse Chat…"
             placeholderTextColor={Colors.textTertiary}
             multiline
             maxLength={1200}
@@ -744,12 +743,6 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
   },
   headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  headerHash: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: Colors.textTertiary,
-    letterSpacing: -0.5,
-  },
   headerTitle: {
     fontSize: 18,
     fontWeight: '700',

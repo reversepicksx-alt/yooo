@@ -66,7 +66,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="community"
         options={{
-          title: 'Lounge',
+          title: 'Reverse Chat',
           tabBarIcon: ({ focused }) => <TabIcon name="people" focused={focused} />,
         }}
       />
