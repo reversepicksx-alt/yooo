@@ -16,6 +16,7 @@ app.add_middleware(
 
 # ── Import and include routers ──
 from routes.auth import router as auth_router
+from routes.community import router as community_router
 from routes.leagues import router as leagues_router
 from routes.players import router as players_router
 from routes.predict import router as predict_router
@@ -36,6 +37,7 @@ from routes.support import router as support_router
 from cache import seed_cache, background_refresh_loop
 
 app.include_router(auth_router)
+app.include_router(community_router)
 app.include_router(leagues_router)
 app.include_router(players_router)
 app.include_router(predict_router)

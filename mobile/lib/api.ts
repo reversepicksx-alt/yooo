@@ -972,3 +972,65 @@ export async function contactSupport(name: string, email: string, message: strin
     body: JSON.stringify({ name, email, message }),
   });
 }
+
+// ─── Community Chat ────────────────────────────────────────────────────────────
+
+export interface CommunityMessage {
+  id: string;
+  email: string;
+  displayName: string;
+  text: string;
+  imageData?: string | null;
+  mentions: string[];
+  reactions: Record<string, string[]>;
+  createdAt: string;
+}
+
+export async function fetchCommunityMessages(params?: {
+  since?: string;
+  before?: string;
+  limit?: number;
+}): Promise<CommunityMessage[]> {
+  const qs = new URLSearchParams();
+  if (params?.since) qs.set('since', params.since);
+  if (params?.before) qs.set('before', params.before);
+  if (params?.limit) qs.set('limit', String(params.limit));
+  const q = qs.toString();
+  return apiCall(`/api/community/messages${q ? `?${q}` : ''}`);
+}
+
+export async function sendCommunityMessage(payload: {
+  email: string;
+  text: string;
+  imageData?: string | null;
+  mentions?: string[];
+}): Promise<CommunityMessage> {
+  return apiCall('/api/community/messages', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function reactToCommunityMessage(
+  messageId: string,
+  email: string,
+  emoji: string,
+): Promise<{ reactions: Record<string, string[]> }> {
+  return apiCall(`/api/community/messages/${messageId}/react`, {
+    method: 'POST',
+    body: JSON.stringify({ email, emoji }),
+  });
+}
+
+export async function deleteCommunityMessage(messageId: string, email: string): Promise<void> {
+  return apiCall(
+    `/api/community/messages/${messageId}?email=${encodeURIComponent(email)}`,
+    { method: 'DELETE' },
+  );
+}
+
+export async function fetchCommunityParticipants(): Promise<
+  Array<{ email: string; displayName: string }>
+> {
+  return apiCall('/api/community/participants');
+}
