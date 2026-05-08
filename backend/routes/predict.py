@@ -4160,18 +4160,27 @@ Analyze ALL data thoroughly. Return JSON only."""
         edge = abs(proj_val - req.line)
         rec = prediction.get("recommendation", "over")
 
-        # Guard 0: Blocked prop types — permanently unreliable
-        # clearances: 3/9 = 33% hit rate over 30 days, well below random.
-        # The stat is too volatile and context-dependent for reliable modeling.
-        # Force coin-flip / 45% confidence so it never shows as a strong pick.
-        _BLOCKED_PROPS = {"clearances"}
-        if req.propType in _BLOCKED_PROPS:
+        # Guard 0: Direction-specific blocked prop types
+        # clearances OVER: 0% hit rate (0W 5L) — all picks had margin ≤ 0.5 above line.
+        # Clearances UNDER hits at 100% (4W 0L) and is NOT penalized.
+        # shots OVER at thin margins (margin < 1.0): 10% hit rate — discrete count means
+        # proj=2 vs line=1.5 is a 50/50 coin flip that the model systematically over-calls.
+        if req.propType == "clearances" and rec == "over":
             prediction["confidenceScore"] = 45
             prediction["coinFlip"] = True
             prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [
-                f"BLOCKED PROP: {req.propType} has insufficient model signal (33% historical hit rate) — not recommended"
+                "CLEARANCES OVER blocked: 0% historical hit rate — bookmakers set these lines precisely. Clearances UNDER remains viable."
             ]
-            print(f"[GUARD 0] Blocked prop type: {req.propType} → forced to 45% coin-flip")
+            print(f"[GUARD 0] clearances OVER → forced to 45% coin-flip (0% hit rate, data n=5)")
+
+        if req.propType in {"shots", "shots_on_target"} and rec == "over" and edge < 1.0:
+            prediction["confidenceScore"] = 45
+            prediction["coinFlip"] = True
+            prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [
+                f"SHOTS OVER blocked: proj={proj_val} only +{edge:.1f} above line {req.line}. "
+                "For discrete shot counts a margin < 1 is a coin flip — model shows 10% hit rate here."
+            ]
+            print(f"[GUARD 0b] shots OVER margin={edge:.1f} < 1.0 → forced to 45% coin-flip")
 
         # Guard 1: Binary line (0.5) — UNDER means zero, very risky
         if req.line <= 0.5 and rec == "under" and conf > 55:
@@ -4206,6 +4215,26 @@ Analyze ALL data thoroughly. Return JSON only."""
                 f"COIN FLIP: Edge only {edge:.1f} vs line {req.line} (proj={prediction.get('projectedValue','?')}). Bayesian P={_bayes_conf_g3}%. Near-line picks are variance-driven."
             ]
             print(f"[GUARD] Coin-flip zone: edge={edge:.1f}, Bayesian P={_bayes_conf_g3}% → capped at 52% (was {old_conf})")
+
+        # Guard 3-PASS: pass_attempts OVER thin-margin extension.
+        # Backtest (n=479 OVER pass_attempts picks):
+        #   edge < 3 → 45% hit rate regardless of Bayesian confidence.
+        #   edge 3-10 → 56% hit rate.
+        #   edge 10+ → 56% hit rate.
+        # Guard 3 only catches edge < 2.0 unconditionally. Picks with edge 2-3 and
+        # bayes_conf ≥ 60% slip through and hit at 45% — worse than random.
+        # Fix: extend coin-flip zone to edge < 3.0 for pass_attempts OVER.
+        # UNDER is NOT penalized (UNDER hits at 65% across all margin buckets).
+        if req.propType in {"pass_attempts", "passes"} and rec == "over" and edge < 3.0:
+            old_conf = prediction.get("confidenceScore", 50)
+            if old_conf > 52:
+                prediction["confidenceScore"] = 52
+                prediction["coinFlip"] = True
+                prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [
+                    f"PASS OVER thin edge: proj {proj_val} is only +{edge:.1f} above line {req.line}. "
+                    "Backtest shows <3 edge OVER picks hit at 45% — coin flip territory."
+                ]
+                print(f"[GUARD 3-PASS] pass_attempts OVER edge={edge:.1f} < 3.0 → capped at 52% (was {old_conf})")
 
         # Guard 3a: High-confidence OVER coin-flip flag.
         # 30-day backtest: OVER ≥70% confidence hits at only 45.7% (32/70) — WORSE
