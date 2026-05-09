@@ -597,6 +597,17 @@ async def predict(req: PredictionRequest):
                         meta = fxm_docs.get(fid_str, {})
                         if meta:
                             home_id_meta = meta.get("home_id")
+                            away_id_meta = meta.get("away_id")
+                            # Club filter: if BOTH team IDs are known and NEITHER matches
+                            # the player's current team, this is a fixture from a previous
+                            # club — drop it so stale old-club stats don't corrupt the prior.
+                            if (home_id_meta is not None and away_id_meta is not None
+                                    and home_id_meta != actual_team_id
+                                    and away_id_meta != actual_team_id):
+                                print(f"[STAGE0 CLUB FILTER] fid={fid_str} "
+                                      f"home={home_id_meta} away={away_id_meta} "
+                                      f"≠ current team {actual_team_id} — dropped (old-club fixture)")
+                                continue
                             is_home = (home_id_meta == actual_team_id)
                             gl["venue"] = "home" if is_home else "away"
                             gl["opponent"] = meta.get("away_name", "") if is_home else meta.get("home_name", "")
@@ -4772,6 +4783,30 @@ Analyze ALL data thoroughly. Return JSON only."""
                 f"{_bt_dir.upper()} {_bt_new_conf}% ({_bt_new_lvl})"
                 + (f" [FLIPPED from {_bt_old_rec.upper()} {_bt_old_conf}%]" if _bt_old_rec != _bt_dir else f" [confidence {_bt_old_conf}→{_bt_new_conf}]")
             )
+
+        # ── MARKET DISTANCE GUARD ────────────────────────────────────────────
+        # When our projection is ≥35% away from the market line, the prior is
+        # likely contaminated (stale seasons, old-club era, position mismatch).
+        # The Bayesian distribution places almost all mass on one side when the
+        # gap is this large — producing 90-99% confidence that is not earned.
+        # Cap at 55% (Medium) and surface a visible warning.
+        # Fires AFTER BAYESIAN TRUTH so the cap applies to the final Bayesian
+        # confidence, not an intermediate AI estimate.
+        _mg_proj = prediction.get("projectedValue", req.line)
+        if req.line > 0 and _mg_proj is not None:
+            _mg_gap_pct = abs(_mg_proj - req.line) / req.line * 100
+            if _mg_gap_pct >= 35:
+                _mg_pre = prediction.get("confidenceScore", 50)
+                if _mg_pre > 55:
+                    prediction["confidenceScore"] = 55
+                    prediction["confidenceLevel"] = "Medium"
+                    prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [
+                        f"MARKET DISTANCE: Model projects {_mg_proj} but line is {req.line} "
+                        f"({_mg_gap_pct:.0f}% gap) — prior may be from wrong club era or "
+                        f"stale season. Treat with caution."
+                    ]
+                    print(f"[MARKET DIST] {req.playerName}: proj={_mg_proj} line={req.line} "
+                          f"gap={_mg_gap_pct:.0f}% → confidence capped {_mg_pre}→55%")
 
         # ── MATH LOCK: Always align sharpSummary + Verdict to the FINAL math outcome ──
         # Runs after PASS GATE so we use the true final recommendation (PASS/OVER/UNDER).

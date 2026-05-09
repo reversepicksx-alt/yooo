@@ -211,7 +211,18 @@ def compute_bayesian_projection(
     # ═══════════════════════════════════════════
     # LAYER 1: PRIOR — Season Average Baseline
     # ═══════════════════════════════════════════
-    prior_mean = sum(all_vals) / n
+    # Recency-weighted mean: game logs are sorted newest-first.
+    # Exponential decay (0.93/game) gives recent matches ~35% more
+    # influence than games from 10+ fixtures ago, while keeping the
+    # full sample for variance stability.
+    # For n < 4 fall back to equal weights — too few games to decay reliably.
+    _PRIOR_DECAY = 0.93
+    if n >= 4:
+        _pw = [_PRIOR_DECAY ** i for i in range(n)]
+        _pw_total = sum(_pw)
+        prior_mean = sum(w * v for w, v in zip(_pw, all_vals)) / _pw_total
+    else:
+        prior_mean = sum(all_vals) / n
 
     # ── HYPERPRIOR SHRINKAGE (low-sample players) ──────────────────────────
     # When a player has fewer than 6 game logs, their empirical average is noisy.
