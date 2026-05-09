@@ -196,6 +196,8 @@ async def fetch_web_intel(
     )
     result = await _ai_call(knowledge_prompt, timeout=15, max_tokens=350)
     if result:
+        import html as _html
+        result = _html.unescape(result)
         print(f"[WEB INTEL] Tactical knowledge fallback: {result[:120]}...")
         return result
 

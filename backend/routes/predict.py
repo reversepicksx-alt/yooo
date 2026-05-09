@@ -3722,14 +3722,16 @@ Analyze ALL data thoroughly. Return JSON only."""
                     return grok_client.chat.completions.create(
                         model=model,
                         messages=grok_messages,
-                        max_tokens=2200,
+                        max_tokens=3500,
                         temperature=0.0,
                     )
-                grok_result = await aio.wait_for(loop.run_in_executor(None, _run), timeout=35)
+                grok_result = await aio.wait_for(loop.run_in_executor(None, _run), timeout=45)
                 text = grok_result.choices[0].message.content.strip()
                 import re as _re
+                import html as _html
                 text = _re.sub(r"```(?:json)?\s*", "", text)
                 text = _re.sub(r"```\s*$", "", text, flags=_re.MULTILINE)
+                text = _html.unescape(text)
                 text = text.strip()
                 start = text.find("{")
                 if start >= 0:
@@ -3740,6 +3742,7 @@ Analyze ALL data thoroughly. Return JSON only."""
                         return result
                     except json.JSONDecodeError:
                         pass
+                    # Try scanning backwards for the last complete closing brace
                     for end_pos in range(len(text), start, -1):
                         if text[end_pos - 1] == "}":
                             try:
@@ -3748,6 +3751,17 @@ Analyze ALL data thoroughly. Return JSON only."""
                                 return result
                             except json.JSONDecodeError:
                                 continue
+                    # Last resort: repair truncated JSON by extracting known string fields
+                    # via regex so we at least recover sharpSummary / tacticalBreakdown
+                    _repaired: dict = {"_source": label, "_repaired": True}
+                    for _key in ("sharpSummary", "tacticalBreakdown", "reasoning", "aiProjection",
+                                 "confidenceScore", "confidenceLevel", "recommendation"):
+                        _m = _re.search(rf'"{_key}"\s*:\s*"((?:[^"\\]|\\.)*)', text[start:])
+                        if _m:
+                            _repaired[_key] = _m.group(1)
+                    if _repaired.get("tacticalBreakdown") or _repaired.get("sharpSummary"):
+                        print(f"[MULTI-AI] {label} — JSON truncated, repaired partial fields: {list(_repaired.keys())}")
+                        return _repaired
                 print(f"[MULTI-AI] {label} non-JSON response: {text[:300]!r}")
                 raise ValueError("No valid JSON found in Grok response")
             except Exception as e:
