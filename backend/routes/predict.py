@@ -5755,6 +5755,7 @@ Analyze ALL data thoroughly. Return JSON only."""
         except Exception as _calib_err:
             print(f"[CONF CALIB] application failed: {_calib_err}")
 
+        prediction["_ts"] = datetime.now(timezone.utc)
         await db.predictions.insert_one(prediction)
         prediction.pop("_id", None)
 

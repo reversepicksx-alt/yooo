@@ -146,11 +146,68 @@ async def seed_grants():
     asyncio.create_task(data_prefetch_loop())
     # Backfill home/away metadata for any uncovered fixtures (no-op if already done)
     asyncio.create_task(backfill_fixture_metadata(max_fixtures=500))
+
+    # Atlas storage guard: purge stale cached data every 6 hours so the free-tier
+    # 512 MB cap is never hit. Predictions are regenerated on demand (7-day TTL).
+    # team_fixture_history rows are re-fetched on next predict run.
+    asyncio.create_task(_atlas_storage_cleanup_loop())
+
     # Nightly calibration loop DISABLED — raw Bayesian projections proved more
     # accurate than the learned-offset corrections. Keep import available for
     # admin endpoints but don't auto-run.
     # from calibration import nightly_calibration_loop
     # asyncio.create_task(nightly_calibration_loop())
+
+
+async def _atlas_storage_cleanup_loop():
+    """Prevent Atlas free-tier 512 MB cap from being hit.
+    Runs every 6 hours. Deletes predictions older than 7 days (they are
+    regenerated on demand) and caps team_fixture_history to 2000 most-recent
+    rows (re-fetched live when needed). Logs how much was removed each pass."""
+    import asyncio
+    from datetime import datetime, timezone, timedelta
+
+    # Create a TTL index on predictions._ts on first run (idempotent)
+    try:
+        await db.predictions.create_index(
+            "_ts",
+            expireAfterSeconds=7 * 24 * 3600,  # 7-day TTL
+            background=True,
+        )
+    except Exception:
+        pass
+
+    while True:
+        try:
+            cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+            # Delete predictions older than 7 days
+            r1 = await db.predictions.delete_many({"_ts": {"$lt": cutoff}})
+            # Also delete predictions with no _ts field but older ObjectId (legacy rows)
+            # ObjectId embeds creation time — docs older than 7 days have generation
+            # time before cutoff.
+            from bson import ObjectId
+            import struct, time as _time
+            _cutoff_ts = int(cutoff.timestamp())
+            _old_id = ObjectId(struct.pack(">I", _cutoff_ts) + b"\x00" * 8)
+            r2 = await db.predictions.delete_many({"_id": {"$lt": _old_id}, "_ts": {"$exists": False}})
+            total_pred = r1.deleted_count + r2.deleted_count
+
+            # Cap team_fixture_history — keep newest 2000 rows only
+            th_count = await db.team_fixture_history.count_documents({})
+            th_deleted = 0
+            if th_count > 2000:
+                # Find the _id of the 2000th newest doc and delete everything older
+                cursor = db.team_fixture_history.find({}, {"_id": 1}).sort("_id", -1).skip(2000).limit(1)
+                pivot = await cursor.to_list(1)
+                if pivot:
+                    rd = await db.team_fixture_history.delete_many({"_id": {"$lte": pivot[0]["_id"]}})
+                    th_deleted = rd.deleted_count
+
+            print(f"[ATLAS CLEANUP] predictions pruned={total_pred} | "
+                  f"team_fixture_history pruned={th_deleted} (was {th_count})")
+        except Exception as _e:
+            print(f"[ATLAS CLEANUP] error: {_e}")
+        await asyncio.sleep(6 * 3600)
 
 
 async def _cheat_sheet_loop():
