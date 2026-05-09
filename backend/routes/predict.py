@@ -3887,6 +3887,56 @@ Analyze ALL data thoroughly. Return JSON only."""
                         f"H2H avg={_h2h_avg_use} ({_h2h_n_use} games, {_venue_note}, "
                         f"weight={_h2h_weight:.0%}) {direction} {_old_bp:.1f} → {bayesian_posterior:.1f}"
                     )
+
+                # ── H2H LINE HIT RATE — UNANIMOUS SIGNAL ─────────────────────────
+                # Separate from the avg-blend above. When ALL same-venue H2H games
+                # cleared the line the same way (e.g., 2/2 OVER 38.5), the
+                # weighted-average approach will always land between the season avg
+                # and the H2H avg — which may never cross the line when the two
+                # anchors straddle it. This block treats unanimous line-crossing as
+                # independent hard evidence and applies an ADDITIONAL pull toward the
+                # H2H avg, strong enough to cross the line.
+                #
+                # Weight: 20% per same-venue game, capped at 55%.
+                # Fires when: ≥2 same-venue H2H games AND ≥75% went same direction.
+                # Guard: "all venues" fallback does NOT trigger this — only
+                # venue-filtered data (we need location-specific evidence).
+                # ─────────────────────────────────────────────────────────────────
+                if req.line and len(_venue_vals) >= 2:
+                    _h2h_over_n   = sum(1 for v in _venue_vals if v > req.line)
+                    _h2h_under_n  = len(_venue_vals) - _h2h_over_n
+                    _h2h_line_n   = len(_venue_vals)
+                    _h2h_over_pct = _h2h_over_n / _h2h_line_n
+
+                    if _h2h_over_pct >= 0.75 or _h2h_over_pct <= 0.25:
+                        # Pull toward a target that is definitively on the dominant side
+                        if _h2h_over_pct >= 0.75:
+                            # ≥75% of same-venue H2H went OVER → target above the line
+                            _h2h_line_target = max(_h2h_avg_use, req.line + 1.5)
+                        else:
+                            # ≥75% went UNDER → target below the line
+                            _h2h_line_target = min(_h2h_avg_use, req.line - 1.5)
+
+                        _h2h_line_weight = min(_h2h_line_n * 0.20, 0.55)
+                        _old_bp2 = bayesian_posterior
+                        bayesian_posterior = round(
+                            _old_bp2 * (1 - _h2h_line_weight) + _h2h_line_target * _h2h_line_weight, 1
+                        )
+                        real_bayes["h2hLineHitRate"]   = round(_h2h_over_pct * 100)
+                        real_bayes["h2hLineSampleN"]   = _h2h_line_n
+                        real_bayes["posteriorMean"]    = bayesian_posterior
+
+                        if abs(bayesian_posterior - _old_bp2) >= 0.3:
+                            _ldir = "▲" if bayesian_posterior > _old_bp2 else "▼"
+                            _ldir_word = "OVER" if _h2h_over_pct >= 0.75 else "UNDER"
+                            print(
+                                f"[H2H LINE SIGNAL] {req.playerName} vs {req.opponentName}: "
+                                f"{_h2h_over_n}/{_h2h_line_n} same-venue H2H {_ldir_word} {req.line} "
+                                f"({_h2h_over_pct:.0%}) → target={_h2h_line_target:.1f} "
+                                f"weight={_h2h_line_weight:.0%} {_ldir} {_old_bp2:.1f} → {bayesian_posterior:.1f}"
+                            )
+                # ─────────────────────────────────────────────────────────────────
+
             # ─────────────────────────────────────────────────────────────────────
 
             # ─── OPPONENT DEFENSIVE PROFILE ADJUSTMENT ────────────────────────────

@@ -386,6 +386,11 @@ interface RawPrediction {
     priorSamples?: number;
     covariateAdjustment?: number;
     cv?: number;
+    opponentH2HAvg?: number;
+    opponentH2HSamples?: number;
+    opponentH2HWeight?: number;
+    h2hLineHitRate?: number;
+    h2hLineSampleN?: number;
   };
   playerGameLogs?: {
     games?: Record<string, unknown>[];

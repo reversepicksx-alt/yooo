@@ -1926,6 +1926,20 @@ export default function ScanScreen() {
                 );
               };
 
+              // Compute venue-specific line hit rate for the badge
+              const venueMatches = allMatches.filter((m: any) => m.venue === venueOverride);
+              const venueVals = venueMatches.map((m: any) => m.targetStat).filter((v: any) => v != null);
+              const venueOverCount = prediction.line != null
+                ? venueVals.filter((v: number) => v > prediction.line!).length : 0;
+              const venueUnderCount = venueVals.length - venueOverCount;
+              const showVenueHitBadge = venueVals.length >= 2;
+              const venueHitPct = venueVals.length > 0 ? Math.round(venueOverCount / venueVals.length * 100) : null;
+              const venueAllOver = venueOverCount === venueVals.length && venueVals.length >= 2;
+              const venueAllUnder = venueUnderCount === venueVals.length && venueVals.length >= 2;
+              const venueHitColor = venueAllOver ? Colors.success : venueAllUnder ? Colors.error : Colors.textSecondary;
+              const venueIcon = venueOverride === 'home' ? '🏠' : '✈️';
+              const venueLabel = venueOverride === 'home' ? 'HOME' : 'AWAY';
+
               return (
                 <View style={styles.h2hCard}>
                   {/* Header */}
@@ -1940,6 +1954,30 @@ export default function ScanScreen() {
                       </Text>
                     )}
                   </View>
+
+                  {/* Venue H2H hit rate badge — shows when ≥2 same-venue games exist */}
+                  {showVenueHitBadge && venueHitPct !== null && (
+                    <View style={[styles.h2hHitBadge, {
+                      backgroundColor: venueHitColor + '18',
+                      borderColor: venueHitColor + '55',
+                    }]}>
+                      <Ionicons
+                        name={venueAllOver ? 'trending-up' : venueAllUnder ? 'trending-down' : 'remove'}
+                        size={12}
+                        color={venueHitColor}
+                      />
+                      <Text style={[styles.h2hHitBadgeText, { color: venueHitColor }]}>
+                        {venueIcon} {venueLabel} H2H  {venueOverCount}/{venueVals.length} OVER  {venueHitPct}%
+                      </Text>
+                      {(venueAllOver || venueAllUnder) && (
+                        <View style={[styles.h2hHitBadgePill, { backgroundColor: venueHitColor + '33' }]}>
+                          <Text style={[styles.h2hHitBadgePillText, { color: venueHitColor }]}>
+                            UNANIMOUS
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                  )}
 
                   {/* Home vs Away comparison bar */}
                   {venueKnown && (homeAvg != null || awayAvg != null) && (
@@ -2701,6 +2739,17 @@ const styles = StyleSheet.create({
   h2hVenueAvg: { fontSize: 22, fontWeight: '900', lineHeight: 26 },
   h2hVenueSub: { fontSize: 9, color: Colors.textTertiary, fontWeight: '600' },
   h2hVenueDivider: { width: 1, height: 40, backgroundColor: Colors.borderSubtle },
+  h2hHitBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 12, paddingVertical: 7,
+    borderRadius: 10, borderWidth: 1,
+    marginBottom: 12,
+  },
+  h2hHitBadgeText: { fontSize: 11, fontWeight: '700', letterSpacing: 0.4, flex: 1 },
+  h2hHitBadgePill: {
+    paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6,
+  },
+  h2hHitBadgePillText: { fontSize: 9, fontWeight: '800', letterSpacing: 0.8 },
   h2hVenueSection: {
     borderTopWidth: 1, borderTopColor: Colors.borderSubtle,
     paddingTop: 8, marginTop: 2, marginBottom: 4,
