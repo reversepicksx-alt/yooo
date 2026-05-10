@@ -113,10 +113,11 @@ async def seed_grants():
     # Fix MLB picks saved with sport='soccer' before the sport-detection fix
     asyncio.create_task(_backfill_mlb_sport())
     # Grok Engine background tasks
-    from grok_engine import auto_settlement_loop, auto_scout_loop, pattern_mining_loop
+    from grok_engine import auto_settlement_loop, auto_scout_loop, pattern_mining_loop, mlb_live_loop
     asyncio.create_task(auto_settlement_loop())
     asyncio.create_task(auto_scout_loop())
     asyncio.create_task(pattern_mining_loop())
+    asyncio.create_task(mlb_live_loop())
     # League-aware empirical calibration: load on startup, refresh every 6h
     from league_priors import ensure_loaded as ensure_league_priors_loaded
     asyncio.create_task(ensure_league_priors_loaded(db))

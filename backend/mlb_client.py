@@ -214,6 +214,59 @@ async def get_team_games(team_id: int, season: int = 2025) -> list:
     return regular
 
 
+async def get_today_and_live_games(team_id: int, season: int = 2025) -> list:
+    """Fetch today's and in-progress games for a team.
+    Uses a 2-minute cache so the live-tracking loop stays fresh without hammering BDL."""
+    if not team_id:
+        return []
+    from datetime import date as _date
+    today = _date.today().isoformat()
+    key = f"mlb_live:{team_id}:{season}:{today}"
+    doc = await _cache_get(key)
+    if _cache_fresh(doc, 120) and doc.get("data") is not None:
+        return doc["data"]
+    try:
+        result = await _get("/games", {"team_ids[]": team_id, "season": season, "per_page": 10})
+        games = result.get("data", [])
+    except Exception as e:
+        log.warning(f"[MLB CLIENT] get_today_and_live_games({team_id}) failed: {e}")
+        return []
+    relevant = []
+    for g in games:
+        status = (g.get("status") or "").upper()
+        gdate = (g.get("date") or "")[:10]
+        if "IN_PROGRESS" in status or "LIVE" in status:
+            relevant.append(g)
+        elif gdate == today:
+            relevant.append(g)
+    if relevant:
+        await _cache_set(key, relevant)
+    return relevant
+
+
+async def get_game_player_stats(player_id: int, game_id: int, season: int = 2025) -> Optional[dict]:
+    """Fetch a player's stats for a specific game.
+    Uses a 90-second cache so live stats refresh on every 2-minute loop iteration."""
+    key = f"mlb_gps:{player_id}:{game_id}"
+    doc = await _cache_get(key)
+    if _cache_fresh(doc, 90) and doc.get("data") is not None:
+        return doc["data"]
+    try:
+        result = await _get("/stats", {
+            "player_ids[]": player_id,
+            "game_ids[]": game_id,
+            "season": season,
+        })
+        stats_list = result.get("data", [])
+        data = stats_list[0] if stats_list else None
+    except Exception as e:
+        log.warning(f"[MLB CLIENT] get_game_player_stats({player_id},{game_id}) failed: {e}")
+        return None
+    if data is not None:
+        await _cache_set(key, data)
+    return data
+
+
 async def get_game_by_teams(home_abbrev: str, away_abbrev: str, season: int = 2025) -> Optional[dict]:
     """Find a specific game by team abbreviations (used for settlement)."""
     try:

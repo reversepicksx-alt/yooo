@@ -1506,3 +1506,159 @@ Return ONLY a valid JSON object (not an array):
             print(f"[SCAN] Grok vision error: {e}")
 
     return {}
+
+
+# ── MLB Live Stat Tracking ────────────────────────────────────────────────────
+
+_MLB_LIVE_PROP_TYPES = {
+    "pitcher_strikeouts", "innings_pitched", "hits_allowed", "earned_runs",
+    "walks_allowed", "pitches_thrown", "batters_faced",
+    "hits", "home_runs", "rbi", "walks", "strikeouts", "runs",
+    "total_bases", "stolen_bases", "doubles", "plate_appearances",
+}
+
+
+async def mlb_live_loop():
+    """Background task: poll BDL every ~2 minutes for live/today MLB games
+    and update currentValue on pending/live MLB picks so the pick card shows
+    a live stat counter exactly like soccer shows live passes/shots."""
+    await asyncio.sleep(20)  # Brief startup delay so the rest of the app is ready
+    while True:
+        try:
+            await _update_mlb_live_picks()
+        except Exception as e:
+            print(f"[MLB LIVE] Loop error: {e}")
+        await asyncio.sleep(110)  # ~2-minute cadence
+
+
+async def _update_mlb_live_picks():
+    """Core of the MLB live loop: find in-progress or today's games,
+    fetch each player's current game stats, and write them to the picks collection."""
+    try:
+        import mlb_client
+        from mlb_engine import ALL_PROP_FIELDS
+    except ImportError as _ie:
+        print(f"[MLB LIVE] Import error: {_ie}")
+        return
+
+    # Grab all live/pending MLB picks (detect by sport field OR prop type)
+    live_picks = await db.picks.find(
+        {"$or": [
+            {"status": "live",    "sport": "mlb"},
+            {"status": "pending", "sport": "mlb"},
+            {"status": "live",    "propType": {"$in": list(_MLB_LIVE_PROP_TYPES)}},
+            {"status": "pending", "propType": {"$in": list(_MLB_LIVE_PROP_TYPES)}},
+        ]},
+        {"_id": 0}
+    ).to_list(200)
+
+    if not live_picks:
+        return
+
+    # Group by (team_id, season) to make one /games call per team not per pick
+    team_groups: dict = {}
+    for pick in live_picks:
+        tid    = pick.get("teamId") or 0
+        season = pick.get("season") or 2025
+        team_groups.setdefault((tid, season), []).append(pick)
+
+    for (team_id, season), picks in team_groups.items():
+        if not team_id:
+            continue
+        try:
+            games = await mlb_client.get_today_and_live_games(team_id, int(season))
+            if not games:
+                continue
+
+            # Prefer an in-progress game; fall back to any today's game
+            live_game  = next((g for g in games if "IN_PROGRESS" in (g.get("status") or "").upper()), None)
+            target     = live_game or games[0]
+            status_str = (target.get("status") or "").upper()
+            is_live    = "IN_PROGRESS" in status_str
+            is_final   = "FINAL"       in status_str
+            game_id    = target.get("id")
+            if not game_id:
+                continue
+
+            home_team   = target.get("home_team", {}) or {}
+            away_team   = target.get("away_team", {}) or {}
+            home_abbrev = home_team.get("abbreviation", "")
+            away_abbrev = away_team.get("abbreviation", "")
+            home_runs   = (target.get("home_team_data") or {}).get("runs")
+            away_runs   = (target.get("away_team_data") or {}).get("runs")
+
+            for pick in picks:
+                player_id = pick.get("playerId")
+                prop_type = (pick.get("propType") or "").lower()
+                field     = ALL_PROP_FIELDS.get(prop_type)
+                if not player_id or not field:
+                    continue
+
+                # Fetch current game stats for this player (90-second cache)
+                current_value = None
+                try:
+                    stats = await mlb_client.get_game_player_stats(int(player_id), int(game_id), int(season))
+                    if stats:
+                        raw = stats.get(field)
+                        if raw is not None:
+                            if prop_type == "innings_pitched":
+                                parts = str(raw).split(".")
+                                whole = int(parts[0])
+                                frac  = int(parts[1]) if len(parts) > 1 else 0
+                                current_value = round(whole + frac / 3.0, 1)
+                            else:
+                                current_value = float(raw)
+                except Exception as _se:
+                    print(f"[MLB LIVE] Stats fetch failed player={player_id} game={game_id}: {_se}")
+                    continue
+
+                # Skip if no data at all and game hasn't started
+                if current_value is None and not (is_live or is_final):
+                    continue
+
+                line = float(pick.get("line") or 0)
+                rec  = (pick.get("recommendation") or "over").upper()
+                match_status = "final" if is_final else ("live" if is_live else "scheduled")
+
+                set_fields: dict = {
+                    "matchStatus": match_status,
+                    "gameId":      game_id,
+                    "homeTeam":    home_abbrev,
+                    "awayTeam":    away_abbrev,
+                }
+                if home_runs is not None:
+                    set_fields["finalHomeGoals"] = home_runs  # reuse soccer field — pick card renders it already
+                if away_runs is not None:
+                    set_fields["finalAwayGoals"] = away_runs
+                if current_value is not None:
+                    set_fields["currentValue"] = current_value
+
+                if is_final and current_value is not None:
+                    line_f = line
+                    if current_value == line_f:
+                        result_str = "push"
+                    elif rec == "OVER":
+                        result_str = "hit" if current_value > line_f else "miss"
+                    else:
+                        result_str = "hit" if current_value < line_f else "miss"
+                    set_fields.update({
+                        "actualValue": round(current_value, 1),
+                        "result":      result_str,
+                        "status":      "settled",
+                        "settledAt":   datetime.now(timezone.utc).isoformat(),
+                        "settledBy":   "mlb_live_loop",
+                    })
+                    print(f"[MLB LIVE] ✓ Settled {pick.get('playerName')} {prop_type} "
+                          f"actual={current_value} line={line_f} rec={rec} → {result_str}")
+                elif is_live:
+                    set_fields["status"] = "live"
+                    if current_value is not None:
+                        print(f"[MLB LIVE] {pick.get('playerName')} {prop_type} = {current_value} (live)")
+
+                await db.picks.update_one(
+                    {"pickId": pick["pickId"]},
+                    {"$set": set_fields}
+                )
+
+        except Exception as _te:
+            print(f"[MLB LIVE] Team {team_id}/{season} error: {_te}")

@@ -285,9 +285,22 @@ async def list_picks(req: GetPicksRequest):
                 pass
 
     live_picks = [p for p in picks if p.get("status") == "live"]
-    if live_picks:
+    # MLB picks are handled by the mlb_live_loop background task which writes
+    # currentValue / matchStatus directly to MongoDB — don't pass them to the
+    # soccer pipeline or it will overwrite their matchStatus with "scheduled".
+    _MLB_PROP_SET = {
+        "pitcher_strikeouts", "innings_pitched", "hits_allowed", "earned_runs",
+        "walks_allowed", "pitches_thrown", "batters_faced",
+        "hits", "home_runs", "rbi", "walks", "strikeouts", "runs",
+        "total_bases", "stolen_bases", "doubles", "plate_appearances",
+    }
+    soccer_live_picks = [
+        p for p in live_picks
+        if p.get("sport", "soccer") != "mlb" and p.get("propType", "") not in _MLB_PROP_SET
+    ]
+    if soccer_live_picks:
         try:
-            live_updates = await _process_soccer_live(live_picks, req.email.lower())
+            live_updates = await _process_soccer_live(soccer_live_picks, req.email.lower())
             update_map = {u["pickId"]: u for u in live_updates if u.get("pickId")}
             for p in picks:
                 upd = update_map.get(p.get("pickId"))
