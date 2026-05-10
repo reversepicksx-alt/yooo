@@ -1590,12 +1590,14 @@ async def predict(req: PredictionRequest):
                     except Exception:
                         pass
 
-                # FIX 2 — Regression to mean (15% shrink toward 50%).
-                # Stacking season-avg + standings + odds inflates extremes.
-                # 531-pick audit showed 70%+ projections averaged only 55.4%
-                # actual. A 15% pull toward 50% closes most of that gap:
-                #   70% → 62%,  65% → 59%,  58% → 56%,  42% → 44%
-                home_poss = round(50.0 + (home_poss - 50.0) * 0.85, 1)
+                # FIX 2 — Regression to mean (22% shrink toward 50%).
+                # 1291-pick audit: actual possession is -4.7pp below projected on
+                # average (mean abs error 9.6pp). Stronger regression closes this:
+                # 15% was insufficient (original fix). 22% brings extremes in further:
+                #   70% → 64.6%,  65% → 60.8%,  58% → 56.2%,  42% → 43.8%
+                # This also reduces the GK dominant possession penalty by making
+                # extreme possession ratios (>1.20) far less common.
+                home_poss = round(50.0 + (home_poss - 50.0) * 0.78, 1)
 
                 # FIX 1 — Lower ceiling from 75% → 67%.
                 # No professional soccer team sustains 75% possession in a

@@ -654,18 +654,36 @@ def compute_bayesian_projection(
                 #   Donnarumma (Man City away vs Burnley, 65% poss): 20 actual vs 27 proj.
                 #   Gazzaniga (Girona HOME, above-avg poss vs Betis): 26 actual.
                 #
-                # Scale (cap raised to 50%, multiplier raised 0.75→2.5 to match evidence):
-                #   ratio=1.05 → ~12% reduction
-                #   ratio=1.10 → ~25% reduction (e.g. Man City 65% poss → GK loses ~25%)
-                #   ratio=1.14 → ~35% reduction (e.g. Man City 75% poss)
-                #   ratio=1.20 → 50% reduction (extreme dominance, capped)
-                dom_penalty = min(0.50, (poss_ratio - 1.0) * 2.5)
+                # Scale (cap reduced 50%→20%, coefficient reduced 2.5→1.0 per empirical audit):
+                # 1291-pick dataset showed 65/65 GK UNDER misses had actual > line, meaning
+                # the old penalty cut projections so far below the line they were always wrong.
+                # Evidence: De Gea season avg ~37, poss_ratio=1.14 → old penalty 35% → proj=24
+                # vs line 31.5, actual 35. With cap=20%: proj=32 → correctly straddles the line.
+                #   ratio=1.05 → ~5% reduction  (was 12%)
+                #   ratio=1.10 → ~10% reduction (was 25%)
+                #   ratio=1.14 → ~14% reduction (was 35%)
+                #   ratio=1.20 → 20% reduction  (was 50%, extreme dominance, now capped lower)
+                dom_penalty = min(0.20, (poss_ratio - 1.0) * 1.0)
                 shrink_mult = round(1.0 - dom_penalty, 3)
                 raw_before_dom = posterior_mean
                 posterior_mean = round(posterior_mean * shrink_mult, 1)
                 print(f"[GK DOM POSS PENALTY] {prop_type}: team_avg={team_season_avg_poss:.1f}% "
                       f"expected={expected_poss:.1f}% ratio={poss_ratio:.2f} "
                       f"shrink={shrink_mult} {raw_before_dom} → {posterior_mean}")
+
+        # ── GK PROJECTION FLOOR ───────────────────────────────────────────────
+        # After all possession adjustments, a GK projection should never drop below
+        # 72% of the player's season prior mean. Anything lower means the possession
+        # model is over-penalising — GKs always handle the ball regardless of team style.
+        # Evidence: projections of 17-24 for GKs with 35+ pass season averages are
+        # physically implausible. A floor prevents cascading possession errors from
+        # producing unbettable projections.
+        if _is_gk and prop_type in {"pass_attempts", "passes"} and prior_mean > 0:
+            _gk_floor = round(prior_mean * 0.72, 1)
+            if posterior_mean < _gk_floor:
+                print(f"[GK FLOOR] {prop_type}: posterior={posterior_mean} below floor={_gk_floor} "
+                      f"(72% of prior_mean={prior_mean:.1f}) → lifting to floor")
+                posterior_mean = _gk_floor
 
     # ═══════════════════════════════════════════
     # CDM INVERTED POSSESSION MODEL  (Layer A of CDM-inversion fix)
@@ -1024,6 +1042,33 @@ def compute_bayesian_projection(
     # spread, PLUS an absolute floor of 17% of the posterior mean so wide-gap props stay
     # honest (e.g. a 30-mean projection with line at 38.5 must acknowledge the real range).
     effective_std = max(posterior_std, prior_std * 0.55, posterior_mean * 0.17)
+
+    # ── POSITION BIAS CORRECTION ─────────────────────────────────────────────
+    # 1291-pick empirical audit identified systematic over/under-estimation
+    # for specific positions on pass_attempts. Applied before de-normalise so
+    # the correction compounds correctly with playing-time scaling.
+    #
+    #   CAM: actual avg 3.2 below projection (model overestimates) → -4% correction
+    #   CM:  actual avg 1.8 below projection (model overestimates) → -2% correction
+    #
+    # These positions overestimate because the model uses a general "high possession
+    # = more passes" rule, but CAMs/CMs in high possession systems often play
+    # narrow and touch the ball less in direct build-up than CBs or DMs.
+    _POS_BIAS_CORRECTIONS = {
+        ("CAM", "pass_attempts"): 0.96,
+        ("AM",  "pass_attempts"): 0.96,
+        ("CM",  "pass_attempts"): 0.98,
+        ("MC",  "pass_attempts"): 0.98,
+        ("CAM", "passes"):        0.96,
+        ("CM",  "passes"):        0.98,
+    }
+    _pos_bias_key = ((position or "").upper(), prop_type)
+    _pos_bias_mult = _POS_BIAS_CORRECTIONS.get(_pos_bias_key)
+    if _pos_bias_mult is not None and abs(_pos_bias_mult - 1.0) > 0.001:
+        _raw_before_bias = posterior_mean
+        posterior_mean = round(posterior_mean * _pos_bias_mult, 1)
+        print(f"[POS BIAS CORR] {position} {prop_type}: {_raw_before_bias:.1f} → {posterior_mean:.1f} "
+              f"(×{_pos_bias_mult} empirical correction)")
 
     # ── DE-NORMALISE: convert per-90 posterior back to raw expected units ────
     # All maths above ran in per-90 space. Now scale down to the player's
