@@ -110,6 +110,8 @@ async def seed_grants():
     asyncio.create_task(_overdue_subscription_sweep())
     # Auto-backfill positions for picks missing them (runs once at startup)
     asyncio.create_task(_auto_backfill_positions())
+    # Fix MLB picks saved with sport='soccer' before the sport-detection fix
+    asyncio.create_task(_backfill_mlb_sport())
     # Grok Engine background tasks
     from grok_engine import auto_settlement_loop, auto_scout_loop, pattern_mining_loop
     asyncio.create_task(auto_settlement_loop())
@@ -239,6 +241,33 @@ async def _cheat_sheet_loop():
         except Exception as e:
             print(f"[CHEAT SHEET] Render failed: {e}")
         await asyncio.sleep(INTERVAL_SECS)
+
+
+async def _backfill_mlb_sport():
+    """
+    One-time startup fix: set sport='mlb' on any picks that have an MLB prop type
+    but were saved with sport='soccer' (the bug that existed before the sport-detection fix).
+    Safe to run repeatedly — only touches picks that need correction.
+    """
+    import asyncio
+    await asyncio.sleep(20)  # Let caches settle first
+    try:
+        _MLB_PROP_TYPES = [
+            "pitcher_strikeouts", "innings_pitched", "hits_allowed", "earned_runs",
+            "walks_allowed", "pitches_thrown", "batters_faced",
+            "hits", "home_runs", "rbi", "walks", "strikeouts", "runs",
+            "total_bases", "stolen_bases", "doubles", "plate_appearances",
+        ]
+        result = await db.picks.update_many(
+            {"propType": {"$in": _MLB_PROP_TYPES}, "sport": {"$ne": "mlb"}},
+            {"$set": {"sport": "mlb"}},
+        )
+        if result.modified_count:
+            print(f"[MLB BACKFILL] Fixed sport field on {result.modified_count} MLB picks (were tagged as soccer)")
+        else:
+            print("[MLB BACKFILL] No picks needed sport correction")
+    except Exception as _e:
+        print(f"[MLB BACKFILL] Error: {_e}")
 
 
 async def _auto_backfill_positions():

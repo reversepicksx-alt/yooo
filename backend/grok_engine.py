@@ -816,8 +816,15 @@ async def _run_auto_settlement():
     settled_count = 0
 
     # ── MLB settlement ────────────────────────────────────────────────────────
-    mlb_picks  = [p for p in live_picks if p.get("sport") == "mlb"]
-    soccer_picks = [p for p in live_picks if p.get("sport", "soccer") != "mlb"]
+    # Detect by sport field OR by prop type (catches picks saved before sport-fix)
+    _MLB_PROP_TYPES = {
+        "pitcher_strikeouts", "innings_pitched", "hits_allowed", "earned_runs",
+        "walks_allowed", "pitches_thrown", "batters_faced",
+        "hits", "home_runs", "rbi", "walks", "strikeouts", "runs",
+        "total_bases", "stolen_bases", "doubles", "plate_appearances",
+    }
+    mlb_picks    = [p for p in live_picks if p.get("sport") == "mlb" or p.get("propType", "") in _MLB_PROP_TYPES]
+    soccer_picks = [p for p in live_picks if p not in mlb_picks]
 
     for pick in mlb_picks:
         try:

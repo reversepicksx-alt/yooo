@@ -126,6 +126,8 @@ COMPLIMENTARY_MEMBERS = {
     "mathieujulens@gmail.com":         "2026-07-09",
     "josequinteros8201@gmail.com":     "2026-04-17",
     "exoticveinz7985@gmail.com":       "2026-04-17",
+    # Manual grants — next billing date or extended comp
+    "jeremiahbrazzle12@gmail.com":     "2026-06-16",  # next payment 16th + 1 month buffer
 }
 
 # ── Supported Leagues ──
