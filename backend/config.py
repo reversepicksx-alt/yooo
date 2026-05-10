@@ -179,9 +179,40 @@ api_semaphore = aio.Semaphore(10)
 # ── Chat sessions (in-memory) ──
 chat_sessions: dict = {}
 
-# ── Database ──
-mongo_client = AsyncIOMotorClient(MONGO_URL)
-db = mongo_client[DB_NAME]
+# ── Database — Atlas SRV fallback ──
+def _resolve_mongo_url() -> str:
+    """
+    Try the configured MONGO_URL (Atlas SRV).
+    If DNS resolution fails at startup, fall back to the local MongoDB
+    that the workflow command starts on localhost:27017.
+    This must run synchronously at import time so every module gets the
+    correct `db` reference from the start.
+    """
+    atlas_url = MONGO_URL
+    local_url = f"mongodb://localhost:27017"
+    if not atlas_url or "mongodb+srv://" not in atlas_url:
+        return atlas_url or local_url
+    try:
+        import dns.resolver as _dns
+        host = atlas_url.split("@")[-1].split("/")[0].split("?")[0]
+        r = _dns.Resolver()
+        r.lifetime = 4
+        r.timeout = 4
+        r.resolve(f"_mongodb._tcp.{host}", "SRV")
+        return atlas_url            # Atlas DNS works — use Atlas
+    except Exception as _e:
+        import sys
+        print(
+            f"[CONFIG] Atlas SRV DNS unavailable ({type(_e).__name__}): {_e}\n"
+            f"[CONFIG] → Falling back to local MongoDB at localhost:27017",
+            file=sys.stderr, flush=True,
+        )
+        return local_url
+
+_EFFECTIVE_MONGO_URL = _resolve_mongo_url()
+_DB_NAME = DB_NAME or "reversepicks"
+mongo_client = AsyncIOMotorClient(_EFFECTIVE_MONGO_URL)
+db = mongo_client[_DB_NAME]
 
 # ── Prop type aliases (for scan) ──
 PROP_TYPE_ALIASES = {
