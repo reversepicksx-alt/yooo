@@ -57,10 +57,8 @@ async def _check_access_local(email_lower: str):
             except Exception:
                 pass
         # No expiresAt, or already past it — access denied
-    whop_sub = await db.whop_subscriptions.find_one({"email": email_lower, "status": "active"}, {"_id": 0})
-    if whop_sub:
-        return "Whop Member"
-    # Stripe subscriptions (new subscribers)
+    # Whop: DISABLED — platform disconnected. No Whop members get access.
+    # Stripe subscriptions — active and trialing only
     stripe_sub = await db.stripe_subscriptions.find_one(
         {"email": email_lower, "status": {"$in": ["active", "trialing"]}}, {"_id": 0}
     )
@@ -81,36 +79,8 @@ async def _check_access_local(email_lower: str):
                     return "Premium (Stripe)"  # paid period not yet over
             except Exception:
                 pass
-    # Stripe: past_due — still give access while Stripe retries the renewal.
-    # Only customer.subscription.deleted should revoke access.
-    stripe_past_due = await db.stripe_subscriptions.find_one(
-        {"email": email_lower, "status": "past_due"}, {"_id": 0}
-    )
-    if stripe_past_due:
-        end_raw = stripe_past_due.get("currentPeriodEnd")
-        if end_raw:
-            try:
-                end_dt = datetime.fromisoformat(str(end_raw).replace(" ", "T"))
-                if end_dt.tzinfo is None:
-                    end_dt = end_dt.replace(tzinfo=timezone.utc)
-                if datetime.now(timezone.utc) < end_dt:
-                    return "Premium (Stripe)"
-            except Exception:
-                pass
-        # currentPeriodEnd missing or already passed — give a 10-day grace from
-        # when the past_due status was set (covers Stripe's full retry window).
-        updated_raw = stripe_past_due.get("updatedAt") or stripe_past_due.get("subscribedAt", "")
-        if updated_raw:
-            try:
-                updated_dt = datetime.fromisoformat(str(updated_raw).replace(" ", "T"))
-                if updated_dt.tzinfo is None:
-                    updated_dt = updated_dt.replace(tzinfo=timezone.utc)
-                grace_end = updated_dt + timedelta(days=1)
-                if datetime.now(timezone.utc) < grace_end:
-                    print(f"[AUTH] past_due grace window active for {email_lower} (until {grace_end.date()})")
-                    return "Premium (Stripe)"
-            except Exception:
-                pass
+    # Stripe: past_due — NO ACCESS. Payment failed = no access. They must update
+    # their payment method and pay to regain entry.
     return None
 
 async def _check_stripe_live(email_lower: str):
@@ -138,13 +108,11 @@ async def _check_stripe_live(email_lower: str):
 
         for cust in customers.data:
             cust_id = cust.id
-            for st in ["active", "trialing", "past_due"]:
+            for st in ["active", "trialing"]:
+                # past_due excluded — failed payment = no access
                 subs_result = _stripe.Subscription.list(customer=cust_id, status=st, limit=5)
                 for sub in subs_result.data:
                     sub_data = sub._data if hasattr(sub, '_data') else {}
-                    cpe = sub_data.get("current_period_end", 0) or 0
-                    if st == "past_due" and cpe and cpe <= now_ts:
-                        continue  # Period already ended — not valid
                     priority = best_status_priority.get(st, 99)
                     if best_sub is None or priority < best_status_priority.get(best_sub[0], 99):
                         best_sub = (st, sub, sub_data, cust_id)
