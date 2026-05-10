@@ -1972,6 +1972,40 @@ export default function ScanScreen() {
               </View>
             )}
 
+            {/* ─── MLB AI ANALYSIS CARD ─── */}
+            {prediction.sport === 'mlb' && (prediction.sharpSummary || prediction.reasoning) && (() => {
+              const isOver = prediction.recommendation === 'OVER';
+              const isUnder = prediction.recommendation === 'UNDER';
+              const recColor = isOver ? Colors.success : isUnder ? Colors.error : Colors.textSecondary;
+              const borderColor = isOver ? Colors.success : isUnder ? Colors.error : '#333';
+              const summary = prediction.sharpSummary || '';
+              const body = prediction.reasoning || prediction.tacticalBreakdown || '';
+              if (!summary && !body) return null;
+              return (
+                <View style={[styles.scoutCard, { borderColor: borderColor + '44' }]}>
+                  <View style={styles.scoutHeader}>
+                    <Ionicons name="flash-outline" size={13} color={Colors.primary} />
+                    <Text style={styles.scoutTitle}>SHARP ANGLE</Text>
+                    <View style={[styles.sharpVerdictPill, { backgroundColor: recColor + '22', borderColor, marginLeft: 'auto' }]}>
+                      <Text style={[styles.sharpVerdictPillText, { color: recColor }]}>
+                        {isOver ? 'OVER' : isUnder ? 'UNDER' : 'PASS'} {prediction.line ?? ''}
+                      </Text>
+                    </View>
+                  </View>
+                  {summary ? (
+                    <Text style={[styles.scoutSectionBody, { color: Colors.text, fontWeight: '600', marginBottom: 8 }]}>
+                      {summary}
+                    </Text>
+                  ) : null}
+                  {body ? (
+                    <Text style={[styles.scoutSectionBody, { color: Colors.textSecondary }]}>
+                      {body}
+                    </Text>
+                  ) : null}
+                </View>
+              );
+            })()}
+
             {/* ─── GAME LOG GRID ─── */}
             {prediction.gameLogs && prediction.gameLogs.length > 0 && (() => {
               const realLogs = prediction.gameLogs.filter(g => !g.synthetic);
@@ -2052,22 +2086,22 @@ export default function ScanScreen() {
                             const isOver = g.value != null && prediction.line != null && g.value >= prediction.line;
                             const isMLB = g.sport === 'mlb' || prediction.sport === 'mlb';
 
-                            // ── MLB tile content ──────────────────────────────
+                            // ── MLB tile content — same visual structure as soccer ──
                             if (isMLB) {
                               const propT = g.propType || prediction.propType || '';
                               const isPitcher = ['pitcher_strikeouts','innings_pitched','hits_allowed','earned_runs','walks_allowed','pitches_thrown','batters_faced'].includes(propT);
-                              // Context line: pitchers show "6IP·99P", batters show "2/4 AB"
-                              let ctxLine = '';
+                              // "Minutes" slot — innings pitched for pitchers, H/AB for batters
+                              let minsText = '—';
                               if (isPitcher) {
-                                const ip = g.ip != null ? `${g.ip}IP` : null;
-                                const pc = g.pitchCount != null ? `${g.pitchCount}P` : null;
-                                ctxLine = [ip, pc].filter(Boolean).join('·') || '—';
+                                minsText = g.ip != null ? `${g.ip}IP` : '—';
                               } else {
                                 const h = g.hits ?? null;
                                 const ab = g.atBats ?? null;
-                                ctxLine = (h != null && ab != null) ? `${h}/${ab}` : (ab != null ? `${ab}AB` : '—');
+                                minsText = (h != null && ab != null) ? `${h}/${ab}` : (ab != null ? `${ab}AB` : '—');
                               }
-                              const gameLabel = g.gameNumber != null ? `G${g.gameNumber}` : '—';
+                              // "Opponent" slot — game label badge + pitch count (pitchers) or nothing (batters)
+                              const gameNum = g.gameNumber != null ? `G${g.gameNumber}` : '—';
+                              const rightLabel = isPitcher && g.pitchCount != null ? `${g.pitchCount}P` : '';
                               return (
                                 <View
                                   key={i}
@@ -2081,9 +2115,14 @@ export default function ScanScreen() {
                                   <Text style={[styles.glTileVal, { color: isOver ? Colors.success : Colors.error }]}>
                                     {g.value != null ? String(g.value) : '—'}
                                   </Text>
-                                  <Text style={styles.glTileMins}>{ctxLine}</Text>
+                                  <Text style={styles.glTileMins}>{minsText}</Text>
                                   <View style={styles.glOppRow}>
-                                    <Text style={[styles.glTileOpp, { color: Colors.textTertiary }]} numberOfLines={1}>{gameLabel}</Text>
+                                    <View style={styles.glVenueBadge}>
+                                      <Text style={styles.glVenueText}>{gameNum}</Text>
+                                    </View>
+                                    {rightLabel ? (
+                                      <Text style={styles.glTileOpp} numberOfLines={1}>{rightLabel}</Text>
+                                    ) : null}
                                   </View>
                                 </View>
                               );
