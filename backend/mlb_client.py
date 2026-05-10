@@ -216,7 +216,12 @@ async def get_team_games(team_id: int, season: int = 2025) -> list:
 
 async def get_today_and_live_games(team_id: int, season: int = 2025) -> list:
     """Fetch today's and in-progress games for a team.
-    Uses a 2-minute cache so the live-tracking loop stays fresh without hammering BDL."""
+    Uses a 2-minute cache so the live-tracking loop stays fresh without hammering BDL.
+
+    BDL returns games oldest-first, so we MUST use the dates[] filter to target
+    today specifically — otherwise per_page=10 would give April games, not May.
+    We also scan the most-recent page of games for any STATUS_IN_PROGRESS game
+    as a safety net (in case a game runs past midnight UTC)."""
     if not team_id:
         return []
     from datetime import date as _date
@@ -225,20 +230,52 @@ async def get_today_and_live_games(team_id: int, season: int = 2025) -> list:
     doc = await _cache_get(key)
     if _cache_fresh(doc, 120) and doc.get("data") is not None:
         return doc["data"]
+
+    relevant: list = []
     try:
-        result = await _get("/games", {"team_ids[]": team_id, "season": season, "per_page": 10})
-        games = result.get("data", [])
+        # Primary: request only today's game by date
+        result = await _get("/games", {
+            "team_ids[]": team_id,
+            "season": season,
+            "per_page": 5,
+            "dates[]": today,
+        })
+        for g in result.get("data", []):
+            status = (g.get("status") or "").upper()
+            gdate = (g.get("date") or "")[:10]
+            if "IN_PROGRESS" in status or "LIVE" in status or gdate == today:
+                relevant.append(g)
     except Exception as e:
-        log.warning(f"[MLB CLIENT] get_today_and_live_games({team_id}) failed: {e}")
-        return []
-    relevant = []
-    for g in games:
-        status = (g.get("status") or "").upper()
-        gdate = (g.get("date") or "")[:10]
-        if "IN_PROGRESS" in status or "LIVE" in status:
-            relevant.append(g)
-        elif gdate == today:
-            relevant.append(g)
+        log.warning(f"[MLB CLIENT] get_today_and_live_games dates filter failed ({team_id}): {e}")
+
+    # Fallback / safety net: get the last page of season games — catches live
+    # games that started yesterday or any in-progress game BDL didn't date-match.
+    if not relevant:
+        try:
+            # Paginate to the most recent games (BDL is oldest-first, so we
+            # follow cursors until the last page which has the newest games)
+            cursor = None
+            last_batch: list = []
+            for _ in range(20):  # max 20 pages × 10 = 200 games
+                params: dict = {"team_ids[]": team_id, "season": season, "per_page": 10}
+                if cursor:
+                    params["cursor"] = cursor
+                r = await _get("/games", params)
+                batch = r.get("data", [])
+                if batch:
+                    last_batch = batch
+                next_cursor = r.get("meta", {}).get("next_cursor")
+                if not next_cursor:
+                    break
+                cursor = next_cursor
+            for g in last_batch:
+                status = (g.get("status") or "").upper()
+                gdate = (g.get("date") or "")[:10]
+                if "IN_PROGRESS" in status or "LIVE" in status or gdate == today:
+                    relevant.append(g)
+        except Exception as e2:
+            log.warning(f"[MLB CLIENT] get_today_and_live_games fallback failed ({team_id}): {e2}")
+
     if relevant:
         await _cache_set(key, relevant)
     return relevant
