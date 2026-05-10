@@ -203,6 +203,18 @@ export interface GameLog {
   tackles?: number | null;
   clearances?: number | null;
   synthetic?: boolean;
+  // MLB-specific fields
+  sport?: string;
+  gameNumber?: number | null;
+  ip?: number | null;
+  pitchCount?: number | null;
+  pHits?: number | null;
+  era?: number | null;
+  hits?: number | null;
+  atBats?: number | null;
+  hr?: number | null;
+  rbi?: number | null;
+  avg?: number | null;
 }
 
 export interface H2HMatch {
@@ -1030,40 +1042,76 @@ export async function mlbPredict(request: Record<string, unknown>): Promise<Pred
   if (raw.error) return { error: raw.error } as PredictionResult;
   const bm = raw.bayesianMetrics || {};
   const rec = (raw.recommendation || '').toUpperCase() as 'OVER' | 'UNDER' | 'PASS';
+
+  // Map game logs — preserve all MLB-specific fields for tile rendering
+  const gameLogs = (raw.gameLogs || []).map((g: any) => ({
+    date:             g.gameId ? String(g.gameId) : '',
+    opponent:         '',
+    venue:            '',
+    value:            g.value ?? null,
+    minutes:          0,
+    sport:            'mlb',
+    gameNumber:       g.gameNumber ?? null,
+    // Pitcher fields
+    ip:               g.ip ?? null,
+    pitchCount:       g.pitchCount ?? null,
+    pHits:            g.pHits ?? null,
+    era:              g.era ?? null,
+    // Batter fields
+    hits:             g.hits ?? null,
+    atBats:           g.atBats ?? null,
+    hr:               g.hr ?? null,
+    rbi:              g.rbi ?? null,
+    avg:              g.avg ?? null,
+  })).filter((g: any) => g.value != null);
+
+  // Prefer top-level fields, fall back to bayesianMetrics sub-object
+  const hitRatesRaw = raw.hitRates;
+  const hitRates = hitRatesRaw
+    ? { over: hitRatesRaw.over, under: hitRatesRaw.under, overPct: hitRatesRaw.over, underPct: hitRatesRaw.under, total: hitRatesRaw.n }
+    : undefined;
+
   return {
-    playerName:        raw.playerName || '',
-    teamName:          raw.teamName || '',
-    opponentName:      raw.opponentName || '',
-    propType:          raw.propType || '',
-    line:              raw.line ?? 0,
-    projection:        raw.projectedValue,
-    confidence:        raw.confidenceScore,
-    rawConfidence:     raw.rawConfidence ?? raw.confidenceScore,
-    recommendation:    rec,
-    confidenceLevel:   raw.confidenceLevel,
-    confidenceInterval:raw.confidenceInterval,
-    bayesianProjection:raw.projectedValue,
-    pOver:             bm.pOver,
-    pUnder:            bm.pUnder,
-    volatility:        bm.volatility,
-    sampleSize:        raw.sampleSize,
-    priorMean:         bm.priorMean,
-    momentumMean:      bm.momentumMean,
-    playerPosition:    raw.playerPosition || '',
-    playerRole:        raw.playerRole || '',
-    leagueId:          undefined,
-    playerId:          raw.playerId,
-    teamId:            undefined,
-    opponentId:        undefined,
-    gameLogs:          (raw.gameLogs || []).map((g: any) => ({
-      date:     g.gameId ? String(g.gameId) : '',
-      opponent: g.teamName || '',
-      venue:    '',
-      value:    g.value ?? null,
-      minutes:  0,
-    })).filter((g: any) => g.value != null),
-    bayesianMetrics: bm,
-    sport: 'mlb',
+    playerName:          raw.playerName || '',
+    teamName:            raw.teamName || '',
+    opponentName:        raw.opponentName || '',
+    propType:            raw.propType || '',
+    line:                raw.line ?? 0,
+    projection:          raw.projectedValue ?? raw.projection,
+    confidence:          raw.confidenceScore,
+    rawConfidence:       raw.rawConfidence ?? raw.confidenceScore,
+    recommendation:      rec,
+    confidenceLevel:     raw.confidenceLevel,
+    confidenceInterval:  raw.confidenceInterval,
+    bayesianProjection:  raw.projectedValue ?? raw.projection,
+    // Bayesian fields — top-level take priority, bm is fallback
+    pOver:               raw.pOver ?? bm.pOver,
+    pUnder:              raw.pUnder ?? bm.pUnder,
+    volatility:          raw.volatility ?? bm.volatility,
+    priorSamples:        raw.priorSamples ?? bm.priorSamples ?? raw.sampleSize,
+    priorMean:           raw.priorMean ?? bm.priorMean,
+    momentumMean:        raw.momentumMean ?? bm.momentumMean,
+    momentumLabel:       raw.momentumLabel ?? bm.momentumLabel,
+    streakFlag:          raw.streakFlag ?? bm.streakFlag,
+    covariateAdjustment: raw.covariateAdjustment ?? bm.covariateAdjustment,
+    homeAvg:             raw.homeAvg ?? null,
+    awayAvg:             raw.awayAvg ?? null,
+    hitRates:            hitRates,
+    sampleSize:          raw.sampleSize,
+    // AI analysis fields
+    sharpSummary:        raw.sharpSummary || undefined,
+    reasoning:           raw.reasoning || undefined,
+    tacticalBreakdown:   raw.reasoning || undefined,
+    // Player / match meta
+    playerPosition:      raw.playerPosition || '',
+    playerRole:          raw.playerRole || '',
+    leagueId:            undefined,
+    playerId:            raw.playerId,
+    teamId:              undefined,
+    opponentId:          undefined,
+    gameLogs,
+    bayesianMetrics:     bm,
+    sport:               'mlb',
   } as unknown as PredictionResult;
 }
 

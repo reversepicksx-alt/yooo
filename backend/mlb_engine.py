@@ -398,10 +398,51 @@ def compute_mlb_projection(
         volatility = "NORMAL"
         cv = 0
 
+    # ── MOMENTUM LABEL ────────────────────────────────────────────────────────
+    if prior_mean > 0:
+        mom_ratio = momentum_mean / prior_mean
+        if mom_ratio >= 1.08:
+            momentum_label = "HOT"
+        elif mom_ratio <= 0.92:
+            momentum_label = "COLD"
+        else:
+            momentum_label = "NEUTRAL"
+    else:
+        momentum_label = "NEUTRAL"
+
+    # ── COVARIATE ADJUSTMENT (venue effect in stat units) ────────────────────
+    pre_venue_posterior = (
+        prior_precision * prior_mean + momentum_precision * momentum_mean
+    ) / total_precision
+    covariate_adjustment = round(pre_venue_posterior * (venue_multiplier - 1.0), 2)
+
+    # ── HIT RATES (fraction of recent games that went OVER the line) ─────────
+    if game_vals and line is not None:
+        over_count  = sum(1 for v in game_vals if v > line)
+        under_count = sum(1 for v in game_vals if v <= line)
+        total       = len(game_vals)
+        hit_rates = {
+            "over":  round(over_count  / total * 100, 1),
+            "under": round(under_count / total * 100, 1),
+            "n":     total,
+        }
+    else:
+        hit_rates = None
+
+    # ── STREAK FLAG ───────────────────────────────────────────────────────────
+    recent_5 = game_vals[:5] if game_vals else []
+    if len(recent_5) >= 3 and line is not None:
+        over_streak  = all(v > line for v in recent_5)
+        under_streak = all(v <= line for v in recent_5)
+        streak_flag  = "OVER_STREAK" if over_streak else ("UNDER_STREAK" if under_streak else "MIXED")
+    else:
+        streak_flag = "MIXED"
+
     print(f"[MLB ENGINE] {prop_type} pos={position} venue={venue} "
-          f"prior={prior_mean:.2f} momentum={momentum_mean:.2f} "
+          f"prior={prior_mean:.2f} momentum={momentum_mean:.2f} ({momentum_label}) "
           f"posterior={posterior_mean:.2f} vs line={line} "
-          f"P(O)={p_over}% P(U)={p_under}% → {recommendation} ({confidence_score:.0f}%)")
+          f"P(O)={p_over}% P(U)={p_under}% → {recommendation} ({confidence_score:.0f}%) "
+          f"streak={streak_flag}")
 
     return {
         "sport":             "mlb",
@@ -417,20 +458,37 @@ def compute_mlb_projection(
         "confidenceLevel":   conf_level,
         "confidenceInterval":{"low": round(ci_low, 2), "high": round(ci_high, 2)},
         "venue":             venue,
+
+        # ── Top-level fields that the UI REVERSE FORMULA card and analysis sections use ──
+        "priorSamples":      n_games,          # triggers REVERSE FORMULA card (needs >= 3)
+        "priorMean":         round(prior_mean, 2),
+        "momentumMean":      round(momentum_mean, 2),
+        "momentumLabel":     momentum_label,
+        "covariateAdjustment": covariate_adjustment,
+        "pOver":             p_over,
+        "pUnder":            p_under,
+        "hitRates":          hit_rates,
+        "volatility":        volatility,
+        "streakFlag":        streak_flag,
+        "homeAvg":           None,   # BDL /stats has no per-game venue info
+        "awayAvg":           None,
+
         "bayesianMetrics": {
-            "pOver":         p_over,
-            "pUnder":        p_under,
-            "priorMean":     round(prior_mean, 2),
-            "momentumMean":  round(momentum_mean, 2),
-            "posteriorMean": posterior_mean,
-            "sampleSize":    n_games,
-            "volatility":    volatility,
-            "cv":            round(cv, 3),
+            "pOver":             p_over,
+            "pUnder":            p_under,
+            "priorMean":         round(prior_mean, 2),
+            "momentumMean":      round(momentum_mean, 2),
+            "momentumLabel":     momentum_label,
+            "posteriorMean":     posterior_mean,
+            "sampleSize":        n_games,
+            "volatility":        volatility,
+            "cv":                round(cv, 3),
+            "streakFlag":        streak_flag,
+            "covariateAdjustment": covariate_adjustment,
             "priorPrecision":    round(prior_precision, 4),
             "momentumPrecision": round(momentum_precision, 4),
         },
         "gameLogs":        display_logs,
         "sampleSize":      n_games,
         "sampleWarning":   sample_warning,
-        "volatility":      volatility,
     }

@@ -1316,6 +1316,14 @@ export default function ScanScreen() {
                   goals: 'goals per game', assists: 'assists per game',
                   key_passes: 'key passes per game', tackles: 'tackles per game',
                   crosses: 'crosses per game', dribbles: 'dribbles per game',
+                  pitcher_strikeouts: 'strikeouts per start', innings_pitched: 'IP per start',
+                  hits_allowed: 'hits allowed per start', earned_runs: 'ER per start',
+                  walks_allowed: 'walks allowed per start', pitches_thrown: 'pitches per start',
+                  batters_faced: 'batters faced per start',
+                  hits: 'hits per game', home_runs: 'HR per game', rbi: 'RBI per game',
+                  walks: 'walks per game', strikeouts: 'Ks per game', runs: 'runs per game',
+                  total_bases: 'total bases per game', stolen_bases: 'SB per game',
+                  doubles: 'doubles per game', plate_appearances: 'PA per game',
                 };
                 const propAvgLabel = PROP_AVG_LABEL[prediction.propType ?? ''] ?? 'per game';
 
