@@ -4841,6 +4841,36 @@ Analyze ALL data thoroughly. Return JSON only."""
                     print(f"[MARKET DIST] {req.playerName}: proj={_mg_proj} line={req.line} "
                           f"gap={_mg_gap_pct:.0f}% → confidence capped {_mg_pre}→55%")
 
+        # ── POSITION-SPECIFIC CONFIDENCE CAP ─────────────────────────────────────
+        # Empirical data (1291 settled picks) shows certain position+prop+direction
+        # combos are systematically overconfident at 90-99%. Hard caps prevent the
+        # model from displaying confidence the data does not support.
+        #   GK  OVER pass_attempts: 41.4% actual hit rate → cap 72%
+        #   CAM OVER pass_attempts:  0.0% actual hit rate → cap 62%
+        #   CM  OVER pass_attempts: 41.7% actual hit rate → cap 68%
+        #   CDM OVER pass_attempts: 33.3% actual hit rate → cap 68%
+        _POS_CONF_CAPS = {
+            ("GK",  "pass_attempts", "over"): 72,
+            ("CAM", "pass_attempts", "over"): 62,
+            ("CM",  "pass_attempts", "over"): 68,
+            ("CDM", "pass_attempts", "over"): 68,
+        }
+        _cap_key = (
+            str(prediction.get("position") or "").upper(),
+            req.propType,
+            str(prediction.get("recommendation") or "").lower(),
+        )
+        _pos_cap = _POS_CONF_CAPS.get(_cap_key)
+        if _pos_cap is not None and (prediction.get("confidenceScore") or 0) > _pos_cap:
+            _pre_pos_cap = prediction["confidenceScore"]
+            prediction["confidenceScore"] = _pos_cap
+            prediction["rawConfidence"]   = _pos_cap
+            prediction["confidenceLevel"] = "High" if _pos_cap >= 65 else "Medium"
+            print(
+                f"[POS CAP] {prediction.get('position')} {req.propType} "
+                f"{prediction.get('recommendation')}: {_pre_pos_cap}% → {_pos_cap}%"
+            )
+
         # ── MATH LOCK: Always align sharpSummary + Verdict to the FINAL math outcome ──
         # Runs after PASS GATE so we use the true final recommendation (PASS/OVER/UNDER).
         # Gemini wrote analysis using an early Bayesian estimate. H2H + opponent profile
@@ -5770,12 +5800,11 @@ Analyze ALL data thoroughly. Return JSON only."""
             print(f"[EDGE GAP RECOMPUTE] failed: {_eg_err}")
 
         # ── EMPIRICAL CONFIDENCE CALIBRATION ──────────────────────────
-        # Per user directive, the Bayesian probability is the SOURCE OF TRUTH
-        # for the displayed `confidenceScore`, so we no longer overwrite it.
-        # We still compute the empirical-hit-rate calibration for logging /
-        # future analysis and store it in `calibratedConfidence` alongside
-        # `rawConfidence` so the two views can be compared, but the displayed
-        # confidence remains the Bayesian-truth value set above.
+        # When the calibration table has enough data (n≥30 per bucket), replace
+        # the displayed confidenceScore with the empirical hit rate — but ONLY
+        # downward. We never boost confidence via calibration; we only correct
+        # overconfidence. This preserves the Bayesian direction (over/under) while
+        # making the displayed number match what the data actually shows.
         try:
             from confidence_calibration import calibrate as _calibrate
             _raw_conf = prediction.get("confidenceScore")
@@ -5783,8 +5812,27 @@ Analyze ALL data thoroughly. Return JSON only."""
                 prediction.setdefault("rawConfidence", _raw_conf)
                 _calibrated = _calibrate(req.propType, float(_raw_conf))
                 if _calibrated is not None:
-                    prediction["calibratedConfidence"] = round(_calibrated)
-                    print(f"[CONF CALIB] {req.propType}: bayesian={_raw_conf}, empirical-calibrated={round(_calibrated)} (display stays bayesian)")
+                    _calibrated_rounded = round(_calibrated)
+                    prediction["calibratedConfidence"] = _calibrated_rounded
+                    if _calibrated < float(_raw_conf):
+                        # Empirical rate is lower than Bayesian → system is
+                        # overconfident for this bucket. Correct the display.
+                        prediction["confidenceScore"] = _calibrated_rounded
+                        prediction["confidenceLevel"] = (
+                            "Very High" if _calibrated_rounded >= 80
+                            else "High"   if _calibrated_rounded >= 65
+                            else "Medium" if _calibrated_rounded >= 50
+                            else "Low"
+                        )
+                        print(
+                            f"[CONF CALIB] {req.propType}: bayesian={_raw_conf}% "
+                            f"→ empirical={_calibrated_rounded}% (overconfidence corrected)"
+                        )
+                    else:
+                        print(
+                            f"[CONF CALIB] {req.propType}: bayesian={_raw_conf}% "
+                            f"empirical={_calibrated_rounded}% (no correction needed)"
+                        )
         except Exception as _calib_err:
             print(f"[CONF CALIB] application failed: {_calib_err}")
 

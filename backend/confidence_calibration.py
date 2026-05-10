@@ -31,7 +31,7 @@ _BUCKET_LABELS = ["<50", "50-59", "60-69", "70-79", "80-89", "90+"]
 # Until the cutoff is reached, calibrate() returns None for every call and
 # the engine passes raw confidence through unchanged. This is intentional:
 # bad calibration is worse than no calibration.
-_CUTOFF_ISO = "2026-05-15T00:00:00+00:00"
+_CUTOFF_ISO = "2026-04-30T00:00:00+00:00"
 
 # In-memory cache: { propType: { bucketLabel: {n, hits, actualRate} } }
 _CALIBRATION_CACHE: Dict[str, Dict[str, dict]] = {}
