@@ -347,27 +347,38 @@ def compute_mlb_projection(
         sample_warning = f"Low sample: only {n_games} relevant game(s) found."
 
     # ── BUILD GAME LOG FOR DISPLAY ───────────────────────────────────────────
+    # Note: BDL /stats endpoint has no date or opponent data — game_id in stats
+    # does NOT correspond to IDs in the /games endpoint. We use gameNumber
+    # (1 = most recent) so the frontend can show meaningful context.
     display_logs = []
-    for entry in valid_games[:15]:
+    for idx, entry in enumerate(valid_games[:15]):
         g = entry["game"]
-        log = {
-            "gameId":      g.get("game_id"),
-            "teamName":    g.get("team_name", ""),
-            "value":       round(entry["val"], 2),
-            "propType":    prop_type,
-        }
-        # Add context fields
-        if prop_type in BATTER_PROPS:
-            log["atBats"]   = g.get("at_bats")
-            log["avg"]      = g.get("avg")
-            log["hits"]     = g.get("hits")
-            log["hr"]       = g.get("hr")
-            log["rbi"]      = g.get("rbi")
+        val = entry["val"]
+        # Round count stats to whole numbers for display
+        if prop_type in COUNT_STATS and prop_type != "innings_pitched":
+            display_val = int(round(val))
         else:
-            log["ip"]       = g.get("ip")
-            log["era"]      = g.get("era")
-            log["pitchCount"] = g.get("pitch_count")
-        display_logs.append(log)
+            display_val = round(val, 1)
+        log_entry = {
+            "gameId":      g.get("game_id"),
+            "gameNumber":  idx + 1,   # 1 = most recent start/game
+            "value":       display_val,
+            "propType":    prop_type,
+            "sport":       "mlb",
+        }
+        # Add baseball context fields for tile display
+        if prop_type in BATTER_PROPS:
+            log_entry["atBats"] = g.get("at_bats")
+            log_entry["hits"]   = g.get("hits")
+            log_entry["hr"]     = g.get("hr")
+            log_entry["rbi"]    = g.get("rbi")
+            log_entry["avg"]    = g.get("avg")
+        else:
+            log_entry["ip"]         = g.get("ip")
+            log_entry["era"]        = g.get("era")
+            log_entry["pitchCount"] = g.get("pitch_count")
+            log_entry["pHits"]      = g.get("p_hits")
+        display_logs.append(log_entry)
 
     # Volatility
     if n_games >= 3:

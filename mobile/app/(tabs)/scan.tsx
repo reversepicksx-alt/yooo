@@ -2042,6 +2042,46 @@ export default function ScanScreen() {
                         <>
                           {filteredLogs.map((g, i) => {
                             const isOver = g.value != null && prediction.line != null && g.value >= prediction.line;
+                            const isMLB = g.sport === 'mlb' || prediction.sport === 'mlb';
+
+                            // ── MLB tile content ──────────────────────────────
+                            if (isMLB) {
+                              const propT = g.propType || prediction.propType || '';
+                              const isPitcher = ['pitcher_strikeouts','innings_pitched','hits_allowed','earned_runs','walks_allowed','pitches_thrown','batters_faced'].includes(propT);
+                              // Context line: pitchers show "6IP·99P", batters show "2/4 AB"
+                              let ctxLine = '';
+                              if (isPitcher) {
+                                const ip = g.ip != null ? `${g.ip}IP` : null;
+                                const pc = g.pitchCount != null ? `${g.pitchCount}P` : null;
+                                ctxLine = [ip, pc].filter(Boolean).join('·') || '—';
+                              } else {
+                                const h = g.hits ?? null;
+                                const ab = g.atBats ?? null;
+                                ctxLine = (h != null && ab != null) ? `${h}/${ab}` : (ab != null ? `${ab}AB` : '—');
+                              }
+                              const gameLabel = g.gameNumber != null ? `G${g.gameNumber}` : '—';
+                              return (
+                                <View
+                                  key={i}
+                                  style={[
+                                    styles.glTile,
+                                    { width: tileW },
+                                    isOver ? styles.glTileOver : styles.glTileUnder,
+                                  ]}
+                                >
+                                  {isOver && <View style={styles.glDot} />}
+                                  <Text style={[styles.glTileVal, { color: isOver ? Colors.success : Colors.error }]}>
+                                    {g.value != null ? String(g.value) : '—'}
+                                  </Text>
+                                  <Text style={styles.glTileMins}>{ctxLine}</Text>
+                                  <View style={styles.glOppRow}>
+                                    <Text style={[styles.glTileOpp, { color: Colors.textTertiary }]} numberOfLines={1}>{gameLabel}</Text>
+                                  </View>
+                                </View>
+                              );
+                            }
+
+                            // ── Soccer tile content ───────────────────────────
                             const oppRaw = g.opponent || '?';
                             const oppShort = oppRaw.replace(/^(al-?|fc |cf |rc |sc |cd |ud |sd |rcd |as |ss |ac |us |ac |sp |ca |cp |ue |ue |ce |cm |se |sk )/i, '').slice(0, 3).toUpperCase();
                             const scoreStr = g.score || '';

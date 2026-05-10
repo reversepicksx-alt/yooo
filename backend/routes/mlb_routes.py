@@ -115,6 +115,14 @@ async def mlb_predict(req: MlbPredictRequest):
     if not player_id:
         raise HTTPException(status_code=404, detail=f"Player '{req.playerName}' not found in MLB database.")
 
+    # ── Auto-remap prop type for pitchers ─────────────────────────────────────
+    # If user picks "strikeouts" (batter K) for an SP/RP/P, they almost
+    # certainly mean pitcher strikeouts — silently correct it.
+    _PITCHER_POSITIONS = {"SP", "RP", "P", "CL", "SU", "MR", "LR"}
+    if position.upper() in _PITCHER_POSITIONS and prop_type == "strikeouts":
+        print(f"[MLB PREDICT] Auto-remapped strikeouts→pitcher_strikeouts for {position} {req.playerName}")
+        prop_type = "pitcher_strikeouts"
+
     # ── Fetch data ────────────────────────────────────────────────────────────
     print(f"[MLB PREDICT] {req.playerName} ({player_id}) | {prop_type} {req.line} | {venue} vs {req.opponentName}")
 
