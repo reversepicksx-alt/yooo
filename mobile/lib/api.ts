@@ -215,6 +215,12 @@ export interface GameLog {
   hr?: number | null;
   rbi?: number | null;
   avg?: number | null;
+  // MLB enrichment fields (from team schedule positional match)
+  gameDate?: string | null;      // "YYYY-MM-DD"
+  opponent?: string | null;      // team abbreviation e.g. "BOS"
+  isHome?: boolean | null;       // true = home game, false = away
+  homeScore?: number | null;     // home team runs
+  awayScore?: number | null;     // away team runs
 }
 
 export interface H2HMatch {
@@ -1043,11 +1049,11 @@ export async function mlbPredict(request: Record<string, unknown>): Promise<Pred
   const bm = raw.bayesianMetrics || {};
   const rec = (raw.recommendation || '').toUpperCase() as 'OVER' | 'UNDER' | 'PASS';
 
-  // Map game logs — preserve all MLB-specific fields for tile rendering
+  // Map game logs — preserve all MLB-specific fields + enrichment for tile rendering
   const gameLogs = (raw.gameLogs || []).map((g: any) => ({
-    date:             g.gameId ? String(g.gameId) : '',
-    opponent:         '',
-    venue:            '',
+    date:             g.gameDate ?? (g.gameId ? String(g.gameId) : ''),
+    opponent:         g.opponent ?? '',
+    venue:            g.isHome === true ? 'home' : g.isHome === false ? 'away' : '',
     value:            g.value ?? null,
     minutes:          0,
     sport:            'mlb',
@@ -1063,6 +1069,11 @@ export async function mlbPredict(request: Record<string, unknown>): Promise<Pred
     hr:               g.hr ?? null,
     rbi:              g.rbi ?? null,
     avg:              g.avg ?? null,
+    // Schedule enrichment fields
+    gameDate:         g.gameDate ?? null,
+    isHome:           g.isHome ?? null,
+    homeScore:        g.homeScore ?? null,
+    awayScore:        g.awayScore ?? null,
   })).filter((g: any) => g.value != null);
 
   // Prefer top-level fields, fall back to bayesianMetrics sub-object
@@ -1107,7 +1118,7 @@ export async function mlbPredict(request: Record<string, unknown>): Promise<Pred
     playerRole:          raw.playerRole || '',
     leagueId:            undefined,
     playerId:            raw.playerId,
-    teamId:              undefined,
+    teamId:              raw.teamId ?? undefined,
     opponentId:          undefined,
     gameLogs,
     bayesianMetrics:     bm,

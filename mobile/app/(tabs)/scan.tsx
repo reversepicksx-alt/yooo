@@ -2086,22 +2086,43 @@ export default function ScanScreen() {
                             const isOver = g.value != null && prediction.line != null && g.value >= prediction.line;
                             const isMLB = g.sport === 'mlb' || prediction.sport === 'mlb';
 
-                            // ── MLB tile content — same visual structure as soccer ──
+                            // ── MLB tile content — mirrors soccer tile layout exactly ──
                             if (isMLB) {
                               const propT = g.propType || prediction.propType || '';
                               const isPitcher = ['pitcher_strikeouts','innings_pitched','hits_allowed','earned_runs','walks_allowed','pitches_thrown','batters_faced'].includes(propT);
-                              // "Minutes" slot — innings pitched for pitchers, H/AB for batters
+
+                              // "Score / secondary" row — runs score if enriched, else IP or H/AB
                               let minsText = '—';
-                              if (isPitcher) {
+                              if (g.homeScore != null && g.awayScore != null) {
+                                minsText = `${g.homeScore}-${g.awayScore}`;
+                              } else if (isPitcher) {
                                 minsText = g.ip != null ? `${g.ip}IP` : '—';
                               } else {
                                 const h = g.hits ?? null;
                                 const ab = g.atBats ?? null;
                                 minsText = (h != null && ab != null) ? `${h}/${ab}` : (ab != null ? `${ab}AB` : '—');
                               }
-                              // "Opponent" slot — game label badge + pitch count (pitchers) or nothing (batters)
-                              const gameNum = g.gameNumber != null ? `G${g.gameNumber}` : '—';
-                              const rightLabel = isPitcher && g.pitchCount != null ? `${g.pitchCount}P` : '';
+
+                              // Venue badge — H/A if enriched, else G1/G2 or ?
+                              let venueBadge = '?';
+                              if (g.isHome === true)       venueBadge = 'H';
+                              else if (g.isHome === false) venueBadge = 'A';
+                              else if (g.gameNumber != null) venueBadge = `G${g.gameNumber}`;
+
+                              // Opponent abbreviation (from enrichment) — fallback pitch count for pitchers
+                              const oppLabel = g.opponent
+                                ? g.opponent
+                                : (isPitcher && g.pitchCount != null ? `${g.pitchCount}P` : '');
+
+                              // Date display MM/DD if enriched
+                              let dateTxt = '';
+                              if (g.gameDate) {
+                                const d = new Date(g.gameDate);
+                                if (!isNaN(d.getTime())) {
+                                  dateTxt = `${d.getMonth() + 1}/${d.getDate()}`;
+                                }
+                              }
+
                               return (
                                 <View
                                   key={i}
@@ -2118,12 +2139,15 @@ export default function ScanScreen() {
                                   <Text style={styles.glTileMins}>{minsText}</Text>
                                   <View style={styles.glOppRow}>
                                     <View style={styles.glVenueBadge}>
-                                      <Text style={styles.glVenueText}>{gameNum}</Text>
+                                      <Text style={styles.glVenueText}>{venueBadge}</Text>
                                     </View>
-                                    {rightLabel ? (
-                                      <Text style={styles.glTileOpp} numberOfLines={1}>{rightLabel}</Text>
+                                    {oppLabel ? (
+                                      <Text style={styles.glTileOpp} numberOfLines={1}>{oppLabel}</Text>
                                     ) : null}
                                   </View>
+                                  {dateTxt ? (
+                                    <Text style={styles.glTileRank}>{dateTxt}</Text>
+                                  ) : null}
                                 </View>
                               );
                             }

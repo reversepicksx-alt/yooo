@@ -171,3 +171,58 @@ async def get_season_stats(player_id: int, season: int = 2025) -> Optional[dict]
     if data is not None:
         await _cache_set(key, data)
     return data
+
+
+async def get_team_games(team_id: int, season: int = 2025) -> list:
+    """Fetch completed regular-season games for a team, newest first.
+    Used to enrich per-game stat tiles with opponent/date/venue/score.
+    Cached 15 minutes — refreshes quickly during active season."""
+    if not team_id:
+        return []
+    key = f"mlb_tg:{team_id}:{season}"
+    doc = await _cache_get(key)
+    if _cache_fresh(doc, 900) and doc.get("data") is not None:
+        return doc["data"]
+
+    all_games: list = []
+    try:
+        cursor = None
+        for _ in range(4):  # up to 400 games — covers a full season
+            params: dict = {"team_ids[]": team_id, "season": season, "per_page": 100}
+            if cursor:
+                params["cursor"] = cursor
+            result = await _get("/games", params)
+            batch = result.get("data", [])
+            all_games.extend(batch)
+            cursor = result.get("meta", {}).get("next_cursor")
+            if not cursor or not batch:
+                break
+    except Exception as e:
+        log.warning(f"[MLB CLIENT] get_team_games({team_id},{season}) failed: {e}")
+        return []
+
+    # Keep only completed regular-season games, sorted newest first
+    regular = [
+        g for g in all_games
+        if g.get("season_type") in ("regular", None, "")
+        and g.get("status") == "STATUS_FINAL"
+    ]
+    regular.sort(key=lambda g: g.get("date", ""), reverse=True)
+
+    if regular:
+        await _cache_set(key, regular)
+    return regular
+
+
+async def get_game_by_teams(home_abbrev: str, away_abbrev: str, season: int = 2025) -> Optional[dict]:
+    """Find a specific game by team abbreviations (used for settlement)."""
+    try:
+        result = await _get("/games", {"season": season, "per_page": 50})
+        for g in result.get("data", []):
+            h = g.get("home_team", {}).get("abbreviation", "")
+            a = g.get("away_team", {}).get("abbreviation", "")
+            if (h == home_abbrev and a == away_abbrev) or (h == away_abbrev and a == home_abbrev):
+                return g
+    except Exception:
+        pass
+    return None

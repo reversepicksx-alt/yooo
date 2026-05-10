@@ -224,20 +224,23 @@ async def mlb_predict(req: MlbPredictRequest):
     if not player_id:
         raise HTTPException(status_code=404, detail=f"Player '{req.playerName}' not found in MLB database.")
 
+    # ── Extract team_id for schedule enrichment ───────────────────────────────
+    team_id = 0
+    if player_data:
+        team_id = (player_data.get("team") or {}).get("id", 0) or 0
+
     # ── Auto-remap prop type for pitchers ─────────────────────────────────────
-    # If user picks "strikeouts" (batter K) for an SP/RP/P, they almost
-    # certainly mean pitcher strikeouts — silently correct it.
     _PITCHER_POSITIONS = {"SP", "RP", "P", "CL", "SU", "MR", "LR"}
     if position.upper() in _PITCHER_POSITIONS and prop_type == "strikeouts":
         print(f"[MLB PREDICT] Auto-remapped strikeouts→pitcher_strikeouts for {position} {req.playerName}")
         prop_type = "pitcher_strikeouts"
 
-    # ── Fetch data ────────────────────────────────────────────────────────────
-    print(f"[MLB PREDICT] {req.playerName} ({player_id}) | {prop_type} {req.line} | {venue} vs {req.opponentName}")
+    # ── Fetch data (game logs + season stats + team schedule) ─────────────────
+    print(f"[MLB PREDICT] {req.playerName} ({player_id}) | {prop_type} {req.line} | {venue} vs {req.opponentName or '?'} | team_id={team_id}")
 
     try:
-        game_logs, season_stats, prev_season_stats = await _fetch_mlb_data(
-            player_id, req.season
+        game_logs, season_stats, prev_season_stats, team_games = await _fetch_mlb_data(
+            player_id, req.season, team_id=team_id
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Failed to fetch MLB data: {e}")
@@ -248,6 +251,8 @@ async def mlb_predict(req: MlbPredictRequest):
             detail=f"No stats found for {req.playerName} in the {req.season} season. "
                    f"They may not have played yet this season."
         )
+
+    log.info(f"[MLB PREDICT] team_games fetched: {len(team_games)} regular-season games for team_id={team_id}")
 
     # ── Run engine ────────────────────────────────────────────────────────────
     result = mlb_engine.compute_mlb_projection(
@@ -260,7 +265,13 @@ async def mlb_predict(req: MlbPredictRequest):
         prev_season_stats=prev_season_stats,
     )
 
-    # ── Run AI analysis concurrently (non-blocking — falls back to None) ──────
+    # ── Enrich game log tiles with opponent/date/venue from team schedule ──────
+    if team_games and result.get("gameLogs"):
+        result["gameLogs"] = _enrich_game_logs(
+            result["gameLogs"], team_games, team_name
+        )
+
+    # ── Run AI analysis concurrently (non-blocking — falls back to empty) ─────
     ai_task = asyncio.create_task(_get_mlb_ai_analysis(
         player_name   = req.playerName,
         position      = position,
@@ -281,16 +292,18 @@ async def mlb_predict(req: MlbPredictRequest):
     # ── Build response (same shape as soccer predict for UI compatibility) ────
     response = {
         **result,
-        "playerName":    req.playerName,
-        "playerId":      player_id,
-        "teamName":      team_name,
-        "opponentName":  req.opponentName or "",
-        "playerPosition":position,
-        "playerRole":    "Pitcher" if prop_type in mlb_engine.PITCHER_PROPS else "Batter",
-        "leagueId":      None,
-        "leagueName":    "MLB",
-        "season":        req.season,
-        "generatedAt":   datetime.now(timezone.utc).isoformat(),
+        "playerName":     req.playerName,
+        "playerId":       player_id,
+        "teamName":       team_name,
+        "teamId":         team_id,
+        "opponentName":   req.opponentName or "",
+        "playerPosition": position,
+        "playerRole":     "Pitcher" if prop_type in mlb_engine.PITCHER_PROPS else "Batter",
+        "leagueId":       None,
+        "leagueName":     "MLB",
+        "season":         req.season,
+        "sport":          "mlb",
+        "generatedAt":    datetime.now(timezone.utc).isoformat(),
     }
 
     # Await AI result and merge into response
@@ -305,16 +318,17 @@ async def mlb_predict(req: MlbPredictRequest):
         response.setdefault("sharpSummary", "")
         response.setdefault("reasoning", "")
 
-    # Cache prediction in MongoDB for analytics
+    # Cache prediction in MongoDB for analytics (upsert by player+prop+line+date)
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     try:
         await db.mlb_predictions.update_one(
             {
-                "playerId": player_id,
-                "propType": prop_type,
-                "line": req.line,
+                "playerId":     player_id,
+                "propType":     prop_type,
+                "line":         req.line,
                 "opponentName": req.opponentName or "",
-                "venue": venue,
-                "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                "venue":        venue,
+                "date":         today_str,
             },
             {"$set": {**response, "cachedAt": datetime.now(timezone.utc).isoformat()}},
             upsert=True,
@@ -325,20 +339,77 @@ async def mlb_predict(req: MlbPredictRequest):
     return response
 
 
-async def _fetch_mlb_data(player_id: int, season: int):
-    """Fetch game logs and season stats concurrently."""
+async def _fetch_mlb_data(player_id: int, season: int, team_id: int = 0):
+    """Fetch game logs, season stats, and team schedule concurrently."""
     import asyncio
-    game_logs_task     = mlb_client.get_player_game_logs(player_id, season, limit=30)
-    season_stats_task  = mlb_client.get_season_stats(player_id, season)
-    prev_stats_task    = mlb_client.get_season_stats(player_id, season - 1)
 
-    game_logs, season_stats, prev_stats = await asyncio.gather(
-        game_logs_task, season_stats_task, prev_stats_task,
+    async def _empty_list(): return []
+
+    game_logs_task    = mlb_client.get_player_game_logs(player_id, season, limit=30)
+    season_stats_task = mlb_client.get_season_stats(player_id, season)
+    prev_stats_task   = mlb_client.get_season_stats(player_id, season - 1)
+    team_games_task   = mlb_client.get_team_games(team_id, season) if team_id else _empty_list()
+
+    game_logs, season_stats, prev_stats, team_games = await asyncio.gather(
+        game_logs_task, season_stats_task, prev_stats_task, team_games_task,
         return_exceptions=True,
     )
 
     if isinstance(game_logs,    Exception): game_logs    = []
     if isinstance(season_stats, Exception): season_stats = None
     if isinstance(prev_stats,   Exception): prev_stats   = None
+    if isinstance(team_games,   Exception): team_games   = []
 
-    return game_logs, season_stats, prev_stats
+    return game_logs, season_stats, prev_stats, team_games
+
+
+def _enrich_game_logs(display_logs: list, team_games: list, player_team_name: str) -> list:
+    """
+    Positionally match per-game stat entries (newest first) to team schedule
+    games (newest first).  Each stat at position i → team_games[i].
+    Adds: gameDate, opponent (abbreviation), isHome, homeScore, awayScore.
+    Falls back gracefully — unmatched entries keep their existing fields.
+    """
+    if not team_games:
+        return display_logs
+
+    enriched = []
+    team_lower = (player_team_name or "").lower().strip()
+
+    for i, log in enumerate(display_logs):
+        if i >= len(team_games):
+            enriched.append(log)
+            continue
+
+        game = team_games[i]
+        home_obj  = game.get("home_team", {})
+        away_obj  = game.get("away_team", {})
+        home_full = (home_obj.get("display_name") or "").lower()
+        away_full = (away_obj.get("display_name") or "").lower()
+
+        # Determine if the player's team is home or away
+        home_match = (
+            team_lower and (
+                team_lower in home_full or
+                home_full in team_lower or
+                (team_lower.split() and team_lower.split()[-1] in home_full)
+            )
+        )
+        is_home   = bool(home_match)
+        opp_obj   = away_obj if is_home else home_obj
+
+        raw_date  = game.get("date", "")
+        game_date = raw_date[:10] if raw_date else None  # "YYYY-MM-DD"
+        home_runs = (game.get("home_team_data") or {}).get("runs")
+        away_runs = (game.get("away_team_data") or {}).get("runs")
+
+        enriched.append({
+            **log,
+            "gameDate":  game_date,
+            "opponent":  opp_obj.get("abbreviation") or None,
+            "isHome":    is_home,
+            "homeScore": home_runs,
+            "awayScore": away_runs,
+        })
+
+    return enriched

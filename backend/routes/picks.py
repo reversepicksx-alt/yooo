@@ -61,8 +61,9 @@ async def save_pick(req: SavePickRequest):
     }
     normalized_prop = prop_label_map.get(normalized_prop, normalized_prop)
 
-    # Sport is soccer-only
-    sport = "soccer"
+    # Detect sport from pick payload (MLB picks send sport='mlb')
+    _sport_raw = pick.get("sport", "soccer")
+    sport = "mlb" if str(_sport_raw).lower() == "mlb" else "soccer"
 
     doc = {
         "pickId": pick_id,
@@ -434,6 +435,43 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
                 proj_fields,
                 sort=[("_created", -1)]
             )
+
+    # Strategy 3: check MLB predictions collection when soccer lookup missed
+    if not prediction:
+        pick_sport = pick.get("sport", "soccer")
+        _MLB_PROPS = {
+            "pitcher_strikeouts", "innings_pitched", "hits_allowed", "earned_runs",
+            "walks_allowed", "pitches_thrown", "batters_faced",
+            "hits", "home_runs", "rbi", "walks", "strikeouts", "runs",
+            "total_bases", "stolen_bases", "doubles", "plate_appearances",
+        }
+        if pick_sport == "mlb" or prop_type in _MLB_PROPS:
+            mlb_proj_fields = {
+                "_id": 0, "reasoning": 1, "sharpSummary": 1,
+                "projectedValue": 1, "projection": 1,
+                "recommendation": 1, "confidenceScore": 1, "confidenceLevel": 1,
+                "confidenceInterval": 1, "pOver": 1, "pUnder": 1,
+                "bayesianMetrics": 1, "gameLogs": 1, "hitRates": 1,
+                "priorMean": 1, "momentumMean": 1, "momentumLabel": 1,
+                "streakFlag": 1, "volatility": 1, "sampleSize": 1,
+                "playerName": 1, "propType": 1, "line": 1,
+                "generatedAt": 1, "sport": 1,
+            }
+            if player_id and player_id != 0:
+                prediction = await db.mlb_predictions.find_one(
+                    {"playerId": player_id, "propType": prop_type},
+                    mlb_proj_fields,
+                    sort=[("generatedAt", -1)],
+                )
+            if not prediction and pick.get("playerName"):
+                prediction = await db.mlb_predictions.find_one(
+                    {
+                        "playerName": {"$regex": pick.get("playerName", ""), "$options": "i"},
+                        "propType": prop_type,
+                    },
+                    mlb_proj_fields,
+                    sort=[("generatedAt", -1)],
+                )
 
     if not prediction:
         return {"found": False}

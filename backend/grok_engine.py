@@ -698,6 +698,98 @@ async def auto_settlement_loop():
         await asyncio.sleep(900)  # Check every 15 minutes
 
 
+async def _try_settle_mlb(pick: dict) -> bool:
+    """
+    Settle an MLB pick using BallDontLie game logs.
+    Called from _run_auto_settlement() for picks with sport='mlb'.
+    Returns True when a settlement was written.
+    """
+    try:
+        import mlb_client
+        from mlb_engine import ALL_PROP_FIELDS, PITCHER_PROPS
+    except ImportError as _ie:
+        print(f"[MLB SETTLE] Import error: {_ie}")
+        return False
+
+    player_id = pick.get("playerId")
+    prop_type  = (pick.get("propType") or "").lower()
+    line       = pick.get("line")
+    rec        = (pick.get("recommendation") or "over").upper()
+
+    if not player_id or not prop_type or line is None:
+        return False
+
+    field = ALL_PROP_FIELDS.get(prop_type)
+    if not field:
+        print(f"[MLB SETTLE] Unknown prop_type={prop_type}, skipping")
+        return False
+
+    # Only settle picks that are 4+ hours old (baseball games ~3–4 h)
+    pick_created = None
+    for ts_key in ("timestamp", "createdAt"):
+        raw = pick.get(ts_key)
+        if raw:
+            try:
+                pick_created = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+                break
+            except Exception:
+                pass
+
+    if pick_created:
+        hours_old = (datetime.now(timezone.utc) - pick_created).total_seconds() / 3600
+        if hours_old < 4:
+            return False  # Too early — game might still be in progress
+
+    season = pick.get("season") or 2025
+    try:
+        game_logs = await mlb_client.get_player_game_logs(player_id, int(season), limit=3)
+    except Exception as _e:
+        print(f"[MLB SETTLE] Log fetch failed for player {player_id}: {_e}")
+        return False
+
+    if not game_logs:
+        return False
+
+    recent = game_logs[0]
+    raw_val = recent.get(field)
+    if raw_val is None:
+        return False
+
+    try:
+        if prop_type == "innings_pitched":
+            # Convert "5.2" BDL fractional IP → float outs representation
+            parts = str(raw_val).split(".")
+            whole = int(parts[0])
+            frac  = int(parts[1]) if len(parts) > 1 else 0
+            actual: float = whole + frac / 3.0
+        else:
+            actual = float(raw_val)
+    except Exception:
+        return False
+
+    line_f = float(line)
+    if actual == line_f:
+        result = "push"
+    elif rec == "OVER":
+        result = "hit" if actual > line_f else "miss"
+    else:
+        result = "hit" if actual < line_f else "miss"
+
+    await db.picks.update_one(
+        {"pickId": pick["pickId"]},
+        {"$set": {
+            "actualValue":  round(actual, 1),
+            "result":       result,
+            "status":       "settled",
+            "matchStatus":  "final",
+            "settledAt":    datetime.now(timezone.utc).isoformat(),
+            "settledBy":    "mlb_auto",
+        }},
+    )
+    print(f"[MLB SETTLE] ✓ {pick.get('playerName')} {prop_type} actual={actual:.2f} line={line_f} rec={rec} → {result}")
+    return True
+
+
 async def _run_auto_settlement():
     """Check all live picks and settle any finished games."""
     from utils import api_football_request, is_quota_exhausted
@@ -723,8 +815,20 @@ async def _run_auto_settlement():
 
     settled_count = 0
 
-    # Process soccer picks
-    soccer_picks = live_picks
+    # ── MLB settlement ────────────────────────────────────────────────────────
+    mlb_picks  = [p for p in live_picks if p.get("sport") == "mlb"]
+    soccer_picks = [p for p in live_picks if p.get("sport", "soccer") != "mlb"]
+
+    for pick in mlb_picks:
+        try:
+            settled = await _try_settle_mlb(pick)
+            if settled:
+                settled_count += 1
+        except Exception as _me:
+            print(f"[MLB SETTLE] Error: {_me}")
+            continue
+
+    # ── Soccer settlement ─────────────────────────────────────────────────────
     if soccer_picks:
         team_ids = list(set(p.get("teamId", 0) for p in soccer_picks if p.get("teamId")))
         for tid in team_ids:
