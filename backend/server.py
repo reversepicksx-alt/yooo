@@ -64,22 +64,28 @@ app.include_router(push_router)
 async def seed_grants():
     # Load dynamic settings (API keys from MongoDB) before anything else
     await init_dynamic_settings()
-    for email in LIFETIME_SUB_EMAILS:
+    try:
+        for email in LIFETIME_SUB_EMAILS:
+            await db.manual_access_grants.update_one(
+                {"email": email},
+                {"$set": {"email": email, "access_type": "Lifetime"}},
+                upsert=True
+            )
         await db.manual_access_grants.update_one(
-            {"email": email},
-            {"$set": {"email": email, "access_type": "Lifetime"}},
+            {"email": OWNER_EMAIL},
+            {"$set": {"email": OWNER_EMAIL, "access_type": "Owner"}},
             upsert=True
         )
-    await db.manual_access_grants.update_one(
-        {"email": OWNER_EMAIL},
-        {"$set": {"email": OWNER_EMAIL, "access_type": "Owner"}},
-        upsert=True
-    )
-    for email, expiry_date in COMPLIMENTARY_MEMBERS.items():
-        await db.manual_access_grants.update_one(
-            {"email": email},
-            {"$set": {"email": email, "access_type": "Complimentary", "expiresAt": expiry_date}},
-            upsert=True
+        for email, expiry_date in COMPLIMENTARY_MEMBERS.items():
+            await db.manual_access_grants.update_one(
+                {"email": email},
+                {"$set": {"email": email, "access_type": "Complimentary", "expiresAt": expiry_date}},
+                upsert=True
+            )
+    except Exception as _grant_err:
+        import logging
+        logging.getLogger("server").warning(
+            f"seed_grants skipped (Atlas quota or transient error): {_grant_err}"
         )
     # Seed the API-Football lookup cache (non-blocking)
     import asyncio
