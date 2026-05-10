@@ -97,12 +97,50 @@ async def _cache_set(key: str, data) -> None:
 
 
 async def search_players(query: str, limit: int = 15) -> list:
-    key = f"mlb_ps:{query.lower().strip()}"
+    """Search BDL for players by name.
+
+    BDL's /players?search= only matches on a single token — multi-word queries
+    like "Noah Cameron" return 0 results even though the player exists.  We work
+    around this by trying the full query first, then falling back to last-name-only
+    and first-name-only searches, deduplicating by player id.
+    """
+    q = query.strip()
+    key = f"mlb_ps:{q.lower()}"
     doc = await _cache_get(key)
     if _cache_fresh(doc, CACHE_TTL["player_search"]) and doc.get("data") is not None:
         return doc["data"]
-    result = await _get("/players", {"search": query, "per_page": limit})
-    players = result.get("data", [])
+
+    seen: dict = {}  # id → player
+
+    async def _search(term: str) -> list:
+        try:
+            r = await _get("/players", {"search": term, "per_page": limit})
+            return r.get("data", [])
+        except Exception:
+            return []
+
+    # 1. Try full query
+    for p in await _search(q):
+        seen[p["id"]] = p
+
+    # 2. If nothing found and query has multiple words, try each word separately
+    words = q.split()
+    if not seen and len(words) > 1:
+        # Try last name (most distinctive)
+        for p in await _search(words[-1]):
+            seen[p["id"]] = p
+        # Try first name if still empty
+        if not seen:
+            for p in await _search(words[0]):
+                seen[p["id"]] = p
+
+    # 3. Even if we got full-query results, supplement with last-name search
+    #    so we don't miss someone whose first name was ignored by BDL
+    elif len(words) > 1:
+        for p in await _search(words[-1]):
+            seen[p["id"]] = p
+
+    players = list(seen.values())[:limit]
     await _cache_set(key, players)
     return players
 
