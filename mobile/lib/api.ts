@@ -978,6 +978,95 @@ export const PROP_TYPES = [
   { value: 'crosses', label: 'Crosses' },
 ];
 
+export const MLB_PROP_TYPES = [
+  { value: 'hits',               label: 'Hits',                  group: 'Batter' },
+  { value: 'home_runs',          label: 'Home Runs',              group: 'Batter' },
+  { value: 'rbi',                label: 'RBI',                    group: 'Batter' },
+  { value: 'total_bases',        label: 'Total Bases',            group: 'Batter' },
+  { value: 'runs',               label: 'Runs Scored',            group: 'Batter' },
+  { value: 'walks',              label: 'Walks',                  group: 'Batter' },
+  { value: 'strikeouts',         label: 'Strikeouts (Batter)',     group: 'Batter' },
+  { value: 'stolen_bases',       label: 'Stolen Bases',           group: 'Batter' },
+  { value: 'doubles',            label: 'Doubles',                group: 'Batter' },
+  { value: 'plate_appearances',  label: 'Plate Appearances',      group: 'Batter' },
+  { value: 'pitcher_strikeouts', label: 'Pitcher Strikeouts',     group: 'Pitcher' },
+  { value: 'innings_pitched',    label: 'Innings Pitched',        group: 'Pitcher' },
+  { value: 'hits_allowed',       label: 'Hits Allowed',           group: 'Pitcher' },
+  { value: 'earned_runs',        label: 'Earned Runs',            group: 'Pitcher' },
+  { value: 'walks_allowed',      label: 'Walks Allowed',          group: 'Pitcher' },
+  { value: 'pitches_thrown',     label: 'Pitches Thrown',         group: 'Pitcher' },
+];
+
+export interface MlbPlayer {
+  id: number;
+  fullName: string;
+  firstName: string;
+  lastName: string;
+  position: string;
+  team: { id: number; displayName: string; abbreviation: string; location?: string };
+  active: boolean;
+  jersey?: string;
+  batsThrows?: string;
+  age?: number;
+}
+
+export async function searchMlbPlayers(query: string): Promise<MlbPlayer[]> {
+  if (!query || query.length < 2) return [];
+  return apiCall<MlbPlayer[]>(`/api/mlb/players/search?q=${encodeURIComponent(query)}`);
+}
+
+export async function getMlbTeams(): Promise<Array<{
+  id: number; displayName: string; abbreviation: string;
+  location: string; name: string; league: string; division: string;
+}>> {
+  return apiCall('/api/mlb/teams');
+}
+
+export async function mlbPredict(request: Record<string, unknown>): Promise<PredictionResult> {
+  const raw = await apiCall<any>('/api/mlb/predict', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+  if (raw.error) return { error: raw.error } as PredictionResult;
+  const bm = raw.bayesianMetrics || {};
+  const rec = (raw.recommendation || '').toUpperCase() as 'OVER' | 'UNDER' | 'PASS';
+  return {
+    playerName:        raw.playerName || '',
+    teamName:          raw.teamName || '',
+    opponentName:      raw.opponentName || '',
+    propType:          raw.propType || '',
+    line:              raw.line ?? 0,
+    projection:        raw.projectedValue,
+    confidence:        raw.confidenceScore,
+    rawConfidence:     raw.rawConfidence ?? raw.confidenceScore,
+    recommendation:    rec,
+    confidenceLevel:   raw.confidenceLevel,
+    confidenceInterval:raw.confidenceInterval,
+    bayesianProjection:raw.projectedValue,
+    pOver:             bm.pOver,
+    pUnder:            bm.pUnder,
+    volatility:        bm.volatility,
+    sampleSize:        raw.sampleSize,
+    priorMean:         bm.priorMean,
+    momentumMean:      bm.momentumMean,
+    playerPosition:    raw.playerPosition || '',
+    playerRole:        raw.playerRole || '',
+    leagueId:          undefined,
+    playerId:          raw.playerId,
+    teamId:            undefined,
+    opponentId:        undefined,
+    gameLogs:          (raw.gameLogs || []).map((g: any) => ({
+      date:     g.gameId ? String(g.gameId) : '',
+      opponent: g.teamName || '',
+      venue:    '',
+      value:    g.value ?? null,
+      minutes:  0,
+    })).filter((g: any) => g.value != null),
+    bayesianMetrics: bm,
+    sport: 'mlb',
+  } as unknown as PredictionResult;
+}
+
 export const LEAGUES = [
   { id: 39, name: 'Premier League' },
   { id: 140, name: 'La Liga' },

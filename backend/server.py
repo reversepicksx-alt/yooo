@@ -35,6 +35,7 @@ from routes.intel import router as intel_router
 from routes.search import router as search_router
 from routes.support import router as support_router
 from routes.push import router as push_router
+from routes.mlb_routes import router as mlb_router
 from cache import seed_cache, background_refresh_loop
 
 app.include_router(auth_router)
@@ -57,6 +58,7 @@ app.include_router(intel_router)
 app.include_router(search_router)
 app.include_router(support_router)
 app.include_router(push_router)
+app.include_router(mlb_router)
 
 
 # ── Startup: seed grants for lifetime VIPs ──
@@ -90,7 +92,11 @@ async def seed_grants():
     # Seed the API-Football lookup cache (non-blocking)
     import asyncio
     # Create index for fixture stat cache (speeds up prediction pipeline)
-    await db.fixture_player_cache.create_index("_k", unique=True)
+    try:
+        await db.fixture_player_cache.create_index("_k", unique=True)
+    except Exception as _idx_err:
+        import logging
+        logging.getLogger("server").warning(f"create_index skipped (Atlas transient): {_idx_err}")
     asyncio.create_task(seed_cache())
     # Build master team cache for smart opponent resolution
     # force=True ensures Portugal/Turkey + leaguePriority field are included

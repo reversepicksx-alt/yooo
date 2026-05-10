@@ -53,13 +53,19 @@ _ENV_DEFAULTS = {
 }
 
 async def init_dynamic_settings():
-    """Load settings overrides from MongoDB on startup."""
+    """Load settings overrides from MongoDB on startup. Fault-tolerant: falls back to env defaults if DB is unreachable."""
     for key in DYNAMIC_KEYS:
-        doc = await db.settings.find_one({"key": key}, {"_id": 0})
-        if doc and doc.get("value"):
-            _dynamic_settings[key] = doc["value"]
-        else:
-            _dynamic_settings[key] = _ENV_DEFAULTS.get(key, "")
+        _dynamic_settings[key] = _ENV_DEFAULTS.get(key, "")
+    try:
+        for key in DYNAMIC_KEYS:
+            doc = await db.settings.find_one({"key": key}, {"_id": 0})
+            if doc and doc.get("value"):
+                _dynamic_settings[key] = doc["value"]
+    except Exception as e:
+        import logging
+        logging.getLogger("uvicorn.error").warning(
+            f"[CONFIG] MongoDB unreachable during startup — using env defaults. ({type(e).__name__}: {e})"
+        )
 
 def get_dynamic_setting(key: str) -> str:
     """Get a dynamic setting (DB override > env)."""
@@ -99,7 +105,6 @@ LIFETIME_SUB_EMAILS = [
     "ferrerfroy@gmail.com",
     "banks.kendre@yahoo.com",
     "willmenjivar123@gmail.com",
-    "Natalearini2@gmail.com"
 ]
 LIFETIME_SUB_EMAILS = [e.lower() for e in LIFETIME_SUB_EMAILS]
 

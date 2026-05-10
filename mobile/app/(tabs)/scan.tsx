@@ -11,7 +11,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import { useQueryClient } from '@tanstack/react-query';
-import { scanProp, predict, savePick, PROP_TYPES, LEAGUES, PredictionResult, ScanResult } from '@/lib/api';
+import { scanProp, predict, mlbPredict, searchMlbPlayers, savePick, PROP_TYPES, MLB_PROP_TYPES, LEAGUES, PredictionResult, ScanResult, MlbPlayer } from '@/lib/api';
 import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult, FuzzyLeagueResult } from '@/components/FuzzySearchInput';
 import LeaguePickerModal from '@/components/LeaguePickerModal';
 import { useAuth } from '@/contexts/AuthContext';
@@ -26,6 +26,12 @@ const PROP_LABELS: Record<string, string> = {
   interceptions: 'Interceptions', blocks: 'Blocks', fouls_drawn: 'Fouls Drawn',
   fouls_committed: 'Fouls', clearances: 'Clearances', yellow_cards: 'Yellow Cards',
   shots_assisted: 'Shot Assists', duels_won: 'Duels Won', passes: 'Passes',
+  hits: 'Hits', home_runs: 'Home Runs', rbi: 'RBI', total_bases: 'Total Bases',
+  runs: 'Runs Scored', walks: 'Walks', strikeouts: 'Strikeouts',
+  stolen_bases: 'Stolen Bases', doubles: 'Doubles', plate_appearances: 'Plate Appearances',
+  pitcher_strikeouts: 'Pitcher Strikeouts', innings_pitched: 'Innings Pitched',
+  hits_allowed: 'Hits Allowed', earned_runs: 'Earned Runs', walks_allowed: 'Walks Allowed',
+  pitches_thrown: 'Pitches Thrown', batters_faced: 'Batters Faced',
 };
 
 const BAND_ACCENT: Record<string, string> = {
@@ -47,6 +53,7 @@ const BAND_LABEL: Record<string, string> = {
 
 type Mode = 'scan' | 'manual';
 type Phase = 'idle' | 'scanning' | 'detected' | 'analyzing' | 'result' | 'saved';
+type Sport = 'soccer' | 'mlb';
 
 export default function ScanScreen() {
   const insets = useSafeAreaInsets();
@@ -54,6 +61,7 @@ export default function ScanScreen() {
   const qc = useQueryClient();
   const [mode, setMode] = useState<Mode>('scan');
   const [phase, setPhase] = useState<Phase>('idle');
+  const [sport, setSport] = useState<Sport>('soccer');
 
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [scannedImageUri, setScannedImageUri] = useState<string | null>(null);
@@ -101,6 +109,16 @@ export default function ScanScreen() {
   const [leagueQuery, setLeagueQuery] = useState('Premier League');
   const [showPropPicker, setShowPropPicker] = useState(false);
   const [showLeaguePicker, setShowLeaguePicker] = useState(false);
+
+  // MLB manual mode fields
+  const [mlbPlayerQuery, setMlbPlayerQuery] = useState('');
+  const [mlbPlayerSuggestions, setMlbPlayerSuggestions] = useState<MlbPlayer[]>([]);
+  const [mlbResolvedPlayer, setMlbResolvedPlayer] = useState<MlbPlayer | null>(null);
+  const [mlbSearching, setMlbSearching] = useState(false);
+  const [mlbOpponentQuery, setMlbOpponentQuery] = useState('');
+  const [mlbPropType, setMlbPropType] = useState('hits');
+  const [mlbShowPropPicker, setMlbShowPropPicker] = useState(false);
+  const mlbSearchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const analysisRef = useRef<any>(null);
@@ -157,6 +175,7 @@ export default function ScanScreen() {
     setManualError(null);
     setSaveError(null);
     setPlayerQuery('');
+    setResolvedPlayer(null);
     setManualOpponentQuery('');
     setResolvedManualOpponent(null);
     setLine('');
@@ -169,6 +188,10 @@ export default function ScanScreen() {
     setShowLineEdit(false);
     setShowLeagueEditScan(false);
     setResolvedScanPlayer(null);
+    setMlbPlayerQuery('');
+    setMlbPlayerSuggestions([]);
+    setMlbResolvedPlayer(null);
+    setMlbOpponentQuery('');
   };
 
   const processImage = async (base64: string, uri: string) => {
@@ -176,7 +199,7 @@ export default function ScanScreen() {
     setPhase('scanning');
     setAnalyzeError(null);
     try {
-      const scanned = await scanProp(base64, 'soccer');
+      const scanned = await scanProp(base64, sport);
       if (scanned.error || !scanned.playerName) {
         // If we got partial data, show the detected screen so the user can correct fields
         const hasPartialData = scanned.propType || scanned.line || scanned.playerTeam || scanned.opponentName;
@@ -270,6 +293,57 @@ export default function ScanScreen() {
     await runPredict(data, true);
   };
 
+  const handleMlbPlayerSearch = (text: string) => {
+    setMlbPlayerQuery(text);
+    if (!text.trim()) { setMlbResolvedPlayer(null); setMlbPlayerSuggestions([]); return; }
+    if (mlbSearchTimeout.current) clearTimeout(mlbSearchTimeout.current);
+    mlbSearchTimeout.current = setTimeout(async () => {
+      if (text.trim().length < 2) return;
+      setMlbSearching(true);
+      try {
+        const results = await searchMlbPlayers(text.trim());
+        setMlbPlayerSuggestions(results || []);
+      } catch { setMlbPlayerSuggestions([]); }
+      finally { setMlbSearching(false); }
+    }, 280);
+  };
+
+  const handleMlbAnalyze = async () => {
+    if (!mlbPlayerQuery.trim()) { setManualError('Enter a player name.'); return; }
+    if (!line.trim() || isNaN(parseFloat(line))) { setManualError('Enter a valid line value (e.g. 0.5).'); return; }
+    setManualError(null);
+    setPhase('analyzing');
+    setMlbPlayerSuggestions([]);
+    try {
+      const result = await mlbPredict({
+        playerName:   mlbPlayerQuery.trim(),
+        playerId:     mlbResolvedPlayer?.id || null,
+        teamName:     mlbResolvedPlayer?.team?.displayName || '',
+        position:     mlbResolvedPlayer?.position || '',
+        propType:     mlbPropType,
+        line:         parseFloat(line),
+        opponentName: mlbOpponentQuery.trim() || '',
+        venue:        venueOverride,
+        season:       2025,
+      });
+      if ((result as any).error) { setManualError((result as any).error); setPhase('idle'); return; }
+      setScanResult({
+        playerName:   result.playerName || mlbPlayerQuery.trim(),
+        propType:     mlbPropType,
+        line:         parseFloat(line),
+        teamName:     result.teamName || '',
+        opponentName: mlbOpponentQuery.trim() || '',
+        leagueId:     0,
+      });
+      setPrediction(result);
+      setPhase('result');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e: unknown) {
+      setManualError(e instanceof Error ? e.message : 'MLB analysis failed — try again');
+      setPhase('idle');
+    }
+  };
+
   const handleSavePick = async () => {
     if (!session || !prediction) return;
     setSaving(true);
@@ -294,8 +368,8 @@ export default function ScanScreen() {
         confidenceInterval: prediction.confidenceInterval,
         position: prediction.playerPosition || undefined,
         role: prediction.playerRole || undefined,
-        sport: 'soccer',
-        projHomePoss: Number.isFinite(projHomePoss) ? projHomePoss : undefined,
+        sport: sport,
+        projHomePoss: sport === 'soccer' && Number.isFinite(projHomePoss) ? projHomePoss : undefined,
         projAwayPoss: Number.isFinite(projAwayPoss) ? projAwayPoss : undefined,
         player: {
           id: prediction.playerId || 0,
@@ -339,12 +413,31 @@ export default function ScanScreen() {
       <View style={styles.header}>
         <Image source={require('../../assets/logo.png')} style={styles.logoImg} resizeMode="contain" />
         <Text style={styles.logoText}>ReversePicks</Text>
-        <Text style={styles.tagline}>Soccer Prop Analytics</Text>
+        <Text style={styles.tagline}>{sport === 'mlb' ? 'MLB Prop Analytics' : 'Soccer Prop Analytics'}</Text>
       </View>
 
+      {/* ─── Sport Toggle ─── */}
+      {(phase === 'idle' || phase === 'result' || phase === 'saved' || mode === 'manual') && (
+        <View style={styles.sportRow}>
+          <TouchableOpacity
+            style={[styles.sportTab, sport === 'soccer' && styles.sportTabActive]}
+            onPress={() => { setSport('soccer'); reset(); }}
+            activeOpacity={0.8}
+          >
+            <Text style={[styles.sportTabText, sport === 'soccer' && styles.sportTabTextActive]}>⚽  Soccer</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.sportTab, sport === 'mlb' && styles.sportTabActive]}
+            onPress={() => { setSport('mlb'); reset(); setMode('manual'); }}
+            activeOpacity={0.8}
+          >
+            <Text style={[styles.sportTabText, sport === 'mlb' && styles.sportTabTextActive]}>⚾  MLB</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
-      {/* ─── Mode Toggle (idle only) ─── */}
-      {(phase === 'idle' || mode === 'manual') && (
+      {/* ─── Mode Toggle (idle only, soccer only) ─── */}
+      {sport === 'soccer' && (phase === 'idle' || mode === 'manual') && (
         <View style={styles.modeRow}>
           <TouchableOpacity
             style={[styles.modeTab, mode === 'scan' && styles.modeTabActive]}
@@ -386,7 +479,7 @@ export default function ScanScreen() {
                   <Ionicons name="image-outline" size={22} color={Colors.primary} />
                   <Text style={styles.heroTitle}>Scan a Prop Slip</Text>
                   <Text style={styles.heroSub}>
-                    Upload a screenshot of any soccer prop slip and get ReverseScan insights in seconds.
+                    Upload a screenshot of any {sport === 'mlb' ? 'MLB' : 'soccer'} prop slip and get ReverseScan insights in seconds.
                   </Text>
                   <TouchableOpacity style={styles.heroBtnBig} onPress={handleGallery} activeOpacity={0.8}>
                     <Ionicons name="images-outline" size={15} color="#000" />
@@ -751,8 +844,8 @@ export default function ScanScreen() {
           </>
         )}
 
-        {/* ─── MANUAL MODE ─── */}
-        {mode === 'manual' && phase !== 'result' && phase !== 'saved' && (
+        {/* ─── MANUAL MODE — Soccer ─── */}
+        {mode === 'manual' && sport === 'soccer' && phase !== 'result' && phase !== 'saved' && (
           <View style={styles.manualForm}>
             <Text style={styles.fieldLabel}>Player Name</Text>
             <FuzzySearchInput
@@ -855,6 +948,126 @@ export default function ScanScreen() {
             <TouchableOpacity
               style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnLoading]}
               onPress={handleManualAnalyze}
+              disabled={phase === 'analyzing'}
+              activeOpacity={0.85}
+            >
+              {phase === 'analyzing' ? (
+                <>
+                  <ActivityIndicator color="#000" size="small" />
+                  <Text style={styles.predictBtnText}>Analyzing…</Text>
+                </>
+              ) : (
+                <>
+                  <Ionicons name="analytics-outline" size={16} color="#000" />
+                  <Text style={styles.predictBtnText}>Analyze</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* ─── MANUAL MODE — MLB ─── */}
+        {sport === 'mlb' && phase !== 'result' && phase !== 'saved' && (
+          <View style={styles.manualForm}>
+            <Text style={styles.fieldLabel}>Player Name</Text>
+            <View style={{ position: 'relative', marginBottom: 2 }}>
+              <TextInput
+                style={[styles.textInput, INPUT_STYLE, { paddingRight: mlbSearching ? 36 : 14 }]}
+                placeholder="e.g. Shohei Ohtani"
+                placeholderTextColor={Colors.textTertiary}
+                value={mlbPlayerQuery}
+                onChangeText={handleMlbPlayerSearch}
+                autoCorrect={false}
+                autoCapitalize="words"
+              />
+              {mlbSearching && (
+                <ActivityIndicator color={Colors.primary} size="small"
+                  style={{ position: 'absolute', right: 12, top: 12 }} />
+              )}
+            </View>
+            {mlbPlayerSuggestions.length > 0 && (
+              <View style={styles.mlbDropdown}>
+                {mlbPlayerSuggestions.slice(0, 6).map(p => (
+                  <TouchableOpacity
+                    key={p.id}
+                    style={styles.mlbDropdownItem}
+                    onPress={() => {
+                      setMlbResolvedPlayer(p);
+                      setMlbPlayerQuery(p.fullName);
+                      setMlbPlayerSuggestions([]);
+                      Haptics.selectionAsync();
+                    }}
+                  >
+                    <Text style={styles.mlbDropdownName}>{p.fullName}</Text>
+                    <Text style={styles.mlbDropdownSub}>
+                      {p.team?.displayName || ''}
+                      {p.position ? `  ·  ${p.position}` : ''}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+            {mlbResolvedPlayer && mlbPlayerSuggestions.length === 0 && (
+              <Text style={{ color: Colors.primary, fontSize: 11, marginBottom: 4, marginLeft: 2 }}>
+                ✓ {mlbResolvedPlayer.team?.displayName || ''}
+                {mlbResolvedPlayer.position ? `  ·  ${mlbResolvedPlayer.position}` : ''}
+              </Text>
+            )}
+
+            <Text style={styles.fieldLabel}>Opponent Team <Text style={styles.fieldLabelOpt}>(optional)</Text></Text>
+            <TextInput
+              style={[styles.textInput, INPUT_STYLE]}
+              placeholder="e.g. New York Yankees"
+              placeholderTextColor={Colors.textTertiary}
+              value={mlbOpponentQuery}
+              onChangeText={setMlbOpponentQuery}
+              autoCorrect={false}
+            />
+
+            <Text style={styles.fieldLabel}>Prop Type</Text>
+            <TouchableOpacity style={styles.pickerBtn} onPress={() => setMlbShowPropPicker(true)}>
+              <Text style={styles.pickerBtnText}>{MLB_PROP_TYPES.find(p => p.value === mlbPropType)?.label || 'Select'}</Text>
+              <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
+            </TouchableOpacity>
+
+            <Text style={styles.fieldLabel}>Line Value</Text>
+            <TextInput
+              style={[styles.textInput, INPUT_STYLE]}
+              placeholder="e.g. 0.5"
+              placeholderTextColor={Colors.textTertiary}
+              value={line}
+              onChangeText={setLine}
+              keyboardType="decimal-pad"
+            />
+
+            <Text style={styles.fieldLabel}>Venue</Text>
+            <View style={styles.venueToggle}>
+              <TouchableOpacity
+                style={[styles.venueOption, venueOverride === 'home' && styles.venueOptionActive]}
+                onPress={() => { setVenueOverride('home'); Haptics.selectionAsync(); }}
+              >
+                <Ionicons name="home-outline" size={13} color={venueOverride === 'home' ? Colors.primary : Colors.textSecondary} />
+                <Text style={[styles.venueOptionText, venueOverride === 'home' && styles.venueOptionTextActive]}>HOME</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.venueOption, venueOverride === 'away' && styles.venueOptionActive]}
+                onPress={() => { setVenueOverride('away'); Haptics.selectionAsync(); }}
+              >
+                <Ionicons name="airplane-outline" size={13} color={venueOverride === 'away' ? Colors.primary : Colors.textSecondary} />
+                <Text style={[styles.venueOptionText, venueOverride === 'away' && styles.venueOptionTextActive]}>AWAY</Text>
+              </TouchableOpacity>
+            </View>
+
+            {manualError && (
+              <View style={styles.inlineError}>
+                <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />
+                <Text style={styles.inlineErrorText}>{manualError}</Text>
+              </View>
+            )}
+
+            <TouchableOpacity
+              style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnLoading]}
+              onPress={handleMlbAnalyze}
               disabled={phase === 'analyzing'}
               activeOpacity={0.85}
             >
@@ -2181,6 +2394,35 @@ export default function ScanScreen() {
         title="Correct League"
       />
 
+      {/* MLB Prop Picker Modal */}
+      <Modal visible={mlbShowPropPicker} transparent animationType="slide">
+        <TouchableOpacity style={styles.modalOverlay} onPress={() => setMlbShowPropPicker(false)}>
+          <View style={styles.modalSheet}>
+            <Text style={styles.modalTitle}>MLB Prop Type</Text>
+            <ScrollView>
+              {(['Batter', 'Pitcher'] as const).map(group => {
+                const groupProps = MLB_PROP_TYPES.filter(p => p.group === group);
+                return (
+                  <View key={group}>
+                    <Text style={styles.mlbPropGroupHeader}>{group} Props</Text>
+                    {groupProps.map(p => (
+                      <TouchableOpacity
+                        key={p.value}
+                        style={[styles.modalItem, p.value === mlbPropType && styles.modalItemActive]}
+                        onPress={() => { setMlbPropType(p.value); setMlbShowPropPicker(false); Haptics.selectionAsync(); }}
+                      >
+                        <Text style={[styles.modalItemText, p.value === mlbPropType && styles.modalItemTextActive]}>{p.label}</Text>
+                        {p.value === mlbPropType && <Ionicons name="checkmark" size={16} color={Colors.primary} />}
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
       {/* Prop Picker Modal — MANUAL mode */}
       <Modal visible={showPropPicker} transparent animationType="slide">
         <TouchableOpacity style={styles.modalOverlay} onPress={() => setShowPropPicker(false)}>
@@ -2242,6 +2484,44 @@ const styles = StyleSheet.create({
   modeTabActive: { backgroundColor: Colors.primaryDim },
   modeTabText: { fontSize: 13, color: Colors.textSecondary, fontWeight: '600' },
   modeTabTextActive: { color: Colors.primary },
+  sportRow: {
+    flexDirection: 'row',
+    marginHorizontal: 20,
+    backgroundColor: Colors.card,
+    borderRadius: Colors.radius,
+    padding: 3,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  sportTab: {
+    flex: 1, alignItems: 'center', justifyContent: 'center',
+    paddingVertical: 8, borderRadius: 9,
+  },
+  sportTabActive: { backgroundColor: Colors.primaryDim },
+  sportTabText: { fontSize: 14, color: Colors.textSecondary, fontWeight: '700' },
+  sportTabTextActive: { color: Colors.primary },
+  mlbDropdown: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    marginBottom: 6,
+    overflow: 'hidden',
+  },
+  mlbDropdownItem: {
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.06)',
+  },
+  mlbDropdownName: { fontSize: 14, fontWeight: '600', color: Colors.text },
+  mlbDropdownSub: { fontSize: 11, color: Colors.textSecondary, marginTop: 1 },
+  mlbPropGroupHeader: {
+    fontSize: 10, fontWeight: '700', color: Colors.primary,
+    letterSpacing: 1, paddingHorizontal: 18, paddingTop: 12, paddingBottom: 4,
+    textTransform: 'uppercase',
+  },
   body: { paddingHorizontal: 20, paddingBottom: 40 },
 
   /* Upload box */
