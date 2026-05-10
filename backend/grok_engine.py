@@ -1555,18 +1555,21 @@ async def _update_mlb_live_picks():
     if not live_picks:
         return
 
-    # Group by (team_id, season) to make one /games call per team not per pick
+    # Always use the current calendar year for live game lookups — a pick saved
+    # in "season 2025" won't find a game running in the 2026 season otherwise.
+    current_year = datetime.now(timezone.utc).year
+
+    # Group by team_id only (not season — we use current_year for all live queries)
     team_groups: dict = {}
     for pick in live_picks:
-        tid    = pick.get("teamId") or 0
-        season = pick.get("season") or 2025
-        team_groups.setdefault((tid, season), []).append(pick)
+        tid = pick.get("teamId") or 0
+        team_groups.setdefault(tid, []).append(pick)
 
-    for (team_id, season), picks in team_groups.items():
+    for team_id, picks in team_groups.items():
         if not team_id:
             continue
         try:
-            games = await mlb_client.get_today_and_live_games(team_id, int(season))
+            games = await mlb_client.get_today_and_live_games(team_id, current_year)
             if not games:
                 continue
 
@@ -1597,7 +1600,7 @@ async def _update_mlb_live_picks():
                 # Fetch current game stats for this player (90-second cache)
                 current_value = None
                 try:
-                    stats = await mlb_client.get_game_player_stats(int(player_id), int(game_id), int(season))
+                    stats = await mlb_client.get_game_player_stats(int(player_id), int(game_id), current_year)
                     if stats:
                         raw = stats.get(field)
                         if raw is not None:
