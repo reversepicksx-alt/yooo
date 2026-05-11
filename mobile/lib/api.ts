@@ -11,17 +11,32 @@ const getApiBase = (): string => {
   return 'http://localhost:8000';
 };
 
+// Endpoints that involve AI synthesis — give them a generous timeout
+const LONG_TIMEOUT_PATHS = ['/api/predict', '/api/mlb/predict', '/api/scan-prop'];
+const LONG_TIMEOUT_MS  = 90_000;  // 90 s — covers worst-case Grok + BDL
+const SHORT_TIMEOUT_MS = 15_000;  // 15 s — all other API calls
+
 async function apiCall<T = unknown>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const base = getApiBase();
   const url = `${base}${endpoint}`;
+  const isLong = LONG_TIMEOUT_PATHS.some(p => endpoint.startsWith(p));
+  const timeoutMs = isLong ? LONG_TIMEOUT_MS : SHORT_TIMEOUT_MS;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   let resp: Response;
   try {
     resp = await fetch(url, {
       ...options,
       headers: { 'Content-Type': 'application/json', ...options.headers },
+      signal: controller.signal,
     });
-  } catch (e) {
+  } catch (e: unknown) {
+    if (e instanceof Error && e.name === 'AbortError') {
+      throw new Error('Request timed out. The server is taking too long — please try again.');
+    }
     throw new Error('Cannot reach server. Please try again.');
+  } finally {
+    clearTimeout(timer);
   }
   if (!resp.ok) {
     const err = await resp.json().catch(() => null);
