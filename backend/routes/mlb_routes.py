@@ -317,25 +317,34 @@ async def mlb_predict(req: MlbPredictRequest):
 
 
 async def _fetch_mlb_data(player_id: int, season: int, team_id: int = 0):
-    """Fetch game logs, season stats, and team schedule concurrently."""
+    """Fetch game logs, season stats, and team schedule concurrently.
+    Always fetches previous season game logs too and appends them so players
+    with fewer than 30 current-season games still show a full 30-game history."""
     import asyncio
 
     async def _empty_list(): return []
 
-    game_logs_task    = mlb_client.get_player_game_logs(player_id, season, limit=30)
-    season_stats_task = mlb_client.get_season_stats(player_id, season)
-    prev_stats_task   = mlb_client.get_season_stats(player_id, season - 1)
-    team_games_task   = mlb_client.get_team_games(team_id, season) if team_id else _empty_list()
+    game_logs_task      = mlb_client.get_player_game_logs(player_id, season,     limit=30)
+    prev_logs_task      = mlb_client.get_player_game_logs(player_id, season - 1, limit=30)
+    season_stats_task   = mlb_client.get_season_stats(player_id, season)
+    prev_stats_task     = mlb_client.get_season_stats(player_id, season - 1)
+    team_games_task     = mlb_client.get_team_games(team_id, season) if team_id else _empty_list()
 
-    game_logs, season_stats, prev_stats, team_games = await asyncio.gather(
-        game_logs_task, season_stats_task, prev_stats_task, team_games_task,
+    game_logs, prev_logs, season_stats, prev_stats, team_games = await asyncio.gather(
+        game_logs_task, prev_logs_task, season_stats_task, prev_stats_task, team_games_task,
         return_exceptions=True,
     )
 
     if isinstance(game_logs,    Exception): game_logs    = []
+    if isinstance(prev_logs,    Exception): prev_logs    = []
     if isinstance(season_stats, Exception): season_stats = None
     if isinstance(prev_stats,   Exception): prev_stats   = None
     if isinstance(team_games,   Exception): team_games   = []
+
+    # Backfill with previous season so we always have up to 30 games of history
+    if len(game_logs) < 30 and prev_logs:
+        needed = 30 - len(game_logs)
+        game_logs = list(game_logs) + list(prev_logs[:needed])
 
     return game_logs, season_stats, prev_stats, team_games
 

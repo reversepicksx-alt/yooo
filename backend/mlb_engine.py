@@ -405,7 +405,7 @@ def compute_mlb_projection(
     # does NOT correspond to IDs in the /games endpoint. We use gameNumber
     # (1 = most recent) so the frontend can show meaningful context.
     display_logs = []
-    for idx, entry in enumerate(valid_games[:15]):
+    for idx, entry in enumerate(valid_games[:30]):
         g = entry["game"]
         val = entry["val"]
         # Round count stats to whole numbers for display
