@@ -97,30 +97,6 @@ Be direct, data-driven, no fluff. Return a JSON object ONLY:
     except Exception as e:
         log.warning(f"[MLB AI] Grok failed: {e}")
 
-    # Gemini fallback
-    try:
-        import asyncio as aio
-        from openai import OpenAI as SyncOpenAI
-        sync_client = SyncOpenAI(api_key=EMERGENT_LLM_KEY, base_url=EMERGENT_PROXY + "/v1")
-        loop = asyncio.get_event_loop()
-        def _call_gemini():
-            return sync_client.chat.completions.create(
-                model="gemini/gemini-2.5-flash",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=300,
-                temperature=0.5,
-            )
-        resp = await asyncio.wait_for(loop.run_in_executor(None, _call_gemini), timeout=15)
-        raw = resp.choices[0].message.content.strip()
-        import json, re
-        m = re.search(r'\{[\s\S]*\}', raw)
-        if m:
-            data = json.loads(m.group(0))
-            log.info(f"[MLB AI] Gemini OK for {player_name}")
-            return data
-    except Exception as e:
-        log.warning(f"[MLB AI] Gemini failed: {e}")
-
     return {}
 
 # ── Player search ─────────────────────────────────────────────────────────────

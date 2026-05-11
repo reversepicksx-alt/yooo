@@ -39,11 +39,8 @@ The project is structured into `backend/` (FastAPI, MongoDB) and `mobile/` (Expo
 - **Subscription Management**: Integrated into `account.tsx` with Square API wrappers for plan details, changes, cancellation, and resubscription.
 - **Line-Deviation Intelligence Engine**: `calibration.py` computes line deviation bands based on settled picks, providing data-driven hit rates and confidence adjustments for "UNDER" and "OVER" scenarios.
 - **AI Architecture**:
-    - **Primary**: Google Gemini 2.5 Pro (prediction synthesis, tactical chat reasoning), Gemini Flash (web intel, data digest, smart scan, tactical chat synthesis).
-    - **Fallback**: xAI Grok (prediction synthesis, web intel), Grok-4-1-fast (tactical chat reasoning).
-    - **Vision**: Gemini Flash vision and Grok vision for smart scan (OCR).
-    - **Position Resolution**: Both Grok and Gemini are used concurrently.
-    - Uses Gemini's JSON mode for reliable output parsing.
+    - **Only AI**: xAI Grok (all prediction synthesis, web intel, tactical chat, scan/OCR vision, position resolution). Gemini has been fully removed.
+    - Grok models used: `grok-4-1-fast-non-reasoning` (fast predictions, MLB analysis, position resolution), Grok search model (web intel), Grok vision (scan OCR).
 - **Bayesian Momentum Engine**: The `bayesian_engine.py` is configured to correctly process game logs sorted newest-first, applying decay weights accurately.
 - **Sample-Quality Filter ("luck strip")**: `backend/sample_quality.py` drops historical game logs distorted by game state — garbage-time cameos (sub-50min in ≥4-goal blowouts) and severe blowouts (≥5-goal margin) — from the prior calculation. Conservative: never reduces sample size below 6. Gated behind `LUCK_STRIP_ENABLED=1` env flag pending backtest validation. Wired in `routes/predict.py` after the venue split.
 - **Empirical Confidence Calibration**: `backend/confidence_calibration.py` builds a `{propType, confidence-bucket} → actualHitRate` table from settled picks, refreshed every 6h on the backend. Applied at the end of `/api/predict` only when bucket has n≥30 (otherwise pass-through). Trains against `pick.rawConfidence` (engine pre-calibration value) to avoid feedback loops; falls back to `confidenceScore` for legacy rows. Date cutoff `2026-05-15` excludes placeholder-era picks. The pre-calibration confidence is exposed as `rawConfidence` in the predict response and persisted on saved picks.

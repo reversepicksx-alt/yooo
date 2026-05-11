@@ -2880,11 +2880,8 @@ POSITION CLUES: CB=high tackles/blocks/aerial duels, low crosses/key passes/drib
 
                     pos_prompt = f"What is {req.playerName}'s primary position and tactical role at {corrected_team_name}?{category_hint}{stats_evidence}\nPosition must be one of: {pos_list}\nRole must be one of: Shot-Stopper, Sweeper Keeper, Ball-Playing CB, Stopper, Fullback, Wing-Back, Inverted Fullback, Anchor, Box-to-Box, Deep-Lying Playmaker, Ball Winner, Mezzala, Advanced Playmaker, Wide Playmaker, Traditional Winger, Inverted Winger, Progressive Carrier, Inside Forward, Target Man, Poacher, False 9, Shadow Striker, Complete Forward, Pressing Forward\nReply ONLY: POSITION|ROLE"
 
-                    # DUAL-AI POSITION VALIDATION: Always run Grok + Gemini in parallel.
-                    # Previously only ran for defenders, but API-Football miscategorizes
-                    # players across all positions (e.g., CM as "Attacker") so all players
-                    # need cross-validation. Only skip dual-AI for GKs (unambiguous).
-                    is_defender = player_position != "Goalkeeper"  # dual-AI for everyone except GK
+                    # GROK-ONLY POSITION RESOLUTION
+                    is_defender = player_position != "Goalkeeper"
 
                     pos_client = SyncOpenAI(api_key=XAI_API_KEY, base_url="https://api.x.ai/v1")
 
@@ -2902,22 +2899,6 @@ POSITION CLUES: CB=high tackles/blocks/aerial duels, low crosses/key passes/drib
                             timeout=8
                         )
 
-                    async def resolve_pos_gemini():
-                        EMERGENT_PROXY = "https://integrations.emergentagent.com/llm"
-                        gemini_client = OpenAI(api_key=EMERGENT_LLM_KEY, base_url=EMERGENT_PROXY + "/v1")
-                        loop = aio.get_event_loop()
-                        def _run_gemini():
-                            return gemini_client.chat.completions.create(
-                                model="gemini/gemini-2.0-flash",
-                                messages=[
-                                    {"role": "system", "content": "You are a football/soccer tactical analyst. Reply in EXACTLY this format on one line:\nPOSITION|ROLE\nNothing else."},
-                                    {"role": "user", "content": pos_prompt},
-                                ],
-                                temperature=0,
-                                max_tokens=50,
-                            )
-                        return await aio.wait_for(loop.run_in_executor(None, _run_gemini), timeout=8)
-
                     def parse_pos_response(resp_text, allowed):
                         parts = resp_text.strip().split("|")
                         pos = parts[0].strip().upper().replace(".", "").replace(",", "") if parts else ""
@@ -2929,56 +2910,20 @@ POSITION CLUES: CB=high tackles/blocks/aerial duels, low crosses/key passes/drib
                     valid_positions = allowed_positions or {"GK","CB","LB","RB","LWB","RWB","CDM","CM","CAM","LM","RM","LW","RW","CF","ST","SS"}
 
                     if is_defender:
-                        # Dual-AI for defenders (most common source of errors)
                         try:
-                            grok_resp, gemini_resp = await aio.gather(
-                                resolve_pos_grok(), resolve_pos_gemini(),
-                                return_exceptions=True
-                            )
+                            grok_resp = await resolve_pos_grok()
                             grok_pos, grok_role = None, None
-                            gemini_pos, gemini_role = None, None
                             if not isinstance(grok_resp, Exception):
                                 grok_pos, grok_role = parse_pos_response(grok_resp.choices[0].message.content, valid_positions)
-                            if not isinstance(gemini_resp, Exception):
-                                gemini_pos, gemini_role = parse_pos_response(gemini_resp.choices[0].message.content, valid_positions)
 
-                            if grok_pos and gemini_pos:
-                                if grok_pos == gemini_pos:
-                                    pos_code = grok_pos
-                                    role_text = grok_role or gemini_role or ""
-                                    print(f"[POS RESOLVE] Dual-AI AGREE: {req.playerName} → {pos_code} (Grok={grok_pos}, Gemini={gemini_pos})")
-                                else:
-                                    # Disagreement — use stats heuristic as tiebreaker
-                                    pos_code = grok_pos  # default to Grok
-                                    role_text = grok_role or ""
-                                    if stats_list:
-                                        latest_s = stats_list[-1]
-                                        key_passes = latest_s.get("passes", {}).get("key", 0) or 0
-                                        dribble_att = latest_s.get("dribbles", {}).get("attempts", 0) or 0
-                                        tackles_total = latest_s.get("tackles", {}).get("total", 0) or 0
-                                        blocks = latest_s.get("tackles", {}).get("blocks", 0) or 0
-                                        # CB indicators: high tackles+blocks, low key passes & dribbles
-                                        cb_score = (tackles_total + blocks * 2) - (key_passes + dribble_att)
-                                        if cb_score > 10 and "CB" in {grok_pos, gemini_pos}:
-                                            pos_code = "CB"
-                                            role_text = grok_role if grok_pos == "CB" else gemini_role or "Ball-Playing CB"
-                                        elif cb_score < -5 and ("LB" in {grok_pos, gemini_pos} or "RB" in {grok_pos, gemini_pos}):
-                                            pos_code = grok_pos if grok_pos in ("LB", "RB") else gemini_pos
-                                            role_text = grok_role if grok_pos == pos_code else gemini_role or "Fullback"
-                                    print(f"[POS RESOLVE] Dual-AI DISAGREE: Grok={grok_pos}, Gemini={gemini_pos} → tiebreak={pos_code} (stats-based)")
-                            elif grok_pos:
+                            if grok_pos:
                                 pos_code = grok_pos
                                 role_text = grok_role or ""
-                                print(f"[POS RESOLVE] Grok only: {req.playerName} → {pos_code}")
-                            elif gemini_pos:
-                                pos_code = gemini_pos
-                                role_text = gemini_role or ""
-                                print(f"[POS RESOLVE] Gemini only: {req.playerName} → {pos_code}")
+                                print(f"[POS RESOLVE] Grok: {req.playerName} → {pos_code}")
                             else:
-                                raise ValueError("Both AIs failed for position")
+                                raise ValueError("Grok failed for position")
                         except Exception as e:
-                            # Fallback to single Grok call
-                            print(f"[POS RESOLVE] Dual-AI failed ({e}), trying single Grok...")
+                            print(f"[POS RESOLVE] Grok position failed ({e}), retrying...")
                             pos_resp = await resolve_pos_grok()
                             pos_code, role_text = parse_pos_response(pos_resp.choices[0].message.content, valid_positions)
                             if not pos_code:
@@ -3633,84 +3578,8 @@ Odds: {json.dumps(match_odds.get('bookmakerOdds',{}), default=str) if match_odds
 
 Analyze ALL data thoroughly. Return JSON only."""
 
-        EMERGENT_PROXY = "https://integrations.emergentagent.com/llm"
-
-        async def call_emergent_direct(model_name, label):
-            """Call Claude/other models directly via OpenAI SDK through Emergent proxy."""
-            try:
-                client = OpenAI(api_key=EMERGENT_LLM_KEY, base_url=EMERGENT_PROXY + "/v1")
-                loop = aio.get_event_loop()
-                def _run():
-                    return client.chat.completions.create(
-                        model=model_name,
-                        messages=[
-                            {"role": "system", "content": PREDICTION_SYSTEM},
-                            {"role": "user", "content": prompt},
-                        ],
-                        max_tokens=2500,
-                        temperature=0.0,
-                    )
-                resp = await aio.wait_for(loop.run_in_executor(None, _run), timeout=40)
-                text = resp.choices[0].message.content.strip()
-                if text.startswith("```"):
-                    text = "\n".join(ln for ln in text.split("\n") if not ln.strip().startswith("```"))
-                start = text.find("{")
-                if start >= 0:
-                    for end_pos in range(len(text), start, -1):
-                        if text[end_pos - 1] == "}":
-                            try:
-                                result = json.loads(text[start:end_pos])
-                                result["_source"] = label
-                                return result
-                            except json.JSONDecodeError:
-                                continue
-                raise ValueError("No valid JSON in response")
-            except Exception as e:
-                print(f"[MULTI-AI] {label} failed: {e}")
-                return None
-
-        from config import GEMINI_API_KEY as _GEMINI_KEY
-        _GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
-        _GEMINI_MODEL = "gemini-2.5-flash"
-
-        async def call_gemini_direct(label="gemini25flash") -> dict | None:
-            """Gemini 2.5 Flash with JSON mode — clean JSON guaranteed, no markdown fences."""
-            if not _GEMINI_KEY:
-                return None
-            try:
-                import httpx as _httpx
-                url = f"{_GEMINI_BASE}/{_GEMINI_MODEL}:generateContent?key={_GEMINI_KEY}"
-                payload = {
-                    "systemInstruction": {"parts": [{"text": PREDICTION_SYSTEM}]},
-                    "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                    "generationConfig": {
-                        "temperature": 0.0,
-                        "maxOutputTokens": 8192,
-                        "responseMimeType": "application/json",
-                        "thinkingConfig": {"thinkingBudget": 0},
-                    },
-                }
-                async with _httpx.AsyncClient(timeout=_httpx.Timeout(25, connect=10)) as client:
-                    resp = await client.post(url, json=payload)
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        candidates = data.get("candidates", [])
-                        if candidates:
-                            parts = candidates[0].get("content", {}).get("parts", [])
-                            text = "".join(p.get("text", "") for p in parts).strip()
-                            if text:
-                                result = json.loads(text)
-                                result["_source"] = label
-                                print(f"[MULTI-AI] Gemini 2.5 Flash OK — summary: {str(result.get('sharpSummary',''))[:80]}")
-                                return result
-                    else:
-                        print(f"[MULTI-AI] Gemini error {resp.status_code}: {resp.text[:200]}")
-            except Exception as e:
-                print(f"[MULTI-AI] {label} failed: {type(e).__name__}: {e}")
-            return None
-
         async def call_grok(label="grok", model="grok-4-1-fast-non-reasoning"):
-            """Grok fallback — used only when Gemini fails."""
+            """Grok — primary and only AI synthesis engine."""
             if not XAI_API_KEY:
                 return None
             try:
@@ -3771,29 +3640,21 @@ Analyze ALL data thoroughly. Return JSON only."""
                 return None
 
         # =============================================
-        # AI SYNTHESIS: Gemini 2.5 Pro (primary) → Grok fallback
-        # Gemini JSON mode guarantees clean parseable output.
+        # AI SYNTHESIS: Grok only
         # Projection comes ONLY from the math engine — AI projectedValue is NEVER used.
         # =============================================
         grok_result = None
-        try:
-            grok_result = await aio.wait_for(call_gemini_direct(label="gemini25flash"), timeout=30)
-        except Exception as e:
-            print(f"[HYBRID] Gemini primary exception: {e}")
 
         # pv is set from early_bayes here as a temporary anchor; real_bayes overwrites it later.
         pv = early_bayes["posteriorMean"] if early_bayes and early_bayes.get("posteriorMean") else req.line
 
-        # If Gemini failed, fall back to Grok
-        if not grok_result or not isinstance(grok_result, dict) or not grok_result.get("tacticalBreakdown"):
-            print(f"[HYBRID] Gemini returned no text — falling back to Grok")
-            try:
-                grok_result = await aio.wait_for(
-                    call_grok(label="grok_fallback", model="grok-4-1-fast-non-reasoning"),
-                    timeout=35
-                )
-            except Exception as e:
-                print(f"[HYBRID] Grok fallback exception: {e}")
+        try:
+            grok_result = await aio.wait_for(
+                call_grok(label="grok", model="grok-4-1-fast-non-reasoning"),
+                timeout=35
+            )
+        except Exception as e:
+            print(f"[HYBRID] Grok exception: {e}")
 
         # BAYESIAN FALLBACK: If ALL Grok models failed (no text), build minimal result from math
         if not grok_result or not isinstance(grok_result, dict) or not grok_result.get("tacticalBreakdown"):

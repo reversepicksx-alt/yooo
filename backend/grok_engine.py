@@ -95,12 +95,7 @@ async def _grok_call(prompt: str, temperature: float = 0, max_tokens: int = 2000
 
 
 async def _ai_call(prompt: str, system: str = "", temperature: float = 0, max_tokens: int = 2000, timeout: int = 35) -> str:
-    """Unified AI call: Gemini Flash primary, Grok fallback."""
-    result = await _gemini_call(prompt, system=system, temperature=temperature,
-                                 max_tokens=max_tokens, timeout=timeout, model=GEMINI_FLASH)
-    if result:
-        return result
-    print("[AI] Gemini failed — falling back to Grok")
+    """Unified AI call: Grok only."""
     return await _grok_call(prompt, temperature=temperature, max_tokens=max_tokens, timeout=timeout)
 
 
@@ -130,34 +125,7 @@ async def fetch_web_intel(
         f"Be factual and specific. Do not make up information. If nothing significant is confirmed, say so briefly."
     )
 
-    # Strategy 1: Gemini with Google Search grounding (live web data)
-    if GEMINI_API_KEY:
-        try:
-            url = f"{GEMINI_BASE}/{GEMINI_FLASH}:generateContent?key={GEMINI_API_KEY}"
-            payload = {
-                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                "tools": [{"googleSearch": {}}],
-                "generationConfig": {"temperature": 0, "maxOutputTokens": 600},
-            }
-            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10)) as client:
-                resp = await client.post(url, json=payload)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    candidates = data.get("candidates", [])
-                    if candidates:
-                        parts = candidates[0].get("content", {}).get("parts", [])
-                        text = " ".join(p.get("text", "") for p in parts if p.get("text")).strip()
-                        if text:
-                            print(f"[WEB INTEL] Gemini Search success: {text[:120]}...")
-                            return text
-                else:
-                    print(f"[WEB INTEL] Gemini Search error {resp.status_code}: {resp.text[:150]}")
-        except httpx.TimeoutException:
-            print("[WEB INTEL] Gemini Search timeout")
-        except Exception as e:
-            print(f"[WEB INTEL] Gemini Search error: {type(e).__name__}: {e}")
-
-    # Strategy 2: Grok web search fallback
+    # Strategy 1: Grok web search
     if XAI_API_KEY:
         headers = {"Authorization": f"Bearer {XAI_API_KEY}", "Content-Type": "application/json"}
         for model in [GROK_SEARCH_MODEL, GROK_REASONING_MODEL]:
@@ -1441,39 +1409,7 @@ Return ONLY a valid JSON object (not an array):
             result["playerTeam"] = result.pop("teamName")
         return result
 
-    # Strategy 1: Gemini vision (primary)
-    if GEMINI_API_KEY:
-        try:
-            url = f"{GEMINI_BASE}/{GEMINI_FLASH}:generateContent?key={GEMINI_API_KEY}"
-            payload = {
-                "contents": [{"role": "user", "parts": [
-                    {"text": prompt},
-                    {"inlineData": {"mimeType": "image/png", "data": image_base64}}
-                ]}],
-                "generationConfig": {"temperature": 0, "maxOutputTokens": 500, "responseMimeType": "application/json"},
-            }
-            async with httpx.AsyncClient(timeout=20) as client:
-                resp = await client.post(url, json=payload)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    candidates = data.get("candidates", [])
-                    if candidates:
-                        parts = candidates[0].get("content", {}).get("parts", [])
-                        text = "".join(p.get("text", "") for p in parts).strip()
-                        result = _parse_json(text)
-                        if result:
-                            if isinstance(result, list) and len(result) > 0:
-                                result = result[0]
-                            if isinstance(result, dict):
-                                result = _normalize(result)
-                                print(f"[SCAN] Gemini vision: {result.get('playerName','')} {result.get('propType','')} {result.get('line','')}")
-                                return result
-                else:
-                    print(f"[SCAN] Gemini vision error: {resp.status_code} — {resp.text[:200]}")
-        except Exception as e:
-            print(f"[SCAN] Gemini vision error: {e}")
-
-    # Strategy 2: Grok vision fallback
+    # Strategy 1: Grok vision
     if XAI_API_KEY:
         try:
             async with httpx.AsyncClient(timeout=20) as client:
