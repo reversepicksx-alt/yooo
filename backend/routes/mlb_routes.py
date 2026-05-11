@@ -85,7 +85,7 @@ Be direct, data-driven, no fluff. Return a JSON object ONLY:
                 max_tokens=300,
                 temperature=0.5,
             ),
-            timeout=18,
+            timeout=8,
         )
         raw = resp.choices[0].message.content.strip()
         import json, re
@@ -306,9 +306,10 @@ async def mlb_predict(req: MlbPredictRequest):
         "generatedAt":    datetime.now(timezone.utc).isoformat(),
     }
 
-    # Await AI result and merge into response
+    # Await AI result and merge into response — hard 12 s cap so a slow AI
+    # never blocks the full predict response from reaching the user.
     try:
-        ai_data = await asyncio.wait_for(asyncio.shield(ai_task), timeout=20)
+        ai_data = await asyncio.wait_for(asyncio.shield(ai_task), timeout=12)
         if ai_data:
             response["sharpSummary"] = ai_data.get("sharpSummary", "")
             response["reasoning"]    = ai_data.get("reasoning", "")

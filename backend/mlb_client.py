@@ -20,9 +20,9 @@ MLB_API_BASE = "https://api.balldontlie.io/mlb/v1"
 # Key hardcoded as fallback; override via MLB_BDL_API_KEY env var
 MLB_API_KEY = os.environ.get("MLB_BDL_API_KEY", "951b8b73-a036-4b30-924f-19f322766545")
 
-_rate_sem = asyncio.Semaphore(1)
+_rate_sem = asyncio.Semaphore(3)   # paid tier: 600 req/min — allow 3 concurrent slots
 _last_req_time: float = 0.0
-_MIN_INTERVAL = 3.1   # seconds between requests — BDL free tier: 5 req / 15s ≈ 1 per 3s
+_MIN_INTERVAL = 0.15  # seconds between requests — paid tier: 600 req/min ≈ 10/s; 0.15s is conservative
 
 CACHE_TTL = {
     "teams":         7 * 86400,   # 7 days
@@ -123,22 +123,16 @@ async def search_players(query: str, limit: int = 15) -> list:
     for p in await _search(q):
         seen[p["id"]] = p
 
-    # 2. If nothing found and query has multiple words, try each word separately
+    # 2. ONLY if nothing found and query has multiple words, try last name then first name.
+    #    Do NOT do a supplemental second call when the first call already returned results —
+    #    that was doubling every multi-word search and causing a huge rate-limit queue.
     words = q.split()
     if not seen and len(words) > 1:
-        # Try last name (most distinctive)
         for p in await _search(words[-1]):
             seen[p["id"]] = p
-        # Try first name if still empty
         if not seen:
             for p in await _search(words[0]):
                 seen[p["id"]] = p
-
-    # 3. Even if we got full-query results, supplement with last-name search
-    #    so we don't miss someone whose first name was ignored by BDL
-    elif len(words) > 1:
-        for p in await _search(words[-1]):
-            seen[p["id"]] = p
 
     players = list(seen.values())[:limit]
     await _cache_set(key, players)
