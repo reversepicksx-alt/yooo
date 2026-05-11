@@ -314,18 +314,27 @@ async def get_today_and_live_games(team_id: int, season: int = 2025) -> list:
         except Exception as e2:
             log.warning(f"[MLB CLIENT] get_today_and_live_games fallback failed ({team_id}): {e2}")
 
-    if relevant:
+    # Only cache when no game is actively in progress — live games must not
+    # be cached so the loop always sees the latest status and score.
+    game_is_live = any("IN_PROGRESS" in (g.get("status") or "").upper() for g in relevant)
+    if relevant and not game_is_live:
         await _cache_set(key, relevant)
     return relevant
 
 
-async def get_game_player_stats(player_id: int, game_id: int, season: int = 2025) -> Optional[dict]:
+async def get_game_player_stats(player_id: int, game_id: int, season: int = 2025,
+                                live: bool = False) -> Optional[dict]:
     """Fetch a player's stats for a specific game.
-    Uses a 90-second cache so live stats refresh on every 2-minute loop iteration."""
+
+    When `live=True` (game still in progress) we skip the cache entirely so
+    every loop iteration reads the latest values from BDL.  Completed games
+    are cached for 24 h (they won't change).
+    """
     key = f"mlb_gps:{player_id}:{game_id}"
-    doc = await _cache_get(key)
-    if _cache_fresh(doc, 90) and doc.get("data") is not None:
-        return doc["data"]
+    if not live:
+        doc = await _cache_get(key)
+        if _cache_fresh(doc, 86400) and doc.get("data") is not None:
+            return doc["data"]
     try:
         result = await _get("/stats", {
             "player_ids[]": player_id,
@@ -337,7 +346,8 @@ async def get_game_player_stats(player_id: int, game_id: int, season: int = 2025
     except Exception as e:
         log.warning(f"[MLB CLIENT] get_game_player_stats({player_id},{game_id}) failed: {e}")
         return None
-    if data is not None:
+    # Only cache completed-game stats — live stats must never be cached
+    if data is not None and not live:
         await _cache_set(key, data)
     return data
 

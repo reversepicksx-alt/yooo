@@ -1007,6 +1007,7 @@ export const MLB_PROP_TYPES = [
   { value: 'stolen_bases',       label: 'Stolen Bases',           group: 'Batter' },
   { value: 'doubles',            label: 'Doubles',                group: 'Batter' },
   { value: 'plate_appearances',  label: 'Plate Appearances',      group: 'Batter' },
+  { value: 'hitter_fantasy_points', label: 'Fantasy Points (DK)', group: 'Batter' },
   { value: 'pitcher_strikeouts', label: 'Pitcher Strikeouts',     group: 'Pitcher' },
   { value: 'innings_pitched',    label: 'Innings Pitched',        group: 'Pitcher' },
   { value: 'hits_allowed',       label: 'Hits Allowed',           group: 'Pitcher' },

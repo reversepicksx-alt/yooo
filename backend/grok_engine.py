@@ -1515,6 +1515,7 @@ _MLB_LIVE_PROP_TYPES = {
     "walks_allowed", "pitches_thrown", "batters_faced",
     "hits", "home_runs", "rbi", "walks", "strikeouts", "runs",
     "total_bases", "stolen_bases", "doubles", "plate_appearances",
+    "hitter_fantasy_points",
 }
 
 
@@ -1597,20 +1598,27 @@ async def _update_mlb_live_picks():
                 if not player_id or not field:
                     continue
 
-                # Fetch current game stats for this player (90-second cache)
+                # Fetch current game stats — skip cache for live games so every
+                # loop iteration gets the freshest values from BDL.
                 current_value = None
                 try:
-                    stats = await mlb_client.get_game_player_stats(int(player_id), int(game_id), current_year)
+                    from mlb_engine import _compute_fantasy_pts as _fp
+                    stats = await mlb_client.get_game_player_stats(
+                        int(player_id), int(game_id), current_year, live=is_live
+                    )
                     if stats:
-                        raw = stats.get(field)
-                        if raw is not None:
-                            if prop_type == "innings_pitched":
-                                parts = str(raw).split(".")
-                                whole = int(parts[0])
-                                frac  = int(parts[1]) if len(parts) > 1 else 0
-                                current_value = round(whole + frac / 3.0, 1)
-                            else:
-                                current_value = float(raw)
+                        if prop_type == "hitter_fantasy_points":
+                            current_value = _fp(stats)
+                        else:
+                            raw = stats.get(field)
+                            if raw is not None:
+                                if prop_type == "innings_pitched":
+                                    parts = str(raw).split(".")
+                                    whole = int(parts[0])
+                                    frac  = int(parts[1]) if len(parts) > 1 else 0
+                                    current_value = round(whole + frac / 3.0, 1)
+                                else:
+                                    current_value = float(raw)
                 except Exception as _se:
                     print(f"[MLB LIVE] Stats fetch failed player={player_id} game={game_id}: {_se}")
                     continue

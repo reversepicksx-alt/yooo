@@ -17,16 +17,18 @@ from typing import Optional
 
 # ── Prop type → per-game API field ──────────────────────────────────────────
 BATTER_PROPS = {
-    "hits":             "hits",
-    "home_runs":        "hr",
-    "rbi":              "rbi",
-    "walks":            "bb",
-    "strikeouts":       "k",
-    "runs":             "runs",
-    "total_bases":      "total_bases",
-    "stolen_bases":     "stolen_bases",
-    "doubles":          "doubles",
-    "plate_appearances":"plate_appearances",
+    "hits":                  "hits",
+    "home_runs":             "hr",
+    "rbi":                   "rbi",
+    "walks":                 "bb",
+    "strikeouts":            "k",
+    "runs":                  "runs",
+    "total_bases":           "total_bases",
+    "stolen_bases":          "stolen_bases",
+    "doubles":               "doubles",
+    "plate_appearances":     "plate_appearances",
+    # Computed synthetic prop — derived from raw fields at extract time
+    "hitter_fantasy_points": "__fantasy_pts__",
 }
 
 PITCHER_PROPS = {
@@ -42,6 +44,7 @@ PITCHER_PROPS = {
 ALL_PROP_FIELDS = {**BATTER_PROPS, **PITCHER_PROPS}
 
 # Props that use Poisson distribution (discrete counts)
+# hitter_fantasy_points is continuous (Gaussian MC), so intentionally excluded
 COUNT_STATS = {
     "hits", "home_runs", "rbi", "walks", "strikeouts", "runs",
     "total_bases", "stolen_bases", "doubles", "plate_appearances",
@@ -66,8 +69,9 @@ SEASON_STAT_MAP = {
     "hits_allowed":       ("pitching_h",  "pitching_gp"),
     "earned_runs":        ("pitching_er", "pitching_gp"),
     "walks_allowed":      ("pitching_bb", "pitching_gp"),
-    "pitches_thrown":     (None,          None),
-    "batters_faced":      (None,          None),
+    "pitches_thrown":        (None,          None),
+    "batters_faced":         (None,          None),
+    "hitter_fantasy_points": (None,          None),   # computed — handled separately
 }
 
 # Momentum decay weights (newest game = index 0)
@@ -79,10 +83,51 @@ HOME_ADJ = {
     "hits": 1.03, "home_runs": 1.04, "rbi": 1.03, "runs": 1.03,
     "walks": 1.01, "strikeouts": 0.99, "total_bases": 1.03,
     "stolen_bases": 1.02, "doubles": 1.03, "plate_appearances": 1.00,
+    "hitter_fantasy_points": 1.03,
     "pitcher_strikeouts": 1.02, "innings_pitched": 1.01,
     "hits_allowed": 0.97, "earned_runs": 0.97, "walks_allowed": 0.99,
     "pitches_thrown": 1.01, "batters_faced": 1.01,
 }
+
+
+def _compute_fantasy_pts(game: dict) -> Optional[float]:
+    """DraftKings-style hitter fantasy points from a per-game stat record.
+
+    Scoring: 1B=+3, 2B=+5, 3B=+8 (treated as 1B — rare), HR=+10,
+             RBI=+2, R=+2, BB=+2, SB=+5.
+    Triples are not tracked separately in BDL so they are counted as singles
+    (conservative, negligible impact on averages).
+    """
+    hits = game.get("hits")
+    if hits is None:
+        return None
+    h       = float(hits)
+    hr      = float(game.get("hr")           or 0)
+    rbi     = float(game.get("rbi")          or 0)
+    bb      = float(game.get("bb")           or 0)
+    runs    = float(game.get("runs")         or 0)
+    sb      = float(game.get("stolen_bases") or 0)
+    doubles = float(game.get("doubles")      or 0)
+    singles = max(0.0, h - doubles - hr)          # triples lumped into singles
+    return round(singles * 3 + doubles * 5 + hr * 10 + rbi * 2 + runs * 2 + bb * 2 + sb * 5, 1)
+
+
+def _compute_fantasy_pts_from_season(season: dict) -> Optional[float]:
+    """Estimate per-game fantasy pts average from season aggregate stats."""
+    gp = season.get("batting_gp")
+    if not gp or int(gp) == 0:
+        return None
+    gp = float(gp)
+    h       = float(season.get("batting_h",  0) or 0)
+    hr      = float(season.get("batting_hr", 0) or 0)
+    rbi     = float(season.get("batting_rbi",0) or 0)
+    bb      = float(season.get("batting_bb", 0) or 0)
+    runs    = float(season.get("batting_r",  0) or 0)
+    sb      = float(season.get("batting_sb", 0) or 0)
+    doubles = float(season.get("batting_2b", 0) or 0)
+    singles = max(0.0, h - doubles - hr)
+    total   = singles * 3 + doubles * 5 + hr * 10 + rbi * 2 + runs * 2 + bb * 2 + sb * 5
+    return round(total / gp, 2)
 
 
 def _ip_to_float(ip_val) -> Optional[float]:
@@ -102,6 +147,8 @@ def _ip_to_float(ip_val) -> Optional[float]:
 
 def _extract_game_val(game: dict, prop_type: str) -> Optional[float]:
     """Extract a prop value from a per-game stat record."""
+    if prop_type == "hitter_fantasy_points":
+        return _compute_fantasy_pts(game)
     field = ALL_PROP_FIELDS.get(prop_type)
     if not field:
         return None
@@ -214,15 +261,21 @@ def compute_mlb_projection(
     season_gp = 0
 
     if season_stats:
-        stat_key, gp_key = SEASON_STAT_MAP.get(prop_type, (None, None))
-        if stat_key and gp_key:
-            total = season_stats.get(stat_key)
-            gp = season_stats.get(gp_key)
-            if total is not None and gp and int(gp) > 0:
-                if prop_type == "innings_pitched":
-                    total = _ip_to_float(total) or total
-                prior_mean = float(total) / float(gp)
-                season_gp = int(gp)
+        if prop_type == "hitter_fantasy_points":
+            computed = _compute_fantasy_pts_from_season(season_stats)
+            if computed is not None:
+                prior_mean = computed
+                season_gp  = int(season_stats.get("batting_gp") or 0)
+        else:
+            stat_key, gp_key = SEASON_STAT_MAP.get(prop_type, (None, None))
+            if stat_key and gp_key:
+                total = season_stats.get(stat_key)
+                gp = season_stats.get(gp_key)
+                if total is not None and gp and int(gp) > 0:
+                    if prop_type == "innings_pitched":
+                        total = _ip_to_float(total) or total
+                    prior_mean = float(total) / float(gp)
+                    season_gp = int(gp)
 
     # Fallback: use game log average if no season stats
     if prior_mean is None and game_vals:
@@ -238,6 +291,7 @@ def compute_mlb_projection(
         "hits": 1.05, "home_runs": 0.18, "rbi": 0.70, "walks": 0.38,
         "strikeouts": 0.90, "runs": 0.58, "total_bases": 1.60,
         "stolen_bases": 0.12, "doubles": 0.22, "plate_appearances": 3.8,
+        "hitter_fantasy_points": 8.5,   # league-average DK pts per plate appearance
         "pitcher_strikeouts": 5.8, "innings_pitched": 5.0,
         "hits_allowed": 5.2, "earned_runs": 2.5, "walks_allowed": 2.1,
         "pitches_thrown": 88.0, "batters_faced": 22.0,
