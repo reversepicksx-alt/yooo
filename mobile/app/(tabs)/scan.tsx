@@ -324,13 +324,36 @@ export default function ScanScreen() {
     setMlbResolvedOpponent(null);
     if (!text.trim()) { setMlbOpponentSuggestions([]); return; }
     const q = text.toLowerCase().trim();
-    const filtered = mlbTeams.filter(t =>
-      t.displayName.toLowerCase().includes(q) ||
-      t.name.toLowerCase().includes(q) ||
-      t.location.toLowerCase().includes(q) ||
-      t.abbreviation.toLowerCase().includes(q)
-    ).slice(0, 6);
-    setMlbOpponentSuggestions(filtered);
+    const qShort = q.length > 2 ? q.slice(0, -1) : q; // strip trailing typo char
+    const words = q.split(/\s+/).filter(Boolean);
+
+    const score = (t: MlbTeam): number => {
+      const fields = [
+        t.displayName.toLowerCase(),
+        t.name.toLowerCase(),
+        t.location.toLowerCase(),
+        t.abbreviation.toLowerCase(),
+      ];
+      let best = 0;
+      for (const f of fields) {
+        if (f === q)                                      best = Math.max(best, 100);
+        else if (f.startsWith(q))                         best = Math.max(best, 90);
+        else if (f.includes(q))                           best = Math.max(best, 80);
+        else if (q.length > 2 && f.includes(qShort))     best = Math.max(best, 65); // trailing typo
+        else if (words.length > 0 && words.every(w => f.includes(w))) best = Math.max(best, 70);
+        else if (words.length > 1 && words.some(w => w.length > 2 && f.includes(w))) best = Math.max(best, 40);
+      }
+      return best;
+    };
+
+    const results = mlbTeams
+      .map(t => ({ t, s: score(t) }))
+      .filter(x => x.s > 0)
+      .sort((a, b) => b.s - a.s)
+      .slice(0, 6)
+      .map(x => x.t);
+
+    setMlbOpponentSuggestions(results);
   };
 
   const handleMlbAnalyze = async () => {
