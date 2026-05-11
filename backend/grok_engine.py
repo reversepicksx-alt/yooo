@@ -692,6 +692,13 @@ async def _try_settle_mlb(pick: dict) -> bool:
         print(f"[MLB SETTLE] Unknown prop_type={prop_type}, skipping")
         return False
 
+    # MLB settlement REQUIRES the live loop to have already confirmed today's game
+    # by writing a gameId onto the pick.  Without it we have no way to know which
+    # game to score — grabbing game_logs[0] would silently use a past start.
+    expected_game_id = pick.get("gameId")
+    if not expected_game_id:
+        return False  # Live loop hasn't confirmed today's game yet — wait
+
     # Only settle picks that are 4+ hours old (baseball games ~3–4 h)
     pick_created = None
     for ts_key in ("timestamp", "createdAt"):
@@ -719,6 +726,13 @@ async def _try_settle_mlb(pick: dict) -> bool:
         return False
 
     recent = game_logs[0]
+
+    # Verify this log entry is for the game the live loop confirmed — not a prior start
+    log_game_id = recent.get("game_id") or recent.get("gameId")
+    if log_game_id and int(log_game_id) != int(expected_game_id):
+        print(f"[MLB SETTLE] Game ID mismatch: log={log_game_id} vs pick gameId={expected_game_id} — game not finished yet")
+        return False
+
     raw_val = recent.get(field)
     if raw_val is None:
         return False
@@ -766,15 +780,26 @@ async def _run_auto_settlement():
     if is_quota_exhausted():
         return  # Don't burn quota on settlement checks when there's nothing left
 
-    # Settle both "live" picks AND "pending" picks — pending picks can miss the live
-    # promotion step if the user doesn't refresh during the match, leaving them stuck.
-    # Include pending picks created more than 90 minutes ago (match should be over).
+    # Settle "live" picks AND soccer "pending" picks older than 90 min (match duration).
+    # MLB pending picks are intentionally excluded from the timestamp-cutoff path —
+    # an MLB game can be scheduled 8+ hours after the pick is saved, so 90 min would
+    # fire settlement long before the first pitch.  MLB picks only enter here once the
+    # live loop promotes them to "live" status (gameId confirmed, in-progress or final).
+    _MLB_PENDING_PROPS = {
+        "pitcher_strikeouts", "innings_pitched", "hits_allowed", "earned_runs",
+        "walks_allowed", "pitches_thrown", "batters_faced",
+        "hits", "home_runs", "rbi", "walks", "strikeouts", "runs",
+        "total_bases", "stolen_bases", "doubles", "plate_appearances",
+    }
     cutoff = (datetime.now(timezone.utc) - timedelta(minutes=90)).isoformat()
     live_picks = await db.picks.find(
         {"$or": [
             {"status": "live"},
-            {"status": "pending", "timestamp": {"$lt": cutoff}},
-            {"status": "pending", "createdAt": {"$lt": cutoff}},
+            # Soccer pending: 90-min cutoff is appropriate (match is over)
+            {"status": "pending", "sport": {"$ne": "mlb"},
+             "propType": {"$nin": list(_MLB_PENDING_PROPS)}, "timestamp": {"$lt": cutoff}},
+            {"status": "pending", "sport": {"$ne": "mlb"},
+             "propType": {"$nin": list(_MLB_PENDING_PROPS)}, "createdAt": {"$lt": cutoff}},
         ]},
         {"_id": 0}
     ).to_list(300)
