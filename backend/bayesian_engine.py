@@ -423,10 +423,14 @@ def compute_bayesian_projection(
     _XG_LEAGUE_AVG = 1.35
     _SHOT_PROPS = {"shots", "shots_on_target"}
     if opponent_fixture_stats and prop_type in _SHOT_PROPS:
-        xg_vals = [
-            s.get("expectedGoals") for s in opponent_fixture_stats
-            if s.get("expectedGoals") is not None
-        ]
+        xg_vals = []
+        for s in opponent_fixture_stats:
+            raw = s.get("expectedGoals")
+            if raw is not None:
+                try:
+                    xg_vals.append(float(raw))
+                except (TypeError, ValueError):
+                    pass
         if len(xg_vals) >= 2:
             avg_xg = sum(xg_vals) / len(xg_vals)
             xg_ratio = avg_xg / _XG_LEAGUE_AVG
