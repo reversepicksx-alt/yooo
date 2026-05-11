@@ -81,6 +81,13 @@ async def _check_access_local(email_lower: str):
                 pass
     # Stripe: past_due — NO ACCESS. Payment failed = no access. They must update
     # their payment method and pay to regain entry.
+    # Return a sentinel so check_access does NOT fall through to the live Stripe
+    # check (which could re-grant access if Stripe still shows "active" while retrying).
+    past_due = await db.stripe_subscriptions.find_one(
+        {"email": email_lower, "status": "past_due"}, {"_id": 0}
+    )
+    if past_due:
+        return "__BLOCKED__"
     return None
 
 async def _check_stripe_live(email_lower: str):
@@ -217,6 +224,8 @@ async def _check_stripe_live(email_lower: str):
 
 async def check_access(email_lower: str):
     result = await _check_access_local(email_lower)
+    if result == "__BLOCKED__":
+        return None  # hard block — past_due in local DB; never fall through to live Stripe
     if result:
         return result
     # Always fall through to live Stripe check — it handles the canceledAt guard
