@@ -18,7 +18,7 @@ EMERGENT_PROXY = "https://llm.chutes.ai"
 
 router = APIRouter(prefix="/api/mlb", tags=["mlb"])
 
-CURRENT_MLB_SEASON = 2025
+CURRENT_MLB_SEASON = 2026
 
 
 # ── AI analysis helper ─────────────────────────────────────────────────────────

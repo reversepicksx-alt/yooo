@@ -34,26 +34,49 @@ CACHE_TTL = {
 
 
 async def _get(path: str, params: dict = None) -> dict:
+    """Single BDL request with rate-limiting.
+    IMPORTANT: the 429-retry sleep happens OUTSIDE the semaphore so other
+    requests are not blocked while we wait for the rate-limit window to reset."""
     global _last_req_time
+    headers = {"Authorization": MLB_API_KEY}
+    url = f"{MLB_API_BASE}{path}"
+
+    # ── First attempt ─────────────────────────────────────────────────────────
     async with _rate_sem:
         elapsed = time.monotonic() - _last_req_time
         if elapsed < _MIN_INTERVAL:
             await asyncio.sleep(_MIN_INTERVAL - elapsed)
-        headers = {"Authorization": MLB_API_KEY}
-        url = f"{MLB_API_BASE}{path}"
         try:
-            async with httpx.AsyncClient(timeout=30) as c:
+            async with httpx.AsyncClient(timeout=20) as c:
                 resp = await c.get(url, headers=headers, params=params or {})
         except Exception as e:
             raise RuntimeError(f"MLB API network error: {e}")
         finally:
             _last_req_time = time.monotonic()
 
-        if resp.status_code == 429:
-            retry_after = int(resp.headers.get("retry-after", "15"))
-            await asyncio.sleep(retry_after + 1)
-            async with httpx.AsyncClient(timeout=30) as c:
+        if resp.status_code != 429:
+            if resp.status_code >= 400:
+                raise RuntimeError(f"MLB API error {resp.status_code}: {resp.text[:200]}")
+            return resp.json()
+
+        # Got a 429 — capture retry-after BEFORE releasing the semaphore
+        retry_after = min(int(resp.headers.get("retry-after", "5")), 10)
+
+    # ── Sleep OUTSIDE the semaphore so other slots stay available ─────────────
+    log.warning(f"[MLB CLIENT] 429 on {path} — waiting {retry_after}s before retry")
+    await asyncio.sleep(retry_after)
+
+    # ── Retry attempt ─────────────────────────────────────────────────────────
+    async with _rate_sem:
+        elapsed = time.monotonic() - _last_req_time
+        if elapsed < _MIN_INTERVAL:
+            await asyncio.sleep(_MIN_INTERVAL - elapsed)
+        try:
+            async with httpx.AsyncClient(timeout=20) as c:
                 resp = await c.get(url, headers=headers, params=params or {})
+        except Exception as e:
+            raise RuntimeError(f"MLB API network error on retry: {e}")
+        finally:
             _last_req_time = time.monotonic()
 
         if resp.status_code >= 400:
@@ -164,7 +187,7 @@ async def get_teams() -> list:
     return teams
 
 
-async def get_player_game_logs(player_id: int, season: int = 2025, limit: int = 30) -> list:
+async def get_player_game_logs(player_id: int, season: int = 2026, limit: int = 30) -> list:
     """Per-game stats, newest first (API returns newest first via cursor pagination)."""
     key = f"mlb_gl:{player_id}:{season}"
     doc = await _cache_get(key)
@@ -187,7 +210,7 @@ async def get_player_game_logs(player_id: int, season: int = 2025, limit: int = 
     return logs
 
 
-async def get_season_stats(player_id: int, season: int = 2025) -> Optional[dict]:
+async def get_season_stats(player_id: int, season: int = 2026) -> Optional[dict]:
     """Season aggregate stats (regular season only)."""
     key = f"mlb_ss:{player_id}:{season}"
     doc = await _cache_get(key)
@@ -205,7 +228,7 @@ async def get_season_stats(player_id: int, season: int = 2025) -> Optional[dict]
     return data
 
 
-async def get_team_games(team_id: int, season: int = 2025) -> list:
+async def get_team_games(team_id: int, season: int = 2026) -> list:
     """Fetch completed regular-season games for a team, newest first.
     Used to enrich per-game stat tiles with opponent/date/venue/score.
     Cached 15 minutes — refreshes quickly during active season."""
@@ -246,7 +269,7 @@ async def get_team_games(team_id: int, season: int = 2025) -> list:
     return regular
 
 
-async def get_today_and_live_games(team_id: int, season: int = 2025) -> list:
+async def get_today_and_live_games(team_id: int, season: int = 2026) -> list:
     """Fetch today's and in-progress games for a team.
     Uses a 2-minute cache so the live-tracking loop stays fresh without hammering BDL.
 
@@ -316,7 +339,7 @@ async def get_today_and_live_games(team_id: int, season: int = 2025) -> list:
     return relevant
 
 
-async def get_game_player_stats(player_id: int, game_id: int, season: int = 2025,
+async def get_game_player_stats(player_id: int, game_id: int, season: int = 2026,
                                 live: bool = False) -> Optional[dict]:
     """Fetch a player's stats for a specific game.
 
@@ -346,7 +369,7 @@ async def get_game_player_stats(player_id: int, game_id: int, season: int = 2025
     return data
 
 
-async def get_game_by_teams(home_abbrev: str, away_abbrev: str, season: int = 2025) -> Optional[dict]:
+async def get_game_by_teams(home_abbrev: str, away_abbrev: str, season: int = 2026) -> Optional[dict]:
     """Find a specific game by team abbreviations (used for settlement)."""
     try:
         result = await _get("/games", {"season": season, "per_page": 50})
