@@ -18,6 +18,40 @@ import { useAuth } from '@/contexts/AuthContext';
 
 type MlbTeam = { id: number; displayName: string; abbreviation: string; location: string; name: string; league: string; division: string; };
 
+// All 30 MLB teams hardcoded — search never depends on a successful API call
+const MLB_TEAMS_STATIC: MlbTeam[] = [
+  { id: 1,  displayName: 'Los Angeles Angels',      abbreviation: 'LAA', location: 'Los Angeles',   name: 'Angels',      league: 'American', division: 'West' },
+  { id: 2,  displayName: 'Houston Astros',           abbreviation: 'HOU', location: 'Houston',       name: 'Astros',      league: 'American', division: 'West' },
+  { id: 3,  displayName: 'Oakland Athletics',        abbreviation: 'OAK', location: 'Oakland',       name: 'Athletics',   league: 'American', division: 'West' },
+  { id: 4,  displayName: 'Toronto Blue Jays',        abbreviation: 'TOR', location: 'Toronto',       name: 'Blue Jays',   league: 'American', division: 'East' },
+  { id: 5,  displayName: 'Atlanta Braves',           abbreviation: 'ATL', location: 'Atlanta',       name: 'Braves',      league: 'National', division: 'East' },
+  { id: 6,  displayName: 'Milwaukee Brewers',        abbreviation: 'MIL', location: 'Milwaukee',     name: 'Brewers',     league: 'National', division: 'Central' },
+  { id: 7,  displayName: 'St. Louis Cardinals',      abbreviation: 'STL', location: 'St. Louis',     name: 'Cardinals',   league: 'National', division: 'Central' },
+  { id: 8,  displayName: 'Chicago Cubs',             abbreviation: 'CHC', location: 'Chicago',       name: 'Cubs',        league: 'National', division: 'Central' },
+  { id: 9,  displayName: 'Arizona Diamondbacks',     abbreviation: 'ARI', location: 'Arizona',       name: 'Diamondbacks',league: 'National', division: 'West' },
+  { id: 10, displayName: 'Los Angeles Dodgers',      abbreviation: 'LAD', location: 'Los Angeles',   name: 'Dodgers',     league: 'National', division: 'West' },
+  { id: 11, displayName: 'San Francisco Giants',     abbreviation: 'SF',  location: 'San Francisco', name: 'Giants',      league: 'National', division: 'West' },
+  { id: 12, displayName: 'Cleveland Guardians',      abbreviation: 'CLE', location: 'Cleveland',     name: 'Guardians',   league: 'American', division: 'Central' },
+  { id: 13, displayName: 'Seattle Mariners',         abbreviation: 'SEA', location: 'Seattle',       name: 'Mariners',    league: 'American', division: 'West' },
+  { id: 14, displayName: 'Miami Marlins',            abbreviation: 'MIA', location: 'Miami',         name: 'Marlins',     league: 'National', division: 'East' },
+  { id: 15, displayName: 'New York Mets',            abbreviation: 'NYM', location: 'New York',      name: 'Mets',        league: 'National', division: 'East' },
+  { id: 16, displayName: 'Washington Nationals',     abbreviation: 'WSH', location: 'Washington',    name: 'Nationals',   league: 'National', division: 'East' },
+  { id: 17, displayName: 'Baltimore Orioles',        abbreviation: 'BAL', location: 'Baltimore',     name: 'Orioles',     league: 'American', division: 'East' },
+  { id: 18, displayName: 'San Diego Padres',         abbreviation: 'SD',  location: 'San Diego',     name: 'Padres',      league: 'National', division: 'West' },
+  { id: 19, displayName: 'Philadelphia Phillies',    abbreviation: 'PHI', location: 'Philadelphia',  name: 'Phillies',    league: 'National', division: 'East' },
+  { id: 20, displayName: 'Pittsburgh Pirates',       abbreviation: 'PIT', location: 'Pittsburgh',    name: 'Pirates',     league: 'National', division: 'Central' },
+  { id: 21, displayName: 'Texas Rangers',            abbreviation: 'TEX', location: 'Texas',         name: 'Rangers',     league: 'American', division: 'West' },
+  { id: 22, displayName: 'Tampa Bay Rays',           abbreviation: 'TB',  location: 'Tampa Bay',     name: 'Rays',        league: 'American', division: 'East' },
+  { id: 23, displayName: 'Boston Red Sox',           abbreviation: 'BOS', location: 'Boston',        name: 'Red Sox',     league: 'American', division: 'East' },
+  { id: 24, displayName: 'Cincinnati Reds',          abbreviation: 'CIN', location: 'Cincinnati',    name: 'Reds',        league: 'National', division: 'Central' },
+  { id: 25, displayName: 'Colorado Rockies',         abbreviation: 'COL', location: 'Colorado',      name: 'Rockies',     league: 'National', division: 'West' },
+  { id: 26, displayName: 'Kansas City Royals',       abbreviation: 'KC',  location: 'Kansas City',   name: 'Royals',      league: 'American', division: 'Central' },
+  { id: 27, displayName: 'Detroit Tigers',           abbreviation: 'DET', location: 'Detroit',       name: 'Tigers',      league: 'American', division: 'Central' },
+  { id: 28, displayName: 'Minnesota Twins',          abbreviation: 'MIN', location: 'Minnesota',     name: 'Twins',       league: 'American', division: 'Central' },
+  { id: 29, displayName: 'Chicago White Sox',        abbreviation: 'CWS', location: 'Chicago',       name: 'White Sox',   league: 'American', division: 'Central' },
+  { id: 30, displayName: 'New York Yankees',         abbreviation: 'NYY', location: 'New York',      name: 'Yankees',     league: 'American', division: 'East' },
+];
+
 const SCREEN_W = Dimensions.get('window').width;
 const INPUT_STYLE = Platform.OS === 'web' ? { outlineWidth: 0 } as object : {};
 
@@ -120,13 +154,13 @@ export default function ScanScreen() {
   const [mlbOpponentQuery, setMlbOpponentQuery] = useState('');
   const [mlbOpponentSuggestions, setMlbOpponentSuggestions] = useState<MlbTeam[]>([]);
   const [mlbResolvedOpponent, setMlbResolvedOpponent] = useState<MlbTeam | null>(null);
-  const [mlbTeams, setMlbTeams] = useState<MlbTeam[]>([]);
+  const [mlbTeams, setMlbTeams] = useState<MlbTeam[]>(MLB_TEAMS_STATIC);
   const [mlbPropType, setMlbPropType] = useState('hits');
   const [mlbShowPropPicker, setMlbShowPropPicker] = useState(false);
   const mlbSearchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    getMlbTeams().then(setMlbTeams).catch(() => {});
+    getMlbTeams().then(data => { if (data && data.length > 0) setMlbTeams(data); }).catch(() => {});
   }, []);
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
