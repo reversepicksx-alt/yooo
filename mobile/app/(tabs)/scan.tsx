@@ -406,7 +406,7 @@ export default function ScanScreen() {
         line:         parseFloat(line),
         opponentName: mlbResolvedOpponent?.displayName || mlbOpponentQuery.trim() || '',
         venue:        venueOverride,
-        season:       2025,
+        season:       2026,
       });
       if ((result as any).error) { setManualError((result as any).error); setPhase('idle'); return; }
       setScanResult({
