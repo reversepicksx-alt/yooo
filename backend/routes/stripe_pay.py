@@ -301,6 +301,10 @@ async def stripe_webhook(request: Request):
         session = event.get("data", {}).get("object", {})
         meta = session.get("metadata") or {}
         email = (session.get("customer_email") or meta.get("email", "")).lower().strip()
+        # Fallback: look up email from Stripe customer record (handles re-subscriptions
+        # made outside our checkout flow where customer_email may be absent)
+        if not email:
+            email = await _email_from_customer(session.get("customer", ""))
         plan_key = meta.get("plan_key", "monthly")
         stripe_sub_id = session.get("subscription", "")
         if email and stripe_sub_id:

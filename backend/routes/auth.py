@@ -79,15 +79,11 @@ async def _check_access_local(email_lower: str):
                     return "Premium (Stripe)"  # paid period not yet over
             except Exception:
                 pass
-    # Stripe: past_due — NO ACCESS. Payment failed = no access. They must update
-    # their payment method and pay to regain entry.
-    # Return a sentinel so check_access does NOT fall through to the live Stripe
-    # check (which could re-grant access if Stripe still shows "active" while retrying).
-    past_due = await db.stripe_subscriptions.find_one(
-        {"email": email_lower, "status": "past_due"}, {"_id": 0}
-    )
-    if past_due:
-        return "__BLOCKED__"
+    # Stripe: past_due — fall through to live Stripe check.
+    # The live check only grants access for active/trialing subs, so a genuinely
+    # past_due user will still be blocked. But if they've since resubscribed and
+    # the webhook missed it, the live check will self-heal their DB record and
+    # grant access — preventing paying customers from being locked out.
     return None
 
 async def _check_stripe_live(email_lower: str):
@@ -224,12 +220,11 @@ async def _check_stripe_live(email_lower: str):
 
 async def check_access(email_lower: str):
     result = await _check_access_local(email_lower)
-    if result == "__BLOCKED__":
-        return None  # hard block — past_due in local DB; never fall through to live Stripe
     if result:
         return result
     # Always fall through to live Stripe check — it handles the canceledAt guard
     # internally and self-heals stale/wrong canceledAt records.
+    # Also self-heals past_due records when a user has since resubscribed.
     return await _check_stripe_live(email_lower)
 
 async def create_session(email: str, access_type: str):
