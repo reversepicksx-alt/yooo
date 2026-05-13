@@ -1633,4 +1633,4 @@ async def _update_mlb_live_picks():
                 )
 
         except Exception as _te:
-            print(f"[MLB LIVE] Team {team_id}/{season} error: {_te}")
+            print(f"[MLB LIVE] Team {team_id}/{current_year} error: {_te}")

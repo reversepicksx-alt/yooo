@@ -230,19 +230,30 @@ async def check_access(email_lower: str):
 async def create_session(email: str, access_type: str):
     # Reuse existing session token so any device that already has it stays logged in.
     # Only generate a new token if there is no existing session (fresh login or after logout).
-    existing = await db.sessions.find_one({"email": email}, {"_id": 0})
+    # All DB writes are wrapped in try/except so a quota error or transient failure
+    # never causes a 500 — we return a valid token regardless.
+    try:
+        existing = await db.sessions.find_one({"email": email}, {"_id": 0})
+    except Exception:
+        existing = None
     if existing and existing.get("session_token"):
-        await db.sessions.update_one(
-            {"email": email},
-            {"$set": {"access_type": access_type, "last_active": datetime.now(timezone.utc).isoformat()}}
-        )
+        try:
+            await db.sessions.update_one(
+                {"email": email},
+                {"$set": {"access_type": access_type, "last_active": datetime.now(timezone.utc).isoformat()}}
+            )
+        except Exception:
+            pass
         return existing["session_token"]
     session_token = str(uuid.uuid4())
-    await db.sessions.update_one(
-        {"email": email},
-        {"$set": {"email": email, "session_token": session_token, "access_type": access_type, "last_active": datetime.now(timezone.utc).isoformat()}},
-        upsert=True
-    )
+    try:
+        await db.sessions.update_one(
+            {"email": email},
+            {"$set": {"email": email, "session_token": session_token, "access_type": access_type, "last_active": datetime.now(timezone.utc).isoformat()}},
+            upsert=True
+        )
+    except Exception:
+        pass  # token still returned — user gets in even if we can't persist the session
     return session_token
 
 @router.post("/verify-access")
