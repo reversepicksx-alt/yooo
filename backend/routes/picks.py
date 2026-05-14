@@ -91,6 +91,7 @@ async def save_pick(req: SavePickRequest):
         "line": pick.get("line", 0),
         "recommendation": (pick.get("recommendation") or "over").lower(),
         "projectedValue": pick.get("projectedValue") or pick.get("projection") or 0,
+        "projection":     pick.get("projection") or pick.get("projectedValue") or 0,
         "confidenceScore": pick.get("confidenceScore") or pick.get("confidence") or 50,
         # rawConfidence preserves the engine's pre-calibration confidence so the
         # calibrator can train against raw values, not its own (calibrated) output.
@@ -98,6 +99,14 @@ async def save_pick(req: SavePickRequest):
         "rawConfidence": pick.get("rawConfidence") or pick.get("confidenceScore") or pick.get("confidence") or 50,
         "confidenceLevel": pick.get("confidenceLevel", "Medium"),
         "confidenceInterval": pick.get("confidenceInterval", []),
+        # Persist Bayesian engine metrics for post-game auditing + model improvement.
+        # These are essential for projection accuracy analysis (was model's direction
+        # correct? how far was the projection from actual?).
+        "bayesianMetrics": pick.get("bayesianMetrics") or {},
+        "pOver":           pick.get("pOver") or (pick.get("bayesianMetrics") or {}).get("pOver"),
+        "pUnder":          pick.get("pUnder") or (pick.get("bayesianMetrics") or {}).get("pUnder"),
+        "priorMean":       pick.get("priorMean") or (pick.get("bayesianMetrics") or {}).get("priorMean"),
+        "momentumMean":    pick.get("momentumMean") or (pick.get("bayesianMetrics") or {}).get("momentumMean"),
         "venue": pick.get("_request", {}).get("venue", "home"),
         "position": pick.get("player", {}).get("position", ""),
         "role": pick.get("player", {}).get("role", ""),

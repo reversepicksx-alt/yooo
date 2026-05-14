@@ -421,6 +421,31 @@ def compute_mlb_projection(
     else:
         posterior_mean = round(posterior_mean, 2)
 
+    # ── EARLY EXIT RISK DETECTION (pitcher strikeouts only) ─────────────────
+    # MLB starters get scratched / pulled in the 1st inning ~7% of games →
+    # automatic actual=0 K, killing any OVER bet. We detect this pattern from
+    # the recent game log and apply a compound scratch discount to the Poisson
+    # lambda before MC so the model naturally leans UNDER on fragile starters.
+    early_exit_risk = False
+    zero_k_count    = 0
+    scratch_discount = 1.0
+    if prop_type == "pitcher_strikeouts":
+        recent_vals  = [g["val"] for g in valid_games[:5]]
+        zero_k_count = sum(1 for v in recent_vals if v == 0)
+        # Base league-wide scratch probability: ~7% → 0.93 multiplier
+        base_scratch = 0.93
+        if zero_k_count >= 3:
+            # 3+ zero-K starts in last 5: fragile/volatile starter
+            early_exit_risk  = True
+            scratch_discount = base_scratch * 0.88   # total ~18% reduction
+        elif zero_k_count == 2:
+            early_exit_risk  = True
+            scratch_discount = base_scratch * 0.92   # total ~14% reduction
+        elif zero_k_count == 1:
+            scratch_discount = base_scratch * 0.96   # total ~11% reduction
+        else:
+            scratch_discount = base_scratch          # baseline 7% reduction
+
     # ── EFFECTIVE STD (for CI and Gaussian MC) ───────────────────────────────
     posterior_std = math.sqrt(max(0.1, 1.0 / total_precision))
     if is_count and prop_type not in {"innings_pitched"}:
@@ -431,7 +456,11 @@ def compute_mlb_projection(
 
     # ── MONTE CARLO ──────────────────────────────────────────────────────────
     if is_count and prop_type != "innings_pitched":
-        p_over, p_under, ci_low, ci_high = _poisson_mc(posterior_mean, line)
+        # For pitcher strikeouts apply scratch discount to the Poisson lambda.
+        # This shifts P(OVER) down without touching the direction of the projection
+        # itself — it reflects the real-world probability a starter never pitches.
+        mc_lambda = posterior_mean * scratch_discount if prop_type == "pitcher_strikeouts" else posterior_mean
+        p_over, p_under, ci_low, ci_high = _poisson_mc(mc_lambda, line)
     else:
         effective_std = max(posterior_std, posterior_mean * 0.12, 0.33)
         p_over, p_under, ci_low, ci_high = _gaussian_mc(posterior_mean, effective_std, line)
@@ -447,17 +476,31 @@ def compute_mlb_projection(
     elif recommendation == "UNDER" and posterior_mean > line:
         posterior_mean = round(line - (posterior_mean - line) * 0.3, 2)
 
-    # ── CONFIDENCE CALIBRATION (empirical position caps) ────────────────────
-    _POS_CAPS = {
-        # Pitchers: strikeouts have high variance — cap OVER confidence
-        "SP": {"pitcher_strikeouts": 72, "innings_pitched": 68},
-        "RP": {"pitcher_strikeouts": 65},
+    # ── CONFIDENCE CALIBRATION (empirical + direction-specific caps) ─────────
+    # Empirical hit rates from Atlas audit:
+    #   pitcher_strikeouts OVER  → 36% historical  → hard cap 62%
+    #   pitcher_strikeouts UNDER → 73% historical  → cap 73%
+    #   innings_pitched OVER     → volatile        → cap 62%
+    # Without this, the model produces 70-73% "High" confidence OVER picks
+    # that lose 64% of the time — the worst possible outcome.
+    _DIRECTION_CAPS: dict[str, dict[str, float]] = {
+        "pitcher_strikeouts": {"OVER": 62.0, "UNDER": 73.0},
+        "innings_pitched":    {"OVER": 62.0, "UNDER": 68.0},
     }
-    pos_upper = (position or "").upper()
-    cap = _POS_CAPS.get(pos_upper, {}).get(prop_type)
+    # Position-level overlay (relievers are even more volatile)
+    _POS_CAPS: dict[str, dict[str, float]] = {
+        "RP": {"pitcher_strikeouts": 60.0, "innings_pitched": 58.0},
+    }
+    pos_upper    = (position or "").upper()
+    rec_dir      = "OVER" if p_over >= p_under else "UNDER"
+    dir_cap      = _DIRECTION_CAPS.get(prop_type, {}).get(rec_dir)
+    pos_cap      = _POS_CAPS.get(pos_upper, {}).get(prop_type)
+
     confidence_score = raw_confidence
-    if cap and confidence_score > cap:
-        confidence_score = cap
+    if dir_cap is not None:
+        confidence_score = min(confidence_score, dir_cap)
+    if pos_cap is not None:
+        confidence_score = min(confidence_score, pos_cap)
 
     # Absolute floor/ceiling — baseball is highly variable; cap at 73% max
     confidence_score = min(73.0, max(50.0, confidence_score))
@@ -567,11 +610,12 @@ def compute_mlb_projection(
     else:
         streak_flag = "MIXED"
 
+    early_exit_note = f" ⚠ EARLY_EXIT_RISK zero_k={zero_k_count} discount={scratch_discount:.2f}" if early_exit_risk else f" scratch_discount={scratch_discount:.2f}"
     print(f"[MLB ENGINE] {prop_type} pos={position} venue={venue} "
           f"prior={prior_mean:.2f} momentum={momentum_mean:.2f} ({momentum_label}) "
           f"posterior={posterior_mean:.2f} vs line={line} "
           f"P(O)={p_over}% P(U)={p_under}% → {recommendation} ({confidence_score:.0f}%) "
-          f"streak={streak_flag}")
+          f"streak={streak_flag}{early_exit_note}")
 
     return {
         "sport":             "mlb",
@@ -619,6 +663,10 @@ def compute_mlb_projection(
             "parkTeam":          park_team,
             "priorPrecision":    round(prior_precision, 4),
             "momentumPrecision": round(momentum_precision, 4),
+            # Early-exit / scratch risk fields (pitcher strikeouts only)
+            "earlyExitRisk":     early_exit_risk,
+            "zeroKCount":        zero_k_count,
+            "scratchDiscount":   round(scratch_discount, 3),
         },
         "gameLogs":        display_logs,
         "sampleSize":      n_games,

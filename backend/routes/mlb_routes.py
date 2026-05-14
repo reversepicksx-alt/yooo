@@ -31,8 +31,10 @@ async def _get_mlb_ai_analysis(
     pitcher_name: str = "",
     park_team: str = "",
     park_factor_pct: float = 0.0,
+    early_exit_risk: bool = False,
+    zero_k_count: int = 0,
 ) -> dict:
-    """Call Grok for MLB sharp verdict + reasoning, now with park + pitcher context."""
+    """Call Grok for MLB sharp verdict + reasoning, with park + pitcher + early-exit context."""
     is_pitcher = prop_type in mlb_engine.PITCHER_PROPS
     prop_label = prop_type.replace("_", " ").title()
 
@@ -73,12 +75,21 @@ async def _get_mlb_ai_analysis(
     elif opponent and not is_pitcher:
         pitcher_text = f"\nNote: opposing pitcher for {opponent} is unknown — factor in their typical rotation quality."
 
+    # Early-exit / scratch risk warning for pitcher strikeout OVER picks
+    risk_text = ""
+    if prop_type == "pitcher_strikeouts" and early_exit_risk:
+        risk_text = (
+            f"\n⚠ EARLY-EXIT RISK: This pitcher has {zero_k_count} starts with 0 K "
+            f"in their last 5 game log — indicating early scratches or 1st-inning pulls. "
+            f"Weight this heavily in your reasoning; the model has already discounted the OVER probability."
+        )
+
     prompt = f"""MLB Props sharp analysis (for experienced sports bettors):
 
 Player: {player_name} ({position})
 Prop: {prop_label} | Line: {line} | Venue: {venue.upper()} vs {opponent or 'TBD'}
 Season avg: {prior_mean:.1f} | Recent form: {momentum_label}
-Model projection: {projection:.1f} → {recommendation} (P(OVER)={p_over}%, P(UNDER)={p_under}%){streak_text}{park_text}{pitcher_text}
+Model projection: {projection:.1f} → {recommendation} (P(OVER)={p_over}%, P(UNDER)={p_under}%){streak_text}{park_text}{pitcher_text}{risk_text}
 
 Recent game log (G1 = most recent):
 {game_ctx}
@@ -86,10 +97,10 @@ Recent game log (G1 = most recent):
 Write a sharp analysis covering:
 1. Core edge: why project {projection:.1f} vs the {line} line
 2. Park and/or pitcher matchup impact — be specific if pitcher is named
-3. Main risk / counter-argument
+3. Main risk / counter-argument (mention early-exit risk if flagged above)
 
 Be direct, data-driven. Return JSON ONLY:
-{{"sharpSummary": "<1 tight sentence with the core edge>", "reasoning": "<2-3 sharp sentences covering matchup, park, momentum>"}}"""
+{{"sharpSummary": "<1 tight sentence with the core edge>", "reasoning": "<2-3 sharp sentences covering matchup, park, momentum, risk>"}}"""
 
     # Try Grok first
     try:
@@ -291,6 +302,8 @@ async def mlb_predict(req: MlbPredictRequest):
         pitcher_name   = req.pitcherName or "",
         park_team      = park_team,
         park_factor_pct= bm.get("parkFactorPct", 0.0),
+        early_exit_risk= bm.get("earlyExitRisk", False),
+        zero_k_count   = bm.get("zeroKCount", 0),
     ))
 
     # ── Build response (same shape as soccer predict for UI compatibility) ────
