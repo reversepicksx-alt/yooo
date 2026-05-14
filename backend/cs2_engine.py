@@ -1,14 +1,17 @@
 """
-CS2 Bayesian Projection Engine v2 — World-Class Edition
+CS2 Bayesian Projection Engine v3 — Precision Edition
 
-5-layer model for Counter-Strike 2 player props:
+7-layer model for Counter-Strike 2 player props:
 
-  Layer 1: PRIOR          — Career kills-per-round × expected rounds (hyper-prior shrinkage)
-  Layer 2: MOMENTUM       — KAST-weighted decayed recent form (last 8 entries, newest first)
+  Layer 1: PRIOR          — Career KPR × expected rounds (hyper-prior shrinkage)
+  Layer 2: MOMENTUM       — KAST + fatigue + H2H weighted decayed recent form
   Layer 3: OPPONENT TIER  — Full 7-bracket rank adjustment (Top5 → 100+)
   Layer 4: COVARIATES     — Tournament tier, first-duel ratio, entry-fragger variance,
                             overtime propensity, KAST consistency, win-rate context
+  Layer 4b: H2H FORM      — Head-to-head win rate vs specific opponent
+  Layer 4c: MAP AWARENESS — Map-specific round estimates (Nuke/Vertigo vs Dust2/Anubis)
   Layer 5: MC SIMULATION  — Negative-binomial for discrete counts, Gaussian for continuous
+  Layer 5b: KPR SIGNATURE — AWPer/boom-bust vs consistent rifler variance calibration
 
 50,000 Monte Carlo trials. All factors independently sourced from BDL API data.
 """
@@ -264,21 +267,24 @@ def _round_normalized_projection(
     prop_type: str,
     prior_mean: float,
     n: int,
+    map_name: Optional[str] = None,
 ) -> float:
     """
     For kills props: normalize by rounds played to get kills/round,
     then scale back by expected rounds for tomorrow's match.
     This is the single most important correction for kill props.
+    When map_name is known, use its historically-calibrated round count
+    instead of the global average (Upgrade 1: map pool awareness).
     """
     if prop_type not in KILLS_CLASS_PROPS:
         return prior_mean
 
-    is_match = prop_type in MATCH_LEVEL_PROPS
-    kpr_field   = "killsPerRound_m1m2" if is_match else "killsPerRound"
+    is_match     = prop_type in MATCH_LEVEL_PROPS
+    kpr_field    = "killsPerRound_m1m2" if is_match else "killsPerRound"
     rounds_field = "maps_1_2_rounds"   if is_match else "totalRounds"
 
-    kpr_vals     = [m.get(kpr_field, 0) for m in logs if m.get(kpr_field, 0) > 0]
-    rounds_vals  = [m.get(rounds_field, 0) for m in logs if m.get(rounds_field, 0) > 0]
+    kpr_vals    = [m.get(kpr_field, 0) for m in logs if m.get(kpr_field, 0) > 0]
+    rounds_vals = [m.get(rounds_field, 0) for m in logs if m.get(rounds_field, 0) > 0]
 
     if not kpr_vals:
         return prior_mean
@@ -288,13 +294,177 @@ def _round_normalized_projection(
     alpha      = min(len(kpr_vals), MIN_SAMPLE) / MIN_SAMPLE
     kpr        = alpha * career_kpr + (1 - alpha) * KPR_HYPER
 
-    # Expected rounds tomorrow (use recent avg rounds as baseline)
-    if rounds_vals:
+    # Expected rounds: map-specific > recent avg > global default
+    map_rounds = _get_map_expected_rounds(map_name, is_match)
+    if map_rounds is not None:
+        expected_rounds = map_rounds
+    elif rounds_vals:
         expected_rounds = sum(rounds_vals) / len(rounds_vals)
     else:
         expected_rounds = EXPECTED_ROUNDS_2MAPS if is_match else EXPECTED_ROUNDS_PER_MAP
 
     return kpr * expected_rounds
+
+
+# ── Upgrade 1: Map pool awareness ─────────────────────────────────────────────
+# Per-map expected round counts based on historical CT-side advantage data.
+# Sources: HLTV map statistics. Used to replace the global average when the
+# specific map is announced before the match.
+_MAP_ROUNDS: dict[str, float] = {
+    "nuke":        22.5,   # heavily CT-sided — short, defenders dominate
+    "overpass":    23.5,   # CT-favoured, long rotations
+    "vertigo":     23.5,   # elevated CT control
+    "ancient":     24.5,   # balanced-CT, slower pace
+    "train":       24.0,   # CT-favoured, hard T side
+    "inferno":     25.5,   # balanced, slightly CT
+    "dust2":       25.0,   # most balanced map in the pool
+    "mirage":      26.0,   # balanced, high round count
+    "anubis":      26.5,   # T-friendly, aggressive pace
+    "cache":       25.0,
+    "cobblestone": 26.0,
+}
+
+
+def _get_map_expected_rounds(map_name: Optional[str], is_match: bool) -> Optional[float]:
+    """Return map-specific expected round count (or None if map unknown)."""
+    if not map_name:
+        return None
+    clean = map_name.lower().replace("de_", "").strip()
+    rounds = _MAP_ROUNDS.get(clean)
+    if rounds is None:
+        return None
+    return rounds * 2 if is_match else rounds
+
+
+# ── Upgrade 2: Multi-match fatigue ────────────────────────────────────────────
+
+def _fatigue_weight(log_entry: dict, all_logs: list) -> float:
+    """
+    Downweight momentum entries when a player played multiple matches on the
+    same day (e.g. 6 matches in a single tournament day).  Playing back-to-back
+    matches degrades performance — these entries are less predictive of a
+    well-rested future match.
+    """
+    date = log_entry.get("date", "")
+    if not date:
+        return 1.0
+    same_day = sum(1 for m in all_logs if m.get("date", "") == date)
+    if same_day >= 4:
+        return 0.40
+    if same_day >= 3:
+        return 0.55
+    if same_day >= 2:
+        return 0.75
+    return 1.0
+
+
+# ── Upgrade 3: H2H weighting ──────────────────────────────────────────────────
+
+def _h2h_momentum_boost(log_entry: dict, opponent_name: Optional[str]) -> float:
+    """
+    Boost the momentum weight for games played specifically vs this opponent.
+    Head-to-head performance is more predictive than general form for the
+    specific matchup being priced.
+    """
+    if not opponent_name:
+        return 1.0
+    opp_in_log = (log_entry.get("opponent") or "").lower()
+    target     = opponent_name.lower()
+    if target in opp_in_log or opp_in_log in target:
+        return 1.60   # H2H games weighted 60% higher in recent-form calc
+    return 1.0
+
+
+def _h2h_form_multiplier(logs: list, opponent_name: Optional[str], prop_type: str) -> float:
+    """
+    H2H win rate vs this specific opponent → small projection adjustment.
+    Dominant H2H history means the player performs well in this matchup.
+    Capped at ±4% — H2H record is meaningful signal, not a decisive one.
+    """
+    if not opponent_name or prop_type not in {"kills", "maps_1_2_kills"}:
+        return 1.0
+    target   = opponent_name.lower()
+    h2h_logs = [
+        m for m in logs
+        if target in (m.get("opponent") or "").lower()
+        or (m.get("opponent") or "").lower() in target
+    ]
+    if len(h2h_logs) < 2:
+        return 1.0
+    won_field = "wonMatch" if prop_type in MATCH_LEVEL_PROPS else "wonMap"
+    wins      = sum(1 for m in h2h_logs if m.get(won_field))
+    win_rate  = wins / len(h2h_logs)
+    if win_rate >= 0.70:
+        return 1.04
+    if win_rate >= 0.55:
+        return 1.02
+    if win_rate <= 0.30:
+        return 0.96
+    if win_rate <= 0.45:
+        return 0.98
+    return 1.0
+
+
+# ── Upgrade 4: Opponent current form (H2H kill trend) ─────────────────────────
+
+def _h2h_kill_trend(logs: list, opponent_name: Optional[str], prop_type: str) -> float:
+    """
+    Look at the player's actual kill totals in H2H games vs this opponent.
+    If they consistently over/under-perform vs this team vs their global average,
+    apply a small correction.  Requires ≥2 H2H entries to trigger.
+    """
+    if not opponent_name or prop_type not in {"kills", "maps_1_2_kills"}:
+        return 1.0
+    target   = opponent_name.lower()
+    h2h_logs = [
+        m for m in logs
+        if target in (m.get("opponent") or "").lower()
+        or (m.get("opponent") or "").lower() in target
+    ]
+    if len(h2h_logs) < 2:
+        return 1.0
+    field     = CS2_PROPS.get(prop_type, prop_type)
+    all_vals  = [float(m.get(field, 0)) for m in logs       if m.get(field) is not None and float(m.get(field, 0)) > 0]
+    h2h_vals  = [float(m.get(field, 0)) for m in h2h_logs   if m.get(field) is not None and float(m.get(field, 0)) > 0]
+    if not all_vals or not h2h_vals:
+        return 1.0
+    global_avg = sum(all_vals) / len(all_vals)
+    h2h_avg    = sum(h2h_vals) / len(h2h_vals)
+    if global_avg <= 0:
+        return 1.0
+    ratio = h2h_avg / global_avg
+    # Cap adjustment at ±5%: if player typically gets 20% more kills vs this team, apply 5% boost
+    return max(0.95, min(1.05, 0.50 + 0.50 * ratio))
+
+
+# ── Upgrade 5: KPR signature variance (AWPer vs rifler detection) ──────────────
+
+def _kpr_signature_variance(logs: list, prop_type: str, std_dev: float) -> float:
+    """
+    Detect player style from the coefficient of variation (std/mean) of KPR.
+
+    AWPers have bimodal KPR: massive rounds when the rifle is working, near-zero
+    when opponents buy counters or win the AWP early.  This is captured by high
+    CoV and means the variance on their kill total should be wider.
+
+    Consistent riflers (CoV < 0.25) are more predictable → tighten variance.
+    """
+    if prop_type not in KILLS_CLASS_PROPS or len(logs) < 5:
+        return std_dev
+    kpr_field = "killsPerRound_m1m2" if prop_type in MATCH_LEVEL_PROPS else "killsPerRound"
+    kpr_vals  = [m.get(kpr_field, 0) for m in logs if (m.get(kpr_field) or 0) > 0]
+    if len(kpr_vals) < 5:
+        return std_dev
+    mean_kpr = sum(kpr_vals) / len(kpr_vals)
+    if mean_kpr <= 0:
+        return std_dev
+    std_kpr  = stats_mod.stdev(kpr_vals)
+    cov      = std_kpr / mean_kpr
+    if cov > 0.50:        # boom-bust / AWPer
+        return std_dev * 1.20
+    if cov < 0.25:        # laser-consistent rifler
+        return std_dev * 0.88
+    return std_dev
 
 
 # ── Main projection function ──────────────────────────────────────────────────
@@ -305,6 +475,8 @@ def compute_cs2_projection(
     line: float,
     opponent_rank: Optional[int] = None,
     tournament_tier: Optional[str] = None,
+    opponent_name: Optional[str] = None,
+    map_name: Optional[str] = None,
 ) -> dict:
     """
     5-layer Bayesian CS2 projection.
@@ -348,24 +520,27 @@ def compute_cs2_projection(
     prior_mean  = alpha * season_mean + (1 - alpha) * hyper
 
     # Round-normalize kills props (most important tactical correction)
+    # Upgrade 1 (map awareness): pass map_name so map-specific rounds are used
     if prop_type in KILLS_CLASS_PROPS:
-        rn_proj   = _round_normalized_projection(map_logs, prop_type, prior_mean, n)
-        # Blend: 70% round-normalised (tactical), 30% raw (preserves style)
-        # Increased from 60/40 — round normalization is the better predictor
+        rn_proj    = _round_normalized_projection(map_logs, prop_type, prior_mean, n, map_name)
         prior_mean = 0.70 * rn_proj + 0.30 * prior_mean
 
-    # ── Layer 2: KAST-weighted momentum ──────────────────────────────────────
-    recent   = values[:len(DECAY)]
-    w_vals   = []
-    weights  = []
+    # ── Layer 2: Momentum (KAST + fatigue + H2H weighted) ────────────────────
+    # Upgrade 2 (fatigue): downweight same-day multi-game entries
+    # Upgrade 3 (H2H):     upweight games vs this specific opponent
+    recent  = values[:len(DECAY)]
+    w_vals  = []
+    weights = []
     for i, v in enumerate(recent):
         if i >= len(map_logs):
             break
         log_entry = map_logs[i]
-        tier_w  = _tier_weight(log_entry.get("tier", ""))
-        kast_w  = _kast_weight(log_entry, prop_type)
-        decay_w = DECAY[i]
-        w = decay_w * tier_w * kast_w
+        tier_w    = _tier_weight(log_entry.get("tier", ""))
+        kast_w    = _kast_weight(log_entry, prop_type)
+        fatigue_w = _fatigue_weight(log_entry, map_logs)       # Upgrade 2
+        h2h_w     = _h2h_momentum_boost(log_entry, opponent_name)  # Upgrade 3
+        decay_w   = DECAY[i]
+        w = decay_w * tier_w * kast_w * fatigue_w * h2h_w
         w_vals.append(v)
         weights.append(w)
 
@@ -398,6 +573,14 @@ def compute_cs2_projection(
     ot_bonus = _overtime_boost(map_logs, prop_type)
     projection += ot_bonus
 
+    # 4e. H2H form multiplier — win rate vs this opponent (Upgrade 3/4)
+    h2h_form_mult = _h2h_form_multiplier(map_logs, opponent_name, prop_type)
+    projection   *= h2h_form_mult
+
+    # 4f. H2H kill trend — actual kills vs this opponent vs global avg (Upgrade 4)
+    h2h_trend_mult = _h2h_kill_trend(map_logs, opponent_name, prop_type)
+    projection    *= h2h_trend_mult
+
     projection = max(projection, 0.0)
 
     # ── Variance estimation ───────────────────────────────────────────────────
@@ -419,13 +602,17 @@ def compute_cs2_projection(
     ]
     avg_kast = sum(kast_vals) / max(len([k for k in kast_vals if k > 0]), 1)
     if avg_kast >= 75:
-        std_dev *= 0.88   # consistent player (was 0.85 — slightly less aggressive)
+        std_dev *= 0.88
     elif avg_kast <= 55 and avg_kast > 0:
-        std_dev *= 1.25   # boom-bust player
+        std_dev *= 1.25
 
     # Entry fragger variance adjustment
     std_dev *= fd_var_mult
-    std_dev  = max(std_dev, 1.5)   # floor was 0.5 — CS2 kill totals are volatile
+
+    # Upgrade 5: KPR signature — AWPer boom-bust vs laser-consistent rifler
+    std_dev = _kpr_signature_variance(map_logs, prop_type, std_dev)
+
+    std_dev = max(std_dev, 1.5)
 
     # ── Layer 5: Monte Carlo (Negative-Binomial for counts) ───────────────────
     is_count  = prop_type in COUNT_PROPS
@@ -493,6 +680,28 @@ def compute_cs2_projection(
     avg_fk    = sum(m.get(fk_field, 0) or 0 for m in map_logs[:10]) / max(len(map_logs[:10]), 1)
     avg_fd    = sum(m.get(fd_field, 0) or 0 for m in map_logs[:10]) / max(len(map_logs[:10]), 1)
 
+    # KPR CoV for display
+    kpr_cov = None
+    if len(kpr_vals) >= 5 and (sum(kpr_vals) / len(kpr_vals)) > 0:
+        mean_kpr = sum(kpr_vals) / len(kpr_vals)
+        try:
+            kpr_cov = round(stats_mod.stdev(kpr_vals) / mean_kpr, 3)
+        except Exception:
+            pass
+
+    # H2H summary for display
+    target_opp  = (opponent_name or "").lower()
+    h2h_entries = [m for m in map_logs if target_opp and (
+        target_opp in (m.get("opponent") or "").lower() or
+        (m.get("opponent") or "").lower() in target_opp
+    )]
+    h2h_n    = len(h2h_entries)
+    h2h_avg  = None
+    if h2h_entries:
+        field_key = CS2_PROPS.get(prop_type, prop_type)
+        h2h_vals  = [float(m.get(field_key, 0)) for m in h2h_entries if m.get(field_key) is not None]
+        h2h_avg   = round(sum(h2h_vals) / len(h2h_vals), 1) if h2h_vals else None
+
     return {
         "projection":    display_proj,
         "pOver":         p_over,
@@ -514,5 +723,14 @@ def compute_cs2_projection(
             "avgKast":               round(avg_kast, 1),
             "overtimeBonus":         ot_bonus,
             "avgKillsPerRound":      round(sum(kpr_vals) / len(kpr_vals), 3) if kpr_vals else None,
+            # New upgrade signals
+            "h2hFormMult":           round(h2h_form_mult, 3),
+            "h2hKillTrendMult":      round(h2h_trend_mult, 3),
+            "h2hGames":              h2h_n,
+            "h2hAvgKills":           h2h_avg,
+            "kprCoV":                kpr_cov,
+            "mapAwareness":          map_name or None,
+            "mapExpectedRounds":     _get_map_expected_rounds(map_name, prop_type in MATCH_LEVEL_PROPS),
+            "fatigueActive":         any(_fatigue_weight(m, map_logs) < 1.0 for m in map_logs[:8]),
         },
     }

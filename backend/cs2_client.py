@@ -418,3 +418,144 @@ async def get_rankings(limit: int = 30) -> list:
     except Exception as e:
         log.error(f"CS2 rankings error: {e}")
         return []
+
+
+async def get_cs2_completed_match_result(
+    team_id: int,
+    player_id: int,
+    opponent_name: str,
+    prop_type: str,
+    after_iso: str,
+) -> Optional[dict]:
+    """
+    Find a completed CS2 match for team_id vs opponent_name that occurred
+    after after_iso (pick save timestamp).  Returns a dict with the player's
+    actual stat values so the pick can be settled as hit/miss/push.
+
+    Returns None if no matching finished match is found yet.
+    """
+    from datetime import timedelta
+    try:
+        after_dt = datetime.fromisoformat(after_iso.replace("Z", "+00:00")).replace(tzinfo=None)
+    except Exception:
+        after_dt = None
+
+    try:
+        # Scan the 25 most recent finished team matches (cheap — usually 1-2 pages)
+        matches = await _fetch_matches_paginated(team_id, max_matches=25)
+        target  = opponent_name.strip().lower()
+
+        for match in matches:
+            mt1 = match.get("team1") or {}
+            mt2 = match.get("team2") or {}
+            opp = mt2 if mt1.get("id") == team_id else mt1
+            opp_name = (opp.get("name") or "").lower()
+
+            # Fuzzy opponent match (first-word also accepted)
+            opp_word = opp_name.split()[0] if opp_name else ""
+            if not (target in opp_name or opp_name in target or opp_word in target):
+                continue
+
+            # Date guard — match must be on or after the pick was saved
+            date_str = _parse_date_from_slug(match.get("slug", ""))
+            if date_str and after_dt:
+                try:
+                    match_dt = datetime.fromisoformat(date_str)
+                    # Allow pick saved up to 6h before match slug date (timezone slack)
+                    if match_dt < after_dt - timedelta(hours=6):
+                        continue
+                except Exception:
+                    pass
+
+            # Fetch maps — completed matches have round scores
+            maps_r = await _get("/match_maps", {"match_ids[]": match.get("id"), "per_page": 10})
+            maps   = maps_r.get("data", [])
+            if not maps:
+                continue
+
+            # A finished match has at least one map with actual scores
+            finished_maps = [
+                m for m in maps
+                if (m.get("team1_score") or 0) + (m.get("team2_score") or 0) > 0
+            ]
+            if not finished_maps:
+                continue   # match not yet complete
+
+            # Fetch player stats from this match
+            per_map_stats = await _fetch_match_maps_and_stats(match, team_id, player_id)
+            if not per_map_stats:
+                continue
+
+            map_lookup = {ms["mapNumber"]: ms for ms in per_map_stats}
+
+            # Determine actual value based on prop_type
+            if prop_type in ("maps_1_2_kills", "maps_1_2_deaths", "maps_1_2_assists"):
+                m1 = map_lookup.get(1, {})
+                m2 = map_lookup.get(2, {})
+                m12 = [m for m in (m1, m2) if m]
+                if not m12:
+                    m12 = sorted(per_map_stats, key=lambda x: x.get("mapNumber", 0))[:2]
+                stat_key = {
+                    "maps_1_2_kills":   "kills",
+                    "maps_1_2_deaths":  "deaths",
+                    "maps_1_2_assists": "assists",
+                }.get(prop_type, "kills")
+                actual = sum(m.get(stat_key, 0) for m in m12)
+            elif prop_type in ("maps_1_2_adr",):
+                m1 = map_lookup.get(1, {})
+                m2 = map_lookup.get(2, {})
+                m12 = [m for m in (m1, m2) if m]
+                adrs = [m.get("adr", 0) for m in m12 if m.get("adr", 0) > 0]
+                actual = round(sum(adrs) / len(adrs), 1) if adrs else None
+            elif prop_type == "kills":
+                # Per-map prop — use map 1
+                actual = map_lookup.get(1, {}).get("kills")
+            elif prop_type == "deaths":
+                actual = map_lookup.get(1, {}).get("deaths")
+            elif prop_type == "assists":
+                actual = map_lookup.get(1, {}).get("assists")
+            elif prop_type == "adr":
+                actual = map_lookup.get(1, {}).get("adr")
+            elif prop_type == "rating":
+                actual = map_lookup.get(1, {}).get("rating")
+            elif prop_type == "first_kills":
+                actual = map_lookup.get(1, {}).get("firstKills")
+            elif prop_type == "clutches_won":
+                actual = map_lookup.get(1, {}).get("clutchesWon")
+            else:
+                actual = None
+
+            if actual is None:
+                continue
+
+            # Build score string (e.g. "TYLOO 2 – 1 5star")
+            mt1_name = (mt1.get("name") or "")
+            mt2_name = (mt2.get("name") or "")
+            map_scores = [(m.get("team1_score", 0) or 0) for m in finished_maps]
+            opp_scores = [(m.get("team2_score", 0) or 0) for m in finished_maps]
+            # Count map wins per side
+            team_map_wins = sum(
+                1 for m in finished_maps
+                if ((m.get("winner") or {}).get("id") == team_id)
+            )
+            opp_map_wins  = len(finished_maps) - team_map_wins
+            home_name = mt1_name if mt1.get("id") == team_id else mt2_name
+            away_name = mt2_name if mt1.get("id") == team_id else mt1_name
+            score_str = f"{home_name} {team_map_wins}–{opp_map_wins} {away_name}"
+
+            log.info(
+                f"[CS2 SETTLE] {prop_type} vs {opp.get('name')} "
+                f"actual={actual} date={date_str} score={score_str}"
+            )
+            return {
+                "actualValue": actual,
+                "matchScore":  score_str,
+                "matchDate":   date_str,
+                "opponent":    opp.get("name", opponent_name),
+                "mapsPlayed":  len(finished_maps),
+            }
+
+    except Exception as e:
+        log.error(f"[CS2 SETTLE] Error fetching completed match result: {e}")
+
+    return None

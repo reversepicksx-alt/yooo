@@ -202,6 +202,7 @@ class Cs2PredictRequest(BaseModel):
     line:           float
     opponentName:   Optional[str]  = ""
     opponentRank:   Optional[int]  = None
+    mapName:        Optional[str]  = None   # e.g. "Mirage", "de_nuke" — map pool awareness
 
 
 @router.post("/predict")
@@ -252,7 +253,7 @@ async def cs2_predict(req: Cs2PredictRequest):
     is_match_level = prop_type in cs2_engine.MATCH_LEVEL_PROPS
     try:
         if is_match_level:
-            map_logs = await cs2_client.get_player_recent_match_stats(player_id, team_id, limit=15)
+            map_logs = await cs2_client.get_player_recent_match_stats(player_id, team_id, limit=30)
         else:
             map_logs = await cs2_client.get_player_recent_map_stats(player_id, team_id, limit=30)
     except Exception as e:
@@ -283,6 +284,8 @@ async def cs2_predict(req: Cs2PredictRequest):
         prop_type=prop_type,
         line=req.line,
         opponent_rank=opp_rank,
+        opponent_name=req.opponentName or None,
+        map_name=req.mapName or None,
     )
 
     if result.get("error") == "insufficient_data":

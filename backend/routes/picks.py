@@ -4,6 +4,7 @@ import unicodedata
 import asyncio as aio
 import traceback
 from datetime import datetime, timezone
+from typing import Optional
 from fastapi import APIRouter, HTTPException
 
 from config import db, CURRENT_SEASON, STAT_LAMBDA_MAP
@@ -12,6 +13,7 @@ from models import (
     CorrectPickRequest, LiveUpdateRequest, SettlePicksRequest,
 )
 from utils import api_football_request
+import cs2_client as _cs2_client
 # auto_analyze_miss_background REMOVED — was draining AI tokens on every miss settlement
 
 router = APIRouter(prefix="/api", tags=["picks"])
@@ -310,6 +312,27 @@ async def list_picks(req: GetPicksRequest):
         "hits", "home_runs", "rbi", "walks", "strikeouts", "runs",
         "total_bases", "stolen_bases", "doubles", "plate_appearances",
     }
+    # ── CS2 auto-settle ────────────────────────────────────────────────────────
+    # When a CS2 match finishes, settle the pick by fetching the player's real
+    # final stats from the BDL CS2 API. No live tracking — just a post-match
+    # check each time the user opens their picks screen.
+    cs2_live_picks = [p for p in live_picks if p.get("sport") == "cs2"]
+    if cs2_live_picks:
+        try:
+            cs2_settle_tasks = [_settle_cs2_pick({**p, "email": req.email.lower()}) for p in cs2_live_picks]
+            cs2_results = await aio.gather(*cs2_settle_tasks, return_exceptions=True)
+            for p, settled in zip(cs2_live_picks, cs2_results):
+                if isinstance(settled, Exception) or not settled:
+                    continue
+                p["status"]      = "settled"
+                p["result"]      = settled.get("result", "pending")
+                p["actualValue"] = settled.get("actualValue")
+                p["hitPct"]      = settled.get("hitPct")
+                p["matchScore"]  = settled.get("matchScore")
+                p["settledAt"]   = settled.get("settledAt")
+        except Exception:
+            traceback.print_exc()
+
     soccer_live_picks = [
         p for p in live_picks
         if p.get("sport", "soccer") not in ("mlb", "cs2") and p.get("propType", "") not in _MLB_PROP_SET
@@ -1059,6 +1082,83 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
         }
 
     return None
+
+
+async def _settle_cs2_pick(pick: dict) -> Optional[dict]:
+    """
+    Auto-settle a CS2 pick once the match is finished.
+    Fetches the player's actual maps 1-2 kills (or other stat) from the
+    BDL CS2 API and compares against the saved line.
+    Returns a settlement dict or None if the match isn't finished yet.
+    """
+    team_id       = pick.get("teamId")
+    player_id     = pick.get("playerId")
+    opponent_name = pick.get("opponentName", "")
+    prop_type     = pick.get("propType", "maps_1_2_kills")
+    line          = pick.get("line", 0)
+    recommendation = pick.get("recommendation", "over")
+    timestamp     = pick.get("timestamp", "")
+
+    if not team_id or not player_id or not opponent_name:
+        return None
+
+    # Normalise timestamp to ISO string
+    if isinstance(timestamp, (int, float)) and timestamp > 0:
+        ts_iso = datetime.fromtimestamp(timestamp / 1000, tz=timezone.utc).isoformat()
+    elif isinstance(timestamp, str) and timestamp:
+        ts_iso = timestamp
+    else:
+        ts_iso = datetime.now(timezone.utc).isoformat()
+
+    try:
+        result = await _cs2_client.get_cs2_completed_match_result(
+            team_id=int(team_id),
+            player_id=int(player_id),
+            opponent_name=opponent_name,
+            prop_type=prop_type,
+            after_iso=ts_iso,
+        )
+    except Exception as e:
+        print(f"[CS2 SETTLE] error for {pick.get('playerName','?')}: {e}")
+        return None
+
+    if not result or result.get("actualValue") is None:
+        return None
+
+    actual_value = result["actualValue"]
+    result_str   = _settle_result(actual_value, line, recommendation)
+    hit_pct      = 100 if result_str == "hit" else (0 if result_str == "miss" else 50)
+    now_iso      = datetime.now(timezone.utc).isoformat()
+
+    settle_set = {
+        "status":      "settled",
+        "result":      result_str,
+        "actualValue": actual_value,
+        "hitPct":      hit_pct,
+        "matchScore":  result.get("matchScore"),
+        "settledAt":   now_iso,
+    }
+
+    await db.picks.update_one(
+        {"pickId": pick["pickId"], "email": pick.get("email", "")},
+        {"$set": settle_set},
+    )
+
+    print(
+        f"[CS2 SETTLE] {pick.get('playerName','?')} {prop_type} "
+        f"actual={actual_value} line={line} → {result_str.upper()} "
+        f"(match: {result.get('matchScore','')})"
+    )
+
+    return {
+        "pickId":      pick["pickId"],
+        "status":      "settled",
+        "result":      result_str,
+        "actualValue": actual_value,
+        "hitPct":      hit_pct,
+        "matchScore":  result.get("matchScore"),
+        "settledAt":   now_iso,
+    }
 
 
 # Basketball settlement removed — Soccer only
