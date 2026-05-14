@@ -750,6 +750,71 @@ def compute_bayesian_projection(
                           f"would_mult={cdm_boost_mult} (NOT APPLIED)")
 
     # ═══════════════════════════════════════════
+    # HOME CDM DEEP-BLOCK BOOST  (symmetric complement to CDM inversion above)
+    # ═══════════════════════════════════════════
+    # When a dominant HOME team (expected poss > 62%) faces a deep-sitting weak
+    # opponent (opp expected poss < 36%), the CDM/DM/DLP becomes the ball-
+    # recycling hub of the entire team.  The possession ratio alone understates
+    # this: the opponent's deep block creates endless short-cycle sequences that
+    # all funnel through the deepest midfielder.  Each 5% the opponent concedes
+    # below the 36% threshold, the CDM's pass count inflates by an additional
+    # 2-3 above what the possession ratio already captures.
+    #
+    # Real-world example that triggered this fix:
+    #   Tchouaméni vs Oviedo (home, La Liga dead rubber) — model said UNDER 67.5,
+    #   player was on pace for 80+ passes at H1 45 min.  Oviedo's expected away
+    #   possession was ~30%; Real Madrid's expected was ~65%.  The CDM inversion
+    #   layer didn't fire (it only fires when possession DROPS below team avg).
+    #   This layer fires on the opposite, equally real scenario.
+    #
+    # Cap: +12% (larger than the away CDM inversion's +6% because the mechanism
+    # is more predictable — a dominant home team vs a parking-the-bus opponent
+    # produces near-certain high-volume CDM recycling).
+    # ═══════════════════════════════════════════
+    home_cdm_deep_block_info = {"applied": False, "multiplier": 1.0, "reason": ""}
+    if (_cdm_mode != "off" and match_dominance
+            and prop_type in {"pass_attempts", "passes"}
+            and venue == "home"
+            and _pos_upper_for_cdm in _cdm_pos_set):
+        _hcdb_team_poss = match_dominance.get("expectedPoss")      # home team's expected poss
+        _hcdb_opp_poss  = match_dominance.get("oppExpectedPoss")   # opponent's expected poss
+        # Thresholds: fire when home team is dominant (>60%) AND opponent sits deep (<40%)
+        # Wide thresholds to catch the full range of "dominant home vs. deep-block" games
+        if (_hcdb_team_poss is not None and _hcdb_opp_poss is not None
+                and _hcdb_team_poss > 60.0 and _hcdb_opp_poss < 40.0):
+            # Depth: how extreme is the deep block? (0→1 as opp drops from 40% to 22%)
+            _hcdb_depth = min(1.0, (40.0 - _hcdb_opp_poss) / 18.0)
+            # Dom: how dominant is the home team? (0→1 as team rises from 60% to 72%)
+            _hcdb_dom   = min(1.0, (_hcdb_team_poss - 60.0) / 12.0)
+            # Depth is the primary driver (opponent's block creates the recycling).
+            # Dom amplifies it — a truly dominant team recycles more repetitions.
+            # The CDM gets touched on every recycling sequence, so pass count
+            # rises faster than possession % alone would suggest.
+            _hcdb_raw  = _hcdb_depth * (0.55 + 0.45 * _hcdb_dom)
+            _hcdb_mult = round(1.0 + min(0.15, _hcdb_raw * 0.22), 3)
+            if _hcdb_mult > 1.005 and _cdm_mode == "live":
+                _raw_before_hcdb = posterior_mean
+                posterior_mean   = round(posterior_mean * _hcdb_mult, 1)
+                home_cdm_deep_block_info["applied"]    = True
+                home_cdm_deep_block_info["multiplier"] = _hcdb_mult
+                home_cdm_deep_block_info["reason"] = (
+                    f"home CDM deep-block recycling hub "
+                    f"(team_poss={_hcdb_team_poss:.1f}% opp_poss={_hcdb_opp_poss:.1f}% "
+                    f"depth={_hcdb_depth:.2f} dom={_hcdb_dom:.2f} mult={_hcdb_mult})"
+                )
+                print(f"[HOME CDM DEEP-BLOCK live] {prop_type} pos={_pos_upper_for_cdm} "
+                      f"team={_hcdb_team_poss:.1f}% opp={_hcdb_opp_poss:.1f}% "
+                      f"mult={_hcdb_mult} {_raw_before_hcdb} → {posterior_mean}")
+            elif _hcdb_mult > 1.005:
+                home_cdm_deep_block_info["reason"] = (
+                    f"shadow: would boost ×{_hcdb_mult} "
+                    f"(team={_hcdb_team_poss:.1f}% opp={_hcdb_opp_poss:.1f}%)"
+                )
+                print(f"[HOME CDM DEEP-BLOCK shadow] {prop_type} pos={_pos_upper_for_cdm} "
+                      f"team={_hcdb_team_poss:.1f}% opp={_hcdb_opp_poss:.1f}% "
+                      f"would_mult={_hcdb_mult} (NOT APPLIED)")
+
+    # ═══════════════════════════════════════════
     # PRESS INTENSITY — Position & Prop Aware
     # ═══════════════════════════════════════════
     # Press signal is computed for any prop where opponent pressing meaningfully
@@ -1196,6 +1261,11 @@ def compute_bayesian_projection(
         # Always emitted; `mode` reports off|shadow|live and `applied` shows
         # whether the projection was actually nudged this call.
         "cdmInversion": cdm_inversion_info,
+
+        # Home CDM deep-block recycling hub boost.
+        # Fires when dominant home team (>62% poss) faces a deep-sitting weak
+        # opponent (<36% poss) — CDM becomes the pass-recycling pivot.
+        "homeCdmDeepBlock": home_cdm_deep_block_info,
     }
 
 

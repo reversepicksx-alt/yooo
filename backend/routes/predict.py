@@ -3052,6 +3052,7 @@ STRIKER/FORWARD (shots, goals, assists):
 
 MIDFIELDER (passes, key_passes, assists):
 - Ball-circulation midfielders: possession % is the primary driver. Every 5% more possession = roughly 8-12 more passes for the deepest midfielder. Key passes / assists: look at how many times the team reaches the final third AND how the striker presses — a high striker press creates more through-ball opportunities.
+- CRITICAL — HOME CDM DEEP-BLOCK RULE: When a dominant home team (60%+ expected possession) faces a deep-sitting weak opponent (opponent expected possession < 36%), the CDM/DM/DLP becomes a ball-RECYCLING HUB. The deep block creates endless short-cycle sequences that all funnel back through the deepest midfielder. In this scenario, the CDM's pass count EXCEEDS their historical season average — sometimes significantly. Do NOT apply a low-motivation or dead-rubber penalty to CDM pass counts when the dominant team is still retaining comfortable possession — the passes still happen, they are just slower-paced and more circular. A CDM averaging 55 passes/game can easily hit 75-85 in this scenario. This is the single biggest source of CDM pass prop errors.
 
 DEFENDER (passes, tackles, clearances):
 - Ball-playing CBs in 55%+ possession teams easily hit 70-90 passes. The key variable is HOW the team builds — short from back (inflates defender passes) vs long-ball (suppresses). Tackles/clearances invert with possession: low possession = more defensive actions.
