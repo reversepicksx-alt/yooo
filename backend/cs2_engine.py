@@ -315,6 +315,22 @@ def compute_cs2_projection(
     if not field:
         return {"error": f"Unknown CS2 prop: {prop_type}"}
 
+    # ── Maps-1-2 sample quality filter ────────────────────────────────────────
+    # "Maps 1-2 kills" props require ≥2 maps to be played.  A match that ended
+    # after only 1 map (BO1 or BO2 1-0 result) has ~half the round count, so
+    # its kill total is structurally incomparable to a 2-map result.  Mixing
+    # these in deflates the average and misprices OVER bets on prolific players.
+    #
+    # Strategy:
+    #   1. Prefer-filter: use only mapsPlayed ≥ 2 entries.
+    #   2. If that yields < MIN_SAMPLE, fall back to all entries (better than nothing).
+    if prop_type in MATCH_LEVEL_PROPS and map_logs:
+        multi_map_logs = [m for m in map_logs if (m.get("mapsPlayed") or 0) >= 2]
+        # Use the multi-map subset if it gives us a decent sample
+        if len(multi_map_logs) >= max(MIN_SAMPLE // 2, 4):
+            map_logs = multi_map_logs
+        # else: not enough 2-map data → keep all logs (hyper-prior will dominate anyway)
+
     values = _extract_values(map_logs, prop_type)
 
     if not values:
