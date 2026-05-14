@@ -75,19 +75,88 @@ SEASON_STAT_MAP = {
 }
 
 # Momentum decay weights (newest game = index 0)
-BATTER_DECAY  = [1.0, 0.82, 0.68, 0.56, 0.46, 0.38, 0.31, 0.25, 0.21, 0.17]
+# Batters: L7 window — hot/cold streaks are recent-dominant in baseball
+BATTER_DECAY  = [1.0, 0.80, 0.64, 0.51, 0.41, 0.33, 0.26]
 PITCHER_DECAY = [1.0, 0.85, 0.72, 0.61, 0.52, 0.44, 0.37, 0.31, 0.26, 0.22]
 
-# Home advantage by prop type (multiplicative)
+# Home advantage by prop type (multiplicative) — pure travel/familiarity effect
 HOME_ADJ = {
-    "hits": 1.03, "home_runs": 1.04, "rbi": 1.03, "runs": 1.03,
-    "walks": 1.01, "strikeouts": 0.99, "total_bases": 1.03,
-    "stolen_bases": 1.02, "doubles": 1.03, "plate_appearances": 1.00,
-    "hitter_fantasy_points": 1.03,
+    "hits": 1.02, "home_runs": 1.03, "rbi": 1.02, "runs": 1.02,
+    "walks": 1.01, "strikeouts": 0.99, "total_bases": 1.02,
+    "stolen_bases": 1.01, "doubles": 1.02, "plate_appearances": 1.00,
+    "hitter_fantasy_points": 1.02,
     "pitcher_strikeouts": 1.02, "innings_pitched": 1.01,
-    "hits_allowed": 0.97, "earned_runs": 0.97, "walks_allowed": 0.99,
+    "hits_allowed": 0.98, "earned_runs": 0.97, "walks_allowed": 0.99,
     "pitches_thrown": 1.01, "batters_faced": 1.01,
 }
+
+# ── Park factors by home team (3-year MLB average, Baseball Reference) ────────
+# Keyed by lowercase substring of team display_name / city.
+# Values are multiplicative vs. neutral park (1.0 = perfectly neutral).
+# Only batter props are significantly park-affected; pitcher props see ~half effect.
+PARK_FACTORS: dict[str, dict[str, float]] = {
+    # Extreme hitter parks
+    "rockies":      {"hits":1.14,"home_runs":1.22,"runs":1.17,"total_bases":1.16,"rbi":1.14,"doubles":1.12,"hitter_fantasy_points":1.14},
+    "cubs":         {"hits":1.08,"home_runs":1.10,"runs":1.08,"total_bases":1.09,"rbi":1.07,"doubles":1.06,"hitter_fantasy_points":1.08},
+    "reds":         {"hits":1.07,"home_runs":1.11,"runs":1.09,"total_bases":1.09,"rbi":1.08,"doubles":1.05,"hitter_fantasy_points":1.08},
+    "red sox":      {"hits":1.07,"home_runs":1.05,"runs":1.07,"total_bases":1.07,"rbi":1.06,"doubles":1.14,"hitter_fantasy_points":1.07},
+    "phillies":     {"hits":1.05,"home_runs":1.08,"runs":1.06,"total_bases":1.07,"rbi":1.06,"doubles":1.04,"hitter_fantasy_points":1.06},
+    "rangers":      {"hits":1.04,"home_runs":1.07,"runs":1.06,"total_bases":1.06,"rbi":1.05,"doubles":1.03,"hitter_fantasy_points":1.05},
+    "braves":       {"hits":1.04,"home_runs":1.06,"runs":1.05,"total_bases":1.05,"rbi":1.05,"doubles":1.03,"hitter_fantasy_points":1.05},
+    "diamondbacks": {"hits":1.04,"home_runs":1.07,"runs":1.06,"total_bases":1.06,"rbi":1.05,"doubles":1.03,"hitter_fantasy_points":1.05},
+    "brewers":      {"hits":1.03,"home_runs":1.05,"runs":1.04,"total_bases":1.04,"rbi":1.04,"doubles":1.02,"hitter_fantasy_points":1.04},
+    "yankees":      {"hits":1.02,"home_runs":1.07,"runs":1.04,"total_bases":1.05,"rbi":1.04,"doubles":1.01,"hitter_fantasy_points":1.04},
+    "orioles":      {"hits":1.03,"home_runs":1.05,"runs":1.04,"total_bases":1.04,"rbi":1.04,"doubles":1.02,"hitter_fantasy_points":1.04},
+    "white sox":    {"hits":1.04,"home_runs":1.06,"runs":1.04,"total_bases":1.05,"rbi":1.03,"doubles":1.02,"hitter_fantasy_points":1.04},
+    # Near-neutral parks
+    "pirates":      {"hits":1.01,"home_runs":0.99,"runs":1.00,"total_bases":1.00,"rbi":1.00,"doubles":1.01,"hitter_fantasy_points":1.00},
+    "twins":        {"hits":1.01,"home_runs":1.02,"runs":1.01,"total_bases":1.01,"rbi":1.01,"doubles":1.00,"hitter_fantasy_points":1.01},
+    "cardinals":    {"hits":1.01,"home_runs":1.00,"runs":1.01,"total_bases":1.01,"rbi":1.01,"doubles":1.01,"hitter_fantasy_points":1.01},
+    "guardians":    {"hits":1.01,"home_runs":0.99,"runs":1.00,"total_bases":1.00,"rbi":1.00,"doubles":1.01,"hitter_fantasy_points":1.00},
+    "blue jays":    {"hits":1.00,"home_runs":1.00,"runs":1.00,"total_bases":1.00,"rbi":1.00,"doubles":1.00,"hitter_fantasy_points":1.00},
+    "athletics":    {"hits":1.00,"home_runs":1.01,"runs":1.00,"total_bases":1.00,"rbi":1.00,"doubles":1.00,"hitter_fantasy_points":1.00},
+    # Pitcher-friendly parks
+    "astros":       {"hits":0.97,"home_runs":0.95,"runs":0.96,"total_bases":0.96,"rbi":0.97,"doubles":0.97,"hitter_fantasy_points":0.96},
+    "dodgers":      {"hits":0.97,"home_runs":0.97,"runs":0.97,"total_bases":0.97,"rbi":0.97,"doubles":0.97,"hitter_fantasy_points":0.97},
+    "angels":       {"hits":0.96,"home_runs":0.94,"runs":0.96,"total_bases":0.95,"rbi":0.96,"doubles":0.96,"hitter_fantasy_points":0.96},
+    "royals":       {"hits":0.97,"home_runs":0.94,"runs":0.96,"total_bases":0.96,"rbi":0.96,"doubles":0.97,"hitter_fantasy_points":0.96},
+    "tigers":       {"hits":0.96,"home_runs":0.93,"runs":0.95,"total_bases":0.95,"rbi":0.95,"doubles":0.96,"hitter_fantasy_points":0.95},
+    "mariners":     {"hits":0.95,"home_runs":0.92,"runs":0.94,"total_bases":0.94,"rbi":0.94,"doubles":0.95,"hitter_fantasy_points":0.94},
+    "giants":       {"hits":0.95,"home_runs":0.88,"runs":0.93,"total_bases":0.93,"rbi":0.93,"doubles":0.95,"hitter_fantasy_points":0.93},
+    "padres":       {"hits":0.93,"home_runs":0.90,"runs":0.92,"total_bases":0.92,"rbi":0.92,"doubles":0.93,"hitter_fantasy_points":0.92},
+    "marlins":      {"hits":0.94,"home_runs":0.92,"runs":0.93,"total_bases":0.93,"rbi":0.93,"doubles":0.94,"hitter_fantasy_points":0.93},
+    "nationals":    {"hits":0.96,"home_runs":0.95,"runs":0.96,"total_bases":0.96,"rbi":0.96,"doubles":0.96,"hitter_fantasy_points":0.96},
+    "mets":         {"hits":0.97,"home_runs":0.95,"runs":0.96,"total_bases":0.96,"rbi":0.96,"doubles":0.97,"hitter_fantasy_points":0.96},
+    "rays":         {"hits":0.95,"home_runs":0.91,"runs":0.93,"total_bases":0.93,"rbi":0.93,"doubles":0.94,"hitter_fantasy_points":0.93},
+}
+
+# Props affected by park factors (batter-side only; pitcher props see ~50% effect)
+PARK_BATTER_PROPS = {
+    "hits", "home_runs", "rbi", "runs", "total_bases", "doubles",
+    "hitter_fantasy_points",
+}
+PARK_PITCHER_PROPS = {
+    "hits_allowed", "earned_runs",   # park matters for pitchers too, but ~half
+}
+
+
+def _get_park_factor(park_team: str, prop_type: str) -> float:
+    """
+    Look up the park factor for the ballpark where today's game is played.
+    park_team = display name of the HOME TEAM (whoever owns the stadium).
+    Returns a multiplicative factor (1.0 = neutral, 1.10 = 10% hitter-friendly).
+    """
+    if not park_team or prop_type not in PARK_BATTER_PROPS | PARK_PITCHER_PROPS:
+        return 1.0
+    team_lower = park_team.lower()
+    for key, factors in PARK_FACTORS.items():
+        if key in team_lower:
+            raw = factors.get(prop_type, 1.0)
+            # Pitcher props see ~50% of the park effect (park biases batters more)
+            if prop_type in PARK_PITCHER_PROPS:
+                raw = 1.0 + (raw - 1.0) * 0.5
+            return raw
+    return 1.0
 
 
 def _compute_fantasy_pts(game: dict) -> Optional[float]:
@@ -231,6 +300,7 @@ def compute_mlb_projection(
     venue: str,               # 'home' or 'away'
     position: str = "",
     prev_season_stats: Optional[dict] = None,
+    park_team: str = "",      # home team name → used to look up park factor
 ) -> dict:
     """
     Compute MLB Bayesian projection and P(over/under) for a given prop.
@@ -341,6 +411,10 @@ def compute_mlb_projection(
     # Apply venue multiplier
     posterior_mean *= venue_multiplier
 
+    # ── LAYER 4: PARK FACTOR ────────────────────────────────────────────────
+    park_factor = _get_park_factor(park_team, prop_type)
+    posterior_mean *= park_factor
+
     # Round count stats to appropriate precision
     if is_count and prop_type not in {"innings_pitched"}:
         posterior_mean = round(posterior_mean, 1)
@@ -385,8 +459,8 @@ def compute_mlb_projection(
     if cap and confidence_score > cap:
         confidence_score = cap
 
-    # Absolute floor/ceiling
-    confidence_score = min(88.0, max(50.0, confidence_score))
+    # Absolute floor/ceiling — baseball is highly variable; cap at 73% max
+    confidence_score = min(73.0, max(50.0, confidence_score))
 
     if confidence_score >= 70:
         conf_level = "High"
@@ -469,6 +543,7 @@ def compute_mlb_projection(
         prior_precision * prior_mean + momentum_precision * momentum_mean
     ) / total_precision
     covariate_adjustment = round(pre_venue_posterior * (venue_multiplier - 1.0), 2)
+    park_factor_pct = round((park_factor - 1.0) * 100, 1)   # e.g. +14.0 for Coors
 
     # ── HIT RATES (fraction of recent games that went OVER the line) ─────────
     if game_vals and line is not None:
@@ -539,6 +614,9 @@ def compute_mlb_projection(
             "cv":                round(cv, 3),
             "streakFlag":        streak_flag,
             "covariateAdjustment": covariate_adjustment,
+            "parkFactor":        park_factor,
+            "parkFactorPct":     park_factor_pct,
+            "parkTeam":          park_team,
             "priorPrecision":    round(prior_precision, 4),
             "momentumPrecision": round(momentum_precision, 4),
         },

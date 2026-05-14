@@ -28,51 +28,68 @@ async def _get_mlb_ai_analysis(
     venue: str, opponent: str, projection: float, p_over: float, p_under: float,
     recommendation: str, game_logs: list, momentum_label: str,
     prior_mean: float, streak_flag: str,
+    pitcher_name: str = "",
+    park_team: str = "",
+    park_factor_pct: float = 0.0,
 ) -> dict:
-    """Call Grok (primary) or Gemini (fallback) for MLB sharp verdict + reasoning."""
+    """Call Grok for MLB sharp verdict + reasoning, now with park + pitcher context."""
     is_pitcher = prop_type in mlb_engine.PITCHER_PROPS
     prop_label = prop_type.replace("_", " ").title()
 
     # Build game log context string
     ctx_lines = []
     for g in game_logs[:7]:
-        gn = g.get("gameNumber", "?")
+        gn  = g.get("gameNumber", "?")
         val = g.get("value", "?")
+        opp = g.get("opponent", "")
+        opp_str = f" vs {opp}" if opp else ""
         if is_pitcher:
-            ip  = g.get("ip", "?")
-            pc  = g.get("pitchCount", "?")
-            ctx_lines.append(f"  G{gn}: {val} K, {ip} IP, {pc} pitches")
+            ip = g.get("ip", "?")
+            pc = g.get("pitchCount", "?")
+            ctx_lines.append(f"  G{gn}: {val} K, {ip} IP, {pc} pitches{opp_str}")
         else:
             h  = g.get("hits", "?")
             ab = g.get("atBats", "?")
-            ctx_lines.append(f"  G{gn}: {val} {prop_label}, {h}/{ab} AB")
+            ctx_lines.append(f"  G{gn}: {val} {prop_label}, {h}/{ab} AB{opp_str}")
     game_ctx = "\n".join(ctx_lines) or "  (no recent game data)"
 
     # Streak context
     streak_text = ""
     if streak_flag == "OVER_STREAK":
-        streak_text = f" The model detects an OVER streak in the last 5 games."
+        streak_text = " OVER streak detected across last 5 games."
     elif streak_flag == "UNDER_STREAK":
-        streak_text = f" The model detects an UNDER streak in the last 5 games."
+        streak_text = " UNDER streak detected across last 5 games."
 
-    prompt = f"""MLB Props sharp analysis (for experienced bettors):
+    # Park factor context
+    park_text = ""
+    if park_team and abs(park_factor_pct) >= 2.0:
+        direction = "hitter-friendly" if park_factor_pct > 0 else "pitcher-friendly"
+        park_text = f"\nPark factor: {park_team} stadium is {direction} ({park_factor_pct:+.1f}% for {prop_label})."
+
+    # Pitcher matchup context
+    pitcher_text = ""
+    if pitcher_name:
+        pitcher_text = f"\nOpposing pitcher: {pitcher_name}. Use your knowledge of their 2025 ERA, K-rate, WHIP, and handedness to assess matchup quality."
+    elif opponent and not is_pitcher:
+        pitcher_text = f"\nNote: opposing pitcher for {opponent} is unknown — factor in their typical rotation quality."
+
+    prompt = f"""MLB Props sharp analysis (for experienced sports bettors):
 
 Player: {player_name} ({position})
-Prop: {prop_label} | Line: {line}
-Venue: {venue.upper()} vs {opponent or 'TBD'}
-Season avg: {prior_mean:.1f} | Momentum: {momentum_label}
-Model projection: {projection:.1f} → {recommendation} (P(OVER)={p_over}%, P(UNDER)={p_under}%){streak_text}
+Prop: {prop_label} | Line: {line} | Venue: {venue.upper()} vs {opponent or 'TBD'}
+Season avg: {prior_mean:.1f} | Recent form: {momentum_label}
+Model projection: {projection:.1f} → {recommendation} (P(OVER)={p_over}%, P(UNDER)={p_under}%){streak_text}{park_text}{pitcher_text}
 
 Recent game log (G1 = most recent):
 {game_ctx}
 
-Write a sharp 2-3 sentence betting analysis covering:
-1. Why the model projects {projection:.1f} vs the {line} line — what's the key edge?
-2. Any matchup or momentum factor that confirms or challenges the {recommendation}
-3. The main risk factor a bettor should know
+Write a sharp analysis covering:
+1. Core edge: why project {projection:.1f} vs the {line} line
+2. Park and/or pitcher matchup impact — be specific if pitcher is named
+3. Main risk / counter-argument
 
-Be direct, data-driven, no fluff. Return a JSON object ONLY:
-{{"sharpSummary": "<1 tight sentence: core edge/tension>", "reasoning": "<2-3 sharp sentences of analysis>"}}"""
+Be direct, data-driven. Return JSON ONLY:
+{{"sharpSummary": "<1 tight sentence with the core edge>", "reasoning": "<2-3 sharp sentences covering matchup, park, momentum>"}}"""
 
     # Try Grok first
     try:
@@ -159,6 +176,7 @@ class MlbPredictRequest(BaseModel):
     opponentName: Optional[str] = ""
     venue:        Optional[str] = "home"
     season:       Optional[int] = CURRENT_MLB_SEASON
+    pitcherName:  Optional[str] = ""   # opposing SP if known
 
 
 @router.post("/predict")
@@ -230,6 +248,10 @@ async def mlb_predict(req: MlbPredictRequest):
 
     log.info(f"[MLB PREDICT] team_games fetched: {len(team_games)} regular-season games for team_id={team_id}")
 
+    # ── Determine park team (home team owns the ballpark) ─────────────────────
+    # home game → player's own team park; away game → opponent's park
+    park_team = team_name if venue == "home" else (req.opponentName or "")
+
     # ── Run engine ────────────────────────────────────────────────────────────
     result = mlb_engine.compute_mlb_projection(
         game_logs=game_logs,
@@ -239,6 +261,7 @@ async def mlb_predict(req: MlbPredictRequest):
         venue=venue,
         position=position,
         prev_season_stats=prev_season_stats,
+        park_team=park_team,
     )
 
     # ── Enrich game log tiles with opponent/date/venue from team schedule ──────
@@ -247,22 +270,27 @@ async def mlb_predict(req: MlbPredictRequest):
             result["gameLogs"], team_games, team_name
         )
 
+    bm = result.get("bayesianMetrics", {})
+
     # ── Run AI analysis concurrently (non-blocking — falls back to empty) ─────
     ai_task = asyncio.create_task(_get_mlb_ai_analysis(
-        player_name   = req.playerName,
-        position      = position,
-        prop_type     = prop_type,
-        line          = req.line,
-        venue         = venue,
-        opponent      = req.opponentName or "",
-        projection    = result["projection"],
-        p_over        = result["pOver"],
-        p_under       = result["pUnder"],
-        recommendation= result["recommendation"],
-        game_logs     = result["gameLogs"],
-        momentum_label= result["momentumLabel"],
-        prior_mean    = result["priorMean"],
-        streak_flag   = result["streakFlag"],
+        player_name    = req.playerName,
+        position       = position,
+        prop_type      = prop_type,
+        line           = req.line,
+        venue          = venue,
+        opponent       = req.opponentName or "",
+        projection     = result["projection"],
+        p_over         = result["pOver"],
+        p_under        = result["pUnder"],
+        recommendation = result["recommendation"],
+        game_logs      = result["gameLogs"],
+        momentum_label = result["momentumLabel"],
+        prior_mean     = result["priorMean"],
+        streak_flag    = result["streakFlag"],
+        pitcher_name   = req.pitcherName or "",
+        park_team      = park_team,
+        park_factor_pct= bm.get("parkFactorPct", 0.0),
     ))
 
     # ── Build response (same shape as soccer predict for UI compatibility) ────
