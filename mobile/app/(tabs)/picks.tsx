@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef } from 'react';
 import {
-  View, Text, StyleSheet, FlatList, TouchableOpacity,
+  View, Text, StyleSheet, FlatList, SectionList, TouchableOpacity,
   ActivityIndicator, Alert, Platform, RefreshControl,
   Modal, ScrollView, Pressable,
 } from 'react-native';
@@ -23,6 +23,7 @@ import { listPicks, deletePick, fetchPickAnalysis, Pick } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 
 type Tab = 'live' | 'history';
+type SportKey = 'soccer' | 'mlb' | 'cs2';
 
 const PROP_LABELS: Record<string, string> = {
   pass_attempts: 'Pass Attempts', shots: 'Shots', shots_on_target: 'SOT',
@@ -31,6 +32,32 @@ const PROP_LABELS: Record<string, string> = {
   interceptions: 'Interceptions', blocks: 'Blocks', fouls_drawn: 'Fouls Drawn',
   fouls_committed: 'Fouls', clearances: 'Clearances', duels_won: 'Duels Won',
   yellow_cards: 'Yellow Cards', shots_assisted: 'Shot Assists', passes: 'Passes',
+};
+
+const MLB_PROP_SET = new Set([
+  'pitcher_strikeouts', 'innings_pitched', 'hits_allowed', 'earned_runs',
+  'walks_allowed', 'pitches_thrown', 'batters_faced', 'hits', 'home_runs',
+  'rbi', 'walks', 'strikeouts', 'runs', 'total_bases', 'stolen_bases',
+  'doubles', 'plate_appearances', 'hitter_fantasy_points',
+]);
+
+const CS2_PROP_SET = new Set([
+  'maps_1_2_kills', 'maps_1_2_headshots', 'maps_1_2_deaths',
+  'maps_1_2_assists', 'maps_1_2_adr', 'map3_kills', 'map3_headshots',
+  'map3_deaths', 'map3_assists', 'map3_adr', 'kills', 'headshots',
+  'deaths', 'adr', 'mvps', 'rating', 'headshot_pct',
+]);
+
+function getSport(p: Pick): SportKey {
+  if (p.sport === 'mlb' || MLB_PROP_SET.has(p.propType)) return 'mlb';
+  if (p.sport === 'cs2' || CS2_PROP_SET.has(p.propType)) return 'cs2';
+  return 'soccer';
+}
+
+const SPORT_META: Record<SportKey, { label: string; icon: string }> = {
+  soccer: { label: 'Soccer', icon: '⚽' },
+  mlb:    { label: 'MLB',    icon: '⚾' },
+  cs2:    { label: 'CS2',    icon: '🎮' },
 };
 
 function isLive(p: Pick) {
@@ -640,6 +667,43 @@ function renderAnalysisBlocks(text: string, rec: string) {
   return blocks;
 }
 
+function SportSectionHeader({ sport, picks }: { sport: SportKey; picks: Pick[] }) {
+  const { label, icon } = SPORT_META[sport];
+  const settled = picks.filter(p => pickWon(p) || pickLost(p) || pickPush(p));
+  const hits    = settled.filter(pickWon).length;
+  const misses  = settled.filter(pickLost).length;
+  const pushes  = settled.filter(pickPush).length;
+  const total   = hits + misses;
+  const winPct  = total > 0 ? Math.round((hits / total) * 100) : null;
+
+  const pctColor = winPct == null ? Colors.textTertiary
+    : winPct >= 60 ? Colors.success
+    : winPct >= 50 ? Colors.primary
+    : Colors.error;
+
+  return (
+    <View style={secStyles.header}>
+      <View style={secStyles.headerLeft}>
+        <Text style={secStyles.headerIcon}>{icon}</Text>
+        <Text style={secStyles.headerLabel}>{label}</Text>
+        <View style={secStyles.countPill}>
+          <Text style={secStyles.countText}>{picks.length}</Text>
+        </View>
+      </View>
+      <View style={secStyles.headerStats}>
+        <Text style={[secStyles.statNum, { color: Colors.success }]}>{hits}<Text style={secStyles.statLbl}>H</Text></Text>
+        <Text style={secStyles.statDiv}> · </Text>
+        <Text style={[secStyles.statNum, { color: Colors.error }]}>{misses}<Text style={secStyles.statLbl}>M</Text></Text>
+        {pushes > 0 && <><Text style={secStyles.statDiv}> · </Text><Text style={[secStyles.statNum, { color: Colors.textTertiary }]}>{pushes}<Text style={secStyles.statLbl}>P</Text></Text></>}
+        <Text style={secStyles.statDiv}>  </Text>
+        <Text style={[secStyles.winPct, { color: pctColor }]}>
+          {winPct != null ? `${winPct}%` : '—'}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
 export default function PicksScreen() {
   const insets = useSafeAreaInsets();
   const { session } = useAuth();
@@ -719,7 +783,14 @@ export default function PicksScreen() {
 
   const live = picks.filter(isLive);
   const history = picks.filter(isSettled);
-  const displayed = activeTab === 'live' ? live : history;
+
+  // Split history into sport buckets (Soccer → MLB → CS2 order)
+  const SPORT_ORDER: SportKey[] = ['soccer', 'mlb', 'cs2'];
+  const bySport: Record<SportKey, Pick[]> = { soccer: [], mlb: [], cs2: [] };
+  for (const p of history) bySport[getSport(p)].push(p);
+  const historySections = SPORT_ORDER
+    .filter(s => bySport[s].length > 0)
+    .map(s => ({ sport: s, data: bySport[s] }));
 
   const modalRec = ((analysisModal?.data?.recommendation ?? analysisModal?.pick?.recommendation) as string | undefined)?.toUpperCase() ?? '';
   const modalIsOver = modalRec === 'OVER';
@@ -768,25 +839,21 @@ export default function PicksScreen() {
         <View style={styles.center}>
           <ActivityIndicator color={Colors.primary} size="large" />
         </View>
-      ) : displayed.length === 0 ? (
+      ) : activeTab === 'live' && live.length === 0 ? (
         <View style={styles.empty}>
-          <Ionicons
-            name={activeTab === 'live' ? 'timer-outline' : 'archive-outline'}
-            size={52}
-            color={Colors.textTertiary}
-          />
-          <Text style={styles.emptyTitle}>
-            {activeTab === 'live' ? 'No live picks' : 'No settled picks yet'}
-          </Text>
-          <Text style={styles.emptySub}>
-            {activeTab === 'live'
-              ? 'Scan a prop slip and save a prediction to track it here.'
-              : 'Picks move here once their game is finished and results are confirmed.'}
-          </Text>
+          <Ionicons name="timer-outline" size={52} color={Colors.textTertiary} />
+          <Text style={styles.emptyTitle}>No live picks</Text>
+          <Text style={styles.emptySub}>Scan a prop slip and save a prediction to track it here.</Text>
         </View>
-      ) : (
+      ) : activeTab === 'history' && history.length === 0 ? (
+        <View style={styles.empty}>
+          <Ionicons name="archive-outline" size={52} color={Colors.textTertiary} />
+          <Text style={styles.emptyTitle}>No settled picks yet</Text>
+          <Text style={styles.emptySub}>Picks move here once their game is finished and results are confirmed.</Text>
+        </View>
+      ) : activeTab === 'live' ? (
         <FlatList
-          data={displayed}
+          data={live}
           keyExtractor={(item, i) => item.pickId || item._id || item.id || String(i)}
           renderItem={({ item }) => {
             const tappable = isLive(item) && !pickWon(item) && !pickLost(item);
@@ -804,20 +871,36 @@ export default function PicksScreen() {
             ) : (
               <PickCard pick={item} onDelete={onDeleteForItem} />
             );
+            return <SwipeableRow onDelete={onDeleteForItem}>{card}</SwipeableRow>;
+          }}
+          contentContainerStyle={styles.list}
+          refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={Colors.primary} />}
+          showsVerticalScrollIndicator={false}
+        />
+      ) : (
+        /* ── HISTORY: sectioned by sport ── */
+        <SectionList
+          sections={historySections}
+          keyExtractor={(item, i) => item.pickId || item._id || item.id || String(i)}
+          renderSectionHeader={({ section }) => (
+            <SportSectionHeader sport={section.sport} picks={section.data} />
+          )}
+          renderItem={({ item }) => {
+            const onDeleteForItem = () => handleDelete(item);
             return (
               <SwipeableRow onDelete={onDeleteForItem}>
-                {card}
+                <Pressable
+                  onPress={() => handlePickPress(item)}
+                  style={({ pressed }) => [{ opacity: pressed ? 0.92 : 1 }]}
+                >
+                  <PickCard pick={item} onDelete={onDeleteForItem} />
+                </Pressable>
               </SwipeableRow>
             );
           }}
+          stickySectionHeadersEnabled={false}
           contentContainerStyle={styles.list}
-          refreshControl={
-            <RefreshControl
-              refreshing={isRefetching}
-              onRefresh={refetch}
-              tintColor={Colors.primary}
-            />
-          }
+          refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={Colors.primary} />}
           showsVerticalScrollIndicator={false}
         />
       )}
@@ -935,6 +1018,36 @@ export default function PicksScreen() {
     </View>
   );
 }
+
+const secStyles = StyleSheet.create({
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginHorizontal: 16,
+    marginTop: 14,
+    marginBottom: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: Colors.card,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  headerIcon: { fontSize: 16 },
+  headerLabel: { fontSize: 13, fontWeight: '800', color: Colors.text, letterSpacing: 0.3 },
+  countPill: {
+    backgroundColor: Colors.cardSecondary,
+    borderRadius: 999, paddingHorizontal: 7, paddingVertical: 1,
+  },
+  countText: { fontSize: 10, fontWeight: '700', color: Colors.textSecondary },
+  headerStats: { flexDirection: 'row', alignItems: 'baseline' },
+  statNum: { fontSize: 13, fontWeight: '800' },
+  statLbl: { fontSize: 9, fontWeight: '600', color: Colors.textTertiary },
+  statDiv: { fontSize: 11, color: Colors.textTertiary },
+  winPct: { fontSize: 14, fontWeight: '800' },
+});
 
 const mStyles = StyleSheet.create({
   modalContainer: { flex: 1, justifyContent: 'flex-end' },
