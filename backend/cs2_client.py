@@ -18,13 +18,13 @@ log = logging.getLogger("cs2_client")
 CS2_API_BASE = "https://api.balldontlie.io/cs/v1"
 CS2_API_KEY  = os.environ.get("MLB_BDL_API_KEY", "951b8b73-a036-4b30-924f-19f322766545")
 
-_rate_sem      = asyncio.Semaphore(3)
+_rate_sem      = asyncio.Semaphore(6)   # paid tier: 600 req/min → 6 concurrent safe
 _last_req_time: float = 0.0
-_MIN_INTERVAL  = 0.15   # 600 req/min paid tier
+_MIN_INTERVAL  = 0.10   # 600 req/min ÷ 6 slots = 100ms minimum between requests
 
 CACHE_TTL = {
     "player_search": 6  * 3600,
-    "player_maps":   1  * 3600,
+    "player_maps":   6  * 3600,   # 6h — matches happen infrequently
     "teams":         24 * 3600,
     "rankings":      3600,
 }
@@ -117,14 +117,110 @@ async def search_players(query: str) -> list:
     return results
 
 
+async def _fetch_matches_paginated(team_id: int, max_matches: int = 200) -> list:
+    """
+    Fetch finished matches for a team using cursor pagination.
+    Returns up to max_matches match objects, newest first.
+    Per_page=100 (API max) keeps the number of page fetches to ≤2.
+    """
+    matches = []
+    params  = {"team_ids[]": team_id, "per_page": 100, "status": "finished"}
+    while len(matches) < max_matches:
+        r      = await _get("/matches", params)
+        page   = r.get("data", [])
+        matches.extend(page)
+        cursor = (r.get("meta") or {}).get("next_cursor")
+        if not cursor or not page:
+            break
+        params = {**params, "cursor": cursor}
+    return matches[:max_matches]
+
+
+def _parse_date_from_slug(slug: str) -> str:
+    try:
+        parts = slug.rsplit("-", 3)
+        return f"{parts[-1]}-{parts[-2]:>02}-{parts[-3]:>02}" if len(parts) >= 4 else ""
+    except Exception:
+        return ""
+
+
+async def _fetch_map_player_stat(map_obj: dict, team_id: int, player_id: int) -> Optional[dict]:
+    """
+    Fetch player_match_map_stats for one map and return a structured stat dict,
+    or None if the player didn't appear.  Runs concurrently inside a match.
+    """
+    map_id          = map_obj.get("id")
+    map_name        = map_obj.get("map_name", "")
+    map_number      = map_obj.get("map_number", 0)
+    winner_id       = (map_obj.get("winner") or {}).get("id")
+    t1_score        = map_obj.get("team1_score", 0) or 0
+    t2_score        = map_obj.get("team2_score", 0) or 0
+    total_rounds    = t1_score + t2_score
+    overtime_rounds = map_obj.get("overtime_rounds") or 0
+    duration_secs   = map_obj.get("duration_seconds") or 0
+
+    try:
+        pmms_r = await _get("/player_match_map_stats", {
+            "match_map_id": map_id,
+            "per_page":     20,
+        })
+    except Exception:
+        return None
+
+    for stat in pmms_r.get("data", []):
+        if stat.get("player", {}).get("id") == player_id:
+            kills = stat.get("kills") or 0
+            return {
+                "mapNumber":      map_number,
+                "mapName":        map_name,
+                "mapId":          map_id,
+                "wonMap":         winner_id == team_id,
+                "totalRounds":    total_rounds,
+                "overtimeRounds": overtime_rounds,
+                "durationSecs":   duration_secs,
+                "kills":          kills,
+                "deaths":         stat.get("deaths") or 0,
+                "assists":        stat.get("assists") or 0,
+                "adr":            float(stat.get("adr") or 0),
+                "kast":           float(stat.get("kast") or 0),
+                "rating":         float(stat.get("rating") or 0),
+                "headshotPct":    float(stat.get("headshot_percentage") or 0),
+                "firstKills":     stat.get("first_kills") or 0,
+                "firstDeaths":    stat.get("first_deaths") or 0,
+                "clutchesWon":    stat.get("clutches_won") or 0,
+                "killsPerRound":  round(kills / total_rounds, 3) if total_rounds > 0 else 0,
+            }
+    return None  # player not in this map
+
+
+async def _fetch_match_maps_and_stats(match: dict, team_id: int, player_id: int) -> list:
+    """
+    Fetch all maps for a match and all player stats in parallel.
+    Returns list of per-map stat dicts (only maps where player appeared).
+    """
+    match_id = match.get("id")
+    try:
+        maps_r = await _get("/match_maps", {"match_ids[]": match_id, "per_page": 10})
+        maps   = maps_r.get("data", [])
+    except Exception:
+        return []
+
+    if not maps:
+        return []
+
+    # Fetch all per-map player stats concurrently
+    results = await asyncio.gather(
+        *[_fetch_map_player_stat(m, team_id, player_id) for m in maps],
+        return_exceptions=True,
+    )
+    return [r for r in results if r and not isinstance(r, Exception)]
+
+
 async def get_player_recent_map_stats(player_id: int, team_id: int, limit: int = 30) -> list:
     """
-    Fetch recent per-map stats for a player.
-    Strategy:
-      1. Get team's last 20 finished matches
-      2. For each match → get match_maps
-      3. For each map → get player_match_map_stats filtered to player_id
-    Returns list of per-map dicts, newest first.
+    Fetch recent per-map stats for a player (newest first).
+    Uses cursor pagination + parallel per-map stat fetches.
+    Scans up to 150 team matches to collect `limit` player map entries.
     """
     key = f"cs2_pmaps_{player_id}_{team_id}"
     doc = await _cache_get(key)
@@ -132,98 +228,56 @@ async def get_player_recent_map_stats(player_id: int, team_id: int, limit: int =
         return doc["data"]
 
     map_stats = []
-    try:
-        matches_r = await _get("/matches", {
-            "team_ids[]": team_id,
-            "per_page":   20,
-            "status":     "finished",
-        })
-        matches = matches_r.get("data", [])
+    BATCH = 8   # process N matches concurrently
 
-        for match in matches:
+    try:
+        matches = await _fetch_matches_paginated(team_id, max_matches=150)
+
+        # Process matches in parallel batches; stop as soon as we hit `limit` map entries
+        for i in range(0, len(matches), BATCH):
             if len(map_stats) >= limit:
                 break
-            match_id = match.get("id")
-            if not match_id:
-                continue
+            batch = matches[i : i + BATCH]
 
-            slug       = match.get("slug", "")
-            tournament = match.get("tournament") or {}
-            t_name     = tournament.get("name", "")
-            t_tier     = tournament.get("tier", "")
+            # Fetch maps + player stats for each match in the batch concurrently
+            batch_results = await asyncio.gather(
+                *[_fetch_match_maps_and_stats(m, team_id, player_id) for m in batch],
+                return_exceptions=True,
+            )
 
-            # Parse date from slug (format: team1-vs-team2-DD-MM-YYYY)
-            try:
-                parts = slug.rsplit("-", 3)
-                date_str = f"{parts[-1]}-{parts[-2]:>02}-{parts[-3]:>02}" if len(parts) >= 4 else ""
-            except Exception:
-                date_str = ""
-
-            # Get maps for this match
-            maps_r = await _get("/match_maps", {"match_ids[]": match_id, "per_page": 10})
-            maps   = maps_r.get("data", [])
-
-            # Determine opponent name from match object
-            team1_obj  = match.get("team1") or {}
-            team2_obj  = match.get("team2") or {}
-            if team1_obj.get("id") == team_id:
-                opponent_name = team2_obj.get("name", "")
-            else:
-                opponent_name = team1_obj.get("name", "")
-
-            for map_obj in maps:
+            for match, per_map_stats in zip(batch, batch_results):
                 if len(map_stats) >= limit:
                     break
-                map_id          = map_obj.get("id")
-                map_name        = map_obj.get("map_name", "")
-                map_number      = map_obj.get("map_number", 0)
-                winner_id       = (map_obj.get("winner") or {}).get("id")
-                t1_score        = map_obj.get("team1_score", 0) or 0
-                t2_score        = map_obj.get("team2_score", 0) or 0
-                total_rounds    = t1_score + t2_score
-                overtime_rounds = map_obj.get("overtime_rounds") or 0
-                duration_secs   = map_obj.get("duration_seconds") or 0
+                if isinstance(per_map_stats, Exception) or not per_map_stats:
+                    continue
 
-                pmms_r = await _get("/player_match_map_stats", {
-                    "match_map_id": map_id,
-                    "per_page":     20,
-                })
-                pmms = pmms_r.get("data", [])
+                slug          = match.get("slug", "")
+                tournament    = match.get("tournament") or {}
+                t_name        = tournament.get("name", "")
+                t_tier        = tournament.get("tier", "")
+                date_str      = _parse_date_from_slug(slug)
+                team1_obj     = match.get("team1") or {}
+                team2_obj     = match.get("team2") or {}
+                opponent_name = team2_obj.get("name", "") if team1_obj.get("id") == team_id \
+                                else team1_obj.get("name", "")
+                match_id      = match.get("id")
 
-                for stat in pmms:
-                    if stat.get("player", {}).get("id") == player_id:
-                        kills = stat.get("kills") or 0
-                        map_stats.append({
-                            "matchId":          match_id,
-                            "mapId":            map_id,
-                            "mapName":          map_name,
-                            "mapNumber":        map_number,
-                            "tournament":       t_name,
-                            "tier":             t_tier,
-                            "date":             date_str,
-                            "opponent":         opponent_name,
-                            "wonMap":           winner_id == team_id,
-                            "totalRounds":      total_rounds,
-                            "overtimeRounds":   overtime_rounds,
-                            "durationSecs":     duration_secs,
-                            "kills":            kills,
-                            "deaths":           stat.get("deaths") or 0,
-                            "assists":          stat.get("assists") or 0,
-                            "adr":              float(stat.get("adr") or 0),
-                            "kast":             float(stat.get("kast") or 0),
-                            "rating":           float(stat.get("rating") or 0),
-                            "headshotPct":      float(stat.get("headshot_percentage") or 0),
-                            "firstKills":       stat.get("first_kills") or 0,
-                            "firstDeaths":      stat.get("first_deaths") or 0,
-                            "clutchesWon":      stat.get("clutches_won") or 0,
-                            # Round-normalised kills (key tactical factor)
-                            "killsPerRound":    round(kills / total_rounds, 3) if total_rounds > 0 else 0,
-                        })
+                # Sort maps by map_number so they come out in order
+                per_map_stats.sort(key=lambda m: m.get("mapNumber", 0))
+                for ms in per_map_stats:
+                    if len(map_stats) >= limit:
                         break
-
-                await asyncio.sleep(0.05)
+                    map_stats.append({
+                        **ms,
+                        "matchId":    match_id,
+                        "tournament": t_name,
+                        "tier":       t_tier,
+                        "date":       date_str,
+                        "opponent":   opponent_name,
+                    })
 
         await _cache_set(key, map_stats)
+        log.info(f"[CS2] player {player_id} map stats: {len(map_stats)} maps fetched")
     except Exception as e:
         log.error(f"CS2 player map stats error: {e}")
 
@@ -250,11 +304,12 @@ async def search_teams(query: str) -> list:
         return []
 
 
-async def get_player_recent_match_stats(player_id: int, team_id: int, limit: int = 15) -> list:
+async def get_player_recent_match_stats(player_id: int, team_id: int, limit: int = 30) -> list:
     """
-    Fetch per-MATCH aggregated stats for maps_1_2_* props.
-    For each match: sums kills/deaths/assists on map1+map2; averages ADR/rating.
-    Returns list of match-level dicts, newest first.
+    Fetch per-MATCH aggregated stats for maps_1_2_* props (newest first).
+    Uses cursor pagination + parallel per-map stat fetches.
+    Scans up to 150 team matches to collect `limit` matches where player appeared.
+    For each match: sums kills/deaths/assists on map1+map2; averages ADR/rating/KAST.
     """
     key = f"cs2_pmatches_{player_id}_{team_id}"
     doc = await _cache_get(key)
@@ -262,129 +317,87 @@ async def get_player_recent_match_stats(player_id: int, team_id: int, limit: int
         return doc["data"]
 
     match_stats = []
-    try:
-        matches_r = await _get("/matches", {
-            "team_ids[]": team_id,
-            "per_page":   25,
-            "status":     "finished",
-        })
-        matches = matches_r.get("data", [])
+    BATCH = 8   # process N matches concurrently
 
-        for match in matches:
+    try:
+        matches = await _fetch_matches_paginated(team_id, max_matches=150)
+
+        for i in range(0, len(matches), BATCH):
             if len(match_stats) >= limit:
                 break
-            match_id = match.get("id")
-            if not match_id:
-                continue
+            batch = matches[i : i + BATCH]
 
-            slug       = match.get("slug", "")
-            tournament = match.get("tournament") or {}
-            t_name     = tournament.get("name", "")
-            t_tier     = tournament.get("tier", "")
+            # Fetch maps + player stats for all matches in batch concurrently
+            batch_results = await asyncio.gather(
+                *[_fetch_match_maps_and_stats(m, team_id, player_id) for m in batch],
+                return_exceptions=True,
+            )
 
-            try:
-                parts    = slug.rsplit("-", 3)
-                date_str = f"{parts[-1]}-{parts[-2]:>02}-{parts[-3]:>02}" if len(parts) >= 4 else ""
-            except Exception:
-                date_str = ""
+            for match, per_map_stats in zip(batch, batch_results):
+                if len(match_stats) >= limit:
+                    break
+                if isinstance(per_map_stats, Exception) or not per_map_stats:
+                    continue
 
-            # Determine opponent name from match object
-            mt1 = match.get("team1") or {}
-            mt2 = match.get("team2") or {}
-            opponent_name = mt2.get("name", "") if mt1.get("id") == team_id else mt1.get("name", "")
+                match_id      = match.get("id")
+                slug          = match.get("slug", "")
+                tournament    = match.get("tournament") or {}
+                t_name        = tournament.get("name", "")
+                t_tier        = tournament.get("tier", "")
+                date_str      = _parse_date_from_slug(slug)
+                mt1           = match.get("team1") or {}
+                mt2           = match.get("team2") or {}
+                opponent_name = mt2.get("name", "") if mt1.get("id") == team_id else mt1.get("name", "")
 
-            maps_r = await _get("/match_maps", {"match_ids[]": match_id, "per_page": 10})
-            maps   = maps_r.get("data", [])
-            if not maps:
-                continue
+                # Build map_number → stat dict
+                map_player_stats = {ms["mapNumber"]: ms for ms in per_map_stats}
 
-            # Collect per-map player stats
-            map_player_stats = {}  # map_number → stat dict
-            for map_obj in maps:
-                map_id          = map_obj.get("id")
-                map_number      = map_obj.get("map_number", 0)
-                map_name        = map_obj.get("map_name", "")
-                winner_id       = (map_obj.get("winner") or {}).get("id")
-                t1_score        = map_obj.get("team1_score", 0) or 0
-                t2_score        = map_obj.get("team2_score", 0) or 0
-                total_rounds    = t1_score + t2_score
-                overtime_rounds = map_obj.get("overtime_rounds") or 0
+                # Maps 1+2 aggregate
+                m1        = map_player_stats.get(1, {})
+                m2        = map_player_stats.get(2, {})
+                m1m2_maps = [m for m in (m1, m2) if m]
+                if not m1m2_maps:
+                    # Fallback: use whatever maps exist
+                    m1m2_maps = sorted(per_map_stats, key=lambda x: x.get("mapNumber", 0))[:2]
 
-                pmms_r = await _get("/player_match_map_stats", {
-                    "match_map_id": map_id,
-                    "per_page":     20,
+                total_rounds_m1m2  = sum(m.get("totalRounds", 0) for m in m1m2_maps)
+                total_kast_vals    = [m.get("kast", 0) for m in m1m2_maps if m.get("kast", 0) > 0]
+                total_first_kills  = sum(m.get("firstKills", 0) for m in m1m2_maps)
+                total_first_deaths = sum(m.get("firstDeaths", 0) for m in m1m2_maps)
+
+                def _sum(field, maps=m1m2_maps):
+                    return sum(m.get(field, 0) for m in maps)
+
+                def _avg(field, maps=m1m2_maps):
+                    vals = [m.get(field, 0) for m in maps if m.get(field, 0) > 0]
+                    return sum(vals) / len(vals) if vals else 0.0
+
+                match_stats.append({
+                    "matchId":              match_id,
+                    "tournament":           t_name,
+                    "tier":                 t_tier,
+                    "date":                 date_str,
+                    "opponent":             opponent_name,
+                    "mapsPlayed":           len(map_player_stats),
+                    "maps":                 list(map_player_stats.values()),
+                    # Maps 1-2 aggregates
+                    "maps_1_2_kills":       _sum("kills"),
+                    "maps_1_2_deaths":      _sum("deaths"),
+                    "maps_1_2_assists":     _sum("assists"),
+                    "maps_1_2_adr":         round(_avg("adr"), 1),
+                    "maps_1_2_rating":      round(_avg("rating"), 2),
+                    "maps_1_2_kast":        round(sum(total_kast_vals) / len(total_kast_vals), 1) if total_kast_vals else 0,
+                    "maps_1_2_firstKills":  total_first_kills,
+                    "maps_1_2_firstDeaths": total_first_deaths,
+                    "maps_1_2_rounds":      total_rounds_m1m2,
+                    "killsPerRound_m1m2":   round(_sum("kills") / total_rounds_m1m2, 3) if total_rounds_m1m2 > 0 else 0,
+                    "map1_kills":           m1.get("kills", 0),
+                    "map2_kills":           m2.get("kills", 0) if m2 else 0,
+                    "wonMatch":             any(m.get("wonMap") for m in map_player_stats.values()),
                 })
-                for stat in pmms_r.get("data", []):
-                    if stat.get("player", {}).get("id") == player_id:
-                        kills = stat.get("kills") or 0
-                        map_player_stats[map_number] = {
-                            "mapNumber":      map_number,
-                            "mapName":        map_name,
-                            "wonMap":         winner_id == team_id,
-                            "totalRounds":    total_rounds,
-                            "overtimeRounds": overtime_rounds,
-                            "kills":          kills,
-                            "deaths":         stat.get("deaths") or 0,
-                            "assists":        stat.get("assists") or 0,
-                            "adr":            float(stat.get("adr") or 0),
-                            "kast":           float(stat.get("kast") or 0),
-                            "rating":         float(stat.get("rating") or 0),
-                            "headshotPct":    float(stat.get("headshot_percentage") or 0),
-                            "firstKills":     stat.get("first_kills") or 0,
-                            "firstDeaths":    stat.get("first_deaths") or 0,
-                            "clutchesWon":    stat.get("clutches_won") or 0,
-                            "killsPerRound":  round(kills / total_rounds, 3) if total_rounds > 0 else 0,
-                        }
-                        break
-                await asyncio.sleep(0.04)
-
-            if not map_player_stats:
-                continue
-
-            # Maps 1+2 aggregate
-            m1 = map_player_stats.get(1, {})
-            m2 = map_player_stats.get(2, {})
-            m1m2_maps = [m for m in (m1, m2) if m]
-
-            total_rounds_m1m2 = sum(m.get("totalRounds", 0) for m in m1m2_maps)
-
-            def _sum(field):
-                return sum(m.get(field, 0) for m in m1m2_maps)
-
-            def _avg(field):
-                vals = [m.get(field, 0) for m in m1m2_maps if m.get(field, 0) > 0]
-                return sum(vals) / len(vals) if vals else 0.0
-
-            total_kast_vals   = [m.get("kast", 0) for m in m1m2_maps if m.get("kast", 0) > 0]
-            total_first_kills = _sum("firstKills")
-            total_first_deaths = _sum("firstDeaths")
-            match_stats.append({
-                "matchId":              match_id,
-                "tournament":           t_name,
-                "tier":                 t_tier,
-                "date":                 date_str,
-                "opponent":             opponent_name,
-                "mapsPlayed":           len(map_player_stats),
-                "maps":                 list(map_player_stats.values()),
-                # Maps 1-2 aggregates
-                "maps_1_2_kills":       _sum("kills"),
-                "maps_1_2_deaths":      _sum("deaths"),
-                "maps_1_2_assists":     _sum("assists"),
-                "maps_1_2_adr":         round(_avg("adr"), 1),
-                "maps_1_2_rating":      round(_avg("rating"), 2),
-                "maps_1_2_kast":        round(sum(total_kast_vals)/len(total_kast_vals), 1) if total_kast_vals else 0,
-                "maps_1_2_firstKills":  total_first_kills,
-                "maps_1_2_firstDeaths": total_first_deaths,
-                "maps_1_2_rounds":      total_rounds_m1m2,
-                # Kill efficiency
-                "killsPerRound_m1m2":   round(_sum("kills") / total_rounds_m1m2, 3) if total_rounds_m1m2 > 0 else 0,
-                # Map 1 only
-                "map1_kills":           m1.get("kills", 0),
-                "map2_kills":           m2.get("kills", 0),
-                "wonMatch":             any(m.get("wonMap") for m in map_player_stats.values()),
-            })
 
         await _cache_set(key, match_stats)
+        log.info(f"[CS2] player {player_id} match stats: {len(match_stats)} matches fetched")
     except Exception as e:
         log.error(f"CS2 player match stats error: {e}")
 
