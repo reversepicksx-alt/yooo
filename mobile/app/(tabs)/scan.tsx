@@ -11,7 +11,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import { useQueryClient } from '@tanstack/react-query';
-import { scanProp, predict, mlbPredict, searchMlbPlayers, getMlbTeams, savePick, PROP_TYPES, MLB_PROP_TYPES, LEAGUES, PredictionResult, ScanResult, MlbPlayer } from '@/lib/api';
+import { scanProp, predict, mlbPredict, searchMlbPlayers, getMlbTeams, cs2Predict, searchCs2Players, savePick, PROP_TYPES, MLB_PROP_TYPES, CS2_PROP_TYPES, LEAGUES, PredictionResult, ScanResult, MlbPlayer, Cs2Player } from '@/lib/api';
 import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult, FuzzyLeagueResult } from '@/components/FuzzySearchInput';
 import LeaguePickerModal from '@/components/LeaguePickerModal';
 import { useAuth } from '@/contexts/AuthContext';
@@ -89,7 +89,7 @@ const BAND_LABEL: Record<string, string> = {
 
 type Mode = 'scan' | 'manual';
 type Phase = 'idle' | 'scanning' | 'detected' | 'analyzing' | 'result' | 'saved';
-type Sport = 'soccer' | 'mlb';
+type Sport = 'soccer' | 'mlb' | 'cs2';
 
 export default function ScanScreen() {
   const insets = useSafeAreaInsets();
@@ -158,6 +158,16 @@ export default function ScanScreen() {
   const [mlbPropType, setMlbPropType] = useState('hits');
   const [mlbShowPropPicker, setMlbShowPropPicker] = useState(false);
   const mlbSearchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // CS2 manual mode fields
+  const [cs2PlayerQuery, setCs2PlayerQuery] = useState('');
+  const [cs2PlayerSuggestions, setCs2PlayerSuggestions] = useState<Cs2Player[]>([]);
+  const [cs2ResolvedPlayer, setCs2ResolvedPlayer] = useState<Cs2Player | null>(null);
+  const [cs2Searching, setCs2Searching] = useState(false);
+  const [cs2OpponentQuery, setCs2OpponentQuery] = useState('');
+  const [cs2PropType, setCs2PropType] = useState('kills');
+  const [cs2ShowPropPicker, setCs2ShowPropPicker] = useState(false);
+  const cs2SearchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     getMlbTeams().then(data => { if (data && data.length > 0) setMlbTeams(data); }).catch(() => {});
@@ -426,6 +436,55 @@ export default function ScanScreen() {
     }
   };
 
+  const handleCs2PlayerSearch = (text: string) => {
+    setCs2PlayerQuery(text);
+    if (!text.trim()) { setCs2ResolvedPlayer(null); setCs2PlayerSuggestions([]); return; }
+    if (cs2SearchTimeout.current) clearTimeout(cs2SearchTimeout.current);
+    cs2SearchTimeout.current = setTimeout(async () => {
+      if (text.trim().length < 2) return;
+      setCs2Searching(true);
+      try {
+        const results = await searchCs2Players(text.trim());
+        setCs2PlayerSuggestions(results || []);
+      } catch { setCs2PlayerSuggestions([]); }
+      finally { setCs2Searching(false); }
+    }, 280);
+  };
+
+  const handleCs2Analyze = async () => {
+    if (!cs2PlayerQuery.trim()) { setManualError('Enter a player nickname.'); return; }
+    if (!line.trim() || isNaN(parseFloat(line))) { setManualError('Enter a valid line value (e.g. 21.5).'); return; }
+    setManualError(null);
+    setPhase('analyzing');
+    setCs2PlayerSuggestions([]);
+    try {
+      const result = await cs2Predict({
+        playerNickname: cs2PlayerQuery.trim(),
+        playerId:       cs2ResolvedPlayer?.id || null,
+        teamName:       cs2ResolvedPlayer?.team?.name || '',
+        teamId:         cs2ResolvedPlayer?.team?.id || null,
+        propType:       cs2PropType,
+        line:           parseFloat(line),
+        opponentName:   cs2OpponentQuery.trim() || '',
+      });
+      if ((result as any).error) { setManualError((result as any).error); setPhase('idle'); return; }
+      setScanResult({
+        playerName:   result.playerName || cs2PlayerQuery.trim(),
+        propType:     cs2PropType,
+        line:         parseFloat(line),
+        teamName:     result.teamName || '',
+        opponentName: cs2OpponentQuery.trim() || '',
+        leagueId:     0,
+      });
+      setPrediction(result);
+      setPhase('result');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e: unknown) {
+      setManualError(e instanceof Error ? e.message : 'CS2 analysis failed — try again');
+      setPhase('idle');
+    }
+  };
+
   const handleSavePick = async () => {
     if (!session || !prediction) return;
     setSaving(true);
@@ -495,7 +554,7 @@ export default function ScanScreen() {
       <View style={styles.header}>
         <Image source={require('../../assets/logo.png')} style={styles.logoImg} resizeMode="contain" />
         <Text style={styles.logoText}>ReversePicks</Text>
-        <Text style={styles.tagline}>{sport === 'mlb' ? 'MLB Prop Analytics' : 'Soccer Prop Analytics'}</Text>
+        <Text style={styles.tagline}>{sport === 'mlb' ? 'MLB Prop Analytics' : sport === 'cs2' ? 'CS2 Prop Analytics' : 'Soccer Prop Analytics'}</Text>
       </View>
 
       {/* ─── Sport Toggle ─── */}
@@ -514,6 +573,13 @@ export default function ScanScreen() {
             activeOpacity={0.8}
           >
             <Text style={[styles.sportTabText, sport === 'mlb' && styles.sportTabTextActive]}>⚾  MLB</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.sportTab, sport === 'cs2' && styles.sportTabActive]}
+            onPress={() => { setSport('cs2'); reset(); setMode('manual'); }}
+            activeOpacity={0.8}
+          >
+            <Text style={[styles.sportTabText, sport === 'cs2' && styles.sportTabTextActive]}>🎮  CS2</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -1177,6 +1243,109 @@ export default function ScanScreen() {
             <TouchableOpacity
               style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnLoading]}
               onPress={handleMlbAnalyze}
+              disabled={phase === 'analyzing'}
+              activeOpacity={0.85}
+            >
+              {phase === 'analyzing' ? (
+                <>
+                  <ActivityIndicator color="#000" size="small" />
+                  <Text style={styles.predictBtnText}>Analyzing…</Text>
+                </>
+              ) : (
+                <>
+                  <Ionicons name="analytics-outline" size={16} color="#000" />
+                  <Text style={styles.predictBtnText}>Analyze</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* ─── MANUAL MODE — CS2 ─── */}
+        {sport === 'cs2' && phase !== 'result' && phase !== 'saved' && (
+          <View style={styles.manualForm}>
+            <Text style={styles.fieldLabel}>Player Nickname</Text>
+            <View style={{ position: 'relative', marginBottom: 2 }}>
+              <TextInput
+                style={[styles.textInput, INPUT_STYLE, { paddingRight: cs2Searching ? 36 : 14 }]}
+                placeholder="e.g. ZywOo, s1mple, NiKo"
+                placeholderTextColor={Colors.textTertiary}
+                value={cs2PlayerQuery}
+                onChangeText={handleCs2PlayerSearch}
+                autoCorrect={false}
+                autoCapitalize="none"
+              />
+              {cs2Searching && (
+                <ActivityIndicator color={Colors.primary} size="small"
+                  style={{ position: 'absolute', right: 12, top: 12 }} />
+              )}
+            </View>
+            {cs2PlayerSuggestions.length > 0 && (
+              <View style={styles.mlbDropdown}>
+                {cs2PlayerSuggestions.slice(0, 6).filter(p => p.isActive !== false && p.team).map(p => (
+                  <TouchableOpacity
+                    key={p.id}
+                    style={styles.mlbDropdownItem}
+                    onPress={() => {
+                      setCs2ResolvedPlayer(p);
+                      setCs2PlayerQuery(p.nickname);
+                      setCs2PlayerSuggestions([]);
+                      Haptics.selectionAsync();
+                    }}
+                  >
+                    <Text style={styles.mlbDropdownName}>{p.nickname}</Text>
+                    <Text style={styles.mlbDropdownSub}>
+                      {p.team?.name || ''}
+                      {p.fullName ? `  ·  ${p.fullName}` : ''}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+            {cs2ResolvedPlayer && cs2PlayerSuggestions.length === 0 && (
+              <Text style={{ color: Colors.primary, fontSize: 11, marginBottom: 4, marginLeft: 2 }}>
+                ✓ {cs2ResolvedPlayer.team?.name || ''}
+                {cs2ResolvedPlayer.fullName ? `  ·  ${cs2ResolvedPlayer.fullName}` : ''}
+              </Text>
+            )}
+
+            <Text style={styles.fieldLabel}>Opponent Team <Text style={styles.fieldLabelOpt}>(optional)</Text></Text>
+            <TextInput
+              style={[styles.textInput, INPUT_STYLE]}
+              placeholder="e.g. NAVI, FaZe, Vitality…"
+              placeholderTextColor={Colors.textTertiary}
+              value={cs2OpponentQuery}
+              onChangeText={setCs2OpponentQuery}
+              autoCorrect={false}
+              autoCapitalize="words"
+            />
+
+            <Text style={styles.fieldLabel}>Prop Type</Text>
+            <TouchableOpacity style={styles.pickerBtn} onPress={() => setCs2ShowPropPicker(true)}>
+              <Text style={styles.pickerBtnText}>{CS2_PROP_TYPES.find(p => p.value === cs2PropType)?.label || 'Select'}</Text>
+              <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
+            </TouchableOpacity>
+
+            <Text style={styles.fieldLabel}>Line Value</Text>
+            <TextInput
+              style={[styles.textInput, INPUT_STYLE]}
+              placeholder="e.g. 21.5"
+              placeholderTextColor={Colors.textTertiary}
+              value={line}
+              onChangeText={setLine}
+              keyboardType="decimal-pad"
+            />
+
+            {manualError && (
+              <View style={styles.inlineError}>
+                <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />
+                <Text style={styles.inlineErrorText}>{manualError}</Text>
+              </View>
+            )}
+
+            <TouchableOpacity
+              style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnLoading]}
+              onPress={handleCs2Analyze}
               disabled={phase === 'analyzing'}
               activeOpacity={0.85}
             >
@@ -2638,6 +2807,27 @@ export default function ScanScreen() {
                   </View>
                 );
               })}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* CS2 Prop Picker Modal */}
+      <Modal visible={cs2ShowPropPicker} transparent animationType="slide">
+        <TouchableOpacity style={styles.modalOverlay} onPress={() => setCs2ShowPropPicker(false)}>
+          <View style={styles.modalSheet}>
+            <Text style={styles.modalTitle}>CS2 Prop Type</Text>
+            <ScrollView>
+              {CS2_PROP_TYPES.map(p => (
+                <TouchableOpacity
+                  key={p.value}
+                  style={[styles.modalItem, p.value === cs2PropType && styles.modalItemActive]}
+                  onPress={() => { setCs2PropType(p.value); setCs2ShowPropPicker(false); Haptics.selectionAsync(); }}
+                >
+                  <Text style={[styles.modalItemText, p.value === cs2PropType && styles.modalItemTextActive]}>{p.label}</Text>
+                  {p.value === cs2PropType && <Ionicons name="checkmark" size={16} color={Colors.primary} />}
+                </TouchableOpacity>
+              ))}
             </ScrollView>
           </View>
         </TouchableOpacity>

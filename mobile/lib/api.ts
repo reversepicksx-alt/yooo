@@ -12,7 +12,7 @@ const getApiBase = (): string => {
 };
 
 // Endpoints that involve AI synthesis — give them a generous timeout
-const LONG_TIMEOUT_PATHS = ['/api/predict', '/api/mlb/predict', '/api/scan-prop'];
+const LONG_TIMEOUT_PATHS = ['/api/predict', '/api/mlb/predict', '/api/cs2/predict', '/api/scan-prop'];
 const LONG_TIMEOUT_MS  = 90_000;  // 90 s — covers worst-case Grok + BDL
 const SHORT_TIMEOUT_MS = 15_000;  // 15 s — all other API calls
 
@@ -1139,6 +1139,94 @@ export async function mlbPredict(request: Record<string, unknown>): Promise<Pred
     gameLogs,
     bayesianMetrics:     bm,
     sport:               'mlb',
+  } as unknown as PredictionResult;
+}
+
+// ─── CS2 ────────────────────────────────────────────────────────────────────
+
+export const CS2_PROP_TYPES = [
+  { value: 'kills',        label: 'Kills' },
+  { value: 'deaths',       label: 'Deaths' },
+  { value: 'assists',      label: 'Assists' },
+  { value: 'adr',          label: 'ADR' },
+  { value: 'headshot_pct', label: 'Headshot %' },
+  { value: 'first_kills',  label: 'First Kills' },
+  { value: 'clutches_won', label: 'Clutches Won' },
+  { value: 'rating',       label: 'Rating' },
+];
+
+export interface Cs2Player {
+  id: number;
+  nickname: string;
+  fullName: string;
+  team: { id: number; name: string; short_name?: string | null } | null;
+  isActive: boolean | null;
+  age?: number | null;
+}
+
+export async function searchCs2Players(query: string): Promise<Cs2Player[]> {
+  if (!query || query.length < 2) return [];
+  return apiCall<Cs2Player[]>(`/api/cs2/players/search?q=${encodeURIComponent(query)}`);
+}
+
+export async function cs2Predict(request: Record<string, unknown>): Promise<PredictionResult> {
+  const raw = await apiCall<any>('/api/cs2/predict', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+  if (raw.error) return { error: raw.error } as PredictionResult;
+  const bm  = raw.bayesianMetrics || {};
+  const rec = (raw.recommendation || '').toUpperCase() as 'OVER' | 'UNDER' | 'PASS';
+
+  const gameLogs = (raw.gameLogs || []).map((g: any) => ({
+    date:           g.date ?? '',
+    opponent:       g.opponent ?? '',
+    venue:          g.wonMap === true ? 'home' : g.wonMap === false ? 'away' : '',
+    value:          g[raw.propType] ?? null,
+    minutes:        0,
+    sport:          'cs2',
+    mapName:        g.mapName ?? '',
+    mapNumber:      g.mapNumber ?? null,
+    kills:          g.kills ?? null,
+    deaths:         g.deaths ?? null,
+    assists:        g.assists ?? null,
+    adr:            g.adr ?? null,
+    kast:           g.kast ?? null,
+    rating:         g.rating ?? null,
+    headshotPct:    g.headshotPct ?? null,
+    firstKills:     g.firstKills ?? null,
+    clutchesWon:    g.clutchesWon ?? null,
+    wonMap:         g.wonMap ?? null,
+    tournament:     g.tournament ?? '',
+    tier:           g.tier ?? '',
+  })).filter((g: any) => g.value != null);
+
+  return {
+    playerName:         raw.playerName || '',
+    teamName:           raw.teamName || '',
+    opponentName:       raw.opponentName || '',
+    propType:           raw.propType || '',
+    line:               raw.line ?? 0,
+    projection:         raw.projection,
+    confidence:         raw.confidenceScore,
+    rawConfidence:      raw.confidenceScore,
+    recommendation:     rec,
+    confidenceLevel:    raw.confidenceLevel,
+    pOver:              raw.pOver ?? bm.pOver,
+    pUnder:             raw.pUnder ?? bm.pUnder,
+    priorSamples:       raw.sampleSize,
+    priorMean:          raw.priorMean ?? bm.priorMean,
+    momentumMean:       raw.momentumMean ?? bm.momentumMean,
+    streakFlag:         raw.streakFlag ?? '',
+    sharpSummary:       raw.sharpSummary || undefined,
+    reasoning:          raw.reasoning || undefined,
+    tacticalBreakdown:  raw.reasoning || undefined,
+    playerId:           raw.playerId,
+    teamId:             raw.teamId,
+    sampleSize:         raw.sampleSize,
+    gameLogs,
+    bayesianMetrics:    bm,
+    sport:              'cs2',
   } as unknown as PredictionResult;
 }
 
