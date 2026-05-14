@@ -48,30 +48,31 @@ COUNT_PROPS = {
 KILLS_CLASS_PROPS = {"kills", "maps_1_2_kills"}
 
 # ── League-average hyper-priors ───────────────────────────────────────────────
-# T1/T2 pro averages. maps_1_2 ≈ 2× per-map.
+# Calibrated to realistic T2/T3 competition (not T1 which is only ~20 teams).
+# maps_1_2 figures account for blowout maps averaging ~18-20 rounds each.
 HYPER_PRIOR = {
-    "kills":            18.0,
-    "deaths":           15.0,
-    "assists":           4.0,
-    "adr":              75.0,
+    "kills":            16.0,   # per-map: realistic T2 avg
+    "deaths":           14.0,
+    "assists":           3.5,
+    "adr":              72.0,
     "headshot_pct":     40.0,
-    "first_kills":       2.5,
-    "clutches_won":      0.5,
-    "rating":            1.05,
-    "maps_1_2_kills":   34.0,
-    "maps_1_2_deaths":  28.0,
-    "maps_1_2_assists":  8.0,
-    "maps_1_2_adr":     75.0,
+    "first_kills":       2.0,
+    "clutches_won":      0.4,
+    "rating":            1.03,
+    "maps_1_2_kills":   27.0,   # was 34.0 — realistic Maps1+2 T2 avg (blowouts included)
+    "maps_1_2_deaths":  26.0,
+    "maps_1_2_assists":  7.0,
+    "maps_1_2_adr":     72.0,
 }
 
 # ── Kills-per-round hyper-prior (used when normalising) ──────────────────────
-KPR_HYPER = 0.70   # ~0.70 kills/round is strong T1/T2 average
+KPR_HYPER = 0.63   # was 0.70 — calibrated to T2/T3 global average
 
-# Standard expected rounds per map (before OT) — competitive CS2
-EXPECTED_ROUNDS_PER_MAP  = 26.0
-EXPECTED_ROUNDS_2MAPS    = 52.0   # Maps 1+2 combined
+# Standard expected rounds per map (before OT) — includes blowouts
+EXPECTED_ROUNDS_PER_MAP  = 22.0   # was 26 — blowouts (16-26) pull real avg down
+EXPECTED_ROUNDS_2MAPS    = 40.0   # was 52 — realistic M1+M2 avg across all tiers
 
-MIN_SAMPLE   = 8       # below this, blend with hyper-prior
+MIN_SAMPLE   = 12      # was 8 — need more data before trusting the sample mean
 MC_TRIALS    = 50_000
 
 # ── Momentum decay weights (index 0 = most recent) ───────────────────────────
@@ -115,9 +116,16 @@ def _kast_weight(log_entry: dict, prop_type: str) -> float:
 
 def _opponent_rank_multiplier(rank: Optional[int], prop_type: str) -> float:
     """
-    Full 7-bracket opponent rank adjustment.
-    Stronger opponents → fewer kills (but more deaths).
-    ADR and rating follow kills directionally.
+    Opponent rank adjustment — deliberately conservative for kills.
+
+    KEY INSIGHT: For raw kill TOTALS (maps_1_2_kills), two effects nearly cancel:
+      • Weaker opponent → more kills PER ROUND (easier duels) → pushes UP
+      • Weaker opponent → blowout → FEWER ROUNDS in the match → pushes DOWN
+    Net effect on raw kill count is small (±5% max). Larger adjustments were
+    the primary driver of projection inflation in back-testing.
+
+    Deaths are less affected by round count (you still die even in blowouts),
+    so the rank effect on deaths is slightly larger.
     """
     if not rank or rank <= 0:
         return 1.0
@@ -125,25 +133,25 @@ def _opponent_rank_multiplier(rank: Optional[int], prop_type: str) -> float:
     kills_direction_props = {"kills", "maps_1_2_kills", "adr", "maps_1_2_adr", "rating"}
     deaths_direction_props = {"deaths", "maps_1_2_deaths"}
 
-    # kills/adr/rating adjustment
+    # kills/adr/rating — capped at ±6% (blowout-round effect partially cancels)
     if prop_type in kills_direction_props:
-        if rank <= 5:   return 0.88   # elite — world-class CT setups
-        if rank <= 10:  return 0.92
-        if rank <= 20:  return 0.96
+        if rank <= 5:   return 0.94   # elite — world-class CT setups, long maps
+        if rank <= 10:  return 0.96
+        if rank <= 20:  return 0.98
         if rank <= 50:  return 1.0
-        if rank <= 100: return 1.04
-        if rank <= 200: return 1.08
-        return 1.12                   # 200+ = very weak opposition
+        if rank <= 100: return 1.02
+        if rank <= 200: return 1.04
+        return 1.06                   # 200+ = weak opponent (net: small boost)
 
-    # deaths — inverse (facing better opponents → more deaths)
+    # deaths — inverse; less round-count cancellation effect
     if prop_type in deaths_direction_props:
-        if rank <= 5:   return 1.12
-        if rank <= 10:  return 1.07
-        if rank <= 20:  return 1.03
+        if rank <= 5:   return 1.08
+        if rank <= 10:  return 1.05
+        if rank <= 20:  return 1.02
         if rank <= 50:  return 1.0
-        if rank <= 100: return 0.97
-        if rank <= 200: return 0.94
-        return 0.91
+        if rank <= 100: return 0.98
+        if rank <= 200: return 0.96
+        return 0.94
 
     return 1.0  # assists, first_kills, clutches — neutral to opponent rank
 
@@ -241,11 +249,12 @@ def _win_rate_adjustment(logs: list, prop_type: str) -> float:
     if prop_type in {"kills", "maps_1_2_kills"}:
         # Win rate 70%+: slightly more kills (organized winning plays)
         # Win rate <40%: slightly fewer kills (being outclassed)
-        return 0.95 + 0.10 * win_rate   # range: 0.95 (0% wr) → 1.05 (100% wr)
+        # Deliberately narrow — team win rate is a weak predictor of individual kill count
+        return 0.97 + 0.06 * win_rate   # range: 0.97 (0% wr) → 1.03 (100% wr)
 
     if prop_type in {"deaths", "maps_1_2_deaths"}:
         # Losing teams die more
-        return 1.05 - 0.10 * win_rate   # range: 1.05 (0% wr) → 0.95 (100% wr)
+        return 1.03 - 0.06 * win_rate   # range: 1.03 (0% wr) → 0.97 (100% wr)
 
     return 1.0
 
@@ -325,8 +334,9 @@ def compute_cs2_projection(
     # Round-normalize kills props (most important tactical correction)
     if prop_type in KILLS_CLASS_PROPS:
         rn_proj   = _round_normalized_projection(map_logs, prop_type, prior_mean, n)
-        # Blend: 60% round-normalised (tactical), 40% raw (preserves style)
-        prior_mean = 0.60 * rn_proj + 0.40 * prior_mean
+        # Blend: 70% round-normalised (tactical), 30% raw (preserves style)
+        # Increased from 60/40 — round normalization is the better predictor
+        prior_mean = 0.70 * rn_proj + 0.30 * prior_mean
 
     # ── Layer 2: KAST-weighted momentum ──────────────────────────────────────
     recent   = values[:len(DECAY)]
@@ -378,7 +388,13 @@ def compute_cs2_projection(
     if n >= 2:
         std_dev = stats_mod.stdev(values)
     else:
-        std_dev = projection * 0.30
+        std_dev = projection * 0.35
+
+    # Small sample → inflate variance (we're less certain about true mean)
+    if n < 8:
+        std_dev *= 1.30
+    elif n < 12:
+        std_dev *= 1.15
 
     # KAST consistency: high KAST → lower variance (reliable)
     kast_vals = [
@@ -387,13 +403,13 @@ def compute_cs2_projection(
     ]
     avg_kast = sum(kast_vals) / max(len([k for k in kast_vals if k > 0]), 1)
     if avg_kast >= 75:
-        std_dev *= 0.85   # consistent player
+        std_dev *= 0.88   # consistent player (was 0.85 — slightly less aggressive)
     elif avg_kast <= 55 and avg_kast > 0:
-        std_dev *= 1.20   # boom-bust player
+        std_dev *= 1.25   # boom-bust player
 
     # Entry fragger variance adjustment
     std_dev *= fd_var_mult
-    std_dev  = max(std_dev, 0.5)
+    std_dev  = max(std_dev, 1.5)   # floor was 0.5 — CS2 kill totals are volatile
 
     # ── Layer 5: Monte Carlo (Negative-Binomial for counts) ───────────────────
     is_count  = prop_type in COUNT_PROPS
@@ -425,12 +441,19 @@ def compute_cs2_projection(
     recommendation = "over" if p_over >= p_under else "under"
     conf_score     = max(p_over, p_under)
 
-    if conf_score >= 70:
+    # CS2 confidence levels — deliberately conservative thresholds.
+    # CS2 kill totals have very high variance (blowouts, eco rounds, map veto).
+    # Require ≥12 samples AND strong MC probability for High confidence.
+    # "High" in CS2 is equivalent to "Medium" in soccer/MLB.
+    if conf_score >= 73 and n >= 12:
         conf_level = "High"
-    elif conf_score >= 60:
+    elif conf_score >= 63 and n >= 6:
         conf_level = "Medium"
     else:
         conf_level = "Low"
+
+    # Hard cap on displayed confidence — CS2 is too volatile for 80%+ confidence
+    conf_score = min(conf_score, 75.0)
 
     # Round for count stats
     display_proj = round(projection) if is_count else round(projection, 1)
