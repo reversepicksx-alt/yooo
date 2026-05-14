@@ -715,22 +715,20 @@ async def _try_settle_mlb(pick: dict) -> bool:
         if hours_old < 4:
             return False  # Too early — game might still be in progress
 
-    season = pick.get("season") or 2025
+    # Always resolve against the current calendar year — picks saved in "season 2025"
+    # can run as actual 2026 calendar-year games on the BDL side.
+    current_year = datetime.now(timezone.utc).year
     try:
-        game_logs = await mlb_client.get_player_game_logs(player_id, int(season), limit=3)
+        recent = await mlb_client.get_game_player_stats(
+            int(player_id), int(expected_game_id), current_year
+        )
     except Exception as _e:
-        print(f"[MLB SETTLE] Log fetch failed for player {player_id}: {_e}")
+        print(f"[MLB SETTLE] Stats fetch failed for player {player_id} game {expected_game_id}: {_e}")
         return False
 
-    if not game_logs:
-        return False
-
-    recent = game_logs[0]
-
-    # Verify this log entry is for the game the live loop confirmed — not a prior start
-    log_game_id = recent.get("game_id") or recent.get("gameId")
-    if log_game_id and int(log_game_id) != int(expected_game_id):
-        print(f"[MLB SETTLE] Game ID mismatch: log={log_game_id} vs pick gameId={expected_game_id} — game not finished yet")
+    if not recent:
+        # Stats not yet available for this game — live loop may settle it instead
+        print(f"[MLB SETTLE] No stats yet for player {player_id} game {expected_game_id}")
         return False
 
     raw_val = recent.get(field)
