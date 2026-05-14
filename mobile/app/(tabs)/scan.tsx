@@ -11,7 +11,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import { useQueryClient } from '@tanstack/react-query';
-import { scanProp, predict, mlbPredict, searchMlbPlayers, getMlbTeams, cs2Predict, searchCs2Players, savePick, PROP_TYPES, MLB_PROP_TYPES, CS2_PROP_TYPES, LEAGUES, PredictionResult, ScanResult, MlbPlayer, Cs2Player } from '@/lib/api';
+import { scanProp, predict, mlbPredict, searchMlbPlayers, getMlbTeams, cs2Predict, searchCs2Players, searchCs2Teams, savePick, PROP_TYPES, MLB_PROP_TYPES, CS2_PROP_TYPES, LEAGUES, PredictionResult, ScanResult, MlbPlayer, Cs2Player, Cs2Team } from '@/lib/api';
 import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult, FuzzyLeagueResult } from '@/components/FuzzySearchInput';
 import LeaguePickerModal from '@/components/LeaguePickerModal';
 import { useAuth } from '@/contexts/AuthContext';
@@ -165,9 +165,13 @@ export default function ScanScreen() {
   const [cs2ResolvedPlayer, setCs2ResolvedPlayer] = useState<Cs2Player | null>(null);
   const [cs2Searching, setCs2Searching] = useState(false);
   const [cs2OpponentQuery, setCs2OpponentQuery] = useState('');
-  const [cs2PropType, setCs2PropType] = useState('kills');
+  const [cs2OpponentSuggestions, setCs2OpponentSuggestions] = useState<Cs2Team[]>([]);
+  const [cs2ResolvedOpponent, setCs2ResolvedOpponent] = useState<Cs2Team | null>(null);
+  const [cs2OppSearching, setCs2OppSearching] = useState(false);
+  const [cs2PropType, setCs2PropType] = useState('maps_1_2_kills');
   const [cs2ShowPropPicker, setCs2ShowPropPicker] = useState(false);
   const cs2SearchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cs2OppSearchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     getMlbTeams().then(data => { if (data && data.length > 0) setMlbTeams(data); }).catch(() => {});
@@ -448,6 +452,22 @@ export default function ScanScreen() {
         setCs2PlayerSuggestions(results || []);
       } catch { setCs2PlayerSuggestions([]); }
       finally { setCs2Searching(false); }
+    }, 280);
+  };
+
+  const handleCs2OpponentSearch = (text: string) => {
+    setCs2OpponentQuery(text);
+    setCs2ResolvedOpponent(null);
+    if (!text.trim()) { setCs2OpponentSuggestions([]); return; }
+    if (cs2OppSearchTimeout.current) clearTimeout(cs2OppSearchTimeout.current);
+    cs2OppSearchTimeout.current = setTimeout(async () => {
+      if (text.trim().length < 2) return;
+      setCs2OppSearching(true);
+      try {
+        const results = await searchCs2Teams(text.trim());
+        setCs2OpponentSuggestions(results || []);
+      } catch { setCs2OpponentSuggestions([]); }
+      finally { setCs2OppSearching(false); }
     }, 280);
   };
 
@@ -1310,15 +1330,45 @@ export default function ScanScreen() {
             )}
 
             <Text style={styles.fieldLabel}>Opponent Team <Text style={styles.fieldLabelOpt}>(optional)</Text></Text>
-            <TextInput
-              style={[styles.textInput, INPUT_STYLE]}
-              placeholder="e.g. NAVI, FaZe, Vitality…"
-              placeholderTextColor={Colors.textTertiary}
-              value={cs2OpponentQuery}
-              onChangeText={setCs2OpponentQuery}
-              autoCorrect={false}
-              autoCapitalize="words"
-            />
+            <View style={{ position: 'relative', marginBottom: 2 }}>
+              <TextInput
+                style={[styles.textInput, INPUT_STYLE, { paddingRight: cs2OppSearching ? 36 : 14 }]}
+                placeholder="e.g. NAVI, FaZe, Vitality…"
+                placeholderTextColor={Colors.textTertiary}
+                value={cs2OpponentQuery}
+                onChangeText={handleCs2OpponentSearch}
+                autoCorrect={false}
+                autoCapitalize="none"
+              />
+              {cs2OppSearching && (
+                <ActivityIndicator color={Colors.primary} size="small"
+                  style={{ position: 'absolute', right: 12, top: 12 }} />
+              )}
+            </View>
+            {cs2OpponentSuggestions.length > 0 && !cs2ResolvedOpponent && (
+              <View style={styles.mlbDropdown}>
+                {cs2OpponentSuggestions.slice(0, 6).map(t => (
+                  <TouchableOpacity
+                    key={t.id}
+                    style={styles.mlbDropdownItem}
+                    onPress={() => {
+                      setCs2ResolvedOpponent(t);
+                      setCs2OpponentQuery(t.name);
+                      setCs2OpponentSuggestions([]);
+                      Haptics.selectionAsync();
+                    }}
+                  >
+                    <Text style={styles.mlbDropdownName}>{t.name}</Text>
+                    {t.shortName ? <Text style={styles.mlbDropdownSub}>{t.shortName}</Text> : null}
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+            {cs2ResolvedOpponent && cs2OpponentSuggestions.length === 0 && (
+              <Text style={{ color: Colors.primary, fontSize: 11, marginBottom: 4, marginLeft: 2 }}>
+                ✓ {cs2ResolvedOpponent.name} (id {cs2ResolvedOpponent.id})
+              </Text>
+            )}
 
             <Text style={styles.fieldLabel}>Prop Type</Text>
             <TouchableOpacity style={styles.pickerBtn} onPress={() => setCs2ShowPropPicker(true)}>

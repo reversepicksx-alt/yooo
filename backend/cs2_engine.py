@@ -16,6 +16,7 @@ import statistics as stats_mod
 from typing import Optional
 
 # ── Prop definitions ─────────────────────────────────────────────────────────
+# Per-map props
 CS2_PROPS = {
     "kills":           "kills",
     "deaths":          "deaths",
@@ -25,22 +26,36 @@ CS2_PROPS = {
     "first_kills":     "firstKills",
     "clutches_won":    "clutchesWon",
     "rating":          "rating",
+    # Per-match (maps 1-2 aggregate) props
+    "maps_1_2_kills":   "maps_1_2_kills",
+    "maps_1_2_deaths":  "maps_1_2_deaths",
+    "maps_1_2_assists": "maps_1_2_assists",
+    "maps_1_2_adr":     "maps_1_2_adr",
 }
 
-# Discrete (Poisson) vs continuous (Gaussian)
-COUNT_PROPS = {"kills", "deaths", "assists", "first_kills", "clutches_won"}
+# Props that require per-MATCH data (not per-map)
+MATCH_LEVEL_PROPS = {"maps_1_2_kills", "maps_1_2_deaths", "maps_1_2_assists", "maps_1_2_adr"}
 
-# ── League-average hyper-priors (used when sample < MIN_SAMPLE) ─────────────
-# Approximate pro-player averages per map in T1/T2 CS2
+# Discrete (Poisson) vs continuous (Gaussian)
+COUNT_PROPS = {"kills", "deaths", "assists", "first_kills", "clutches_won",
+               "maps_1_2_kills", "maps_1_2_deaths", "maps_1_2_assists"}
+
+# ── League-average hyper-priors ───────────────────────────────────────────────
+# Per-map averages for T1/T2 pros; maps_1_2 values ≈ 2× per-map
 HYPER_PRIOR = {
-    "kills":        18.0,
-    "deaths":       15.0,
-    "assists":       4.0,
-    "adr":          75.0,
-    "headshot_pct": 40.0,
-    "first_kills":   2.5,
-    "clutches_won":  0.5,
-    "rating":        1.05,
+    "kills":            18.0,
+    "deaths":           15.0,
+    "assists":           4.0,
+    "adr":              75.0,
+    "headshot_pct":     40.0,
+    "first_kills":       2.5,
+    "clutches_won":      0.5,
+    "rating":            1.05,
+    # Maps 1-2 (2-map totals)
+    "maps_1_2_kills":   34.0,
+    "maps_1_2_deaths":  28.0,
+    "maps_1_2_assists":  8.0,
+    "maps_1_2_adr":     75.0,
 }
 
 MIN_SAMPLE   = 8   # below this, blend with hyper-prior

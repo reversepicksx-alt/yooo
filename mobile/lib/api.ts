@@ -1145,14 +1145,18 @@ export async function mlbPredict(request: Record<string, unknown>): Promise<Pred
 // ─── CS2 ────────────────────────────────────────────────────────────────────
 
 export const CS2_PROP_TYPES = [
-  { value: 'kills',        label: 'Kills' },
-  { value: 'deaths',       label: 'Deaths' },
-  { value: 'assists',      label: 'Assists' },
-  { value: 'adr',          label: 'ADR' },
-  { value: 'headshot_pct', label: 'Headshot %' },
-  { value: 'first_kills',  label: 'First Kills' },
-  { value: 'clutches_won', label: 'Clutches Won' },
-  { value: 'rating',       label: 'Rating' },
+  { value: 'maps_1_2_kills',   label: 'Maps 1-2 Kills' },
+  { value: 'maps_1_2_deaths',  label: 'Maps 1-2 Deaths' },
+  { value: 'maps_1_2_assists', label: 'Maps 1-2 Assists' },
+  { value: 'maps_1_2_adr',     label: 'Maps 1-2 ADR' },
+  { value: 'kills',            label: 'Kills (per map)' },
+  { value: 'deaths',           label: 'Deaths (per map)' },
+  { value: 'assists',          label: 'Assists (per map)' },
+  { value: 'adr',              label: 'ADR (per map)' },
+  { value: 'headshot_pct',     label: 'Headshot %' },
+  { value: 'first_kills',      label: 'First Kills' },
+  { value: 'clutches_won',     label: 'Clutches Won' },
+  { value: 'rating',           label: 'Rating' },
 ];
 
 export interface Cs2Player {
@@ -1167,6 +1171,17 @@ export interface Cs2Player {
 export async function searchCs2Players(query: string): Promise<Cs2Player[]> {
   if (!query || query.length < 2) return [];
   return apiCall<Cs2Player[]>(`/api/cs2/players/search?q=${encodeURIComponent(query)}`);
+}
+
+export interface Cs2Team {
+  id: number;
+  name: string;
+  shortName?: string | null;
+}
+
+export async function searchCs2Teams(query: string): Promise<Cs2Team[]> {
+  if (!query || query.length < 2) return [];
+  return apiCall<Cs2Team[]>(`/api/cs2/teams/search?q=${encodeURIComponent(query)}`);
 }
 
 export async function cs2Predict(request: Record<string, unknown>): Promise<PredictionResult> {

@@ -17,14 +17,18 @@ log    = logging.getLogger("cs2_routes")
 router = APIRouter(prefix="/api/cs2", tags=["cs2"])
 
 CS2_PROP_LABELS = {
-    "kills":        "Kills",
-    "deaths":       "Deaths",
-    "assists":      "Assists",
-    "adr":          "ADR",
-    "headshot_pct": "Headshot %",
-    "first_kills":  "First Kills",
-    "clutches_won": "Clutches Won",
-    "rating":       "Rating",
+    "kills":            "Kills",
+    "deaths":           "Deaths",
+    "assists":          "Assists",
+    "adr":              "ADR",
+    "headshot_pct":     "Headshot %",
+    "first_kills":      "First Kills",
+    "clutches_won":     "Clutches Won",
+    "rating":           "Rating",
+    "maps_1_2_kills":   "Maps 1-2 Kills",
+    "maps_1_2_deaths":  "Maps 1-2 Deaths",
+    "maps_1_2_assists": "Maps 1-2 Assists",
+    "maps_1_2_adr":     "Maps 1-2 ADR",
 }
 
 
@@ -47,16 +51,24 @@ async def _get_cs2_ai_analysis(
 ) -> dict:
     prop_label = CS2_PROP_LABELS.get(prop_type, prop_type.replace("_", " ").title())
 
-    # Build log context (last 5 maps)
+    # Build log context (last 5 entries — match-level for maps_1_2, per-map otherwise)
     ctx_lines = []
+    is_match_level = prop_type in cs2_engine.MATCH_LEVEL_PROPS
     for i, m in enumerate(map_logs[:5]):
         field = cs2_engine.CS2_PROPS.get(prop_type, prop_type)
         val   = m.get(field, "?")
-        mn    = m.get("mapName", "?").replace("de_", "")
-        won   = "W" if m.get("wonMap") else "L"
-        opp_t = m.get("opponent", "")
-        ctx_lines.append(f"  Map {i+1} ({mn},{won}): {val} {prop_label}"
-                         + (f" vs {opp_t}" if opp_t else ""))
+        if is_match_level:
+            n_maps  = m.get("mapsPlayed", 2)
+            won     = "W" if m.get("wonMatch") else "L"
+            opp_t   = m.get("tournament", "")
+            ctx_lines.append(f"  Match {i+1} ({n_maps}-map,{won}): {val} {prop_label}"
+                             + (f" @ {opp_t}" if opp_t else ""))
+        else:
+            mn    = m.get("mapName", "?").replace("de_", "")
+            won   = "W" if m.get("wonMap") else "L"
+            opp_t = m.get("opponent", "")
+            ctx_lines.append(f"  Map {i+1} ({mn},{won}): {val} {prop_label}"
+                             + (f" vs {opp_t}" if opp_t else ""))
     game_ctx = "\n".join(ctx_lines) or "  (no recent data)"
 
     rank_note = f"Opponent world rank: #{opp_rank}" if opp_rank else "Opponent rank: unknown"
@@ -121,6 +133,17 @@ async def search_players(q: str = Query(..., min_length=2)):
         ]
     except Exception as e:
         log.error(f"CS2 player search error: {e}")
+        return []
+
+
+# ── Team search ───────────────────────────────────────────────────────────────
+
+@router.get("/teams/search")
+async def search_teams(q: str = Query(..., min_length=2)):
+    try:
+        return await cs2_client.search_teams(q)
+    except Exception as e:
+        log.error(f"CS2 team search error: {e}")
         return []
 
 
@@ -192,16 +215,21 @@ async def cs2_predict(req: Cs2PredictRequest):
 
     print(f"[CS2 PREDICT] {nickname} ({player_id}) | {prop_type} {req.line} | team={team_name}({team_id}) | opp={req.opponentName or '?'}")
 
-    # ── Fetch recent map stats ────────────────────────────────────────────────
+    # ── Fetch stats (match-level for maps_1_2 props, per-map for everything else) ─
+    is_match_level = prop_type in cs2_engine.MATCH_LEVEL_PROPS
     try:
-        map_logs = await cs2_client.get_player_recent_map_stats(player_id, team_id, limit=30)
+        if is_match_level:
+            map_logs = await cs2_client.get_player_recent_match_stats(player_id, team_id, limit=15)
+        else:
+            map_logs = await cs2_client.get_player_recent_map_stats(player_id, team_id, limit=30)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Failed to fetch CS2 data: {e}")
 
     if not map_logs:
+        data_kind = "match" if is_match_level else "map"
         raise HTTPException(
             status_code=404,
-            detail=f"No recent map stats found for {nickname}. They may not have played recently.",
+            detail=f"No recent {data_kind} stats found for {nickname}. They may not have played recently.",
         )
 
     # ── Fetch opponent rank if opponentName given ────────────────────────────
@@ -227,7 +255,7 @@ async def cs2_predict(req: Cs2PredictRequest):
     if result.get("error") == "insufficient_data":
         raise HTTPException(
             status_code=404,
-            detail=f"Insufficient map data for {nickname} to generate a prediction.",
+            detail=f"Insufficient data for {nickname} on {prop_type}. Need at least 2 matches/maps.",
         )
 
     # ── AI analysis (non-blocking) ─────────────────────────────────────────────

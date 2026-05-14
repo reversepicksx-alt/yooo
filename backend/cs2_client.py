@@ -214,6 +214,141 @@ async def get_player_recent_map_stats(player_id: int, team_id: int, limit: int =
     return map_stats
 
 
+async def search_teams(query: str) -> list:
+    """Search CS2 teams by name, returning clean results."""
+    key = f"cs2_tsearch_{query.lower().strip()}"
+    doc = await _cache_get(key)
+    if _fresh(doc, CACHE_TTL["teams"]) and doc.get("data") is not None:
+        return doc["data"]
+    try:
+        r = await _get("/teams", {"search": query.strip(), "per_page": 20})
+        results = [
+            {"id": t["id"], "name": t.get("name", ""), "shortName": t.get("short_name")}
+            for t in r.get("data", [])
+            if t.get("id") and t.get("name") and t.get("slug")  # slug present = real team
+        ]
+        await _cache_set(key, results)
+        return results
+    except Exception as e:
+        log.error(f"CS2 team search error: {e}")
+        return []
+
+
+async def get_player_recent_match_stats(player_id: int, team_id: int, limit: int = 15) -> list:
+    """
+    Fetch per-MATCH aggregated stats for maps_1_2_* props.
+    For each match: sums kills/deaths/assists on map1+map2; averages ADR/rating.
+    Returns list of match-level dicts, newest first.
+    """
+    key = f"cs2_pmatches_{player_id}_{team_id}"
+    doc = await _cache_get(key)
+    if _fresh(doc, CACHE_TTL["player_maps"]) and doc.get("data") is not None:
+        return doc["data"]
+
+    match_stats = []
+    try:
+        matches_r = await _get("/matches", {
+            "team_ids[]": team_id,
+            "per_page":   25,
+            "status":     "finished",
+        })
+        matches = matches_r.get("data", [])
+
+        for match in matches:
+            if len(match_stats) >= limit:
+                break
+            match_id = match.get("id")
+            if not match_id:
+                continue
+
+            slug       = match.get("slug", "")
+            tournament = match.get("tournament") or {}
+            t_name     = tournament.get("name", "")
+            t_tier     = tournament.get("tier", "")
+
+            try:
+                parts    = slug.rsplit("-", 3)
+                date_str = f"{parts[-1]}-{parts[-2]:>02}-{parts[-3]:>02}" if len(parts) >= 4 else ""
+            except Exception:
+                date_str = ""
+
+            maps_r = await _get("/match_maps", {"match_ids[]": match_id, "per_page": 10})
+            maps   = maps_r.get("data", [])
+            if not maps:
+                continue
+
+            # Collect per-map player stats
+            map_player_stats = {}  # map_number → stat dict
+            for map_obj in maps:
+                map_id     = map_obj.get("id")
+                map_number = map_obj.get("map_number", 0)
+                map_name   = map_obj.get("map_name", "")
+                winner_id  = (map_obj.get("winner") or {}).get("id")
+
+                pmms_r = await _get("/player_match_map_stats", {
+                    "match_map_id": map_id,
+                    "per_page":     20,
+                })
+                for stat in pmms_r.get("data", []):
+                    if stat.get("player", {}).get("id") == player_id:
+                        map_player_stats[map_number] = {
+                            "mapNumber":    map_number,
+                            "mapName":      map_name,
+                            "wonMap":       winner_id == team_id,
+                            "kills":        stat.get("kills") or 0,
+                            "deaths":       stat.get("deaths") or 0,
+                            "assists":      stat.get("assists") or 0,
+                            "adr":          float(stat.get("adr") or 0),
+                            "kast":         float(stat.get("kast") or 0),
+                            "rating":       float(stat.get("rating") or 0),
+                            "headshotPct":  float(stat.get("headshot_percentage") or 0),
+                            "firstKills":   stat.get("first_kills") or 0,
+                            "clutchesWon":  stat.get("clutches_won") or 0,
+                        }
+                        break
+                await asyncio.sleep(0.04)
+
+            if not map_player_stats:
+                continue
+
+            # Maps 1+2 aggregate
+            m1 = map_player_stats.get(1, {})
+            m2 = map_player_stats.get(2, {})
+            m1m2_maps = [m for m in (m1, m2) if m]
+
+            def _sum(field):
+                return sum(m.get(field, 0) for m in m1m2_maps)
+
+            def _avg(field):
+                vals = [m.get(field, 0) for m in m1m2_maps if m.get(field, 0) > 0]
+                return sum(vals) / len(vals) if vals else 0.0
+
+            match_stats.append({
+                "matchId":          match_id,
+                "tournament":       t_name,
+                "tier":             t_tier,
+                "date":             date_str,
+                "mapsPlayed":       len(map_player_stats),
+                "maps":             list(map_player_stats.values()),
+                # Maps 1-2 aggregates
+                "maps_1_2_kills":   _sum("kills"),
+                "maps_1_2_deaths":  _sum("deaths"),
+                "maps_1_2_assists": _sum("assists"),
+                "maps_1_2_adr":     round(_avg("adr"), 1),
+                "maps_1_2_rating":  round(_avg("rating"), 2),
+                # Map 1 only
+                "map1_kills":       m1.get("kills", 0),
+                "map2_kills":       m2.get("kills", 0),
+                "wonMatch":         any(m.get("wonMap") for m in map_player_stats.values()),
+            })
+
+        await _cache_set(key, match_stats)
+    except Exception as e:
+        log.error(f"CS2 player match stats error: {e}")
+
+    return match_stats
+
+
 async def get_rankings(limit: int = 30) -> list:
     """Current HLTV-style team rankings."""
     key = "cs2_rankings"
