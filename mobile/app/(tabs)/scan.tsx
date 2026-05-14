@@ -532,6 +532,19 @@ export default function ScanScreen() {
         sport: sport,
         projHomePoss: sport === 'soccer' && Number.isFinite(projHomePoss) ? projHomePoss : undefined,
         projAwayPoss: Number.isFinite(projAwayPoss) ? projAwayPoss : undefined,
+        // CS2: persist AI analysis directly on the pick so the analysis modal can show it
+        ...(sport === 'cs2' ? {
+          sharpSummary:    prediction.sharpSummary  || undefined,
+          reasoning:       prediction.reasoning      || prediction.tacticalBreakdown || undefined,
+          tacticalMetrics: (prediction as any).bayesianMetrics?.tacticalMetrics || undefined,
+          projectedValue:  prediction.projection,
+          pOver:           prediction.pOver,
+          pUnder:          prediction.pUnder,
+          priorMean:       (prediction as any).bayesianMetrics?.priorMean,
+          momentumMean:    (prediction as any).bayesianMetrics?.momentumMean,
+          sampleSize:      (prediction as any).bayesianMetrics?.sampleSize,
+          streakFlag:      (prediction as any).streakFlag,
+        } : {}),
         player: {
           id: prediction.playerId || 0,
           name: prediction.playerName || scanResult?.playerName || playerQuery,

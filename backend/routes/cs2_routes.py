@@ -48,32 +48,62 @@ async def _get_cs2_ai_analysis(
     momentum_mean: float,
     streak_flag: str,
     opp_rank: Optional[int],
+    tactical_metrics: Optional[dict] = None,
 ) -> dict:
-    prop_label = CS2_PROP_LABELS.get(prop_type, prop_type.replace("_", " ").title())
-
-    # Build log context (last 5 entries — match-level for maps_1_2, per-map otherwise)
-    ctx_lines = []
+    prop_label     = CS2_PROP_LABELS.get(prop_type, prop_type.replace("_", " ").title())
     is_match_level = prop_type in cs2_engine.MATCH_LEVEL_PROPS
+
+    # ── Recent log context (last 5 entries) ───────────────────────────────────
+    ctx_lines = []
     for i, m in enumerate(map_logs[:5]):
         field = cs2_engine.CS2_PROPS.get(prop_type, prop_type)
         val   = m.get(field, "?")
+        opp_t = m.get("opponent", "") or m.get("tournament", "")
         if is_match_level:
-            n_maps  = m.get("mapsPlayed", 2)
-            won     = "W" if m.get("wonMatch") else "L"
-            opp_t   = m.get("tournament", "")
-            ctx_lines.append(f"  Match {i+1} ({n_maps}-map,{won}): {val} {prop_label}"
-                             + (f" @ {opp_t}" if opp_t else ""))
+            n_maps = m.get("mapsPlayed", 2)
+            won    = "W" if m.get("wonMatch") else "L"
+            rounds = m.get("maps_1_2_rounds", "?")
+            kast   = m.get("maps_1_2_kast", 0)
+            kast_s = f" KAST={kast:.0f}%" if kast else ""
+            ctx_lines.append(
+                f"  Match {i+1} ({n_maps}-map,{won},{rounds}rnd{kast_s}): {val} {prop_label}"
+                + (f" vs {opp_t}" if opp_t else "")
+            )
         else:
-            mn    = m.get("mapName", "?").replace("de_", "")
-            won   = "W" if m.get("wonMap") else "L"
-            opp_t = m.get("opponent", "")
-            ctx_lines.append(f"  Map {i+1} ({mn},{won}): {val} {prop_label}"
-                             + (f" vs {opp_t}" if opp_t else ""))
+            mn     = m.get("mapName", "?").replace("de_", "")
+            won    = "W" if m.get("wonMap") else "L"
+            rounds = m.get("totalRounds", "?")
+            kpr    = m.get("killsPerRound", 0)
+            kpr_s  = f" ({kpr:.2f}k/r)" if kpr and prop_type == "kills" else ""
+            ctx_lines.append(
+                f"  Map {i+1} ({mn},{won},{rounds}rnd{kpr_s}): {val} {prop_label}"
+                + (f" vs {opp_t}" if opp_t else "")
+            )
     game_ctx = "\n".join(ctx_lines) or "  (no recent data)"
+
+    # ── Tactical metrics summary ──────────────────────────────────────────────
+    tm = tactical_metrics or {}
+    tm_lines = []
+    if tm.get("avgKillsPerRound"):
+        tm_lines.append(f"• Career KPR: {tm['avgKillsPerRound']:.3f} k/round")
+    if tm.get("avgKast"):
+        tm_lines.append(f"• KAST efficiency: {tm['avgKast']:.0f}% (consistency signal)")
+    if tm.get("entryFraggerRatio") and tm["entryFraggerRatio"] != 1.0:
+        ratio = tm["entryFraggerRatio"]
+        role  = "entry fragger" if ratio > 1.2 else "support" if ratio < 0.8 else "balanced"
+        tm_lines.append(f"• First-duel ratio: {ratio:.2f} ({role})")
+    if tm.get("oppRankMultiplier") and tm["oppRankMultiplier"] != 1.0:
+        direction = "weaker" if tm["oppRankMultiplier"] > 1.0 else "stronger"
+        tm_lines.append(f"• Opponent rank adj: {tm['oppRankMultiplier']:.2f}× ({direction} opposition)")
+    if tm.get("overtimeBonus") and tm["overtimeBonus"] > 0:
+        tm_lines.append(f"• OT frequency bonus: +{tm['overtimeBonus']:.1f} kills")
+    if tm.get("winRateAdj") and abs(tm["winRateAdj"] - 1.0) > 0.01:
+        tm_lines.append(f"• Win-rate context: {tm['winRateAdj']:.2f}× (team form)")
+    tactical_ctx = "\n".join(tm_lines) if tm_lines else "  (standard)"
 
     rank_note = f"Opponent world rank: #{opp_rank}" if opp_rank else "Opponent rank: unknown"
 
-    prompt = f"""You are a sharp CS2 esports betting analyst.
+    prompt = f"""You are a sharp CS2 esports betting analyst with deep knowledge of counter-strike tactics.
 
 Player: {player_nickname}
 Prop: {prop_label} | Line: {line}
@@ -81,16 +111,19 @@ Opponent: {opponent or 'TBD'} | {rank_note}
 Season avg: {prior_mean:.1f} | Momentum avg: {momentum_mean:.1f}
 Model projection: {projection:.1f} → {recommendation.upper()} (P(OVER)={p_over}%, P(UNDER)={p_under}%){(' | ' + streak_flag) if streak_flag else ''}
 
-Recent map log (Map 1 = most recent):
+Tactical factors applied by model:
+{tactical_ctx}
+
+Recent match/map log (most recent first):
 {game_ctx}
 
-Write a sharp 2-3 sentence CS2 betting analysis:
-1. Why the model projects {projection:.1f} vs the {line} line
-2. Key matchup or form factor (opponent tier, map pool, momentum)
-3. Main risk factor
+Write a crisp, sharp 2-3 sentence CS2 betting analysis using the tactical data above:
+1. Why the model projects {projection:.1f} vs the {line} line (cite KPR, KAST, or round counts if relevant)
+2. Key matchup or form factor (opponent tier #{opp_rank or '?'}, entry-fragger role, momentum)
+3. Main risk or edge
 
-Be direct and data-driven. Return JSON ONLY:
-{{"sharpSummary": "<1 tight sentence>", "reasoning": "<2-3 sharp sentences>"}}"""
+Be specific. Use CS2 terminology. Return JSON ONLY:
+{{"sharpSummary": "<1 tight sentence under 20 words>", "reasoning": "<2-3 sharp sentences with specific numbers>"}}"""
 
     try:
         from openai import AsyncOpenAI
@@ -99,10 +132,10 @@ Be direct and data-driven. Return JSON ONLY:
             client.chat.completions.create(
                 model="grok-4-1-fast-non-reasoning",
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=300,
-                temperature=0.5,
+                max_tokens=400,
+                temperature=0.4,
             ),
-            timeout=8,
+            timeout=12,
         )
         raw = resp.choices[0].message.content.strip()
         m   = re.search(r'\{[\s\S]*\}', raw)
@@ -258,6 +291,8 @@ async def cs2_predict(req: Cs2PredictRequest):
             detail=f"Insufficient data for {nickname} on {prop_type}. Need at least 2 matches/maps.",
         )
 
+    tactical_metrics = result.get("tacticalMetrics", {})
+
     # ── AI analysis (non-blocking) ─────────────────────────────────────────────
     ai_task = asyncio.create_task(_get_cs2_ai_analysis(
         player_nickname=nickname,
@@ -273,6 +308,7 @@ async def cs2_predict(req: Cs2PredictRequest):
         momentum_mean=result["momentumMean"],
         streak_flag=result.get("streakFlag", ""),
         opp_rank=opp_rank,
+        tactical_metrics=tactical_metrics,
     ))
 
     try:
@@ -307,8 +343,9 @@ async def cs2_predict(req: Cs2PredictRequest):
         "reasoning":        ai.get("reasoning", ""),
         "gameLogs":         map_logs[:15],
         "bayesianMetrics": {
-            "priorMean":    result["priorMean"],
-            "momentumMean": result["momentumMean"],
-            "sampleSize":   result["sampleSize"],
+            "priorMean":       result["priorMean"],
+            "momentumMean":    result["momentumMean"],
+            "sampleSize":      result["sampleSize"],
+            "tacticalMetrics": tactical_metrics,
         },
     }

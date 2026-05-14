@@ -163,17 +163,26 @@ async def get_player_recent_map_stats(player_id: int, team_id: int, limit: int =
             maps_r = await _get("/match_maps", {"match_ids[]": match_id, "per_page": 10})
             maps   = maps_r.get("data", [])
 
+            # Determine opponent name from match object
+            team1_obj  = match.get("team1") or {}
+            team2_obj  = match.get("team2") or {}
+            if team1_obj.get("id") == team_id:
+                opponent_name = team2_obj.get("name", "")
+            else:
+                opponent_name = team1_obj.get("name", "")
+
             for map_obj in maps:
                 if len(map_stats) >= limit:
                     break
-                map_id     = map_obj.get("id")
-                map_name   = map_obj.get("map_name", "")
-                map_number = map_obj.get("map_number", 0)
-                winner_id  = (map_obj.get("winner") or {}).get("id")
-
-                # Build opponent name from scores context
-                t1_score = map_obj.get("team1_score", 0) or 0
-                t2_score = map_obj.get("team2_score", 0) or 0
+                map_id          = map_obj.get("id")
+                map_name        = map_obj.get("map_name", "")
+                map_number      = map_obj.get("map_number", 0)
+                winner_id       = (map_obj.get("winner") or {}).get("id")
+                t1_score        = map_obj.get("team1_score", 0) or 0
+                t2_score        = map_obj.get("team2_score", 0) or 0
+                total_rounds    = t1_score + t2_score
+                overtime_rounds = map_obj.get("overtime_rounds") or 0
+                duration_secs   = map_obj.get("duration_seconds") or 0
 
                 pmms_r = await _get("/player_match_map_stats", {
                     "match_map_id": map_id,
@@ -183,6 +192,7 @@ async def get_player_recent_map_stats(player_id: int, team_id: int, limit: int =
 
                 for stat in pmms:
                     if stat.get("player", {}).get("id") == player_id:
+                        kills = stat.get("kills") or 0
                         map_stats.append({
                             "matchId":          match_id,
                             "mapId":            map_id,
@@ -191,8 +201,12 @@ async def get_player_recent_map_stats(player_id: int, team_id: int, limit: int =
                             "tournament":       t_name,
                             "tier":             t_tier,
                             "date":             date_str,
+                            "opponent":         opponent_name,
                             "wonMap":           winner_id == team_id,
-                            "kills":            stat.get("kills") or 0,
+                            "totalRounds":      total_rounds,
+                            "overtimeRounds":   overtime_rounds,
+                            "durationSecs":     duration_secs,
+                            "kills":            kills,
                             "deaths":           stat.get("deaths") or 0,
                             "assists":          stat.get("assists") or 0,
                             "adr":              float(stat.get("adr") or 0),
@@ -202,6 +216,8 @@ async def get_player_recent_map_stats(player_id: int, team_id: int, limit: int =
                             "firstKills":       stat.get("first_kills") or 0,
                             "firstDeaths":      stat.get("first_deaths") or 0,
                             "clutchesWon":      stat.get("clutches_won") or 0,
+                            # Round-normalised kills (key tactical factor)
+                            "killsPerRound":    round(kills / total_rounds, 3) if total_rounds > 0 else 0,
                         })
                         break
 
@@ -272,6 +288,11 @@ async def get_player_recent_match_stats(player_id: int, team_id: int, limit: int
             except Exception:
                 date_str = ""
 
+            # Determine opponent name from match object
+            mt1 = match.get("team1") or {}
+            mt2 = match.get("team2") or {}
+            opponent_name = mt2.get("name", "") if mt1.get("id") == team_id else mt1.get("name", "")
+
             maps_r = await _get("/match_maps", {"match_ids[]": match_id, "per_page": 10})
             maps   = maps_r.get("data", [])
             if not maps:
@@ -280,10 +301,14 @@ async def get_player_recent_match_stats(player_id: int, team_id: int, limit: int
             # Collect per-map player stats
             map_player_stats = {}  # map_number → stat dict
             for map_obj in maps:
-                map_id     = map_obj.get("id")
-                map_number = map_obj.get("map_number", 0)
-                map_name   = map_obj.get("map_name", "")
-                winner_id  = (map_obj.get("winner") or {}).get("id")
+                map_id          = map_obj.get("id")
+                map_number      = map_obj.get("map_number", 0)
+                map_name        = map_obj.get("map_name", "")
+                winner_id       = (map_obj.get("winner") or {}).get("id")
+                t1_score        = map_obj.get("team1_score", 0) or 0
+                t2_score        = map_obj.get("team2_score", 0) or 0
+                total_rounds    = t1_score + t2_score
+                overtime_rounds = map_obj.get("overtime_rounds") or 0
 
                 pmms_r = await _get("/player_match_map_stats", {
                     "match_map_id": map_id,
@@ -291,19 +316,24 @@ async def get_player_recent_match_stats(player_id: int, team_id: int, limit: int
                 })
                 for stat in pmms_r.get("data", []):
                     if stat.get("player", {}).get("id") == player_id:
+                        kills = stat.get("kills") or 0
                         map_player_stats[map_number] = {
-                            "mapNumber":    map_number,
-                            "mapName":      map_name,
-                            "wonMap":       winner_id == team_id,
-                            "kills":        stat.get("kills") or 0,
-                            "deaths":       stat.get("deaths") or 0,
-                            "assists":      stat.get("assists") or 0,
-                            "adr":          float(stat.get("adr") or 0),
-                            "kast":         float(stat.get("kast") or 0),
-                            "rating":       float(stat.get("rating") or 0),
-                            "headshotPct":  float(stat.get("headshot_percentage") or 0),
-                            "firstKills":   stat.get("first_kills") or 0,
-                            "clutchesWon":  stat.get("clutches_won") or 0,
+                            "mapNumber":      map_number,
+                            "mapName":        map_name,
+                            "wonMap":         winner_id == team_id,
+                            "totalRounds":    total_rounds,
+                            "overtimeRounds": overtime_rounds,
+                            "kills":          kills,
+                            "deaths":         stat.get("deaths") or 0,
+                            "assists":        stat.get("assists") or 0,
+                            "adr":            float(stat.get("adr") or 0),
+                            "kast":           float(stat.get("kast") or 0),
+                            "rating":         float(stat.get("rating") or 0),
+                            "headshotPct":    float(stat.get("headshot_percentage") or 0),
+                            "firstKills":     stat.get("first_kills") or 0,
+                            "firstDeaths":    stat.get("first_deaths") or 0,
+                            "clutchesWon":    stat.get("clutches_won") or 0,
+                            "killsPerRound":  round(kills / total_rounds, 3) if total_rounds > 0 else 0,
                         }
                         break
                 await asyncio.sleep(0.04)
@@ -316,6 +346,8 @@ async def get_player_recent_match_stats(player_id: int, team_id: int, limit: int
             m2 = map_player_stats.get(2, {})
             m1m2_maps = [m for m in (m1, m2) if m]
 
+            total_rounds_m1m2 = sum(m.get("totalRounds", 0) for m in m1m2_maps)
+
             def _sum(field):
                 return sum(m.get(field, 0) for m in m1m2_maps)
 
@@ -323,23 +355,33 @@ async def get_player_recent_match_stats(player_id: int, team_id: int, limit: int
                 vals = [m.get(field, 0) for m in m1m2_maps if m.get(field, 0) > 0]
                 return sum(vals) / len(vals) if vals else 0.0
 
+            total_kast_vals   = [m.get("kast", 0) for m in m1m2_maps if m.get("kast", 0) > 0]
+            total_first_kills = _sum("firstKills")
+            total_first_deaths = _sum("firstDeaths")
             match_stats.append({
-                "matchId":          match_id,
-                "tournament":       t_name,
-                "tier":             t_tier,
-                "date":             date_str,
-                "mapsPlayed":       len(map_player_stats),
-                "maps":             list(map_player_stats.values()),
+                "matchId":              match_id,
+                "tournament":           t_name,
+                "tier":                 t_tier,
+                "date":                 date_str,
+                "opponent":             opponent_name,
+                "mapsPlayed":           len(map_player_stats),
+                "maps":                 list(map_player_stats.values()),
                 # Maps 1-2 aggregates
-                "maps_1_2_kills":   _sum("kills"),
-                "maps_1_2_deaths":  _sum("deaths"),
-                "maps_1_2_assists": _sum("assists"),
-                "maps_1_2_adr":     round(_avg("adr"), 1),
-                "maps_1_2_rating":  round(_avg("rating"), 2),
+                "maps_1_2_kills":       _sum("kills"),
+                "maps_1_2_deaths":      _sum("deaths"),
+                "maps_1_2_assists":     _sum("assists"),
+                "maps_1_2_adr":         round(_avg("adr"), 1),
+                "maps_1_2_rating":      round(_avg("rating"), 2),
+                "maps_1_2_kast":        round(sum(total_kast_vals)/len(total_kast_vals), 1) if total_kast_vals else 0,
+                "maps_1_2_firstKills":  total_first_kills,
+                "maps_1_2_firstDeaths": total_first_deaths,
+                "maps_1_2_rounds":      total_rounds_m1m2,
+                # Kill efficiency
+                "killsPerRound_m1m2":   round(_sum("kills") / total_rounds_m1m2, 3) if total_rounds_m1m2 > 0 else 0,
                 # Map 1 only
-                "map1_kills":       m1.get("kills", 0),
-                "map2_kills":       m2.get("kills", 0),
-                "wonMatch":         any(m.get("wonMap") for m in map_player_stats.values()),
+                "map1_kills":           m1.get("kills", 0),
+                "map2_kills":           m2.get("kills", 0),
+                "wonMatch":             any(m.get("wonMap") for m in map_player_stats.values()),
             })
 
         await _cache_set(key, match_stats)

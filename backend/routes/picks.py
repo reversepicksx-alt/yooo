@@ -122,6 +122,17 @@ async def save_pick(req: SavePickRequest):
     except (TypeError, ValueError):
         pass
 
+    # Store AI analysis fields directly on CS2 picks (no separate predictions collection)
+    if sport == "cs2":
+        for field in ("sharpSummary", "reasoning", "tacticalBreakdown"):
+            val = pick.get(field)
+            if val:
+                doc[field] = val
+        # Store tactical metrics so the analysis modal can show them
+        tm = pick.get("tacticalMetrics")
+        if tm:
+            doc["tacticalMetrics"] = tm
+
     # Grok-powered position resolution if position is missing (soccer only)
     if sport == "soccer" and (not doc["position"] or doc["position"] in ("Unknown", "unknown")):
         try:
@@ -454,7 +465,21 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
                 sort=[("_created", -1)]
             )
 
-    # Strategy 3: check MLB predictions collection when soccer lookup missed
+    # Strategy 3: CS2 picks store analysis directly in the pick document
+    if not prediction and pick.get("sport") == "cs2":
+        cs2_analysis = {}
+        for field in ("sharpSummary", "reasoning", "tacticalBreakdown", "tacticalMetrics",
+                      "projectedValue", "recommendation", "confidenceScore", "confidenceLevel",
+                      "pOver", "pUnder", "priorMean", "momentumMean", "sampleSize",
+                      "streakFlag", "propType", "line", "playerName", "opponentName"):
+            val = pick.get(field)
+            if val is not None:
+                cs2_analysis[field] = val
+        if cs2_analysis.get("reasoning") or cs2_analysis.get("sharpSummary"):
+            return {"found": True, "analysis": cs2_analysis}
+        return {"found": False}
+
+    # Strategy 4: check MLB predictions collection when soccer lookup missed
     if not prediction:
         pick_sport = pick.get("sport", "soccer")
         _MLB_PROPS = {
