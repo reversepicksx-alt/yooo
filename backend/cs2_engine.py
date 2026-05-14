@@ -23,49 +23,72 @@ from typing import Optional
 # ── Prop definitions ─────────────────────────────────────────────────────────
 CS2_PROPS = {
     # Per-map props
-    "kills":            "kills",
-    "deaths":           "deaths",
-    "assists":          "assists",
-    "adr":              "adr",
-    "headshot_pct":     "headshotPct",
-    "first_kills":      "firstKills",
-    "clutches_won":     "clutchesWon",
-    "rating":           "rating",
+    "kills":                "kills",
+    "deaths":               "deaths",
+    "assists":              "assists",
+    "adr":                  "adr",
+    "headshot_pct":         "headshotPct",
+    "headshots":            "headshotCount",    # per-map headshot count (kills × hs%)
+    "first_kills":          "firstKills",
+    "clutches_won":         "clutchesWon",
+    "rating":               "rating",
     # Per-match (maps 1-2 aggregate) props — values pulled from match-level logs
-    "maps_1_2_kills":   "maps_1_2_kills",
-    "maps_1_2_deaths":  "maps_1_2_deaths",
-    "maps_1_2_assists": "maps_1_2_assists",
-    "maps_1_2_adr":     "maps_1_2_adr",
+    "maps_1_2_kills":       "maps_1_2_kills",
+    "maps_1_2_deaths":      "maps_1_2_deaths",
+    "maps_1_2_assists":     "maps_1_2_assists",
+    "maps_1_2_adr":         "maps_1_2_adr",
+    "maps_1_2_headshots":   "maps_1_2_headshots",
+    # Map 3 props — from match logs, only valid when map3 was played
+    "map3_kills":           "map3_kills",
+    "map3_headshots":       "map3_headshots",
+    "map3_deaths":          "map3_deaths",
+    "map3_assists":         "map3_assists",
+    "map3_adr":             "map3_adr",
 }
 
 # Props that require per-MATCH data (not per-map)
-MATCH_LEVEL_PROPS = {"maps_1_2_kills", "maps_1_2_deaths", "maps_1_2_assists", "maps_1_2_adr"}
+MATCH_LEVEL_PROPS = {
+    "maps_1_2_kills", "maps_1_2_deaths", "maps_1_2_assists",
+    "maps_1_2_adr", "maps_1_2_headshots",
+    "map3_kills", "map3_headshots", "map3_deaths", "map3_assists", "map3_adr",
+}
+
+# Map-3-specific props (subset of MATCH_LEVEL_PROPS)
+MAP3_PROPS = {"map3_kills", "map3_headshots", "map3_deaths", "map3_assists", "map3_adr"}
 
 # Discrete (Negative-Binomial / Poisson) vs continuous (Gaussian)
 COUNT_PROPS = {
-    "kills", "deaths", "assists", "first_kills", "clutches_won",
-    "maps_1_2_kills", "maps_1_2_deaths", "maps_1_2_assists",
+    "kills", "deaths", "assists", "first_kills", "clutches_won", "headshots",
+    "maps_1_2_kills", "maps_1_2_deaths", "maps_1_2_assists", "maps_1_2_headshots",
+    "map3_kills", "map3_headshots", "map3_deaths", "map3_assists",
 }
 
 # Props where we normalise by rounds before projecting
-KILLS_CLASS_PROPS = {"kills", "maps_1_2_kills"}
+KILLS_CLASS_PROPS = {"kills", "maps_1_2_kills", "map3_kills"}
 
 # ── League-average hyper-priors ───────────────────────────────────────────────
 # Calibrated to realistic T2/T3 competition (not T1 which is only ~20 teams).
 # maps_1_2 figures account for blowout maps averaging ~18-20 rounds each.
 HYPER_PRIOR = {
-    "kills":            16.0,   # per-map: realistic T2 avg
-    "deaths":           14.0,
-    "assists":           3.5,
-    "adr":              72.0,
-    "headshot_pct":     40.0,
-    "first_kills":       2.0,
-    "clutches_won":      0.4,
-    "rating":            1.03,
-    "maps_1_2_kills":   27.0,   # was 34.0 — realistic Maps1+2 T2 avg (blowouts included)
-    "maps_1_2_deaths":  26.0,
-    "maps_1_2_assists":  7.0,
-    "maps_1_2_adr":     72.0,
+    "kills":                16.0,   # per-map: realistic T2 avg
+    "deaths":               14.0,
+    "assists":               3.5,
+    "adr":                  72.0,
+    "headshot_pct":         40.0,
+    "headshots":             6.5,   # per-map: ~16 kills × 40% hs rate
+    "first_kills":           2.0,
+    "clutches_won":          0.4,
+    "rating":                1.03,
+    "maps_1_2_kills":       27.0,
+    "maps_1_2_deaths":      26.0,
+    "maps_1_2_assists":      7.0,
+    "maps_1_2_adr":         72.0,
+    "maps_1_2_headshots":   11.0,   # ~27 kills × 40% hs rate
+    "map3_kills":           16.0,   # map 3 → competitive map, not a blowout
+    "map3_headshots":        6.5,
+    "map3_deaths":          14.0,
+    "map3_assists":          3.5,
+    "map3_adr":             72.0,
 }
 
 # ── Kills-per-round hyper-prior (used when normalising) ──────────────────────
@@ -108,7 +131,9 @@ def _kast_weight(log_entry: dict, prop_type: str) -> float:
     Higher KAST = more reliable game → upweight that entry.
     League avg ~65-70%. Use 67.5% as baseline.
     """
-    if prop_type in MATCH_LEVEL_PROPS:
+    if prop_type in MAP3_PROPS:
+        kast = log_entry.get("map3_kast", 0) or 0
+    elif prop_type in MATCH_LEVEL_PROPS:
         kast = log_entry.get("maps_1_2_kast", 0) or 0
     else:
         kast = log_entry.get("kast", 0) or 0
@@ -133,8 +158,12 @@ def _opponent_rank_multiplier(rank: Optional[int], prop_type: str) -> float:
     if not rank or rank <= 0:
         return 1.0
 
-    kills_direction_props = {"kills", "maps_1_2_kills", "adr", "maps_1_2_adr", "rating"}
-    deaths_direction_props = {"deaths", "maps_1_2_deaths"}
+    kills_direction_props = {
+        "kills", "maps_1_2_kills", "map3_kills",
+        "adr", "maps_1_2_adr", "map3_adr", "rating",
+        "headshots", "maps_1_2_headshots", "map3_headshots",
+    }
+    deaths_direction_props = {"deaths", "maps_1_2_deaths", "map3_deaths"}
 
     # kills/adr/rating — capped at ±6% (blowout-round effect partially cancels)
     if prop_type in kills_direction_props:
@@ -165,7 +194,11 @@ def _tournament_tier_multiplier(tier: str, prop_type: str) -> float:
     C-tier events are chaotic → more kills.
     """
     t = (tier or "").lower()
-    kills_direction = prop_type in {"kills", "maps_1_2_kills", "adr", "maps_1_2_adr"}
+    kills_direction = prop_type in {
+        "kills", "maps_1_2_kills", "map3_kills",
+        "adr", "maps_1_2_adr", "map3_adr",
+        "headshots", "maps_1_2_headshots", "map3_headshots",
+    }
     if t == "s":
         return 0.97 if kills_direction else 1.0
     if t in ("b", "c", "d"):
@@ -180,7 +213,7 @@ def _first_duel_ratio(logs: list, prop_type: str):
     < 0.8 → support role: capped but consistent
     Returns (projection_multiplier, variance_multiplier).
     """
-    if prop_type not in {"kills", "maps_1_2_kills", "deaths", "maps_1_2_deaths"}:
+    if prop_type not in {"kills", "maps_1_2_kills", "map3_kills", "deaths", "maps_1_2_deaths", "map3_deaths"}:
         return 1.0, 1.0
 
     fk_field = "maps_1_2_firstKills" if prop_type in MATCH_LEVEL_PROPS else "firstKills"
@@ -196,12 +229,12 @@ def _first_duel_ratio(logs: list, prop_type: str):
     avg_fd = sum(fd_vals) / max(len(fd_vals), 1)
     ratio  = avg_fk / max(avg_fd, 0.5)
 
-    if prop_type in {"kills", "maps_1_2_kills"}:
+    if prop_type in {"kills", "maps_1_2_kills", "map3_kills"}:
         if ratio > 1.3:   return 1.06, 1.15   # aggressive entry fragger
         if ratio > 1.1:   return 1.03, 1.07
         if ratio < 0.75:  return 0.97, 0.88   # pure support
         if ratio < 0.90:  return 0.99, 0.93
-    elif prop_type in {"deaths", "maps_1_2_deaths"}:
+    elif prop_type in {"deaths", "maps_1_2_deaths", "map3_deaths"}:
         if ratio > 1.3:   return 0.96, 1.10   # entry fraggers die less (win duels)
         if ratio < 0.75:  return 1.04, 0.92   # support players die more
 
@@ -239,7 +272,7 @@ def _win_rate_adjustment(logs: list, prop_type: str) -> float:
     Winning teams kill more (CT holds, successful T attacks).
     Win rate → projection modifier for kills/deaths.
     """
-    if prop_type not in {"kills", "maps_1_2_kills", "deaths", "maps_1_2_deaths"}:
+    if prop_type not in {"kills", "maps_1_2_kills", "map3_kills", "deaths", "maps_1_2_deaths", "map3_deaths"}:
         return 1.0
 
     won_field = "wonMatch" if prop_type in MATCH_LEVEL_PROPS else "wonMap"
@@ -249,13 +282,10 @@ def _win_rate_adjustment(logs: list, prop_type: str) -> float:
 
     win_rate = sum(1 for w in won_vals if w) / len(won_vals)
 
-    if prop_type in {"kills", "maps_1_2_kills"}:
-        # Win rate 70%+: slightly more kills (organized winning plays)
-        # Win rate <40%: slightly fewer kills (being outclassed)
-        # Deliberately narrow — team win rate is a weak predictor of individual kill count
+    if prop_type in {"kills", "maps_1_2_kills", "map3_kills"}:
         return 0.97 + 0.06 * win_rate   # range: 0.97 (0% wr) → 1.03 (100% wr)
 
-    if prop_type in {"deaths", "maps_1_2_deaths"}:
+    if prop_type in {"deaths", "maps_1_2_deaths", "map3_deaths"}:
         # Losing teams die more
         return 1.03 - 0.06 * win_rate   # range: 1.03 (0% wr) → 0.97 (100% wr)
 
@@ -279,9 +309,18 @@ def _round_normalized_projection(
     if prop_type not in KILLS_CLASS_PROPS:
         return prior_mean
 
-    is_match     = prop_type in MATCH_LEVEL_PROPS
-    kpr_field    = "killsPerRound_m1m2" if is_match else "killsPerRound"
-    rounds_field = "maps_1_2_rounds"   if is_match else "totalRounds"
+    if prop_type == "map3_kills":
+        kpr_field    = "map3_kpr"
+        rounds_field = "map3_rounds"
+        is_match     = True   # single-map but comes from match data
+    elif prop_type in MATCH_LEVEL_PROPS:
+        kpr_field    = "killsPerRound_m1m2"
+        rounds_field = "maps_1_2_rounds"
+        is_match     = True
+    else:
+        kpr_field    = "killsPerRound"
+        rounds_field = "totalRounds"
+        is_match     = False
 
     kpr_vals    = [m.get(kpr_field, 0) for m in logs if m.get(kpr_field, 0) > 0]
     rounds_vals = [m.get(rounds_field, 0) for m in logs if m.get(rounds_field, 0) > 0]
@@ -488,20 +527,18 @@ def compute_cs2_projection(
         return {"error": f"Unknown CS2 prop: {prop_type}"}
 
     # ── Maps-1-2 sample quality filter ────────────────────────────────────────
-    # "Maps 1-2 kills" props require ≥2 maps to be played.  A match that ended
-    # after only 1 map (BO1 or BO2 1-0 result) has ~half the round count, so
-    # its kill total is structurally incomparable to a 2-map result.  Mixing
-    # these in deflates the average and misprices OVER bets on prolific players.
-    #
-    # Strategy:
-    #   1. Prefer-filter: use only mapsPlayed ≥ 2 entries.
-    #   2. If that yields < MIN_SAMPLE, fall back to all entries (better than nothing).
-    if prop_type in MATCH_LEVEL_PROPS and map_logs:
+    # "Maps 1-2" props require ≥2 maps played; map3 props require ≥3 maps.
+    # Single-map results have structurally incomparable totals — filtering them
+    # prevents mispriced lines from blowout 1-map scorelines polluting the average.
+    if prop_type in MAP3_PROPS and map_logs:
+        # Map-3 filter: only use matches where map 3 was actually played
+        map3_logs = [m for m in map_logs if m.get("map3_played") or m.get(CS2_PROPS[prop_type]) is not None]
+        if len(map3_logs) >= max(MIN_SAMPLE // 2, 4):
+            map_logs = map3_logs
+    elif prop_type in MATCH_LEVEL_PROPS and map_logs:
         multi_map_logs = [m for m in map_logs if (m.get("mapsPlayed") or 0) >= 2]
-        # Use the multi-map subset if it gives us a decent sample
         if len(multi_map_logs) >= max(MIN_SAMPLE // 2, 4):
             map_logs = multi_map_logs
-        # else: not enough 2-map data → keep all logs (hyper-prior will dominate anyway)
 
     values = _extract_values(map_logs, prop_type)
 

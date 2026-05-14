@@ -169,7 +169,9 @@ async def _fetch_map_player_stat(map_obj: dict, team_id: int, player_id: int) ->
 
     for stat in pmms_r.get("data", []):
         if stat.get("player", {}).get("id") == player_id:
-            kills = stat.get("kills") or 0
+            kills       = stat.get("kills") or 0
+            hs_pct      = float(stat.get("headshot_percentage") or 0)
+            hs_count    = round(kills * hs_pct / 100)   # derived headshot count
             return {
                 "mapNumber":      map_number,
                 "mapName":        map_name,
@@ -184,7 +186,8 @@ async def _fetch_map_player_stat(map_obj: dict, team_id: int, player_id: int) ->
                 "adr":            float(stat.get("adr") or 0),
                 "kast":           float(stat.get("kast") or 0),
                 "rating":         float(stat.get("rating") or 0),
-                "headshotPct":    float(stat.get("headshot_percentage") or 0),
+                "headshotPct":    hs_pct,
+                "headshotCount":  hs_count,
                 "firstKills":     stat.get("first_kills") or 0,
                 "firstDeaths":    stat.get("first_deaths") or 0,
                 "clutchesWon":    stat.get("clutches_won") or 0,
@@ -372,6 +375,12 @@ async def get_player_recent_match_stats(player_id: int, team_id: int, limit: int
                     vals = [m.get(field, 0) for m in maps if m.get(field, 0) > 0]
                     return sum(vals) / len(vals) if vals else 0.0
 
+                # Map 3 aggregates (None when match didn't go to map 3)
+                m3         = map_player_stats.get(3, {})
+                m3_played  = bool(m3)
+                m3_rounds  = m3.get("totalRounds", 0) if m3_played else 0
+                m3_kills   = m3.get("kills", 0)       if m3_played else None
+
                 match_stats.append({
                     "matchId":              match_id,
                     "tournament":           t_name,
@@ -386,6 +395,7 @@ async def get_player_recent_match_stats(player_id: int, team_id: int, limit: int
                     "maps_1_2_assists":     _sum("assists"),
                     "maps_1_2_adr":         round(_avg("adr"), 1),
                     "maps_1_2_rating":      round(_avg("rating"), 2),
+                    "maps_1_2_headshots":   _sum("headshotCount"),
                     "maps_1_2_kast":        round(sum(total_kast_vals) / len(total_kast_vals), 1) if total_kast_vals else 0,
                     "maps_1_2_firstKills":  total_first_kills,
                     "maps_1_2_firstDeaths": total_first_deaths,
@@ -393,6 +403,16 @@ async def get_player_recent_match_stats(player_id: int, team_id: int, limit: int
                     "killsPerRound_m1m2":   round(_sum("kills") / total_rounds_m1m2, 3) if total_rounds_m1m2 > 0 else 0,
                     "map1_kills":           m1.get("kills", 0),
                     "map2_kills":           m2.get("kills", 0) if m2 else 0,
+                    # Map 3 aggregates (None = match didn't go to map 3)
+                    "map3_played":          m3_played,
+                    "map3_kills":           m3_kills,
+                    "map3_headshots":       m3.get("headshotCount", 0) if m3_played else None,
+                    "map3_deaths":          m3.get("deaths", 0)        if m3_played else None,
+                    "map3_assists":         m3.get("assists", 0)        if m3_played else None,
+                    "map3_adr":             m3.get("adr", 0.0)          if m3_played else None,
+                    "map3_kast":            m3.get("kast", 0.0)         if m3_played else None,
+                    "map3_rounds":          m3_rounds,
+                    "map3_kpr":             round(m3_kills / m3_rounds, 3) if (m3_played and m3_rounds > 0 and m3_kills is not None) else None,
                     "wonMatch":             any(m.get("wonMap") for m in map_player_stats.values()),
                 })
 

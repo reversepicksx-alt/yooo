@@ -1145,18 +1145,28 @@ export async function mlbPredict(request: Record<string, unknown>): Promise<Pred
 // ─── CS2 ────────────────────────────────────────────────────────────────────
 
 export const CS2_PROP_TYPES = [
-  { value: 'maps_1_2_kills',   label: 'Maps 1-2 Kills' },
-  { value: 'maps_1_2_deaths',  label: 'Maps 1-2 Deaths' },
-  { value: 'maps_1_2_assists', label: 'Maps 1-2 Assists' },
-  { value: 'maps_1_2_adr',     label: 'Maps 1-2 ADR' },
-  { value: 'kills',            label: 'Kills (per map)' },
-  { value: 'deaths',           label: 'Deaths (per map)' },
-  { value: 'assists',          label: 'Assists (per map)' },
-  { value: 'adr',              label: 'ADR (per map)' },
-  { value: 'headshot_pct',     label: 'Headshot %' },
-  { value: 'first_kills',      label: 'First Kills' },
-  { value: 'clutches_won',     label: 'Clutches Won' },
-  { value: 'rating',           label: 'Rating' },
+  // Maps 1-2 (full match, most common on PrizePicks)
+  { value: 'maps_1_2_kills',      label: 'Maps 1-2 Kills' },
+  { value: 'maps_1_2_deaths',     label: 'Maps 1-2 Deaths' },
+  { value: 'maps_1_2_assists',    label: 'Maps 1-2 Assists' },
+  { value: 'maps_1_2_adr',        label: 'Maps 1-2 ADR' },
+  { value: 'maps_1_2_headshots',  label: 'Maps 1-2 Headshots' },
+  // Map 3 props (when series goes to a deciding map)
+  { value: 'map3_kills',          label: 'Map 3 Kills' },
+  { value: 'map3_headshots',      label: 'Map 3 Headshots' },
+  { value: 'map3_deaths',         label: 'Map 3 Deaths' },
+  { value: 'map3_assists',        label: 'Map 3 Assists' },
+  { value: 'map3_adr',            label: 'Map 3 ADR' },
+  // Per-map props
+  { value: 'kills',               label: 'Kills (per map)' },
+  { value: 'deaths',              label: 'Deaths (per map)' },
+  { value: 'assists',             label: 'Assists (per map)' },
+  { value: 'adr',                 label: 'ADR (per map)' },
+  { value: 'headshots',           label: 'Headshots (per map)' },
+  { value: 'headshot_pct',        label: 'Headshot %' },
+  { value: 'first_kills',         label: 'First Kills' },
+  { value: 'clutches_won',        label: 'Clutches Won' },
+  { value: 'rating',              label: 'Rating' },
 ];
 
 export interface Cs2Player {
@@ -1208,12 +1218,20 @@ export async function cs2Predict(request: Record<string, unknown>): Promise<Pred
     adr:            g.adr ?? null,
     kast:           g.kast ?? null,
     rating:         g.rating ?? null,
-    headshotPct:    g.headshotPct ?? null,
-    firstKills:     g.firstKills ?? null,
-    clutchesWon:    g.clutchesWon ?? null,
-    wonMap:         g.wonMap ?? null,
-    tournament:     g.tournament ?? '',
-    tier:           g.tier ?? '',
+    headshotPct:        g.headshotPct ?? null,
+    headshotCount:      g.headshotCount ?? null,
+    firstKills:         g.firstKills ?? null,
+    clutchesWon:        g.clutchesWon ?? null,
+    wonMap:             g.wonMap ?? null,
+    tournament:         g.tournament ?? '',
+    tier:               g.tier ?? '',
+    maps_1_2_headshots: g.maps_1_2_headshots ?? null,
+    map3_kills:         g.map3_kills ?? null,
+    map3_headshots:     g.map3_headshots ?? null,
+    map3_deaths:        g.map3_deaths ?? null,
+    map3_assists:       g.map3_assists ?? null,
+    map3_adr:           g.map3_adr ?? null,
+    map3_played:        g.map3_played ?? false,
   })).filter((g: any) => g.value != null);
 
   return {

@@ -17,18 +17,25 @@ log    = logging.getLogger("cs2_routes")
 router = APIRouter(prefix="/api/cs2", tags=["cs2"])
 
 CS2_PROP_LABELS = {
-    "kills":            "Kills",
-    "deaths":           "Deaths",
-    "assists":          "Assists",
-    "adr":              "ADR",
-    "headshot_pct":     "Headshot %",
-    "first_kills":      "First Kills",
-    "clutches_won":     "Clutches Won",
-    "rating":           "Rating",
-    "maps_1_2_kills":   "Maps 1-2 Kills",
-    "maps_1_2_deaths":  "Maps 1-2 Deaths",
-    "maps_1_2_assists": "Maps 1-2 Assists",
-    "maps_1_2_adr":     "Maps 1-2 ADR",
+    "kills":                "Kills",
+    "deaths":               "Deaths",
+    "assists":              "Assists",
+    "adr":                  "ADR",
+    "headshot_pct":         "Headshot %",
+    "headshots":            "Headshots",
+    "first_kills":          "First Kills",
+    "clutches_won":         "Clutches Won",
+    "rating":               "Rating",
+    "maps_1_2_kills":       "Maps 1-2 Kills",
+    "maps_1_2_deaths":      "Maps 1-2 Deaths",
+    "maps_1_2_assists":     "Maps 1-2 Assists",
+    "maps_1_2_adr":         "Maps 1-2 ADR",
+    "maps_1_2_headshots":   "Maps 1-2 Headshots",
+    "map3_kills":           "Map 3 Kills",
+    "map3_headshots":       "Map 3 Headshots",
+    "map3_deaths":          "Map 3 Deaths",
+    "map3_assists":         "Map 3 Assists",
+    "map3_adr":             "Map 3 ADR",
 }
 
 
