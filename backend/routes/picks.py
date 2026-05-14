@@ -61,9 +61,14 @@ async def save_pick(req: SavePickRequest):
     }
     normalized_prop = prop_label_map.get(normalized_prop, normalized_prop)
 
-    # Detect sport from pick payload (MLB picks send sport='mlb')
-    _sport_raw = pick.get("sport", "soccer")
-    sport = "mlb" if str(_sport_raw).lower() == "mlb" else "soccer"
+    # Detect sport from pick payload
+    _sport_raw = str(pick.get("sport", "soccer")).lower()
+    if _sport_raw == "mlb":
+        sport = "mlb"
+    elif _sport_raw == "cs2":
+        sport = "cs2"
+    else:
+        sport = "soccer"
 
     doc = {
         "pickId": pick_id,
@@ -117,8 +122,8 @@ async def save_pick(req: SavePickRequest):
     except (TypeError, ValueError):
         pass
 
-    # Grok-powered position resolution if position is missing
-    if not doc["position"] or doc["position"] in ("Unknown", "unknown"):
+    # Grok-powered position resolution if position is missing (soccer only)
+    if sport == "soccer" and (not doc["position"] or doc["position"] in ("Unknown", "unknown")):
         try:
             from grok_positions import resolve_position_grok
             resolved = await resolve_position_grok(doc["playerName"], "soccer")
@@ -296,7 +301,7 @@ async def list_picks(req: GetPicksRequest):
     }
     soccer_live_picks = [
         p for p in live_picks
-        if p.get("sport", "soccer") != "mlb" and p.get("propType", "") not in _MLB_PROP_SET
+        if p.get("sport", "soccer") not in ("mlb", "cs2") and p.get("propType", "") not in _MLB_PROP_SET
     ]
     if soccer_live_picks:
         try:
