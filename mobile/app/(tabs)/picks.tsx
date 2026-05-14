@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef } from 'react';
 import {
-  View, Text, StyleSheet, FlatList, SectionList, TouchableOpacity,
+  View, Text, StyleSheet, FlatList, TouchableOpacity,
   ActivityIndicator, Alert, Platform, RefreshControl,
   Modal, ScrollView, Pressable,
 } from 'react-native';
@@ -667,22 +667,28 @@ function renderAnalysisBlocks(text: string, rec: string) {
   return blocks;
 }
 
-function SportSectionHeader({ sport, picks }: { sport: SportKey; picks: Pick[] }) {
+function SportSectionHeader({
+  sport, picks, expanded, onToggle,
+}: {
+  sport: SportKey; picks: Pick[]; expanded: boolean; onToggle: () => void;
+}) {
   const { label, icon } = SPORT_META[sport];
-  const settled = picks.filter(p => pickWon(p) || pickLost(p) || pickPush(p));
-  const hits    = settled.filter(pickWon).length;
-  const misses  = settled.filter(pickLost).length;
-  const pushes  = settled.filter(pickPush).length;
-  const total   = hits + misses;
-  const winPct  = total > 0 ? Math.round((hits / total) * 100) : null;
-
+  const hits   = picks.filter(pickWon).length;
+  const misses = picks.filter(pickLost).length;
+  const pushes = picks.filter(pickPush).length;
+  const total  = hits + misses;
+  const winPct = total > 0 ? Math.round((hits / total) * 100) : null;
   const pctColor = winPct == null ? Colors.textTertiary
     : winPct >= 60 ? Colors.success
     : winPct >= 50 ? Colors.primary
     : Colors.error;
 
   return (
-    <View style={secStyles.header}>
+    <TouchableOpacity
+      onPress={onToggle}
+      activeOpacity={0.75}
+      style={secStyles.header}
+    >
       <View style={secStyles.headerLeft}>
         <Text style={secStyles.headerIcon}>{icon}</Text>
         <Text style={secStyles.headerLabel}>{label}</Text>
@@ -690,17 +696,36 @@ function SportSectionHeader({ sport, picks }: { sport: SportKey; picks: Pick[] }
           <Text style={secStyles.countText}>{picks.length}</Text>
         </View>
       </View>
-      <View style={secStyles.headerStats}>
-        <Text style={[secStyles.statNum, { color: Colors.success }]}>{hits}<Text style={secStyles.statLbl}>H</Text></Text>
-        <Text style={secStyles.statDiv}> · </Text>
-        <Text style={[secStyles.statNum, { color: Colors.error }]}>{misses}<Text style={secStyles.statLbl}>M</Text></Text>
-        {pushes > 0 && <><Text style={secStyles.statDiv}> · </Text><Text style={[secStyles.statNum, { color: Colors.textTertiary }]}>{pushes}<Text style={secStyles.statLbl}>P</Text></Text></>}
-        <Text style={secStyles.statDiv}>  </Text>
-        <Text style={[secStyles.winPct, { color: pctColor }]}>
-          {winPct != null ? `${winPct}%` : '—'}
-        </Text>
+      <View style={secStyles.headerRight}>
+        <View style={secStyles.headerStats}>
+          <Text style={[secStyles.statNum, { color: Colors.success }]}>
+            {hits}<Text style={secStyles.statLbl}>H</Text>
+          </Text>
+          <Text style={secStyles.statDiv}> · </Text>
+          <Text style={[secStyles.statNum, { color: Colors.error }]}>
+            {misses}<Text style={secStyles.statLbl}>M</Text>
+          </Text>
+          {pushes > 0 && (
+            <>
+              <Text style={secStyles.statDiv}> · </Text>
+              <Text style={[secStyles.statNum, { color: Colors.textTertiary }]}>
+                {pushes}<Text style={secStyles.statLbl}>P</Text>
+              </Text>
+            </>
+          )}
+          <Text style={secStyles.statDiv}>  </Text>
+          <Text style={[secStyles.winPct, { color: pctColor }]}>
+            {winPct != null ? `${winPct}%` : '—'}
+          </Text>
+        </View>
+        <Ionicons
+          name={expanded ? 'chevron-up' : 'chevron-down'}
+          size={14}
+          color={Colors.textSecondary}
+          style={{ marginLeft: 6 }}
+        />
       </View>
-    </View>
+    </TouchableOpacity>
   );
 }
 
@@ -711,6 +736,16 @@ export default function PicksScreen() {
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const [activeTab, setActiveTab] = useState<Tab>('live');
   const [analysisModal, setAnalysisModal] = useState<{ pick: Pick; data: Record<string, unknown> | null; loading: boolean } | null>(null);
+  // Which sport sections are expanded in history (default: all collapsed so all 3 headers visible)
+  const [expandedSports, setExpandedSports] = useState<Set<SportKey>>(new Set());
+  const toggleSport = useCallback((sport: SportKey) => {
+    setExpandedSports(prev => {
+      const next = new Set(prev);
+      if (next.has(sport)) next.delete(sport);
+      else next.add(sport);
+      return next;
+    });
+  }, []);
 
   const { data: picks = [], isLoading, refetch, isRefetching, error } = useQuery({
     queryKey: ['picks', session?.email],
@@ -788,9 +823,22 @@ export default function PicksScreen() {
   const SPORT_ORDER: SportKey[] = ['soccer', 'mlb', 'cs2'];
   const bySport: Record<SportKey, Pick[]> = { soccer: [], mlb: [], cs2: [] };
   for (const p of history) bySport[getSport(p)].push(p);
-  const historySections = SPORT_ORDER
-    .filter(s => bySport[s].length > 0)
-    .map(s => ({ sport: s, data: bySport[s] }));
+
+  // Build flat accordion list: header items + pick items for expanded sections
+  type AccordionItem =
+    | { type: 'header'; sport: SportKey }
+    | { type: 'pick';   sport: SportKey; pick: Pick };
+
+  const accordionData: AccordionItem[] = [];
+  for (const sport of SPORT_ORDER) {
+    if (bySport[sport].length === 0) continue;
+    accordionData.push({ type: 'header', sport });
+    if (expandedSports.has(sport)) {
+      for (const pick of bySport[sport]) {
+        accordionData.push({ type: 'pick', sport, pick });
+      }
+    }
+  }
 
   const modalRec = ((analysisModal?.data?.recommendation ?? analysisModal?.pick?.recommendation) as string | undefined)?.toUpperCase() ?? '';
   const modalIsOver = modalRec === 'OVER';
@@ -878,28 +926,42 @@ export default function PicksScreen() {
           showsVerticalScrollIndicator={false}
         />
       ) : (
-        /* ── HISTORY: sectioned by sport ── */
-        <SectionList
-          sections={historySections}
-          keyExtractor={(item, i) => item.pickId || item._id || item.id || String(i)}
-          renderSectionHeader={({ section }) => (
-            <SportSectionHeader sport={section.sport} picks={section.data} />
-          )}
+        /* ── HISTORY: collapsible sport accordion ── */
+        <FlatList
+          data={accordionData}
+          keyExtractor={(item, i) =>
+            item.type === 'header'
+              ? `hdr-${item.sport}`
+              : `pick-${(item as { type: 'pick'; pick: Pick; sport: SportKey }).pick.pickId || i}`
+          }
           renderItem={({ item }) => {
-            const onDeleteForItem = () => handleDelete(item);
+            if (item.type === 'header') {
+              return (
+                <SportSectionHeader
+                  sport={item.sport}
+                  picks={bySport[item.sport]}
+                  expanded={expandedSports.has(item.sport)}
+                  onToggle={() => {
+                    try { Haptics.selectionAsync(); } catch {}
+                    toggleSport(item.sport);
+                  }}
+                />
+              );
+            }
+            const pickItem = item.pick;
+            const onDeleteForItem = () => handleDelete(pickItem);
             return (
               <SwipeableRow onDelete={onDeleteForItem}>
                 <Pressable
-                  onPress={() => handlePickPress(item)}
+                  onPress={() => handlePickPress(pickItem)}
                   style={({ pressed }) => [{ opacity: pressed ? 0.92 : 1 }]}
                 >
-                  <PickCard pick={item} onDelete={onDeleteForItem} />
+                  <PickCard pick={pickItem} onDelete={onDeleteForItem} />
                 </Pressable>
               </SwipeableRow>
             );
           }}
-          stickySectionHeadersEnabled={false}
-          contentContainerStyle={styles.list}
+          contentContainerStyle={[styles.list, { paddingTop: 4 }]}
           refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={Colors.primary} />}
           showsVerticalScrollIndicator={false}
         />
@@ -1034,19 +1096,20 @@ const secStyles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.border,
   },
-  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 7 },
-  headerIcon: { fontSize: 16 },
+  headerLeft:  { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  headerRight: { flexDirection: 'row', alignItems: 'center' },
+  headerIcon:  { fontSize: 16 },
   headerLabel: { fontSize: 13, fontWeight: '800', color: Colors.text, letterSpacing: 0.3 },
   countPill: {
     backgroundColor: Colors.cardSecondary,
     borderRadius: 999, paddingHorizontal: 7, paddingVertical: 1,
   },
-  countText: { fontSize: 10, fontWeight: '700', color: Colors.textSecondary },
+  countText:   { fontSize: 10, fontWeight: '700', color: Colors.textSecondary },
   headerStats: { flexDirection: 'row', alignItems: 'baseline' },
-  statNum: { fontSize: 13, fontWeight: '800' },
-  statLbl: { fontSize: 9, fontWeight: '600', color: Colors.textTertiary },
-  statDiv: { fontSize: 11, color: Colors.textTertiary },
-  winPct: { fontSize: 14, fontWeight: '800' },
+  statNum:     { fontSize: 13, fontWeight: '800' },
+  statLbl:     { fontSize: 9, fontWeight: '600', color: Colors.textTertiary },
+  statDiv:     { fontSize: 11, color: Colors.textTertiary },
+  winPct:      { fontSize: 14, fontWeight: '800' },
 });
 
 const mStyles = StyleSheet.create({
