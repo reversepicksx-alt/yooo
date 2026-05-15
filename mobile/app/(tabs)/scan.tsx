@@ -1432,6 +1432,10 @@ export default function ScanScreen() {
           <>
             <View ref={analysisRef} collapsable={false} style={styles.captureContainer}>
             <View style={styles.analysisCard}>
+              {/* Top accent stripe — color signals OVER/UNDER at a glance */}
+              <View style={[styles.analysisAccentStripe, {
+                backgroundColor: prediction.recommendation === 'OVER' ? Colors.primary : Colors.error,
+              }]} />
               {/* Header */}
               <View style={styles.analysisHeader}>
                 <View style={styles.analysisPlayerInfo}>
@@ -1585,6 +1589,26 @@ export default function ScanScreen() {
                   <Text style={styles.analysisStatSub}>{prediction.confidenceLevel?.toUpperCase() || 'SCORE'}</Text>
                 </View>
               </View>
+
+              {/* Confidence Gauge — visual meter 50%→100% */}
+              {confPct != null && (
+                <View style={styles.confGaugeWrap}>
+                  <View style={styles.confGaugeTrack}>
+                    <View style={[styles.confGaugeFill, {
+                      width: `${Math.min(100, Math.max(0, (confPct - 50) * 2))}%` as any,
+                      backgroundColor: recColor,
+                    }]} />
+                    <View style={styles.confGaugeMidMark} />
+                  </View>
+                  <View style={styles.confGaugeLabels}>
+                    <Text style={styles.confGaugeLabelEdge}>50%</Text>
+                    <Text style={[styles.confGaugeLabelCenter, { color: recColor }]}>
+                      {confPct}% · {prediction.confidenceLevel?.toUpperCase() || 'CONFIDENCE'}
+                    </Text>
+                    <Text style={styles.confGaugeLabelEdge}>100%</Text>
+                  </View>
+                </View>
+              )}
 
               {/* Line vs Season Average + Edge Explanation */}
               {prediction.priorMean != null && prediction.line != null && (() => {
@@ -1835,116 +1859,238 @@ export default function ScanScreen() {
                 </>
               )}
 
-              {/* ── MODEL FACTORS CARD ─────────────────────────────────────── */}
+              {/* ── ALGORITHM BREAKDOWN CARD ──────────────────────────────── */}
               {(() => {
                 const mf = (prediction as any).matchFactors;
                 if (!mf) return null;
-                const bm     = mf.bayesian ?? {};
-                const ms     = mf.matchStakes ?? {};
-                const stMod  = bm.matchStakes ?? {};
-                const cdmInv = bm.cdmInversion ?? {};
-                const hcdb   = bm.homeCdmDeepBlock ?? {};
-                const pos    = prediction.playerPosition ?? '';
-                const priorM = bm.priorMean;
-                const postM  = bm.posteriorMean;
-                const n      = bm.priorSamples;
-                const pOver  = bm.pOver;
-                const pUnder = bm.pUnder;
-                const expPoss    = mf.expectedPoss;
-                const h2hPoss    = mf.h2hPossAvg;
-                const h2hCount   = mf.h2hPossCount;
-                const possMulti  = mf.possMultiplier;
-                const stakeLabel = ms.label ?? ms.teamStakeLevel;
+                const bm       = mf.bayesian ?? {};
+                const ms       = mf.matchStakes ?? {};
+                const stMod    = bm.matchStakes ?? {};
+                const cdmInv   = bm.cdmInversion ?? {};
+                const hcdb     = bm.homeCdmDeepBlock ?? {};
+                const pos      = prediction.playerPosition ?? '';
+                const priorM   = bm.priorMean as number | undefined;
+                const postM    = bm.posteriorMean as number | undefined;
+                const n        = bm.priorSamples as number | undefined;
+                const pOver    = bm.pOver as number | undefined;
+                const pUnder   = bm.pUnder as number | undefined;
+                const expPoss  = mf.expectedPoss as number | undefined;
+                const h2hPoss  = mf.h2hPossAvg as number | undefined;
+                const h2hCnt   = mf.h2hPossCount as number | undefined;
+                const possMulti = mf.possMultiplier as number | undefined;
+                const stakeLabel = (ms.label ?? ms.teamStakeLevel) as string | undefined;
+                const lcInfo   = bm.leagueCalib ?? {};
+                const spInfo   = bm.scenarioPriors ?? {};
+                const oppAvg   = bm.oppAllowedAvg as number | undefined;
+                const oppWt    = bm.oppAllowedWeight as number | undefined;
+                const momLabel = bm.momentumLabel as string | undefined;
+                const momEff   = bm.momentumEffect as number | undefined;
+                const isOver   = pOver != null && pUnder != null && pOver >= pUnder;
+                const stakeColor = stakeLabel?.includes('RELEGATION') ? '#FF6B35'
+                                 : stakeLabel?.includes('DEAD')        ? '#666'
+                                 : stakeLabel?.includes('TITLE')       ? '#F59E0B'
+                                 : Colors.primary;
 
-                // Collect active modifiers
-                const mods: string[] = [];
-                if (cdmInv.applied) mods.push(`CDM Inv ×${cdmInv.mult}`);
-                if (hcdb.applied)   mods.push(`DeepBlock ×${hcdb.mult}`);
-                if (stMod.applied)  mods.push(`Stakes ×${stMod.mult}`);
+                // Build signal chain
+                type ChainStep = { label: string; pct: number; color: string; n?: number };
+                const chain: ChainStep[] = [];
                 if (possMulti != null && Math.abs(possMulti - 1) > 0.01)
-                  mods.push(`Poss ×${possMulti.toFixed(3)}`);
+                  chain.push({ label: 'POSS', pct: (possMulti - 1) * 100, color: '#4DA6FF', n: h2hCnt });
+                if (stMod?.mult != null && Math.abs(stMod.mult - 1) > 0.005)
+                  chain.push({ label: 'STAKES', pct: (stMod.mult - 1) * 100, color: stMod.mult < 1 ? '#FF6B35' : Colors.primary });
+                if (lcInfo?.multiplier != null && Math.abs(lcInfo.multiplier - 1) > 0.005)
+                  chain.push({ label: 'LEAGUE', pct: (lcInfo.multiplier - 1) * 100, color: lcInfo.multiplier < 1 ? '#F59E0B' : Colors.primary, n: lcInfo.n });
+                if (spInfo?.multiplier != null && Math.abs(spInfo.multiplier - 1) > 0.005)
+                  chain.push({ label: 'SCEN', pct: (spInfo.multiplier - 1) * 100, color: spInfo.multiplier < 1 ? '#F59E0B' : Colors.primary, n: spInfo.n });
+                if (cdmInv.applied) chain.push({ label: 'CDM INV', pct: (cdmInv.mult - 1) * 100, color: '#A084E8' });
+                if (hcdb.applied)   chain.push({ label: 'DEEP BLK', pct: (hcdb.mult - 1) * 100, color: '#A084E8' });
+
+                // Extra modifiers
+                const extraMods: string[] = [];
+                if (stMod.applied && stMod.mult != null && !chain.find(c => c.label === 'STAKES'))
+                  extraMods.push(`Stakes ×${stMod.mult}`);
 
                 return (
                   <View>
                     <View style={styles.analysisDivider} />
                     <View style={styles.mfCard}>
-                      {/* Header */}
+
+                      {/* ── Header ── */}
                       <View style={styles.mfHeader}>
-                        <Ionicons name="analytics-outline" size={12} color={Colors.primary} />
-                        <Text style={styles.mfTitle}>MODEL FACTORS</Text>
+                        <Ionicons name="analytics" size={13} color={Colors.primary} />
+                        <Text style={styles.mfTitle}>ALGORITHM BREAKDOWN</Text>
+                        {n != null && (
+                          <View style={styles.mfSamplesBadge}>
+                            <Text style={styles.mfSamplesText}>{n} GAMES</Text>
+                          </View>
+                        )}
                       </View>
 
-                      {/* Bayesian row */}
-                      {(priorM != null || postM != null) && (
-                        <View style={styles.mfRow}>
-                          <Text style={styles.mfLabel}>BAYESIAN ENGINE</Text>
-                          <Text style={styles.mfVal}>
-                            {pos ? `${pos}  ·  ` : ''}
-                            {priorM != null ? `prior ${priorM.toFixed(1)}` : ''}
-                            {postM  != null ? ` → ${postM.toFixed(1)}` : ''}
-                            {n      != null ? `  (n=${n})` : ''}
-                          </Text>
-                        </View>
-                      )}
-
-                      {/* Probability row */}
+                      {/* ── Probability Meter ── */}
                       {pOver != null && pUnder != null && (
-                        <View style={styles.mfRow}>
-                          <Text style={styles.mfLabel}>PROBABILITIES</Text>
-                          <Text style={[styles.mfVal, {
-                            color: pOver >= pUnder ? Colors.primary : '#FF6B35'
-                          }]}>
-                            {`P(over) ${pOver.toFixed(1)}%  ·  P(under) ${pUnder.toFixed(1)}%`}
-                          </Text>
+                        <View style={styles.mfProbSection}>
+                          <View style={styles.mfProbTrack}>
+                            <View style={[styles.mfProbOverFill, { flex: pOver }]} />
+                            <View style={styles.mfProbDivider} />
+                            <View style={[styles.mfProbUnderFill, { flex: pUnder }]} />
+                          </View>
+                          <View style={styles.mfProbLabels}>
+                            <View style={styles.mfProbLabelLeft}>
+                              <Text style={[styles.mfProbPct, { color: Colors.primary }]}>{pOver.toFixed(1)}%</Text>
+                              <Text style={styles.mfProbDir}>OVER</Text>
+                            </View>
+                            <Text style={styles.mfProbVs}>P( )</Text>
+                            <View style={styles.mfProbLabelRight}>
+                              <Text style={[styles.mfProbPct, { color: '#FF6B35' }]}>{pUnder.toFixed(1)}%</Text>
+                              <Text style={styles.mfProbDir}>UNDER</Text>
+                            </View>
+                          </View>
                         </View>
                       )}
 
-                      {/* Possession row */}
-                      {expPoss != null && (
-                        <View style={styles.mfRow}>
-                          <Text style={styles.mfLabel}>EXP. POSSESSION</Text>
-                          <View style={styles.mfPossRow}>
-                            <Text style={styles.mfVal}>{expPoss.toFixed(1)}%</Text>
-                            {h2hPoss != null && (
-                              <View style={styles.mfH2HPill}>
-                                <Text style={styles.mfH2HPillText}>
-                                  {`H2H avg ${h2hPoss.toFixed(1)}%`}
-                                  {h2hCount ? ` (${h2hCount}g)` : ''}
-                                </Text>
-                              </View>
+                      {/* ── Metrics Grid ── */}
+                      <View style={styles.mfMetricsGrid}>
+                        {priorM != null && (
+                          <View style={styles.mfMetric}>
+                            <Text style={styles.mfMetricLabel}>PRIOR</Text>
+                            <Text style={styles.mfMetricVal}>{priorM.toFixed(1)}</Text>
+                            <Text style={styles.mfMetricSub}>{pos || 'BASE'}</Text>
+                          </View>
+                        )}
+                        {postM != null && (
+                          <View style={[styles.mfMetric, styles.mfMetricHighlight, {
+                            borderColor: (isOver ? Colors.primary : '#FF6B35') + '66',
+                            backgroundColor: (isOver ? Colors.primary : '#FF6B35') + '0C',
+                          }]}>
+                            <Text style={styles.mfMetricLabel}>POSTERIOR</Text>
+                            <Text style={[styles.mfMetricVal, { color: isOver ? Colors.primary : '#FF6B35' }]}>
+                              {postM.toFixed(1)}
+                            </Text>
+                            {priorM != null && (
+                              <Text style={[styles.mfMetricSub, {
+                                color: postM > priorM ? Colors.primary : '#FF6B35',
+                              }]}>
+                                {postM > priorM ? '▲' : '▼'}{Math.abs(postM - priorM).toFixed(1)}
+                              </Text>
                             )}
                           </View>
+                        )}
+                        {expPoss != null && (
+                          <View style={styles.mfMetric}>
+                            <Text style={styles.mfMetricLabel}>EXP POSS</Text>
+                            <Text style={styles.mfMetricVal}>{Math.round(expPoss)}%</Text>
+                            {h2hPoss != null && (
+                              <Text style={styles.mfMetricSub}>H2H {Math.round(h2hPoss)}%</Text>
+                            )}
+                          </View>
+                        )}
+                        {oppAvg != null && (
+                          <View style={styles.mfMetric}>
+                            <Text style={styles.mfMetricLabel}>OPP ALLOWS</Text>
+                            <Text style={[styles.mfMetricVal, { color: '#A084E8' }]}>{oppAvg.toFixed(1)}</Text>
+                            {oppWt != null && <Text style={styles.mfMetricSub}>{oppWt}% wt</Text>}
+                          </View>
+                        )}
+                        {momLabel && (
+                          <View style={styles.mfMetric}>
+                            <Text style={styles.mfMetricLabel}>MOMENTUM</Text>
+                            <Text style={[styles.mfMetricVal, { fontSize: 11,
+                              color: momLabel === 'HOT' ? '#FF8C42' : momLabel === 'COLD' ? '#60A5FA' : Colors.textSecondary,
+                            }]}>{momLabel}</Text>
+                            {momEff != null && momEff !== 0 && (
+                              <Text style={[styles.mfMetricSub, { color: momEff > 0 ? Colors.primary : '#FF6B35' }]}>
+                                {momEff > 0 ? '+' : ''}{momEff.toFixed(1)}
+                              </Text>
+                            )}
+                          </View>
+                        )}
+                        {lcInfo?.n != null && (
+                          <View style={styles.mfMetric}>
+                            <Text style={styles.mfMetricLabel}>LEAGUE CAL</Text>
+                            <Text style={[styles.mfMetricVal, { fontSize: 11,
+                              color: lcInfo.multiplier < 1 ? '#F59E0B' : Colors.primary,
+                            }]}>
+                              {lcInfo.multiplier >= 1 ? '+' : ''}{((lcInfo.multiplier - 1) * 100).toFixed(1)}%
+                            </Text>
+                            <Text style={styles.mfMetricSub}>n={lcInfo.n}</Text>
+                          </View>
+                        )}
+                      </View>
+
+                      {/* ── Signal Chain ── */}
+                      {priorM != null && postM != null && chain.length > 0 && (
+                        <View style={styles.mfChainSection}>
+                          <Text style={styles.mfChainTitle}>SIGNAL CHAIN</Text>
+                          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                            <View style={styles.mfChainRow}>
+                              <View style={styles.mfChainNode}>
+                                <Text style={styles.mfChainNodeNum}>{priorM.toFixed(1)}</Text>
+                                <Text style={styles.mfChainNodeSub}>PRIOR</Text>
+                              </View>
+                              {chain.map((s, i) => (
+                                <React.Fragment key={i}>
+                                  <Text style={styles.mfChainArrow}>›</Text>
+                                  <View style={[styles.mfChainStep, {
+                                    borderColor: s.color + '66',
+                                    backgroundColor: s.color + '14',
+                                  }]}>
+                                    <Text style={[styles.mfChainStepLabel, { color: s.color }]}>{s.label}</Text>
+                                    <Text style={[styles.mfChainStepPct, { color: s.color }]}>
+                                      {s.pct >= 0 ? '+' : ''}{s.pct.toFixed(1)}%
+                                    </Text>
+                                    {s.n != null && <Text style={styles.mfChainStepN}>n={s.n}</Text>}
+                                  </View>
+                                </React.Fragment>
+                              ))}
+                              <Text style={styles.mfChainArrow}>›</Text>
+                              <View style={[styles.mfChainNode, {
+                                borderColor: (isOver ? Colors.primary : '#FF6B35') + '66',
+                                backgroundColor: (isOver ? Colors.primary : '#FF6B35') + '10',
+                              }]}>
+                                <Text style={[styles.mfChainNodeNum, { color: isOver ? Colors.primary : '#FF6B35' }]}>
+                                  {postM.toFixed(1)}
+                                </Text>
+                                <Text style={styles.mfChainNodeSub}>FINAL</Text>
+                              </View>
+                            </View>
+                          </ScrollView>
                         </View>
                       )}
 
-                      {/* Match Stakes row */}
-                      {stakeLabel && stakeLabel !== 'NORMAL' && (
-                        <View style={[styles.mfRow, { alignItems: 'flex-start' }]}>
-                          <Text style={styles.mfLabel}>MATCH STAKES</Text>
-                          <View style={{ flex: 1, alignItems: 'flex-end', gap: 2 }}>
-                            <Text style={[styles.mfVal, {
-                              color: stakeLabel?.includes('RELEGATION') ? '#FF6B35'
-                                   : stakeLabel?.includes('DEAD')       ? '#888'
-                                   : Colors.primary
-                            }]}>
-                              {stakeLabel?.replace(/_/g, ' ')}
+                      {/* ── Match Stakes Banner ── */}
+                      {stakeLabel && stakeLabel !== 'NORMAL' && stakeLabel !== 'NORMAL_STAKES' && (
+                        <View style={[styles.mfStakeBanner, {
+                          borderColor: stakeColor + '55',
+                          backgroundColor: stakeColor + '0E',
+                        }]}>
+                          <Ionicons name="warning-outline" size={11} color={stakeColor} />
+                          <View style={{ flex: 1 }}>
+                            <Text style={[styles.mfStakeBannerLabel, { color: stakeColor }]}>
+                              {stakeLabel.replace(/_/g, ' ')}
                             </Text>
                             {stMod.reason ? (
-                              <Text style={styles.mfStakesReason}>{stMod.reason}</Text>
+                              <Text style={styles.mfStakeBannerReason}>{stMod.reason}</Text>
                             ) : null}
                           </View>
+                          {stMod.mult != null && Math.abs(stMod.mult - 1) > 0.005 && (
+                            <Text style={[styles.mfStakeBannerMult, { color: stakeColor }]}>
+                              {stMod.mult >= 1 ? '+' : ''}{((stMod.mult - 1) * 100).toFixed(0)}%
+                            </Text>
+                          )}
                         </View>
                       )}
 
-                      {/* Active modifiers row */}
-                      {mods.length > 0 && (
-                        <View style={styles.mfRow}>
-                          <Text style={styles.mfLabel}>MODIFIERS</Text>
-                          <Text style={[styles.mfVal, { color: Colors.primary }]}>
-                            {mods.join('  ·  ')}
+                      {/* ── Opp Profile note ── */}
+                      {oppAvg != null && (
+                        <View style={styles.mfOppRow}>
+                          <Ionicons name="people-outline" size={10} color={Colors.textTertiary} />
+                          <Text style={styles.mfOppLabel} numberOfLines={1}>
+                            {pos ? `${pos}s` : 'Players'} vs {prediction.opponentName || 'opp'}: {oppAvg.toFixed(1)} avg allowed
+                            {oppWt != null ? ` (${oppWt}% influence)` : ''}
                           </Text>
                         </View>
                       )}
+
                     </View>
                   </View>
                 );
@@ -2419,8 +2565,8 @@ export default function ScanScreen() {
               const filteredLogs = displayLogs.filter(g =>
                 gameLogFilter === 'all' ? true : g.venue === gameLogFilter
               );
-              const COLS = 5;
-              const tileW = (SCREEN_W - 40 - 16 - (COLS - 1) * 5) / COLS;
+              const COLS = 6;
+              const tileW = (SCREEN_W - 40 - 16 - (COLS - 1) * 4) / COLS;
               const oppPoss = prediction.possessionOppAvg;
               return (
                 <View style={styles.gameLogsCard}>
@@ -3319,42 +3465,176 @@ const styles = StyleSheet.create({
   ciVal: { fontSize: 13, color: Colors.textSecondary, fontWeight: '600' },
 
   /* Model Factors card */
+  /* ─── ANALYSIS CARD ACCENT STRIPE ─── */
+  analysisAccentStripe: {
+    height: 3, borderTopLeftRadius: Colors.radiusLg, borderTopRightRadius: Colors.radiusLg,
+    marginBottom: 0,
+  },
+
+  /* ─── CONFIDENCE GAUGE ─── */
+  confGaugeWrap: {
+    paddingHorizontal: 16, paddingBottom: 8, paddingTop: 4, gap: 4,
+  },
+  confGaugeTrack: {
+    height: 6, backgroundColor: Colors.cardSecondary, borderRadius: 3,
+    overflow: 'hidden', position: 'relative',
+  },
+  confGaugeFill: {
+    height: '100%', borderRadius: 3,
+    shadowRadius: 6, shadowOpacity: 0.4,
+  },
+  confGaugeMidMark: {
+    position: 'absolute', left: '0%' as any, top: 0, bottom: 0,
+    width: 1, backgroundColor: 'rgba(255,255,255,0.15)',
+  },
+  confGaugeLabels: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+  },
+  confGaugeLabelEdge: {
+    fontSize: 8, color: Colors.textTertiary, fontWeight: '600', letterSpacing: 0.3,
+  },
+  confGaugeLabelCenter: {
+    fontSize: 9, fontWeight: '800', letterSpacing: 0.5,
+  },
+
+  /* ─── ALGORITHM BREAKDOWN (MODEL FACTORS) ─── */
   mfCard: {
-    paddingHorizontal: 16, paddingVertical: 12, gap: 8,
+    paddingHorizontal: 16, paddingVertical: 14, gap: 12,
   },
   mfHeader: {
-    flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2,
+    flexDirection: 'row', alignItems: 'center', gap: 7,
   },
   mfTitle: {
-    fontSize: 10, color: Colors.primary, fontWeight: '700', letterSpacing: 1.0,
+    fontSize: 11, color: Colors.primary, fontWeight: '800', letterSpacing: 1.2, flex: 1,
   },
-  mfRow: {
-    flexDirection: 'row', alignItems: 'center',
-    justifyContent: 'space-between', gap: 8,
+  mfSamplesBadge: {
+    backgroundColor: 'rgba(57,255,20,0.10)', borderRadius: 10,
+    paddingHorizontal: 8, paddingVertical: 3,
+    borderWidth: 1, borderColor: 'rgba(57,255,20,0.25)',
   },
-  mfLabel: {
-    fontSize: 9, color: Colors.textTertiary, fontWeight: '700',
-    letterSpacing: 0.7, flexShrink: 0,
-  },
-  mfVal: {
-    fontSize: 11, color: Colors.textSecondary, fontWeight: '600',
-    textAlign: 'right', flexShrink: 1,
-  },
-  mfPossRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-  },
-  mfH2HPill: {
-    backgroundColor: 'rgba(57,255,20,0.10)', borderRadius: 4,
-    paddingHorizontal: 6, paddingVertical: 2,
-    borderWidth: 1, borderColor: 'rgba(57,255,20,0.30)',
-  },
-  mfH2HPillText: {
+  mfSamplesText: {
     fontSize: 9, color: Colors.primary, fontWeight: '700', letterSpacing: 0.5,
   },
-  mfStakesReason: {
-    fontSize: 9, color: Colors.textTertiary, fontWeight: '500',
-    textAlign: 'right', fontStyle: 'italic',
+
+  /* Probability meter */
+  mfProbSection: { gap: 6 },
+  mfProbTrack: {
+    flexDirection: 'row', height: 10, borderRadius: 5, overflow: 'hidden', gap: 0,
   },
+  mfProbOverFill: {
+    backgroundColor: 'rgba(57,255,20,0.55)',
+  },
+  mfProbDivider: { width: 2, backgroundColor: Colors.background },
+  mfProbUnderFill: {
+    backgroundColor: 'rgba(255,107,53,0.50)',
+  },
+  mfProbLabels: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+  },
+  mfProbLabelLeft: { alignItems: 'flex-start', gap: 1 },
+  mfProbLabelRight: { alignItems: 'flex-end', gap: 1 },
+  mfProbPct: { fontSize: 18, fontWeight: '900', lineHeight: 22 },
+  mfProbDir: { fontSize: 8, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 1 },
+  mfProbVs: { fontSize: 9, color: Colors.textTertiary, fontWeight: '500' },
+
+  /* Metrics grid */
+  mfMetricsGrid: {
+    flexDirection: 'row', flexWrap: 'wrap', gap: 6,
+  },
+  mfMetric: {
+    flex: 1, minWidth: 70, alignItems: 'center', gap: 2,
+    backgroundColor: Colors.cardSecondary, borderRadius: 8,
+    paddingVertical: 8, paddingHorizontal: 6,
+    borderWidth: 1, borderColor: Colors.borderSubtle,
+  },
+  mfMetricHighlight: {
+    borderWidth: 1,
+  },
+  mfMetricLabel: {
+    fontSize: 7, color: Colors.textTertiary, fontWeight: '700',
+    letterSpacing: 0.8, textAlign: 'center',
+  },
+  mfMetricVal: {
+    fontSize: 18, fontWeight: '900', color: Colors.text, lineHeight: 22,
+  },
+  mfMetricSub: {
+    fontSize: 8, color: Colors.textSecondary, fontWeight: '600', textAlign: 'center',
+  },
+
+  /* Signal chain */
+  mfChainSection: { gap: 6 },
+  mfChainTitle: {
+    fontSize: 8, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 1.2,
+  },
+  mfChainRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 4, paddingBottom: 2,
+  },
+  mfChainNode: {
+    alignItems: 'center', gap: 2,
+    backgroundColor: Colors.cardSecondary, borderRadius: 7,
+    paddingVertical: 6, paddingHorizontal: 8,
+    borderWidth: 1, borderColor: Colors.borderSubtle,
+  },
+  mfChainNodeNum: {
+    fontSize: 14, fontWeight: '900', color: Colors.text, lineHeight: 17,
+  },
+  mfChainNodeSub: {
+    fontSize: 7, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 0.7,
+  },
+  mfChainArrow: {
+    fontSize: 16, color: '#2a2a2a', fontWeight: '700', marginHorizontal: 0,
+  },
+  mfChainStep: {
+    alignItems: 'center', gap: 1,
+    borderRadius: 6, paddingVertical: 5, paddingHorizontal: 7, borderWidth: 1,
+  },
+  mfChainStepLabel: {
+    fontSize: 7, fontWeight: '800', letterSpacing: 0.6,
+  },
+  mfChainStepPct: {
+    fontSize: 10, fontWeight: '900',
+  },
+  mfChainStepN: {
+    fontSize: 7, color: Colors.textTertiary, fontWeight: '600',
+  },
+
+  /* Stakes banner */
+  mfStakeBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    borderRadius: 8, borderWidth: 1, padding: 10,
+  },
+  mfStakeBannerLabel: {
+    fontSize: 10, fontWeight: '800', letterSpacing: 0.5,
+  },
+  mfStakeBannerReason: {
+    fontSize: 9, color: Colors.textTertiary, fontWeight: '500', fontStyle: 'italic', marginTop: 1,
+  },
+  mfStakeBannerMult: {
+    fontSize: 13, fontWeight: '900', letterSpacing: 0.5,
+  },
+
+  /* Opp profile row */
+  mfOppRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    backgroundColor: 'rgba(160,132,232,0.08)', borderRadius: 6,
+    paddingHorizontal: 8, paddingVertical: 5,
+    borderWidth: 1, borderColor: 'rgba(160,132,232,0.20)',
+  },
+  mfOppLabel: {
+    fontSize: 10, color: Colors.textSecondary, fontWeight: '600', flex: 1,
+  },
+
+  /* Legacy mf styles kept for any remaining references */
+  mfRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  mfLabel: { fontSize: 9, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 0.7, flexShrink: 0 },
+  mfVal: { fontSize: 11, color: Colors.textSecondary, fontWeight: '600', textAlign: 'right', flexShrink: 1 },
+  mfPossRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  mfH2HPill: {
+    backgroundColor: 'rgba(57,255,20,0.10)', borderRadius: 4,
+    paddingHorizontal: 6, paddingVertical: 2, borderWidth: 1, borderColor: 'rgba(57,255,20,0.30)',
+  },
+  mfH2HPillText: { fontSize: 9, color: Colors.primary, fontWeight: '700', letterSpacing: 0.5 },
+  mfStakesReason: { fontSize: 9, color: Colors.textTertiary, fontWeight: '500', textAlign: 'right', fontStyle: 'italic' },
 
   /* Moneyline & Game Type */
   matchOddsRow: { paddingHorizontal: 16, paddingVertical: 12, gap: 10 },
@@ -3555,10 +3835,10 @@ const styles = StyleSheet.create({
   glTabActive: { backgroundColor: Colors.primaryDim },
   glTabText: { fontSize: 11, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.5 },
   glTabTextActive: { color: Colors.primary },
-  glGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  glGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
   glTile: {
-    borderRadius: 10, padding: 8, alignItems: 'center',
-    gap: 4, borderWidth: 1, position: 'relative',
+    borderRadius: 7, padding: 5, alignItems: 'center',
+    gap: 2, borderWidth: 1, position: 'relative',
   },
   glTileOver: {
     backgroundColor: 'rgba(57,255,20,0.07)', borderColor: 'rgba(57,255,20,0.3)',
@@ -3567,11 +3847,11 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,59,48,0.07)', borderColor: 'rgba(255,59,48,0.2)',
   },
   glDot: {
-    position: 'absolute', top: 6, right: 6,
-    width: 6, height: 6, borderRadius: 3, backgroundColor: '#FF8C42',
+    position: 'absolute', top: 4, right: 4,
+    width: 4, height: 4, borderRadius: 2, backgroundColor: '#FF8C42',
   },
-  glTileVal: { fontSize: 16, fontWeight: '900', lineHeight: 20 },
-  glTileMins: { fontSize: 8, color: Colors.textSecondary, fontWeight: '600' },
+  glTileVal: { fontSize: 13, fontWeight: '900', lineHeight: 16 },
+  glTileMins: { fontSize: 7, color: Colors.textSecondary, fontWeight: '600' },
   glVenueBadge: {
     backgroundColor: '#1a1a1a', borderRadius: 4,
     paddingHorizontal: 5, paddingVertical: 2,

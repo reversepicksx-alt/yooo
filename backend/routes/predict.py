@@ -3867,6 +3867,14 @@ Analyze ALL data thoroughly. Return JSON only."""
                 "matchStakes":   (real_bayes or {}).get("matchStakes"),
                 "cdmInversion":  (real_bayes or {}).get("cdmInversion"),
                 "homeCdmDeepBlock": (real_bayes or {}).get("homeCdmDeepBlock"),
+                "leagueCalib":   (real_bayes or {}).get("leagueCalib"),
+                "scenarioPriors":(real_bayes or {}).get("scenarioPriors"),
+                "oppAllowedAvg": (real_bayes or {}).get("opponentAllowedAvg"),
+                "oppAllowedN":   (real_bayes or {}).get("opponentAllowedSamples"),
+                "oppAllowedWeight": (real_bayes or {}).get("opponentAllowedWeight"),
+                "momentumLabel": (real_bayes or {}).get("momentumLabel"),
+                "momentumEffect":(real_bayes or {}).get("momentumEffect"),
+                "priorStd":      (real_bayes or {}).get("priorStd"),
             },
         }
 
