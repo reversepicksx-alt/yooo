@@ -621,8 +621,11 @@ async def predict(req: PredictionRequest):
                         collected.append(gl)
 
                     # Only short-circuit if we have enough games with venue data.
-                    # If fewer than 5 games (or most lack venue), fall through to Stage 1
-                    # so the live API fills in the gaps and resolves venue/opponent correctly.
+                    # Minimum 15 games required — a proper Bayesian prior needs enough
+                    # samples to split home/away and compute stable rolling averages.
+                    # Below 15 we always fall through to Stage 1 so the live API fetches
+                    # all 40 team fixtures and fills the gaps (Stage 1 still uses cache
+                    # hits for any fixture already stored, so no wasted API calls).
                     good = [g for g in collected if g.get("venue")]
                     # For saves prop: also require that at least SOME cached logs actually
                     # have goals_saves data. The prefetch cache often stores a game log
@@ -637,7 +640,7 @@ async def predict(req: PredictionRequest):
                         _saves_ok = any(g.get(target_f) is not None for g in collected)
                         if not _saves_ok:
                             print(f"[CACHE-STAGE0] {req.playerName}/saves: 0 of {len(collected)} cached logs have goals_saves — falling through to Stage 1")
-                    if len(collected) >= 5 and len(good) >= len(collected) // 2 and _saves_ok:
+                    if len(collected) >= 15 and len(good) >= len(collected) // 2 and _saves_ok:
                         print(f"[CACHE-STAGE0] Returning {len(collected)} real (cached) game logs — skipping API")
                         return collected
                     elif collected:
