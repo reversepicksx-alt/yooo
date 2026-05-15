@@ -158,6 +158,7 @@ def compute_bayesian_projection(
     scenario_priors_result: dict = None,
     scenario_priors_mode: str = "off",
     role: str = "",
+    match_stakes: dict = None,
 ) -> dict:
     """
     Compute a 3-layer Bayesian projection from raw game data.
@@ -815,6 +816,88 @@ def compute_bayesian_projection(
                       f"would_mult={_hcdb_mult} (NOT APPLIED)")
 
     # ═══════════════════════════════════════════
+    # MATCH STAKES LAYER
+    # ═══════════════════════════════════════════
+    # League table context that pure stats can never capture:
+    #
+    #  MUST_WIN_RELEGATION   — team in the drop zone, late season.
+    #    • CBs/CDMs: suppress pass_attempts (managers go DIRECT under pressure).
+    #    • FWDs/AMs: shot boost (+6%) — team needs goals.
+    #    • ALL: tackles/clearances +6% (higher intensity).
+    #
+    #  HIGH_STAKES_RELEGATION — 1-4pts above drop zone, few games left.
+    #    • Mild version: pass_attempts -5%, intensity +4%.
+    #
+    #  DEAD_RUBBER — team mathematically safe, nothing at stake.
+    #    • Rotation expected. Flat -10% on all volume stats.
+    #
+    #  HIGH_STAKES_TITLE / HIGH_STAKES_EUROPE — intensity boost (+4%).
+    #
+    #  Opponent stakes: if OPPONENT is in MUST_WIN_RELEGATION, the whole
+    #  game lifts intensity regardless of who the player plays for.
+    # ═══════════════════════════════════════════
+    match_stakes_info = {"applied": False, "mult": 1.0, "reason": ""}
+    if match_stakes:
+        _ms_team_level = match_stakes.get("teamStakeLevel", "NORMAL")
+        _ms_opp_level  = match_stakes.get("opponentStakeLevel", "NORMAL")
+        _pos_up        = (position or "").upper()
+        _is_cb_cdm     = _pos_up in {"CB", "SW", "CDM", "DM", "DMF", "D", "DF"}
+        _is_fwd        = _pos_up in {"ST", "CF", "LW", "RW", "CAM", "AM", "SS", "FW", "WF"}
+        _VOLUME_PROPS  = {"pass_attempts", "passes", "shots", "shots_on_target",
+                          "tackles", "clearances", "key_passes", "crosses", "dribbles"}
+
+        _ms_mult = 1.0
+        _ms_note = ""
+
+        if _ms_team_level == "MUST_WIN_RELEGATION":
+            if prop_type in {"pass_attempts", "passes", "key_passes"} and _is_cb_cdm:
+                _ms_mult = 0.90
+                _ms_note = "MUST_WIN_RELEGATION: CB/CDM direct-play suppression (-10% pass vol)"
+            elif prop_type in {"pass_attempts", "passes"} and not _is_gk and not _is_cb_cdm:
+                _ms_mult = 0.95
+                _ms_note = "MUST_WIN_RELEGATION: survival-mode direct play (-5% pass vol)"
+            elif prop_type in {"shots", "shots_on_target"} and _is_fwd:
+                _ms_mult = 1.06
+                _ms_note = "MUST_WIN_RELEGATION: FWD desperate for goals (+6% shots)"
+            elif prop_type in {"tackles", "clearances", "interceptions"}:
+                _ms_mult = 1.06
+                _ms_note = "MUST_WIN_RELEGATION: elevated physical intensity (+6%)"
+
+        elif _ms_team_level == "HIGH_STAKES_RELEGATION":
+            if prop_type in {"pass_attempts", "passes"} and _is_cb_cdm:
+                _ms_mult = 0.95
+                _ms_note = "HIGH_STAKES_RELEGATION: direct-play tendency (-5% pass vol)"
+            elif prop_type in {"tackles", "clearances"}:
+                _ms_mult = 1.04
+                _ms_note = "HIGH_STAKES_RELEGATION: elevated defensive intensity (+4%)"
+
+        elif _ms_team_level == "DEAD_RUBBER":
+            if prop_type in _VOLUME_PROPS:
+                _ms_mult = 0.90
+                _ms_note = "DEAD_RUBBER: rotation/low-intensity deflation (-10%)"
+
+        elif _ms_team_level in ("HIGH_STAKES_TITLE", "HIGH_STAKES_EUROPE"):
+            _ms_mult = 1.04
+            _ms_note = f"{_ms_team_level}: maximum motivation (+4%)"
+
+        # Opponent in survival mode lifts the whole game's intensity
+        if _ms_opp_level == "MUST_WIN_RELEGATION" and abs(_ms_mult - 1.0) < 0.005:
+            if prop_type in {"tackles", "clearances", "shots"}:
+                _ms_mult = 1.05
+                _ms_note = "OPP MUST_WIN_RELEGATION: high-intensity game (+5%)"
+            elif prop_type in {"pass_attempts", "passes"} and not _is_cb_cdm:
+                _ms_mult = 0.96
+                _ms_note = "OPP MUST_WIN_RELEGATION: opponent pressing hard (-4% pass flow)"
+
+        if abs(_ms_mult - 1.0) > 0.005:
+            _ms_before = posterior_mean
+            posterior_mean = round(posterior_mean * _ms_mult, 1)
+            match_stakes_info = {"applied": True, "mult": _ms_mult, "reason": _ms_note}
+            print(f"[MATCH STAKES] {prop_type} pos={_pos_up} "
+                  f"team={_ms_team_level} opp={_ms_opp_level} "
+                  f"mult={_ms_mult} {_ms_before} → {posterior_mean}  [{_ms_note}]")
+
+    # ═══════════════════════════════════════════
     # PRESS INTENSITY — Position & Prop Aware
     # ═══════════════════════════════════════════
     # Press signal is computed for any prop where opponent pressing meaningfully
@@ -1266,6 +1349,9 @@ def compute_bayesian_projection(
         # Fires when dominant home team (>62% poss) faces a deep-sitting weak
         # opponent (<36% poss) — CDM becomes the pass-recycling pivot.
         "homeCdmDeepBlock": home_cdm_deep_block_info,
+
+        # Match stakes layer — league table situation (relegation/title/dead rubber).
+        "matchStakes": match_stakes_info,
     }
 
 

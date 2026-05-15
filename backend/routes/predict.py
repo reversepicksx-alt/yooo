@@ -1165,6 +1165,9 @@ async def predict(req: PredictionRequest):
             player_team_name=corrected_team_name or req.teamName or "",
             opponent_name=req.opponentName or "",
             prop_type=req.propType,
+            standings=standings,
+            player_team_id=actual_team_id or req.teamId,
+            opponent_id=req.opponentId,
         )
 
         web_intel_task = fetch_web_intel(
@@ -2245,6 +2248,7 @@ async def predict(req: PredictionRequest):
                 scenario_priors_result=_scenario_priors_result,
                 scenario_priors_mode=_scen_mode,
                 role=locals().get("player_role", ""),
+                match_stakes=game_situation.get("matchStakes"),
             )
             _eb_samples = early_bayes.get("priorSamples", 0) if early_bayes else 0
             print(f"[BAYESIAN] {req.playerName}/{req.propType}: samples={_eb_samples}, logs={len(_bayes_logs)} (venue={player_venue})")
@@ -5056,6 +5060,7 @@ Analyze ALL data thoroughly. Return JSON only."""
                     "mustWinByGoals": _agg.get("mustWinByGoals", 0),
                 },
                 "injuries": game_situation.get("injuries", {}).get("summaryText", ""),
+                "matchStakes": game_situation.get("matchStakes"),
             }
 
         # DATA QUALITY INDICATOR — flag when API data might be unreliable

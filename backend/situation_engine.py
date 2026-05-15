@@ -384,6 +384,252 @@ def _compute_pressure_multipliers(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# MATCH STAKES CLASSIFIER
+# ═══════════════════════════════════════════════════════════════════════════
+
+def classify_match_stakes(
+    standings: list,
+    player_team_id,
+    opponent_id,
+    player_team_name: str = "",
+    opponent_name: str = "",
+) -> dict:
+    """
+    Classify the stakes of a league match using live standings data.
+
+    Stakes levels (player's team perspective):
+      MUST_WIN_RELEGATION   — team IS in the relegation zone, ≤10 games left
+      HIGH_STAKES_RELEGATION — team within 3pts of relegation zone, ≤12 games left
+      HIGH_STAKES_TITLE      — team within 3pts of league leader, ≤8 games left
+      HIGH_STAKES_EUROPE     — team on edge of European spots, ≤8 games left
+      LOW_STAKES_SAFE        — 10+ pts clear of any danger/milestone
+      DEAD_RUBBER            — mathematically safe by large margin, late season
+      NORMAL                 — everything else
+
+    Returns:
+        {
+          "teamStakeLevel":   str,   # player's team
+          "opponentStakeLevel": str, # opponent
+          "teamSituation":    str,   # human-readable
+          "opponentSituation": str,
+          "overallIntensityBoost": float,  # 0.0 - 1.0
+          "directPlayTendency": float,     # 0.0 - 1.0  (relegation → more direct)
+          "contextBlock": str,             # ready for Grok injection
+          "teamRank": int | None,
+          "opponentRank": int | None,
+          "totalTeams": int,
+        }
+    """
+    if not standings:
+        return _empty_stakes()
+
+    total = len(standings)
+    # Build lookup by team id
+    by_id = {}
+    for s in standings:
+        team_obj = s.get("team", {})
+        tid = team_obj.get("id") if isinstance(team_obj, dict) else None
+        if tid:
+            by_id[str(tid)] = s
+
+    team_row = by_id.get(str(player_team_id))
+    opp_row  = by_id.get(str(opponent_id))
+
+    if not team_row and not opp_row:
+        return _empty_stakes()
+
+    # Relegation zone size depends on league size
+    # 20-team leagues: bottom 3 relegated; 18-team: bottom 2; 16-team: bottom 2
+    if total >= 20:
+        rel_zone = 3
+    elif total >= 17:
+        rel_zone = 2
+    else:
+        rel_zone = 2
+
+    def _analyse_row(row, team_name):
+        if not row:
+            return "NORMAL", team_name or "Unknown", None, {}
+        rank   = row.get("rank", 0) or 0
+        pts    = (row.get("points") or 0)
+        played = (row.get("all", {}) or {}).get("played", 0) or 0
+        # Estimate games remaining (most leagues 34-38 game seasons)
+        # Use total_possible = 2*(total-1) for double round-robin; cap at 38
+        total_possible = min(38, 2 * (total - 1))
+        games_left = max(0, total_possible - played)
+
+        # Points gap from relegation safety
+        safety_rank = total - rel_zone          # last safe rank (e.g. 17th in 20-team)
+        # Find the safety-boundary team's points
+        safety_row = next(
+            (s for s in standings if (s.get("rank") or 0) == safety_rank),
+            None
+        )
+        safety_pts = (safety_row.get("points") or 0) if safety_row else 0
+        pts_from_safety = pts - safety_pts     # negative = IN relegation zone
+
+        # Points gap from leader
+        leader_row = next(
+            (s for s in standings if (s.get("rank") or 0) == 1),
+            None
+        )
+        leader_pts = (leader_row.get("points") or 0) if leader_row else 0
+        pts_from_leader = leader_pts - pts     # positive = behind leader
+
+        # European spot estimation (top 5 generally)
+        euro_rank_cutoff = 5
+        euro_boundary_row = next(
+            (s for s in standings if (s.get("rank") or 0) == euro_rank_cutoff),
+            None
+        )
+        euro_pts = (euro_boundary_row.get("points") or 0) if euro_boundary_row else 0
+        pts_from_europe = euro_pts - pts  # positive = below European spots
+
+        meta = {
+            "rank": rank, "pts": pts, "played": played, "games_left": games_left,
+            "pts_from_safety": pts_from_safety, "pts_from_leader": pts_from_leader,
+            "pts_from_europe": pts_from_europe, "safety_pts": safety_pts,
+            "safety_rank": safety_rank, "total": total,
+        }
+
+        # ── Classify ──────────────────────────────────────────────────────
+        if pts_from_safety < 0 and games_left <= 10:
+            level = "MUST_WIN_RELEGATION"
+            desc  = (f"{team_name} IN relegation zone (rank {rank}/{total}, "
+                     f"{abs(pts_from_safety)} pts from safety, {games_left} games left) — "
+                     f"desperate, must-win mentality affects EVERY stat line")
+
+        elif pts_from_safety < 0 and games_left > 10:
+            level = "HIGH_STAKES_RELEGATION"
+            desc  = (f"{team_name} in relegation zone (rank {rank}/{total}, "
+                     f"{abs(pts_from_safety)} pts from safety, {games_left} games left)")
+
+        elif 0 <= pts_from_safety <= 4 and games_left <= 12:
+            level = "HIGH_STAKES_RELEGATION"
+            desc  = (f"{team_name} only {pts_from_safety}pt(s) above relegation "
+                     f"(rank {rank}/{total}, {games_left} games left) — survival six-pointer energy")
+
+        elif pts_from_leader <= 3 and games_left <= 8:
+            level = "HIGH_STAKES_TITLE"
+            desc  = (f"{team_name} in title race ({pts_from_leader} pts behind leader, "
+                     f"{games_left} games left) — maximum motivation")
+
+        elif pts_from_europe <= 3 and games_left <= 8 and rank <= euro_rank_cutoff + 2:
+            level = "HIGH_STAKES_EUROPE"
+            desc  = (f"{team_name} fighting for European spot (rank {rank}, "
+                     f"{pts_from_europe} pts from top-{euro_rank_cutoff}, {games_left} games left)")
+
+        elif pts_from_safety >= 15 and games_left <= 5:
+            level = "DEAD_RUBBER"
+            desc  = (f"{team_name} mathematically safe ({pts_from_safety} pts above relegation, "
+                     f"{games_left} games left) — expect rotation, reduced effort")
+
+        elif pts_from_safety >= 10 and pts_from_leader > 15 and pts_from_europe > 6:
+            level = "LOW_STAKES_SAFE"
+            desc  = (f"{team_name} mid-table comfort zone (rank {rank}, nothing at stake)")
+
+        else:
+            level = "NORMAL"
+            desc  = (f"{team_name} rank {rank}/{total}, {pts}pts, {games_left} games left")
+
+        return level, desc, rank, meta
+
+    team_level, team_desc, team_rank, team_meta = _analyse_row(team_row, player_team_name or "Player's team")
+    opp_level,  opp_desc,  opp_rank,  opp_meta  = _analyse_row(opp_row,  opponent_name or "Opponent")
+
+    # ── Overall intensity + direct-play tendency ───────────────────────────
+    _INTENSITY = {
+        "MUST_WIN_RELEGATION":    1.0,
+        "HIGH_STAKES_RELEGATION": 0.75,
+        "HIGH_STAKES_TITLE":      0.70,
+        "HIGH_STAKES_EUROPE":     0.55,
+        "NORMAL":                 0.30,
+        "LOW_STAKES_SAFE":        0.10,
+        "DEAD_RUBBER":            0.0,
+    }
+    intensity = max(
+        _INTENSITY.get(team_level, 0.3),
+        _INTENSITY.get(opp_level,  0.3),
+    )
+
+    # Relegation fights make teams more direct — dump-and-chase, less patient build-up
+    _DIRECT_PLAY = {
+        "MUST_WIN_RELEGATION":    0.85,
+        "HIGH_STAKES_RELEGATION": 0.60,
+        "HIGH_STAKES_TITLE":      0.30,
+        "HIGH_STAKES_EUROPE":     0.25,
+        "NORMAL":                 0.0,
+        "LOW_STAKES_SAFE":        0.0,
+        "DEAD_RUBBER":            0.0,
+    }
+    direct_tendency = _DIRECT_PLAY.get(team_level, 0.0)
+
+    # ── Grok context block ─────────────────────────────────────────────────
+    ctx_lines = []
+    any_stakes = team_level not in ("NORMAL", "LOW_STAKES_SAFE") or \
+                 opp_level  not in ("NORMAL", "LOW_STAKES_SAFE")
+
+    if any_stakes:
+        ctx_lines.append("[MATCH STAKES — CRITICAL CONTEXT]")
+        ctx_lines.append(f"  Player's team: {team_desc}")
+        ctx_lines.append(f"  Opponent:      {opp_desc}")
+
+        if team_level == "MUST_WIN_RELEGATION":
+            ctx_lines.append(
+                ">>> RELEGATION MUST-WIN: Player's team is fighting for survival. "
+                "Expect maximum pressing, direct play under pressure, higher physical duels. "
+                "CBs/CDMs will play MORE long balls — suppress pass_attempts projection vs normal game. "
+                "Strikers/wingers: elevated shot attempts out of desperation. "
+                "This OVERRIDES a 'dead rubber' or 'low motivation' read. <<<")
+        elif team_level == "HIGH_STAKES_RELEGATION":
+            ctx_lines.append(
+                ">>> HIGH-STAKES RELEGATION BATTLE: Elevated intensity, direct play tendencies. "
+                "Pass counts may be lower than seasonal avg due to more direct/vertical play. <<<")
+        elif team_level == "HIGH_STAKES_TITLE":
+            ctx_lines.append(
+                ">>> TITLE RACE: Maximum motivation and effort. "
+                "High-tempo, controlled possession expected. <<<")
+        elif team_level == "DEAD_RUBBER":
+            ctx_lines.append(
+                ">>> DEAD RUBBER (player's team): Expect rotation, reduced intensity, deflated volume stats. "
+                "Apply 8-12% reduction to all projection volume figures. <<<")
+
+        if opp_level == "MUST_WIN_RELEGATION":
+            ctx_lines.append(
+                ">>> OPPONENT IS IN RELEGATION SURVIVAL MODE: They will press hard and play direct. "
+                "Expect a high-intensity, physical game regardless of table position. <<<")
+        elif opp_level == "DEAD_RUBBER":
+            ctx_lines.append(
+                ">>> OPPONENT IS IN A DEAD RUBBER: May rotate squad, reduced intensity, "
+                "opening up spaces for the player's team. <<<")
+
+    return {
+        "teamStakeLevel":     team_level,
+        "opponentStakeLevel": opp_level,
+        "teamSituation":      team_desc,
+        "opponentSituation":  opp_desc,
+        "overallIntensityBoost": intensity,
+        "directPlayTendency": direct_tendency,
+        "contextBlock":       "\n".join(ctx_lines),
+        "teamRank":           team_rank,
+        "opponentRank":       opp_rank,
+        "totalTeams":         total,
+        "teamMeta":           team_meta,
+        "opponentMeta":       opp_meta,
+    }
+
+
+def _empty_stakes() -> dict:
+    return {
+        "teamStakeLevel": "NORMAL", "opponentStakeLevel": "NORMAL",
+        "teamSituation": "", "opponentSituation": "",
+        "overallIntensityBoost": 0.3, "directPlayTendency": 0.0,
+        "contextBlock": "", "teamRank": None, "opponentRank": None,
+        "totalTeams": 0, "teamMeta": {}, "opponentMeta": {},
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # MAIN ENTRY POINT
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -398,6 +644,9 @@ async def build_game_situation(
     opponent_name: str,
     prop_type: str,
     season: int = None,
+    standings: list = None,
+    player_team_id: int = None,
+    opponent_id: int = None,
 ) -> dict:
     """
     Master function — builds a comprehensive game situation context dict.
@@ -417,12 +666,8 @@ async def build_game_situation(
         season = CURRENT_SEASON
 
     is_knockout = _detect_knockout(match_round)
-    # Explicit 2nd leg from round name (e.g., "Round of 16 - 2nd Leg")
     is_second_leg = _detect_second_leg(match_round)
 
-    # For knockout matches that don't explicitly say "2nd Leg" in the round name,
-    # check H2H history. If there's a recent finished match between these teams in
-    # the same competition this season, today is the 2nd leg.
     h2h_task = _fetch_h2h_same_competition(home_team_id, away_team_id, league_id, season) \
         if is_knockout else asyncio.sleep(0, result=[])
     injury_task = _fetch_injuries(fixture_id) if fixture_id else asyncio.sleep(0, result=[])
@@ -433,24 +678,34 @@ async def build_game_situation(
     if isinstance(injury_raw, Exception):
         injury_raw = []
 
-    # Parse aggregate (always done for knockout matches)
     aggregate = _parse_aggregate(h2h_raw, home_team_id, away_team_id, fixture_id)
 
-    # Auto-detect 2nd leg from H2H data when round name doesn't say "2nd Leg"
-    # If we found a recent first-leg result in the same competition, this is the 2nd leg
     if is_knockout and not is_second_leg and aggregate.get("firstLegFound"):
         is_second_leg = True
         print(f"[SITUATION ENGINE] 2nd leg AUTO-DETECTED via H2H history (round='{match_round}')")
 
-    # Parse injuries
     injuries = _parse_injuries(injury_raw, home_team_id if is_player_home else away_team_id,
                                away_team_id if is_player_home else home_team_id)
 
-    # Compute pressure multipliers
     multipliers = _compute_pressure_multipliers(aggregate, is_knockout, is_second_leg,
                                                 is_player_home, prop_type)
 
-    # Build human-readable context block for AI prompt injection
+    # ── Match stakes classification (league standing context) ────────────────
+    _stakes_team_id = player_team_id or (home_team_id if is_player_home else away_team_id)
+    _stakes_opp_id  = opponent_id    or (away_team_id if is_player_home else home_team_id)
+    match_stakes = classify_match_stakes(
+        standings=standings or [],
+        player_team_id=_stakes_team_id,
+        opponent_id=_stakes_opp_id,
+        player_team_name=player_team_name,
+        opponent_name=opponent_name,
+    )
+    if match_stakes["teamStakeLevel"] not in ("NORMAL", "LOW_STAKES_SAFE", "DEAD_RUBBER") or \
+       match_stakes["opponentStakeLevel"] not in ("NORMAL", "LOW_STAKES_SAFE", "DEAD_RUBBER"):
+        print(f"[STAKES] {player_team_name} ({match_stakes['teamStakeLevel']}) "
+              f"vs {opponent_name} ({match_stakes['opponentStakeLevel']})")
+
+    # ── Build context block for Grok ─────────────────────────────────────────
     lines = []
 
     if is_knockout:
@@ -486,6 +741,11 @@ async def build_game_situation(
         for n in multipliers["notes"]:
             lines.append(f"  - {n}")
 
+    # Inject stakes context block from classifier
+    stakes_ctx = match_stakes.get("contextBlock", "")
+    if stakes_ctx:
+        lines.append(stakes_ctx)
+
     if injuries["summaryText"]:
         lines.append(f"[CONFIRMED ABSENCES] {injuries['summaryText']}")
         if injuries["playerTeamAbsences"]:
@@ -501,10 +761,11 @@ async def build_game_situation(
         "aggregate": aggregate,
         "multipliers": multipliers,
         "injuries": injuries,
+        "matchStakes": match_stakes,
         "contextBlock": context_block,
     }
 
     if context_block:
-        print(f"[SITUATION ENGINE] {player_team_name} vs {opponent_name}: {context_block[:200]}")
+        print(f"[SITUATION ENGINE] {player_team_name} vs {opponent_name}: {context_block[:300]}")
 
     return situation
