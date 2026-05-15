@@ -3875,6 +3875,9 @@ Analyze ALL data thoroughly. Return JSON only."""
                 "momentumLabel": (real_bayes or {}).get("momentumLabel"),
                 "momentumEffect":(real_bayes or {}).get("momentumEffect"),
                 "priorStd":      (real_bayes or {}).get("priorStd"),
+                "pairShare":     (real_bayes or {}).get("pairShare"),
+                "compSeasonAvg": (real_bayes or {}).get("compSeasonAvg"),
+                "rawOppAllowedAvg": (real_bayes or {}).get("rawOppAllowedAvg"),
             },
         }
 
@@ -4013,6 +4016,51 @@ Analyze ALL data thoroughly. Return JSON only."""
                 if _opp_allowed_avg and _opp_allowed_n >= 3:
                     _opp_weight = min(_opp_allowed_n * 0.025, 0.15)  # base: 2.5% per player, max 15%
                     _old_bp = bayesian_posterior
+
+                    # ── PAIR CALIBRATION ──────────────────────────────────────────────
+                    # Comparison players' raw stat vs this opponent reflects their actual
+                    # output — but these players may be dominant role players (e.g. primary
+                    # CB averaging 55+), while the target is secondary (averaging 38-42).
+                    # Blending toward the raw comparison avg over-projects the secondary
+                    # player. Fix: compute the opponent's RELATIVE uplift vs those same
+                    # players' normal season averages, then apply that same uplift ratio
+                    # to THIS player's own baseline level.
+                    #
+                    #   uplift         = opp_allowed_avg / comp_players_season_avg
+                    #   calibrated_opp = player_posterior × uplift
+                    #
+                    # Only fires for pass-sensitive props when ≥2 comparison players have
+                    # a known season average (populated by _fetch_comp_player_stats).
+                    # Capped at ±50% of raw opp avg to prevent runaway adjustments.
+                    # ──────────────────────────────────────────────────────────────────
+                    _pair_calib_props = {"pass_attempts", "passes", "key_passes", "crosses"}
+                    if req.propType in _pair_calib_props and position_comparison:
+                        _comp_seas = [
+                            p["seasonAvgStat"] for p in position_comparison
+                            if p.get("seasonAvgStat") and p["seasonAvgStat"] > 0
+                        ]
+                        if len(_comp_seas) >= 2:
+                            _comp_seas_avg = sum(_comp_seas) / len(_comp_seas)
+                            if _comp_seas_avg > 0:
+                                _opp_uplift = _opp_allowed_avg / _comp_seas_avg
+                                _cal_opp    = round(_old_bp * _opp_uplift, 1)
+                                # Cap: calibrated must stay within [50%, 150%] of raw opp avg
+                                _cal_opp = max(
+                                    round(_opp_allowed_avg * 0.50, 1),
+                                    min(round(_opp_allowed_avg * 1.50, 1), _cal_opp)
+                                )
+                                _pair_share = round(_old_bp / _comp_seas_avg, 3)
+                                real_bayes["pairShare"]        = _pair_share
+                                real_bayes["compSeasonAvg"]    = round(_comp_seas_avg, 1)
+                                real_bayes["rawOppAllowedAvg"] = _opp_allowed_avg
+                                if abs(_cal_opp - _opp_allowed_avg) >= 0.5:
+                                    print(
+                                        f"[PAIR CAL] {req.propType} {_opp_pos_label}: "
+                                        f"player={_old_bp:.1f} comp_seas={_comp_seas_avg:.1f} "
+                                        f"share={_pair_share:.2f} uplift={_opp_uplift:.2f}× "
+                                        f"opp {_opp_allowed_avg:.1f}→{_cal_opp:.1f}"
+                                    )
+                                _opp_allowed_avg = _cal_opp
 
                     # ── CONVERGENCE BOOST ────────────────────────────────────────────────
                     # When possession dominance AND opponent profile BOTH point the same

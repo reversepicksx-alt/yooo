@@ -1883,6 +1883,9 @@ export default function ScanScreen() {
                 const spInfo   = bm.scenarioPriors ?? {};
                 const oppAvg   = bm.oppAllowedAvg as number | undefined;
                 const oppWt    = bm.oppAllowedWeight as number | undefined;
+                const rawOppAvg   = bm.rawOppAllowedAvg as number | undefined;
+                const pairShare   = bm.pairShare as number | undefined;
+                const compSeasAvg = bm.compSeasonAvg as number | undefined;
                 const momLabel = bm.momentumLabel as string | undefined;
                 const momEff   = bm.momentumEffect as number | undefined;
                 const isOver   = pOver != null && pUnder != null && pOver >= pUnder;
@@ -1904,6 +1907,8 @@ export default function ScanScreen() {
                   chain.push({ label: 'SCEN', pct: (spInfo.multiplier - 1) * 100, color: spInfo.multiplier < 1 ? '#F59E0B' : Colors.primary, n: spInfo.n });
                 if (cdmInv.applied) chain.push({ label: 'CDM INV', pct: (cdmInv.mult - 1) * 100, color: '#A084E8' });
                 if (hcdb.applied)   chain.push({ label: 'DEEP BLK', pct: (hcdb.mult - 1) * 100, color: '#A084E8' });
+                if (rawOppAvg != null && oppAvg != null && Math.abs(rawOppAvg - oppAvg) >= 0.5)
+                  chain.push({ label: 'PAIR CAL', pct: ((oppAvg - rawOppAvg) / rawOppAvg) * 100, color: '#F59E0B' });
 
                 // Extra modifiers
                 const extraMods: string[] = [];
@@ -1988,7 +1993,24 @@ export default function ScanScreen() {
                           <View style={styles.mfMetric}>
                             <Text style={styles.mfMetricLabel}>OPP ALLOWS</Text>
                             <Text style={[styles.mfMetricVal, { color: '#A084E8' }]}>{oppAvg.toFixed(1)}</Text>
-                            {oppWt != null && <Text style={styles.mfMetricSub}>{oppWt}% wt</Text>}
+                            {rawOppAvg != null && Math.abs(rawOppAvg - oppAvg) >= 0.5 ? (
+                              <Text style={styles.mfMetricSub}>raw {rawOppAvg.toFixed(1)}</Text>
+                            ) : oppWt != null ? (
+                              <Text style={styles.mfMetricSub}>{oppWt}% wt</Text>
+                            ) : null}
+                          </View>
+                        )}
+                        {pairShare != null && compSeasAvg != null && (
+                          <View style={styles.mfMetric}>
+                            <Text style={styles.mfMetricLabel}>PAIR RANK</Text>
+                            <Text style={[styles.mfMetricVal, { fontSize: 11,
+                              color: pairShare < 0.82 ? '#F59E0B'
+                                   : pairShare > 1.18 ? Colors.primary
+                                   : Colors.textSecondary,
+                            }]}>
+                              {(pairShare * 100).toFixed(0)}%
+                            </Text>
+                            <Text style={styles.mfMetricSub}>of {compSeasAvg.toFixed(0)} avg</Text>
                           </View>
                         )}
                         {momLabel && (
