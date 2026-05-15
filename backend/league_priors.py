@@ -137,19 +137,32 @@ def lookup(league_id, position, prop_type, recommendation,
     b = _cache["buckets"].get(key)
 
     # Fallback: cross-league bucket (position+prop+side only)
-    cross_key = (0, key[1], key[2], key[3])
+    _is_cross_league = False
     if not b:
-        cross = None
-        # build a virtual cross-league average on the fly
+        _is_cross_league = True
+        # Check if the same league has data for the OPPOSITE recommendation.
+        # If so, the league is "known" (we have picks data for it) but this side
+        # is untested — that's a signal the league behaves differently from the
+        # global cross-league average and we should trust it even less.
+        _opp_rec = "under" if key[3] == "over" else "over"
+        _same_league_other_side = (key[0], key[1], key[2], _opp_rec) in _cache["buckets"]
+
         cross_n = 0; cross_err = 0.0; cross_hits = 0
         for k, v in _cache["buckets"].items():
             if (k[1], k[2], k[3]) == (key[1], key[2], key[3]):
-                cross_n += v["n"]; cross_err += v["mean_err"] * v["n"]; cross_hits += int(round(v["hit_rate"] * v["n"]))
+                cross_n += v["n"]
+                cross_err += v["mean_err"] * v["n"]
+                cross_hits += int(round(v["hit_rate"] * v["n"]))
         if cross_n >= _MIN_SAMPLE:
             mean_err = cross_err / cross_n
-            shrink = (cross_n / (cross_n + _SHRINK_K)) * 0.5  # cross-league: half strength
+            # Cross-league strength:
+            #   0.20x when same league has opposite-rec data (league deviates from global)
+            #   0.35x otherwise (styles differ across leagues — use conservatively)
+            # Previously was 0.50x which caused it to hit the ±6% cap too readily.
+            _cross_strength = 0.20 if _same_league_other_side else 0.35
+            shrink = (cross_n / (cross_n + _SHRINK_K)) * _cross_strength
             b = {
-                "n": cross_n,
+                "n":        cross_n,
                 "hit_rate": round(cross_hits / cross_n, 3),
                 "mean_err": round(mean_err, 2),
                 "shrink":   round(shrink, 3),
@@ -157,9 +170,14 @@ def lookup(league_id, position, prop_type, recommendation,
         else:
             return inert
 
+    # Cross-league fallback caps at ±3% max (half of the ±6% for specific buckets).
+    # Even with 176 cross-league samples, a global average from La Liga / PL / etc.
+    # should not be allowed to dominate a Saudi or novel-league prediction.
+    _nudge_cap = _MAX_NUDGE * 0.5 if _is_cross_league else _MAX_NUDGE
+
     bias = b["mean_err"]                 # raw error in the same units as the projection
     rel_bias = bias / max(abs(posterior_mean), 1e-6)
-    nudge = max(-_MAX_NUDGE, min(_MAX_NUDGE, rel_bias * b["shrink"]))
+    nudge = max(-_nudge_cap, min(_nudge_cap, rel_bias * b["shrink"]))
     direction = "boost" if nudge > 0.005 else ("cut" if nudge < -0.005 else "neutral")
     return {
         "multiplier": round(1.0 + nudge, 4),

@@ -1148,12 +1148,23 @@ def compute_bayesian_projection(
 
     if _selected_calib and _selected_calib.get("found"):
         lmult = float(_selected_calib.get("multiplier", 1.0))
+        # Cross-league fallbacks aggregate hundreds of picks from stylistically
+        # different leagues (La Liga, PL, etc.) and can hit the ±6% hard cap even
+        # when the target league behaves differently. Heuristic: buckets with
+        # n ≥ 80 are almost certainly cross-league composites — cap them at ±3%
+        # so league-style differences don't overwhelm matchup-specific signals.
+        _calib_n = int(_selected_calib.get("n", 0))
+        _is_cross_league_bucket = _calib_n >= 80
+        if _is_cross_league_bucket and abs(lmult - 1.0) > 0.03:
+            _sign = 1.0 if lmult > 1.0 else -1.0
+            lmult = round(1.0 + _sign * 0.03, 4)
         if abs(lmult - 1.0) > 0.001:
             raw_before_lc = posterior_mean
             posterior_mean = round(posterior_mean * lmult, 1)
+            _cross_tag = " [cross-league cap ±3%]" if _is_cross_league_bucket else ""
             print(f"[LEAGUE CALIB] {prop_type} {position} {venue}: n={_selected_calib.get('n')}, "
                   f"hit={_selected_calib.get('hit_rate')}, bias={_selected_calib.get('bias')}, "
-                  f"mult={lmult:.4f} {raw_before_lc} → {posterior_mean}")
+                  f"mult={lmult:.4f} {raw_before_lc} → {posterior_mean}{_cross_tag}")
         league_calib_info = {
             "applied":  True,
             "multiplier": round(lmult, 4),
@@ -1183,6 +1194,14 @@ def compute_bayesian_projection(
             and scenario_priors_result.get("found")
             and scenario_priors_mode in {"shadow", "live"}):
         sp_mult = float(scenario_priors_result.get("multiplier", 1.0))
+        # Scenario priors are probability-weighted across future scenarios (draw,
+        # low-scoring, blowout, etc.) that haven't happened yet. OVER buckets for
+        # CB pass_attempts carry heavy negative mean_err (-9 to -17) that drag the
+        # weighted average far down. Cap at ±3% so this pre-game guess doesn't
+        # overrule possession and opponent-profile signals that are matchup-specific.
+        if abs(sp_mult - 1.0) > 0.03:
+            _sp_sign = 1.0 if sp_mult > 1.0 else -1.0
+            sp_mult = round(1.0 + _sp_sign * 0.03, 4)
         scenario_priors_info["multiplier"] = round(sp_mult, 4)
         scenario_priors_info["components"] = scenario_priors_result.get("components", [])
         scenario_priors_info["coverage"]   = scenario_priors_result.get("coverage")

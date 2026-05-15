@@ -4064,6 +4064,46 @@ Analyze ALL data thoroughly. Return JSON only."""
                 real_bayes["situationalMultiplier"] = _sit_bayes_mult
             # ─────────────────────────────────────────────────────────────────────
 
+            # ── RECOMPUTE P(over)/P(under) AFTER OPP-PROFILE + SITUATION MULT ──
+            # The opponent profile (and situational multiplier) can shift bayesian_posterior
+            # significantly — e.g. 39.1 → 43.0 — AFTER pOver/pUnder were frozen by the
+            # Bayesian engine. If we don't refresh the probabilities here, BAYESIAN TRUTH
+            # reads the stale pOver=35.6% and locks in UNDER even though the final
+            # projection is clearly in OVER territory.
+            # Use the predictive std (game-to-game variability), not posteriorStd
+            # which is the credible interval for the mean (often ~0.3) and far too
+            # tight for P(over a line). Mirror the engine's effective_std formula:
+            # max(posterior_std, prior_std*0.55, posterior_mean*0.17)
+            _rb_prior_std    = real_bayes.get("priorStd") or 0.0
+            _rb_post_std_raw = real_bayes.get("posteriorStd") or 0.0
+            _rb_eff_std = max(
+                _rb_post_std_raw,
+                _rb_prior_std * 0.55,
+                bayesian_posterior * 0.17,
+            )
+            if _rb_eff_std > 0 and req.line:
+                try:
+                    import math as _math
+                    def _norm_cdf(x):
+                        return 0.5 * (1 + _math.erf(x / _math.sqrt(2)))
+                    _z = (req.line - bayesian_posterior) / _rb_eff_std
+                    _new_p_under = round(100 * _norm_cdf(_z), 1)
+                    _new_p_over  = round(100 - _new_p_under, 1)
+                    _old_p_over  = real_bayes.get("pOver", 50)
+                    if abs(_new_p_over - _old_p_over) >= 2.0:
+                        real_bayes["pOver"]  = _new_p_over
+                        real_bayes["pUnder"] = _new_p_under
+                        _new_rec = "over" if _new_p_over >= _new_p_under else "under"
+                        real_bayes["recommendation"] = _new_rec
+                        print(
+                            f"[P-REFRESH] {req.playerName}/{req.propType}: "
+                            f"posterior={bayesian_posterior} eff_std={_rb_eff_std:.2f} "
+                            f"→ P(over) {_old_p_over}% → {_new_p_over}% rec={_new_rec.upper()}"
+                        )
+                except Exception as _pr_err:
+                    print(f"[P-REFRESH-ERR] {_pr_err}")
+            # ─────────────────────────────────────────────────────────────────────
+
             bayesian_prob = max(real_bayes.get("pOver", 50), real_bayes.get("pUnder", 50)) / 100
             bayesian_rec = real_bayes.get("recommendation", "over")
             # early_proj = early_bayes estimate before full multi-factor Bayesian run

@@ -209,8 +209,14 @@ def lookup_weighted(scenario_probs: dict, position, prop_type, recommendation,
     if not components:
         return inert
 
-    # Cap composed nudge at ±_MAX_NUDGE so it can't exceed single-bucket cap
-    final_nudge = max(-_MAX_NUDGE, min(_MAX_NUDGE, weighted_nudge))
+    # Cap composed nudge at ±3% (half of single-bucket ±6%).
+    # The weighted average mixes scenarios that haven't occurred yet — draw,
+    # low_scoring, high_scoring — and in CB pass_attempts the OVER buckets
+    # carry huge negative mean_err (-9 to -17) that dominate the aggregate.
+    # Applying the full ±6% cap on a prediction that's inherently uncertain
+    # (we don't know the final score yet) was double-penalising props that
+    # already have strong possession and opponent-profile signals.
+    final_nudge = max(-_MAX_NUDGE * 0.5, min(_MAX_NUDGE * 0.5, weighted_nudge))
     direction = "boost" if final_nudge > 0.005 else ("cut" if final_nudge < -0.005 else "neutral")
     return {
         "multiplier":     round(1.0 + final_nudge, 4),
