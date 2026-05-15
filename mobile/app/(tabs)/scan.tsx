@@ -1835,6 +1835,121 @@ export default function ScanScreen() {
                 </>
               )}
 
+              {/* ── MODEL FACTORS CARD ─────────────────────────────────────── */}
+              {(() => {
+                const mf = (prediction as any).matchFactors;
+                if (!mf) return null;
+                const bm     = mf.bayesian ?? {};
+                const ms     = mf.matchStakes ?? {};
+                const stMod  = bm.matchStakes ?? {};
+                const cdmInv = bm.cdmInversion ?? {};
+                const hcdb   = bm.homeCdmDeepBlock ?? {};
+                const pos    = prediction.playerPosition ?? '';
+                const priorM = bm.priorMean;
+                const postM  = bm.posteriorMean;
+                const n      = bm.priorSamples;
+                const pOver  = bm.pOver;
+                const pUnder = bm.pUnder;
+                const expPoss    = mf.expectedPoss;
+                const h2hPoss    = mf.h2hPossAvg;
+                const h2hCount   = mf.h2hPossCount;
+                const possMulti  = mf.possMultiplier;
+                const stakeLabel = ms.label ?? ms.teamStakeLevel;
+
+                // Collect active modifiers
+                const mods: string[] = [];
+                if (cdmInv.applied) mods.push(`CDM Inv ×${cdmInv.mult}`);
+                if (hcdb.applied)   mods.push(`DeepBlock ×${hcdb.mult}`);
+                if (stMod.applied)  mods.push(`Stakes ×${stMod.mult}`);
+                if (possMulti != null && Math.abs(possMulti - 1) > 0.01)
+                  mods.push(`Poss ×${possMulti.toFixed(3)}`);
+
+                return (
+                  <View>
+                    <View style={styles.analysisDivider} />
+                    <View style={styles.mfCard}>
+                      {/* Header */}
+                      <View style={styles.mfHeader}>
+                        <Ionicons name="analytics-outline" size={12} color={Colors.primary} />
+                        <Text style={styles.mfTitle}>MODEL FACTORS</Text>
+                      </View>
+
+                      {/* Bayesian row */}
+                      {(priorM != null || postM != null) && (
+                        <View style={styles.mfRow}>
+                          <Text style={styles.mfLabel}>BAYESIAN ENGINE</Text>
+                          <Text style={styles.mfVal}>
+                            {pos ? `${pos}  ·  ` : ''}
+                            {priorM != null ? `prior ${priorM.toFixed(1)}` : ''}
+                            {postM  != null ? ` → ${postM.toFixed(1)}` : ''}
+                            {n      != null ? `  (n=${n})` : ''}
+                          </Text>
+                        </View>
+                      )}
+
+                      {/* Probability row */}
+                      {pOver != null && pUnder != null && (
+                        <View style={styles.mfRow}>
+                          <Text style={styles.mfLabel}>PROBABILITIES</Text>
+                          <Text style={[styles.mfVal, {
+                            color: pOver >= pUnder ? Colors.primary : '#FF6B35'
+                          }]}>
+                            {`P(over) ${pOver.toFixed(1)}%  ·  P(under) ${pUnder.toFixed(1)}%`}
+                          </Text>
+                        </View>
+                      )}
+
+                      {/* Possession row */}
+                      {expPoss != null && (
+                        <View style={styles.mfRow}>
+                          <Text style={styles.mfLabel}>EXP. POSSESSION</Text>
+                          <View style={styles.mfPossRow}>
+                            <Text style={styles.mfVal}>{expPoss.toFixed(1)}%</Text>
+                            {h2hPoss != null && (
+                              <View style={styles.mfH2HPill}>
+                                <Text style={styles.mfH2HPillText}>
+                                  {`H2H avg ${h2hPoss.toFixed(1)}%`}
+                                  {h2hCount ? ` (${h2hCount}g)` : ''}
+                                </Text>
+                              </View>
+                            )}
+                          </View>
+                        </View>
+                      )}
+
+                      {/* Match Stakes row */}
+                      {stakeLabel && stakeLabel !== 'NORMAL' && (
+                        <View style={[styles.mfRow, { alignItems: 'flex-start' }]}>
+                          <Text style={styles.mfLabel}>MATCH STAKES</Text>
+                          <View style={{ flex: 1, alignItems: 'flex-end', gap: 2 }}>
+                            <Text style={[styles.mfVal, {
+                              color: stakeLabel?.includes('RELEGATION') ? '#FF6B35'
+                                   : stakeLabel?.includes('DEAD')       ? '#888'
+                                   : Colors.primary
+                            }]}>
+                              {stakeLabel?.replace(/_/g, ' ')}
+                            </Text>
+                            {stMod.reason ? (
+                              <Text style={styles.mfStakesReason}>{stMod.reason}</Text>
+                            ) : null}
+                          </View>
+                        </View>
+                      )}
+
+                      {/* Active modifiers row */}
+                      {mods.length > 0 && (
+                        <View style={styles.mfRow}>
+                          <Text style={styles.mfLabel}>MODIFIERS</Text>
+                          <Text style={[styles.mfVal, { color: Colors.primary }]}>
+                            {mods.join('  ·  ')}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                  </View>
+                );
+              })()}
+
               {/* Moneyline & Game Type */}
               {(prediction.moneyline || prediction.expectedGameType) && (
                 <>
@@ -3202,6 +3317,44 @@ const styles = StyleSheet.create({
   },
   ciLabel: { fontSize: 10, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 0.8 },
   ciVal: { fontSize: 13, color: Colors.textSecondary, fontWeight: '600' },
+
+  /* Model Factors card */
+  mfCard: {
+    paddingHorizontal: 16, paddingVertical: 12, gap: 8,
+  },
+  mfHeader: {
+    flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2,
+  },
+  mfTitle: {
+    fontSize: 10, color: Colors.primary, fontWeight: '700', letterSpacing: 1.0,
+  },
+  mfRow: {
+    flexDirection: 'row', alignItems: 'center',
+    justifyContent: 'space-between', gap: 8,
+  },
+  mfLabel: {
+    fontSize: 9, color: Colors.textTertiary, fontWeight: '700',
+    letterSpacing: 0.7, flexShrink: 0,
+  },
+  mfVal: {
+    fontSize: 11, color: Colors.textSecondary, fontWeight: '600',
+    textAlign: 'right', flexShrink: 1,
+  },
+  mfPossRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+  },
+  mfH2HPill: {
+    backgroundColor: 'rgba(57,255,20,0.10)', borderRadius: 4,
+    paddingHorizontal: 6, paddingVertical: 2,
+    borderWidth: 1, borderColor: 'rgba(57,255,20,0.30)',
+  },
+  mfH2HPillText: {
+    fontSize: 9, color: Colors.primary, fontWeight: '700', letterSpacing: 0.5,
+  },
+  mfStakesReason: {
+    fontSize: 9, color: Colors.textTertiary, fontWeight: '500',
+    textAlign: 'right', fontStyle: 'italic',
+  },
 
   /* Moneyline & Game Type */
   matchOddsRow: { paddingHorizontal: 16, paddingVertical: 12, gap: 10 },

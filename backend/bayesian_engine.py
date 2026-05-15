@@ -849,13 +849,34 @@ def compute_bayesian_projection(
         _ms_mult = 1.0
         _ms_note = ""
 
+        # Possession gate: if the team actually dominates possession AGAINST THIS
+        # SPECIFIC OPPONENT (H2H-blended expectedPoss), direct-play relegation debuffs
+        # are invalid — the style is possession-based regardless of the table position.
+        # Threshold: team expects >58% possession → skip all direct-play penalties.
+        _team_exp_poss = float(match_stakes.get("teamExpectedPoss") or
+                               (match_dominance or {}).get("expectedPoss") or 50.0)
+        _h2h_poss_override = float(match_stakes.get("h2hPossAvg") or 0)
+        # Use the more reliable of blended H2H or expected possession
+        _effective_poss = max(_team_exp_poss, _h2h_poss_override)
+        _poss_dominant = _effective_poss > 58.0  # team controls the ball vs this opponent
+
         if _ms_team_level == "MUST_WIN_RELEGATION":
             if prop_type in {"pass_attempts", "passes", "key_passes"} and _is_cb_cdm:
-                _ms_mult = 0.90
-                _ms_note = "MUST_WIN_RELEGATION: CB/CDM direct-play suppression (-10% pass vol)"
+                if _poss_dominant:
+                    # Possession-dominant → direct-play debuff invalid; small intensity lift instead
+                    _ms_mult = 1.04
+                    _ms_note = (f"MUST_WIN_RELEGATION: CB/CDM but {_effective_poss:.0f}% poss "
+                                f"dominance negates direct-play penalty → intensity +4%")
+                else:
+                    _ms_mult = 0.90
+                    _ms_note = "MUST_WIN_RELEGATION: CB/CDM direct-play suppression (-10% pass vol)"
             elif prop_type in {"pass_attempts", "passes"} and not _is_gk and not _is_cb_cdm:
-                _ms_mult = 0.95
-                _ms_note = "MUST_WIN_RELEGATION: survival-mode direct play (-5% pass vol)"
+                if _poss_dominant:
+                    _ms_mult = 1.0  # no debuff when team dominates possession
+                    _ms_note = f"MUST_WIN_RELEGATION: {_effective_poss:.0f}% poss dominant — no direct-play penalty"
+                else:
+                    _ms_mult = 0.95
+                    _ms_note = "MUST_WIN_RELEGATION: survival-mode direct play (-5% pass vol)"
             elif prop_type in {"shots", "shots_on_target"} and _is_fwd:
                 _ms_mult = 1.06
                 _ms_note = "MUST_WIN_RELEGATION: FWD desperate for goals (+6% shots)"
@@ -865,8 +886,14 @@ def compute_bayesian_projection(
 
         elif _ms_team_level == "HIGH_STAKES_RELEGATION":
             if prop_type in {"pass_attempts", "passes"} and _is_cb_cdm:
-                _ms_mult = 0.95
-                _ms_note = "HIGH_STAKES_RELEGATION: direct-play tendency (-5% pass vol)"
+                if _poss_dominant:
+                    # Possession dominance overrides relegation direct-play tendency
+                    _ms_mult = 1.0
+                    _ms_note = (f"HIGH_STAKES_RELEGATION: {_effective_poss:.0f}% poss dominance "
+                                f"negates direct-play penalty — no debuff")
+                else:
+                    _ms_mult = 0.95
+                    _ms_note = "HIGH_STAKES_RELEGATION: direct-play tendency (-5% pass vol)"
             elif prop_type in {"tackles", "clearances"}:
                 _ms_mult = 1.04
                 _ms_note = "HIGH_STAKES_RELEGATION: elevated defensive intensity (+4%)"

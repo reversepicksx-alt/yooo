@@ -1735,6 +1735,116 @@ async def predict(req: PredictionRequest):
         if match_dominance.get("notes"):
             print(f"[MATCH DOMINANCE] {req.playerName}: poss={match_dominance['expectedPoss']}%, mult={match_dominance['multiplier']}, {' | '.join(match_dominance['notes'])}")
 
+        # ─────────────────────────────────────────────────────────────────────
+        # H2H POSSESSION OVERRIDE
+        # The season-average model can't know that Damac dominates 63%
+        # possession specifically against Al-Fayha even if their overall home
+        # average is lower. When we have ≥2 H2H fixtures with possession data,
+        # we override expectedPoss with a weighted blend:
+        #   H2H avg × (50-70%) + season avg × (30-50%)
+        # Weight grows with sample count: 2 games=50%, 3=56%, 4=62%, 5+=68%.
+        # This is the single biggest source of missed high-pass CB/CDM props.
+        #
+        # Source priority: DB cache (instant) → /fixtures/statistics API call
+        # ─────────────────────────────────────────────────────────────────────
+        async def _get_h2h_fixture_poss(fid: int, team_id: int) -> float | None:
+            """Return team's possession % in a fixture. Tries cache first, then API."""
+            # 1. Try fixture_player_cache (populated from previous predictions)
+            try:
+                _doc = await db.fixture_player_cache.find_one(
+                    {"_k": f"fxt_{fid}_{team_id}"}, {"_id": 0, "d.possession": 1}
+                )
+                if _doc and _doc.get("d"):
+                    _raw = str(_doc["d"].get("possession", "")).replace("%", "").strip()
+                    if _raw:
+                        return float(_raw)
+            except Exception:
+                pass
+            # 2. Fallback: fetch /fixtures/statistics directly from the API
+            try:
+                _stats = await api_football_request("fixtures/statistics", {"fixture": fid})
+                for _s in (_stats or []):
+                    if _s.get("team", {}).get("id") == team_id:
+                        for _st in _s.get("statistics", []):
+                            if _st.get("type") == "Ball Possession":
+                                _val = str(_st.get("value", "")).replace("%", "").strip()
+                                if _val:
+                                    return float(_val)
+            except Exception:
+                pass
+            return None
+
+        _h2h_team_poss_vals: list[float] = []
+        if h2h_data and actual_team_id:
+            _h2h_poss_tasks = []
+            _h2h_fxt_ids_used = []
+            for _hf in h2h_data[:8]:
+                _hf_fid  = _hf.get("fixture", {}).get("id")
+                _hf_home = _hf.get("teams", {}).get("home", {}).get("id")
+                if not _hf_fid:
+                    continue
+                # CRITICAL: venue-match — only include H2H fixtures where the
+                # player's team had the SAME venue as the current prediction.
+                # Mixing home and away possession averages to ~50% and wipes out
+                # the opponent-specific possession advantage (e.g. Damac 63% HOME
+                # vs Fayha but only 38% AWAY → naive avg = 50.5%, useless).
+                _player_is_home_in_h2h = (_hf_home == actual_team_id)
+                if _player_is_home_in_h2h != _is_home:
+                    continue  # skip wrong-venue fixture
+                _h2h_poss_tasks.append(_get_h2h_fixture_poss(_hf_fid, actual_team_id))
+                _h2h_fxt_ids_used.append(_hf_fid)
+            try:
+                _h2h_poss_results = await aio.wait_for(
+                    aio.gather(*_h2h_poss_tasks), timeout=8
+                )
+                _h2h_team_poss_vals = [r for r in _h2h_poss_results if r is not None]
+                print(f"[H2H POSS FETCH] {req.playerName}: venue={'home' if _is_home else 'away'} "
+                      f"venue-matched fixtures={len(_h2h_poss_tasks)}/{len(h2h_data[:8])}, "
+                      f"got possession for {len(_h2h_team_poss_vals)}: {_h2h_team_poss_vals}")
+            except aio.TimeoutError:
+                print(f"[H2H POSS FETCH] timeout for {req.playerName}")
+                _h2h_team_poss_vals = []
+
+        _h2h_poss_avg: float | None = None
+        if len(_h2h_team_poss_vals) >= 2:
+            _h2h_poss_avg = round(sum(_h2h_team_poss_vals) / len(_h2h_team_poss_vals), 1)
+            _season_base = match_dominance.get("expectedPoss", 50.0)
+            # More H2H samples → higher trust in H2H signal (caps at 70% weight at 5+ games)
+            _h2h_n = len(_h2h_team_poss_vals)
+            _h2h_weight = min(0.70, 0.50 + (_h2h_n - 2) * 0.06)
+            _blended_poss = round(_h2h_weight * _h2h_poss_avg + (1 - _h2h_weight) * _season_base, 1)
+            _blended_poss = min(78.0, max(28.0, _blended_poss))
+            _blended_opp  = round(100.0 - _blended_poss, 1)
+            print(f"[H2H POSS OVERRIDE] {req.playerName}: H2H avg={_h2h_poss_avg}% "
+                  f"(n={_h2h_n}, wt={_h2h_weight:.0%}) season={_season_base}% "
+                  f"→ blended={_blended_poss}%")
+            # Update match_dominance with H2H-blended possession
+            if _is_home:
+                match_dominance["homePoss"] = _blended_poss
+                match_dominance["awayPoss"] = _blended_opp
+            else:
+                match_dominance["homePoss"] = _blended_opp
+                match_dominance["awayPoss"] = _blended_poss
+            match_dominance["expectedPoss"]    = _blended_poss
+            match_dominance["oppExpectedPoss"] = _blended_opp
+            match_dominance["h2hPossAvg"]      = _h2h_poss_avg
+            match_dominance["h2hPossCount"]    = _h2h_n
+            # Recompute multiplier from blended possession
+            _PASS_H = {"pass_attempts", "key_passes", "crosses", "passes"}
+            _DEF_H  = {"tackles", "interceptions", "blocks", "clearances"}
+            _t_avg  = match_dominance.get("teamSeasonAvg") or 50.0
+            if req.propType in _PASS_H:
+                _raw = max(-0.35, min(0.35, (_blended_poss / max(_t_avg, 38.0)) - 1.0))
+                match_dominance["multiplier"] = round(1.0 + _raw, 3)
+            elif req.propType in _DEF_H:
+                _inv = (100.0 - _blended_poss) / max(_t_avg, 38.0)
+                _raw = max(-0.25, min(0.25, _inv - 1.0))
+                match_dominance["multiplier"] = round(1.0 + _raw, 3)
+            match_dominance["notes"].append(
+                f"H2H poss override ({_h2h_n} matches): avg {_h2h_poss_avg}% → blended {_blended_poss}%"
+            )
+            print(f"[H2H POSS OVERRIDE] new multiplier={match_dominance['multiplier']} for {req.propType}")
+
         # =============================================
         # SITUATION ENGINE: Apply possession boost from knockout/2nd-leg context
         # Overrides the season-average-based possession model when game state demands it
@@ -2248,7 +2358,13 @@ async def predict(req: PredictionRequest):
                 scenario_priors_result=_scenario_priors_result,
                 scenario_priors_mode=_scen_mode,
                 role=locals().get("player_role", ""),
-                match_stakes=game_situation.get("matchStakes"),
+                match_stakes={
+                    **(game_situation.get("matchStakes") or {}),
+                    # Inject live expectedPoss so Bayesian can gate the
+                    # direct-play debuff when possession shows dominance
+                    "teamExpectedPoss": match_dominance.get("expectedPoss", 50.0),
+                    "h2hPossAvg": match_dominance.get("h2hPossAvg"),
+                },
             )
             _eb_samples = early_bayes.get("priorSamples", 0) if early_bayes else 0
             print(f"[BAYESIAN] {req.playerName}/{req.propType}: samples={_eb_samples}, logs={len(_bayes_logs)} (venue={player_venue})")
@@ -3733,6 +3849,26 @@ Analyze ALL data thoroughly. Return JSON only."""
         if real_bayes:
             prediction["bayesianMetrics"] = real_bayes
             prediction["confidenceInterval"] = real_bayes.get("confidenceInterval", prediction.get("confidenceInterval"))
+
+        # Expose the key engine inputs the UI needs to show "Model Factors"
+        prediction["matchFactors"] = {
+            "expectedPoss":   match_dominance.get("expectedPoss"),
+            "oppExpectedPoss":match_dominance.get("oppExpectedPoss"),
+            "h2hPossAvg":     match_dominance.get("h2hPossAvg"),
+            "h2hPossCount":   match_dominance.get("h2hPossCount"),
+            "possMultiplier": match_dominance.get("multiplier"),
+            "matchStakes":    game_situation.get("matchStakes"),
+            "bayesian": {
+                "priorMean":     (real_bayes or {}).get("priorMean"),
+                "posteriorMean": (real_bayes or {}).get("posteriorMean"),
+                "priorSamples":  (real_bayes or {}).get("priorSamples"),
+                "pOver":         (real_bayes or {}).get("pOver"),
+                "pUnder":        (real_bayes or {}).get("pUnder"),
+                "matchStakes":   (real_bayes or {}).get("matchStakes"),
+                "cdmInversion":  (real_bayes or {}).get("cdmInversion"),
+                "homeCdmDeepBlock": (real_bayes or {}).get("homeCdmDeepBlock"),
+            },
+        }
 
         # =============================================
         # =============================================
