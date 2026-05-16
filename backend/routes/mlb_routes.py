@@ -133,6 +133,25 @@ Be direct, data-driven. Return JSON ONLY:
 async def search_players(q: str = Query(..., min_length=2)):
     try:
         players = await mlb_client.search_players(q, limit=15)
+
+        # BallDontLie's search endpoint omits team for traded/recently-moved players.
+        # Enrich by fetching the full player record (cached at 2h TTL) for the top 8
+        # active results that are missing team data.
+        enriched: list = []
+        fetch_tasks = []
+        fetch_indices = []
+        for i, p in enumerate(players[:8]):
+            if p.get("active") and not p.get("team"):
+                fetch_tasks.append(mlb_client.get_player(p["id"]))
+                fetch_indices.append(i)
+
+        if fetch_tasks:
+            import asyncio
+            fetched = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+            for idx, result in zip(fetch_indices, fetched):
+                if isinstance(result, dict) and result:
+                    players[idx] = result
+
         return [
             {
                 "id":        p.get("id"),
@@ -140,7 +159,7 @@ async def search_players(q: str = Query(..., min_length=2)):
                 "firstName": p.get("first_name"),
                 "lastName":  p.get("last_name"),
                 "position":  p.get("position", ""),
-                "team":      p.get("team", {}),
+                "team":      p.get("team") or {},
                 "active":    p.get("active", True),
                 "jersey":    p.get("jersey"),
                 "batsThrows":p.get("bats_throws"),
@@ -218,8 +237,10 @@ async def mlb_predict(req: MlbPredictRequest):
         if results:
             # Pick best match: prefer active players
             active = [p for p in results if p.get("active")]
-            player_data = active[0] if active else results[0]
-            player_id = player_data.get("id")
+            best_match = active[0] if active else results[0]
+            player_id = best_match.get("id")
+            # Always fetch the full player record — search results omit team for traded players
+            player_data = await mlb_client.get_player(player_id) or best_match
 
     if player_data:
         position = position or player_data.get("position", "")
@@ -256,6 +277,47 @@ async def mlb_predict(req: MlbPredictRequest):
             detail=f"No stats found for {req.playerName} in the {req.season} season. "
                    f"They may not have played yet this season."
         )
+
+    # ── Team fallback: derive from season stats when player object had no team ──
+    # (happens for recently traded players where BallDontLie player record lags)
+    if not team_name and season_stats and season_stats.get("team_name"):
+        team_name = season_stats["team_name"]
+        print(f"[MLB PREDICT] Team resolved from season_stats: {team_name}")
+
+    if not team_name and game_logs:
+        # Use the team_name from the most recent current-season game log entry
+        for gl in game_logs:
+            tn = gl.get("team_name", "")
+            if tn:
+                team_name = tn
+                print(f"[MLB PREDICT] Team resolved from game log: {team_name}")
+                break
+
+    # If we now have a team name but still no team_id, look it up from the teams list
+    if team_name and not team_id:
+        try:
+            all_teams = await mlb_client.get_teams()
+            team_lower = team_name.lower()
+            for t in all_teams:
+                dn = t.get("display_name", "").lower()
+                nm = t.get("name", "").lower()
+                loc = t.get("location", "").lower()
+                if team_lower in dn or dn in team_lower or nm in team_lower or loc in team_lower:
+                    team_id = t.get("id", 0)
+                    team_name = t.get("display_name", team_name)
+                    print(f"[MLB PREDICT] Resolved team_id={team_id} for '{team_name}'")
+                    break
+        except Exception as e:
+            log.warning(f"[MLB PREDICT] Team ID lookup failed: {e}")
+
+    # If team_id was just found but team_games weren't fetched yet, fetch them now
+    if team_id and not team_games:
+        try:
+            team_games = await mlb_client.get_team_games(team_id, req.season)
+            log.info(f"[MLB PREDICT] Deferred team_games fetch: {len(team_games)} games for team_id={team_id}")
+        except Exception as e:
+            log.warning(f"[MLB PREDICT] Deferred team_games fetch failed: {e}")
+            team_games = []
 
     log.info(f"[MLB PREDICT] team_games fetched: {len(team_games)} regular-season games for team_id={team_id}")
 

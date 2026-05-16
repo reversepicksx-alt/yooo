@@ -26,8 +26,8 @@ _MIN_INTERVAL = 0.15  # seconds between requests — paid tier: 600 req/min ≈ 
 
 CACHE_TTL = {
     "teams":         7 * 86400,   # 7 days
-    "player":        6 * 3600,    # 6 hours
-    "player_search": 24 * 3600,   # 24 hours
+    "player":        2 * 3600,    # 2 hours (was 6h — trades need to surface quickly)
+    "player_search": 4 * 3600,    # 4 hours (was 24h — stale teams on traded players)
     "stats":         2 * 3600,    # 2 hours (live season)
     "season_stats":  2 * 3600,
 }
