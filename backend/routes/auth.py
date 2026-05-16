@@ -33,6 +33,33 @@ async def _check_access_local(email_lower: str):
                         return None  # expired — fall through to normal checks
                 except Exception:
                     pass
+            # STRIPE OVERRIDE: if this user has a Stripe subscription that is
+            # past_due OR canceled with an expired paid period, the complimentary
+            # grant is VOID — a failed/canceled payment always blocks access,
+            # regardless of any manual grant. Only Owner/Lifetime grants bypass this.
+            stripe_record = await db.stripe_subscriptions.find_one(
+                {"email": email_lower}, {"_id": 0, "status": 1, "currentPeriodEnd": 1}
+            )
+            if stripe_record:
+                _st = stripe_record.get("status", "")
+                if _st == "past_due":
+                    print(f"[ACCESS BLOCK] {email_lower}: complimentary grant voided — Stripe sub is past_due")
+                    return None
+                if _st == "canceled":
+                    _cpe_raw = stripe_record.get("currentPeriodEnd")
+                    _blocked = True
+                    if _cpe_raw:
+                        try:
+                            _cpe_dt = datetime.fromisoformat(str(_cpe_raw).replace(" ", "T"))
+                            if _cpe_dt.tzinfo is None:
+                                _cpe_dt = _cpe_dt.replace(tzinfo=timezone.utc)
+                            if datetime.now(timezone.utc) < _cpe_dt:
+                                _blocked = False  # still within paid window — allow
+                        except Exception:
+                            pass
+                    if _blocked:
+                        print(f"[ACCESS BLOCK] {email_lower}: complimentary grant voided — Stripe sub canceled/expired")
+                        return None
         return access_type
     # Active/pending subs always have access (Square handles renewal enforcement)
     square_sub = await db.square_subscriptions.find_one(
