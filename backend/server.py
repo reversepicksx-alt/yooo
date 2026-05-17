@@ -99,6 +99,13 @@ async def seed_grants():
     except Exception as _idx_err:
         import logging
         logging.getLogger("server").warning(f"create_index skipped (Atlas transient): {_idx_err}")
+    # Install TTL indexes on all cache collections to keep Atlas storage under control
+    try:
+        from ttl_indexes import setup_ttl_indexes
+        await setup_ttl_indexes(db)
+    except Exception as _ttl_err:
+        import logging
+        logging.getLogger("server").warning(f"TTL index setup skipped: {_ttl_err}")
     asyncio.create_task(seed_cache())
     # Build master team cache for smart opponent resolution
     # force=True ensures Portugal/Turkey + leaguePriority field are included

@@ -41,7 +41,7 @@ async def _cache_set(db, key: str, data) -> None:
         await db.first_goal_cache.update_one(
             {"key": key},
             {"$set": {"key": key, "data": data,
-                      "ts": datetime.now(timezone.utc).isoformat()}},
+                      "ts": datetime.now(timezone.utc)}},
             upsert=True,
         )
     except Exception:

@@ -69,7 +69,7 @@ async def _cache_set(key: str, data) -> None:
     try:
         await db.cs2_cache.update_one(
             {"key": key},
-            {"$set": {"key": key, "data": data, "_ts": datetime.now(timezone.utc).isoformat()}},
+            {"$set": {"key": key, "data": data, "_ts": datetime.now(timezone.utc)}},
             upsert=True,
         )
     except Exception:

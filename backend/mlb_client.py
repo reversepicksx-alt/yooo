@@ -112,7 +112,7 @@ async def _cache_set(key: str, data) -> None:
     try:
         await db.mlb_cache.update_one(
             {"key": key},
-            {"$set": {"key": key, "data": data, "ts": datetime.now(timezone.utc).isoformat()}},
+            {"$set": {"key": key, "data": data, "ts": datetime.now(timezone.utc)}},
             upsert=True,
         )
     except Exception as e:

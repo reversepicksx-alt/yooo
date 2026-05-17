@@ -206,6 +206,7 @@ async def sync_squad(team_id: int, team_name: str = "", league_id: int = 0):
                 "teamId": team_id,
                 "teamName": team_name,
                 "leagueId": league_id,
+                "_dt": datetime.now(timezone.utc),
             }
             ops.append(doc)
 
@@ -716,6 +717,7 @@ async def sync_player_season_stats_for_team(team_id: int, season: int = None, le
                     "player": player,
                     "statistics": entry.get("statistics", []),
                     "_ts": time.time(),
+                    "_dt": datetime.now(timezone.utc),
                 }
                 ops.append(db[COL_PLAYER_STATS].update_one(
                     {"_id_key": doc["_id_key"]},
@@ -819,6 +821,7 @@ async def sync_team_season_stats_for_all_leagues(seasons: list = None) -> int:
                             "season": season,
                             "data": data,
                             "_ts": time.time(),
+                            "_dt": datetime.now(timezone.utc),
                         }
                         await db[COL_TEAM_STATS].update_one(
                             {"teamId": team_id, "leagueId": lid, "season": season},
@@ -874,7 +877,7 @@ async def sync_team_fixture_history_for_all_leagues(count: int = 40) -> int:
             if data:
                 await db[COL_TEAM_FIXTURES].update_one(
                     {"teamId": team_id},
-                    {"$set": {"teamId": team_id, "fixtures": data, "_ts": time.time()}},
+                    {"$set": {"teamId": team_id, "fixtures": data, "_ts": time.time(), "_dt": datetime.now(timezone.utc)}},
                     upsert=True
                 )
                 total += 1
