@@ -20,7 +20,7 @@ from typing import Optional, Dict
 import asyncio
 
 
-_MIN_BUCKET_N = 30  # below this, pass through raw confidence
+_MIN_BUCKET_N = 15  # below this, pass through raw confidence
 _BUCKET_BOUNDARIES = [0, 50, 60, 70, 80, 90, 101]
 _BUCKET_LABELS = ["<50", "50-59", "60-69", "70-79", "80-89", "90+"]
 
