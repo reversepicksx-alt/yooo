@@ -36,6 +36,8 @@ CS2_PROP_LABELS = {
     "map3_deaths":          "Map 3 Deaths",
     "map3_assists":         "Map 3 Assists",
     "map3_adr":             "Map 3 ADR",
+    "maps_1_3_kills":       "Maps 1-3 Kills",
+    "maps_1_3_headshots":   "Maps 1-3 Headshots",
 }
 
 

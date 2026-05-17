@@ -413,6 +413,9 @@ async def get_player_recent_match_stats(player_id: int, team_id: int, limit: int
                     "map3_kast":            m3.get("kast", 0.0)         if m3_played else None,
                     "map3_rounds":          m3_rounds,
                     "map3_kpr":             round(m3_kills / m3_rounds, 3) if (m3_played and m3_rounds > 0 and m3_kills is not None) else None,
+                    # Maps 1-3 totals (maps 1-2 + map 3 when played; None when no map 3)
+                    "maps_1_3_kills":       (_sum("kills") + m3_kills) if m3_played and m3_kills is not None else None,
+                    "maps_1_3_headshots":   (_sum("headshotCount") + (m3.get("headshotCount", 0) or 0)) if m3_played else None,
                     "wonMatch":             any(m.get("wonMap") for m in map_player_stats.values()),
                 })
 
@@ -527,6 +530,16 @@ async def get_cs2_completed_match_result(
                 m12 = [m for m in (m1, m2) if m]
                 adrs = [m.get("adr", 0) for m in m12 if m.get("adr", 0) > 0]
                 actual = round(sum(adrs) / len(adrs), 1) if adrs else None
+            elif prop_type in ("maps_1_3_kills", "maps_1_3_headshots"):
+                # All 3 maps combined (maps 1-2 + map 3 if played)
+                m1 = map_lookup.get(1, {})
+                m2 = map_lookup.get(2, {})
+                m3 = map_lookup.get(3, {})
+                all_maps = [m for m in (m1, m2, m3) if m]
+                if not all_maps:
+                    all_maps = sorted(per_map_stats, key=lambda x: x.get("mapNumber", 0))[:3]
+                stat_key = "kills" if prop_type == "maps_1_3_kills" else "headshotCount"
+                actual = sum(m.get(stat_key, 0) or 0 for m in all_maps)
             elif prop_type == "kills":
                 # Per-map prop — use map 1
                 actual = map_lookup.get(1, {}).get("kills")

@@ -68,6 +68,12 @@ const PROP_LABELS: Record<string, string> = {
   pitcher_strikeouts: 'Pitcher Strikeouts', innings_pitched: 'Innings Pitched',
   hits_allowed: 'Hits Allowed', earned_runs: 'Earned Runs', walks_allowed: 'Walks Allowed',
   pitches_thrown: 'Pitches Thrown', batters_faced: 'Batters Faced',
+  hitter_fantasy_points: 'Fantasy Points (DK)',
+  hits_runs_rbis: 'H+R+RBI',
+  pitcher_fantasy_score: 'Pitcher Fantasy (DK)',
+  pitching_outs: 'Pitching Outs',
+  maps_1_3_kills: 'Maps 1-3 Kills',
+  maps_1_3_headshots: 'Maps 1-3 Headshots',
 };
 
 const BAND_ACCENT: Record<string, string> = {
@@ -1637,6 +1643,12 @@ export default function ScanScreen() {
                   walks: 'walks per game', strikeouts: 'Ks per game', runs: 'runs per game',
                   total_bases: 'total bases per game', stolen_bases: 'SB per game',
                   doubles: 'doubles per game', plate_appearances: 'PA per game',
+                  hitter_fantasy_points: 'DK pts per game',
+                  hits_runs_rbis: 'H+R+RBI per game',
+                  pitcher_fantasy_score: 'DK pts per start',
+                  pitching_outs: 'outs per start',
+                  maps_1_3_kills: 'kills across all 3 maps',
+                  maps_1_3_headshots: 'headshots across all 3 maps',
                 };
                 const propAvgLabel = PROP_AVG_LABEL[prediction.propType ?? ''] ?? 'per game';
 

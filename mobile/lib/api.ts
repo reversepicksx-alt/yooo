@@ -1016,6 +1016,7 @@ export const PROP_TYPES = [
   { value: 'pass_attempts', label: 'Pass Attempts' },
   { value: 'shots', label: 'Shots' },
   { value: 'shots_on_target', label: 'Shots on Target' },
+  { value: 'shots_assisted', label: 'Shot Assists' },
   { value: 'goals', label: 'Goals' },
   { value: 'assists', label: 'Assists' },
   { value: 'key_passes', label: 'Key Passes' },
@@ -1036,13 +1037,16 @@ export const MLB_PROP_TYPES = [
   { value: 'stolen_bases',       label: 'Stolen Bases',           group: 'Batter' },
   { value: 'doubles',            label: 'Doubles',                group: 'Batter' },
   { value: 'plate_appearances',  label: 'Plate Appearances',      group: 'Batter' },
-  { value: 'hitter_fantasy_points', label: 'Fantasy Points (DK)', group: 'Batter' },
-  { value: 'pitcher_strikeouts', label: 'Pitcher Strikeouts',     group: 'Pitcher' },
-  { value: 'innings_pitched',    label: 'Innings Pitched',        group: 'Pitcher' },
-  { value: 'hits_allowed',       label: 'Hits Allowed',           group: 'Pitcher' },
-  { value: 'earned_runs',        label: 'Earned Runs',            group: 'Pitcher' },
-  { value: 'walks_allowed',      label: 'Walks Allowed',          group: 'Pitcher' },
-  { value: 'pitches_thrown',     label: 'Pitches Thrown',         group: 'Pitcher' },
+  { value: 'hitter_fantasy_points',  label: 'Fantasy Points (DK)',    group: 'Batter' },
+  { value: 'hits_runs_rbis',         label: 'H+R+RBI',               group: 'Batter' },
+  { value: 'pitcher_strikeouts',     label: 'Pitcher Strikeouts',     group: 'Pitcher' },
+  { value: 'innings_pitched',        label: 'Innings Pitched',        group: 'Pitcher' },
+  { value: 'hits_allowed',           label: 'Hits Allowed',           group: 'Pitcher' },
+  { value: 'earned_runs',            label: 'Earned Runs',            group: 'Pitcher' },
+  { value: 'walks_allowed',          label: 'Walks Allowed',          group: 'Pitcher' },
+  { value: 'pitches_thrown',         label: 'Pitches Thrown',         group: 'Pitcher' },
+  { value: 'pitcher_fantasy_score',  label: 'Pitcher Fantasy (DK)',   group: 'Pitcher' },
+  { value: 'pitching_outs',          label: 'Pitching Outs',          group: 'Pitcher' },
 ];
 
 export interface MlbPlayer {
@@ -1165,6 +1169,9 @@ export const CS2_PROP_TYPES = [
   { value: 'maps_1_2_assists',    label: 'Maps 1-2 Assists' },
   { value: 'maps_1_2_adr',        label: 'Maps 1-2 ADR' },
   { value: 'maps_1_2_headshots',  label: 'Maps 1-2 Headshots' },
+  // Maps 1-3 (all 3 maps combined — when series plays out to map 3)
+  { value: 'maps_1_3_kills',      label: 'Maps 1-3 Kills' },
+  { value: 'maps_1_3_headshots',  label: 'Maps 1-3 Headshots' },
   // Map 3 props (when series goes to a deciding map)
   { value: 'map3_kills',          label: 'Map 3 Kills' },
   { value: 'map3_headshots',      label: 'Map 3 Headshots' },

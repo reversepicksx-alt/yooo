@@ -22,6 +22,8 @@ from typing import Optional
 
 # ── Prop definitions ─────────────────────────────────────────────────────────
 CS2_PROPS = {
+    "maps_1_3_kills":       "maps_1_3_kills",
+    "maps_1_3_headshots":   "maps_1_3_headshots",
     # Per-map props
     "kills":                "kills",
     "deaths":               "deaths",
@@ -51,6 +53,7 @@ MATCH_LEVEL_PROPS = {
     "maps_1_2_kills", "maps_1_2_deaths", "maps_1_2_assists",
     "maps_1_2_adr", "maps_1_2_headshots",
     "map3_kills", "map3_headshots", "map3_deaths", "map3_assists", "map3_adr",
+    "maps_1_3_kills", "maps_1_3_headshots",
 }
 
 # Map-3-specific props (subset of MATCH_LEVEL_PROPS)
@@ -61,10 +64,11 @@ COUNT_PROPS = {
     "kills", "deaths", "assists", "first_kills", "clutches_won", "headshots",
     "maps_1_2_kills", "maps_1_2_deaths", "maps_1_2_assists", "maps_1_2_headshots",
     "map3_kills", "map3_headshots", "map3_deaths", "map3_assists",
+    "maps_1_3_kills", "maps_1_3_headshots",
 }
 
 # Props where we normalise by rounds before projecting
-KILLS_CLASS_PROPS = {"kills", "maps_1_2_kills", "map3_kills"}
+KILLS_CLASS_PROPS = {"kills", "maps_1_2_kills", "map3_kills", "maps_1_3_kills"}
 
 # ── League-average hyper-priors ───────────────────────────────────────────────
 # Calibrated to realistic T2/T3 competition (not T1 which is only ~20 teams).
@@ -89,6 +93,8 @@ HYPER_PRIOR = {
     "map3_deaths":          14.0,
     "map3_assists":          3.5,
     "map3_adr":             72.0,
+    "maps_1_3_kills":       43.0,   # maps 1-2 (~27) + map 3 (~16)
+    "maps_1_3_headshots":   17.5,   # maps 1-2 (~11) + map 3 (~6.5)
 }
 
 # ── Kills-per-round hyper-prior (used when normalising) ──────────────────────
@@ -159,9 +165,9 @@ def _opponent_rank_multiplier(rank: Optional[int], prop_type: str) -> float:
         return 1.0
 
     kills_direction_props = {
-        "kills", "maps_1_2_kills", "map3_kills",
+        "kills", "maps_1_2_kills", "map3_kills", "maps_1_3_kills",
         "adr", "maps_1_2_adr", "map3_adr", "rating",
-        "headshots", "maps_1_2_headshots", "map3_headshots",
+        "headshots", "maps_1_2_headshots", "map3_headshots", "maps_1_3_headshots",
     }
     deaths_direction_props = {"deaths", "maps_1_2_deaths", "map3_deaths"}
 

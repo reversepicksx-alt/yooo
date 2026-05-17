@@ -788,6 +788,8 @@ async def _run_auto_settlement():
         "walks_allowed", "pitches_thrown", "batters_faced",
         "hits", "home_runs", "rbi", "walks", "strikeouts", "runs",
         "total_bases", "stolen_bases", "doubles", "plate_appearances",
+        "hitter_fantasy_points", "hits_runs_rbis",
+        "pitcher_fantasy_score", "pitching_outs",
     }
     cutoff = (datetime.now(timezone.utc) - timedelta(minutes=90)).isoformat()
     live_picks = await db.picks.find(
@@ -813,6 +815,8 @@ async def _run_auto_settlement():
         "walks_allowed", "pitches_thrown", "batters_faced",
         "hits", "home_runs", "rbi", "walks", "strikeouts", "runs",
         "total_bases", "stolen_bases", "doubles", "plate_appearances",
+        "hitter_fantasy_points", "hits_runs_rbis",
+        "pitcher_fantasy_score", "pitching_outs",
     }
     mlb_picks    = [p for p in live_picks if p.get("sport") == "mlb" or p.get("propType", "") in _MLB_PROP_TYPES]
     soccer_picks = [p for p in live_picks if p not in mlb_picks]
@@ -1474,7 +1478,8 @@ _MLB_LIVE_PROP_TYPES = {
     "walks_allowed", "pitches_thrown", "batters_faced",
     "hits", "home_runs", "rbi", "walks", "strikeouts", "runs",
     "total_bases", "stolen_bases", "doubles", "plate_appearances",
-    "hitter_fantasy_points",
+    "hitter_fantasy_points", "hits_runs_rbis",
+    "pitcher_fantasy_score", "pitching_outs",
 }
 
 
@@ -1568,6 +1573,15 @@ async def _update_mlb_live_picks():
                     if stats:
                         if prop_type == "hitter_fantasy_points":
                             current_value = _fp(stats)
+                        elif prop_type == "hits_runs_rbis":
+                            from mlb_engine import _compute_hits_runs_rbis as _hrr
+                            current_value = _hrr(stats)
+                        elif prop_type == "pitcher_fantasy_score":
+                            from mlb_engine import _compute_pitcher_fantasy as _pf
+                            current_value = _pf(stats)
+                        elif prop_type == "pitching_outs":
+                            from mlb_engine import _compute_pitching_outs as _po
+                            current_value = _po(stats)
                         else:
                             raw = stats.get(field)
                             if raw is not None:

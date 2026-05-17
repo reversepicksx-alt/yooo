@@ -27,29 +27,34 @@ BATTER_PROPS = {
     "stolen_bases":          "stolen_bases",
     "doubles":               "doubles",
     "plate_appearances":     "plate_appearances",
-    # Computed synthetic prop — derived from raw fields at extract time
+    # Computed synthetic props — derived from raw fields at extract time
     "hitter_fantasy_points": "__fantasy_pts__",
+    "hits_runs_rbis":        "__hits_runs_rbis__",
 }
 
 PITCHER_PROPS = {
-    "pitcher_strikeouts": "p_k",
-    "innings_pitched":    "ip",
-    "hits_allowed":       "p_hits",
-    "earned_runs":        "er",
-    "walks_allowed":      "p_bb",
-    "pitches_thrown":     "pitch_count",
-    "batters_faced":      "batters_faced",
+    "pitcher_strikeouts":   "p_k",
+    "innings_pitched":      "ip",
+    "hits_allowed":         "p_hits",
+    "earned_runs":          "er",
+    "walks_allowed":        "p_bb",
+    "pitches_thrown":       "pitch_count",
+    "batters_faced":        "batters_faced",
+    # Computed synthetic props
+    "pitcher_fantasy_score": "__pitcher_fantasy__",
+    "pitching_outs":         "__pitching_outs__",
 }
 
 ALL_PROP_FIELDS = {**BATTER_PROPS, **PITCHER_PROPS}
 
 # Props that use Poisson distribution (discrete counts)
-# hitter_fantasy_points is continuous (Gaussian MC), so intentionally excluded
+# hitter_fantasy_points, pitcher_fantasy_score are continuous (Gaussian MC)
 COUNT_STATS = {
     "hits", "home_runs", "rbi", "walks", "strikeouts", "runs",
     "total_bases", "stolen_bases", "doubles", "plate_appearances",
     "pitcher_strikeouts", "hits_allowed", "earned_runs", "walks_allowed",
     "pitches_thrown", "batters_faced",
+    "hits_runs_rbis", "pitching_outs",
 }
 
 # ── Season stats field mapping: prop_type → (total_field, games_field) ─────
@@ -69,9 +74,12 @@ SEASON_STAT_MAP = {
     "hits_allowed":       ("pitching_h",  "pitching_gp"),
     "earned_runs":        ("pitching_er", "pitching_gp"),
     "walks_allowed":      ("pitching_bb", "pitching_gp"),
-    "pitches_thrown":        (None,          None),
-    "batters_faced":         (None,          None),
-    "hitter_fantasy_points": (None,          None),   # computed — handled separately
+    "pitches_thrown":         (None,           None),
+    "batters_faced":          (None,           None),
+    "hitter_fantasy_points":  (None,           None),   # computed — handled separately
+    "hits_runs_rbis":         (None,           None),   # computed from H+R+RBI
+    "pitcher_fantasy_score":  (None,           None),   # computed from IP/K/H/ER/BB
+    "pitching_outs":          ("pitching_ip",  "pitching_gp"),  # derived from IP
 }
 
 # Momentum decay weights (newest game = index 0)
@@ -85,9 +93,11 @@ HOME_ADJ = {
     "walks": 1.01, "strikeouts": 0.99, "total_bases": 1.02,
     "stolen_bases": 1.01, "doubles": 1.02, "plate_appearances": 1.00,
     "hitter_fantasy_points": 1.02,
+    "hits_runs_rbis": 1.02,
     "pitcher_strikeouts": 1.02, "innings_pitched": 1.01,
     "hits_allowed": 0.98, "earned_runs": 0.97, "walks_allowed": 0.99,
     "pitches_thrown": 1.01, "batters_faced": 1.01,
+    "pitcher_fantasy_score": 1.01, "pitching_outs": 1.01,
 }
 
 # ── Park factors by home team (3-year MLB average, Baseball Reference) ────────
@@ -159,6 +169,82 @@ def _get_park_factor(park_team: str, prop_type: str) -> float:
     return 1.0
 
 
+def _compute_hits_runs_rbis(game: dict) -> Optional[float]:
+    """H + R + RBI combo stat per game."""
+    hits = game.get("hits")
+    if hits is None:
+        return None
+    return float(hits) + float(game.get("runs") or 0) + float(game.get("rbi") or 0)
+
+
+def _compute_hits_runs_rbis_from_season(season: dict) -> Optional[float]:
+    gp = season.get("batting_gp")
+    if not gp or int(gp) == 0:
+        return None
+    gp = float(gp)
+    h   = float(season.get("batting_h",   0) or 0)
+    r   = float(season.get("batting_r",   0) or 0)
+    rbi = float(season.get("batting_rbi", 0) or 0)
+    return round((h + r + rbi) / gp, 2)
+
+
+def _compute_pitcher_fantasy(game: dict) -> Optional[float]:
+    """DraftKings-style pitcher fantasy points.
+    Scoring: outs_recorded×1 + K×2 - H×0.6 - ER×2.25 - BB×0.6
+    (Win/QS bonuses omitted — not trackable per-game from BDL)
+    """
+    ip = game.get("ip")
+    if ip is None:
+        return None
+    ip_dec = _ip_to_float(ip)
+    if ip_dec is None:
+        return None
+    k  = float(game.get("p_k")    or 0)
+    h  = float(game.get("p_hits") or 0)
+    er = float(game.get("er")     or 0)
+    bb = float(game.get("p_bb")   or 0)
+    outs = ip_dec * 3
+    return round(outs + k * 2 - h * 0.6 - er * 2.25 - bb * 0.6, 1)
+
+
+def _compute_pitcher_fantasy_from_season(season: dict) -> Optional[float]:
+    gp = season.get("pitching_gp")
+    if not gp or int(gp) == 0:
+        return None
+    gp  = float(gp)
+    ip  = _ip_to_float(season.get("pitching_ip", 0)) or 0.0
+    k   = float(season.get("pitching_k",  0) or 0)
+    h   = float(season.get("pitching_h",  0) or 0)
+    er  = float(season.get("pitching_er", 0) or 0)
+    bb  = float(season.get("pitching_bb", 0) or 0)
+    outs_total = ip * 3
+    total = outs_total + k * 2 - h * 0.6 - er * 2.25 - bb * 0.6
+    return round(total / gp, 2)
+
+
+def _compute_pitching_outs(game: dict) -> Optional[float]:
+    """Outs recorded in a start. BDL stores IP as '6.1' = 6 innings + 1 out = 19 outs."""
+    ip = game.get("ip")
+    if ip is None:
+        return None
+    try:
+        parts = str(ip).split(".")
+        whole = int(parts[0])
+        extra = int(parts[1]) if len(parts) > 1 else 0
+        return float(whole * 3 + extra)
+    except (ValueError, TypeError):
+        return None
+
+
+def _compute_pitching_outs_from_season(season: dict) -> Optional[float]:
+    gp = season.get("pitching_gp")
+    if not gp or int(gp) == 0:
+        return None
+    gp = float(gp)
+    ip = _ip_to_float(season.get("pitching_ip", 0)) or 0.0
+    return round((ip * 3) / gp, 1)
+
+
 def _compute_fantasy_pts(game: dict) -> Optional[float]:
     """DraftKings-style hitter fantasy points from a per-game stat record.
 
@@ -218,6 +304,12 @@ def _extract_game_val(game: dict, prop_type: str) -> Optional[float]:
     """Extract a prop value from a per-game stat record."""
     if prop_type == "hitter_fantasy_points":
         return _compute_fantasy_pts(game)
+    if prop_type == "hits_runs_rbis":
+        return _compute_hits_runs_rbis(game)
+    if prop_type == "pitcher_fantasy_score":
+        return _compute_pitcher_fantasy(game)
+    if prop_type == "pitching_outs":
+        return _compute_pitching_outs(game)
     field = ALL_PROP_FIELDS.get(prop_type)
     if not field:
         return None
@@ -336,6 +428,21 @@ def compute_mlb_projection(
             if computed is not None:
                 prior_mean = computed
                 season_gp  = int(season_stats.get("batting_gp") or 0)
+        elif prop_type == "hits_runs_rbis":
+            computed = _compute_hits_runs_rbis_from_season(season_stats)
+            if computed is not None:
+                prior_mean = computed
+                season_gp  = int(season_stats.get("batting_gp") or 0)
+        elif prop_type == "pitcher_fantasy_score":
+            computed = _compute_pitcher_fantasy_from_season(season_stats)
+            if computed is not None:
+                prior_mean = computed
+                season_gp  = int(season_stats.get("pitching_gp") or 0)
+        elif prop_type == "pitching_outs":
+            computed = _compute_pitching_outs_from_season(season_stats)
+            if computed is not None:
+                prior_mean = computed
+                season_gp  = int(season_stats.get("pitching_gp") or 0)
         else:
             stat_key, gp_key = SEASON_STAT_MAP.get(prop_type, (None, None))
             if stat_key and gp_key:
@@ -361,10 +468,13 @@ def compute_mlb_projection(
         "hits": 1.05, "home_runs": 0.18, "rbi": 0.70, "walks": 0.38,
         "strikeouts": 0.90, "runs": 0.58, "total_bases": 1.60,
         "stolen_bases": 0.12, "doubles": 0.22, "plate_appearances": 3.8,
-        "hitter_fantasy_points": 8.5,   # league-average DK pts per plate appearance
+        "hitter_fantasy_points": 8.5,   # league-average DK pts per game
+        "hits_runs_rbis": 2.33,         # ~1.05H + 0.58R + 0.70RBI
         "pitcher_strikeouts": 5.8, "innings_pitched": 5.0,
         "hits_allowed": 5.2, "earned_runs": 2.5, "walks_allowed": 2.1,
         "pitches_thrown": 88.0, "batters_faced": 22.0,
+        "pitcher_fantasy_score": 16.6,  # outs(15)+K(11.6)-H(-3.12)-ER(-5.63)-BB(-1.26)
+        "pitching_outs": 15.0,          # ~5 IP avg × 3 outs/inning
     }
     league_avg = _LEAGUE_PRIORS.get(prop_type, prior_mean)
     # Shrink toward league avg when < 20 games
