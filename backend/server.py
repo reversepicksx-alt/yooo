@@ -978,6 +978,57 @@ async def owner_analytics():
     prop_type = await group_by("propType")
     league = await group_by_league()
 
+    # ── Brier Score + ROI by confidence tier ─────────────────────────────────
+    # Fetch settled picks with confidence info (cutoff = post-placeholder-bug era)
+    conf_picks = await db.picks.find(
+        {"status": "settled", "result": {"$in": ["hit", "miss"]},
+         "settledAt": {"$gte": "2026-04-30T00:00:00+00:00"}},
+        {"_id": 0, "result": 1, "confidenceScore": 1, "rawConfidence": 1, "propType": 1}
+    ).to_list(5000)
+
+    # Brier Score: mean((prob - outcome)^2), lower = better
+    # Use rawConfidence (pre-calibration) so we measure the engine, not the calibrator
+    brier_sum, brier_n = 0.0, 0
+    tier_buckets = {
+        "High (≥70%)":  {"hits": 0, "misses": 0},
+        "Medium (60–69%)": {"hits": 0, "misses": 0},
+        "Low (<60%)":   {"hits": 0, "misses": 0},
+    }
+    for p in conf_picks:
+        raw = p.get("rawConfidence") or p.get("confidenceScore") or 0
+        if not raw or raw <= 0:
+            continue
+        outcome = 1 if p.get("result") == "hit" else 0
+        prob = raw / 100.0
+        brier_sum += (prob - outcome) ** 2
+        brier_n += 1
+
+        # Tier bucket
+        if raw >= 70:
+            tier_buckets["High (≥70%)"]["hits" if outcome else "misses"] += 1
+        elif raw >= 60:
+            tier_buckets["Medium (60–69%)"]["hits" if outcome else "misses"] += 1
+        else:
+            tier_buckets["Low (<60%)"]["hits" if outcome else "misses"] += 1
+
+    brier_score = round(brier_sum / brier_n, 4) if brier_n >= 10 else None
+
+    # ROI assumes -110 standard American odds: win=+$100, loss=-$110 per $110 wagered
+    confidence_tiers = []
+    for tier_label, counts in tier_buckets.items():
+        h, m = counts["hits"], counts["misses"]
+        t = h + m
+        if t == 0:
+            continue
+        hit_rate = pct(h, t)
+        roi = round((h * 100 - m * 110) / (t * 110) * 100, 1) if t else 0
+        confidence_tiers.append({
+            "label": tier_label,
+            "hits": h, "misses": m, "total": t,
+            "winPct": hit_rate,
+            "roi": roi,
+        })
+
     return {
         "overall": {
             "hits": total_hits,
@@ -992,6 +1043,9 @@ async def owner_analytics():
         "byPosition": position,
         "byPropType": prop_type,
         "byLeague": league,
+        "brierScore": brier_score,
+        "brierN": brier_n,
+        "confidenceTiers": confidence_tiers,
     }
 
 

@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useQuery } from '@tanstack/react-query';
 import Colors from '@/constants/colors';
-import { getOwnerAnalytics, AnalyticsBucket } from '@/lib/api';
+import { getOwnerAnalytics, AnalyticsBucket, ConfidenceTier } from '@/lib/api';
 
 const PROP_LABELS: Record<string, string> = {
   pass_attempts: 'Pass Attempts',
@@ -26,6 +26,81 @@ function winColor(pct: number): string {
   if (pct >= 68) return Colors.primary;
   if (pct >= 58) return '#FFCC00';
   return Colors.error;
+}
+
+function roiColor(roi: number): string {
+  if (roi >= 5) return Colors.primary;
+  if (roi >= 0) return '#FFCC00';
+  return Colors.error;
+}
+
+function brierLabel(score: number): { text: string; color: string } {
+  if (score <= 0.20) return { text: 'Excellent', color: Colors.primary };
+  if (score <= 0.25) return { text: 'Well Calibrated', color: Colors.primary };
+  if (score <= 0.30) return { text: 'Slightly Overconfident', color: '#FFCC00' };
+  return { text: 'Needs Calibration', color: Colors.error };
+}
+
+function ConfidenceQualityCard({
+  brierScore, brierN, tiers,
+}: { brierScore: number | null; brierN: number; tiers: ConfidenceTier[] }) {
+  return (
+    <View style={styles.confCard}>
+      <View style={styles.sectionHeader}>
+        <Ionicons name="analytics-outline" size={14} color={Colors.primary} />
+        <Text style={styles.sectionTitle}>Confidence Quality</Text>
+      </View>
+
+      {/* Brier Score */}
+      {brierScore !== null && (
+        <View style={styles.brierRow}>
+          <View style={styles.brierLeft}>
+            <Text style={styles.brierNum}>{brierScore.toFixed(3)}</Text>
+            <Text style={styles.brierSub}>Brier Score</Text>
+          </View>
+          <View style={styles.brierRight}>
+            <Text style={[styles.brierBadge, { color: brierLabel(brierScore).color }]}>
+              {brierLabel(brierScore).text}
+            </Text>
+            <Text style={styles.brierHint}>
+              Lower = better · perfect = 0 · random = 0.25 · n={brierN}
+            </Text>
+          </View>
+        </View>
+      )}
+
+      {/* ROI by confidence tier */}
+      {tiers.length > 0 && (
+        <>
+          <View style={styles.tierHeader}>
+            <Text style={[styles.tierCol, { flex: 2 }]}>TIER</Text>
+            <Text style={styles.tierCol}>PICKS</Text>
+            <Text style={styles.tierCol}>HIT%</Text>
+            <Text style={styles.tierCol}>EST ROI</Text>
+          </View>
+          {tiers.map((t) => (
+            <View key={t.label} style={styles.tierRow}>
+              <Text style={[styles.tierCell, { flex: 2, color: Colors.text }]} numberOfLines={1}>
+                {t.label}
+              </Text>
+              <Text style={styles.tierCell}>{t.total}</Text>
+              <Text style={[styles.tierCell, { color: winColor(t.winPct), fontWeight: '700' }]}>
+                {t.winPct.toFixed(1)}%
+              </Text>
+              <Text style={[styles.tierCell, { color: roiColor(t.roi), fontWeight: '700' }]}>
+                {t.roi >= 0 ? '+' : ''}{t.roi.toFixed(1)}%
+              </Text>
+            </View>
+          ))}
+          <Text style={styles.tierNote}>Est. ROI assumes −110 lines · post-Apr 30 picks only</Text>
+        </>
+      )}
+
+      {brierScore === null && tiers.length === 0 && (
+        <Text style={styles.tierNote}>Not enough post-calibration picks yet (need ≥10).</Text>
+      )}
+    </View>
+  );
 }
 
 function BarRow({ item, maxTotal }: { item: AnalyticsBucket; maxTotal: number }) {
@@ -165,6 +240,13 @@ export default function AnalyticsTab() {
                 </View>
               </View>
             </View>
+
+            {/* Confidence Quality — Brier Score + ROI by tier */}
+            <ConfidenceQualityCard
+              brierScore={data.brierScore ?? null}
+              brierN={data.brierN ?? 0}
+              tiers={data.confidenceTiers ?? []}
+            />
 
             {/* Key insight callout */}
             <View style={styles.insightCard}>
@@ -459,5 +541,91 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: Colors.textTertiary,
     marginTop: 8,
+  },
+
+  // Confidence Quality card
+  confCard: {
+    backgroundColor: Colors.card,
+    borderRadius: Colors.radius,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    marginBottom: 10,
+  },
+  brierRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(57,255,20,0.05)',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(57,255,20,0.15)',
+    padding: 12,
+    marginBottom: 14,
+    gap: 14,
+  },
+  brierLeft: {
+    alignItems: 'center',
+    minWidth: 58,
+  },
+  brierNum: {
+    fontSize: 26,
+    fontWeight: '800',
+    color: Colors.text,
+    letterSpacing: -0.5,
+  },
+  brierSub: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: Colors.textTertiary,
+    letterSpacing: 1,
+    marginTop: 2,
+    textTransform: 'uppercase',
+  },
+  brierRight: {
+    flex: 1,
+  },
+  brierBadge: {
+    fontSize: 14,
+    fontWeight: '700',
+    marginBottom: 3,
+  },
+  brierHint: {
+    fontSize: 10,
+    color: Colors.textTertiary,
+    lineHeight: 14,
+  },
+  tierHeader: {
+    flexDirection: 'row',
+    paddingBottom: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.borderSubtle,
+    marginBottom: 4,
+  },
+  tierCol: {
+    flex: 1,
+    fontSize: 9,
+    fontWeight: '700',
+    color: Colors.textTertiary,
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  tierRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 7,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.04)',
+  },
+  tierCell: {
+    flex: 1,
+    fontSize: 13,
+    color: Colors.textSecondary,
+  },
+  tierNote: {
+    fontSize: 10,
+    color: Colors.textTertiary,
+    marginTop: 8,
+    textAlign: 'center',
   },
 });

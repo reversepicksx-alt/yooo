@@ -915,6 +915,15 @@ export interface AnalyticsBucket {
   winPct: number;
 }
 
+export interface ConfidenceTier {
+  label: string;
+  hits: number;
+  misses: number;
+  total: number;
+  winPct: number;
+  roi: number;
+}
+
 export interface AnalyticsData {
   overall: { hits: number; misses: number; total: number; winPct: number };
   streak: { type: string | null; count: number };
@@ -924,6 +933,9 @@ export interface AnalyticsData {
   byPosition: AnalyticsBucket[];
   byPropType: AnalyticsBucket[];
   byLeague: AnalyticsBucket[];
+  brierScore: number | null;
+  brierN: number;
+  confidenceTiers: ConfidenceTier[];
 }
 
 export async function getOwnerAnalytics(): Promise<AnalyticsData> {
