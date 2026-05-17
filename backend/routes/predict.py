@@ -71,10 +71,33 @@ async def predict(req: PredictionRequest):
                 try:
                     data = await api_football_request("players", {"id": req.playerId, "season": s})
                     if data:
+                        entry = data[0]
                         if all_data is None:
-                            all_data = data[0]
+                            all_data = entry
                         else:
-                            all_data.setdefault("statistics", []).extend(data[0].get("statistics", []))
+                            all_data.setdefault("statistics", []).extend(entry.get("statistics", []))
+                        # Write back to player_season_stats cache so future predictions
+                        # survive quota exhaustion without hitting the API again
+                        try:
+                            _pid = entry.get("player", {}).get("id") or req.playerId
+                            _doc = {
+                                "_id_key": f"{_pid}_{s}",
+                                "playerId": _pid,
+                                "season": s,
+                                "teamId": actual_team_id or 0,
+                                "leagueId": league_id or 0,
+                                "player": entry.get("player", {}),
+                                "statistics": entry.get("statistics", []),
+                                "_ts": __import__("time").time(),
+                                "_dt": datetime.now(timezone.utc),
+                            }
+                            await db.player_season_stats.update_one(
+                                {"_id_key": _doc["_id_key"]},
+                                {"$set": _doc},
+                                upsert=True
+                            )
+                        except Exception:
+                            pass
                 except Exception:
                     continue
             return all_data
@@ -844,7 +867,7 @@ async def predict(req: PredictionRequest):
                     except Exception:
                         return None
 
-                sem = aio.Semaphore(5)
+                sem = aio.Semaphore(10)
                 async def _sem_fetch(fix_raw):
                     async with sem:
                         return await _fetch_one(fix_raw)
@@ -1226,10 +1249,10 @@ async def predict(req: PredictionRequest):
             return_exceptions=True
         )
         try:
-            results = await aio.wait_for(all_wave2, timeout=40)
+            results = await aio.wait_for(all_wave2, timeout=55)
         except aio.TimeoutError:
             results = [None, None, None, None, None, None, None]
-            print(f"[WAVE2 TIMEOUT] Wave 2 exceeded 40s for {req.playerName}")
+            print(f"[WAVE2 TIMEOUT] Wave 2 exceeded 55s for {req.playerName}")
 
         team_fixture_stats = results[0] if not isinstance(results[0], (Exception, type(None))) else []
         opponent_fixture_stats = results[1] if not isinstance(results[1], (Exception, type(None))) else []
@@ -1295,7 +1318,7 @@ async def predict(req: PredictionRequest):
 
                 if _player_fixtures_raw:
                     # For each fixture, fetch per-game stats
-                    _sem2 = aio.Semaphore(5)
+                    _sem2 = aio.Semaphore(10)
                     async def _fetch_player_fix_stats(fix_raw):
                         try:
                             fid = fix_raw.get("fixture", {}).get("id")
@@ -5965,6 +5988,42 @@ Analyze ALL data thoroughly. Return JSON only."""
             prediction["h2hPlayerStats"] = historical_data["h2hPlayerStats"]
         if historical_data.get("playerGameLogs"):
             prediction["playerGameLogs"] = historical_data["playerGameLogs"]
+        elif player_game_logs:
+            # Safety net: historical_data path missed — rebuild from final player_game_logs
+            _pgl_target_map = {
+                "pass_attempts": "passes_total", "shots": "shots_total", "shots_on_target": "shots_on",
+                "tackles": "tackles_total", "key_passes": "passes_key", "saves": "goals_saves",
+                "interceptions": "tackles_interceptions", "blocks": "tackles_blocks",
+                "dribbles": "dribbles_attempts", "fouls_drawn": "fouls_drawn",
+                "crosses": "passes_crosses", "clearances": "tackles_clearances",
+                "goals": "goals_total", "assists": "goals_assists",
+            }
+            _pgl_tf = _pgl_target_map.get(req.propType, "passes_total")
+            _pgl_vals = [g.get(_pgl_tf) for g in player_game_logs if g.get(_pgl_tf) is not None]
+            _pgl_home = [v for g, v in zip(player_game_logs, _pgl_vals) if g.get("venue") == "home" and g.get(_pgl_tf) is not None]
+            _pgl_away = [v for g, v in zip(player_game_logs, _pgl_vals) if g.get("venue") == "away" and g.get(_pgl_tf) is not None]
+            _pgl_summary = {
+                "games": player_game_logs,
+                "targetProp": req.propType,
+                "sampleSize": len(_pgl_vals),
+            }
+            if _pgl_vals:
+                _pgl_summary["rawAvg"] = round(sum(_pgl_vals) / len(_pgl_vals), 2)
+            if _pgl_home:
+                _pgl_summary["homeAvg"] = round(sum(_pgl_home) / len(_pgl_home), 2)
+            if _pgl_away:
+                _pgl_summary["awayAvg"] = round(sum(_pgl_away) / len(_pgl_away), 2)
+            if _pgl_vals and req.line:
+                _pgl_over = sum(1 for v in _pgl_vals if v > req.line)
+                _pgl_under = sum(1 for v in _pgl_vals if v < req.line)
+                _pgl_summary["hitRates"] = {
+                    "overHits": _pgl_over, "underHits": _pgl_under,
+                    "overPct": round(_pgl_over / len(_pgl_vals) * 100, 1),
+                    "underPct": round(_pgl_under / len(_pgl_vals) * 100, 1),
+                    "total": len(_pgl_vals),
+                }
+            prediction["playerGameLogs"] = _pgl_summary
+            print(f"[SAFETY NET] playerGameLogs rebuilt from {len(player_game_logs)} logs for {req.playerName}")
         if gk_formula_data:
             prediction["gkFormula"] = gk_formula_data
         # positionComparison removed — not shown in UI
