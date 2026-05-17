@@ -631,6 +631,7 @@ export async function predict(request: Record<string, unknown>): Promise<Predict
     keyEvidence: raw.keyEvidence || undefined,
     gameFlowDynamics: raw.gameFlowDynamics || undefined,
     scenarioAnalysis: raw.scenarioAnalysis || undefined,
+    scenarioProbabilities: raw.scenarioProbabilities ?? undefined,
     matchContext: raw.matchContext ? { league: raw.matchContext.league, round: raw.matchContext.round, date: raw.matchContext.date } : undefined,
     gameSituation: raw.gameSituation ?? undefined,
     gameScript: raw.gameScript ?? undefined,
