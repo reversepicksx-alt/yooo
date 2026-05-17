@@ -976,7 +976,16 @@ async def deep_stats_sync():
     Downloads the heavy stat collections: player season stats, team season stats,
     and team fixture history. These are queried by predictions instead of
     calling the API live. Runs separately from full_sync to avoid blocking it.
+
+    DISABLED on Atlas M0 (512 MB) via DISABLE_DEEP_SYNC env var (default: 1).
+    Set DISABLE_DEEP_SYNC=0 after upgrading to Atlas M2+ to re-enable.
+    Predictions fall back to live API-Football calls when these collections are empty.
     """
+    import os
+    if os.environ.get("DISABLE_DEEP_SYNC", "1") != "0":
+        print("[CACHE] Deep stats sync SKIPPED (DISABLE_DEEP_SYNC=1) — Atlas M0 storage guard")
+        return
+
     print("[CACHE] Starting deep stats sync (player stats, team stats, fixture history)...")
     start = time.time()
 
@@ -1097,11 +1106,14 @@ async def background_refresh_loop():
             if transfers:
                 print(f"[CACHE] {len(transfers)} transfers detected!")
             await full_sync(force=True)
-            # Fixture history refreshes every day (daily cycle)
-            await sync_team_fixture_history_for_all_leagues(count=40)
-            # Player + team stats refresh every 7 days
-            if cycle % 7 == 0:
-                await sync_player_season_stats_for_all_leagues()
-                await sync_team_season_stats_for_all_leagues()
+            # Fixture history + season stats: only when DISABLE_DEEP_SYNC=0
+            import os as _os
+            if _os.environ.get("DISABLE_DEEP_SYNC", "1") == "0":
+                await sync_team_fixture_history_for_all_leagues(count=40)
+                if cycle % 7 == 0:
+                    await sync_player_season_stats_for_all_leagues()
+                    await sync_team_season_stats_for_all_leagues()
+            else:
+                print("[CACHE] Background deep sync SKIPPED (DISABLE_DEEP_SYNC=1)")
         except Exception as e:
             print(f"[CACHE] Scheduled refresh error: {e}")
