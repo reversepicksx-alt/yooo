@@ -3144,10 +3144,11 @@ REQUIRED JSON FIELDS:
 
   **Analysis** — MANDATORY: You MUST reference each recent game BY NAME with its exact number (e.g. "72 vs Villarreal, 43 vs Osasuna"). For every outlier game — high AND low — explain the specific tactical reason WHY that number happened: what did that opponent do defensively/offensively that created or suppressed the stat? Then identify which past game from the log is most tactically similar to TODAY'S OPPONENT and use it as your primary anchor for the projection. Home/away split matters — explain the structural reason WHY, not just that it exists. This section must read like someone who watched every game, not someone reading a spreadsheet.
 
-  **Scenarios** — Three tactical scenarios with specific stat ranges and the TRIGGER that makes each one happen:
+  **Scenarios** — Three tactical scenarios with specific stat ranges and the TRIGGER that makes each one happen. If [FIRST GOAL PROFILE] data is provided, use the teamScoredFirstPct / opponentScoredFirstPct to anchor your probability estimates for each scenario — these are real historical rates, not guesses:
   Best case: [specific tactical trigger] → [stat range]
   Base case: [expected game flow] → [stat range]
   Worst case: [specific risk trigger] → [stat range]
+  In your JSON, populate scenarioProbabilities.best / .base / .worst as decimals (e.g. 0.55 / 0.30 / 0.15) that sum to 1.0. Base these on the first-goal historical rates combined with form, odds, and venue.
 
   **Risk** — What specific event would kill this bet? Be precise: "if [team] goes down early and chases the game, expect more open play which [raises/lowers] this stat by X-Y". Mention sub timing, tactical shape changes, injury context.
 
@@ -3192,7 +3193,7 @@ CALIBRATION RULES:
 - BINARY LINES (0.5): UNDER 0.5 confidence NEVER exceeds 55%.
 - DEFENDER PASSES: Ball-playing CBs/LBs in possession teams hit 60-90+ per game routinely.
 
-JSON: {"confidenceScore":0,"confidenceLevel":"","aiProjection":0,"sharpSummary":"","reasoning":"","scenarioAnalysis":"","keyEvidence":"","sensitivityTests":"","subRisk":"","gameFlowDynamics":"","uncertaintyNote":"","tacticalBreakdown":"","matchupOverview":{"homeTeam":"","awayTeam":"","favorite":"","moneyline":{"home":"","draw":"","away":""},"expectedPossession":{"home":0,"away":0},"expectedGameType":"","keyMatchupFactor":""},"bayesianMetrics":{"priorMean":0,"momentumEffect":0,"covariateAdjustment":0,"reversalFlag":"stable"},"probabilityCurve":[],"recentSamples":[],"player":{"id":0,"name":"","team":"","position":""},"opponent":"","propType":"","line":0,"confidenceInterval":[0,0],"tacticalAlerts":[]}"""
+JSON: {"confidenceScore":0,"confidenceLevel":"","aiProjection":0,"sharpSummary":"","reasoning":"","scenarioAnalysis":"","keyEvidence":"","sensitivityTests":"","subRisk":"","gameFlowDynamics":"","uncertaintyNote":"","tacticalBreakdown":"","matchupOverview":{"homeTeam":"","awayTeam":"","favorite":"","moneyline":{"home":"","draw":"","away":""},"expectedPossession":{"home":0,"away":0},"expectedGameType":"","keyMatchupFactor":""},"bayesianMetrics":{"priorMean":0,"momentumEffect":0,"covariateAdjustment":0,"reversalFlag":"stable"},"scenarioProbabilities":{"best":0,"base":0,"worst":0},"probabilityCurve":[],"recentSamples":[],"player":{"id":0,"name":"","team":"","position":""},"opponent":"","propType":"","line":0,"confidenceInterval":[0,0],"tacticalAlerts":[]}"""
 
         # Build the data payload — use GPT summary as primary + Wave 2 deep data as supplement
         wave2_supplement = {}
@@ -3579,6 +3580,27 @@ Average {req.propType}: {comp_avg} | Per-90 avg: {comp_per90_avg} | Sample: {len
                     "venue": player_venue,
                 }
 
+        # ── First-Goal Profile (both teams, concurrent) ──────────────────────────
+        _fg_team: dict = {}
+        _fg_opp:  dict = {}
+        _fg_scenario_weights: dict = {}
+        if not ai_only_mode and actual_team_id and req.opponentId:
+            try:
+                from first_goal_engine import get_first_goal_profile, compute_scenario_weights as _fg_sw
+                _fg_season = 2025
+                _fg_results = await aio.gather(
+                    get_first_goal_profile(actual_team_id, _fg_season, api_football_request, db),
+                    get_first_goal_profile(req.opponentId,  _fg_season, api_football_request, db),
+                    return_exceptions=True,
+                )
+                _fg_team = _fg_results[0] if not isinstance(_fg_results[0], Exception) else {}
+                _fg_opp  = _fg_results[1] if not isinstance(_fg_results[1], Exception) else {}
+                if _fg_team.get("available"):
+                    _fg_scenario_weights = _fg_sw(_fg_team, req.propType)
+                    print(f"[FIRST GOAL] {req.playerName}: teamFirst={_fg_team.get('teamScoredFirstPct'):.0%} oppFirst={_fg_team.get('opponentScoredFirstPct'):.0%} n={_fg_team.get('dataPoints')}")
+            except Exception as _fge:
+                print(f"[FIRST GOAL] engine failed: {_fge}")
+
         # Compose data for Grok prediction
         final_data_parts = []
         if grok_digest:
@@ -3587,6 +3609,26 @@ Average {req.propType}: {comp_avg} | Per-90 avg: {comp_per90_avg} | Sample: {len
             final_data_parts.append(f"[DATA DIGEST]\n{data_digest}")
         if wave2_supplement:
             final_data_parts.append(f"[GAME LOGS]\n{json.dumps(wave2_supplement, default=str)[:5000]}")
+
+        if _fg_team.get("available"):
+            _fg_prompt_block = (
+                f"[FIRST GOAL PROFILE — last {_fg_team.get('dataPoints', 0)} matches]\n"
+                f"Team ({corrected_team_name}) scored first: {round(_fg_team.get('teamScoredFirstPct', 0) * 100)}% of games\n"
+                f"Opponent ({req.opponentName}) scored first: {round(_fg_team.get('opponentScoredFirstPct', 0) * 100)}% of games\n"
+                f"No goal / goalless half: {round(_fg_team.get('noGoalPct', 0) * 100)}% of games\n"
+                f"Avg first-goal minute: {_fg_team.get('avgFirstGoalMin', 35)}\n"
+                f"Math-derived scenario weights → best: {round(_fg_scenario_weights.get('best', 0.40) * 100)}% / "
+                f"base: {round(_fg_scenario_weights.get('base', 0.35) * 100)}% / "
+                f"worst: {round(_fg_scenario_weights.get('worst', 0.25) * 100)}%\n"
+                f">>> Use these rates to anchor scenarioProbabilities in your JSON. They are real data, not estimates. <<<"
+            )
+            if _fg_opp.get("available"):
+                _fg_prompt_block += (
+                    f"\nOpponent ({req.opponentName}) first-goal profile (their own recent matches): "
+                    f"scored first {round(_fg_opp.get('teamScoredFirstPct', 0) * 100)}% / "
+                    f"conceded first {round(_fg_opp.get('opponentScoredFirstPct', 0) * 100)}%"
+                )
+            final_data_parts.append(_fg_prompt_block)
 
         if final_data_parts:
             final_data = "\n\n".join(final_data_parts)[:10000]
@@ -3816,6 +3858,21 @@ Analyze ALL data thoroughly. Return JSON only."""
         prediction["projectedValue"] = pv
         prediction["recommendation"] = "over" if pv > req.line else "under"
 
+        # scenarioProbabilities: prefer Grok-assigned values; fall back to first-goal math
+        _sp = prediction.get("scenarioProbabilities")
+        if (not isinstance(_sp, dict) or
+                not all(isinstance(_sp.get(k), (int, float)) for k in ("best", "base", "worst")) or
+                sum(_sp.get(k, 0) for k in ("best", "base", "worst")) < 0.5):
+            if _fg_scenario_weights:
+                prediction["scenarioProbabilities"] = _fg_scenario_weights
+        else:
+            # Normalise Grok's values (they may not sum to 1.0 exactly)
+            _sp_total = sum(_sp[k] for k in ("best", "base", "worst"))
+            if _sp_total > 0:
+                prediction["scenarioProbabilities"] = {
+                    k: round(_sp[k] / _sp_total, 3) for k in ("best", "base", "worst")
+                }
+
         # Confidence normalization
         cs = prediction.get("confidenceScore", 50)
         if isinstance(cs, (int, float)):
@@ -3857,6 +3914,9 @@ Analyze ALL data thoroughly. Return JSON only."""
         prediction["matchFactors"] = {
             "expectedPoss":   match_dominance.get("expectedPoss"),
             "oppExpectedPoss":match_dominance.get("oppExpectedPoss"),
+            "firstGoalProfile":     _fg_team if _fg_team.get("available") else None,
+            "firstGoalOppProfile":  _fg_opp  if _fg_opp.get("available")  else None,
+            "scenarioProbabilities": prediction.get("scenarioProbabilities") or _fg_scenario_weights or None,
             "h2hPossAvg":     match_dominance.get("h2hPossAvg"),
             "h2hPossCount":   match_dominance.get("h2hPossCount"),
             "possMultiplier": match_dominance.get("multiplier"),

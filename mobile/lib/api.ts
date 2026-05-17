@@ -466,6 +466,7 @@ interface RawPrediction {
   keyEvidence?: string;
   gameFlowDynamics?: string;
   scenarioAnalysis?: string;
+  scenarioProbabilities?: { best: number; base: number; worst: number };
   matchContext?: { league?: string; round?: string; date?: string };
   gameSituation?: Record<string, unknown>;
   dataQuality?: { level?: string; message?: string; gamesWithData?: number; totalGames?: number };

@@ -3012,14 +3012,37 @@ export default function ScanScreen() {
                       <Text style={styles.scoutBlend}>{prediction.blendNote}</Text>
                     )}
                   </View>
-                  {filtered.map((sec, i) => (
-                    <View key={i} style={styles.scoutSection}>
-                      <Text style={[styles.scoutSectionTitle, { color: sectionColor(sec.title) }]}>
-                        {sec.title.toUpperCase()}
-                      </Text>
-                      <Text style={styles.scoutSectionBody}>{sec.body}</Text>
-                    </View>
-                  ))}
+                  {filtered.map((sec, i) => {
+                    const isScenarios = /scenario/i.test(sec.title);
+                    const sp = isScenarios ? prediction.scenarioProbabilities : null;
+                    return (
+                      <View key={i} style={styles.scoutSection}>
+                        <Text style={[styles.scoutSectionTitle, { color: sectionColor(sec.title) }]}>
+                          {sec.title.toUpperCase()}
+                        </Text>
+                        {isScenarios && sp && (sp.best || sp.base || sp.worst) ? (
+                          <View style={styles.scenarioProbRow}>
+                            {[
+                              { label: 'Best', key: 'best',  color: Colors.primary },
+                              { label: 'Base', key: 'base',  color: '#4DA6FF' },
+                              { label: 'Worst', key: 'worst', color: Colors.error },
+                            ].map(({ label, key, color }) => {
+                              const pct = sp[key as keyof typeof sp];
+                              if (typeof pct !== 'number') return null;
+                              const pctInt = Math.round(pct * 100);
+                              return (
+                                <View key={key} style={[styles.scenarioProbPill, { borderColor: color }]}>
+                                  <Text style={[styles.scenarioProbLabel, { color }]}>{label}</Text>
+                                  <Text style={[styles.scenarioProbPct, { color }]}>{pctInt}%</Text>
+                                </View>
+                              );
+                            })}
+                          </View>
+                        ) : null}
+                        <Text style={styles.scoutSectionBody}>{sec.body}</Text>
+                      </View>
+                    );
+                  })}
                 </View>
               );
             })()}
@@ -3736,6 +3759,30 @@ const styles = StyleSheet.create({
   scoutSection: { gap: 5 },
   scoutSectionTitle: { fontSize: 10, fontWeight: '800', letterSpacing: 1.5 },
   scoutSectionBody: { fontSize: 13, color: Colors.textSecondary, lineHeight: 20 },
+  scenarioProbRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 6,
+  },
+  scenarioProbPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 9,
+    paddingVertical: 3,
+    borderRadius: 20,
+    borderWidth: 1,
+    backgroundColor: '#0a0a0a',
+  },
+  scenarioProbLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  scenarioProbPct: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
 
   /* AI section blocks */
   aiBlocks: { gap: 14, marginTop: 4 },
