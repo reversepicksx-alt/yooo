@@ -654,14 +654,46 @@ async def predict(req: PredictionRequest):
                 # may only yield 6-8 venue-specific samples once home/away are split,
                 # causing the venue-split prior to fall back to combined and mix
                 # home/away stats. 40 games gives enough coverage for proper venue splits.
-                team_fixtures_raw = await api_football_request(
-                    "fixtures", {"team": actual_team_id, "last": 40, "status": "FT"}
-                )
-                if not team_fixtures_raw:
-                    print(f"[API-DIRECT] No fixtures found for teamId={actual_team_id}")
-                    return collected
 
-                print(f"[API-DIRECT] {req.playerName}: {len(team_fixtures_raw)} team fixtures from API")
+                # ── On-demand cache: check team_fixture_history before calling API ──
+                team_fixtures_raw = None
+                _tfh_cache_ttl = 24 * 3600  # 24 hours
+                try:
+                    _tfh_doc = await db.team_fixture_history.find_one(
+                        {"teamId": actual_team_id}, {"_id": 0, "fixtures": 1, "_ts": 1}
+                    )
+                    if _tfh_doc and _tfh_doc.get("fixtures"):
+                        import time as _t2
+                        _age = _t2.time() - _tfh_doc.get("_ts", 0)
+                        if _age < _tfh_cache_ttl:
+                            team_fixtures_raw = _tfh_doc["fixtures"]
+                            print(f"[API-DIRECT] {req.playerName}: {len(team_fixtures_raw)} team fixtures from CACHE (age {int(_age/3600)}h)")
+                except Exception:
+                    pass
+
+                if team_fixtures_raw is None:
+                    team_fixtures_raw = await api_football_request(
+                        "fixtures", {"team": actual_team_id, "last": 40, "status": "FT"}
+                    )
+                    if not team_fixtures_raw:
+                        print(f"[API-DIRECT] No fixtures found for teamId={actual_team_id}")
+                        return collected
+                    print(f"[API-DIRECT] {req.playerName}: {len(team_fixtures_raw)} team fixtures from API")
+                    # Write-back: cache for next prediction on same team
+                    import time as _t3
+                    try:
+                        await db.team_fixture_history.update_one(
+                            {"teamId": actual_team_id},
+                            {"$set": {
+                                "teamId": actual_team_id,
+                                "fixtures": team_fixtures_raw,
+                                "_ts": _t3.time(),
+                                "_dt": datetime.now(timezone.utc),
+                            }},
+                            upsert=True
+                        )
+                    except Exception as _ce:
+                        pass  # non-fatal — prediction continues
 
                 async def _fetch_one(fix_raw):
                     try:
