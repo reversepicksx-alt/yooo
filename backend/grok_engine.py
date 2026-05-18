@@ -859,26 +859,24 @@ async def _run_auto_settlement():
                                 pass
                             break
 
+                # Use last:5 for each season (2 calls instead of 6).
+                # last:5 covers ~2-3 weeks of matches which is enough to settle any pending pick.
+                # Date-specific calls only added for picks older than yesterday to handle edge cases.
                 date_fix_calls = []
                 for pd in set(pick_dates):
                     if pd not in (today, yesterday):
                         date_fix_calls.append(api_football_request("fixtures", {"team": tid, "date": pd, "season": CURRENT_SEASON}))
 
-                (today_fix, yest_fix, last_fix,
-                 today_fix2, yest_fix2, last_fix2, *extra_date_fixes) = await asyncio.gather(
-                    api_football_request("fixtures", {"team": tid, "date": today, "season": CURRENT_SEASON}),
-                    api_football_request("fixtures", {"team": tid, "date": yesterday, "season": CURRENT_SEASON}),
-                    api_football_request("fixtures", {"team": tid, "last": 10, "season": CURRENT_SEASON}),
-                    api_football_request("fixtures", {"team": tid, "date": today, "season": next_s}),
-                    api_football_request("fixtures", {"team": tid, "date": yesterday, "season": next_s}),
-                    api_football_request("fixtures", {"team": tid, "last": 10, "season": next_s}),
+                settle_batches = await asyncio.gather(
+                    api_football_request("fixtures", {"team": tid, "last": 5, "season": CURRENT_SEASON}),
+                    api_football_request("fixtures", {"team": tid, "last": 5, "season": next_s}),
                     *date_fix_calls,
                     return_exceptions=True
                 )
 
                 all_fixtures = []
                 seen = set()
-                for batch in [today_fix, yest_fix, last_fix, today_fix2, yest_fix2, last_fix2, *extra_date_fixes]:
+                for batch in settle_batches:
                     if isinstance(batch, Exception) or not batch:
                         continue
                     for f in batch:
@@ -913,19 +911,14 @@ async def _run_auto_settlement():
                     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
                     yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
                     next_s = CURRENT_SEASON + 1
-                    (today_fix, yest_fix, last_fix,
-                     today_fix2, yest_fix2, last_fix2) = await asyncio.gather(
-                        api_football_request("fixtures", {"team": tid, "date": today, "season": CURRENT_SEASON}),
-                        api_football_request("fixtures", {"team": tid, "date": yesterday, "season": CURRENT_SEASON}),
-                        api_football_request("fixtures", {"team": tid, "last": 10, "season": CURRENT_SEASON}),
-                        api_football_request("fixtures", {"team": tid, "date": today, "season": next_s}),
-                        api_football_request("fixtures", {"team": tid, "date": yesterday, "season": next_s}),
-                        api_football_request("fixtures", {"team": tid, "last": 10, "season": next_s}),
+                    orphan_batches = await asyncio.gather(
+                        api_football_request("fixtures", {"team": tid, "last": 5, "season": CURRENT_SEASON}),
+                        api_football_request("fixtures", {"team": tid, "last": 5, "season": next_s}),
                         return_exceptions=True
                     )
                     all_fixtures = []
                     seen = set()
-                    for batch in [today_fix, yest_fix, last_fix, today_fix2, yest_fix2, last_fix2]:
+                    for batch in orphan_batches:
                         if isinstance(batch, Exception) or not batch:
                             continue
                         for f in batch:

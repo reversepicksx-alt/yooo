@@ -696,7 +696,7 @@ async def predict(req: PredictionRequest):
 
                 if team_fixtures_raw is None:
                     team_fixtures_raw = await api_football_request(
-                        "fixtures", {"team": actual_team_id, "last": 40, "status": "FT"}
+                        "fixtures", {"team": actual_team_id, "last": 25, "status": "FT"}
                     )
                     if not team_fixtures_raw:
                         print(f"[API-DIRECT] No fixtures found for teamId={actual_team_id}")
@@ -1064,10 +1064,10 @@ async def predict(req: PredictionRequest):
             except Exception:
                 pass
             if not opponent_recent_raw:
-                opponent_recent_raw = await api_football_request("fixtures", {"team": safe_opp_id, "last": 15})
+                opponent_recent_raw = await api_football_request("fixtures", {"team": safe_opp_id, "last": 8})
         opponent_fixture_list = []
         if opponent_recent_raw:
-            for f in opponent_recent_raw[:15]:
+            for f in opponent_recent_raw[:8]:
                 opp_home_id = f.get("teams", {}).get("home", {}).get("id")
                 opp_venue = "home" if opp_home_id == req.opponentId else "away"
                 opponent_fixture_list.append({
@@ -1295,13 +1295,13 @@ async def predict(req: PredictionRequest):
             }
             _gl_key2 = _gl_field_map2.get(req.propType, "passes_total")
 
-            # Stage 1: Pull the player's last 40 fixtures directly from API by player ID.
-            # Increased from 20: shallow windows cut venue-specific samples in half once
-            # home/away are split, making the engine fall back to combined stats.
+            # Stage 1: Pull the player's last 20 fixtures directly from API by player ID.
+            # 20 is sufficient: after home/away split we get ~10 venue-specific samples,
+            # which is plenty for the Bayesian engine. Reduced from 40 to save API quota.
             try:
                 print(f"[PLAYER-DIRECT] {req.playerName}: fetching fixtures directly by playerId={req.playerId}")
                 _player_fixtures_raw = await api_football_request(
-                    "fixtures", {"player": req.playerId, "last": 40}
+                    "fixtures", {"player": req.playerId, "last": 20}
                 )
                 if _player_fixtures_raw and actual_team_id:
                     # Filter to ONLY fixtures where the player's club team appears.
