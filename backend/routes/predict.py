@@ -1185,20 +1185,15 @@ async def predict(req: PredictionRequest):
         # =============================================
         match_dominance = {"expectedPoss": 50.0, "oppExpectedPoss": 50.0, "multiplier": 1.0, "notes": []}
 
-        # Wave 2: Fetch deep fixture data + Grok digest + Situation Engine + Web Intel in parallel
-        from grok_engine import build_grok_digest, fetch_web_intel, fetch_ai_press_intensity
+        # Wave 2: Fetch deep fixture data + Situation Engine in parallel
+        # Grok digest, web intel, and AI press intensity removed — Grok is summary-only.
+        # Press intensity falls back to the heuristic engine; digest/web intel were
+        # pre-processing context that Grok no longer needs for math.
         from situation_engine import build_game_situation
-        grok_digest_task = build_grok_digest(
-            player_name=req.playerName, team_name=corrected_team_name or "",
-            opponent_name=req.opponentName, prop_type=req.propType,
-            line=req.line, venue=player_venue,
-            player_stats=player_stats, team_stats=team_stats,
-            opponent_stats=opponent_stats, h2h_data=h2h_data,
-            match_odds=match_odds, standings=standings,
-            player_game_logs=[], team_fixture_stats=[],
-            opponent_fixture_stats=[], match_dominance={},
-            sport="soccer"
-        )
+
+        async def _noop_str(): return ""
+        async def _noop_none(): return None
+        grok_digest_task = _noop_str()
 
         # Situation engine inputs
         _sit_is_home = player_venue == "home"
@@ -1228,20 +1223,10 @@ async def predict(req: PredictionRequest):
             opponent_id=req.opponentId,
         )
 
-        web_intel_task = fetch_web_intel(
-            player_team=corrected_team_name or req.teamName or "",
-            opponent=req.opponentName or "",
-            match_date=_sit_match_date,
-            match_round=_sit_match_round,
-            league=_sit_match_league,
-        )
-
-        # AI press intensity — Grok rates opponent press on 0–1 scale.
-        # Bayesian uses this directly when present, falls back to heuristic otherwise.
-        ai_press_task = fetch_ai_press_intensity(
-            opponent=req.opponentName or "",
-            league=_sit_match_league or "",
-        )
+        # web_intel and ai_press_intensity removed — Grok is summary-only.
+        # Press intensity falls back to heuristic; web search was only context for the prompt.
+        web_intel_task = _noop_str()
+        ai_press_task = _noop_none()
 
         all_wave2 = aio.gather(
             team_fixture_stats_task, opponent_fixture_stats_task, player_game_logs_task,
