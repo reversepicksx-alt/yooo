@@ -159,6 +159,7 @@ def compute_bayesian_projection(
     scenario_priors_mode: str = "off",
     role: str = "",
     match_stakes: dict = None,
+    league_id: int = None,
 ) -> dict:
     """
     Compute a 3-layer Bayesian projection from raw game data.
@@ -1242,23 +1243,27 @@ def compute_bayesian_projection(
     effective_std = max(posterior_std, prior_std * 0.55, posterior_mean * 0.17)
 
     # ── POSITION BIAS CORRECTION ─────────────────────────────────────────────
-    # 1291-pick empirical audit identified systematic over/under-estimation
+    # 2295-pick empirical audit identified systematic over/under-estimation
     # for specific positions on pass_attempts. Applied before de-normalise so
     # the correction compounds correctly with playing-time scaling.
     #
-    #   CAM: actual avg 3.2 below projection (model overestimates) → -4% correction
-    #   CM:  actual avg 1.8 below projection (model overestimates) → -2% correction
+    #   CAM: hit rate 28.6% — model overestimates heavily → -10% correction
+    #   AM:  same family as CAM                           → -10% correction
+    #   CM:  hit rate 30.8% — model overestimates          → -8% correction
+    #   MC:  same family as CM                             → -8% correction
     #
     # These positions overestimate because the model uses a general "high possession
     # = more passes" rule, but CAMs/CMs in high possession systems often play
     # narrow and touch the ball less in direct build-up than CBs or DMs.
+    # Previous corrections (−4% CAM, −2% CM) were insufficient — empirical data
+    # from 2295 settled picks shows the actual underperformance is much larger.
     _POS_BIAS_CORRECTIONS = {
-        ("CAM", "pass_attempts"): 0.96,
-        ("AM",  "pass_attempts"): 0.96,
-        ("CM",  "pass_attempts"): 0.98,
-        ("MC",  "pass_attempts"): 0.98,
-        ("CAM", "passes"):        0.96,
-        ("CM",  "passes"):        0.98,
+        ("CAM", "pass_attempts"): 0.90,
+        ("AM",  "pass_attempts"): 0.90,
+        ("CM",  "pass_attempts"): 0.92,
+        ("MC",  "pass_attempts"): 0.92,
+        ("CAM", "passes"):        0.90,
+        ("CM",  "passes"):        0.92,
     }
     _pos_bias_key = ((position or "").upper(), prop_type)
     _pos_bias_mult = _POS_BIAS_CORRECTIONS.get(_pos_bias_key)
@@ -1267,6 +1272,24 @@ def compute_bayesian_projection(
         posterior_mean = round(posterior_mean * _pos_bias_mult, 1)
         print(f"[POS BIAS CORR] {position} {prop_type}: {_raw_before_bias:.1f} → {posterior_mean:.1f} "
               f"(×{_pos_bias_mult} empirical correction)")
+
+    # ── BUNDESLIGA PASS VOLUME DEFLATION ─────────────────────────────────────
+    # Empirical data: Bundesliga (ID 78) home picks hit only 37.5% (6/16) vs
+    # Premier League 72.4% (21/29). Avg projection error: 11.56 vs 7.76.
+    # Root cause: the Bundesliga's high-press vertical style means GKs and CBs
+    # play under more pressure with shorter disrupted sequences — net pass counts
+    # run ~13% below what the model expects using cross-league priors.
+    # Miss examples: proj 58→actual 27, proj 66→actual 48, proj 40→actual 17.
+    # Apply a ×0.87 deflation for Bundesliga HOME GK/CB pass_attempts.
+    _bundes_pos_set = {"GK", "CB", "LCB", "RCB", "LB", "RB", "WB", "WBL", "WBR"}
+    if (league_id == 78
+            and prop_type in {"pass_attempts", "passes"}
+            and venue == "home"
+            and (position or "").upper() in _bundes_pos_set):
+        _raw_before_bundes = posterior_mean
+        posterior_mean = round(posterior_mean * 0.87, 1)
+        print(f"[BUNDESLIGA DEFLATION] {position} {prop_type} home: "
+              f"{_raw_before_bundes:.1f} → {posterior_mean:.1f} (×0.87 high-press correction)")
 
     # ── DE-NORMALISE: convert per-90 posterior back to raw expected units ────
     # All maths above ran in per-90 space. Now scale down to the player's

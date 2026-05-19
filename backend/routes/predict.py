@@ -2408,6 +2408,7 @@ async def predict(req: PredictionRequest):
                     "teamExpectedPoss": match_dominance.get("expectedPoss", 50.0),
                     "h2hPossAvg": match_dominance.get("h2hPossAvg"),
                 },
+                league_id=req.leagueId,
             )
             _eb_samples = early_bayes.get("priorSamples", 0) if early_bayes else 0
             print(f"[BAYESIAN] {req.playerName}/{req.propType}: samples={_eb_samples}, logs={len(_bayes_logs)} (venue={player_venue})")
@@ -4609,6 +4610,68 @@ Analyze ALL data thoroughly. Return JSON only."""
                 ]
                 if _draw_conf != prediction["confidenceScore"]:
                     print(f"[GUARD 3d] draw scenario: P={_p_draw:.2f}, -{_draw_penalty}% ({_draw_conf}→{prediction['confidenceScore']})")
+
+        # Guard 3d-ii: draw scenario + OVER + CB/CM/CAM pass_attempts = catastrophic
+        # Empirical: owner DRAW OVER pass_attempts hits only 25.9% (7/27).
+        # CB in draws: 33.3%, CM in draws: 0%, CAM in draws: 0%.
+        # The model applies CB lead-manage boosts and CDM chase-mode boosts which
+        # OVERFIRE in draw scenarios — predicting OVER when possession stays even
+        # and no lead needs managing. Hard cap confidence at 52% for these combos.
+        _draw_over_pos_set = {"CB", "LCB", "RCB", "CM", "MC", "CAM", "AM", "LM", "RM"}
+        if (_p_draw > 0.25
+                and req.propType in {"pass_attempts", "passes"}
+                and str(prediction.get("recommendation", "")).lower() == "over"
+                and str(_bayes_position or "").upper() in _draw_over_pos_set):
+            _d2_pre = prediction.get("confidenceScore", 50)
+            if _d2_pre > 52:
+                prediction["confidenceScore"] = 52
+                prediction["confidenceLevel"] = "Low"
+                prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [
+                    f"DRAW + OVER WARNING ({_p_draw*100:.0f}% draw probability): "
+                    f"{_bayes_position} pass OVER picks in draw scenarios hit only 26% historically — confidence capped"
+                ]
+                print(f"[GUARD 3d-ii] draw+OVER+{_bayes_position} pass_attempts: P_draw={_p_draw:.2f} "
+                      f"conf {_d2_pre}→52 (empirical 26% hit rate)")
+
+        # Guard 3e: home_blowout + away + OVER pass_attempts
+        # Empirical: owner OVER in home_blowout scenarios hits only 25% (3/12).
+        # Away players in blowouts park the bus / defend deep → minimal passing,
+        # long clearances replace build-up sequences. Model over-projects away
+        # pass volume because it expects normal game-state possession fractions.
+        _p_home_blowout = (_scenario_probs or {}).get("P_home_blowout", 0)
+        if (_p_home_blowout > 0.25
+                and req.propType in {"pass_attempts", "passes"}
+                and str(prediction.get("recommendation", "")).lower() == "over"
+                and str(player_venue or "").lower() == "away"):
+            _hb_pre = prediction.get("confidenceScore", 50)
+            if _hb_pre > 52:
+                prediction["confidenceScore"] = 52
+                prediction["confidenceLevel"] = "Low"
+                prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [
+                    f"HOME BLOWOUT + AWAY OVER WARNING ({_p_home_blowout*100:.0f}% blowout probability): "
+                    f"Away pass OVER picks in blowout scenarios hit only 25% — away team parks bus and passes fall"
+                ]
+                print(f"[GUARD 3e] home_blowout+away OVER pass_attempts: P={_p_home_blowout:.2f} "
+                      f"conf {_hb_pre}→52 (empirical 25% hit rate)")
+
+        # Guard 3f: Bundesliga home OVER pass_attempts confidence cap
+        # Empirical: Bundesliga (ID 78) home OVER hits only 30.8% (4/13).
+        # High-press vertical style — GKs/CBs pass count runs 13% below model's
+        # cross-league prior. Bundesliga deflation already applied in the Bayesian
+        # engine (×0.87), but if projection still lands OVER after deflation
+        # we add a visible warning and cap confidence at 58%.
+        if (req.leagueId == 78
+                and req.propType in {"pass_attempts", "passes"}
+                and str(prediction.get("recommendation", "")).lower() == "over"
+                and str(player_venue or "").lower() == "home"):
+            _bf_pre = prediction.get("confidenceScore", 50)
+            if _bf_pre > 58:
+                prediction["confidenceScore"] = 58
+                prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [
+                    "BUNDESLIGA HOME OVER: High-press league — pass counts run 13% below model prior. "
+                    "Historical hit rate 31% on home OVER pass picks. Confidence capped."
+                ]
+                print(f"[GUARD 3f] Bundesliga home OVER pass_attempts: conf {_bf_pre}→58")
 
         # Guard 4: Base-rate conflict — model recommendation fights the player's own season average.
         # When the season average sits on the OPPOSITE side of the line from the recommendation,
