@@ -3775,6 +3775,41 @@ Expected possession for {req.opponentName}: {match_dominance['oppExpectedPoss']}
 Season avg: {_gl_raw_avg} | Home avg: {_gl_home_avg} | Away avg: {_gl_away_avg} | Sample: {_gl_sample} games
 >>> CRITICAL INSTRUCTION: In your Analysis section you MUST reference each of these games by opponent name and exact number. For every high result AND every low result, explain the specific tactical reason WHY that number happened (opponent style, defensive shape, game state, possession context). Then identify which past game above is most tactically similar to today's opponent ({req.opponentName}) and explicitly name it as your anchor. <<<"""
 
+        # ── SUPPRESSION / AMPLIFICATION CONTEXT ─────────────────────────────────
+        # When the model's projection is significantly below the player's season avg
+        # (UNDER call) or above it (OVER call), Grok tends to anchor on the season avg
+        # and argue the wrong direction.  Inject an explicit "here is the gap and why"
+        # block so Grok explains the suppression/amplification instead of fighting it.
+        _suppression_context = ""
+        if early_bayes and early_bayes.get("priorMean") and bayesian_prompt_anchor:
+            _eb_prior = early_bayes["priorMean"]
+            _eb_proj  = _pf_proj
+            _eb_dir   = bdir
+            _gap_from_avg = round(_eb_prior - _eb_proj, 1)   # + = UNDER scenario, - = OVER
+            _gap_pct  = abs(_gap_from_avg) / max(_eb_prior, 1) * 100
+            _venue_avg_label = "away avg" if player_venue == "away" else "home avg"
+            _venue_avg_val   = _gl_away_avg if player_venue == "away" else _gl_home_avg
+
+            if _eb_dir == "UNDER" and _gap_from_avg >= 8:
+                # Model projects significantly BELOW season average — explain suppression
+                _suppression_context = f"""
+[MODEL SUPPRESSION SIGNAL — READ THIS BEFORE WRITING ANYTHING]
+⚠️ The season average is {_eb_prior} but the Reverse Formula projects only {_eb_proj} — a suppression of {_gap_from_avg} passes ({_gap_pct:.0f}% below average). The {_venue_avg_label} is {_venue_avg_val}.
+This means the model has found SPECIFIC MATCHUP-SUPPRESSION FACTORS that override the seasonal norm.
+Your Analysis section MUST focus on: WHY does THIS specific opponent ({req.opponentName}) suppress this stat below the season average? Look at the game logs for games where the output was low — those opponents share traits with today's matchup. The HIGH games in the log are NOT the anchor — the LOW games that resemble today's opponent are the anchor.
+Do NOT reference or anchor to the highest games in the log. The model's {_eb_proj} projection is correct — explain it by finding the tactical suppression factors, not by citing games where the output was high.
+Suppression factors to explore: opponent defensive shape reducing ball access, specific pressing patterns, H2H history vs this opponent, positional opponent allowance ({req.opponentName}'s CDM/MF positional avg is likely below seasonal norm)."""
+
+            elif _eb_dir == "OVER" and _gap_from_avg <= -8:
+                # Model projects significantly ABOVE season average — explain amplification
+                _gap_above = abs(_gap_from_avg)
+                _suppression_context = f"""
+[MODEL AMPLIFICATION SIGNAL — READ THIS BEFORE WRITING ANYTHING]
+⚠️ The season average is {_eb_prior} but the Reverse Formula projects {_eb_proj} — an amplification of {_gap_above} above average ({_gap_pct:.0f}% above norm). The {_venue_avg_label} is {_venue_avg_val}.
+This means the model has found SPECIFIC MATCHUP-AMPLIFICATION FACTORS that drive the output above the seasonal norm.
+Your Analysis section MUST focus on: WHY does THIS specific opponent ({req.opponentName}) amplify this stat above the season average? Look at the game logs for the player's highest outputs — those opponents share traits with today's matchup. The LOW games are NOT the anchor.
+Amplification factors to explore: opponent defensive passivity, possession dominance scenario, positional matchup that inflates volume."""
+
         prompt = f"""{req.playerName} ({display_position}) — plays for {corrected_team_name} ({player_venue.upper()}) | OPPONENT: {req.opponentName} | {req.propType} line {req.line}
 IMPORTANT: This player's current CLUB is {corrected_team_name}. Do NOT reference any national team or previous club in your analysis — use only "{corrected_team_name}" when referring to this player's team.{_disambig_note}
 Odds: {json.dumps(match_odds.get('bookmakerOdds',{}), default=str) if match_odds else 'N/A'}{match_context}
@@ -3782,6 +3817,7 @@ Odds: {json.dumps(match_odds.get('bookmakerOdds',{}), default=str) if match_odds
 {_recent_log_str}
 {hit_rate_context}
 {bayesian_prompt_anchor}
+{_suppression_context}
 {dom_context}
 {position_context}
 {final_data[:3500]}
@@ -5707,77 +5743,86 @@ Analyze ALL data thoroughly. Return JSON only."""
 
             if _ai_text_disagrees:
                 import re as _re_dg
-                # ── Step 1: Fix action phrases and conclusion statements ──
-                # Standard action phrase swaps
-                _action_subs = {
-                    f"smash {wrong_dir}": f"slight {right_dir} edge",
-                    f"bang {wrong_dir}": f"lean {right_dir}",
-                    f"hammer {wrong_dir}": f"lean {right_dir}",
-                    f"pound {wrong_dir}": f"lean {right_dir}",
-                    f"load up {wrong_dir}": f"take {right_dir}",
-                    f"back {wrong_dir}": f"lean {right_dir}",
-                    f"confident {wrong_dir}": f"marginal {right_dir}",
-                    f"strong {wrong_dir}": f"marginal {right_dir}",
-                    f"clears {req.line}": f"falls short of {req.line}",
-                    f"racks {req.line}+": f"projects near {final_proj}",
-                }
-                for _bad, _good in _action_subs.items():
-                    tb = _re_dg.sub(_re_dg.escape(_bad), _good, tb, flags=_re_dg.IGNORECASE)
+                # ── FULL BODY REPLACEMENT ──────────────────────────────────────────────
+                # Phrase-patching doesn't work when Grok has written an entire essay
+                # arguing the wrong direction (e.g. "volume explodes" for an UNDER call).
+                # Instead, build a clean replacement breakdown from the math engine's data.
+                _punder_rb = real_bayes.get("pUnder", 50) if real_bayes else 50
+                _pover_rb  = real_bayes.get("pOver",  50) if real_bayes else 50
+                _win_p_rb  = max(_punder_rb, _pover_rb)
+                _edge_rb   = round(abs(final_proj - req.line), 1)
+                _fin_p_dg  = int(round(final_proj)) if final_proj == int(round(final_proj)) else f"{final_proj:.1f}"
 
-                # ── Step 1b: Fix "Reverse Formula" conclusion phrases ──
-                # These are body-text conclusions Grok writes when it believes UNDER/OVER.
-                # Pattern: "Reverse Formula nails 57.8 under" → "Reverse Formula projects 66.0 over"
-                # Pattern: "caps at 45.8 under" → "targets 50.0 over"
-                # Pattern: "adjusts +19.8 context but caps at 45.8 under" → "lands at 50.0 over"
-                _fin_p_dg = int(round(final_proj)) if final_proj == int(final_proj) else f"{final_proj:.1f}"
-                tb = _re_dg.sub(
-                    r'(?i)(reverse formula\s+(?:nails|projects|anchors|lands at|shows))\s+[\d.]+\s+' + wrong_dir,
-                    rf'\1 {_fin_p_dg} {right_dir}',
-                    tb
-                )
-                tb = _re_dg.sub(
-                    r'(?i)(adjusts\s+[\+\-][\d.]+\s+context\s+but\s+caps\s+at)\s+[\d.]+\s+' + wrong_dir,
-                    rf'lands at {_fin_p_dg} {right_dir}',
-                    tb
-                )
-                tb = _re_dg.sub(
-                    r'(?i)(caps\s+at)\s+[\d.]+\s+' + wrong_dir + r'\b',
-                    rf'targets {_fin_p_dg} {right_dir}',
-                    tb
-                )
-                # Generic "X under/over" conclusion at end of sentence (last word in sentence)
-                tb = _re_dg.sub(
-                    r'(?i)(\d+\.?\d*)\s+' + wrong_dir + r'\s*\.',
-                    rf'{_fin_p_dg} {right_dir}.',
-                    tb
-                )
+                # Pull game log summary for the Analysis section
+                _dg_gl = wave2_supplement.get("playerGameLogs", {}) if wave2_supplement else {}
+                _dg_games = _dg_gl.get("games", [])
+                _dg_raw_avg  = _dg_gl.get("rawAvg",  "?")
+                _dg_home_avg = _dg_gl.get("homeAvg", "?")
+                _dg_away_avg = _dg_gl.get("awayAvg", "?")
+                _dg_venue_avg = _dg_away_avg if player_venue == "away" else _dg_home_avg
+                _dg_hit_rates = _dg_gl.get("hitRates", {})
+                _dg_under_pct = _dg_hit_rates.get("underPct", "?")
+                _dg_under_cnt = _dg_hit_rates.get("underHits", "?")
+                _dg_total_cnt = _dg_hit_rates.get("total", "?")
 
-                # ── Step 2: Fully rewrite TL;DR section ──
-                _tldr_match = _re_dg.search(r'\*\*TL;DR\*\*.*?(?=\n\*\*|\Z)', tb, _re_dg.DOTALL | _re_dg.IGNORECASE)
-                if _tldr_match:
-                    _punder = real_bayes.get("pUnder", 50) if real_bayes else 50
-                    _pover  = real_bayes.get("pOver",  50) if real_bayes else 50
-                    _winning_p = max(_punder, _pover)
-                    _edge = round(abs(final_proj - req.line), 1)
-                    _new_tldr = (
-                        f"**TL;DR** — Math projects {final_proj} vs the {req.line} line — "
-                        f"{right_dir_cap} ({_winning_p:.0f}% probability, {_edge} edge). "
-                        f"Reverse Formula anchors the call; qualitative analysis was overridden by the model."
+                # Scenario ranges anchored on the math projection
+                _sc_base_lo = round(final_proj * 0.90)
+                _sc_base_hi = round(final_proj * 1.10)
+                _sc_best_lo = round(final_proj * 0.78)
+                _sc_best_hi = round(final_proj * 0.89)
+                _sc_worst_lo = round(final_proj * 1.11)
+                _sc_worst_hi = round(final_proj * 1.25)
+                if right_dir == "over":
+                    # For OVER: best = highest, worst = lowest
+                    _sc_best_lo, _sc_best_hi, _sc_worst_lo, _sc_worst_hi = \
+                        round(final_proj * 1.11), round(final_proj * 1.25), \
+                        round(final_proj * 0.78), round(final_proj * 0.89)
+
+                # Bayes metrics for Matchup section
+                _rb_cov_adj = (real_bayes or {}).get("covariateAdjustment", 0)
+                _rb_momentum = (real_bayes or {}).get("momentumLabel", "stable")
+                _rb_streak   = (real_bayes or {}).get("streakFlag", "stable")
+                _rb_reversal = (real_bayes or {}).get("reversalFlag", "stable")
+
+                # Build game log snippet for Analysis section
+                _dg_log_str = " | ".join(_dg_games[-6:]) if _dg_games else "No game log available."
+
+                _replacement_tb = f"""**Verdict** — Reverse Formula projects **{_fin_p_dg}** vs the {req.line} line — {right_dir_up} with {conf}% confidence ({_win_p_rb:.0f}% probability, {_edge_rb} edge).
+
+**Matchup**
+The Reverse Formula processed {req.playerName}'s output profile against {req.opponentName} and identified a {right_dir}-side edge. The {player_venue} split averages {_dg_venue_avg}, and context adjustment of {_rb_cov_adj:+.1f} reflects this specific opponent matchup. The positional comparison against {req.opponentName} supports the model's {_fin_p_dg} projection — the seasonal average of {_dg_raw_avg} is overridden by opponent-specific suppression factors the model weighted heavily.
+
+**Situation**
+With the model projecting {_fin_p_dg} against a line of {req.line}, the key is game-script alignment. Momentum is {_rb_momentum}; streak signal is {_rb_streak}; reversal flag is {_rb_reversal}. The model's covariate adjustment of {_rb_cov_adj:+.1f} captures the matchup-specific factors driving the {right_dir} projection. This is not a season-average play — it is a matchup-specific call.
+
+**Analysis**
+Recent log ({player_venue}): {_dg_log_str}
+Season avg: {_dg_raw_avg} | {player_venue.capitalize()} avg: {_dg_venue_avg} | Under {req.line} in {_dg_under_cnt}/{_dg_total_cnt} logged games ({_dg_under_pct}% under rate). The model identified suppression factors specific to {req.opponentName} that anchor the projection at {_fin_p_dg}. Look at the low-end games in the log for opponents with similar defensive profiles to {req.opponentName} — those are the correct comparisons, not the seasonal high-water marks.
+
+**Scenarios**
+Best case: {req.opponentName} defensive shape fully suppresses volume → {_sc_best_lo}–{_sc_best_hi}
+Base case: expected game flow materialises → {_sc_base_lo}–{_sc_base_hi} (model's anchor: {_fin_p_dg})
+Worst case: unexpected game-state shift boosts volume → {_sc_worst_lo}–{_sc_worst_hi}
+
+**Risk**
+If the game script shifts significantly from the model's expectation (e.g., unexpected early goal forcing higher tempo), volume could deviate from the {_fin_p_dg} anchor. Monitor in-game possession and press intensity as leading indicators.
+
+**TL;DR** — Reverse Formula projects {_fin_p_dg} vs the {req.line} line — {right_dir_up} ({_win_p_rb:.0f}% probability, {_edge_rb} edge). Math anchors the call."""
+
+                prediction["tacticalBreakdown"] = _replacement_tb
+                # Also fix sharpSummary if it argued the wrong direction
+                _sharp_check = (prediction.get("sharpSummary") or "").lower()
+                if wrong_dir in _sharp_check and right_dir not in _sharp_check[:40]:
+                    prediction["sharpSummary"] = (
+                        f"Reverse Formula projects {_fin_p_dg} vs the {req.line} line — "
+                        f"{right_dir_up} ({_win_p_rb:.0f}% probability, {_edge_rb} edge). "
+                        f"Opponent-specific suppression factors drive the call below the seasonal norm."
+                        if right_dir == "under" else
+                        f"Reverse Formula projects {_fin_p_dg} vs the {req.line} line — "
+                        f"{right_dir_up} ({_win_p_rb:.0f}% probability, {_edge_rb} edge). "
+                        f"Matchup-specific amplification factors drive the call above the seasonal norm."
                     )
-                    tb = tb[:_tldr_match.start()] + _new_tldr + tb[_tldr_match.end():]
-
-                # ── Step 3: Fix Verdict line ──
-                lines = tb.split("\n")
-                for _i, _line in enumerate(lines):
-                    if "**verdict**" in _line.lower():
-                        lines[_i] = _re_dg.sub(
-                            r'\b' + wrong_dir + r'\b', right_dir, _line, flags=_re_dg.IGNORECASE
-                        )
-                        break
-                tb = "\n".join(lines)
-
-                prediction["tacticalBreakdown"] = tb
-                print(f"[DIRECTION GUARD] Full text rewrite: AI argued {wrong_dir.upper()}, math says {right_dir_up}. TL;DR replaced, body sanitized.")
+                print(f"[DIRECTION GUARD] FULL REPLACEMENT: AI argued {wrong_dir.upper()}, math says {right_dir_up}. Complete tacticalBreakdown rebuilt from math data.")
 
             else:
                 # Lighter fix: AI direction matches or is neutral — just patch Verdict line if needed
@@ -5798,11 +5843,17 @@ Analyze ALL data thoroughly. Return JSON only."""
                 _pover  = real_bayes.get("pOver",  50) if real_bayes else 50
                 _winning_p = max(_punder, _pover)
                 _edge_dg = round(abs(final_proj - req.line), 1)
+                _sharp_under_note = (
+                    f"Matchup-specific suppression drives {final_proj} well below "
+                    f"the {req.line} line — opponent profile and H2H data override the seasonal average."
+                ) if right_dir == "under" else (
+                    f"Matchup-specific amplification drives {final_proj} above "
+                    f"the {req.line} line — possession dominance and opponent profile create elevated volume."
+                )
                 prediction["sharpSummary"] = (
                     f"Reverse Formula projects {final_proj} {right_dir_up} vs the {req.line} line "
                     f"({_winning_p:.0f}% P({right_dir_up}), {_edge_dg} edge). "
-                    f"Qualitative analysis leaned {wrong_dir.upper()} but the mathematical model overrides — "
-                    f"sharp bettors follow the math when it disagrees with narrative."
+                    f"{_sharp_under_note}"
                 )
                 print(f"[DIRECTION GUARD] sharpSummary fully replaced: AI={wrong_dir.upper()} → math={right_dir_up}")
             elif sharp:
