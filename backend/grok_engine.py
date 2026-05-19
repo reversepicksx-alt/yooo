@@ -747,6 +747,41 @@ async def _try_settle_mlb(pick: dict) -> bool:
     except Exception:
         return False
 
+    # ── DNP guard for pitcher props ───────────────────────────────────────────
+    # If a pitcher was scratched / did not appear, BDL returns ip=0 and all
+    # counting stats as 0.  Settling an UNDER with actual=0 in that case is a
+    # false hit — the player never took the mound.  Detect by checking IP: if
+    # IP == 0 and the prop value is also 0, void the pick (push) so it doesn't
+    # inflate the hit-rate ledger.
+    _PITCHER_PROP_SET = {
+        "pitcher_strikeouts", "hits_allowed", "earned_runs",
+        "walks_allowed", "pitches_thrown", "batters_faced",
+        "pitcher_fantasy_score", "pitching_outs",
+    }
+    if prop_type in _PITCHER_PROP_SET and actual == 0.0:
+        ip_raw = recent.get("ip")
+        if ip_raw is not None:
+            try:
+                ip_parts = str(ip_raw).split(".")
+                ip_float = int(ip_parts[0]) + (int(ip_parts[1]) / 3.0 if len(ip_parts) > 1 else 0)
+                if ip_float == 0.0:
+                    print(f"[MLB SETTLE] DNP detected for {pick.get('playerName')} {prop_type} "
+                          f"(IP=0, stat=0) — voiding pick as push")
+                    await db.picks.update_one(
+                        {"pickId": pick["pickId"]},
+                        {"$set": {
+                            "actualValue":  0.0,
+                            "result":       "push",
+                            "status":       "settled",
+                            "matchStatus":  "final",
+                            "settledAt":    datetime.now(timezone.utc).isoformat(),
+                            "settledBy":    "mlb_auto_dnp",
+                        }},
+                    )
+                    return True
+            except Exception:
+                pass
+
     line_f = float(line)
     if actual == line_f:
         result = "push"
@@ -1612,7 +1647,29 @@ async def _update_mlb_live_picks():
 
                 if is_final and current_value is not None:
                     line_f = line
-                    if current_value == line_f:
+                    # ── DNP guard: pitcher got 0 K/outs but also 0 IP ─────────
+                    _PITCHER_COUNT_PROPS = {
+                        "pitcher_strikeouts", "hits_allowed", "earned_runs",
+                        "walks_allowed", "pitches_thrown", "batters_faced",
+                        "pitcher_fantasy_score", "pitching_outs",
+                    }
+                    result_str: str
+                    if prop_type in _PITCHER_COUNT_PROPS and current_value == 0.0 and stats:
+                        ip_raw = stats.get("ip")
+                        if ip_raw is not None:
+                            try:
+                                ip_parts = str(ip_raw).split(".")
+                                ip_float = int(ip_parts[0]) + (int(ip_parts[1]) / 3.0 if len(ip_parts) > 1 else 0)
+                                if ip_float == 0.0:
+                                    result_str = "push"
+                                    print(f"[MLB LIVE] DNP {pick.get('playerName')} {prop_type} IP=0 → push")
+                                else:
+                                    result_str = "push" if current_value == line_f else ("hit" if (rec == "OVER" and current_value > line_f) or (rec != "OVER" and current_value < line_f) else "miss")
+                            except Exception:
+                                result_str = "push" if current_value == line_f else ("hit" if (rec == "OVER" and current_value > line_f) or (rec != "OVER" and current_value < line_f) else "miss")
+                        else:
+                            result_str = "push" if current_value == line_f else ("hit" if (rec == "OVER" and current_value > line_f) or (rec != "OVER" and current_value < line_f) else "miss")
+                    elif current_value == line_f:
                         result_str = "push"
                     elif rec == "OVER":
                         result_str = "hit" if current_value > line_f else "miss"
