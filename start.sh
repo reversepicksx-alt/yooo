@@ -11,6 +11,14 @@ OLD_DB_PATH="/home/runner/workspace/mongodb_data"
 
 mkdir -p "$DB_PATH"
 
+# Remove stale lock file — left behind when a previous deployment was
+# hard-killed by the platform. Without this, mongod refuses to start on the
+# next deploy, the backend crashes, and the health check times out.
+if [ -f "$DB_PATH/mongod.lock" ]; then
+  echo "[START] Removing stale mongod.lock..."
+  rm -f "$DB_PATH/mongod.lock"
+fi
+
 # One-time migration: if new path is empty but old path has data, copy it over
 if [ -z "$(ls -A $DB_PATH 2>/dev/null)" ] && [ -d "$OLD_DB_PATH" ] && [ -n "$(ls -A $OLD_DB_PATH 2>/dev/null)" ]; then
   echo "[START] Migrating MongoDB data from workspace to persistent home directory..."
@@ -18,13 +26,30 @@ if [ -z "$(ls -A $DB_PATH 2>/dev/null)" ] && [ -d "$OLD_DB_PATH" ] && [ -n "$(ls
   echo "[START] Migration complete."
 fi
 
+# ── Start production proxy FIRST on port 5000 ──────────────────────────────
+# The proxy serves the pre-built static dist/ immediately — it does NOT need
+# MongoDB or the FastAPI backend to answer GET / with HTTP 200. Starting it
+# first means the platform health check passes as soon as Node.js binds the
+# port, while MongoDB and Python initialise in the background.
+echo "[START] Starting production proxy on port 5000..."
+cd /home/runner/workspace/mobile
+PRODUCTION=true node proxy.js &
+PROXY_PID=$!
+
+# Give Node a moment to bind the port before we start the heavier processes
+sleep 2
+
+# ── Start MongoDB (background daemon) ──────────────────────────────────────
+echo "[START] Starting MongoDB..."
 mongod \
   --dbpath "$DB_PATH" \
   --logpath /home/runner/.reversepicks_mongo.log \
   --fork --quiet 2>/dev/null || true
-sleep 4
 
-# ── Build frontend if dist is missing or empty ──────────────────────────────
+# Wait for mongod to finish initialising its data files
+sleep 6
+
+# ── Build frontend if dist is missing (fallback only) ──────────────────────
 DIST_INDEX="/home/runner/workspace/mobile/dist/index.html"
 if [ ! -f "$DIST_INDEX" ]; then
   echo "[START] dist/index.html not found — building Expo web export now..."
@@ -43,15 +68,11 @@ if [ ! -f "$DIST_INDEX" ]; then
 else
   echo "[START] dist/index.html found — skipping build."
 fi
-# ───────────────────────────────────────────────────────────────────────────
 
-# Start FastAPI backend on port 8000 (in background)
+# ── Start FastAPI backend on port 8000 ─────────────────────────────────────
 echo "[START] Starting backend on port 8000..."
 cd /home/runner/workspace/backend
 python -m uvicorn server:app --host 0.0.0.0 --port 8000 --workers 1 &
-cd /home/runner/workspace
 
-# Start production proxy on port 5000
-echo "[START] Starting production proxy on port 5000..."
-cd /home/runner/workspace/mobile
-PRODUCTION=true node proxy.js
+# Keep the container alive by waiting on the proxy process
+wait $PROXY_PID
