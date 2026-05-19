@@ -437,6 +437,11 @@ async def predict(req: PredictionRequest):
                         r["opponent"] = fix.get("opponent", "")
                         r["venue"] = fix.get("venue", "")
                         r["score"] = f"{fix.get('homeGoals',0)}-{fix.get('awayGoals',0)}"
+                        # goals_conceded: goals scored AGAINST the opponent in this fixture
+                        _fv = fix.get("venue", "home")
+                        r["goals_conceded"] = (fix.get("awayGoals", 0)
+                                               if _fv == "home"
+                                               else fix.get("homeGoals", 0))
                         return r
 
                     # Partial cache hit — has team stats but no tackles yet
@@ -516,6 +521,11 @@ async def predict(req: PredictionRequest):
                     result["opponent"] = fix.get("opponent", "")
                     result["venue"]    = fix.get("venue", "")
                     result["score"]    = f"{fix.get('homeGoals',0)}-{fix.get('awayGoals',0)}"
+                    # goals_conceded: goals scored AGAINST the opponent in this fixture
+                    _fv2 = fix.get("venue", "home")
+                    result["goals_conceded"] = (fix.get("awayGoals", 0)
+                                                if _fv2 == "home"
+                                                else fix.get("homeGoals", 0))
                     return result
                 except Exception:
                     return None
@@ -2384,6 +2394,78 @@ async def predict(req: PredictionRequest):
                 except Exception as _sp_err:
                     print(f"[SCENARIO PRIORS] lookup failed: {_sp_err}")
 
+            # ── Ultra v4: compute 4 new Bayesian inputs ──────────────────────
+            # 1. REST DAYS — days since player's team last played
+            _rest_days_v4: int | None = None
+            try:
+                _match_date_str_v4 = (match_odds or {}).get("matchDate", "") or ""
+                if _match_date_str_v4 and player_game_logs:
+                    from datetime import date as _dt_v4
+                    _md_obj = _dt_v4.fromisoformat(_match_date_str_v4[:10])
+                    _last_dates = [
+                        g.get("date", "")[:10] for g in player_game_logs
+                        if g.get("date", "")[:10]
+                    ]
+                    if _last_dates:
+                        _ld_obj = _dt_v4.fromisoformat(max(_last_dates))
+                        _rest_days_v4 = max(0, (_md_obj - _ld_obj).days)
+                        print(f"[REST DAYS] {req.playerName}: last={max(_last_dates)} "
+                              f"match={_match_date_str_v4[:10]} → {_rest_days_v4}d rest")
+            except Exception as _rd_err:
+                print(f"[REST DAYS] err: {_rd_err}")
+
+            # 2. OPPONENT CLEAN SHEET RATE — fraction of recent games opp kept CS
+            _opp_cs_rate_v4: float | None = None
+            try:
+                _cs_vals = [
+                    s.get("goals_conceded")
+                    for s in (opponent_fixture_stats or [])
+                    if s.get("goals_conceded") is not None
+                ]
+                if len(_cs_vals) >= 3:
+                    _opp_cs_rate_v4 = round(
+                        sum(1 for v in _cs_vals if v == 0) / len(_cs_vals), 3
+                    )
+                    print(f"[CS RATE] {req.opponentName}: "
+                          f"cs={sum(1 for v in _cs_vals if v==0)}/{len(_cs_vals)} "
+                          f"= {_opp_cs_rate_v4:.0%}")
+            except Exception as _cs_err:
+                print(f"[CS RATE] err: {_cs_err}")
+
+            # 3. ALTITUDE — high-altitude league mapping (away teams only)
+            _HIGH_ALTITUDE_LEAGUES_V4 = {
+                270: 3640,   # Bolivia (La Paz, Sucre) — Liga Profesional
+                285: 2850,   # Ecuador (Quito) — Liga Pro
+                239: 2640,   # Colombia (Bogotá) — Primera A
+                262: 2240,   # Mexico (Mexico City) — Liga MX (moderate)
+                300: 2800,   # Peru (Lima is sea-level but Cusco/Arequipa) — rough avg
+            }
+            _altitude_m_v4: int | None = None
+            _lid_v4 = req.leagueId or locals().get("league_id")
+            if _lid_v4 and _lid_v4 in _HIGH_ALTITUDE_LEAGUES_V4:
+                # Only pass altitude for AWAY team (home teams are acclimatised)
+                if player_venue == "away":
+                    _altitude_m_v4 = _HIGH_ALTITUDE_LEAGUES_V4[_lid_v4]
+                    print(f"[ALTITUDE] {req.opponentName} league={_lid_v4} "
+                          f"altitude={_altitude_m_v4}m (away penalty active)")
+
+            # 4. OPPONENT FOUL RATE — avg fouls/game from opponent's recent fixtures
+            _opp_foul_rate_v4: float | None = None
+            try:
+                _foul_vals = [
+                    s.get("fouls_committed_agg")
+                    for s in (opponent_fixture_stats or [])
+                    if s.get("fouls_committed_agg") is not None
+                ]
+                if len(_foul_vals) >= 2:
+                    _opp_foul_rate_v4 = round(sum(_foul_vals) / len(_foul_vals), 1)
+                    print(f"[FOUL RATE] {req.opponentName}: "
+                          f"avg={_opp_foul_rate_v4:.1f} fouls/game "
+                          f"(n={len(_foul_vals)})")
+            except Exception as _fr_err:
+                print(f"[FOUL RATE] err: {_fr_err}")
+            # ─────────────────────────────────────────────────────────────────
+
             early_bayes = compute_bayesian_projection(
                 game_logs=_bayes_logs,
                 prop_type=req.propType,
@@ -2409,6 +2491,11 @@ async def predict(req: PredictionRequest):
                     "h2hPossAvg": match_dominance.get("h2hPossAvg"),
                 },
                 league_id=req.leagueId,
+                # ── Ultra v4 new layers ────────────────────────────────────
+                rest_days=_rest_days_v4,
+                opponent_clean_sheet_rate=_opp_cs_rate_v4,
+                altitude_m=_altitude_m_v4,
+                opponent_foul_rate=_opp_foul_rate_v4,
             )
             _eb_samples = early_bayes.get("priorSamples", 0) if early_bayes else 0
             print(f"[BAYESIAN] {req.playerName}/{req.propType}: samples={_eb_samples}, logs={len(_bayes_logs)} (venue={player_venue})")

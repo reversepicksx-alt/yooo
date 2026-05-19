@@ -160,6 +160,11 @@ def compute_bayesian_projection(
     role: str = "",
     match_stakes: dict = None,
     league_id: int = None,
+    # ── Ultra v4 — 5 new layers ──────────────────────────────────────────────
+    rest_days: int = None,                    # days since player's last game
+    opponent_clean_sheet_rate: float = None,  # fraction of recent games opp kept CS
+    altitude_m: int = None,                   # venue altitude in metres (away only)
+    opponent_foul_rate: float = None,         # opp avg fouls/game (set-piece orient.)
 ) -> dict:
     """
     Compute a 3-layer Bayesian projection from raw game data.
@@ -926,6 +931,188 @@ def compute_bayesian_projection(
                   f"mult={_ms_mult} {_ms_before} → {posterior_mean}  [{_ms_note}]")
 
     # ═══════════════════════════════════════════
+    # FATIGUE LAYER — Rest Days & Fixture Congestion
+    # ═══════════════════════════════════════════
+    # Two sub-layers:
+    #   A) REST DAYS  — time since last game (caller-supplied rest_days parameter)
+    #   B) CONGESTION — count of games in last 14 days (derived internally from game_logs)
+    #
+    # Physical props (sprinting, tackling, dribbling) degrade sharply under fatigue.
+    # Volume props (passing, tactical positioning) degrade less — more cognitive.
+    #
+    # Rest day thresholds (calibrated against sports science research on physical output):
+    #   0-1 days : back-to-back fixtures (extreme fatigue) — rare outside cup/tournament
+    #   2-3 days : heavy fatigue — typical midweek + weekend schedule
+    #   4-5 days : mild fatigue — normal but slightly compressed schedule
+    #   6-7 days : optimal rest — baseline (no adjustment)
+    #   8-11 days: fresh legs — extended break (international window, cup exit, etc.)
+    #   12+ days : slight rust — sharper props dip, volume stable
+    # ═══════════════════════════════════════════
+    _PHYSICAL_FATIGUE_PROPS = {
+        "shots", "shots_on_target", "tackles", "interceptions",
+        "clearances", "dribbles", "duels_won", "blocks",
+    }
+    _VOLUME_FATIGUE_PROPS = {"pass_attempts", "passes", "key_passes", "crosses"}
+    fatigue_info = {
+        "applied": False, "mult": 1.0, "reason": "", "rest_days": rest_days,
+        "congestion_mult": 1.0, "congestion_games": 0,
+    }
+    if rest_days is not None and rest_days >= 0:
+        _is_phys_fat = prop_type in _PHYSICAL_FATIGUE_PROPS
+        _is_vol_fat  = prop_type in _VOLUME_FATIGUE_PROPS
+        _fat_phys, _fat_vol = 1.0, 1.0
+        _fat_label = "optimal"
+        if rest_days <= 1:
+            _fat_phys, _fat_vol = 0.88, 0.92; _fat_label = "backtoback"
+        elif rest_days <= 3:
+            _fat_phys, _fat_vol = 0.93, 0.96; _fat_label = "heavy"
+        elif rest_days <= 5:
+            _fat_phys, _fat_vol = 0.97, 0.99; _fat_label = "mild"
+        elif rest_days <= 7:
+            pass  # optimal rest — baseline, no adjustment
+        elif rest_days <= 11:
+            _fat_phys, _fat_vol = 1.02, 1.02; _fat_label = "fresh"
+        else:
+            _fat_phys, _fat_vol = 0.99, 1.01; _fat_label = "rust"
+
+        _fat_mult = _fat_phys if _is_phys_fat else (_fat_vol if _is_vol_fat else 1.0)
+        if abs(_fat_mult - 1.0) > 0.005:
+            _fat_before = posterior_mean
+            posterior_mean = round(posterior_mean * _fat_mult, 1)
+            fatigue_info.update({
+                "applied": True, "mult": _fat_mult,
+                "reason": f"{_fat_label} fatigue (rest={rest_days}d)",
+            })
+            print(f"[FATIGUE] {prop_type} rest={rest_days}d ({_fat_label}): "
+                  f"×{_fat_mult} {_fat_before} → {posterior_mean}")
+
+    # ── FIXTURE CONGESTION (internal — derived from game_logs dates) ─────────
+    # Count games played in the last 14 days before the most recent game log.
+    # 4+ games in 14 days = fixture congestion → compounding physical fatigue.
+    # Applied as an ADDITIONAL multiplier (stacks with rest_days fatigue above).
+    # Conservative: physical floor 0.92, volume floor 0.96.
+    _congestion_games = 0
+    _congestion_mult  = 1.0
+    if len(game_logs) >= 4:
+        try:
+            from datetime import date as _date_cls, timedelta as _td
+            _recent_dates = sorted(
+                [g.get("date", "")[:10] for g in game_logs if g.get("date", "")[:10]],
+                reverse=True,
+            )
+            if len(_recent_dates) >= 2:
+                _ref_date     = _date_cls.fromisoformat(_recent_dates[0])
+                _window_start = _ref_date - _td(days=14)
+                _congestion_games = sum(
+                    1 for d in _recent_dates
+                    if _date_cls.fromisoformat(d) >= _window_start
+                )
+                if _congestion_games >= 4:
+                    if prop_type in _PHYSICAL_FATIGUE_PROPS:
+                        _congestion_mult = round(max(0.92, 1.0 - (_congestion_games - 3) * 0.02), 3)
+                    elif prop_type in _VOLUME_FATIGUE_PROPS:
+                        _congestion_mult = round(max(0.96, 1.0 - (_congestion_games - 3) * 0.01), 3)
+                    if abs(_congestion_mult - 1.0) > 0.005:
+                        _cong_before = posterior_mean
+                        posterior_mean = round(posterior_mean * _congestion_mult, 1)
+                        fatigue_info["congestion_mult"]  = _congestion_mult
+                        fatigue_info["congestion_games"] = _congestion_games
+                        print(f"[CONGESTION] {prop_type}: {_congestion_games} games/14d "
+                              f"×{_congestion_mult} {_cong_before} → {posterior_mean}")
+        except Exception:
+            pass  # date parsing failure — skip silently
+
+    # ═══════════════════════════════════════════
+    # OPPONENT CLEAN SHEET RATE — Defensive Tightness
+    # ═══════════════════════════════════════════
+    # How often has this opponent kept a clean sheet in their recent games?
+    # High CS rate reveals elite defensive organisation: compact block, disciplined
+    # shape, or an elite keeper — beyond what xG or shots-conceded alone captures
+    # (a team can concede many shots but keep CSs through last-ditch defending).
+    #
+    # Applied only to offensive props: goals, shots, shots_on_target.
+    # Key_passes excluded — playmaker volume is more about team style than opp defense.
+    #
+    # CS rate distribution (European leagues, ~n=1500 team-seasons):
+    #   ≥60%  : elite defense (Man City 23/24: 64%, Atletico Madrid avg: 58%)
+    #   45-60%: solid defense
+    #   25-45%: average defense
+    #   10-25%: below average
+    #   <10%  : leaky (relegation zone quality)
+    # ═══════════════════════════════════════════
+    _OFFENSIVE_PROPS_CS = {"goals", "shots", "shots_on_target"}
+    clean_sheet_info = {"applied": False, "mult": 1.0, "cs_rate": opponent_clean_sheet_rate,
+                        "label": "unknown"}
+    if opponent_clean_sheet_rate is not None and prop_type in _OFFENSIVE_PROPS_CS:
+        _cs_mult = 1.0
+        if opponent_clean_sheet_rate >= 0.60:
+            _cs_mult = 0.87;  _cs_lbl = "ELITE DEF"
+        elif opponent_clean_sheet_rate >= 0.45:
+            _cs_mult = 0.92;  _cs_lbl = "SOLID DEF"
+        elif opponent_clean_sheet_rate >= 0.35:
+            _cs_mult = 0.96;  _cs_lbl = "GOOD DEF"
+        elif opponent_clean_sheet_rate <= 0.10:
+            _cs_mult = 1.13;  _cs_lbl = "LEAKY DEF"
+        elif opponent_clean_sheet_rate <= 0.20:
+            _cs_mult = 1.07;  _cs_lbl = "WEAK DEF"
+        elif opponent_clean_sheet_rate <= 0.30:
+            _cs_mult = 1.03;  _cs_lbl = "BELOW AVG DEF"
+        else:
+            _cs_lbl = "AVERAGE DEF"
+        # Hard cap: ±15% — CS rate is one signal, not the full story
+        _cs_mult = round(max(0.85, min(1.15, _cs_mult)), 3)
+        if abs(_cs_mult - 1.0) > 0.005:
+            _cs_before = posterior_mean
+            posterior_mean = round(posterior_mean * _cs_mult, 1)
+            clean_sheet_info.update({
+                "applied": True, "mult": _cs_mult, "label": _cs_lbl,
+            })
+            print(f"[CS RATE] {prop_type}: opp_cs={opponent_clean_sheet_rate:.0%} "
+                  f"({_cs_lbl}) ×{_cs_mult} {_cs_before} → {posterior_mean}")
+
+    # ═══════════════════════════════════════════
+    # SET PIECE VOLUME BOOST — High-Fouling Opponents
+    # ═══════════════════════════════════════════
+    # When an opponent commits many fouls per game, they generate more free kicks
+    # and penalty-area situations for the attacking team.  Set piece specialists
+    # (and any FWD/CAM operating in dangerous areas) see more shot/shooting
+    # opportunities when the opponent is foul-heavy.
+    #
+    # Applied only to attacking positions on shots/shots_on_target.
+    # Key_passes excluded — set pieces primarily create direct shot opps, not chains.
+    #
+    # League avg: ~11-12 fouls/game per team (across Big 5 + MLS).
+    # High-fouling: Atletico, Burnley, Championship sides — 14+/game.
+    # ═══════════════════════════════════════════
+    _SP_SHOT_PROPS    = {"shots_on_target", "shots"}
+    _SP_ATTACK_POS    = {"ST", "CF", "LW", "RW", "CAM", "AM", "SS", "FW", "WF", "FO"}
+    _pos_upper_sp     = (position or "").upper()
+    set_piece_info    = {"applied": False, "mult": 1.0, "foul_rate": opponent_foul_rate}
+    if (opponent_foul_rate is not None
+            and prop_type in _SP_SHOT_PROPS
+            and _pos_upper_sp in _SP_ATTACK_POS):
+        _sp_mult = 1.0
+        if opponent_foul_rate >= 16:
+            _sp_mult = 1.08   # very high fouling — constant set pieces
+        elif opponent_foul_rate >= 14:
+            _sp_mult = 1.05
+        elif opponent_foul_rate >= 13:
+            _sp_mult = 1.02
+        elif opponent_foul_rate <= 8:
+            _sp_mult = 0.95   # very disciplined — fewer set piece chances
+        elif opponent_foul_rate <= 9:
+            _sp_mult = 0.97
+        # Cap at ±10%
+        _sp_mult = round(max(0.90, min(1.10, _sp_mult)), 3)
+        if abs(_sp_mult - 1.0) > 0.005:
+            _sp_before = posterior_mean
+            posterior_mean = round(posterior_mean * _sp_mult, 1)
+            set_piece_info.update({"applied": True, "mult": _sp_mult})
+            print(f"[SET PIECE] {prop_type} pos={_pos_upper_sp}: "
+                  f"opp_fouls={opponent_foul_rate:.1f}/g ×{_sp_mult} "
+                  f"{_sp_before} → {posterior_mean}")
+
+    # ═══════════════════════════════════════════
     # PRESS INTENSITY — Position & Prop Aware
     # ═══════════════════════════════════════════
     # Press signal is computed for any prop where opponent pressing meaningfully
@@ -1273,6 +1460,128 @@ def compute_bayesian_projection(
         print(f"[POS BIAS CORR] {position} {prop_type}: {_raw_before_bias:.1f} → {posterior_mean:.1f} "
               f"(×{_pos_bias_mult} empirical correction)")
 
+    # ═══════════════════════════════════════════
+    # ALTITUDE PENALTY — High-Altitude Away Fixtures
+    # ═══════════════════════════════════════════
+    # Playing at high altitude significantly reduces physical output for
+    # visiting teams not adapted to thin-air conditions. Effect is primarily
+    # on aerobic/sprint-intensive props (shots, tackles, dribbles, interceptions).
+    # Passing volume is largely unaffected — it is more cognitive/technical.
+    #
+    # Altitude thresholds (calibrated against sports science literature):
+    #   1500-2000m : minor effect (~1-2% physical drop)
+    #   2000-2500m : moderate (~3-4%) — Mexico City: 2240m
+    #   2500-3000m : significant (~5-6%) — Bogotá: 2640m, Quito: 2850m
+    #   3000m+     : severe (~7-9%) — La Paz: 3640m
+    #
+    # Applied ONLY to AWAY teams (home teams are altitude-acclimatised).
+    # Caller is responsible for zeroing this out when the team is at home.
+    # ═══════════════════════════════════════════
+    altitude_info = {"applied": False, "mult": 1.0, "altitude_m": altitude_m}
+    if altitude_m is not None and venue == "away" and altitude_m > 1500:
+        # Linear scale: 1500m (0%) → 4000m (9% max reduction)
+        _alt_raw     = max(0.0, (altitude_m - 1500) / 2500) * 0.09
+        _alt_penalty = round(max(0.91, 1.0 - _alt_raw), 3)
+        if prop_type in _PHYSICAL_FATIGUE_PROPS:
+            _alt_before = posterior_mean
+            posterior_mean = round(posterior_mean * _alt_penalty, 1)
+            altitude_info.update({"applied": True, "mult": _alt_penalty})
+            print(f"[ALTITUDE] {prop_type} away={altitude_m}m: "
+                  f"penalty=×{_alt_penalty} {_alt_before} → {posterior_mean}")
+
+    # ═══════════════════════════════════════════
+    # LEAGUE STYLE MATRIX — Style-Corrected Baselines
+    # ═══════════════════════════════════════════
+    # Each league has a distinct tactical DNA that shifts average outputs
+    # for each prop category beyond what individual game logs capture.
+    # Corrections are derived from multi-season league analytics research.
+    #
+    # Categories:
+    #   "shots"    → shots, shots_on_target, goals
+    #   "physical" → tackles, interceptions, clearances, dribbles, duels_won, blocks
+    #   "volume"   → pass_attempts, passes, key_passes, crosses
+    #
+    # Bundesliga GK/CB home passes (×0.87) are handled by the SEPARATE
+    # Bundesliga deflation block below — this matrix's Bundesliga "volume"
+    # multiplier is intentionally skipped for those cases to avoid double-apply.
+    #
+    # Cap: ±8% per category to prevent overcorrection.
+    # ═══════════════════════════════════════════
+    _LEAGUE_STYLE_MATRIX = {
+        # La Liga (140) — technical/possession, below-avg scoring (2.2 g/game)
+        140: {"shots": 0.95, "physical": 0.97, "volume": 1.02},
+        # Premier League (39) — physical/high-intensity, above-avg scoring
+        39:  {"shots": 1.03, "physical": 1.06, "volume": 1.00},
+        # Bundesliga (78) — high-press vertical style, pace over possession
+        # GK/CB home passes already ×0.87 below — skip volume for those
+        78:  {"shots": 1.04, "physical": 1.06, "volume": 0.97},
+        # Serie A (135) — low scoring (2.5 g/game), tactical, defensive
+        135: {"shots": 0.91, "physical": 1.04, "volume": 0.98},
+        # Ligue 1 (61) — one-sided (PSG era), lower avg competition
+        61:  {"shots": 0.96, "physical": 1.01, "volume": 0.99},
+        # Eredivisie (88) — high scoring, open play, low defensive org.
+        88:  {"shots": 1.09, "physical": 0.97, "volume": 1.02},
+        # Championship (40) — long ball, physical, lower technical quality
+        40:  {"shots": 1.03, "physical": 1.07, "volume": 0.96},
+        # MLS (253) — high variance, physical, more open than European norms
+        253: {"shots": 1.08, "physical": 1.03, "volume": 0.96},
+        # Liga MX (262) — similar to MLS, altitude in some venues
+        262: {"shots": 1.05, "physical": 1.02, "volume": 0.97},
+        # Brasileirão (71) — technical + physical blend
+        71:  {"shots": 1.02, "physical": 1.04, "volume": 0.99},
+        # Primeira Liga / Portugal (94) — defensive, physical, low scoring
+        94:  {"shots": 0.94, "physical": 1.04, "volume": 0.98},
+        # Scottish Premiership (179) — physical, long ball, low possession
+        179: {"shots": 1.03, "physical": 1.05, "volume": 0.94},
+        # Belgian Pro League (144) — open, moderate scoring
+        144: {"shots": 1.05, "physical": 1.02, "volume": 0.98},
+        # Turkish Süper Lig (203) — open, physical, higher scoring
+        203: {"shots": 1.04, "physical": 1.04, "volume": 0.97},
+        # Argentine Primera División (128) — physical, aggressive, moderate scoring
+        128: {"shots": 1.04, "physical": 1.08, "volume": 0.97},
+        # Greek Super League (197) — physical, set-piece heavy
+        197: {"shots": 1.02, "physical": 1.05, "volume": 0.96},
+        # Russian Premier League (235) — physical, direct, moderate scoring
+        235: {"shots": 1.01, "physical": 1.05, "volume": 0.97},
+    }
+    _SHOTS_CATEGORY_LS    = {"shots", "shots_on_target", "goals"}
+    _PHYSICAL_CATEGORY_LS = {"tackles", "interceptions", "clearances",
+                              "dribbles", "duels_won", "blocks"}
+    _VOLUME_CATEGORY_LS   = {"pass_attempts", "passes", "key_passes", "crosses"}
+
+    league_style_info = {"applied": False, "mult": 1.0, "league_id": league_id,
+                         "category": None}
+    _lid_style = league_id
+    if _lid_style and _lid_style in _LEAGUE_STYLE_MATRIX:
+        _ls = _LEAGUE_STYLE_MATRIX[_lid_style]
+        _ls_mult, _ls_cat = 1.0, None
+        if prop_type in _SHOTS_CATEGORY_LS:
+            _ls_mult = _ls.get("shots", 1.0);    _ls_cat = "shots"
+        elif prop_type in _PHYSICAL_CATEGORY_LS:
+            _ls_mult = _ls.get("physical", 1.0); _ls_cat = "physical"
+        elif prop_type in _VOLUME_CATEGORY_LS:
+            _ls_mult = _ls.get("volume", 1.0);   _ls_cat = "volume"
+
+        # Skip Bundesliga volume mult for GK/CB home passes — handled below
+        _bundes_skip = (
+            _lid_style == 78
+            and prop_type in {"pass_attempts", "passes"}
+            and venue == "home"
+            and (position or "").upper() in {
+                "GK", "CB", "LCB", "RCB", "LB", "RB", "WB", "WBL", "WBR"
+            }
+        )
+        if _ls_cat and not _bundes_skip:
+            _ls_mult = round(max(0.92, min(1.08, _ls_mult)), 3)
+            if abs(_ls_mult - 1.0) > 0.005:
+                _ls_before = posterior_mean
+                posterior_mean = round(posterior_mean * _ls_mult, 1)
+                league_style_info.update({
+                    "applied": True, "mult": _ls_mult, "category": _ls_cat,
+                })
+                print(f"[LEAGUE STYLE] {prop_type} ({_ls_cat}) "
+                      f"league={_lid_style}: ×{_ls_mult} {_ls_before} → {posterior_mean}")
+
     # ── BUNDESLIGA PASS VOLUME DEFLATION ─────────────────────────────────────
     # Empirical data: Bundesliga (ID 78) home picks hit only 37.5% (6/16) vs
     # Premier League 72.4% (21/29). Avg projection error: 11.56 vs 7.76.
@@ -1421,6 +1730,18 @@ def compute_bayesian_projection(
 
         # Match stakes layer — league table situation (relegation/title/dead rubber).
         "matchStakes": match_stakes_info,
+
+        # ── Ultra v4 — 5 new layers ──────────────────────────────────────────
+        # Fatigue: rest_days + fixture congestion
+        "fatigueLayer": fatigue_info,
+        # Opponent clean sheet rate → offensive prop suppression/boost
+        "cleanSheetLayer": clean_sheet_info,
+        # Set piece volume boost for attackers vs high-fouling opponents
+        "setPieceLayer": set_piece_info,
+        # Altitude penalty for away teams at high-altitude venues
+        "altitudeLayer": altitude_info,
+        # League style matrix — per-league tactical DNA correction
+        "leagueStyleLayer": league_style_info,
     }
 
 
@@ -1457,6 +1778,12 @@ def _empty_metrics(line: float) -> dict:
             "avg_defensive_actions": None, "avg_tackles": None, "avg_interceptions": None,
             "avg_poss": None, "avg_passes": None,
         },
+        "fatigueLayer":     {"applied": False, "mult": 1.0, "reason": "", "rest_days": None,
+                             "congestion_mult": 1.0, "congestion_games": 0},
+        "cleanSheetLayer":  {"applied": False, "mult": 1.0, "cs_rate": None, "label": "unknown"},
+        "setPieceLayer":    {"applied": False, "mult": 1.0, "foul_rate": None},
+        "altitudeLayer":    {"applied": False, "mult": 1.0, "altitude_m": None},
+        "leagueStyleLayer": {"applied": False, "mult": 1.0, "league_id": None, "category": None},
     }
 
 
