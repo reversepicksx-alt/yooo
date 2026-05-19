@@ -1562,26 +1562,11 @@ async def _update_mlb_live_picks():
         if not team_id:
             continue
         try:
+            # ── Fetch today's game for this team ─────────────────────────────
             games = await mlb_client.get_today_and_live_games(team_id, current_year)
-            if not games:
-                continue
-
-            # Prefer an in-progress game; fall back to any today's game
-            live_game  = next((g for g in games if "IN_PROGRESS" in (g.get("status") or "").upper()), None)
-            target     = live_game or games[0]
-            status_str = (target.get("status") or "").upper()
-            is_live    = "IN_PROGRESS" in status_str
-            is_final   = "FINAL"       in status_str
-            game_id    = target.get("id")
-            if not game_id:
-                continue
-
-            home_team   = target.get("home_team", {}) or {}
-            away_team   = target.get("away_team", {}) or {}
-            home_abbrev = home_team.get("abbreviation", "")
-            away_abbrev = away_team.get("abbreviation", "")
-            home_runs   = (target.get("home_team_data") or {}).get("runs")
-            away_runs   = (target.get("away_team_data") or {}).get("runs")
+            live_game   = next((g for g in games if "IN_PROGRESS" in (g.get("status") or "").upper()), None)
+            today_game  = live_game or (games[0] if games else None)
+            today_game_id = today_game.get("id") if today_game else None
 
             for pick in picks:
                 player_id = pick.get("playerId")
@@ -1590,9 +1575,74 @@ async def _update_mlb_live_picks():
                 if not player_id or not field:
                     continue
 
+                # ── Determine which game to use for this pick ─────────────────
+                # CRITICAL: never overwrite a confirmed gameId with today's game.
+                # Old picks had their gameId silently replaced each loop cycle,
+                # meaning a 5-day-old pick would try to settle against today's
+                # scheduled game — which has no stats — and loop forever.
+                stored_game_id = pick.get("gameId")
+
+                if stored_game_id and stored_game_id != today_game_id:
+                    # Pick has stats from a PREVIOUS game — use that game's data.
+                    # If it differs from today's it's already completed.
+                    game_id     = stored_game_id
+                    is_live     = False   # past game is never live
+                    is_final    = True    # past game is always final
+                    home_abbrev = pick.get("homeTeam", "")
+                    away_abbrev = pick.get("awayTeam", "")
+                    home_runs   = pick.get("finalHomeGoals")
+                    away_runs   = pick.get("finalAwayGoals")
+                elif today_game_id:
+                    # Either no stored gameId, or stored matches today → use today's game
+                    game_id     = today_game_id
+                    status_str  = (today_game.get("status") or "").upper()
+                    is_live     = "IN_PROGRESS" in status_str
+                    is_final    = "FINAL"       in status_str
+                    home_team   = today_game.get("home_team", {}) or {}
+                    away_team   = today_game.get("away_team", {}) or {}
+                    home_abbrev = home_team.get("abbreviation", "")
+                    away_abbrev = away_team.get("abbreviation", "")
+                    home_runs   = (today_game.get("home_team_data") or {}).get("runs")
+                    away_runs   = (today_game.get("away_team_data") or {}).get("runs")
+                else:
+                    # No today game found for this team — skip
+                    continue
+
+                # ── Stale-final escape hatch ──────────────────────────────────
+                # If matchStatus is already "final" AND the pick is >48h old with
+                # no currentValue, stats are never coming — void as push so it
+                # doesn't stay live indefinitely.
+                if is_final and pick.get("currentValue") is None:
+                    pick_ts = None
+                    for _tf in ("timestamp", "createdAt"):
+                        _raw = pick.get(_tf)
+                        if _raw:
+                            try:
+                                pick_ts = datetime.fromisoformat(str(_raw).replace("Z", "+00:00"))
+                                break
+                            except Exception:
+                                pass
+                    if pick_ts:
+                        age_h = (datetime.now(timezone.utc) - pick_ts).total_seconds() / 3600
+                        if age_h > 48:
+                            print(f"[MLB LIVE] Stale-final void: {pick.get('playerName')} "
+                                  f"{prop_type} age={age_h:.0f}h game={game_id} — push")
+                            await db.picks.update_one(
+                                {"pickId": pick["pickId"]},
+                                {"$set": {
+                                    "result":      "push",
+                                    "status":      "settled",
+                                    "matchStatus": "final",
+                                    "settledAt":   datetime.now(timezone.utc).isoformat(),
+                                    "settledBy":   "mlb_stale_void",
+                                }},
+                            )
+                            continue
+
                 # Fetch current game stats — skip cache for live games so every
                 # loop iteration gets the freshest values from BDL.
                 current_value = None
+                stats = None
                 try:
                     from mlb_engine import _compute_fantasy_pts as _fp
                     stats = await mlb_client.get_game_player_stats(
@@ -1632,14 +1682,15 @@ async def _update_mlb_live_picks():
                 rec  = (pick.get("recommendation") or "over").upper()
                 match_status = "final" if is_final else ("live" if is_live else "scheduled")
 
-                set_fields: dict = {
-                    "matchStatus": match_status,
-                    "gameId":      game_id,
-                    "homeTeam":    home_abbrev,
-                    "awayTeam":    away_abbrev,
-                }
+                set_fields: dict = {"matchStatus": match_status}
+                # Only write gameId/score fields when using TODAY's game (don't
+                # overwrite historical data on picks with a prior game's gameId).
+                if not stored_game_id or stored_game_id == today_game_id:
+                    set_fields["gameId"] = game_id
+                    set_fields["homeTeam"] = home_abbrev
+                    set_fields["awayTeam"] = away_abbrev
                 if home_runs is not None:
-                    set_fields["finalHomeGoals"] = home_runs  # reuse soccer field — pick card renders it already
+                    set_fields["finalHomeGoals"] = home_runs
                 if away_runs is not None:
                     set_fields["finalAwayGoals"] = away_runs
                 if current_value is not None:
