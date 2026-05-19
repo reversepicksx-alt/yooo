@@ -177,6 +177,8 @@ export default function ScanScreen() {
   const [cs2OppSearching, setCs2OppSearching] = useState(false);
   const [cs2PropType, setCs2PropType] = useState('maps_1_2_kills');
   const [cs2ShowPropPicker, setCs2ShowPropPicker] = useState(false);
+  const [cs2MapName, setCs2MapName] = useState('');
+  const [cs2TeamStartsCt, setCs2TeamStartsCt] = useState<boolean | null>(null);
   const cs2SearchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cs2OppSearchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -259,6 +261,14 @@ export default function ScanScreen() {
     setMlbOpponentQuery('');
     setMlbOpponentSuggestions([]);
     setMlbResolvedOpponent(null);
+    setCs2PlayerQuery('');
+    setCs2PlayerSuggestions([]);
+    setCs2ResolvedPlayer(null);
+    setCs2OpponentQuery('');
+    setCs2OpponentSuggestions([]);
+    setCs2ResolvedOpponent(null);
+    setCs2MapName('');
+    setCs2TeamStartsCt(null);
   };
 
   const processImage = async (base64: string, uri: string) => {
@@ -487,13 +497,15 @@ export default function ScanScreen() {
     setCs2PlayerSuggestions([]);
     try {
       const result = await cs2Predict({
-        playerNickname: cs2PlayerQuery.trim(),
-        playerId:       cs2ResolvedPlayer?.id || null,
-        teamName:       cs2ResolvedPlayer?.team?.name || '',
-        teamId:         cs2ResolvedPlayer?.team?.id || null,
-        propType:       cs2PropType,
-        line:           parseFloat(line),
-        opponentName:   cs2OpponentQuery.trim() || '',
+        playerNickname:     cs2PlayerQuery.trim(),
+        playerId:           cs2ResolvedPlayer?.id || null,
+        teamName:           cs2ResolvedPlayer?.team?.name || '',
+        teamId:             cs2ResolvedPlayer?.team?.id || null,
+        propType:           cs2PropType,
+        line:               parseFloat(line),
+        opponentName:       cs2OpponentQuery.trim() || '',
+        mapName:            cs2MapName.trim() || undefined,
+        playerTeamStartsCt: cs2TeamStartsCt !== null ? cs2TeamStartsCt : undefined,
       });
       if ((result as any).error) { setManualError((result as any).error); setPhase('idle'); return; }
       setScanResult({
@@ -1397,6 +1409,49 @@ export default function ScanScreen() {
               <Text style={styles.pickerBtnText}>{CS2_PROP_TYPES.find(p => p.value === cs2PropType)?.label || 'Select'}</Text>
               <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
             </TouchableOpacity>
+
+            <Text style={styles.fieldLabel}>Map <Text style={styles.fieldLabelOpt}>(optional — improves accuracy)</Text></Text>
+            <TextInput
+              style={[styles.textInput, INPUT_STYLE]}
+              placeholder="e.g. Mirage, Nuke, Anubis, Dust2"
+              placeholderTextColor={Colors.textTertiary}
+              value={cs2MapName}
+              onChangeText={setCs2MapName}
+              autoCorrect={false}
+              autoCapitalize="words"
+            />
+
+            <Text style={styles.fieldLabel}>Player Team Starts <Text style={styles.fieldLabelOpt}>(optional)</Text></Text>
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+              {([
+                { label: 'CT Side', value: true },
+                { label: 'T Side',  value: false },
+                { label: 'Unknown', value: null },
+              ] as { label: string; value: boolean | null }[]).map(opt => (
+                <TouchableOpacity
+                  key={opt.label}
+                  style={{
+                    flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: 'center',
+                    borderWidth: 1,
+                    borderColor: cs2TeamStartsCt === opt.value
+                      ? (opt.value === true ? Colors.primary : opt.value === false ? '#FF6B35' : Colors.textTertiary)
+                      : '#2A2A2A',
+                    backgroundColor: cs2TeamStartsCt === opt.value
+                      ? (opt.value === true ? Colors.primary + '20' : opt.value === false ? '#FF6B3520' : '#2A2A2A')
+                      : 'transparent',
+                  }}
+                  onPress={() => { setCs2TeamStartsCt(opt.value); Haptics.selectionAsync(); }}
+                  activeOpacity={0.75}
+                >
+                  <Text style={{
+                    fontSize: 12, fontFamily: 'JetBrainsMono_600SemiBold',
+                    color: cs2TeamStartsCt === opt.value
+                      ? (opt.value === true ? Colors.primary : opt.value === false ? '#FF6B35' : Colors.textSecondary)
+                      : Colors.textTertiary,
+                  }}>{opt.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
 
             <Text style={styles.fieldLabel}>Line Value</Text>
             <TextInput
@@ -2499,6 +2554,136 @@ export default function ScanScreen() {
                 </View>
               </View>
             )}
+
+            {/* ─── CS2 ALGORITHM BREAKDOWN CARD ─── */}
+            {prediction.sport === 'cs2' && (() => {
+              const bm2  = (prediction as any).bayesianMetrics || {};
+              const tm2  = bm2.tacticalMetrics || {};
+              const pO2  = (prediction as any).pOver  as number | undefined;
+              const pU2  = (prediction as any).pUnder as number | undefined;
+              const n2   = bm2.sampleSize as number | undefined;
+              const sf2  = (prediction as any).streakFlag as string | undefined;
+              const isO2 = pO2 != null && pU2 != null && pO2 >= pU2;
+              const summary2 = (prediction as any).sharpSummary || '';
+              const body2    = (prediction as any).reasoning || '';
+              const role2    = tm2.roleClassification || '';
+              const roleLabels2: Record<string,string> = {
+                awper:'AWPer', entry_fragger:'Entry Fragger', star_rifler:'Star Rifler',
+                lurker:'Lurker', igl:'IGL', support:'Support', rifler:'Rifler',
+              };
+              const roleStr2 = roleLabels2[role2] || role2;
+              const map2  = tm2.mapAwareness || (prediction as any).mapName || '';
+              const ct2   = tm2.playerTeamStartsCt;
+              const adrCareer2 = tm2.careerAdr as number | null | undefined;
+              const adrRecent2 = tm2.recentAdr  as number | null | undefined;
+              const adrDelta2  = (adrCareer2 != null && adrRecent2 != null) ? (adrRecent2 - adrCareer2) : null;
+              const underdogM2 = tm2.underdogCompress as number | undefined;
+              const formBias2  = tm2.formWindowBiasMult as number | undefined;
+              const kprFactor2 = tm2.mapKprFactor as number | undefined;
+              const ctWin2     = tm2.mapCtWinRate as number | undefined;
+              const h2hG2      = tm2.h2hGames as number | undefined;
+              const h2hAvg2    = tm2.h2hAvgKills as number | null | undefined;
+              const streakAdj2 = tm2.streakPAdj as number | undefined;
+              const kprCov2    = tm2.kprCoV as number | undefined;
+              const hsAvg2     = tm2.avgHeadshotPct as number | null | undefined;
+
+              const metricRows2: { label: string; val: string; color?: string }[] = [];
+              if (n2 != null)       metricRows2.push({ label:'SAMPLE', val:`${n2} maps` });
+              if (roleStr2)         metricRows2.push({ label:'ROLE', val: roleStr2,
+                color: role2==='awper'?'#A084E8': role2==='entry_fragger'?'#FF8C42': role2==='star_rifler'?Colors.primary: Colors.textSecondary });
+              if (hsAvg2 != null)   metricRows2.push({ label:'HS%', val:`${hsAvg2.toFixed(0)}%`,
+                color: hsAvg2 < 28 ? '#A084E8' : undefined });
+              if (adrCareer2 != null && adrRecent2 != null)
+                metricRows2.push({ label:'ADR TREND', val:`${adrRecent2.toFixed(0)} vs ${adrCareer2.toFixed(0)}`,
+                  color: adrDelta2! > 3 ? Colors.primary : adrDelta2! < -3 ? '#FF6B35' : Colors.textSecondary });
+              if (map2) {
+                let mapStr = map2.replace('de_','');
+                if (kprFactor2 != null && Math.abs(kprFactor2-1)>0.01) mapStr += ` (KPR ×${kprFactor2.toFixed(2)})`;
+                metricRows2.push({ label:'MAP', val: mapStr });
+              }
+              if (ct2 !== undefined && ct2 !== null && ctWin2 != null)
+                metricRows2.push({ label:'SIDE', val:`${ct2?'CT':'T'} · map CT ${(ctWin2*100).toFixed(1)}%`,
+                  color: (ct2 && ctWin2>0.52) ? Colors.primary : (!ct2 && ctWin2<0.50) ? Colors.primary : Colors.textSecondary });
+              if (formBias2 != null && Math.abs(formBias2-1)>0.01)
+                metricRows2.push({ label:'FORM', val:`${formBias2>1?'🔥 Hot':'❄️ Cold'} ×${formBias2.toFixed(2)}`,
+                  color: formBias2>1 ? Colors.primary : '#60A5FA' });
+              if (underdogM2 != null && Math.abs(underdogM2-1)>0.01)
+                metricRows2.push({ label:'RANK GAP', val:`×${underdogM2.toFixed(2)} ${underdogM2<1?'(underdog)':'(fav)'}`,
+                  color: underdogM2<1?'#FF6B35': Colors.primary });
+              if (h2hG2 != null && h2hG2 >= 2)
+                metricRows2.push({ label:'H2H', val:`${h2hG2}g avg ${h2hAvg2??'?'}` });
+              if (sf2)              metricRows2.push({ label:'STREAK', val: sf2.replace(/🔥|❄️/g,'').trim(),
+                color: sf2.includes('OVER') ? Colors.primary : '#60A5FA' });
+              if (kprCov2 != null)  metricRows2.push({ label:'KPR CoV', val:kprCov2.toFixed(3),
+                color: kprCov2>0.5?'#A084E8':undefined });
+
+              const borderC2 = isO2 ? Colors.primary : '#FF6B35';
+              return (
+                <View style={[styles.scoutCard, { borderColor: borderC2 + '44' }]}>
+                  {/* Header */}
+                  <View style={styles.scoutHeader}>
+                    <Ionicons name="analytics" size={13} color={Colors.primary} />
+                    <Text style={styles.scoutTitle}>CS2 ENGINE v4</Text>
+                    {n2 != null && (
+                      <View style={[styles.mfSamplesBadge, { marginLeft: 'auto' }]}>
+                        <Text style={styles.mfSamplesText}>{n2} MAPS</Text>
+                      </View>
+                    )}
+                  </View>
+
+                  {/* P(OVER) / P(UNDER) bar */}
+                  {pO2 != null && pU2 != null && (
+                    <View style={[styles.mfProbSection, { marginTop: 6 }]}>
+                      <View style={styles.mfProbTrack}>
+                        <View style={[styles.mfProbOverFill, { flex: pO2 }]} />
+                        <View style={styles.mfProbDivider} />
+                        <View style={[styles.mfProbUnderFill, { flex: pU2 }]} />
+                      </View>
+                      <View style={styles.mfProbLabels}>
+                        <View style={styles.mfProbLabelLeft}>
+                          <Text style={[styles.mfProbPct, { color: Colors.primary }]}>{pO2.toFixed(1)}%</Text>
+                          <Text style={styles.mfProbDir}>OVER</Text>
+                        </View>
+                        <Text style={styles.mfProbVs}>MC</Text>
+                        <View style={styles.mfProbLabelRight}>
+                          <Text style={[styles.mfProbPct, { color: '#FF6B35' }]}>{pU2.toFixed(1)}%</Text>
+                          <Text style={styles.mfProbDir}>UNDER</Text>
+                        </View>
+                      </View>
+                    </View>
+                  )}
+
+                  {/* Metrics grid */}
+                  {metricRows2.length > 0 && (
+                    <View style={{ flexDirection:'row', flexWrap:'wrap', gap:6, marginTop:8 }}>
+                      {metricRows2.map((row, i) => (
+                        <View key={i} style={{ flexDirection:'row', gap:4, alignItems:'center',
+                          backgroundColor:'#181818', borderRadius:5, paddingHorizontal:7, paddingVertical:4,
+                        }}>
+                          <Text style={{ fontSize:9, color:Colors.textTertiary, fontFamily:'JetBrainsMono_700Bold', letterSpacing:0.8 }}>{row.label}</Text>
+                          <Text style={{ fontSize:10, color: row.color || Colors.textSecondary, fontFamily:'JetBrainsMono_600SemiBold' }}>{row.val}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+
+                  {/* AI sharp summary */}
+                  {summary2 ? (
+                    <Text style={[styles.scoutSectionBody, { color:Colors.text, fontWeight:'600', marginTop:10, marginBottom:6 }]}>
+                      {summary2}
+                    </Text>
+                  ) : null}
+                  {body2 ? (
+                    <Text style={[styles.scoutSectionBody, { color:Colors.textSecondary }]}>{body2}</Text>
+                  ) : null}
+                  {streakAdj2 != null && streakAdj2 !== 0 && (
+                    <Text style={{ fontSize:10, color:Colors.textTertiary, marginTop:6, fontFamily:'JetBrainsMono_400Regular' }}>
+                      Streak momentum adj: {streakAdj2>0?'+':''}{streakAdj2}% p_over
+                    </Text>
+                  )}
+                </View>
+              );
+            })()}
 
             {/* ─── MLB AI ANALYSIS CARD ─── */}
             {prediction.sport === 'mlb' && (prediction.sharpSummary || prediction.reasoning) && (() => {

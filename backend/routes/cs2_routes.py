@@ -1,5 +1,6 @@
 """
 CS2 prediction routes — /api/cs2/*
+v4 Ultra: LAN/Online · Map KPR · CT/T Side · Enhanced Role · ADR Trend · Form Bias · Underdog Compression
 """
 import asyncio
 import logging
@@ -40,6 +41,18 @@ CS2_PROP_LABELS = {
     "maps_1_3_headshots":   "Maps 1-3 Headshots",
 }
 
+# Role → human label for AI prompt
+_ROLE_LABELS = {
+    "awper":         "AWPer (boom-bust, low HS%)",
+    "entry_fragger": "Entry Fragger (high FK rate, high KPR)",
+    "star_rifler":   "Star Rifler (consistent high KPR)",
+    "lurker":        "Lurker (clutch-dependent, flanks)",
+    "igl":           "IGL (sacrifices kills for utility/info)",
+    "support":       "Support (capped ceiling, very consistent)",
+    "rifler":        "Rifler (balanced)",
+    "unknown":       "Unknown",
+}
+
 
 # ── AI analysis helper ────────────────────────────────────────────────────────
 
@@ -58,6 +71,9 @@ async def _get_cs2_ai_analysis(
     streak_flag: str,
     opp_rank: Optional[int],
     tactical_metrics: Optional[dict] = None,
+    map_name: Optional[str] = None,
+    player_team_rank: Optional[int] = None,
+    player_team_starts_ct: Optional[bool] = None,
 ) -> dict:
     prop_label     = CS2_PROP_LABELS.get(prop_type, prop_type.replace("_", " ").title())
     is_match_level = prop_type in cs2_engine.MATCH_LEVEL_PROPS
@@ -84,8 +100,10 @@ async def _get_cs2_ai_analysis(
             rounds = m.get("totalRounds", "?")
             kpr    = m.get("killsPerRound", 0)
             kpr_s  = f" ({kpr:.2f}k/r)" if kpr and prop_type == "kills" else ""
+            adr    = m.get("adr", 0)
+            adr_s  = f" ADR={adr:.0f}" if adr else ""
             ctx_lines.append(
-                f"  Map {i+1} ({mn},{won},{rounds}rnd{kpr_s}): {val} {prop_label}"
+                f"  Map {i+1} ({mn},{won},{rounds}rnd{kpr_s}{adr_s}): {val} {prop_label}"
                 + (f" vs {opp_t}" if opp_t else "")
             )
     game_ctx = "\n".join(ctx_lines) or "  (no recent data)"
@@ -93,46 +111,94 @@ async def _get_cs2_ai_analysis(
     # ── Tactical metrics summary ──────────────────────────────────────────────
     tm = tactical_metrics or {}
     tm_lines = []
+
     if tm.get("avgKillsPerRound"):
         tm_lines.append(f"• Career KPR: {tm['avgKillsPerRound']:.3f} k/round")
+
     if tm.get("avgKast"):
         tm_lines.append(f"• KAST efficiency: {tm['avgKast']:.0f}% (consistency signal)")
-    if tm.get("entryFraggerRatio") and tm["entryFraggerRatio"] != 1.0:
-        ratio = tm["entryFraggerRatio"]
-        role  = "entry fragger" if ratio > 1.2 else "support" if ratio < 0.8 else "balanced"
-        tm_lines.append(f"• First-duel ratio: {ratio:.2f} ({role})")
+
+    # Role
+    role = tm.get("roleClassification", "unknown")
+    role_label = _ROLE_LABELS.get(role, role)
+    tm_lines.append(f"• Player role: {role_label}")
+
+    if tm.get("avgHeadshotPct") is not None:
+        tm_lines.append(f"• HS%: {tm['avgHeadshotPct']:.0f}% {'→ AWPer signal' if (tm['avgHeadshotPct'] or 100) < 28 else ''}")
+
+    # ADR trend
+    if tm.get("careerAdr") and tm.get("recentAdr"):
+        adr_delta = tm["recentAdr"] - tm["careerAdr"]
+        trend_s = f"+{adr_delta:.1f}" if adr_delta >= 0 else f"{adr_delta:.1f}"
+        tm_lines.append(f"• ADR trend: recent {tm['recentAdr']:.0f} vs career {tm['careerAdr']:.0f} ({trend_s})")
+
     if tm.get("oppRankMultiplier") and tm["oppRankMultiplier"] != 1.0:
         direction = "weaker" if tm["oppRankMultiplier"] > 1.0 else "stronger"
         tm_lines.append(f"• Opponent rank adj: {tm['oppRankMultiplier']:.2f}× ({direction} opposition)")
+
+    if tm.get("underdogCompress") and tm["underdogCompress"] != 1.0:
+        gap = (player_team_rank or 0) - (opp_rank or 0)
+        label = "underdog compression" if gap > 0 else "favorite boost"
+        tm_lines.append(f"• Rank gap factor: {tm['underdogCompress']:.2f}× ({label}, gap={gap:+d})")
+
+    if map_name:
+        map_clean = map_name.lower().replace("de_", "").strip()
+        tm_lines.append(f"• Map: {map_name} | Expected rounds: {tm.get('mapExpectedRounds', '?')} | KPR factor: {tm.get('mapKprFactor', 1.0):.2f}×")
+        if tm.get("mapCtWinRate"):
+            ct_pct = round(tm["mapCtWinRate"] * 100, 1)
+            side_s = f"CT {ct_pct}% — " + ("CT-favored" if ct_pct > 52 else "T-favored" if ct_pct < 48 else "balanced")
+            if player_team_starts_ct is not None:
+                side_s += f" | Player team starts: {'CT' if player_team_starts_ct else 'T'} → side adj: {tm.get('mapSideBiasMultiplier', 1.0):.3f}×"
+            tm_lines.append(f"• {side_s}")
+
     if tm.get("overtimeBonus") and tm["overtimeBonus"] > 0:
         tm_lines.append(f"• OT frequency bonus: +{tm['overtimeBonus']:.1f} kills")
+
+    if tm.get("h2hGames", 0) >= 2:
+        tm_lines.append(f"• H2H vs {opponent}: {tm['h2hGames']} games, avg {tm.get('h2hAvgKills', '?')} {prop_label} | H2H mult: {tm['h2hFormMult']:.2f}×")
+
+    if tm.get("lanVarMult") and abs(tm["lanVarMult"] - 1.0) > 0.02:
+        env = "LAN (structured)" if tm["lanVarMult"] < 1.0 else "Online (volatile)"
+        tm_lines.append(f"• Match environment: {env} | Variance factor: {tm['lanVarMult']:.2f}×")
+
+    if tm.get("formWindowBiasMult") and abs(tm["formWindowBiasMult"] - 1.0) > 0.01:
+        trend = "hot form" if tm["formWindowBiasMult"] > 1.0 else "cold form"
+        tm_lines.append(f"• Recent form bias: {tm['formWindowBiasMult']:.2f}× ({trend})")
+
     if tm.get("winRateAdj") and abs(tm["winRateAdj"] - 1.0) > 0.01:
         tm_lines.append(f"• Win-rate context: {tm['winRateAdj']:.2f}× (team form)")
+
+    if streak_flag:
+        tm_lines.append(f"• Streak: {streak_flag} (P adj: {tm.get('streakPAdj', 0):+.0f}%)")
+
     tactical_ctx = "\n".join(tm_lines) if tm_lines else "  (standard)"
 
     rank_note = f"Opponent world rank: #{opp_rank}" if opp_rank else "Opponent rank: unknown"
+    team_rank_note = f"Player team rank: #{player_team_rank}" if player_team_rank else ""
 
-    prompt = f"""You are a sharp CS2 esports betting analyst with deep knowledge of counter-strike tactics.
+    prompt = f"""You are a sharp CS2 esports betting analyst with deep knowledge of Counter-Strike tactics.
 
-Player: {player_nickname}
+Player: {player_nickname} | {team_rank_note}
 Prop: {prop_label} | Line: {line}
 Opponent: {opponent or 'TBD'} | {rank_note}
+Map: {map_name or 'TBD'}
 Season avg: {prior_mean:.1f} | Momentum avg: {momentum_mean:.1f}
-Model projection: {projection:.1f} → {recommendation.upper()} (P(OVER)={p_over}%, P(UNDER)={p_under}%){(' | ' + streak_flag) if streak_flag else ''}
+Model projection: {projection:.1f} → {recommendation.upper()} (P(OVER)={p_over}%, P(UNDER)={p_under}%)
 
-Tactical factors applied by model:
+v4 Tactical factors:
 {tactical_ctx}
 
-Recent match/map log (most recent first):
+Recent match/map log (newest first, with ADR and KPR when available):
 {game_ctx}
 
-Write a crisp, sharp 2-3 sentence CS2 betting analysis using the tactical data above:
-1. Why the model projects {projection:.1f} vs the {line} line (cite KPR, KAST, or round counts if relevant)
-2. Key matchup or form factor (opponent tier #{opp_rank or '?'}, entry-fragger role, momentum)
-3. Main risk or edge
+Write a sharp, specific CS2 betting analysis using ALL the tactical data above:
+1. Why the model projects {projection:.1f} vs {line} line — cite KPR, ADR trend, role, or map-side context
+2. Key matchup factor — rank gap, LAN/online environment, H2H history, or CT/T-side advantage
+3. Main edge or risk — streak, role volatility, underdog compression, or map KPR adjustment
 
-Be specific. Use CS2 terminology. Return JSON ONLY:
-{{"sharpSummary": "<1 tight sentence under 20 words>", "reasoning": "<2-3 sharp sentences with specific numbers>"}}"""
+Be precise. Use CS2 terminology. Reference specific numbers from the tactical factors.
+Return JSON ONLY:
+{{"sharpSummary": "<1 tight sentence under 22 words>", "reasoning": "<2-3 sharp sentences with specific numbers>"}}"""
 
     try:
         from openai import AsyncOpenAI
@@ -141,10 +207,10 @@ Be specific. Use CS2 terminology. Return JSON ONLY:
             client.chat.completions.create(
                 model="grok-4-1-fast-non-reasoning",
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=400,
-                temperature=0.4,
+                max_tokens=450,
+                temperature=0.35,
             ),
-            timeout=12,
+            timeout=14,
         )
         raw = resp.choices[0].message.content.strip()
         m   = re.search(r'\{[\s\S]*\}', raw)
@@ -203,15 +269,18 @@ async def get_rankings():
 # ── Predict ───────────────────────────────────────────────────────────────────
 
 class Cs2PredictRequest(BaseModel):
-    playerNickname: str
-    playerId:       Optional[int]  = None
-    teamName:       Optional[str]  = ""
-    teamId:         Optional[int]  = None
-    propType:       str
-    line:           float
-    opponentName:   Optional[str]  = ""
-    opponentRank:   Optional[int]  = None
-    mapName:        Optional[str]  = None   # e.g. "Mirage", "de_nuke" — map pool awareness
+    playerNickname:      str
+    playerId:            Optional[int]  = None
+    teamName:            Optional[str]  = ""
+    teamId:              Optional[int]  = None
+    propType:            str
+    line:                float
+    opponentName:        Optional[str]  = ""
+    opponentRank:        Optional[int]  = None
+    mapName:             Optional[str]  = None   # e.g. "Mirage", "de_nuke"
+    # NEW v4 parameters
+    playerTeamRank:      Optional[int]  = None   # player's team world rank (underdog compression)
+    playerTeamStartsCt:  Optional[bool] = None   # True = player's team starts CT
 
 
 @router.post("/predict")
@@ -235,7 +304,6 @@ async def cs2_predict(req: Cs2PredictRequest):
         results = await cs2_client.search_players(nickname)
         if not results:
             raise HTTPException(status_code=404, detail=f"Player '{nickname}' not found in CS2 database.")
-        # Pick best match — prefer active, exact nickname match first
         best = None
         nick_low = nickname.lower()
         for p in results:
@@ -256,9 +324,9 @@ async def cs2_predict(req: Cs2PredictRequest):
             detail=f"Could not determine team for '{nickname}'. Provide teamId.",
         )
 
-    print(f"[CS2 PREDICT] {nickname} ({player_id}) | {prop_type} {req.line} | team={team_name}({team_id}) | opp={req.opponentName or '?'}")
+    print(f"[CS2 PREDICT] {nickname} ({player_id}) | {prop_type} {req.line} | team={team_name}({team_id}) | opp={req.opponentName or '?'} | map={req.mapName or '?'} | teamRank={req.playerTeamRank} | startsCT={req.playerTeamStartsCt}")
 
-    # ── Fetch stats (match-level for maps_1_2 props, per-map for everything else) ─
+    # ── Fetch stats ───────────────────────────────────────────────────────────
     is_match_level = prop_type in cs2_engine.MATCH_LEVEL_PROPS
     try:
         if is_match_level:
@@ -277,12 +345,19 @@ async def cs2_predict(req: Cs2PredictRequest):
 
     # ── Fetch opponent rank if opponentName given ────────────────────────────
     opp_rank = req.opponentRank
-    if req.opponentName and not opp_rank:
+    player_team_rank = req.playerTeamRank
+    if req.opponentName and (not opp_rank or not player_team_rank):
         try:
-            rankings = await cs2_client.get_rankings(50)
+            rankings = await cs2_client.get_rankings(100)
+            opp_name_low  = (req.opponentName or "").lower()
+            team_name_low = team_name.lower()
             for r in rankings:
-                if req.opponentName.lower() in r.get("team", {}).get("name", "").lower():
+                rname = r.get("team", {}).get("name", "").lower()
+                if not opp_rank and opp_name_low and opp_name_low in rname:
                     opp_rank = r.get("rank")
+                if not player_team_rank and team_name_low and team_name_low in rname:
+                    player_team_rank = r.get("rank")
+                if opp_rank and player_team_rank:
                     break
         except Exception:
             pass
@@ -295,6 +370,8 @@ async def cs2_predict(req: Cs2PredictRequest):
         opponent_rank=opp_rank,
         opponent_name=req.opponentName or None,
         map_name=req.mapName or None,
+        player_team_rank=player_team_rank,
+        player_team_starts_ct=req.playerTeamStartsCt,
     )
 
     if result.get("error") == "insufficient_data":
@@ -321,43 +398,49 @@ async def cs2_predict(req: Cs2PredictRequest):
         streak_flag=result.get("streakFlag", ""),
         opp_rank=opp_rank,
         tactical_metrics=tactical_metrics,
+        map_name=req.mapName or None,
+        player_team_rank=player_team_rank,
+        player_team_starts_ct=req.playerTeamStartsCt,
     ))
 
     try:
-        ai = await asyncio.wait_for(ai_task, timeout=12)
+        ai = await asyncio.wait_for(ai_task, timeout=14)
     except Exception:
         ai = {}
 
     prop_label = CS2_PROP_LABELS.get(prop_type, prop_type.replace("_", " ").title())
 
     return {
-        "sport":            "cs2",
-        "playerName":       nickname,
-        "playerId":         player_id,
-        "teamName":         team_name,
-        "teamId":           team_id,
-        "propType":         prop_type,
-        "propLabel":        prop_label,
-        "line":             req.line,
-        "opponentName":     req.opponentName or "",
-        "opponentRank":     opp_rank,
-        "projection":       result["projection"],
-        "pOver":            result["pOver"],
-        "pUnder":           result["pUnder"],
-        "recommendation":   result["recommendation"],
-        "confidenceScore":  result["confidenceScore"],
-        "confidenceLevel":  result["confidenceLevel"],
-        "priorMean":        result["priorMean"],
-        "momentumMean":     result["momentumMean"],
-        "sampleSize":       result["sampleSize"],
-        "streakFlag":       result.get("streakFlag", ""),
-        "sharpSummary":     ai.get("sharpSummary", ""),
-        "reasoning":        ai.get("reasoning", ""),
-        "gameLogs":         map_logs[:15],
+        "sport":               "cs2",
+        "playerName":          nickname,
+        "playerId":            player_id,
+        "teamName":            team_name,
+        "teamId":              team_id,
+        "propType":            prop_type,
+        "propLabel":           prop_label,
+        "line":                req.line,
+        "opponentName":        req.opponentName or "",
+        "opponentRank":        opp_rank,
+        "mapName":             req.mapName or "",
+        "playerTeamRank":      player_team_rank,
+        "playerTeamStartsCt":  req.playerTeamStartsCt,
+        "projection":          result["projection"],
+        "pOver":               result["pOver"],
+        "pUnder":              result["pUnder"],
+        "recommendation":      result["recommendation"],
+        "confidenceScore":     result["confidenceScore"],
+        "confidenceLevel":     result["confidenceLevel"],
+        "priorMean":           result["priorMean"],
+        "momentumMean":        result["momentumMean"],
+        "sampleSize":          result["sampleSize"],
+        "streakFlag":          result.get("streakFlag", ""),
+        "sharpSummary":        ai.get("sharpSummary", ""),
+        "reasoning":           ai.get("reasoning", ""),
+        "gameLogs":            map_logs[:15],
         "bayesianMetrics": {
-            "priorMean":       result["priorMean"],
-            "momentumMean":    result["momentumMean"],
-            "sampleSize":      result["sampleSize"],
-            "tacticalMetrics": tactical_metrics,
+            "priorMean":        result["priorMean"],
+            "momentumMean":     result["momentumMean"],
+            "sampleSize":       result["sampleSize"],
+            "tacticalMetrics":  tactical_metrics,
         },
     }

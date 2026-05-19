@@ -1,0 +1,35 @@
+Match Context
+•  Match: Falcons Force vs fnatic (CCT Europe 2026 Series #2)
+•  Format: BO3
+•  Current Odds: fnatic are heavy favorites (~70-80% to win the series)
+•  Falcons Force are significant underdogs
+Your bot is currently live with 4 Overs:
+•  Nucleonz Over 26 kills
+•  VENO Over 26.5 kills
+•  grecu Over 27.5 kills
+•  jambo Over (likely ~39 kills on fnatic side)
+3-Layer Analysis
+Layer 1: Raw Form & Player Stats
+•  The players you picked (Nucleonz, VENO, grecu) are Falcons Force’s main attackers.
+•  They’ve shown decent form recently, but they are still much lower rated than fnatic’s players overall.
+•  jambo (on fnatic) is in good form and usually delivers high kill numbers.
+Layer 2: Matchup & Map Pool
+•  fnatic is clearly the better team and should win most maps.
+•  However, Falcons Force can steal maps 1 and 2 if the map pool favors them.
+•  The bot seems to be assuming Falcons Force will be competitive on the first two maps, which is why it’s going Over on their players.
+Layer 3: Line Value & Bot Behavior
+•  Your bot is heavily biased toward Overs right now. This is a common pattern when it sees underdogs in favorable map situations.
+•  The lines might be set assuming Falcons Force will play close maps, but fnatic’s overall superiority makes this risky.
+Is Your Bot Wrong?
+Yes, I think the bot is overvaluing these Overs.
+Why:
+•  fnatic is significantly better and should control most maps.
+•  Even if Falcons Force steals a map, their players are unlikely to post the high kill numbers needed to clear these lines consistently.
+•  The bot is probably overestimating how much Falcons Force will compete on maps 1 and 2.
+Does Venue Matter in CS2?
+Short Answer: Yes, but not as much as in soccer.
+•  LAN vs Online: LAN events (like this CCT) usually favor more experienced teams. fnatic has much more LAN experience than Falcons Force.
+•  Crowd & Atmosphere: Can slightly affect underdogs more than favorites.
+•  Travel/Jet Lag: Can impact teams traveling long distances.
+Your bot missing venue data is a weakness. In this case, playing on LAN against a more experienced European team (fnatic) makes Falcons Force’s Overs even riskier.
+Final Recommendation
