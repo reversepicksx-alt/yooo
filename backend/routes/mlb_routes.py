@@ -71,7 +71,7 @@ async def _get_mlb_ai_analysis(
     # Pitcher matchup context
     pitcher_text = ""
     if pitcher_name:
-        pitcher_text = f"\nOpposing pitcher: {pitcher_name}. Use your knowledge of their 2025 ERA, K-rate, WHIP, and handedness to assess matchup quality."
+        pitcher_text = f"\nOpposing pitcher: {pitcher_name}. Use your knowledge of their {CURRENT_MLB_SEASON} ERA, K-rate, WHIP, and handedness to assess matchup quality."
     elif opponent and not is_pitcher:
         pitcher_text = f"\nNote: opposing pitcher for {opponent} is unknown — factor in their typical rotation quality."
 

@@ -2642,12 +2642,15 @@ export default function ScanScreen() {
                                 ? g.opponent
                                 : (isPitcher && g.pitchCount != null ? `${g.pitchCount}P` : '');
 
-                              // Date display MM/DD if enriched
+                              // Date display MM/DD if enriched; suffix "'YY" for prior-season games
                               let dateTxt = '';
                               if (g.gameDate) {
                                 const d = new Date(g.gameDate);
                                 if (!isNaN(d.getTime())) {
-                                  dateTxt = `${d.getMonth() + 1}/${d.getDate()}`;
+                                  const gameYear = d.getFullYear();
+                                  const currentSeason = (prediction as any).season ?? new Date().getFullYear();
+                                  const yearSuffix = gameYear < currentSeason ? ` '${String(gameYear).slice(-2)}` : '';
+                                  dateTxt = `${d.getMonth() + 1}/${d.getDate()}${yearSuffix}`;
                                 }
                               }
 
