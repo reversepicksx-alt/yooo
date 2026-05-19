@@ -458,61 +458,23 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete?: () => void }) {
         );
       })()}
 
-      {/* Match score + possession block — clearly labels home (left) vs away
-          (right). Shows actual final/live possession when available AND the
-          model's pre-match projected possession on its own line — so the user
-          can spot when the projection was off (a directional edge signal). */}
+      {/* Match context — single compact line: score + poss merged */}
       {showScoreLine && (
         <View style={styles.matchCtxBlock}>
-          <View style={styles.matchCtxScoreRow}>
+          <Text style={styles.matchCtxLine} numberOfLines={1} ellipsizeMode="tail">
             {haveScoreNumbers ? (
-              <>
-                <Text style={styles.scoreLabel}>{settled ? 'FT' : 'LIVE'}</Text>
-                <Text style={styles.scoreText} numberOfLines={1} ellipsizeMode="middle">
-                  <Text style={[styles.scoreTeamName, { color: homeColor }]}>{homeTeamName || 'Home'}</Text>
-                  <Text style={[styles.scoreNum, { color: homeColor }]}>{`  ${finalHome}`}</Text>
-                  <Text style={styles.scoreDash}>{'  –  '}</Text>
-                  <Text style={[styles.scoreNum, { color: awayColor }]}>{`${finalAway}  `}</Text>
-                  <Text style={[styles.scoreTeamName, { color: awayColor }]}>{awayTeamName || 'Away'}</Text>
-                </Text>
-              </>
-            ) : (
-              // No score yet (pre-match / pending): still show team labels so
-              // the user can read the possession figures below.
-              <Text style={styles.scoreText} numberOfLines={1} ellipsizeMode="middle">
-                <Text style={[styles.scoreTeamName, { color: Colors.textSecondary }]}>{homeTeamName || 'Home'}</Text>
-                <Text style={styles.scoreDash}>{'   vs   '}</Text>
-                <Text style={[styles.scoreTeamName, { color: Colors.textSecondary }]}>{awayTeamName || 'Away'}</Text>
-              </Text>
-            )}
-          </View>
-          {(hasActualPoss || hasProjPoss) && (() => {
-            // Compact single line: actual + projection + delta together
-            // (was 2 stacked lines — collapsed to save vertical space).
-            let deltaTag: { color: string; label: string } | null = null;
-            if (hasActualPoss && hasProjPoss) {
+              `${settled ? 'FT' : 'LIVE'} `
+            ) : ''}
+            {haveScoreNumbers
+              ? `${homeTeamName || 'Home'} ${finalHome}–${finalAway} ${awayTeamName || 'Away'}`
+              : `${homeTeamName || 'Home'} vs ${awayTeamName || 'Away'}`}
+            {hasActualPoss ? `  ·  ${homePoss}/${awayPoss}%` : ''}
+            {hasProjPoss && !hasActualPoss ? `  ·  Proj ${Math.round(projHomePoss as number)}/${Math.round(projAwayPoss as number)}%` : ''}
+            {hasActualPoss && hasProjPoss ? (() => {
               const delta = Math.abs((projHomePoss as number) - (homePoss as number));
-              const color = delta <= 3 ? Colors.success : delta >= 8 ? Colors.error : Colors.textSecondary;
-              deltaTag = { color, label: `Δ${delta.toFixed(0)}` };
-            }
-            return (
-              <View style={styles.projPossRow}>
-                {hasActualPoss && (
-                  <Text style={styles.possText} numberOfLines={1}>
-                    {settled ? 'Poss' : 'Live'} {homePoss}/{awayPoss}
-                  </Text>
-                )}
-                {hasProjPoss && (
-                  <Text style={styles.projPossText} numberOfLines={1}>
-                    Proj {Math.round(projHomePoss as number)}/{Math.round(projAwayPoss as number)}
-                  </Text>
-                )}
-                {deltaTag && (
-                  <Text style={[styles.projDeltaText, { color: deltaTag.color }]}>{deltaTag.label}</Text>
-                )}
-              </View>
-            );
-          })()}
+              return ` Δ${delta.toFixed(0)}`;
+            })() : ''}
+          </Text>
         </View>
       )}
 
@@ -1220,12 +1182,12 @@ const styles = StyleSheet.create({
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, paddingHorizontal: 40 },
   emptyTitle: { fontSize: 18, fontWeight: '700', color: Colors.text },
   emptySub: { fontSize: 14, color: Colors.textSecondary, textAlign: 'center', lineHeight: 21 },
-  list: { paddingHorizontal: 16, paddingBottom: 40, gap: 4 },
+  list: { paddingHorizontal: 12, paddingBottom: 40, gap: 2 },
 
   card: {
-    backgroundColor: Colors.card, borderRadius: 10,
-    paddingHorizontal: 10, paddingVertical: 6,
-    borderWidth: 1, borderColor: Colors.borderSubtle, gap: 2,
+    backgroundColor: Colors.card, borderRadius: 8,
+    paddingHorizontal: 9, paddingVertical: 4,
+    borderWidth: 1, borderColor: Colors.borderSubtle, gap: 1,
   },
   cardWon: { borderColor: 'rgba(57,255,20,0.3)' },
   cardLost: { borderColor: 'rgba(255,59,48,0.25)' },
@@ -1235,8 +1197,8 @@ const styles = StyleSheet.create({
   cardPlayer: { fontSize: 13, fontWeight: '700', color: Colors.text, flex: 1 },
   cardMeta: { fontSize: 9, color: Colors.textTertiary, letterSpacing: 0.2, marginBottom: 1 },
 
-  cardRow2: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
-  cardRow2Left: { flex: 1, gap: 1 },
+  cardRow2: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6 },
+  cardRow2Left: { flex: 1, gap: 0 },
   inlineStats: { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 },
   inlineStat: { alignItems: 'center', gap: 0 },
   inlineVal: { fontSize: 12, fontWeight: '700', color: Colors.text },
@@ -1293,12 +1255,12 @@ const styles = StyleSheet.create({
   confBadgeText: { fontSize: 9, fontWeight: '800', letterSpacing: 0.3 },
 
   trackBarOuter: {
-    height: 4,
+    height: 3,
     backgroundColor: Colors.cardSecondary,
     borderRadius: 2,
     overflow: 'hidden',
     position: 'relative',
-    marginTop: 3,
+    marginTop: 2,
   },
   trackBarFill: {
     position: 'absolute',
@@ -1318,31 +1280,17 @@ const styles = StyleSheet.create({
   },
 
   matchCtxBlock: {
-    marginTop: 4,
-    paddingTop: 3,
+    marginTop: 2,
+    paddingTop: 2,
     borderTopWidth: 1,
     borderTopColor: Colors.borderSubtle,
-    gap: 1,
   },
-  matchCtxScoreRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  scoreLabel: {
-    fontSize: 8,
-    fontWeight: '800',
+  matchCtxLine: {
+    fontSize: 9,
     color: Colors.textTertiary,
-    letterSpacing: 0.5,
+    fontWeight: '600',
+    letterSpacing: 0.1,
   },
-  scoreText: { flex: 1, fontSize: 10 },
-  scoreTeamName: { fontWeight: '700' },
-  scoreNum: { fontWeight: '800' },
-  scoreDash: { color: Colors.textTertiary, fontWeight: '600' },
-  possText: { fontSize: 9, color: Colors.textSecondary, fontWeight: '600' },
-  projPossRow: { flexDirection: 'row', alignItems: 'center', gap: 5, flexWrap: 'wrap' },
-  projPossText: { fontSize: 9, color: Colors.textTertiary, fontWeight: '600', fontStyle: 'italic', flexShrink: 1 },
-  projDeltaText: { fontSize: 8, fontWeight: '800', letterSpacing: 0.3, flexShrink: 0 },
 
   swipeAction: {
     backgroundColor: Colors.error,
