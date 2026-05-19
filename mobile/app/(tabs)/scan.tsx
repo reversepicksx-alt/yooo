@@ -165,6 +165,12 @@ export default function ScanScreen() {
   const [mlbPropType, setMlbPropType] = useState('hits');
   const [mlbShowPropPicker, setMlbShowPropPicker] = useState(false);
   const mlbSearchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // MLB v2 Ultra fields
+  const [mlbBatterHand, setMlbBatterHand] = useState<'L'|'R'|'S'|null>(null);
+  const [mlbPitcherHand, setMlbPitcherHand] = useState<'L'|'R'|null>(null);
+  const [mlbPitcherEra, setMlbPitcherEra] = useState('');
+  const [mlbGameTotal, setMlbGameTotal] = useState('');
+  const [mlbLineupSpot, setMlbLineupSpot] = useState('');
 
   // CS2 manual mode fields
   const [cs2PlayerQuery, setCs2PlayerQuery] = useState('');
@@ -261,6 +267,11 @@ export default function ScanScreen() {
     setMlbOpponentQuery('');
     setMlbOpponentSuggestions([]);
     setMlbResolvedOpponent(null);
+    setMlbBatterHand(null);
+    setMlbPitcherHand(null);
+    setMlbPitcherEra('');
+    setMlbGameTotal('');
+    setMlbLineupSpot('');
     setCs2PlayerQuery('');
     setCs2PlayerSuggestions([]);
     setCs2ResolvedPlayer(null);
@@ -430,15 +441,20 @@ export default function ScanScreen() {
     setMlbPlayerSuggestions([]);
     try {
       const result = await mlbPredict({
-        playerName:   mlbPlayerQuery.trim(),
-        playerId:     mlbResolvedPlayer?.id || null,
-        teamName:     mlbResolvedPlayer?.team?.displayName || '',
-        position:     mlbResolvedPlayer?.position || '',
-        propType:     mlbPropType,
-        line:         parseFloat(line),
-        opponentName: mlbResolvedOpponent?.displayName || mlbOpponentQuery.trim() || '',
-        venue:        venueOverride,
-        season:       2026,
+        playerName:        mlbPlayerQuery.trim(),
+        playerId:          mlbResolvedPlayer?.id || null,
+        teamName:          mlbResolvedPlayer?.team?.displayName || '',
+        position:          mlbResolvedPlayer?.position || '',
+        propType:          mlbPropType,
+        line:              parseFloat(line),
+        opponentName:      mlbResolvedOpponent?.displayName || mlbOpponentQuery.trim() || '',
+        venue:             venueOverride,
+        season:            2026,
+        batterHandedness:  mlbBatterHand || undefined,
+        pitcherHandedness: mlbPitcherHand || undefined,
+        pitcherEra:        mlbPitcherEra ? parseFloat(mlbPitcherEra) : undefined,
+        gameTotal:         mlbGameTotal ? parseFloat(mlbGameTotal) : undefined,
+        lineupSpot:        mlbLineupSpot ? parseInt(mlbLineupSpot) : undefined,
       });
       if ((result as any).error) { setManualError((result as any).error); setPhase('idle'); return; }
       setScanResult({
@@ -1285,6 +1301,75 @@ export default function ScanScreen() {
                 <Ionicons name="airplane-outline" size={13} color={venueOverride === 'away' ? Colors.primary : Colors.textSecondary} />
                 <Text style={[styles.venueOptionText, venueOverride === 'away' && styles.venueOptionTextActive]}>AWAY</Text>
               </TouchableOpacity>
+            </View>
+
+            {/* ── MLB v2 Ultra fields ── */}
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 4 }}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.fieldLabel}>Batter Hand <Text style={styles.fieldLabelOpt}>(opt)</Text></Text>
+                <View style={[styles.venueToggle, { gap: 4 }]}>
+                  {(['L','R','S'] as const).map(h => (
+                    <TouchableOpacity
+                      key={h}
+                      style={[styles.venueOption, { flex: 1, paddingHorizontal: 4 }, mlbBatterHand === h && styles.venueOptionActive]}
+                      onPress={() => { setMlbBatterHand(mlbBatterHand === h ? null : h); Haptics.selectionAsync(); }}
+                    >
+                      <Text style={[styles.venueOptionText, mlbBatterHand === h && styles.venueOptionTextActive]}>{h}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.fieldLabel}>Pitcher Hand <Text style={styles.fieldLabelOpt}>(opt)</Text></Text>
+                <View style={[styles.venueToggle, { gap: 4 }]}>
+                  {(['L','R'] as const).map(h => (
+                    <TouchableOpacity
+                      key={h}
+                      style={[styles.venueOption, { flex: 1 }, mlbPitcherHand === h && styles.venueOptionActive]}
+                      onPress={() => { setMlbPitcherHand(mlbPitcherHand === h ? null : h); Haptics.selectionAsync(); }}
+                    >
+                      <Text style={[styles.venueOptionText, mlbPitcherHand === h && styles.venueOptionTextActive]}>{h}HP</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            </View>
+
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 4 }}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.fieldLabel}>Opp Pitcher ERA <Text style={styles.fieldLabelOpt}>(opt)</Text></Text>
+                <TextInput
+                  style={[styles.textInput, INPUT_STYLE]}
+                  placeholder="e.g. 3.45"
+                  placeholderTextColor={Colors.textTertiary}
+                  value={mlbPitcherEra}
+                  onChangeText={setMlbPitcherEra}
+                  keyboardType="decimal-pad"
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.fieldLabel}>Game Total O/U <Text style={styles.fieldLabelOpt}>(opt)</Text></Text>
+                <TextInput
+                  style={[styles.textInput, INPUT_STYLE]}
+                  placeholder="e.g. 9.5"
+                  placeholderTextColor={Colors.textTertiary}
+                  value={mlbGameTotal}
+                  onChangeText={setMlbGameTotal}
+                  keyboardType="decimal-pad"
+                />
+              </View>
+              <View style={{ flex: 0.7 }}>
+                <Text style={styles.fieldLabel}>Lineup Spot <Text style={styles.fieldLabelOpt}>(opt)</Text></Text>
+                <TextInput
+                  style={[styles.textInput, INPUT_STYLE]}
+                  placeholder="1-9"
+                  placeholderTextColor={Colors.textTertiary}
+                  value={mlbLineupSpot}
+                  onChangeText={t => setMlbLineupSpot(t.replace(/[^1-9]/g,'').slice(0,1))}
+                  keyboardType="number-pad"
+                  maxLength={1}
+                />
+              </View>
             </View>
 
             {manualError && (

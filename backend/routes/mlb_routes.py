@@ -33,8 +33,24 @@ async def _get_mlb_ai_analysis(
     park_factor_pct: float = 0.0,
     early_exit_risk: bool = False,
     zero_k_count: int = 0,
+    # v2 new factors
+    pitcher_handedness: str = "",
+    batter_handedness: str = "",
+    pitcher_era: Optional[float] = None,
+    game_total: Optional[float] = None,
+    lineup_spot: Optional[int] = None,
+    platoon_mult: float = 1.0,
+    era_mult: float = 1.0,
+    total_mult: float = 1.0,
+    lineup_mult: float = 1.0,
+    babip_mult: float = 1.0,
+    rolling_babip: Optional[float] = None,
+    krate_mult: float = 1.0,
+    rolling_k_rate: Optional[float] = None,
+    pitcher_role: str = "",
+    pitch_traj_mult: float = 1.0,
 ) -> dict:
-    """Call Grok for MLB sharp verdict + reasoning, with park + pitcher + early-exit context."""
+    """Call Grok for MLB sharp verdict + reasoning — v2 Ultra with all 9 model layers."""
     is_pitcher = prop_type in mlb_engine.PITCHER_PROPS
     prop_label = prop_type.replace("_", " ").title()
 
@@ -71,36 +87,87 @@ async def _get_mlb_ai_analysis(
     # Pitcher matchup context
     pitcher_text = ""
     if pitcher_name:
-        pitcher_text = f"\nOpposing pitcher: {pitcher_name}. Use your knowledge of their {CURRENT_MLB_SEASON} ERA, K-rate, WHIP, and handedness to assess matchup quality."
+        pitcher_text = f"\nOpposing pitcher: {pitcher_name}"
+        if pitcher_era is not None:
+            pitcher_text += f" (ERA {pitcher_era:.2f})"
+        if pitcher_handedness:
+            pitcher_text += f" — {pitcher_handedness}HP"
+        pitcher_text += f". Use your knowledge of their {CURRENT_MLB_SEASON} K-rate, WHIP, and stuff to assess matchup quality."
     elif opponent and not is_pitcher:
-        pitcher_text = f"\nNote: opposing pitcher for {opponent} is unknown — factor in their typical rotation quality."
+        pitcher_text = f"\nOpposing pitcher for {opponent} unknown — factor in their typical rotation quality."
 
-    # Early-exit / scratch risk warning for pitcher strikeout OVER picks
+    # Platoon split context
+    platoon_text = ""
+    if batter_handedness and pitcher_handedness and abs(platoon_mult - 1.0) >= 0.015:
+        direction = "advantage" if platoon_mult > 1.0 else "disadvantage"
+        platoon_text = (
+            f"\nPlatoon split: {batter_handedness}HB vs {pitcher_handedness}HP → "
+            f"{platoon_mult:.2f}× ({direction}, {abs(platoon_mult - 1.0)*100:.0f}% effect on {prop_label})."
+        )
+    elif batter_handedness and pitcher_handedness:
+        platoon_text = f"\nPlatoon: {batter_handedness}HB vs {pitcher_handedness}HP (neutral matchup)."
+
+    # ERA tier context
+    era_text = ""
+    if pitcher_era is not None and abs(era_mult - 1.0) >= 0.03:
+        direction = "suppresses" if era_mult < 1.0 else "boosts"
+        era_text = f"\nPitcher ERA {pitcher_era:.2f} {direction} batter output by {abs(era_mult - 1.0)*100:.0f}% (model applied {era_mult:.2f}× ERA adjustment)."
+
+    # Game total context
+    total_text = ""
+    if game_total is not None:
+        env = "high-scoring" if game_total > 9.5 else ("low-scoring" if game_total < 7.5 else "average-scoring")
+        total_text = f"\nGame total O/U {game_total}: {env} environment (×{total_mult:.2f} environment factor applied)."
+
+    # Lineup position context
+    lineup_text = ""
+    if lineup_spot is not None and abs(lineup_mult - 1.0) >= 0.02:
+        slot_label = {1:"leadoff", 2:"2-hole", 3:"3-hole", 4:"cleanup", 5:"5-hole",
+                      6:"6-hole", 7:"7-hole", 8:"8-hole", 9:"9-hole"}.get(lineup_spot, f"spot {lineup_spot}")
+        lineup_text = f"\nLineup spot: {slot_label} (#{lineup_spot}) → {lineup_mult:.2f}× PA opportunity vs league avg."
+
+    # BABIP regression context
+    babip_text = ""
+    if rolling_babip is not None and abs(babip_mult - 1.0) >= 0.02:
+        direction = "regression pressure" if babip_mult < 1.0 else "bounce-back signal"
+        babip_text = (
+            f"\nBABIP regression: rolling BABIP {rolling_babip:.3f} vs .295 league avg → "
+            f"{direction} applied ({babip_mult:.2f}× hits adjustment)."
+        )
+
+    # K-rate trend context
+    krate_text = ""
+    if rolling_k_rate is not None and abs(krate_mult - 1.0) >= 0.02:
+        direction = "high K rate (poor contact)" if krate_mult < 1.0 else "low K rate (elite contact)"
+        krate_text = f"\nContact quality: {rolling_k_rate:.1%} recent K rate → {direction} ({krate_mult:.2f}× hits adjustment)."
+
+    # Pitch count trajectory / opener
+    role_text = ""
+    if pitcher_role and pitcher_role not in ("unknown", "starter", "standard_starter"):
+        role_text = f"\nPitcher role detection: '{pitcher_role}' (avg pitch count pattern → {pitch_traj_mult:.2f}× IP/K adjustment)."
+
+    # Early-exit / scratch risk
     risk_text = ""
     if prop_type == "pitcher_strikeouts" and early_exit_risk:
         risk_text = (
             f"\n⚠ EARLY-EXIT RISK: This pitcher has {zero_k_count} starts with 0 K "
             f"in their last 5 game log — indicating early scratches or 1st-inning pulls. "
-            f"Weight this heavily in your reasoning; the model has already discounted the OVER probability."
+            f"Model has discounted OVER probability accordingly."
         )
 
-    prompt = f"""MLB Props sharp analysis (for experienced sports bettors):
+    prompt = f"""MLB Props sharp analysis (for experienced sports bettors) — v2 Ultra:
 
 Player: {player_name} ({position})
 Prop: {prop_label} | Line: {line} | Venue: {venue.upper()} vs {opponent or 'TBD'}
 Season avg: {prior_mean:.1f} | Recent form: {momentum_label}
-Model projection: {projection:.1f} → {recommendation} (P(OVER)={p_over}%, P(UNDER)={p_under}%){streak_text}{park_text}{pitcher_text}{risk_text}
+Model projection: {projection:.1f} → {recommendation} (P(OVER)={p_over}%, P(UNDER)={p_under}%){streak_text}{park_text}{pitcher_text}{platoon_text}{era_text}{total_text}{lineup_text}{babip_text}{krate_text}{role_text}{risk_text}
 
 Recent game log (G1 = most recent):
 {game_ctx}
 
-Write a sharp analysis covering:
-1. Core edge: why project {projection:.1f} vs the {line} line
-2. Park and/or pitcher matchup impact — be specific if pitcher is named
-3. Main risk / counter-argument (mention early-exit risk if flagged above)
-
-Be direct, data-driven. Return JSON ONLY:
-{{"sharpSummary": "<1 tight sentence with the core edge>", "reasoning": "<2-3 sharp sentences covering matchup, park, momentum, risk>"}}"""
+Write sharp analysis covering ALL relevant factors above. Be specific about which factors move the needle most.
+Return JSON ONLY:
+{{"sharpSummary": "<1 tight sentence with core edge + biggest factor>", "reasoning": "<2-4 sharp sentences covering platoon split, ERA tier, game environment, BABIP/contact quality, and park — only mention factors that are actually provided above>"}}"""
 
     # Try Grok first
     try:
@@ -210,16 +277,22 @@ async def get_teams():
 # ── Predict ───────────────────────────────────────────────────────────────────
 
 class MlbPredictRequest(BaseModel):
-    playerName:   str
-    playerId:     Optional[int] = None
-    teamName:     Optional[str] = ""
-    position:     Optional[str] = ""
-    propType:     str
-    line:         float
-    opponentName: Optional[str] = ""
-    venue:        Optional[str] = "home"
-    season:       Optional[int] = CURRENT_MLB_SEASON
-    pitcherName:  Optional[str] = ""   # opposing SP if known
+    playerName:        str
+    playerId:          Optional[int] = None
+    teamName:          Optional[str] = ""
+    position:          Optional[str] = ""
+    propType:          str
+    line:              float
+    opponentName:      Optional[str] = ""
+    venue:             Optional[str] = "home"
+    season:            Optional[int] = CURRENT_MLB_SEASON
+    pitcherName:       Optional[str] = ""    # opposing SP name if known
+    # ── v2 Ultra parameters ──────────────────────────────────────────────────
+    pitcherHandedness: Optional[str] = None  # 'L' or 'R' — opposing pitcher
+    batterHandedness:  Optional[str] = None  # 'L', 'R', or 'S' — this batter
+    pitcherEra:        Optional[float] = None # opposing pitcher's current-season ERA
+    gameTotal:         Optional[float] = None # game O/U total line
+    lineupSpot:        Optional[int]   = None # batting order 1-9
 
 
 @router.post("/predict")
@@ -338,16 +411,29 @@ async def mlb_predict(req: MlbPredictRequest):
     # home game → player's own team park; away game → opponent's park
     park_team = team_name if venue == "home" else (req.opponentName or "")
 
-    # ── Run engine ────────────────────────────────────────────────────────────
+    # ── Normalize v2 handedness params ────────────────────────────────────────
+    pitcher_hand = (req.pitcherHandedness or "").upper().strip() or None
+    batter_hand  = (req.batterHandedness  or "").upper().strip() or None
+    if pitcher_hand and pitcher_hand not in ("L", "R"):
+        pitcher_hand = None
+    if batter_hand and batter_hand not in ("L", "R", "S"):
+        batter_hand = None
+
+    # ── Run engine v2 ─────────────────────────────────────────────────────────
     result = mlb_engine.compute_mlb_projection(
-        game_logs=game_logs,
-        season_stats=season_stats,
-        prop_type=prop_type,
-        line=req.line,
-        venue=venue,
-        position=position,
-        prev_season_stats=prev_season_stats,
-        park_team=park_team,
+        game_logs           = game_logs,
+        season_stats        = season_stats,
+        prop_type           = prop_type,
+        line                = req.line,
+        venue               = venue,
+        position            = position,
+        prev_season_stats   = prev_season_stats,
+        park_team           = park_team,
+        pitcher_handedness  = pitcher_hand,
+        batter_handedness   = batter_hand,
+        pitcher_era         = req.pitcherEra,
+        game_total          = req.gameTotal,
+        lineup_spot         = req.lineupSpot,
     )
 
     # ── Enrich game log tiles with opponent/date/venue from team schedule ──────
@@ -360,25 +446,41 @@ async def mlb_predict(req: MlbPredictRequest):
 
     # ── Run AI analysis concurrently (non-blocking — falls back to empty) ─────
     ai_task = asyncio.create_task(_get_mlb_ai_analysis(
-        player_name    = req.playerName,
-        position       = position,
-        prop_type      = prop_type,
-        line           = req.line,
-        venue          = venue,
-        opponent       = req.opponentName or "",
-        projection     = result["projection"],
-        p_over         = result["pOver"],
-        p_under        = result["pUnder"],
-        recommendation = result["recommendation"],
-        game_logs      = result["gameLogs"],
-        momentum_label = result["momentumLabel"],
-        prior_mean     = result["priorMean"],
-        streak_flag    = result["streakFlag"],
-        pitcher_name   = req.pitcherName or "",
-        park_team      = park_team,
-        park_factor_pct= bm.get("parkFactorPct", 0.0),
-        early_exit_risk= bm.get("earlyExitRisk", False),
-        zero_k_count   = bm.get("zeroKCount", 0),
+        player_name        = req.playerName,
+        position           = position,
+        prop_type          = prop_type,
+        line               = req.line,
+        venue              = venue,
+        opponent           = req.opponentName or "",
+        projection         = result["projection"],
+        p_over             = result["pOver"],
+        p_under            = result["pUnder"],
+        recommendation     = result["recommendation"],
+        game_logs          = result["gameLogs"],
+        momentum_label     = result["momentumLabel"],
+        prior_mean         = result["priorMean"],
+        streak_flag        = result["streakFlag"],
+        pitcher_name       = req.pitcherName or "",
+        park_team          = park_team,
+        park_factor_pct    = bm.get("parkFactorPct", 0.0),
+        early_exit_risk    = bm.get("earlyExitRisk", False),
+        zero_k_count       = bm.get("zeroKCount", 0),
+        # v2 factors
+        pitcher_handedness = pitcher_hand or "",
+        batter_handedness  = batter_hand  or "",
+        pitcher_era        = req.pitcherEra,
+        game_total         = req.gameTotal,
+        lineup_spot        = req.lineupSpot,
+        platoon_mult       = bm.get("platoonSplitMult", 1.0),
+        era_mult           = bm.get("eraFactor", 1.0),
+        total_mult         = bm.get("gameTotalFactor", 1.0),
+        lineup_mult        = bm.get("lineupPositionMult", 1.0),
+        babip_mult         = bm.get("babipMult", 1.0),
+        rolling_babip      = bm.get("rollingBabip"),
+        krate_mult         = bm.get("kRateMult", 1.0),
+        rolling_k_rate     = bm.get("rollingKRate"),
+        pitcher_role       = bm.get("pitcherRole", ""),
+        pitch_traj_mult    = bm.get("pitchTrajMult", 1.0),
     ))
 
     # ── Build response (same shape as soccer predict for UI compatibility) ────
