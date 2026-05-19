@@ -152,6 +152,19 @@ async def search_players(q: str = Query(..., min_length=2)):
                 if isinstance(result, dict) and result:
                     players[idx] = result
 
+        # Sort: full-query match first, then active, then has-team, then alphabetical.
+        # BDL returns players in ID order (oldest first), so without this sort
+        # an active rookie like "Sal Stewart" (id≈3M) would be buried under a
+        # dozen retired veterans named "Stewart".
+        q_words = q.lower().split()
+        def _rank(p):
+            full = (p.get("full_name") or "").lower()
+            full_match  = 0 if all(w in full for w in q_words) else 1
+            is_active   = 0 if p.get("active") else 1
+            has_team    = 0 if p.get("team") else 1
+            return (full_match, is_active, has_team, full)
+        players.sort(key=_rank)
+
         return [
             {
                 "id":        p.get("id"),

@@ -11,22 +11,40 @@ router = APIRouter(prefix="/api", tags=["players"])
 
 
 async def _search_players_cache(query: str, league_id: int = None) -> list:
-    """Fast MongoDB cache lookup for player search. Returns list of player dicts."""
+    """Fast MongoDB cache lookup for player search. Returns list of player dicts.
+
+    For multi-word queries we require ALL words to appear in nameClean so that
+    searching "van de ven" cannot accidentally match "Aravena" (contains "ven"
+    but not "van" or "de").
+    """
     from cache import COL_PLAYERS
     from utils import strip_accents
     query_clean = strip_accents(query.lower().strip())
-    parts = query_clean.split()
-    last_name = parts[-1] if parts else query_clean
+    parts = [p for p in query_clean.split() if p]
+    if not parts:
+        return []
 
-    filt: dict = {"nameClean": {"$regex": re.escape(last_name)}}
+    # Top-5 European leagues — used to validate single-word cache hits
+    TOP_LEAGUES = {39, 140, 135, 78, 61}
+
+    # Build filter: every word in the query must appear in nameClean
+    if len(parts) == 1:
+        filt: dict = {"nameClean": {"$regex": re.escape(parts[0])}}
+    else:
+        filt = {"$and": [{"nameClean": {"$regex": re.escape(w)}} for w in parts]}
+
     if league_id:
         filt["leagueId"] = league_id
 
     docs = await db[COL_PLAYERS].find(filt, {"_id": 0}).limit(20).to_list(20)
 
-    if not docs and len(parts) >= 2:
-        filt2: dict = {"nameClean": {"$regex": re.escape(last_name)}}
-        docs = await db[COL_PLAYERS].find(filt2, {"_id": 0}).limit(20).to_list(20)
+    # For single-word queries without a league constraint: only use the cache if
+    # it contains at least one top-5 European league player. Otherwise the cache
+    # may return e.g. Ecuadorian "Caicedos" while Chelsea's Moisés Caicedo is
+    # actually findable via the live API — so let Strategy 2 run instead.
+    if not league_id and len(parts) == 1 and docs:
+        if not any(d.get("leagueId") in TOP_LEAGUES for d in docs):
+            return []
 
     results = []
     for d in docs:
@@ -188,18 +206,31 @@ async def search_players(req: PlayerSearchRequest):
             seen_ids[pid] = p
     players = list(seen_ids.values())
 
-    # Sort
+    # Sort — all_match is the PRIMARY criterion so a perfect name match
+    # (e.g. "van de Ven") always beats a team-enriched partial match (e.g. "Aravena").
     def _strip(s):
         return ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn')
     query_parts = [_strip(w.lower()) for w in req.query.strip().split()]
+    _TOP5_LEAGUES = {39, 140, 135, 78, 61}   # EPL, LaLiga, SerieA, Bund., Ligue1
+
     def sort_key(p):
-        has_team = 0 if p["teamName"] else 1
-        name_norm = _strip(p["name"].lower())
-        firstname_norm = _strip((p["firstname"] or "").lower())
-        all_match = 0 if all(w in name_norm for w in query_parts) else 1
-        first_match = 0 if query_parts and firstname_norm.startswith(query_parts[0]) else 1
-        return (has_team, all_match, first_match, p["name"])
+        has_team    = 0 if p["teamName"] else 1
+        name_norm   = _strip(p["name"].lower())
+        first_norm  = _strip((p["firstname"] or "").lower())
+        all_match   = 0 if all(w in name_norm for w in query_parts) else 1
+        first_match = 0 if query_parts and first_norm.startswith(query_parts[0]) else 1
+        # Prefer top-5 European leagues — e.g. Chelsea's Moisés Caicedo over
+        # Ecuadorian Caicedos when the user just types "caicedo".
+        top_league  = 0 if p.get("leagueId") in _TOP5_LEAGUES else 1
+        return (all_match, top_league, has_team, first_match, p["name"])
     players.sort(key=sort_key)
+
+    # Quality filter: if we have any perfect-match player (all query words in name),
+    # drop the partial-match players — they are almost always wrong (e.g. "Aravena"
+    # when searching "van de ven" because they share the letters "ven").
+    if any(sort_key(p)[0] == 0 for p in players):
+        players = [p for p in players if sort_key(p)[0] == 0]
+
     return {"players": players[:15]}
 
 

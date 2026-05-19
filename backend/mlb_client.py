@@ -119,6 +119,205 @@ async def _cache_set(key: str, data) -> None:
         log.debug(f"[MLB CACHE] write skip (DB unreachable): {e}")
 
 
+# ── MLB Stats API (free, no auth) ─────────────────────────────────────────
+# Used as a fallback when BallDontLie doesn't have a player (young call-ups,
+# recent signings, etc.). Player IDs from statsapi are ≥ 500 000 and never
+# collide with BDL IDs (which are typically < 10 000).
+
+MLBSTATS_BASE = "https://statsapi.mlb.com/api/v1"
+_STATSAPI_ID_THRESHOLD = 100_000  # IDs above this are MLB Stats API
+
+
+async def _statsapi_get(path: str, params: dict = None) -> dict:
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.get(f"{MLBSTATS_BASE}{path}", params=params or {})
+            r.raise_for_status()
+            return r.json()
+    except Exception as e:
+        log.warning(f"[MLBSTATS] GET {path} failed: {e}")
+        return {}
+
+
+def _statsapi_person_to_bdl(p: dict) -> dict:
+    """Convert an MLB Stats API person dict into BDL-compatible format."""
+    pos_info = p.get("primaryPosition", {})
+    pos_abbr = pos_info.get("abbreviation", "")
+    pos_type = pos_info.get("type", "")
+    if pos_type == "Pitcher" or pos_abbr in ("SP", "RP", "P"):
+        position = pos_abbr if pos_abbr in ("SP", "RP") else "P"
+    else:
+        position = pos_abbr or pos_type
+
+    team = p.get("currentTeam", {})
+    team_name = team.get("name", "")
+    return {
+        "id":         p["id"],
+        "full_name":  p.get("fullName", ""),
+        "first_name": p.get("firstName", ""),
+        "last_name":  p.get("lastName", ""),
+        "position":   position,
+        "team": {
+            "id":           team.get("id"),
+            "name":         team_name,
+            "display_name": team_name,
+            "slug":         team_name.lower().replace(" ", "-"),
+            "abbreviation": "",
+        },
+        "active": p.get("active", True),
+        "jersey": p.get("primaryNumber"),
+        "age":    p.get("currentAge"),
+        "bats_throws": "",
+        "_source": "mlbstats",
+    }
+
+
+async def _statsapi_search_players(query: str, limit: int = 15) -> list:
+    """Search MLB Stats API for players by name."""
+    data = await _statsapi_get("/people/search", {"names": query, "sportId": 1})
+    people = data.get("people", [])
+
+    # Fallback: try last name only for multi-word queries
+    if not people:
+        words = query.strip().split()
+        if len(words) > 1:
+            data2 = await _statsapi_get("/people/search", {"names": words[-1], "sportId": 1})
+            people = data2.get("people", [])
+
+    # Prefer active players; hydrate currentTeam if missing
+    active = [p for p in people if p.get("active")]
+    if not active:
+        active = people
+
+    results = []
+    for p in active[:limit]:
+        # If person has no currentTeam, try fetching full record
+        if not p.get("currentTeam") and p.get("id"):
+            full = await _statsapi_get(f"/people/{p['id']}", {"hydrate": "currentTeam"})
+            people_list = full.get("people", [])
+            if people_list:
+                p = people_list[0]
+        results.append(_statsapi_person_to_bdl(p))
+
+    return results
+
+
+async def _statsapi_get_player(player_id: int) -> Optional[dict]:
+    """Fetch a single player from MLB Stats API and return in BDL format."""
+    data = await _statsapi_get(f"/people/{player_id}", {"hydrate": "currentTeam"})
+    people = data.get("people", [])
+    if not people:
+        return None
+    return _statsapi_person_to_bdl(people[0])
+
+
+async def _statsapi_game_logs(player_id: int, season: int, group: str = "hitting") -> list:
+    """Fetch per-game stats from MLB Stats API and normalise to BDL field names."""
+    data = await _statsapi_get(
+        f"/people/{player_id}/stats",
+        {"stats": "gameLog", "group": group, "season": season, "sportId": 1},
+    )
+    splits = []
+    for stat_block in data.get("stats", []):
+        splits.extend(stat_block.get("splits", []))
+
+    logs = []
+    for split in splits:
+        st = split.get("stat", {})
+        game_info = split.get("game", {})
+        game_id = game_info.get("gamePk", 0)
+
+        if group == "hitting":
+            entry = {
+                "game_id":          game_id,
+                "hits":             st.get("hits"),
+                "runs":             st.get("runs"),
+                "rbi":              st.get("rbi"),
+                "hr":               st.get("homeRuns"),
+                "bb":               st.get("baseOnBalls"),
+                "k":                st.get("strikeOuts"),     # batting strikeouts (unused as prop but kept)
+                "total_bases":      st.get("totalBases"),
+                "stolen_bases":     st.get("stolenBases"),
+                "doubles":          st.get("doubles"),
+                "plate_appearances":st.get("plateAppearances"),
+                "at_bats":          st.get("atBats"),
+                "avg":              st.get("avg"),
+                # Date / context
+                "date":             split.get("date", ""),
+            }
+        else:  # pitching
+            ip_str = st.get("inningsPitched", "")
+            try:
+                ip_val = float(ip_str) if ip_str else None
+            except (ValueError, TypeError):
+                ip_val = None
+            entry = {
+                "game_id":      game_id,
+                "ip":           ip_val,
+                "p_k":          st.get("strikeOuts"),
+                "p_hits":       st.get("hits"),
+                "er":           st.get("earnedRuns"),
+                "p_bb":         st.get("baseOnBalls"),
+                "pitch_count":  st.get("numberOfPitches"),
+                "batters_faced":st.get("battersFaced"),
+                "era":          st.get("era"),
+                "date":         split.get("date", ""),
+            }
+        logs.append(entry)
+
+    # Sort newest-first (same as BDL)
+    logs.sort(key=lambda g: g.get("date", ""), reverse=True)
+    return logs
+
+
+async def _statsapi_season_stats(player_id: int, season: int, group: str = "hitting") -> Optional[dict]:
+    """Fetch season aggregate stats from MLB Stats API and normalise to BDL field names."""
+    data = await _statsapi_get(
+        f"/people/{player_id}/stats",
+        {"stats": "season", "group": group, "season": season, "sportId": 1},
+    )
+    splits = []
+    for stat_block in data.get("stats", []):
+        splits.extend(stat_block.get("splits", []))
+    if not splits:
+        return None
+    st = splits[0].get("stat", {})
+
+    if group == "hitting":
+        gp = st.get("gamesPlayed") or 0
+        return {
+            "batting_gp":  gp,
+            "batting_h":   st.get("hits"),
+            "batting_hr":  st.get("homeRuns"),
+            "batting_rbi": st.get("rbi"),
+            "batting_bb":  st.get("baseOnBalls"),
+            "batting_so":  st.get("strikeOuts"),
+            "batting_r":   st.get("runs"),
+            "batting_tb":  st.get("totalBases"),
+            "batting_sb":  st.get("stolenBases"),
+            "batting_2b":  st.get("doubles"),
+            "batting_ab":  st.get("atBats"),
+            "batting_avg": st.get("avg"),
+        }
+    else:  # pitching
+        gp = st.get("gamesPlayed") or 0
+        ip_str = st.get("inningsPitched", "")
+        try:
+            ip_val = float(ip_str) if ip_str else None
+        except (ValueError, TypeError):
+            ip_val = None
+        return {
+            "pitching_gp": gp,
+            "pitching_k":  st.get("strikeOuts"),
+            "pitching_ip": ip_val,
+            "pitching_h":  st.get("hits"),
+            "pitching_er": st.get("earnedRuns"),
+            "pitching_bb": st.get("baseOnBalls"),
+            "pitching_pc": st.get("numberOfPitches"),
+            "pitching_bf": st.get("battersFaced"),
+        }
+
+
 async def search_players(query: str, limit: int = 15) -> list:
     """Search BDL for players by name.
 
@@ -126,6 +325,8 @@ async def search_players(query: str, limit: int = 15) -> list:
     like "Noah Cameron" return 0 results even though the player exists.  We work
     around this by trying the full query first, then falling back to last-name-only
     and first-name-only searches, deduplicating by player id.
+
+    Falls back to MLB Stats API (free, no auth) when BDL has no record of the player.
     """
     q = query.strip()
     key = f"mlb_ps:{q.lower()}"
@@ -158,11 +359,38 @@ async def search_players(query: str, limit: int = 15) -> list:
                 seen[p["id"]] = p
 
     players = list(seen.values())[:limit]
-    await _cache_set(key, players)
+
+    # 3. MLB Stats API fallback — for young/recently-called-up players BDL may not
+    #    have yet (e.g. Cole Young, Sal Stewart). IDs from statsapi are large (≥500000)
+    #    so they never collide with BDL IDs.
+    #
+    #    Trigger condition: no players found at all, OR for multi-word queries where
+    #    none of the BDL results contain ALL query words in the full_name — this
+    #    handles "cole young" returning 15 Youngs but no Cole Young.
+    q_words = q.lower().split()
+    bdl_has_full_match = any(
+        all(w in (p.get("full_name") or "").lower() for w in q_words)
+        for p in players
+    )
+    if not players or (len(q_words) > 1 and not bdl_has_full_match):
+        statsapi_players = await _statsapi_search_players(q, limit)
+        if statsapi_players:
+            # Prepend statsapi results (exact matches) ahead of BDL partials
+            existing_ids = {p["id"] for p in players}
+            for p in statsapi_players:
+                if p["id"] not in existing_ids:
+                    players.insert(0, p)
+                    existing_ids.add(p["id"])
+            players = players[:limit]
+
+    if players:
+        await _cache_set(key, players)
     return players
 
 
 async def get_player(player_id: int) -> Optional[dict]:
+    if player_id >= _STATSAPI_ID_THRESHOLD:
+        return await _statsapi_get_player(player_id)
     key = f"mlb_p:{player_id}"
     doc = await _cache_get(key)
     if _cache_fresh(doc, CACHE_TTL["player"]) and doc.get("data") is not None:
@@ -188,7 +416,17 @@ async def get_teams() -> list:
 
 
 async def get_player_game_logs(player_id: int, season: int = 2026, limit: int = 30) -> list:
-    """Per-game stats, newest first (API returns newest first via cursor pagination)."""
+    """Per-game stats, newest first (API returns newest first via cursor pagination).
+
+    For MLB Stats API players (id ≥ 100 000) we try hitting logs first, then
+    pitching logs if hitting comes back empty (pitcher check).
+    """
+    if player_id >= _STATSAPI_ID_THRESHOLD:
+        logs = await _statsapi_game_logs(player_id, season, group="hitting")
+        if not logs:
+            logs = await _statsapi_game_logs(player_id, season, group="pitching")
+        return logs[:limit]
+
     key = f"mlb_gl:{player_id}:{season}"
     doc = await _cache_get(key)
     if _cache_fresh(doc, CACHE_TTL["stats"]) and doc.get("data") is not None:
@@ -211,7 +449,16 @@ async def get_player_game_logs(player_id: int, season: int = 2026, limit: int = 
 
 
 async def get_season_stats(player_id: int, season: int = 2026) -> Optional[dict]:
-    """Season aggregate stats (regular season only)."""
+    """Season aggregate stats (regular season only).
+
+    For MLB Stats API players (id ≥ 100 000) we try hitting first, then pitching.
+    """
+    if player_id >= _STATSAPI_ID_THRESHOLD:
+        data = await _statsapi_season_stats(player_id, season, group="hitting")
+        if not data:
+            data = await _statsapi_season_stats(player_id, season, group="pitching")
+        return data
+
     key = f"mlb_ss:{player_id}:{season}"
     doc = await _cache_get(key)
     if _cache_fresh(doc, CACHE_TTL["season_stats"]) and doc.get("data") is not None:
