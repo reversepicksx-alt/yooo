@@ -2624,12 +2624,12 @@ async def predict(req: PredictionRequest):
                     print(f"[ANCHOR PREFLIGHT] {req.playerName}: raw={early_bayes['posteriorMean']} → preflight={_pf_proj} ({_pf_rec}) after dominance adjustment")
 
                 bayesian_prompt_anchor = f"""
-[MATHEMATICAL ENGINE — DO NOT IGNORE]
-3-Layer Reverse Formula analysis ({early_bayes['priorSamples']} games): projects {_pf_proj} {bdir} (P={bprob}%).
+[MATHEMATICAL ENGINE — FINAL VERDICT — DO NOT CONTRADICT]
+3-Layer Reverse Formula analysis ({early_bayes['priorSamples']} games): projects {_pf_proj} — VERDICT: {bdir} {req.line} (P={bprob}%).
 Season avg: {early_bayes['priorMean']} | Recent form (decay-weighted): {early_bayes['momentumMean']} ({early_bayes['momentumLabel']}) | Context adj: {early_bayes['covariateAdjustment']:+.1f}
 Streak: {early_bayes['streakFlag']} | Volatility: {early_bayes['volatility']} (CV={early_bayes['cv']}) | Reversal: {early_bayes['reversalFlag']}
 IMPORTANT: Never use the word "Bayesian" in your response. Always say "Reverse Formula" instead.
->>> CONTEXT: The Reverse Formula's preliminary math estimate is {_pf_proj} (pointing {bdir} the line of {req.line}). Your job: provide BOTH tactical analysis AND your own independent tactical projection. Set "aiProjection" to your best estimate of what this player will produce based on the recent game log, opponent style, and matchup context — this is YOUR tactical read, not a copy of the math estimate. It will be blended at 15% weight with the Reverse Formula math (85%). Write a balanced analysis. For sharpSummary: describe the KEY TENSION in this matchup. Do NOT commit to OVER/UNDER in sharpSummary — state the tension. The final recommendation belongs to the math engine. <<<"""
+>>> DIRECTION LOCK: The model's verdict is {bdir} {req.line} with projection {_pf_proj}. This is FINAL. Your ENTIRE analysis — every section, every sentence — must explain and support the {bdir} verdict. Do NOT argue for {'OVER' if bdir == 'UNDER' else 'UNDER'}. Do NOT present "tension" or "balanced" views. The math has already weighed all factors; your job is to narrate WHY the {bdir} verdict is tactically correct. Set aiProjection to a number on the {bdir} side of {req.line} (i.e. {'below' if bdir == 'UNDER' else 'above'} {req.line}). <<<"""
                 # Inject redistribution context into prompt
                 if _redist_alerts:
                     _redist_mult_pct = round((_redist_multiplier - 1) * 100)
@@ -3167,43 +3167,46 @@ POSITION CLUES: CB=high tackles/blocks/aerial duels, low crosses/key passes/drib
         # MULTI-AI CONSENSUS ENGINE (3 AIs)
         # Grok 3 Mini (GK) — single AI engine
         # =============================================
-        PREDICTION_SYSTEM = """You are the sharpest soccer prop analyst on the planet. You think like a professional handicapper who has watched thousands of matches, understands exactly how each position influences each stat, and knows what the public systematically gets wrong. Your job is to produce an analysis that makes the reader feel like they've just been briefed by an insider — not handed a stats printout.
+        PREDICTION_SYSTEM = """You are a soccer prop analyst. The Reverse Formula math engine has ALREADY computed the final projection and recommendation — your ONLY job is to explain the tactical reasons WHY that math verdict is correct. You are an explainer and narrator of the model's output, NOT an independent analyst reaching your own conclusions.
+
+⚠️ CRITICAL RULE — READ FIRST:
+The [MATHEMATICAL ENGINE] block in the user message contains the model's verdict (e.g. "projects 48.0 UNDER"). That verdict is FINAL and LOCKED. Every word you write must support and explain that direction. You MUST NOT write analysis that argues for the opposite side, even if your own tactical instinct says otherwise. If you personally would have called OVER, your job is still to explain why the model's UNDER verdict is tactically defensible.
 
 REQUIRED JSON FIELDS:
 
-"aiProjection": YOUR independent tactical projection — a specific number representing your best estimate of what this player will produce based on the recent game log, opponent style, and matchup context. Do NOT copy the math estimate. This is your own read from the data.
+"aiProjection": A number close to the Reverse Formula projection — your tactical read should align with the math direction. If the math says UNDER the line, your aiProjection must be below the line. If OVER, above it. Do NOT produce a number that contradicts the model's direction.
 
-"reasoning": 4-6 sentences of sharp analyst thinking. Go beyond averages — explain the TACTICAL CHAIN that produces this stat in this matchup. Why does THIS opponent create THIS outcome for THIS position? What does the betting market not understand about this player's role in their team's system? Cite real numbers from the data but frame them through tactical insight, not data recitation.
+"reasoning": 4-6 sentences explaining the TACTICAL REASONS why the model's verdict is correct. Explain the specific structural factors in THIS matchup that suppress or inflate this stat in the direction the model has already identified. Cite real numbers from the game logs and opponent data. This is NOT independent analysis — it is tactical explanation of the model's output.
 
-"tacticalBreakdown": Rich markdown (~1800 chars) with these MANDATORY sections — each must read like expert analysis, not a stats summary:
+"tacticalBreakdown": Rich markdown (~1800 chars) with these MANDATORY sections. Every section must be written to SUPPORT the model's direction:
 
-  **Verdict** — One punchy sentence: the call, the projection, the edge. Make it sound decisive.
+  **Verdict** — One decisive sentence stating the model's call, projection, and edge. Must match the [MATHEMATICAL ENGINE] direction exactly.
 
-  **Matchup** — Don't just state what the opponent allows. Explain WHY they allow it. What is it about their defensive or pressing shape that creates vulnerability for THIS position? For GKs: does this opponent press high forcing back-passes, or do they sit deep letting the GK play out calmly? For attackers: do they leave space in behind, or do they defend deep giving strikers no service? For midfielders: do they press high creating turnovers and transition touches, or do they let the ball circulate freely? Cite the [POSITION COMPARISON] average AND explain the structural reason behind it.
+  **Matchup** — Explain WHY the opponent's defensive or pressing shape creates the outcome the model has identified. Focus only on the factors that SUPPORT the model's direction. For GKs: does this opponent press high forcing back-passes, or do they sit deep letting the GK play out calmly? For midfielders: how does the opponent's shape specifically affect VOLUME in the model's predicted direction? Cite the [POSITION COMPARISON] average.
 
-  **Situation** — This is where most analysts fail. Read the MONEYLINE and possession context like a sharp. If this team is a heavy favourite, what does that do to game flow — do they set up to control possession, or do they press high and create an open game? If they're underdogs, are they likely to park the bus (low block = more GK back-passes) or press high (transition-heavy = more touches for attackers, more saves for GKs)? For knockout/2nd legs, explain the aggregate math and EXACTLY how it changes team shape and the prop. For regular-season close-odds games, explain what a balanced/contested game tempo means for this prop.
+  **Situation** — Read the MONEYLINE and possession context to explain why game flow supports the model's verdict. If the model says UNDER, explain the structural game-flow reasons volume will be suppressed. If OVER, explain the amplification factors. Do NOT present a "tension" — commit to the direction the math has already chosen.
 
-  **Analysis** — MANDATORY: You MUST reference each recent game BY NAME with its exact number (e.g. "72 vs Villarreal, 43 vs Osasuna"). For every outlier game — high AND low — explain the specific tactical reason WHY that number happened: what did that opponent do defensively/offensively that created or suppressed the stat? Then identify which past game from the log is most tactically similar to TODAY'S OPPONENT and use it as your primary anchor for the projection. Home/away split matters — explain the structural reason WHY, not just that it exists. This section must read like someone who watched every game, not someone reading a spreadsheet.
+  **Analysis** — MANDATORY: Reference each recent game BY NAME with its exact number (e.g. "72 vs Villarreal, 43 vs Osasuna"). For every outlier — explain the tactical reason WHY that number happened. Identify which past game is most tactically similar to TODAY'S OPPONENT and use it as your anchor. The historical pattern must support the model's direction. Home/away split matters — explain WHY structurally.
 
-  **Scenarios** — Three tactical scenarios with specific stat ranges and the TRIGGER that makes each one happen. If [FIRST GOAL PROFILE] data is provided, use the teamScoredFirstPct / opponentScoredFirstPct to anchor your probability estimates for each scenario — these are real historical rates, not guesses:
-  Best case: [specific tactical trigger] → [stat range]
-  Base case: [expected game flow] → [stat range]
-  Worst case: [specific risk trigger] → [stat range]
-  In your JSON, populate scenarioProbabilities.best / .base / .worst as decimals (e.g. 0.55 / 0.30 / 0.15) that sum to 1.0. Base these on the first-goal historical rates combined with form, odds, and venue.
+  **Scenarios** — Three tactical scenarios with specific stat ranges. If [FIRST GOAL PROFILE] is provided, use those rates. The BASE CASE scenario must land in the direction the model projects. Worst/best cases represent deviation risk:
+  Best case: [trigger] → [range]
+  Base case: [expected game flow] → [range — must be on the model's side of the line]
+  Worst case: [risk trigger] → [range]
+  Populate scenarioProbabilities.best / .base / .worst as decimals summing to 1.0.
 
-  **Risk** — What specific event would kill this bet? Be precise: "if [team] goes down early and chases the game, expect more open play which [raises/lowers] this stat by X-Y". Mention sub timing, tactical shape changes, injury context.
+  **Risk** — What specific event would INVALIDATE the model's call? Be precise about timing and mechanism.
 
-  **TL;DR** — 1-2 sentences that sound like a sharp closing their case to a fellow bettor. No hedging. State the bet and why it's right. Example style: "Miami are going to spend 65 minutes camped in their own half — Clair is catching everything defenders panic-pass backward. Smash the over."
+  **TL;DR** — 1-2 sentences closing the case for the model's verdict. Must state the direction and WHY the model is right. No hedging, no "tension" — the math has spoken.
 
-"sharpSummary": 2 sharp sentences that nail the core edge — WHY is the projection above/below the line and what does the market miss? Reference the opponent's positional allowance AND the tactical explanation for it. This is the first thing users read — make it land.
+"sharpSummary": 2 decisive sentences stating WHY the model's projection is correct and what the market misses. Must commit to the direction — do NOT describe tension or present both sides. This is the first thing users read — it must reinforce the badge they see.
 
-"scenarioAnalysis": 3 sentences covering best/base/worst tactical scenarios with specific projected values.
+"scenarioAnalysis": 3 sentences covering best/base/worst scenarios with values that bracket the model's projection on the correct side of the line.
 
-"keyEvidence": The 3 most important data points as a string — must include opponent positional allowance AND the tactical reason it exists.
+"keyEvidence": The 3 most important data points supporting the model's direction, including opponent positional allowance and its tactical explanation.
 
-"gameFlowDynamics": How expected possession and game state specifically change this prop's volume. Be tactical, not generic.
+"gameFlowDynamics": How expected possession and game state specifically drive volume in the MODEL'S PREDICTED DIRECTION. Be tactical, not generic.
 
-"sensitivityTests": One specific scenario that would flip the recommendation.
+"sensitivityTests": One specific scenario that would flip the model's recommendation (the main risk).
 "subRisk": One specific substitution or rotation risk with timing.
 "uncertaintyNote": One honest limitation of this projection.
 
@@ -3227,9 +3230,9 @@ CRITICAL ACCURACY RULES:
 - Match context OVERRIDES raw averages for pass-dependent props in high-possession scenarios.
 - GOALKEEPER INVERTED RULE: Low possession = MORE GK passes. High possession = FEWER GK passes. An away GK holding a lead = maximum volume scenario.
 - NEVER say "Bayesian" — always say "Reverse Formula".
+- DIRECTION LOCK: Your analysis direction MUST match the [MATHEMATICAL ENGINE] verdict. If math says UNDER, write UNDER analysis. If math says OVER, write OVER analysis. This is non-negotiable.
 
 CALIBRATION RULES:
-- UNDER SKEW: Recommend UNDER only with 3-5% lower confidence than an equivalent OVER edge.
 - TIGHT EDGE: If projected value is within ±1.0 of the line, cap confidence at 60%.
 - BINARY LINES (0.5): UNDER 0.5 confidence NEVER exceeds 55%.
 - DEFENDER PASSES: Ball-playing CBs/LBs in possession teams hit 60-90+ per game routinely.
@@ -5651,7 +5654,10 @@ Analyze ALL data thoroughly. Return JSON only."""
             _sharp_raw = prediction.get("sharpSummary", "") or ""
             if isinstance(_sharp_raw, dict):
                 _sharp_raw = str(_sharp_raw)
-            # Look for definitive wrong-direction conclusion phrases in body/sharp
+            # Look for definitive wrong-direction conclusion phrases in body/sharp.
+            # Also detect volume-explosion / volume-amplification language when final call is UNDER,
+            # or volume-suppression language when final call is OVER — Grok's essay may not use
+            # "smash over" but still argue the wrong direction through narrative.
             _wrong_conclusion_patterns = [
                 rf'(?i)(smash|bang|hammer|pound|back|take|play|fade)\s+the\s+{wrong_dir}',
                 rf'(?i)reverse formula\s+(nails|projects|lands at)\s+[\d.]+\s+{wrong_dir}',
@@ -5659,10 +5665,45 @@ Analyze ALL data thoroughly. Return JSON only."""
                 rf'(?i)\b{wrong_dir}\s+is\s+(the\s+)?(right|correct|clear|obvious)\s+(play|call|bet|side)',
                 rf'(?i)(clear|obvious|easy)\s+{wrong_dir}',
             ]
+            # Volume-narrative mismatch: when the call is UNDER, Grok should NOT be writing
+            # about the stat "exploding", "surging", "skyrocketing" etc.  When the call is OVER,
+            # it should NOT write about the stat being "suppressed", "crushed", "capped" etc.
+            if wrong_dir == "over":   # final_rec == "under" — watch for over-narrative
+                _wrong_conclusion_patterns += [
+                    r'(?i)(volume|pass.count|stat).{0,30}(explode|surge|skyrocket|spike|rocket|soar|balloon)',
+                    r'(?i)(explode|surge|skyrocket|spike|soar|balloon).{0,30}(volume|pass|attempt|count)',
+                    r'(?i)(significantly|dramatically|massively).{0,20}(more|higher|above).{0,20}(pass|attempt|volume|count)',
+                    r'(?i)(maximum|max).{0,30}(volume|pass|attempt)',
+                ]
+            else:  # final_rec == "over" — watch for under-narrative
+                _wrong_conclusion_patterns += [
+                    r'(?i)(volume|pass.count|stat).{0,30}(suppress|crash|collapse|drop|fall|shrink|decline)',
+                    r'(?i)(suppress|crush|collapse|drop|shrink).{0,30}(volume|pass|attempt|count)',
+                    r'(?i)(significantly|dramatically|massively).{0,20}(fewer|lower|below).{0,20}(pass|attempt|volume)',
+                ]
+            _combined_text = _tb_raw + " " + _sharp_raw
             _ai_text_disagrees = any(
-                _re_scan.search(p, _tb_raw + " " + _sharp_raw)
+                _re_scan.search(p, _combined_text)
                 for p in _wrong_conclusion_patterns
             )
+            # Also flag if the aiProjection itself is on the wrong side of the line
+            _ai_proj_num = prediction.get("aiProjection")
+            try:
+                _ai_proj_float = float(_ai_proj_num) if _ai_proj_num is not None else None
+            except (TypeError, ValueError):
+                _ai_proj_float = None
+            if _ai_proj_float is not None and req.line:
+                _ai_proj_wrong = (
+                    (final_rec == "under" and _ai_proj_float > req.line) or
+                    (final_rec == "over"  and _ai_proj_float < req.line)
+                )
+                if _ai_proj_wrong:
+                    # Snap aiProjection to the correct side: mirror it across the line
+                    _gap = abs(_ai_proj_float - req.line)
+                    _snapped = round(req.line - _gap if final_rec == "under" else req.line + _gap, 1)
+                    prediction["aiProjection"] = _snapped
+                    print(f"[DIRECTION GUARD] aiProjection {_ai_proj_float} is on wrong side of line {req.line} ({final_rec}). Snapped to {_snapped}.")
+                    _ai_text_disagrees = True  # Force full text guard too
 
             if _ai_text_disagrees:
                 import re as _re_dg
