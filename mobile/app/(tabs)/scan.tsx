@@ -112,6 +112,7 @@ export default function ScanScreen() {
   const [manualError, setManualError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [pickSaved, setPickSaved] = useState(false);
 
   // User-controlled venue override
   const [venueOverride, setVenueOverride] = useState<'home' | 'away'>('home');
@@ -237,6 +238,7 @@ export default function ScanScreen() {
     setAnalyzeError(null);
     setManualError(null);
     setSaveError(null);
+    setPickSaved(false);
     setPlayerQuery('');
     setResolvedPlayer(null);
     setManualOpponentQuery('');
@@ -565,9 +567,10 @@ export default function ScanScreen() {
           venue: venueOverride || 'home',
         },
       });
-      setPhase('saved');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setPickSaved(true);
       qc.invalidateQueries({ queryKey: ['picks'] });
+      router.push('/(tabs)/picks');
     } catch (e: unknown) {
       setSaveError(e instanceof Error ? e.message : 'Save failed — try again');
     } finally {
@@ -3069,17 +3072,22 @@ export default function ScanScreen() {
             </View>{/* end captureContainer */}
 
             <TouchableOpacity
-              style={[styles.saveBtn, saving && { opacity: 0.6 }]}
+              style={[styles.saveBtn, (saving || pickSaved) && { opacity: 0.6 }]}
               onPress={handleSavePick}
-              disabled={saving}
+              disabled={saving || pickSaved}
               activeOpacity={0.85}
             >
               {saving
                 ? <ActivityIndicator color="#000" size="small" />
-                : <>
-                    <Ionicons name="bookmark" size={16} color="#000" />
-                    <Text style={styles.saveBtnText}>Save to My Picks</Text>
-                  </>
+                : pickSaved
+                  ? <>
+                      <Ionicons name="checkmark-circle" size={16} color="#000" />
+                      <Text style={styles.saveBtnText}>Saved — Going to Picks…</Text>
+                    </>
+                  : <>
+                      <Ionicons name="bookmark" size={16} color="#000" />
+                      <Text style={styles.saveBtnText}>Save to My Picks</Text>
+                    </>
               }
             </TouchableOpacity>
 
