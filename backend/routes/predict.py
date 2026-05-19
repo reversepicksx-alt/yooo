@@ -3894,13 +3894,8 @@ Analyze ALL data thoroughly. Return JSON only."""
         # pv is set from early_bayes here as a temporary anchor; real_bayes overwrites it later.
         pv = early_bayes["posteriorMean"] if early_bayes and early_bayes.get("posteriorMean") else req.line
 
-        try:
-            grok_result = await aio.wait_for(
-                call_grok(label="grok", model="grok-4-1-fast-non-reasoning"),
-                timeout=35
-            )
-        except Exception as e:
-            print(f"[HYBRID] Grok exception: {e}")
+        # Grok removed — pure Bayesian math only. call_grok() is never invoked.
+        print("[PURE MATH] Skipping Grok call — Bayesian engine is the sole analysis source.")
 
         # BAYESIAN FALLBACK: If ALL Grok models failed (no text), build minimal result from math
         if not grok_result or not isinstance(grok_result, dict) or not grok_result.get("tacticalBreakdown"):
@@ -5176,81 +5171,10 @@ Analyze ALL data thoroughly. Return JSON only."""
                 f"{prediction.get('recommendation')}: {_pre_pos_cap}% → {_pos_cap}%"
             )
 
-        # ── MATH LOCK: Always align sharpSummary + Verdict to the FINAL math outcome ──
-        # Runs after PASS GATE so we use the true final recommendation (PASS/OVER/UNDER).
-        # Gemini wrote analysis using an early Bayesian estimate. H2H + opponent profile
-        # adjustments may have moved the projection significantly — this ensures the user-
-        # visible text always matches the badge and projection number.
-        import re as _re_lock
+        # MATH LOCK removed — pure math analysis is built below, no Grok text to patch.
         _lock_final_rec = str(prediction.get("recommendation", "")).upper()  # PASS, OVER, or UNDER
         _lock_proj_raw  = prediction.get("projectedValue", req.line)
         _lock_proj_str  = str(int(_lock_proj_raw)) if _lock_proj_raw == int(_lock_proj_raw) else f"{_lock_proj_raw:.1f}"
-        _lock_line_str  = str(int(req.line)) if req.line == int(req.line) else f"{req.line:.1f}"
-
-        # Key evidence phrases from the math pipeline
-        _lock_ev = []
-        if position_comp_data and position_comp_data.get("avgStatValue") and position_comp_data.get("sampleSize", 0) >= 3:
-            _lk_opp_avg = position_comp_data["avgStatValue"]
-            _lk_opp_n   = position_comp_data.get("sampleSize", 0)
-            _lk_opp_pos = position_comp_data.get("positionShort", "same-position players")
-            _lock_ev.append(f"opponent profile ({_lk_opp_pos}s avg {_lk_opp_avg:.1f} in {_lk_opp_n} matchups)")
-        if h2h_data:
-            _h2h_lock_vals = [g.get("stat_value") or g.get("statValue") for g in h2h_data if g.get("stat_value") or g.get("statValue")]
-            if _h2h_lock_vals:
-                _h2h_lock_avg = round(sum(_h2h_lock_vals) / len(_h2h_lock_vals), 1)
-                _lock_ev.append(f"H2H avg {_h2h_lock_avg:.1f} ({len(_h2h_lock_vals)} games)")
-        if early_bayes and early_bayes.get("momentumLabel") in ("HOT", "COOLING"):
-            _lock_ev.append(f"{early_bayes['momentumLabel'].lower()} recent form")
-
-        _lock_season_avg = early_bayes.get("priorMean", "?") if early_bayes else "?"
-        _lock_ev0 = _lock_ev[0] if _lock_ev else "matchup factors"
-
-        if _lock_final_rec == "PASS":
-            _lock_leaning = str(prediction.get("passLeaning", "")).upper() or "EVEN"
-            prediction["sharpSummary"] = (
-                f"Reverse Formula projects {_lock_proj_str} — close to the {_lock_line_str} line (leans {_lock_leaning}). "
-                f"Edge is within the model's noise band — the math sees both sides. Season avg {_lock_season_avg} adjusted by {_lock_ev0}. Skip or use as a secondary pick only."
-            )
-            _lock_verdict = (
-                f"**Verdict** — Reverse Formula projects **{_lock_proj_str}** vs line of {_lock_line_str}. "
-                f"Gap is too narrow for a confident call — PASS. Leans {_lock_leaning} but noise band is too wide to commit."
-            )
-        elif _lock_final_rec == "OVER":
-            _lock_market = f"The market underestimates this matchup — season avg {_lock_season_avg} gets boosted by {_lock_ev0}."
-            prediction["sharpSummary"] = (
-                f"Reverse Formula projects {_lock_proj_str} — OVER the {_lock_line_str} line. {_lock_market}"
-            )
-            _lock_verdict = (
-                f"**Verdict** — Reverse Formula projects **{_lock_proj_str}**, clearing the {_lock_line_str} line (OVER). "
-                f"Key driver: {_lock_ev0}."
-            )
-        else:  # UNDER
-            _lock_market = f"The market overestimates output here — season avg {_lock_season_avg} gets suppressed by {_lock_ev0}."
-            prediction["sharpSummary"] = (
-                f"Reverse Formula projects {_lock_proj_str} — UNDER the {_lock_line_str} line. {_lock_market}"
-            )
-            _lock_verdict = (
-                f"**Verdict** — Reverse Formula projects **{_lock_proj_str}**, falling short of the {_lock_line_str} line (UNDER). "
-                f"Key suppressor: {_lock_ev0}."
-            )
-
-        # Replace the **Verdict** section in tacticalBreakdown
-        _lock_tb = prediction.get("tacticalBreakdown", "")
-        if isinstance(_lock_tb, dict):
-            _lock_tb = _lock_tb.get("text", _lock_tb.get("content", ""))
-        if isinstance(_lock_tb, str) and _lock_tb:
-            _lock_tb = _re_lock.sub(
-                r'\*\*Verdict\*\*.*?(?=\n\n|\n\*\*|\Z)',
-                _lock_verdict,
-                _lock_tb,
-                count=1,
-                flags=_re_lock.DOTALL | _re_lock.IGNORECASE
-            )
-            prediction["tacticalBreakdown"] = _lock_tb
-
-        print(f"[MATH LOCK] sharpSummary + Verdict → {_lock_final_rec} {_lock_proj_str} vs {_lock_line_str}")
-        # ─────────────────────────────────────────────────────────────────────────────
-
         # ── EDGE & SAFETY RATING (DATA-DRIVEN) ───────────────────────────────────
         # Computed AFTER BAYESIAN TRUTH + MATH LOCK — all values are final here.
         # edgeRating  : SHARP EDGE | EDGE | MARGINAL | NO EDGE
@@ -5609,510 +5533,131 @@ Analyze ALL data thoroughly. Return JSON only."""
             "opponentShotsOnTarget": gk_formula_data.get("opponentAvgSOT") if gk_formula_data else None,
         }
 
-        # USE GROK OUTPUT DIRECTLY — no secondary synthesis
-        rec = prediction.get('recommendation', 'over').upper()
-        line = prediction.get('line', req.line)
-        proj = prediction.get('projectedValue', '?')
-        conf = prediction.get('confidenceScore', '?')
-        pl = {
-            "pass_attempts": "Pass Attempts", "passes": "Passes",
-            "shots": "Shots", "shots_on_target": "Shots on Target",
-            "tackles": "Tackles", "key_passes": "Key Passes",
-            "saves": "Saves", "interceptions": "Interceptions",
-            "blocks": "Blocks", "dribbles": "Dribbles",
-            "fouls_drawn": "Fouls Drawn", "fouls_committed": "Fouls Committed",
-            "crosses": "Crosses", "clearances": "Clearances",
-            "duels_won": "Duels Won", "yellow_cards": "Yellow Cards",
-            "shots_assisted": "Shots Assisted", "goals": "Goals", "assists": "Assists",
-        }.get(req.propType, req.propType)
-        consensus_note = prediction.get('consensusNote', '')
+        # ── PURE MATH ANALYSIS — no AI paragraphs ────────────────────────────────
+        _m_rec    = prediction.get("recommendation", "over").upper()
+        _m_proj   = prediction.get("projectedValue", req.line)
+        _m_conf   = prediction.get("confidenceScore", 50)
+        _m_lvl    = prediction.get("confidenceLevel", "Medium")
+        _m_proj_s = str(int(_m_proj)) if _m_proj == int(_m_proj) else f"{_m_proj:.1f}"
+        _m_line_s = str(int(req.line)) if req.line == int(req.line) else f"{req.line:.1f}"
+        _m_edge   = round(abs(_m_proj - req.line), 1)
 
-        # If Grok returned a solid tacticalBreakdown, use it directly
-        grok_tb = prediction.get('tacticalBreakdown', '')
-        if not grok_tb or len(str(grok_tb)) < 200:
-            # Build from individual Grok fields
-            tb_parts = []
-            if prediction.get('sharpSummary'):
-                tb_parts.append(f"**Verdict: {rec} {line} {pl}**\n{prediction['sharpSummary']}")
-            else:
-                tb_parts.append(f"**Verdict: {rec} {line} {pl}**\nProjected {proj} {pl.lower()} — favors {rec.lower()}.")
+        _m_rb     = real_bayes or {}
+        _m_pover  = _m_rb.get("pOver", 50)
+        _m_punder = _m_rb.get("pUnder", 50)
+        _m_pwin   = max(_m_pover, _m_punder)
+        _m_mom    = _m_rb.get("momentumLabel", "STABLE")
+        _m_rev    = _m_rb.get("reversalFlag", "stable").upper()
+        _m_cov    = _m_rb.get("covariateAdjustment", 0) or 0
+        _m_prior  = _m_rb.get("priorMean") or (early_bayes.get("priorMean") if early_bayes else None) or "—"
 
-            if prediction.get('reasoning') and len(str(prediction['reasoning'])) > 30:
-                tb_parts.append(f"**Analysis**\n{prediction['reasoning']}")
+        # Verdict line
+        _m_dir_lbl = "clearing" if _m_rec == "OVER" else ("within noise of" if _m_rec == "PASS" else "falling short of")
+        _m_verdict = (
+            f"**Verdict** — Reverse Formula projects **{_m_proj_s}**, {_m_dir_lbl} the {_m_line_s} line "
+            f"({_m_rec} | {_m_pwin:.0f}% | edge: {_m_edge})."
+        )
 
-            if prediction.get('scenarioAnalysis'):
-                tb_parts.append(f"**Game Script Scenarios**\n{prediction['scenarioAnalysis']}")
-            if prediction.get('keyEvidence'):
-                tb_parts.append(f"**Key Evidence**\n{prediction['keyEvidence']}")
+        # Math Engine numbers block
+        _m_math = (
+            f"**Math Engine**\n"
+            f"Projection: {_m_proj_s}  |  Line: {_m_line_s}  |  Edge: {_m_edge}\n"
+            f"P(OVER): {_m_pover:.0f}%  |  P(UNDER): {_m_punder:.0f}%\n"
+            f"Season avg: {_m_prior}  |  Covariate adj: {_m_cov:+.1f}\n"
+            f"Momentum: {_m_mom}  |  Reversal flag: {_m_rev}  |  Confidence: {_m_conf}% ({_m_lvl})"
+        )
 
-            risk = []
-            if prediction.get('sensitivityTests'):
-                risk.append(f"- Sensitivity: {prediction['sensitivityTests']}")
-            if prediction.get('subRisk'):
-                risk.append(f"- Sub Risk: {prediction['subRisk']}")
-            if prediction.get('uncertaintyNote'):
-                risk.append(f"- Key Risk: {prediction['uncertaintyNote']}")
-            if risk:
-                tb_parts.append("**Risk Radar**\n" + "\n".join(risk))
-            if prediction.get('gameFlowDynamics'):
-                tb_parts.append(f"**Game Flow**\n{prediction['gameFlowDynamics']}")
-
-            tb_parts.append(f"**TL;DR** — {rec} {line} at {conf}% confidence. Projected: {proj} {pl.lower()}. {consensus_note}")
-            prediction["tacticalBreakdown"] = "\n\n".join(tb_parts)
-            print(f"[TIMING] Built tacticalBreakdown from AI fields: {len(prediction['tacticalBreakdown'])} chars")
-        else:
-            print(f"[TIMING] Using AI tacticalBreakdown directly ({grok_result.get('_source','?')}): {len(grok_tb)} chars")
-
-        # ── DIRECTION GUARD: If math recommendation contradicts AI text, fix ALL text ──
-        # The AI generates analysis based on its own projection which may differ from the
-        # final math-anchored number. When they disagree on direction, we must sanitize
-        # EVERY text field — not just the Verdict line — to prevent contradictions like
-        # "smash over" appearing in the TL;DR while the badge shows UNDER.
-        final_rec = prediction.get("recommendation", "").lower()
-        final_proj = prediction.get("projectedValue", req.line)
-        tb = prediction.get("tacticalBreakdown", "")
-        if isinstance(tb, dict):
-            tb = " ".join(str(v) for v in tb.values())
-            prediction["tacticalBreakdown"] = tb
-        if tb and final_rec:
-            wrong_dir = "under" if final_rec == "over" else "over"
-            right_dir = final_rec          # lowercase
-            right_dir_cap = final_rec.capitalize()
-            right_dir_up  = final_rec.upper()
-
-            # Detect wrong-direction text by scanning the tacticalBreakdown directly.
-            # Grok is explanation-only now (no projectedValue/recommendation), but it may
-            # still accidentally write the wrong direction. Catch it by checking the text.
-            import re as _re_scan
-            _tb_raw = prediction.get("tacticalBreakdown", "") or ""
-            if isinstance(_tb_raw, dict):
-                _tb_raw = " ".join(str(v) for v in _tb_raw.values())
-            _sharp_raw = prediction.get("sharpSummary", "") or ""
-            if isinstance(_sharp_raw, dict):
-                _sharp_raw = str(_sharp_raw)
-            # Look for definitive wrong-direction conclusion phrases in body/sharp.
-            # Also detect volume-explosion / volume-amplification language when final call is UNDER,
-            # or volume-suppression language when final call is OVER — Grok's essay may not use
-            # "smash over" but still argue the wrong direction through narrative.
-            _wrong_conclusion_patterns = [
-                rf'(?i)(smash|bang|hammer|pound|back|take|play|fade)\s+the\s+{wrong_dir}',
-                rf'(?i)reverse formula\s+(nails|projects|lands at)\s+[\d.]+\s+{wrong_dir}',
-                rf'(?i)caps at\s+[\d.]+\s+{wrong_dir}',
-                rf'(?i)\b{wrong_dir}\s+is\s+(the\s+)?(right|correct|clear|obvious)\s+(play|call|bet|side)',
-                rf'(?i)(clear|obvious|easy)\s+{wrong_dir}',
-            ]
-            # Volume-narrative mismatch: when the call is UNDER, Grok should NOT be writing
-            # about the stat "exploding", "surging", "skyrocketing" etc.  When the call is OVER,
-            # it should NOT write about the stat being "suppressed", "crushed", "capped" etc.
-            if wrong_dir == "over":   # final_rec == "under" — watch for over-narrative
-                _wrong_conclusion_patterns += [
-                    r'(?i)(volume|pass.count|stat).{0,30}(explode|surge|skyrocket|spike|rocket|soar|balloon)',
-                    r'(?i)(explode|surge|skyrocket|spike|soar|balloon).{0,30}(volume|pass|attempt|count)',
-                    r'(?i)(significantly|dramatically|massively).{0,20}(more|higher|above).{0,20}(pass|attempt|volume|count)',
-                    r'(?i)(maximum|max).{0,30}(volume|pass|attempt)',
-                ]
-            else:  # final_rec == "over" — watch for under-narrative
-                _wrong_conclusion_patterns += [
-                    r'(?i)(volume|pass.count|stat).{0,30}(suppress|crash|collapse|drop|fall|shrink|decline)',
-                    r'(?i)(suppress|crush|collapse|drop|shrink).{0,30}(volume|pass|attempt|count)',
-                    r'(?i)(significantly|dramatically|massively).{0,20}(fewer|lower|below).{0,20}(pass|attempt|volume)',
-                ]
-            _combined_text = _tb_raw + " " + _sharp_raw
-            _ai_text_disagrees = any(
-                _re_scan.search(p, _combined_text)
-                for p in _wrong_conclusion_patterns
+        # Game Log section (reuse pre-parsed data from wave2_supplement)
+        _m_log_str = ""
+        _gl_d2 = wave2_supplement.get("playerGameLogs", {}) if wave2_supplement else {}
+        _gl_g2 = _gl_d2.get("games", [])
+        if _gl_g2:
+            import re as _re_ml2
+            _gl_fmt2 = []
+            for _gs2 in _gl_g2[-8:]:
+                _mm2 = _re_ml2.match(r"(\d{4}-(\d{2})-(\d{2})) vs (.+?) \((.+?), (\d+)min\): (.+)", _gs2)
+                if _mm2:
+                    _gl_fmt2.append(f"{_mm2.group(7)} vs {_mm2.group(4)} ({_mm2.group(5)}, {_mm2.group(6)}min)")
+                else:
+                    _gl_fmt2.append(_gs2)
+            _gl_avg2   = _gl_d2.get("rawAvg", "—")
+            _gl_h_avg2 = _gl_d2.get("homeAvg", "—")
+            _gl_a_avg2 = _gl_d2.get("awayAvg", "—")
+            _gl_n2     = _gl_d2.get("sampleSize", len(_gl_fmt2))
+            _m_log_str = (
+                f"**Game Log** ({req.propType}, last {len(_gl_fmt2)} games)\n"
+                + " | ".join(_gl_fmt2) + "\n"
+                + f"Season avg: {_gl_avg2}  |  Home avg: {_gl_h_avg2}  |  Away avg: {_gl_a_avg2}  |  n={_gl_n2}"
             )
-            # Also flag if the aiProjection itself is on the wrong side of the line
-            _ai_proj_num = prediction.get("aiProjection")
-            try:
-                _ai_proj_float = float(_ai_proj_num) if _ai_proj_num is not None else None
-            except (TypeError, ValueError):
-                _ai_proj_float = None
-            if _ai_proj_float is not None and req.line:
-                _ai_proj_wrong = (
-                    (final_rec == "under" and _ai_proj_float > req.line) or
-                    (final_rec == "over"  and _ai_proj_float < req.line)
-                )
-                if _ai_proj_wrong:
-                    # Snap aiProjection to the correct side: mirror it across the line
-                    _gap = abs(_ai_proj_float - req.line)
-                    _snapped = round(req.line - _gap if final_rec == "under" else req.line + _gap, 1)
-                    prediction["aiProjection"] = _snapped
-                    print(f"[DIRECTION GUARD] aiProjection {_ai_proj_float} is on wrong side of line {req.line} ({final_rec}). Snapped to {_snapped}.")
-                    _ai_text_disagrees = True  # Force full text guard too
 
-            if _ai_text_disagrees:
-                import re as _re_dg
-                # ── FULL BODY REPLACEMENT ──────────────────────────────────────────────
-                # Phrase-patching doesn't work when Grok has written an entire essay
-                # arguing the wrong direction (e.g. "volume explodes" for an UNDER call).
-                # Instead, build a clean replacement breakdown from the math engine's data.
-                _punder_rb = real_bayes.get("pUnder", 50) if real_bayes else 50
-                _pover_rb  = real_bayes.get("pOver",  50) if real_bayes else 50
-                _win_p_rb  = max(_punder_rb, _pover_rb)
-                _edge_rb   = round(abs(final_proj - req.line), 1)
-                _fin_p_dg  = int(round(final_proj)) if final_proj == int(round(final_proj)) else f"{final_proj:.1f}"
+        # Hit Rate section
+        _m_hr_str = ""
+        _hr2 = _gl_d2.get("hitRates") if _gl_d2 else None
+        if _hr2:
+            _m_hr_str = f"**Hit Rate**\n{_hr2.get('summary', '')}"
 
-                # Pull game log summary for the Analysis section
-                _dg_gl = wave2_supplement.get("playerGameLogs", {}) if wave2_supplement else {}
-                _dg_games = _dg_gl.get("games", [])
-                _dg_raw_avg  = _dg_gl.get("rawAvg",  "?")
-                _dg_home_avg = _dg_gl.get("homeAvg", "?")
-                _dg_away_avg = _dg_gl.get("awayAvg", "?")
-                _dg_venue_avg = _dg_away_avg if player_venue == "away" else _dg_home_avg
-                _dg_hit_rates = _dg_gl.get("hitRates", {})
-                _dg_under_pct = _dg_hit_rates.get("underPct", "?")
-                _dg_under_cnt = _dg_hit_rates.get("underHits", "?")
-                _dg_total_cnt = _dg_hit_rates.get("total", "?")
+        # Opponent Profile
+        _m_opp_parts = []
+        if position_comp_data and position_comp_data.get("avgStatValue"):
+            _opp_avg2 = position_comp_data["avgStatValue"]
+            _opp_n2   = position_comp_data.get("sampleSize", 0)
+            _opp_pos2 = position_comp_data.get("positionShort", "position")
+            _m_opp_parts.append(
+                f"{req.opponentName} allows {_opp_avg2:.1f} {req.propType} "
+                f"to {_opp_pos2}s ({_opp_n2} matchups)"
+            )
+        if h2h_data:
+            _h2h_v2 = [g.get("stat_value") or g.get("statValue") for g in h2h_data
+                       if g.get("stat_value") or g.get("statValue")]
+            if _h2h_v2:
+                _h2h_avg2 = round(sum(_h2h_v2) / len(_h2h_v2), 1)
+                _m_opp_parts.append(f"H2H avg: {_h2h_avg2} ({len(_h2h_v2)} games vs {req.opponentName})")
+        if _m_opp_parts:
+            _m_opp_str = "**Opponent Profile**\n" + "  |  ".join(_m_opp_parts)
+        else:
+            _m_opp_str = ""
 
-                # Scenario ranges anchored on the math projection
-                _sc_base_lo = round(final_proj * 0.90)
-                _sc_base_hi = round(final_proj * 1.10)
-                _sc_best_lo = round(final_proj * 0.78)
-                _sc_best_hi = round(final_proj * 0.89)
-                _sc_worst_lo = round(final_proj * 1.11)
-                _sc_worst_hi = round(final_proj * 1.25)
-                if right_dir == "over":
-                    # For OVER: best = highest, worst = lowest
-                    _sc_best_lo, _sc_best_hi, _sc_worst_lo, _sc_worst_hi = \
-                        round(final_proj * 1.11), round(final_proj * 1.25), \
-                        round(final_proj * 0.78), round(final_proj * 0.89)
+        # Scenarios block
+        _m_sp2 = prediction.get("scenarioProbabilities", {}) or {}
+        _m_scen_str = ""
+        if _m_sp2 and any(_m_sp2.get(k) is not None for k in ("best", "base", "worst")):
+            _s_best = round((_m_sp2.get("best") or 0) * 100)
+            _s_base = round((_m_sp2.get("base") or 0) * 100)
+            _s_wrst = round((_m_sp2.get("worst") or 0) * 100)
+            _m_scen_str = f"**Scenarios**\nBest: {_s_best}%  |  Base: {_s_base}%  |  Worst: {_s_wrst}%"
 
-                # Bayes metrics for Matchup section
-                _rb_cov_adj = (real_bayes or {}).get("covariateAdjustment", 0)
-                _rb_momentum = (real_bayes or {}).get("momentumLabel", "stable")
-                _rb_streak   = (real_bayes or {}).get("streakFlag", "stable")
-                _rb_reversal = (real_bayes or {}).get("reversalFlag", "stable")
+        # TL;DR
+        _m_tldr = (
+            f"**TL;DR** — {_m_proj_s} {_m_rec} {_m_line_s}  |  "
+            f"P({_m_rec}): {_m_pwin:.0f}%  |  Edge: {_m_edge}  |  "
+            f"{_m_conf}% confidence ({_m_lvl})"
+        )
 
-                # Build game log snippet for Analysis section
-                _dg_log_str = " | ".join(_dg_games[-6:]) if _dg_games else "No game log available."
+        # Assemble tacticalBreakdown (pure math, no AI prose)
+        _m_sections = [_m_verdict, _m_math]
+        if _m_log_str:  _m_sections.append(_m_log_str)
+        if _m_hr_str:   _m_sections.append(_m_hr_str)
+        if _m_opp_str:  _m_sections.append(_m_opp_str)
+        if _m_scen_str: _m_sections.append(_m_scen_str)
+        _m_sections.append(_m_tldr)
+        prediction["tacticalBreakdown"] = "\n\n".join(_m_sections)
 
-                _replacement_tb = f"""**Verdict** — Reverse Formula projects **{_fin_p_dg}** vs the {req.line} line — {right_dir_up} with {conf}% confidence ({_win_p_rb:.0f}% probability, {_edge_rb} edge).
+        # sharpSummary — pure math statement (no AI narrative)
+        _m_ev_note = ""
+        if position_comp_data and position_comp_data.get("avgStatValue"):
+            _m_ev_note = (
+                f" Opponent allows {position_comp_data['avgStatValue']:.1f} "
+                f"to {position_comp_data.get('positionShort','pos')}s "
+                f"({position_comp_data.get('sampleSize',0)} matchups)."
+            )
+        prediction["sharpSummary"] = (
+            f"Reverse Formula: {_m_proj_s} {_m_rec} {_m_line_s} "
+            f"(P({_m_rec}): {_m_pwin:.0f}%, edge: {_m_edge})."
+            f"{_m_ev_note}"
+        )
+        print(f"[PURE MATH] Built math-only tacticalBreakdown ({len(prediction['tacticalBreakdown'])} chars) + sharpSummary")
 
-**Matchup**
-The Reverse Formula processed {req.playerName}'s output profile against {req.opponentName} and identified a {right_dir}-side edge. The {player_venue} split averages {_dg_venue_avg}, and context adjustment of {_rb_cov_adj:+.1f} reflects this specific opponent matchup. The positional comparison against {req.opponentName} supports the model's {_fin_p_dg} projection — the seasonal average of {_dg_raw_avg} is overridden by opponent-specific suppression factors the model weighted heavily.
-
-**Situation**
-With the model projecting {_fin_p_dg} against a line of {req.line}, the key is game-script alignment. Momentum is {_rb_momentum}; streak signal is {_rb_streak}; reversal flag is {_rb_reversal}. The model's covariate adjustment of {_rb_cov_adj:+.1f} captures the matchup-specific factors driving the {right_dir} projection. This is not a season-average play — it is a matchup-specific call.
-
-**Analysis**
-Recent log ({player_venue}): {_dg_log_str}
-Season avg: {_dg_raw_avg} | {player_venue.capitalize()} avg: {_dg_venue_avg} | Under {req.line} in {_dg_under_cnt}/{_dg_total_cnt} logged games ({_dg_under_pct}% under rate). The model identified suppression factors specific to {req.opponentName} that anchor the projection at {_fin_p_dg}. Look at the low-end games in the log for opponents with similar defensive profiles to {req.opponentName} — those are the correct comparisons, not the seasonal high-water marks.
-
-**Scenarios**
-Best case: {req.opponentName} defensive shape fully suppresses volume → {_sc_best_lo}–{_sc_best_hi}
-Base case: expected game flow materialises → {_sc_base_lo}–{_sc_base_hi} (model's anchor: {_fin_p_dg})
-Worst case: unexpected game-state shift boosts volume → {_sc_worst_lo}–{_sc_worst_hi}
-
-**Risk**
-If the game script shifts significantly from the model's expectation (e.g., unexpected early goal forcing higher tempo), volume could deviate from the {_fin_p_dg} anchor. Monitor in-game possession and press intensity as leading indicators.
-
-**TL;DR** — Reverse Formula projects {_fin_p_dg} vs the {req.line} line — {right_dir_up} ({_win_p_rb:.0f}% probability, {_edge_rb} edge). Math anchors the call."""
-
-                prediction["tacticalBreakdown"] = _replacement_tb
-                # Also fix sharpSummary if it argued the wrong direction
-                _sharp_check = (prediction.get("sharpSummary") or "").lower()
-                if wrong_dir in _sharp_check and right_dir not in _sharp_check[:40]:
-                    prediction["sharpSummary"] = (
-                        f"Reverse Formula projects {_fin_p_dg} vs the {req.line} line — "
-                        f"{right_dir_up} ({_win_p_rb:.0f}% probability, {_edge_rb} edge). "
-                        f"Opponent-specific suppression factors drive the call below the seasonal norm."
-                        if right_dir == "under" else
-                        f"Reverse Formula projects {_fin_p_dg} vs the {req.line} line — "
-                        f"{right_dir_up} ({_win_p_rb:.0f}% probability, {_edge_rb} edge). "
-                        f"Matchup-specific amplification factors drive the call above the seasonal norm."
-                    )
-                print(f"[DIRECTION GUARD] FULL REPLACEMENT: AI argued {wrong_dir.upper()}, math says {right_dir_up}. Complete tacticalBreakdown rebuilt from math data.")
-
-            else:
-                # Lighter fix: AI direction matches or is neutral — just patch Verdict line if needed
-                first_line = tb.split("\n")[0] if tb else ""
-                if "**verdict**" in first_line.lower() and wrong_dir in first_line.lower() and right_dir not in first_line.lower():
-                    import re as _re_dg2
-                    corrected = _re_dg2.sub(r'\b' + wrong_dir + r'\b', right_dir, first_line, flags=_re_dg2.IGNORECASE)
-                    prediction["tacticalBreakdown"] = corrected + tb[len(first_line):]
-                    print(f"[DIRECTION GUARD] Verdict line patched: {wrong_dir.upper()} → {right_dir_up}")
-
-            # Fix sharpSummary
-            sharp = prediction.get("sharpSummary", "")
-            if sharp and _ai_text_disagrees:
-                # AI text argued the WRONG direction → its sharpSummary is built around
-                # that wrong premise and cannot be salvaged by appending a note.
-                # Replace it entirely with a direction-correct expert summary.
-                _punder = real_bayes.get("pUnder", 50) if real_bayes else 50
-                _pover  = real_bayes.get("pOver",  50) if real_bayes else 50
-                _winning_p = max(_punder, _pover)
-                _edge_dg = round(abs(final_proj - req.line), 1)
-                _sharp_under_note = (
-                    f"Matchup-specific suppression drives {final_proj} well below "
-                    f"the {req.line} line — opponent profile and H2H data override the seasonal average."
-                ) if right_dir == "under" else (
-                    f"Matchup-specific amplification drives {final_proj} above "
-                    f"the {req.line} line — possession dominance and opponent profile create elevated volume."
-                )
-                prediction["sharpSummary"] = (
-                    f"Reverse Formula projects {final_proj} {right_dir_up} vs the {req.line} line "
-                    f"({_winning_p:.0f}% P({right_dir_up}), {_edge_dg} edge). "
-                    f"{_sharp_under_note}"
-                )
-                print(f"[DIRECTION GUARD] sharpSummary fully replaced: AI={wrong_dir.upper()} → math={right_dir_up}")
-            elif sharp:
-                # Direction agreed — just clean up any stray wrong-direction language
-                import re as _re_sharp
-                _sharp_has_wrong_action = any(
-                    f"{a} {wrong_dir}" in sharp.lower()
-                    for a in ("smash", "bang", "hammer", "pound", "load up", "strong")
-                )
-                if _sharp_has_wrong_action:
-                    for _bad_s, _good_s in [
-                        (f"smash {wrong_dir}", f"lean {right_dir}"),
-                        (f"strong {wrong_dir}", f"marginal {right_dir}"),
-                        (f"bang {wrong_dir}", f"lean {right_dir}"),
-                    ]:
-                        sharp = _re_sharp.sub(_re_sharp.escape(_bad_s), _good_s, sharp, flags=_re_sharp.IGNORECASE)
-                    prediction["sharpSummary"] = sharp
-
-        # ── POSSESSION NARRATIVE GUARD: fix AI attributing possession to the wrong team ──
-        # e.g. AI says "Lanús possession mastery" when Lanús actually has 44% possession.
-        # Checks the final possession numbers against the narrative and corrects misattribution.
-        try:
-            import re as _re_poss
-            _poss_home_team   = match_dominance.get("homeTeamName", "")
-            _poss_away_team   = match_dominance.get("awayTeamName", "")
-            _home_poss_pct    = float(match_dominance.get("homePoss", 50) or 50)
-            _away_poss_pct    = float(match_dominance.get("awayPoss", 50) or 50)
-            # Normalise: who is the player's team vs opponent?
-            _player_team_norm = (corrected_team_name or "").lower()
-            _opp_team_norm    = (req.opponentName or "").lower()
-            _player_poss = match_dominance.get("expectedPoss", 50) or 50
-            _opp_poss    = match_dominance.get("oppExpectedPoss", 50) or 50
-            _poss_gap = abs(_player_poss - _opp_poss)
-
-            # Only correct when possession split is meaningful (>5pp gap)
-            if _poss_gap >= 5 and corrected_team_name and req.opponentName:
-                _dom_team  = corrected_team_name if _player_poss > _opp_poss else req.opponentName
-                _sub_team  = req.opponentName    if _player_poss > _opp_poss else corrected_team_name
-                _dom_team_lc = _dom_team.lower()
-                _sub_team_lc = _sub_team.lower()
-
-                # Possession-dominance keywords — phrases the AI uses for the controlling team
-                _dom_keywords = [
-                    "possession mastery", "possession dominance", "possession monster",
-                    "controls possession", "control possession", "controlling possession",
-                    "holds possession", "dominate possession", "possession edge",
-                    "possession advantage", "higher possession", "more possession",
-                    "keep the ball", "keeps the ball", "set the tempo", "sets the tempo",
-                    "dictate play", "dictates play", "possession-heavy",
-                ]
-
-                _tb = prediction.get("tacticalBreakdown", "")
-                if _tb:
-                    _tb_lower = _tb.lower()
-                    for _kw in _dom_keywords:
-                        # Find each occurrence of the keyword
-                        for _m in _re_poss.finditer(_re_poss.escape(_kw), _tb_lower):
-                            # Look at the 60 chars before the keyword to see which team is mentioned
-                            _ctx_start = max(0, _m.start() - 60)
-                            _ctx = _tb_lower[_ctx_start:_m.start()]
-                            # If the subordinate team (lower possession) is in context, that's wrong
-                            if _sub_team_lc in _ctx and _dom_team_lc not in _ctx:
-                                print(f"[POSS GUARD] AI attributed '{_kw}' to '{_sub_team}' ({_sub_team} has {_opp_poss if _sub_team_lc==_opp_team_norm else _player_poss:.0f}%) — correcting narrative.")
-                                # Swap team names in a sentence window around the keyword
-                                _sent_start = _tb_lower.rfind(".", 0, _m.start())
-                                _sent_end   = _tb.find(".", _m.end())
-                                if _sent_start < 0: _sent_start = 0
-                                if _sent_end < 0: _sent_end = len(_tb)
-                                _sent = _tb[_sent_start:_sent_end + 1]
-                                _corrected_sent = _re_poss.sub(
-                                    _re_poss.escape(_sub_team),
-                                    f"{_dom_team}",
-                                    _sent, flags=_re_poss.IGNORECASE
-                                )
-                                _tb = _tb[:_sent_start] + _corrected_sent + _tb[_sent_end + 1:]
-                                _tb_lower = _tb.lower()
-                    prediction["tacticalBreakdown"] = _tb
-
-                # Also check sharpSummary
-                _ss = prediction.get("sharpSummary", "")
-                if _ss:
-                    _ss_lower = _ss.lower()
-                    for _kw in _dom_keywords:
-                        for _m in _re_poss.finditer(_re_poss.escape(_kw), _ss_lower):
-                            _ctx = _ss_lower[max(0, _m.start()-60):_m.start()]
-                            if _sub_team_lc in _ctx and _dom_team_lc not in _ctx:
-                                _ss = _re_poss.sub(
-                                    _re_poss.escape(_sub_team), _dom_team, _ss, flags=_re_poss.IGNORECASE
-                                )
-                                _ss_lower = _ss.lower()
-                    prediction["sharpSummary"] = _ss
-        except Exception as _poss_guard_err:
-            print(f"[POSS GUARD] Error: {_poss_guard_err}")
-
-        # ── CONFIDENCE LANGUAGE GUARD: strip overconfident phrasing on low-edge calls ──
-        _is_coin_flip = prediction.get("coinFlip", False)
-        _final_conf   = prediction.get("confidenceScore", 100)
-        if _is_coin_flip or _final_conf <= 55:
-            import re as _re
-            _overconfident_phrases = [
-                ("strong value",   "slim edge"),
-                ("strong edge",    "slim edge"),
-                ("strong lean",    "slight lean"),
-                ("reliable over",  "marginal over"),
-                ("reliable under", "marginal under"),
-                ("reliable",       "marginal"),
-                ("high confidence","low confidence"),
-                ("at strong value", "at slim value"),
-            ]
-            for _field in ("tacticalBreakdown", "sharpSummary"):
-                _txt = prediction.get(_field, "")
-                if not _txt:
-                    continue
-                _changed = False
-                for _bad, _good in _overconfident_phrases:
-                    if _bad in _txt.lower():
-                        _txt = _re.sub(_bad, _good, _txt, flags=_re.IGNORECASE)
-                        _changed = True
-                if _changed:
-                    prediction[_field] = _txt
-                    print(f"[CONFIDENCE GUARD] Replaced overconfident phrasing in {_field} (conf={_final_conf}%)")
-
-        # ── TEXT FINALIZATION: Normalize projection numbers + strip false overrides ──
-        # Problem: Grok writes analysis using its own projected value (e.g. 42.8).
-        # But the final badge uses the math-anchored+calibrated value (e.g. 48).
-        # This creates "projection says 42.8 but badge shows 48" contradictions.
-        # Fix: after ALL numeric adjustments are locked, replace the AI's stale
-        # projection number in all text fields with the final authoritative value.
-        # Also: only say "overrides qualitative lean" when directions *actually* differed.
-        import re as _re_fin
-        _fin_proj  = prediction.get("projectedValue", req.line)
-        _fin_rec   = prediction.get("recommendation", "over").lower()
-        _fusion    = prediction.get("fusionApplied", {})
-        # earlyEstimate = math's early_bayes before all multi-factor adjustments (not Grok's opinion)
-        _ai_proj   = _fusion.get("earlyEstimate", _fin_proj)
-        _ai_rec    = _fusion.get("earlyEstimateRec", _fin_rec)
-        _dirs_differed = (_ai_rec.lower() != _fin_rec.lower())
-
-        # Build patterns for the AI's stale number (e.g. 42.8, 42, ~43)
-        _ai_p_int   = int(round(_ai_proj))
-        _ai_p_float = f"{_ai_proj:.1f}"
-        _fin_p_str  = str(int(round(_fin_proj))) if _fin_proj == int(_fin_proj) else f"{_fin_proj:.1f}"
-
-        def _normalize_text(txt: str) -> str:
-            if not txt:
-                return txt
-
-            # ── Step A: Always strip false "overrides qualitative lean" notes ──
-            # These get appended by the direction guard or AI even when directions agree.
-            # Remove unconditionally when AI and math called the same direction.
-            if not _dirs_differed:
-                txt = _re_fin.sub(
-                    r'\.\s*Math \(\d+% P\((OVER|UNDER)\)\) overrides qualitative lean'
-                    r' — (narrow|solid|strong|slim|marginal|clear) (OVER|UNDER) edge\.',
-                    '', txt, flags=_re_fin.IGNORECASE
-                )
-
-            # ── Step B-0: Fix projection-attribution phrases regardless of which number Grok wrote ──
-            # Grok may internally reason about a stale number and write it in phrases like
-            # "Reverse Formula's 50.1 projection" or "projects 52 under" or "at 48.3 projected".
-            # Replace the number in these phrases with _fin_p_str unconditionally.
-            _proj_phrase_patterns = [
-                # "Reverse Formula's 50.1 projection" → "Reverse Formula's 49 projection"
-                (r"(Reverse Formula(?:'s)?)\s+(\d+\.?\d*)\s+(projection)", rf"\1 {_fin_p_str} \3"),
-                # "Reverse Formula projects/nails/lands at 52.3" → "Reverse Formula projects 49"
-                (r"(Reverse Formula\s+(?:nails|projects|lands at|estimates))\s+(\d+\.?\d*)", rf"\1 {_fin_p_str}"),
-                # "projects 52.3 over/under" → "projects 49 over/under"
-                (r"(projects?|projected(?:\s+at)?|projects\s+to\s+be)\s+(\d+\.?\d*)\s+(over|under)", rf"\1 {_fin_p_str} \3"),
-                # "projecting 26.8" (gerund form, any context) → "projecting 24"
-                (r"(projecting\s+)(\d+\.?\d*)(\b)", rf"\g<1>{_fin_p_str}\3"),
-                # "50.1 projected" or "50.1 projection" → "49 projected/projection"
-                (r"(\d+\.?\d*)\s+(project(?:ed|ion)?\b)", rf"{_fin_p_str} \2"),
-                # "projection 60.3" (projection before number) → "projection 62"
-                (r"(project(?:ed|ion|ing)?\s+)(\d+\.?\d*)(\b)", rf"\g<1>{_fin_p_str}\3"),
-                # "at 50.1 projected" → "at 49 projected"
-                (r"(at\s+)(\d+\.?\d*)(\s+project(?:ed|ion)?)", rf"\g<1>{_fin_p_str}\3"),
-                # "with 50.1 projection" / "with a 50.1 projection" → "with 49 projection"
-                (r"(with\s+(?:a\s+)?)(\d+\.?\d*)(\s+projection)", rf"\g<1>{_fin_p_str}\3"),
-                # "lands at 60.3" → "lands at 62"
-                (r"(\blands?\s+at\s+)(\d+\.?\d*)(\b)", rf"\g<1>{_fin_p_str}\3"),
-                # "sits 60.3 under 64.5" → "sits 62 under 64.5" (only when followed by over/under)
-                (r"(\bsits?\s+(?:at\s+)?)(\d+\.?\d*)(\s+(?:over|under)\b)", rf"\g<1>{_fin_p_str}\3"),
-                # "clears X passes" / "clears X with" / "clears X at" / "clears X:" (OVER language)
-                (r"(clears?\s+[\d.]+\s+(?:passes?|attempts?|with|at|:)\s*)(\d+\.?\d*)(\b)", rf"\g<1>{_fin_p_str}\3"),
-                # "falls short of X.X at Y.Y" / "cruises under X.X at Y.Y"
-                (r"((?:falls short of|cruises (?:over|under))\s+[\d.]+\s+at\s+)(\d+\.?\d*)(\b)", rf"\g<1>{_fin_p_str}\3"),
-                # "sharp +3 edge on Reverse Formula's 50.1 projection"
-                (r"(sharp\s+[+-]?\d+\.?\d*\s+edge\s+on\s+Reverse Formula's?\s+)(\d+\.?\d*)(\s+projection)", rf"\g<1>{_fin_p_str}\3"),
-                # "pushing him past 50.1" / "pushing him to 50.1"
-                (r"(pushing\s+(?:him|her|them)\s+(?:past|to|above|over)\s+)(\d+\.?\d*)(\b)", rf"\g<1>{_fin_p_str}\3"),
-                # "inflates ... to 50.1 territory" / "to 50.1 range" / "to 50.1 levels"
-                (r"(\bto\s+)(\d+\.?\d*)(\s+(?:territory|range|level[s]?)\b)", rf"\g<1>{_fin_p_str}\3"),
-                # "capping Ginter at 60.3" / "caps Ginter at 60.3" / "caps him at 60.3"
-                (r"(cap(?:ping|s)?\s+(?:\w+\s+)?at\s+)(\d+\.?\d*)(\b)", rf"\g<1>{_fin_p_str}\3"),
-                # "ceiling of 60.3" / "ceiling at 60.3"
-                (r"(ceiling\s+(?:of|at)\s+)(\d+\.?\d*)(\b)", rf"\g<1>{_fin_p_str}\3"),
-            ]
-            for _pat, _repl in _proj_phrase_patterns:
-                txt = _re_fin.sub(_pat, _repl, txt, flags=_re_fin.IGNORECASE)
-
-            # ── Step B: Number substitution — only when gap is meaningful (≥1.0) ──
-            if abs(_ai_proj - _fin_proj) < 1.0:
-                pass  # Numbers very close — skip number substitution but still run Step D
-            else:
-                # Replace float version (42.8) first, then int (42), to avoid partial matches
-                for _old_num in [_ai_p_float, str(_ai_p_int)]:
-                    # Only replace when it appears as a standalone number (not part of a larger number)
-                    txt = _re_fin.sub(r'(?<!\d)' + _re_fin.escape(_old_num) + r'(?!\d)', _fin_p_str, txt)
-
-            # ── Step D: Direction-conflict correction ──
-            # When AI wrote OVER language but math says UNDER (or vice versa), fix the directional verbs.
-            # Also catches cases where the AI's Grok projection (not the Bayesian anchor) differs.
-            _grok_proj_str = str(int(round(_fin_proj))) if _fin_proj == int(_fin_proj) else f"{_fin_proj:.1f}"
-            if _fin_rec == "under":
-                # Replace OVER-implying phrases with UNDER-appropriate ones
-                # "clears X passes" / "clears X attempts" → "stays near X" (projection is already the correct number)
-                txt = _re_fin.sub(r'\bclears?\s+([\d.]+)\s+(passes?|attempts?|shots?|saves?)',
-                    rf'stays near \1 \2', txt, flags=_re_fin.IGNORECASE)
-                # "clears X" (standalone) → "stays under X"
-                txt = _re_fin.sub(r'\bclears?\s+([\d.]+)(?!\s*(?:passes?|attempts?|shots?|saves?))',
-                    rf'stays under \1', txt, flags=_re_fin.IGNORECASE)
-                # "surpasses/exceeds/hits X+" → "stays below X"
-                txt = _re_fin.sub(r'\b(surpasses?|exceeds?|hits)\s+([\d.]+)\+?',
-                    rf'stays below \2', txt, flags=_re_fin.IGNORECASE)
-                # "+X% edge" when line is UNDER → no change needed (edge direction, not direction word)
-            elif _fin_rec == "over":
-                # Replace UNDER-implying phrases with OVER-appropriate ones
-                # "falls short of X" → "reaches X" 
-                txt = _re_fin.sub(r'\bfalls?\s+short\s+of\s+([\d.]+)',
-                    rf'reaches \1', txt, flags=_re_fin.IGNORECASE)
-                # "stays below/under X" → "reaches X"
-                txt = _re_fin.sub(r'\bstays?\s+(?:below|under)\s+([\d.]+)',
-                    rf'reaches \1', txt, flags=_re_fin.IGNORECASE)
-
-            # ── Step C: Patch "narrow edge" language when actual edge is large ──
-            _edge_size = abs(_fin_proj - req.line)
-            if _edge_size > 5:
-                txt = _re_fin.sub(r'\bnarrow (over|under) edge\b', r'strong \1 edge', txt, flags=_re_fin.IGNORECASE)
-                txt = _re_fin.sub(r'\bnarrow edge\b', 'strong edge', txt, flags=_re_fin.IGNORECASE)
-                txt = _re_fin.sub(r'\bslight (over|under) edge\b', r'clear \1 edge', txt, flags=_re_fin.IGNORECASE)
-            elif _edge_size > 2.5:
-                txt = _re_fin.sub(r'\bnarrow (over|under) edge\b', r'solid \1 edge', txt, flags=_re_fin.IGNORECASE)
-
-            return txt
-
-        for _tf in ("tacticalBreakdown", "sharpSummary", "reasoning", "scenarioAnalysis", "gameFlowDynamics"):
-            _old_txt = prediction.get(_tf, "")
-            if _old_txt:
-                _new_txt = _normalize_text(_old_txt)
-                if _new_txt != _old_txt:
-                    prediction[_tf] = _new_txt
-
-        if abs(_ai_proj - _fin_proj) >= 1.0:
-            print(f"[TEXT NORM] AI proj={_ai_proj:.1f} → final={_fin_proj:.1f} — normalized numeric references in text fields")
-
-        # GAME SCRIPT INTELLIGENCE REMOVED.
-        # Was applying confidence deltas based on trailing-game scenarios,
-        # which systematically pushed borderline home-GK picks toward OVER.
-        # The underlying model's projection + confidence is sufficient.
+        # ── Game script disabled
         prediction["gameScript"] = {"key_finding": "Game script analysis disabled.", "scenarios": []}
 
         # Save to MongoDB
