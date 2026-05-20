@@ -11,7 +11,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import { useQueryClient } from '@tanstack/react-query';
-import { scanProp, predict, mlbPredict, searchMlbPlayers, getMlbTeams, cs2Predict, searchCs2Players, searchCs2Teams, savePick, PROP_TYPES, MLB_PROP_TYPES, CS2_PROP_TYPES, LEAGUES, PredictionResult, ScanResult, MlbPlayer, Cs2Player, Cs2Team } from '@/lib/api';
+import { scanProp, predict, mlbPredict, searchMlbPlayers, getMlbTeams, getMlbGameContext, cs2Predict, searchCs2Players, searchCs2Teams, savePick, PROP_TYPES, MLB_PROP_TYPES, CS2_PROP_TYPES, LEAGUES, PredictionResult, ScanResult, MlbPlayer, Cs2Player, Cs2Team } from '@/lib/api';
 import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult, FuzzyLeagueResult } from '@/components/FuzzySearchInput';
 import LeaguePickerModal from '@/components/LeaguePickerModal';
 import { useAuth } from '@/contexts/AuthContext';
@@ -171,6 +171,10 @@ export default function ScanScreen() {
   const [mlbPitcherEra, setMlbPitcherEra] = useState('');
   const [mlbGameTotal, setMlbGameTotal] = useState('');
   const [mlbLineupSpot, setMlbLineupSpot] = useState('');
+  // MLB auto-fill state
+  const [mlbAutoFilling, setMlbAutoFilling] = useState(false);
+  const [mlbAutoFilled, setMlbAutoFilled] = useState(false);
+  const [mlbPitcherName, setMlbPitcherName] = useState('');
 
   // CS2 manual mode fields
   const [cs2PlayerQuery, setCs2PlayerQuery] = useState('');
@@ -394,6 +398,37 @@ export default function ScanScreen() {
       } catch { setMlbPlayerSuggestions([]); }
       finally { setMlbSearching(false); }
     }, 280);
+  };
+
+  const fetchMlbGameContext = async (player: MlbPlayer) => {
+    const teamName = player.team?.displayName || '';
+    if (!teamName) return;
+    setMlbAutoFilling(true);
+    setMlbAutoFilled(false);
+    setMlbPitcherName('');
+    try {
+      const ctx = await getMlbGameContext({
+        teamName,
+        playerId: player.id || 0,
+        season: 2026,
+      });
+      if (ctx && !ctx.error && !ctx.message) {
+        if (ctx.probablePitcher?.hand === 'L' || ctx.probablePitcher?.hand === 'R') {
+          setMlbPitcherHand(ctx.probablePitcher.hand);
+        }
+        if (ctx.probablePitcher?.era != null) {
+          setMlbPitcherEra(String(ctx.probablePitcher.era));
+        }
+        if (ctx.lineupSpot) {
+          setMlbLineupSpot(String(ctx.lineupSpot));
+        }
+        if (ctx.probablePitcher?.name) {
+          setMlbPitcherName(ctx.probablePitcher.name);
+        }
+        setMlbAutoFilled(true);
+      }
+    } catch {}
+    finally { setMlbAutoFilling(false); }
   };
 
   const handleMlbOpponentSearch = (text: string) => {
@@ -1213,6 +1248,14 @@ export default function ScanScreen() {
                       setMlbResolvedPlayer(p);
                       setMlbPlayerQuery(p.fullName);
                       setMlbPlayerSuggestions([]);
+                      // Auto-fill batter hand from batsThrows (e.g. "R/R" → R, "L/R" → L, "S/R" → S)
+                      if (p.batsThrows) {
+                        const bh = p.batsThrows[0]?.toUpperCase();
+                        if (bh === 'L' || bh === 'R' || bh === 'S') {
+                          setMlbBatterHand(bh as 'L' | 'R' | 'S');
+                        }
+                      }
+                      fetchMlbGameContext(p);
                       Haptics.selectionAsync();
                     }}
                   >
@@ -1304,9 +1347,34 @@ export default function ScanScreen() {
             </View>
 
             {/* ── MLB v2 Ultra fields ── */}
+            {/* Auto-fill status row */}
+            {mlbAutoFilling && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4, marginBottom: 2 }}>
+                <ActivityIndicator color={Colors.primary} size="small" />
+                <Text style={{ color: Colors.textSecondary, fontSize: 11, fontFamily: 'JetBrainsMono_400Regular' }}>
+                  Fetching lineup data…
+                </Text>
+              </View>
+            )}
+            {mlbAutoFilled && !mlbAutoFilling && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4, marginBottom: 2 }}>
+                <Ionicons name="flash" size={11} color={Colors.primary} />
+                <Text style={{ color: Colors.primary, fontSize: 11, fontFamily: 'JetBrainsMono_400Regular' }}>
+                  Auto-filled from MLB schedule
+                  {mlbPitcherName ? ` · vs ${mlbPitcherName}` : ''}
+                </Text>
+              </View>
+            )}
+
             <View style={{ flexDirection: 'row', gap: 10, marginTop: 4 }}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.fieldLabel}>Batter Hand <Text style={styles.fieldLabelOpt}>(opt)</Text></Text>
+                <Text style={styles.fieldLabel}>
+                  Batter Hand{' '}
+                  {mlbBatterHand && mlbResolvedPlayer?.batsThrows
+                    ? <Text style={{ color: Colors.primary, fontSize: 9, fontFamily: 'JetBrainsMono_600SemiBold' }}>AUTO</Text>
+                    : <Text style={styles.fieldLabelOpt}>(opt)</Text>
+                  }
+                </Text>
                 <View style={[styles.venueToggle, { gap: 4 }]}>
                   {(['L','R','S'] as const).map(h => (
                     <TouchableOpacity
@@ -1320,7 +1388,13 @@ export default function ScanScreen() {
                 </View>
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.fieldLabel}>Pitcher Hand <Text style={styles.fieldLabelOpt}>(opt)</Text></Text>
+                <Text style={styles.fieldLabel}>
+                  Pitcher Hand{' '}
+                  {mlbPitcherHand && mlbAutoFilled
+                    ? <Text style={{ color: Colors.primary, fontSize: 9, fontFamily: 'JetBrainsMono_600SemiBold' }}>AUTO</Text>
+                    : <Text style={styles.fieldLabelOpt}>(opt)</Text>
+                  }
+                </Text>
                 <View style={[styles.venueToggle, { gap: 4 }]}>
                   {(['L','R'] as const).map(h => (
                     <TouchableOpacity
@@ -1337,7 +1411,13 @@ export default function ScanScreen() {
 
             <View style={{ flexDirection: 'row', gap: 10, marginTop: 4 }}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.fieldLabel}>Opp Pitcher ERA <Text style={styles.fieldLabelOpt}>(opt)</Text></Text>
+                <Text style={styles.fieldLabel}>
+                  Opp Pitcher ERA{' '}
+                  {mlbPitcherEra && mlbAutoFilled
+                    ? <Text style={{ color: Colors.primary, fontSize: 9, fontFamily: 'JetBrainsMono_600SemiBold' }}>AUTO</Text>
+                    : <Text style={styles.fieldLabelOpt}>(opt)</Text>
+                  }
+                </Text>
                 <TextInput
                   style={[styles.textInput, INPUT_STYLE]}
                   placeholder="e.g. 3.45"
@@ -1359,7 +1439,13 @@ export default function ScanScreen() {
                 />
               </View>
               <View style={{ flex: 0.7 }}>
-                <Text style={styles.fieldLabel}>Lineup Spot <Text style={styles.fieldLabelOpt}>(opt)</Text></Text>
+                <Text style={styles.fieldLabel}>
+                  Lineup{' '}
+                  {mlbLineupSpot && mlbAutoFilled
+                    ? <Text style={{ color: Colors.primary, fontSize: 9, fontFamily: 'JetBrainsMono_600SemiBold' }}>AUTO</Text>
+                    : <Text style={styles.fieldLabelOpt}>(opt)</Text>
+                  }
+                </Text>
                 <TextInput
                   style={[styles.textInput, INPUT_STYLE]}
                   placeholder="1-9"
@@ -1494,49 +1580,6 @@ export default function ScanScreen() {
               <Text style={styles.pickerBtnText}>{CS2_PROP_TYPES.find(p => p.value === cs2PropType)?.label || 'Select'}</Text>
               <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
             </TouchableOpacity>
-
-            <Text style={styles.fieldLabel}>Map <Text style={styles.fieldLabelOpt}>(optional — improves accuracy)</Text></Text>
-            <TextInput
-              style={[styles.textInput, INPUT_STYLE]}
-              placeholder="e.g. Mirage, Nuke, Anubis, Dust2"
-              placeholderTextColor={Colors.textTertiary}
-              value={cs2MapName}
-              onChangeText={setCs2MapName}
-              autoCorrect={false}
-              autoCapitalize="words"
-            />
-
-            <Text style={styles.fieldLabel}>Player Team Starts <Text style={styles.fieldLabelOpt}>(optional)</Text></Text>
-            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
-              {([
-                { label: 'CT Side', value: true },
-                { label: 'T Side',  value: false },
-                { label: 'Unknown', value: null },
-              ] as { label: string; value: boolean | null }[]).map(opt => (
-                <TouchableOpacity
-                  key={opt.label}
-                  style={{
-                    flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: 'center',
-                    borderWidth: 1,
-                    borderColor: cs2TeamStartsCt === opt.value
-                      ? (opt.value === true ? Colors.primary : opt.value === false ? '#FF6B35' : Colors.textTertiary)
-                      : '#2A2A2A',
-                    backgroundColor: cs2TeamStartsCt === opt.value
-                      ? (opt.value === true ? Colors.primary + '20' : opt.value === false ? '#FF6B3520' : '#2A2A2A')
-                      : 'transparent',
-                  }}
-                  onPress={() => { setCs2TeamStartsCt(opt.value); Haptics.selectionAsync(); }}
-                  activeOpacity={0.75}
-                >
-                  <Text style={{
-                    fontSize: 12, fontFamily: 'JetBrainsMono_600SemiBold',
-                    color: cs2TeamStartsCt === opt.value
-                      ? (opt.value === true ? Colors.primary : opt.value === false ? '#FF6B35' : Colors.textSecondary)
-                      : Colors.textTertiary,
-                  }}>{opt.label}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
 
             <Text style={styles.fieldLabel}>Line Value</Text>
             <TextInput

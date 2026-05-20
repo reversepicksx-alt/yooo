@@ -274,6 +274,34 @@ async def get_teams():
         raise HTTPException(status_code=502, detail=f"MLB teams fetch failed: {e}")
 
 
+# ── Game Context (auto-fill) ───────────────────────────────────────────────────
+
+@router.get("/game-context")
+async def get_game_context(
+    teamName: str = Query(""),
+    teamAbbr: str = Query(""),
+    playerId: int = Query(0),
+    season:   int = Query(2026),
+):
+    """
+    Returns today's game context for a team:
+    - Probable opponent pitcher: name, hand (L/R), season ERA
+    - Player lineup spot (only available ~2h before first pitch)
+    Used by the mobile app to auto-fill MLB prediction fields.
+    """
+    try:
+        result = await mlb_client.get_game_context(
+            team_name=teamName,
+            team_abbr=teamAbbr,
+            player_id=playerId,
+            season=season,
+        )
+        return result
+    except Exception as e:
+        log.warning(f"[MLB GAME CTX] {e}")
+        return {"error": str(e), "probablePitcher": None, "lineupSpot": None}
+
+
 # ── Predict ───────────────────────────────────────────────────────────────────
 
 class MlbPredictRequest(BaseModel):

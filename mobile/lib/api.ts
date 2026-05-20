@@ -1074,6 +1074,35 @@ export async function getMlbTeams(): Promise<Array<{
   return apiCall('/api/mlb/teams');
 }
 
+export interface MlbGameContext {
+  probablePitcher: {
+    name: string;
+    id: number;
+    hand: 'L' | 'R' | '';
+    era: number | null;
+  } | null;
+  lineupSpot: number | null;
+  isHome: boolean | null;
+  opponentTeam: string;
+  gameDate: string;
+  message?: string;
+  error?: string;
+}
+
+export async function getMlbGameContext(params: {
+  teamName?: string;
+  teamAbbr?: string;
+  playerId?: number;
+  season?: number;
+}): Promise<MlbGameContext> {
+  const qs = new URLSearchParams();
+  if (params.teamName) qs.set('teamName', params.teamName);
+  if (params.teamAbbr) qs.set('teamAbbr', params.teamAbbr);
+  if (params.playerId) qs.set('playerId', String(params.playerId));
+  if (params.season)   qs.set('season',   String(params.season));
+  return apiCall<MlbGameContext>(`/api/mlb/game-context?${qs.toString()}`);
+}
+
 export async function mlbPredict(request: Record<string, unknown>): Promise<PredictionResult> {
   const raw = await apiCall<any>('/api/mlb/predict', {
     method: 'POST',

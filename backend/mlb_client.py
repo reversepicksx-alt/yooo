@@ -628,3 +628,129 @@ async def get_game_by_teams(home_abbrev: str, away_abbrev: str, season: int = 20
     except Exception:
         pass
     return None
+
+
+async def get_game_context(
+    team_name: str = "",
+    team_abbr: str = "",
+    player_id: int = 0,
+    season: int = 2026,
+) -> dict:
+    """
+    Fetch today's game context from MLB Stats API:
+    - Probable opponent pitcher (name, hand L/R, season ERA)
+    - Player lineup spot (if lineup posted ~2h before game)
+    Cached 10 minutes.
+    """
+    from datetime import date as _date
+    today = _date.today().isoformat()
+    cache_key = f"mlb_game_ctx:{team_name}:{team_abbr}:{player_id}:{today}"
+    doc = await _cache_get(cache_key)
+    if _cache_fresh(doc, 600) and doc.get("data") is not None:
+        return doc["data"]
+
+    # ── 1. Resolve Stats API team ID ─────────────────────────────────────────
+    teams_data = await _statsapi_get("/teams", {"sportId": 1, "season": season})
+    stats_team_id = None
+    tn_lower = team_name.lower()
+    ta_upper = team_abbr.upper()
+
+    for t in teams_data.get("teams", []):
+        t_abbr = t.get("abbreviation", "").upper()
+        t_loc  = t.get("locationName", "").lower()
+        t_team = t.get("teamName", "").lower()
+        full   = f"{t_loc} {t_team}".strip()
+
+        if ta_upper and t_abbr == ta_upper:
+            stats_team_id = t["id"]
+            break
+        if tn_lower and (
+            tn_lower in full or full in tn_lower or
+            t_team in tn_lower or tn_lower in t_team
+        ):
+            stats_team_id = t["id"]
+            break
+
+    if not stats_team_id:
+        return {"error": "Team not found", "probablePitcher": None, "lineupSpot": None}
+
+    # ── 2. Today's schedule with probable pitchers + lineups ─────────────────
+    schedule = await _statsapi_get("/schedule", {
+        "sportId": 1,
+        "teamId":  stats_team_id,
+        "date":    today,
+        "hydrate": "probablePitcher,lineups",
+    })
+
+    all_games = []
+    for d in schedule.get("dates", []):
+        all_games.extend(d.get("games", []))
+
+    if not all_games:
+        result = {
+            "message": "No game scheduled today",
+            "probablePitcher": None,
+            "lineupSpot": None,
+            "isHome": None,
+            "opponentTeam": "",
+        }
+        await _cache_set(cache_key, result)
+        return result
+
+    game = all_games[0]
+    home_info = game.get("teams", {}).get("home", {})
+    away_info = game.get("teams", {}).get("away", {})
+    is_home   = (home_info.get("team", {}).get("id") == stats_team_id)
+    our_info  = home_info if is_home else away_info
+    opp_info  = away_info if is_home else home_info
+
+    # ── 3. Probable pitcher (opponent's starter) ──────────────────────────────
+    prob_pitcher = opp_info.get("probablePitcher") or {}
+    pitcher_result = None
+
+    if prob_pitcher.get("id"):
+        pitcher_id = prob_pitcher["id"]
+        p_data = await _statsapi_get(f"/people/{pitcher_id}", {
+            "hydrate": f"stats(group=pitching,type=season,season={season})",
+        })
+        person = (p_data.get("people") or [{}])[0]
+        pitch_hand = (person.get("pitchHand") or {}).get("code", "")
+
+        era = None
+        for sb in person.get("stats", []):
+            for split in sb.get("splits", []):
+                era_raw = split.get("stat", {}).get("era")
+                if era_raw and era_raw not in ("-.--", "0.00", ""):
+                    try:
+                        era = float(era_raw)
+                    except Exception:
+                        pass
+
+        pitcher_result = {
+            "name": prob_pitcher.get("fullName") or person.get("fullName", ""),
+            "id":   pitcher_id,
+            "hand": pitch_hand,
+            "era":  era,
+        }
+
+    # ── 4. Lineup spot ────────────────────────────────────────────────────────
+    lineup_spot = None
+    lineups = game.get("lineups") or {}
+    batters_key = "homeTeamBatters" if is_home else "awayTeamBatters"
+    batters = lineups.get(batters_key, [])
+    if player_id and batters:
+        for i, b in enumerate(batters, start=1):
+            b_id = b.get("id") if isinstance(b, dict) else b
+            if b_id == player_id:
+                lineup_spot = i
+                break
+
+    result = {
+        "probablePitcher": pitcher_result,
+        "lineupSpot":      lineup_spot,
+        "isHome":          is_home,
+        "opponentTeam":    (opp_info.get("team") or {}).get("name", ""),
+        "gameDate":        today,
+    }
+    await _cache_set(cache_key, result)
+    return result
