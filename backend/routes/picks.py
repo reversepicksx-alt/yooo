@@ -18,6 +18,27 @@ import cs2_client as _cs2_client
 
 router = APIRouter(prefix="/api", tags=["picks"])
 
+# ── CS2 settle cooldown ────────────────────────────────────────────────────
+# Tracks the last time we ATTEMPTED to settle each CS2 pick (by pickId).
+# If the match wasn't ready yet, we wait CS2_SETTLE_COOLDOWN_SEC before
+# trying again.  This prevents hammering the PandaScore API with hundreds
+# of requests per minute when multiple users poll /api/picks/list.
+#
+# Key: pickId (str)  →  Value: last-attempt monotonic timestamp (float)
+_cs2_settle_last_attempt: dict[str, float] = {}
+_cs2_settle_locks:        dict[str, aio.Lock] = {}
+CS2_SETTLE_COOLDOWN_SEC = 300   # 5 minutes between settle retries per pick
+
+
+def _cs2_settle_lock(pick_id: str) -> aio.Lock:
+    """Return (or create) a per-pick asyncio.Lock — prevents concurrent settle calls."""
+    if pick_id not in _cs2_settle_locks:
+        _cs2_settle_locks[pick_id] = aio.Lock()
+    return _cs2_settle_locks[pick_id]
+
+
+import time as _time
+
 
 def generate_tracking_id():
     """Generate a unique tracking ID for every pick."""
@@ -367,10 +388,35 @@ async def list_picks(req: GetPicksRequest):
     # When a CS2 match finishes, settle the pick by fetching the player's real
     # final stats from the BDL CS2 API. No live tracking — just a post-match
     # check each time the user opens their picks screen.
+    #
+    # RATE LIMIT GUARD: only attempt to settle a pick once every
+    # CS2_SETTLE_COOLDOWN_SEC (5 min).  Concurrent list calls for the same
+    # pick are serialised via per-pick asyncio.Locks so only ONE request
+    # fires at a time.  This prevents the 429 cascade that blocked settling.
     cs2_live_picks = [p for p in live_picks if p.get("sport") == "cs2"]
     if cs2_live_picks:
+        async def _settle_with_cooldown(pick: dict) -> Optional[dict]:
+            pick_id = pick.get("pickId", "")
+            now = _time.monotonic()
+            last = _cs2_settle_last_attempt.get(pick_id, 0.0)
+            if now - last < CS2_SETTLE_COOLDOWN_SEC:
+                # Still within cooldown window — skip API call
+                return None
+            lock = _cs2_settle_lock(pick_id)
+            if lock.locked():
+                # Another concurrent request is already settling this pick
+                return None
+            async with lock:
+                # Re-check cooldown inside the lock (double-checked locking)
+                now2 = _time.monotonic()
+                last2 = _cs2_settle_last_attempt.get(pick_id, 0.0)
+                if now2 - last2 < CS2_SETTLE_COOLDOWN_SEC:
+                    return None
+                _cs2_settle_last_attempt[pick_id] = now2
+                return await _settle_cs2_pick({**pick, "email": req.email.lower()})
+
         try:
-            cs2_settle_tasks = [_settle_cs2_pick({**p, "email": req.email.lower()}) for p in cs2_live_picks]
+            cs2_settle_tasks = [_settle_with_cooldown(p) for p in cs2_live_picks]
             cs2_results = await aio.gather(*cs2_settle_tasks, return_exceptions=True)
             for p, settled in zip(cs2_live_picks, cs2_results):
                 if isinstance(settled, Exception) or not settled:

@@ -30,10 +30,15 @@ CACHE_TTL = {
 }
 
 
-async def _get(path: str, params: dict = None) -> dict:
+async def _get(path: str, params: dict = None, _retry: int = 0) -> dict:
     global _last_req_time
     headers = {"Authorization": CS2_API_KEY}
     url = f"{CS2_API_BASE}{path}"
+
+    # Hard cap: 2 retries on 429 then raise so caller can bail out cleanly.
+    # Previously unlimited retries caused cascading 429 storms when the
+    # settling logic fired on every picks/list call from multiple users.
+    MAX_429_RETRIES = 2
 
     async with _rate_sem:
         elapsed = time.monotonic() - _last_req_time
@@ -52,10 +57,13 @@ async def _get(path: str, params: dict = None) -> dict:
                 raise RuntimeError(f"CS2 API error {resp.status_code}: {resp.text[:200]}")
             return resp.json()
 
-    # 429 — wait outside semaphore
-    print(f"[CS2 CLIENT] 429 on {path} — waiting 10s before retry")
-    await asyncio.sleep(10)
-    return await _get(path, params)
+    # 429 — exponential back-off then retry (capped)
+    if _retry >= MAX_429_RETRIES:
+        raise RuntimeError(f"CS2 API 429 rate-limited on {path} after {_retry} retries — aborting")
+    wait = 10 * (2 ** _retry)   # 10s, 20s
+    print(f"[CS2 CLIENT] 429 on {path} — waiting {wait}s before retry {_retry + 1}/{MAX_429_RETRIES}")
+    await asyncio.sleep(wait)
+    return await _get(path, params, _retry=_retry + 1)
 
 
 async def _cache_get(key: str) -> Optional[dict]:
