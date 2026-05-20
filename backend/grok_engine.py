@@ -854,7 +854,17 @@ async def _run_auto_settlement():
         "pitcher_fantasy_score", "pitching_outs",
     }
     mlb_picks    = [p for p in live_picks if p.get("sport") == "mlb" or p.get("propType", "") in _MLB_PROP_TYPES]
-    soccer_picks = [p for p in live_picks if p not in mlb_picks]
+    # Detect CS2 picks by sport field OR propType (catches picks saved before
+    # the sport-field repair was deployed — same logic as picks.py repair block).
+    _CS2_PROP_PREFIXES = ("map1_", "maps_1_2_")
+    cs2_picks = [
+        p for p in live_picks
+        if p.get("sport") == "cs2"
+        or str(p.get("propType", "")).startswith(_CS2_PROP_PREFIXES)
+    ]
+    # Re-partition: remove cs2 from both mlb and soccer pools
+    mlb_picks   = [p for p in mlb_picks   if p not in cs2_picks]
+    soccer_picks = [p for p in live_picks if p not in mlb_picks and p not in cs2_picks]
 
     for pick in mlb_picks:
         try:
@@ -974,6 +984,97 @@ async def _run_auto_settlement():
                             settled_count += 1
                 except Exception:
                     continue
+
+    # ── CS2 background settlement ──────────────────────────────────────────────
+    # Settle CS2 picks that have been pending/live for > 30 min.  Uses the same
+    # BDL cache layer as the on-demand path so the 15-min cron run only costs
+    # a handful of API calls (all subsequent hits are served from cache).
+    if cs2_picks:
+        import cs2_client as _cs2_client_ge
+        cs2_settle_cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
+
+        for pick in cs2_picks:
+            team_id   = pick.get("teamId")
+            player_id = pick.get("playerId")
+            opp_name  = pick.get("opponentName", "")
+            prop_type = pick.get("propType", "maps_1_2_kills")
+            line      = pick.get("line", 0)
+            rec       = pick.get("recommendation", "over")
+            pick_id   = pick.get("pickId", "")
+            email     = pick.get("email", "")
+
+            if not team_id or not player_id or not opp_name:
+                continue
+
+            # Skip picks saved in the last 30 min — match can't be over yet
+            for tf in ("timestamp", "createdAt"):
+                raw_ts = pick.get(tf)
+                if raw_ts:
+                    try:
+                        pts = datetime.fromisoformat(str(raw_ts).replace("Z", "+00:00"))
+                        if pts.tzinfo is None:
+                            pts = pts.replace(tzinfo=timezone.utc)
+                        if pts > cs2_settle_cutoff:
+                            raw_ts = None   # too recent
+                    except Exception:
+                        raw_ts = None
+                    break
+
+            if raw_ts is None:
+                continue
+
+            ts_iso = pick.get("timestamp") or pick.get("createdAt", "")
+            if isinstance(ts_iso, (int, float)) and ts_iso > 0:
+                ts_iso = datetime.fromtimestamp(ts_iso / 1000, tz=timezone.utc).isoformat()
+
+            try:
+                result = await _cs2_client_ge.get_cs2_completed_match_result(
+                    team_id=int(team_id),
+                    player_id=int(player_id),
+                    opponent_name=opp_name,
+                    prop_type=prop_type,
+                    after_iso=str(ts_iso),
+                )
+            except Exception as _ce:
+                print(f"[CS2 AUTO-SETTLE] error for {pick.get('playerName','?')}: {_ce}")
+                continue
+
+            if not result or result.get("actualValue") is None:
+                continue
+
+            actual_value = result["actualValue"]
+            # Determine hit/miss/push
+            _diff = actual_value - float(line)
+            if abs(_diff) < 0.001:
+                result_str = "push"
+            elif rec == "over":
+                result_str = "hit" if actual_value > float(line) else "miss"
+            else:
+                result_str = "hit" if actual_value < float(line) else "miss"
+
+            hit_pct   = 100 if result_str == "hit" else (0 if result_str == "miss" else 50)
+            now_iso   = datetime.now(timezone.utc).isoformat()
+            settle_set = {
+                "status":      "settled",
+                "result":      result_str,
+                "actualValue": actual_value,
+                "hitPct":      hit_pct,
+                "matchScore":  result.get("matchScore"),
+                "settledAt":   now_iso,
+                "sport":       "cs2",   # also repair the sport field in DB
+            }
+            try:
+                await db.picks.update_one(
+                    {"pickId": pick_id, "email": email},
+                    {"$set": settle_set},
+                )
+                settled_count += 1
+                print(
+                    f"[CS2 AUTO-SETTLE] {pick.get('playerName','?')} {prop_type} "
+                    f"actual={actual_value} line={line} → {result_str}"
+                )
+            except Exception as _ue:
+                print(f"[CS2 AUTO-SETTLE] DB write error: {_ue}")
 
     if settled_count > 0:
         print(f"[AUTO-SETTLE] Settled {settled_count} picks")

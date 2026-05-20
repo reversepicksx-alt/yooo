@@ -396,9 +396,33 @@ async def list_picks(req: GetPicksRequest):
             tid = generate_tracking_id()
             p["trackingId"] = tid
             updates["trackingId"] = tid
-        if not p.get("sport"):
-            p["sport"] = "soccer"
-            updates["sport"] = "soccer"
+        if not p.get("sport") or (
+            # Repair picks already wrongly stamped as soccer: if the pick has
+            # a CS2 propType it must be cs2 regardless of what sport says.
+            p.get("sport") == "soccer"
+            and str(p.get("propType", "")).startswith(("map1_", "maps_1_2_"))
+        ):
+            # Detect sport from propType so old picks saved before the sport
+            # field was added are not permanently mis-labelled as soccer.
+            _CS2_PROPS = {
+                "map1_kills", "map1_deaths", "map1_assists", "map1_adr",
+                "map1_rating", "map1_first_kills", "map1_clutches_won",
+                "map1_headshot_pct", "maps_1_2_kills", "maps_1_2_deaths",
+                "maps_1_2_assists", "maps_1_2_headshots",
+            }
+            _MLB_PROPS = {
+                "hits", "home_runs", "rbi", "walks", "strikeouts", "runs",
+                "total_bases", "stolen_bases", "doubles", "plate_appearances",
+            }
+            _pt = p.get("propType", "")
+            if _pt in _CS2_PROPS or str(_pt).startswith(("map1_", "maps_1_2_")):
+                _detected = "cs2"
+            elif _pt in _MLB_PROPS:
+                _detected = "mlb"
+            else:
+                _detected = "soccer"
+            p["sport"] = _detected
+            updates["sport"] = _detected
         rec_raw = p.get("recommendation", "")
         if rec_raw and rec_raw != rec_raw.lower():
             p["recommendation"] = rec_raw.lower()
