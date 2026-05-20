@@ -1084,6 +1084,30 @@ async def _run_auto_settlement():
                     f"[CS2 AUTO-SETTLE] {pick.get('playerName','?')} {prop_type} "
                     f"actual={actual_value} line={line} → {result_str}"
                 )
+                # ── In-app notification ──────────────────────────────────────
+                try:
+                    from routes.notifications import create_notification
+                    _emoji = "✅" if result_str == "hit" else ("❌" if result_str == "miss" else "↔️")
+                    _prop  = prop_type.replace("_", " ").title()
+                    _label = "HIT" if result_str == "hit" else ("MISSED" if result_str == "miss" else "PUSH")
+                    await create_notification(
+                        email=email,
+                        ntype="pick_settled",
+                        title=f"{_emoji} {pick.get('playerName','?')} {_prop} — {_label}",
+                        body=f"Actual: {actual_value} · Line: {line} · {rec.upper()}",
+                        data={
+                            "pickId":         pick_id,
+                            "playerName":     pick.get("playerName"),
+                            "propType":       prop_type,
+                            "result":         result_str,
+                            "actualValue":    actual_value,
+                            "line":           line,
+                            "recommendation": rec,
+                            "sport":          "cs2",
+                        },
+                    )
+                except Exception as _ne:
+                    print(f"[CS2 AUTO-SETTLE] notification error: {_ne}")
             except Exception as _ue:
                 print(f"[CS2 AUTO-SETTLE] DB write error: {_ue}")
 

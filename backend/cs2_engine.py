@@ -243,13 +243,13 @@ def _opponent_rank_multiplier(rank: Optional[int], prop_type: str) -> float:
     deaths_direction_props = {"deaths", "maps_1_2_deaths", "map3_deaths"}
 
     if prop_type in kills_direction_props:
-        if rank <= 5:   return 0.91   # world-elite: tight CT setups, gun-game dominance
-        if rank <= 10:  return 0.93
-        if rank <= 20:  return 0.96
+        if rank <= 5:   return 0.72   # world-elite (#1-5): structured CT, gun-game dominance → severe suppression
+        if rank <= 10:  return 0.80   # top-10: consistent anti-strat, utility discipline
+        if rank <= 20:  return 0.88   # top-20: strong individual matchup quality
         if rank <= 50:  return 1.0    # baseline range — most historical opponents
-        if rank <= 100: return 1.02
-        if rank <= 200: return 1.04
-        return 1.07
+        if rank <= 100: return 1.03
+        if rank <= 200: return 1.05
+        return 1.08
 
     if prop_type in deaths_direction_props:
         if rank <= 5:   return 1.10
@@ -844,20 +844,27 @@ def _underdog_compression(
     rank_gap = player_team_rank - opponent_rank   # positive = player's team is worse
 
     # Underdog (player's team worse):
-    if rank_gap >= 50:
-        return 0.88   # severe underdog: structural kill suppression across all rounds
+    # Research: eco chains after pistol losses, forced buy rounds, and structured
+    # opponent CT setups all compound → real kill output drops 30-50% for the
+    # weaker side in lopsided matchups.
+    if rank_gap >= 60:
+        return 0.72   # extreme mismatch (e.g. T3 vs #1): often ≤10 kills/map
+    if rank_gap >= 45:
+        return 0.78
     if rank_gap >= 30:
-        return 0.92
+        return 0.85
     if rank_gap >= 15:
-        return 0.96
+        return 0.92
     if rank_gap >= 5:
-        return 0.99   # slight underdog — minimal adjustment
+        return 0.98   # slight underdog — minimal adjustment
 
     # Favorite (player's team better):
-    if rank_gap <= -30:
-        return 1.07   # dominant favorite: opponent passive, more kills available
-    if rank_gap <= -15:
-        return 1.04
+    if rank_gap <= -40:
+        return 1.10   # dominant favorite: passive opponent, gun-game advantage
+    if rank_gap <= -20:
+        return 1.06
+    if rank_gap <= -10:
+        return 1.03
     if rank_gap <= -5:
         return 1.01
     return 1.0

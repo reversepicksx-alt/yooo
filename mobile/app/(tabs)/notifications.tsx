@@ -101,14 +101,13 @@ export default function NotificationsScreen() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Clear: persistently mark every visible notif as read.
+  // Clear: mark all as read on server, then wipe list locally so they vanish.
   const handleClearAll = async () => {
     if (!session?.email || items.length === 0) return;
     setMarkingAll(true);
-    const visibleIds = items.filter(n => !n.read).map(n => n.notificationId);
     try {
-      await markNotificationsRead(session.email, visibleIds);
-      setItems(prev => prev.map(n => visibleIds.includes(n.notificationId) ? { ...n, read: true } : n));
+      await markNotificationsRead(session.email, undefined);
+      setItems([]);
     } catch {}
     setMarkingAll(false);
   };
