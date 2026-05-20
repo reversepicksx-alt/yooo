@@ -85,9 +85,6 @@ export default function NotificationsScreen() {
   const [loading,    setLoading]    = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [markingAll, setMarkingAll] = useState(false);
-  // Hides locally-cleared notifications: ids the user has tapped "Clear" on
-  // since the last fresh load. Pull-to-refresh resets this set.
-  const [hiddenIds,  setHiddenIds]  = useState<Set<string>>(new Set());
 
   const load = useCallback(async (isRefresh = false) => {
     if (!session?.email) return;
@@ -95,7 +92,6 @@ export default function NotificationsScreen() {
     try {
       const data = await getNotifications(session.email, 60);
       setItems(data || []);
-      if (isRefresh) setHiddenIds(new Set()); // refresh shows everything again
     } catch {}
     finally {
       setLoading(false);
@@ -105,20 +101,15 @@ export default function NotificationsScreen() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Clear: mark every visible notif as read AND hide them from the list.
-  // (They stay in the DB so pull-to-refresh can still surface them.)
+  // Clear: persistently mark every visible notif as read.
   const handleClearAll = async () => {
     if (!session?.email || items.length === 0) return;
     setMarkingAll(true);
-    const visibleIds = items.filter(n => !hiddenIds.has(n.notificationId)).map(n => n.notificationId);
+    const visibleIds = items.filter(n => !n.read).map(n => n.notificationId);
     try {
       await markNotificationsRead(session.email, visibleIds);
+      setItems(prev => prev.map(n => visibleIds.includes(n.notificationId) ? { ...n, read: true } : n));
     } catch {}
-    setHiddenIds(prev => {
-      const next = new Set(prev);
-      visibleIds.forEach(id => next.add(id));
-      return next;
-    });
     setMarkingAll(false);
   };
 
@@ -131,7 +122,7 @@ export default function NotificationsScreen() {
     }
   };
 
-  const visibleItems = items.filter(n => !hiddenIds.has(n.notificationId));
+  const visibleItems = items;
   const unreadCount  = visibleItems.filter(n => !n.read).length;
 
   // ── Render ─────────────────────────────────────────────────────────────────
