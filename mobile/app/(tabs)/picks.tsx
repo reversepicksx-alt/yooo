@@ -204,7 +204,13 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete?: () => void }) {
 
   const propLabel = PROP_LABELS[pick.propType] || pick.propType?.replace(/_/g, ' ') || '—';
   const venueStr = pick.venue ? pick.venue.toUpperCase() : '';
-  const posLabel = [pick.position, pick.role].filter(Boolean).join(' · ');
+  // Position/role label is only meaningful for soccer. CS2 and MLB don't have
+  // tactical roles like "Box-to-Box" — those leaked in from the soccer
+  // position resolver. Suppress the label entirely for non-soccer picks.
+  const cardSport = getSport(pick);
+  const posLabel = cardSport === 'soccer'
+    ? [pick.position, pick.role].filter(Boolean).join(' · ')
+    : '';
 
   const settled = won || lost || push;
   const nowValue = settled

@@ -48,7 +48,7 @@ interface FuzzySearchInputProps {
 
 const IS_WEB = Platform.OS === 'web';
 const INPUT_STYLE = IS_WEB ? { outlineWidth: 0 } as object : {};
-const DEBOUNCE_MS = 280;
+const DEBOUNCE_MS = 150;   // tighter than the old 280ms so results feel instant
 
 function leagueName(leagueId: number): string {
   return LEAGUES.find(l => l.id === leagueId)?.name || '';

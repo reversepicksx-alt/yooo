@@ -30,6 +30,68 @@ _cs2_settle_locks:        dict[str, aio.Lock] = {}
 CS2_SETTLE_COOLDOWN_SEC = 300   # 5 minutes between settle retries per pick
 
 
+@router.post("/picks/cs2/force-settle")
+async def cs2_force_settle(payload: dict):
+    """
+    Diagnostic + manual settle path. Bypasses the 5-min cooldown for a single
+    CS2 pick so the user can ask the system to look right now. Returns a
+    structured payload explaining what happened (settled, not yet, or why
+    the lookup failed) so the frontend can show a useful message.
+
+    Body: { "email": "...", "token": "...", "pickId": "..." }
+    Requires a valid session token AND the pick must belong to that user.
+    Uses the per-pick lock so we can never double-settle concurrently with
+    the pull-based settler on /picks/list.
+    """
+    email   = (payload.get("email") or "").lower().strip()
+    token   = payload.get("token") or ""
+    pick_id = payload.get("pickId") or ""
+    if not email or not pick_id or not token:
+        raise HTTPException(status_code=400, detail="email, token and pickId required")
+
+    session = await db.sessions.find_one(
+        {"email": email, "session_token": token}, {"_id": 0}
+    )
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid session")
+
+    pick = await db.picks.find_one({"email": email, "pickId": pick_id}, {"_id": 0})
+    if not pick:
+        raise HTTPException(status_code=404, detail="pick not found")
+    if pick.get("sport") != "cs2":
+        return {"ok": False, "reason": "not a CS2 pick"}
+    if pick.get("status") == "settled":
+        return {"ok": True, "alreadySettled": True, "result": pick.get("result")}
+
+    # Reset cooldown so the next settle attempt runs immediately, then take
+    # the per-pick lock so a concurrent /picks/list settler can't race us.
+    lock = _cs2_settle_lock(pick_id)
+    async with lock:
+        # Re-check after acquiring the lock — another caller may have just
+        # settled this pick while we were waiting on the lock.
+        fresh = await db.picks.find_one({"email": email, "pickId": pick_id}, {"_id": 0})
+        if fresh and fresh.get("status") == "settled":
+            return {"ok": True, "alreadySettled": True, "result": fresh.get("result")}
+
+        _cs2_settle_last_attempt[pick_id] = _time.monotonic()
+        try:
+            settled = await _settle_cs2_pick({**pick, "email": email})
+        except Exception as e:
+            traceback.print_exc()
+            return {"ok": False, "reason": f"settle exception: {e}"}
+
+    if not settled:
+        return {
+            "ok": False,
+            "settled": False,
+            "reason": "match not yet finished or opponent name didn't match any recent finished match — see backend logs ([CS2 SETTLE])",
+            "teamId":       pick.get("teamId"),
+            "playerId":     pick.get("playerId"),
+            "opponentName": pick.get("opponentName"),
+        }
+    return {"ok": True, "settled": True, **settled}
+
+
 def _cs2_settle_lock(pick_id: str) -> aio.Lock:
     """Return (or create) a per-pick asyncio.Lock — prevents concurrent settle calls."""
     if pick_id not in _cs2_settle_locks:
@@ -164,6 +226,20 @@ async def save_pick(req: SavePickRequest):
         tm = pick.get("tacticalMetrics")
         if tm:
             doc["tacticalMetrics"] = tm
+        # ── CS2 position/role cleanup ──────────────────────────────────────
+        # Soccer position fields (e.g. "CM · Box-to-Box", "ST · Poacher")
+        # were leaking onto CS2 picks because the player.position/role were
+        # being passed through from a previous soccer prediction or the
+        # default soccer resolver. CS2 has no tactical role of that kind —
+        # we either store the engine's roleClassification (e.g. "entry_fragger")
+        # or leave both fields blank.
+        engine_role = (tm or {}).get("roleClassification") if tm else None
+        if engine_role:
+            doc["position"] = ""               # CS2 doesn't have a position label
+            doc["role"]     = str(engine_role).replace("_", " ").title()
+        else:
+            doc["position"] = ""
+            doc["role"]     = ""
 
     # ── MLB / CS2 position fix ─────────────────────────────────────────────────
     # MLB picks: always set baseball-appropriate position/role.  Old picks were

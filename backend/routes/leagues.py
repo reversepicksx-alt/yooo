@@ -86,10 +86,29 @@ async def get_cached_national_teams():
 
 
 @router.get("/cache/leagues")
-async def get_cached_leagues():
-    """All cached leagues from API-Football."""
+async def get_cached_leagues(q: str = None, limit: int = 50):
+    """
+    Cached leagues from API-Football.
+    - If `q` is provided, filter server-side by case-insensitive substring
+      against name OR country, capped at `limit` results (default 50).
+      This avoids shipping the entire 1200+ league list on every keystroke.
+    - If `q` is omitted, returns the full sorted list (back-compat).
+    """
+    query: dict = {}
+    if q and len(q.strip()) >= 1:
+        # Escape regex metacharacters in user input
+        import re as _re
+        safe = _re.escape(q.strip())
+        query = {"$or": [
+            {"name":    {"$regex": safe, "$options": "i"}},
+            {"country": {"$regex": safe, "$options": "i"}},
+        ]}
+
     leagues = []
-    async for doc in db[COL_LEAGUES].find({}, {"_id": 0}).sort("name", 1):
+    cursor = db[COL_LEAGUES].find(query, {"_id": 0}).sort("name", 1)
+    if q:
+        cursor = cursor.limit(max(1, min(int(limit), 200)))
+    async for doc in cursor:
         leagues.append({
             "id": doc.get("leagueId"),
             "name": doc.get("name"),

@@ -12,15 +12,18 @@ const getApiBase = (): string => {
 };
 
 // Endpoints that involve AI synthesis — give them a generous timeout
-const LONG_TIMEOUT_PATHS = ['/api/predict', '/api/mlb/predict', '/api/cs2/predict', '/api/scan-prop'];
-const LONG_TIMEOUT_MS  = 90_000;  // 90 s — covers worst-case Grok + BDL
-const SHORT_TIMEOUT_MS = 15_000;  // 15 s — all other API calls
+const LONG_TIMEOUT_PATHS = ['/api/predict', '/api/mlb/predict', '/api/scan-prop'];
+const CS2_PREDICT_PATH   = '/api/cs2/predict';
+const LONG_TIMEOUT_MS    = 90_000;   // 90 s — soccer / MLB / scan
+const CS2_TIMEOUT_MS     = 150_000;  // 150 s — CS2 first-call cold cache hits 20+ BDL endpoints
+const SHORT_TIMEOUT_MS   = 15_000;   // 15 s — all other API calls
 
 async function apiCall<T = unknown>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const base = getApiBase();
   const url = `${base}${endpoint}`;
+  const isCs2Predict = endpoint.startsWith(CS2_PREDICT_PATH);
   const isLong = LONG_TIMEOUT_PATHS.some(p => endpoint.startsWith(p));
-  const timeoutMs = isLong ? LONG_TIMEOUT_MS : SHORT_TIMEOUT_MS;
+  const timeoutMs = isCs2Predict ? CS2_TIMEOUT_MS : (isLong ? LONG_TIMEOUT_MS : SHORT_TIMEOUT_MS);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let resp: Response;

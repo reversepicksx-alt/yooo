@@ -467,6 +467,7 @@ async def get_cs2_completed_match_result(
     actual stat values so the pick can be settled as hit/miss/push.
 
     Returns None if no matching finished match is found yet.
+    Logs the reason for failure so settlement issues can be diagnosed.
     """
     from datetime import timedelta
     try:
@@ -477,17 +478,50 @@ async def get_cs2_completed_match_result(
     try:
         # Scan the 25 most recent finished team matches (cheap — usually 1-2 pages)
         matches = await _fetch_matches_paginated(team_id, max_matches=25)
-        target  = opponent_name.strip().lower()
+        if not matches:
+            log.info(f"[CS2 SETTLE] team={team_id} vs '{opponent_name}': no recent matches returned by API")
+            return None
 
+        target = opponent_name.strip().lower()
+        # Normalised target for ultra-fuzzy match: strip common esports suffixes
+        # and non-alphanumerics, so "ninjasinpyjamas" matches "Ninjas in Pyjamas",
+        # "the mongolz" matches "MongolZ", etc.
+        import re as _re
+        def _norm(s: str) -> str:
+            s = s.lower()
+            for suffix in (" esports", " gaming", " team", " club"):
+                s = s.replace(suffix, "")
+            s = _re.sub(r"^the\s+", "", s)
+            return _re.sub(r"[^a-z0-9]", "", s)
+        target_norm = _norm(target)
+
+        opponent_candidates = []   # [(name, has_id_match)] for diagnostics
         for match in matches:
             mt1 = match.get("team1") or {}
             mt2 = match.get("team2") or {}
             opp = mt2 if mt1.get("id") == team_id else mt1
             opp_name = (opp.get("name") or "").lower()
+            opponent_candidates.append(opp_name)
 
-            # Fuzzy opponent match (first-word also accepted)
+            # Fuzzy opponent match: substring, first-word, OR normalised match.
+            # Guard against false positives on short tokens (e.g. "OG", "G2",
+            # "9z", "MIBR") — for any name normalised to ≤4 chars we require
+            # an exact normalised equality, not a substring hit.
             opp_word = opp_name.split()[0] if opp_name else ""
-            if not (target in opp_name or opp_name in target or opp_word in target):
+            opp_norm = _norm(opp_name)
+            min_len  = min(len(target_norm or ""), len(opp_norm or ""))
+            if min_len <= 4:
+                norm_match = bool(target_norm) and (target_norm == opp_norm)
+            else:
+                norm_match = bool(target_norm) and bool(opp_norm) and (
+                    target_norm in opp_norm or opp_norm in target_norm
+                )
+            sub_match = (
+                (len(target) >= 4 and target in opp_name) or
+                (len(opp_name) >= 4 and opp_name in target) or
+                (opp_word and len(opp_word) >= 4 and opp_word in target)
+            )
+            if not (sub_match or norm_match):
                 continue
 
             # Date guard — match must be on or after the pick was saved.
@@ -605,6 +639,12 @@ async def get_cs2_completed_match_result(
                 "mapsPlayed":  len(finished_maps),
             }
 
+        # No match found — log what we DID see so the failure mode is obvious
+        log.info(
+            f"[CS2 SETTLE] team={team_id} no finished match for opponent "
+            f"'{opponent_name}' after {after_iso} — recent opponents scanned: "
+            f"{opponent_candidates[:8]}"
+        )
     except Exception as e:
         log.error(f"[CS2 SETTLE] Error fetching completed match result: {e}")
 

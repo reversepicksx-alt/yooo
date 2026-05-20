@@ -85,6 +85,9 @@ export default function NotificationsScreen() {
   const [loading,    setLoading]    = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [markingAll, setMarkingAll] = useState(false);
+  // Hides locally-cleared notifications: ids the user has tapped "Clear" on
+  // since the last fresh load. Pull-to-refresh resets this set.
+  const [hiddenIds,  setHiddenIds]  = useState<Set<string>>(new Set());
 
   const load = useCallback(async (isRefresh = false) => {
     if (!session?.email) return;
@@ -92,6 +95,7 @@ export default function NotificationsScreen() {
     try {
       const data = await getNotifications(session.email, 60);
       setItems(data || []);
+      if (isRefresh) setHiddenIds(new Set()); // refresh shows everything again
     } catch {}
     finally {
       setLoading(false);
@@ -101,28 +105,21 @@ export default function NotificationsScreen() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Auto-mark unread items as read when screen mounts (after 1.5s delay)
-  useEffect(() => {
+  // Clear: mark every visible notif as read AND hide them from the list.
+  // (They stay in the DB so pull-to-refresh can still surface them.)
+  const handleClearAll = async () => {
     if (!session?.email || items.length === 0) return;
-    const unread = items.filter(n => !n.read).map(n => n.notificationId);
-    if (unread.length === 0) return;
-    const timer = setTimeout(async () => {
-      try {
-        await markNotificationsRead(session.email, unread);
-        setItems(prev => prev.map(n => unread.includes(n.notificationId) ? { ...n, read: true } : n));
-      } catch {}
-    }, 1500);
-    return () => clearTimeout(timer);
-  }, [session?.email, items.length]);
-
-  const handleMarkAllRead = async () => {
-    if (!session?.email) return;
     setMarkingAll(true);
+    const visibleIds = items.filter(n => !hiddenIds.has(n.notificationId)).map(n => n.notificationId);
     try {
-      await markNotificationsRead(session.email);
-      setItems(prev => prev.map(n => ({ ...n, read: true })));
+      await markNotificationsRead(session.email, visibleIds);
     } catch {}
-    finally { setMarkingAll(false); }
+    setHiddenIds(prev => {
+      const next = new Set(prev);
+      visibleIds.forEach(id => next.add(id));
+      return next;
+    });
+    setMarkingAll(false);
   };
 
   const handleCardPress = async (n: AppNotification) => {
@@ -134,7 +131,8 @@ export default function NotificationsScreen() {
     }
   };
 
-  const unreadCount = items.filter(n => !n.read).length;
+  const visibleItems = items.filter(n => !hiddenIds.has(n.notificationId));
+  const unreadCount  = visibleItems.filter(n => !n.read).length;
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -144,20 +142,22 @@ export default function NotificationsScreen() {
       <View style={styles.header}>
         <View>
           <Text style={styles.headerTitle}>ALERTS</Text>
-          {unreadCount > 0 && (
-            <Text style={styles.headerSub}>{unreadCount} unread</Text>
+          {visibleItems.length > 0 && (
+            <Text style={styles.headerSub}>
+              {unreadCount > 0 ? `${unreadCount} unread` : `${visibleItems.length} total`}
+            </Text>
           )}
         </View>
-        {unreadCount > 0 && (
+        {visibleItems.length > 0 && (
           <TouchableOpacity
             style={styles.markAllBtn}
-            onPress={handleMarkAllRead}
+            onPress={handleClearAll}
             disabled={markingAll}
             activeOpacity={0.75}
           >
             {markingAll
               ? <ActivityIndicator size="small" color={Colors.primary} />
-              : <Text style={styles.markAllText}>Mark all read</Text>
+              : <Text style={styles.markAllText}>Clear</Text>
             }
           </TouchableOpacity>
         )}
@@ -171,17 +171,19 @@ export default function NotificationsScreen() {
         <View style={styles.centered}>
           <ActivityIndicator color={Colors.primary} size="large" />
         </View>
-      ) : items.length === 0 ? (
+      ) : visibleItems.length === 0 ? (
         <View style={styles.centered}>
           <Ionicons name="notifications-off-outline" size={48} color={Colors.textTertiary} />
-          <Text style={styles.emptyTitle}>No alerts yet</Text>
+          <Text style={styles.emptyTitle}>{items.length === 0 ? 'No alerts yet' : 'All caught up'}</Text>
           <Text style={styles.emptyBody}>
-            You'll be notified here when a pick settles or someone mentions you in chat.
+            {items.length === 0
+              ? "You'll be notified here when a pick settles or someone mentions you in chat."
+              : 'Pull to refresh to see past alerts again.'}
           </Text>
         </View>
       ) : (
         <FlatList
-          data={items}
+          data={visibleItems}
           keyExtractor={n => n.notificationId}
           renderItem={({ item }) => <NotifCard item={item} onPress={handleCardPress} />}
           contentContainerStyle={styles.list}
