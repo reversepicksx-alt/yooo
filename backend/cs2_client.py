@@ -487,14 +487,18 @@ async def get_cs2_completed_match_result(
             if not (target in opp_name or opp_name in target or opp_word in target):
                 continue
 
-            # Date guard — match must be on or after the pick was saved
+            # Date guard — match must be on or after the pick was saved.
+            # Slug dates are day-only (e.g. "2026-05-19"), so compare at
+            # date granularity — never skip a match that falls on the same
+            # calendar day as the pick save (the old ±6h window wrongly
+            # skipped same-day matches when picks were saved late in the day).
             date_str = _parse_date_from_slug(match.get("slug", ""))
             if date_str and after_dt:
                 try:
-                    match_dt = datetime.fromisoformat(date_str)
-                    # Allow pick saved up to 6h before match slug date (timezone slack)
-                    if match_dt < after_dt - timedelta(hours=6):
-                        continue
+                    match_date = datetime.fromisoformat(date_str).date()
+                    pick_date  = after_dt.date()
+                    if match_date < pick_date:
+                        continue   # match was definitely before this pick was saved
                 except Exception:
                     pass
 
