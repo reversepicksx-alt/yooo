@@ -278,11 +278,11 @@ async def _fetch_match_maps_and_stats(match: dict, team_id: int, player_id: int)
     stats = [r for r in results if r and not isinstance(r, Exception)]
     # Only cache once we have real data — empty result may just mean the API
     # hasn't ingested player stats yet, and we want to retry shortly.
-    if stats:
-        try:
+    try:
+        if stats:
             await _cache_set(key, stats)
-        except Exception:
-            pass
+    except Exception:
+        pass
     return stats
 
 

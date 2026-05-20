@@ -1072,6 +1072,9 @@ async def _run_auto_settlement():
                 "sport":       "cs2",   # also repair the sport field in DB
             }
             try:
+                current = await db.picks.find_one({"pickId": pick_id, "email": email}, {"_id": 0, "status": 1, "sport": 1})
+                if current and current.get("status") == "settled" and current.get("sport") == "cs2":
+                    continue
                 await db.picks.update_one(
                     {"pickId": pick_id, "email": email},
                     {"$set": settle_set},

@@ -246,6 +246,8 @@ async def _check_stripe_live(email_lower: str):
 
 
 async def check_access(email_lower: str):
+    if not email_lower:
+        return None
     result = await _check_access_local(email_lower)
     if result:
         return result
@@ -305,18 +307,18 @@ async def login(req: LoginRequest):
 @router.post("/set-password")
 async def set_password(req: SetPasswordRequest):
     email_lower = req.email.lower().strip()
-    access_type = await check_access(email_lower)
+    access_type = await _check_access_local(email_lower)
     if not access_type:
-        raise HTTPException(status_code=401, detail="No active subscription found.")
+        raise HTTPException(status_code=401, detail="No active membership found.")
     token = await create_session(email_lower, access_type)
     return {"verified": True, "email": email_lower, "session_token": token, "access_type": access_type, "message": "Access granted"}
 
 @router.post("/reset-password")
 async def reset_password(req: ResetPasswordRequest):
     email_lower = req.email.lower().strip()
-    access_type = await check_access(email_lower)
+    access_type = await _check_access_local(email_lower)
     if not access_type:
-        raise HTTPException(status_code=401, detail="No active subscription found.")
+        raise HTTPException(status_code=401, detail="No active membership found.")
     token = await create_session(email_lower, access_type)
     return {"verified": True, "email": email_lower, "session_token": token, "access_type": access_type, "message": "Access granted"}
 

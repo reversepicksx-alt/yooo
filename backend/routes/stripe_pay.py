@@ -94,6 +94,27 @@ def _get_or_create_stripe_customer(email: str) -> str:
     return new_cust.id
 
 
+async def _recent_subscription_action_exists(email_lower: str, plan_key: str, action: str, minutes: int = 10) -> bool:
+    cutoff = datetime.now(timezone.utc).timestamp() - (minutes * 60)
+    try:
+        sub = await db.stripe_subscriptions.find_one({"email": email_lower}, {"_id": 0, "updatedAt": 1, "lastCheckoutAction": 1, "lastCheckoutPlan": 1, "lastCheckoutAt": 1})
+        if not sub:
+            return False
+        if sub.get("lastCheckoutAction") == action and sub.get("lastCheckoutPlan") == plan_key:
+            ts_raw = sub.get("lastCheckoutAt") or sub.get("updatedAt")
+            if ts_raw:
+                try:
+                    ts = datetime.fromisoformat(str(ts_raw).replace(" ", "T").replace("Z", "+00:00"))
+                    if ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=timezone.utc)
+                    return ts.timestamp() >= cutoff
+                except Exception:
+                    return False
+    except Exception:
+        return False
+    return False
+
+
 @router.post("/create-checkout")
 async def create_checkout(req: CheckoutRequest):
     plan_key = req.planKey.lower()
@@ -129,6 +150,10 @@ async def create_checkout(req: CheckoutRequest):
     try:
         price_id = _get_or_create_price(plan_key)
         email_lower = req.email.lower().strip()
+        if await _recent_subscription_action_exists(email_lower, plan_key, "create"):
+            sub = await db.stripe_subscriptions.find_one({"email": email_lower}, {"_id": 0, "checkoutUrl": 1})
+            if sub and sub.get("checkoutUrl"):
+                return {"checkoutUrl": sub["checkoutUrl"]}
 
         # Reuse existing Stripe customer to prevent duplicate accounts
         customer_id = _get_or_create_stripe_customer(email_lower)
@@ -143,6 +168,19 @@ async def create_checkout(req: CheckoutRequest):
             print(f"[STRIPE] Extended payment methods unavailable ({_pmt_err}), falling back to card-only")
             session = _build_session(["card"])
 
+        now = datetime.now(timezone.utc).isoformat()
+        await db.stripe_subscriptions.update_one(
+            {"email": email_lower},
+            {"$set": {
+                "email": email_lower,
+                "lastCheckoutAction": "create",
+                "lastCheckoutPlan": plan_key,
+                "lastCheckoutAt": now,
+                "checkoutUrl": session.url,
+                "updatedAt": now,
+            }},
+            upsert=True,
+        )
         return {"checkoutUrl": session.url}
     except stripe.StripeError as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -236,6 +274,14 @@ async def change_plan(req: ChangePlanRequest):
 
     get_stripe()
     try:
+        if await _recent_subscription_action_exists(email_lower, plan_key, "change"):
+            return {
+                "success": True,
+                "previous_plan": old_key,
+                "new_plan": plan_key,
+                "new_label": STRIPE_PLANS[plan_key]["label"],
+                "message": "Plan update already submitted recently.",
+            }
         price_id = _get_or_create_price(plan_key)
         stripe_sub = stripe.Subscription.retrieve(sub["stripeSubscriptionId"])
         stripe.Subscription.modify(
@@ -247,7 +293,13 @@ async def change_plan(req: ChangePlanRequest):
         )
         await db.stripe_subscriptions.update_one(
             {"email": email_lower},
-            {"$set": {"planKey": plan_key, "updatedAt": datetime.now(timezone.utc).isoformat()}}
+            {"$set": {
+                "planKey": plan_key,
+                "updatedAt": datetime.now(timezone.utc).isoformat(),
+                "lastCheckoutAction": "change",
+                "lastCheckoutPlan": plan_key,
+                "lastCheckoutAt": datetime.now(timezone.utc).isoformat(),
+            }}
         )
         return {
             "success": True,
