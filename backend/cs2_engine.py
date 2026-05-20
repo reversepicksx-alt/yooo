@@ -89,6 +89,7 @@ KILLS_CLASS_PROPS = {"kills", "map1_kills", "maps_1_2_kills", "map3_kills", "map
 # maps_1_2 figures account for blowout maps averaging ~18-20 rounds each.
 HYPER_PRIOR = {
     "kills":                16.0,   # per-map: realistic T2 avg
+    "map1_kills":           16.0,   # map 1 only — same single-map baseline as kills
     "deaths":               14.0,
     "assists":               3.5,
     "adr":                  72.0,
@@ -204,6 +205,8 @@ def _kast_weight(log_entry: dict, prop_type: str) -> float:
     """
     if prop_type in MAP3_PROPS:
         kast = log_entry.get("map3_kast", 0) or 0
+    elif prop_type == "map1_kills":
+        kast = log_entry.get("map1_kast", 0) or 0
     elif prop_type in MATCH_LEVEL_PROPS:
         kast = log_entry.get("maps_1_2_kast", 0) or 0
     else:
@@ -376,6 +379,13 @@ def _round_normalized_projection(
         kpr_field    = "map3_kpr"
         rounds_field = "map3_rounds"
         is_match     = True
+    elif prop_type == "map1_kills":
+        # Single-map prop stored in match-level logs — use map1-specific fields.
+        # is_match=True for log access; rounds_is_single=True so we don't double rounds.
+        kpr_field        = "map1_kpr"
+        rounds_field     = "map1_rounds"
+        is_match         = True
+        rounds_is_single = True
     elif prop_type in MATCH_LEVEL_PROPS:
         kpr_field    = "killsPerRound_m1m2"
         rounds_field = "maps_1_2_rounds"
@@ -384,6 +394,9 @@ def _round_normalized_projection(
         kpr_field    = "killsPerRound"
         rounds_field = "totalRounds"
         is_match     = False
+
+    # rounds_is_single: map1_kills lives in match-level logs but is a single-map count
+    rounds_is_single = locals().get("rounds_is_single", False)
 
     kpr_vals    = [m.get(kpr_field, 0) for m in logs if m.get(kpr_field, 0) > 0]
     rounds_vals = [m.get(rounds_field, 0) for m in logs if m.get(rounds_field, 0) > 0]
@@ -395,13 +408,16 @@ def _round_normalized_projection(
     alpha      = min(len(kpr_vals), MIN_SAMPLE) / MIN_SAMPLE
     kpr        = alpha * career_kpr + (1 - alpha) * KPR_HYPER
 
-    map_rounds = _get_map_expected_rounds(map_name, is_match)
+    # For map1_kills: treat like a single-map prop for round scaling even though
+    # the log entry comes from the match-level (is_match) data source.
+    rounds_scale_as_match = is_match and not rounds_is_single
+    map_rounds = _get_map_expected_rounds(map_name, rounds_scale_as_match)
     if map_rounds is not None:
         expected_rounds = map_rounds
     elif rounds_vals:
         expected_rounds = sum(rounds_vals) / len(rounds_vals)
     else:
-        expected_rounds = EXPECTED_ROUNDS_2MAPS if is_match else EXPECTED_ROUNDS_PER_MAP
+        expected_rounds = EXPECTED_ROUNDS_2MAPS if rounds_scale_as_match else EXPECTED_ROUNDS_PER_MAP
 
     return kpr * expected_rounds
 

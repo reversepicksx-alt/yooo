@@ -410,6 +410,9 @@ async def get_player_recent_match_stats(player_id: int, team_id: int, limit: int
                     "maps_1_2_rounds":      total_rounds_m1m2,
                     "killsPerRound_m1m2":   round(_sum("kills") / total_rounds_m1m2, 3) if total_rounds_m1m2 > 0 else 0,
                     "map1_kills":           m1.get("kills", 0),
+                    "map1_rounds":          m1.get("totalRounds", 0),
+                    "map1_kpr":             round(m1.get("kills", 0) / m1.get("totalRounds", 1), 3) if m1.get("totalRounds", 0) > 0 else 0,
+                    "map1_kast":            m1.get("kast", 0),
                     "map2_kills":           m2.get("kills", 0) if m2 else 0,
                     # Map 3 aggregates (None = match didn't go to map 3)
                     "map3_played":          m3_played,
