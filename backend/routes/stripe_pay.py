@@ -158,6 +158,27 @@ async def create_checkout(req: CheckoutRequest):
         # Reuse existing Stripe customer to prevent duplicate accounts
         customer_id = _get_or_create_stripe_customer(email_lower)
 
+        # ── Duplicate-subscription guard ─────────────────────────────────────
+        # Cancel any existing active/trialing subscriptions before creating a
+        # new checkout. Without this, tapping "subscribe" more than once (or
+        # completing two checkout flows) stacks multiple live subscriptions and
+        # the customer is charged for all of them every billing cycle.
+        try:
+            existing_subs = stripe.Subscription.list(
+                customer=customer_id, status="active", limit=10
+            )
+            for esub in existing_subs.auto_paging_iter():
+                stripe.Subscription.cancel(esub.id)
+                print(f"[STRIPE] Canceled duplicate active sub {esub.id} for {email_lower} before new checkout")
+            trialing_subs = stripe.Subscription.list(
+                customer=customer_id, status="trialing", limit=10
+            )
+            for esub in trialing_subs.auto_paging_iter():
+                stripe.Subscription.cancel(esub.id)
+                print(f"[STRIPE] Canceled duplicate trialing sub {esub.id} for {email_lower} before new checkout")
+        except Exception as _cancel_err:
+            print(f"[STRIPE] Warning: could not cancel existing subs for {email_lower}: {_cancel_err}")
+
         # Try with expanded payment methods first (Cash App Pay + Stripe Link).
         # Cash App Pay / Link let users pay even if their bank blocks card subscriptions.
         # Fall back to card-only if the Stripe account doesn't have those methods enabled.
