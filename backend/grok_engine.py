@@ -655,7 +655,7 @@ async def auto_settlement_loop():
     Each run fires 6+ API calls per unique team in pending picks, so frequent
     runs burn quota fast. 15 min is plenty since picks resolve after the match.
     """
-    await asyncio.sleep(60)  # Initial delay
+    await asyncio.sleep(5)   # Short delay then run immediately on startup
     print("[GROK ENGINE] Auto-settlement bot started (15 min interval)")
 
     while True:
@@ -1007,20 +1007,28 @@ async def _run_auto_settlement():
                 continue
 
             # Skip picks saved in the last 30 min — match can't be over yet
+            # Parse pick timestamp (may be Unix-ms int OR ISO string)
+            pick_ts = None
             for tf in ("timestamp", "createdAt"):
                 raw_ts = pick.get(tf)
-                if raw_ts:
-                    try:
-                        pts = datetime.fromisoformat(str(raw_ts).replace("Z", "+00:00"))
-                        if pts.tzinfo is None:
-                            pts = pts.replace(tzinfo=timezone.utc)
-                        if pts > cs2_settle_cutoff:
-                            raw_ts = None   # too recent
-                    except Exception:
-                        raw_ts = None
+                if not raw_ts:
+                    continue
+                try:
+                    if isinstance(raw_ts, (int, float)) and raw_ts > 1_000_000_000:
+                        # Unix milliseconds (common for CS2 picks saved from mobile)
+                        pick_ts = datetime.fromtimestamp(raw_ts / 1000, tz=timezone.utc)
+                    elif isinstance(raw_ts, datetime):
+                        pick_ts = raw_ts if raw_ts.tzinfo else raw_ts.replace(tzinfo=timezone.utc)
+                    else:
+                        pick_ts = datetime.fromisoformat(str(raw_ts).replace("Z", "+00:00"))
+                        if pick_ts.tzinfo is None:
+                            pick_ts = pick_ts.replace(tzinfo=timezone.utc)
                     break
+                except Exception:
+                    continue
 
-            if raw_ts is None:
+            # Skip picks saved in the last 30 min — match can't be over yet
+            if pick_ts and pick_ts > cs2_settle_cutoff:
                 continue
 
             ts_iso = pick.get("timestamp") or pick.get("createdAt", "")

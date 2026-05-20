@@ -30,6 +30,133 @@ _cs2_settle_locks:        dict[str, aio.Lock] = {}
 CS2_SETTLE_COOLDOWN_SEC = 300   # 5 minutes between settle retries per pick
 
 
+@router.post("/picks/cs2/admin-manual-settle")
+async def cs2_admin_manual_settle(payload: dict):
+    """
+    Admin endpoint: manually settle a CS2 pick by providing the actual value directly.
+    Use when BDL hasn't ingested player stats yet but real-world results are known.
+    Body: { "secret": "...", "pickId": "...", "email": "...", "actualValue": 12 }
+    """
+    import os as _os
+    admin_secret = _os.environ.get("ADMIN_SECRET", "")
+    if not admin_secret or payload.get("secret") != admin_secret:
+        raise HTTPException(status_code=403, detail="forbidden")
+
+    pick_id      = payload.get("pickId") or ""
+    email        = (payload.get("email") or "").lower().strip()
+    actual_value = payload.get("actualValue")
+
+    if not pick_id or not email or actual_value is None:
+        raise HTTPException(status_code=400, detail="pickId, email, actualValue required")
+
+    pick = await db.picks.find_one({"pickId": pick_id, "email": email}, {"_id": 0})
+    if not pick:
+        raise HTTPException(status_code=404, detail="pick not found")
+    if pick.get("status") == "settled":
+        return {"ok": True, "alreadySettled": True}
+
+    line        = float(pick.get("line", 0))
+    rec         = pick.get("recommendation", "over")
+    actual_value = float(actual_value)
+    diff = actual_value - line
+    if abs(diff) < 0.001:
+        result_str = "push"
+    elif rec == "over":
+        result_str = "hit" if actual_value > line else "miss"
+    else:
+        result_str = "hit" if actual_value < line else "miss"
+
+    hit_pct  = 100 if result_str == "hit" else (0 if result_str == "miss" else 50)
+    now_iso  = datetime.now(timezone.utc).isoformat()
+    settle_set = {
+        "status":      "settled",
+        "result":      result_str,
+        "actualValue": actual_value,
+        "hitPct":      hit_pct,
+        "settledAt":   now_iso,
+        "sport":       "cs2",
+    }
+    await db.picks.update_one(
+        {"pickId": pick_id, "email": email},
+        {"$set": settle_set}
+    )
+    return {
+        "ok":          True,
+        "settled":     True,
+        "result":      result_str,
+        "actualValue": actual_value,
+        "line":        line,
+        "player":      pick.get("playerName"),
+    }
+
+
+@router.post("/picks/cs2/admin-force-settle-all")
+async def cs2_admin_force_settle_all(payload: dict):
+    """
+    Admin endpoint: force-settle ALL pending/live CS2 picks right now.
+    Auth: requires ADMIN_SECRET env var match (no user session needed).
+    Used for immediate post-deployment recovery.
+    Body: { "secret": "..." }
+    """
+    import os as _os
+    admin_secret = _os.environ.get("ADMIN_SECRET", "")
+    if not admin_secret or payload.get("secret") != admin_secret:
+        raise HTTPException(status_code=403, detail="forbidden")
+
+    # Find all unsettled CS2 picks by sport OR by prop type prefix
+    all_picks = await db.picks.find(
+        {"$or": [
+            {"status": {"$in": ["pending", "live"]}, "sport": "cs2"},
+            {"status": {"$in": ["pending", "live"]},
+             "propType": {"$regex": "^(map1_|maps_1_2_)"}},
+        ]},
+        {"_id": 0}
+    ).to_list(500)
+
+    results = []
+    for pick in all_picks:
+        pick_id = pick.get("pickId", "")
+        email   = pick.get("email", "")
+        team_id   = pick.get("teamId")
+        player_id = pick.get("playerId")
+        opp_name  = pick.get("opponentName", "")
+        if not team_id or not player_id or not opp_name:
+            results.append({"pickId": pick_id, "player": pick.get("playerName"), "status": "skip_missing_fields"})
+            continue
+
+        # Repair sport field in-memory so _settle_cs2_pick works
+        pick = {**pick, "sport": "cs2", "email": email}
+
+        lock = _cs2_settle_lock(pick_id)
+        async with lock:
+            fresh = await db.picks.find_one({"pickId": pick_id, "email": email}, {"_id": 0})
+            if fresh and fresh.get("status") == "settled":
+                results.append({"pickId": pick_id, "player": pick.get("playerName"), "status": "already_settled"})
+                continue
+            try:
+                settled = await _settle_cs2_pick(pick)
+            except Exception as e:
+                results.append({"pickId": pick_id, "player": pick.get("playerName"), "status": f"error: {e}"})
+                continue
+
+        if settled:
+            results.append({
+                "pickId":      pick_id,
+                "player":      pick.get("playerName"),
+                "status":      "settled",
+                "result":      settled.get("result"),
+                "actualValue": settled.get("actualValue"),
+                "line":        pick.get("line"),
+                "matchScore":  settled.get("matchScore"),
+            })
+        else:
+            results.append({"pickId": pick_id, "player": pick.get("playerName"),
+                            "opp": opp_name, "status": "no_match_found"})
+
+    settled_count = sum(1 for r in results if r.get("status") == "settled")
+    return {"ok": True, "total": len(all_picks), "settled": settled_count, "picks": results}
+
+
 @router.post("/picks/cs2/force-settle")
 async def cs2_force_settle(payload: dict):
     """
