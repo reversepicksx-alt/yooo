@@ -243,9 +243,9 @@ def _opponent_rank_multiplier(rank: Optional[int], prop_type: str) -> float:
     deaths_direction_props = {"deaths", "maps_1_2_deaths", "map3_deaths"}
 
     if prop_type in kills_direction_props:
-        if rank <= 5:   return 0.72   # world-elite (#1-5): structured CT, gun-game dominance → severe suppression
-        if rank <= 10:  return 0.80   # top-10: consistent anti-strat, utility discipline
-        if rank <= 20:  return 0.88   # top-20: strong individual matchup quality
+        if rank <= 5:   return 0.64   # world-elite (#1-5): structured CT, gun-game dominance → severe suppression
+        if rank <= 10:  return 0.74   # top-10: consistent anti-strat, utility discipline
+        if rank <= 20:  return 0.86   # top-20: strong individual matchup quality
         if rank <= 50:  return 1.0    # baseline range — most historical opponents
         if rank <= 100: return 1.03
         if rank <= 200: return 1.05
