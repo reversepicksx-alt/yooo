@@ -27,6 +27,12 @@ CACHE_TTL = {
     "player_maps":   6  * 3600,   # 6h — matches happen infrequently
     "teams":         24 * 3600,
     "rankings":      3600,
+    # Settle-path caches — short TTL but SHARED across every user + every pick
+    # for the same team/match. Without these, 5 users × 3 live picks each on
+    # the same team = 15 parallel calls to /matches + 375 calls to /match_maps
+    # and /player_match_map_stats per poll, instantly hitting the 600/min cap.
+    "team_matches": 180,          # 3 min — finished match list per team
+    "match_maps":   600,          # 10 min — per-match map+stat bundle
 }
 
 
@@ -88,7 +94,15 @@ def _fresh(doc: Optional[dict], ttl: int) -> bool:
     if not doc or not doc.get("_ts"):
         return False
     try:
-        ts = datetime.fromisoformat(doc["_ts"])
+        raw = doc["_ts"]
+        # `_ts` may be either a BSON datetime (what _cache_set writes) or an
+        # ISO string (older docs). Handle both — the previous version only
+        # accepted strings and silently treated all freshly-written cache
+        # entries as stale, defeating the new short-TTL settle caches.
+        if isinstance(raw, datetime):
+            ts = raw
+        else:
+            ts = datetime.fromisoformat(str(raw))
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=timezone.utc)
         return (datetime.now(timezone.utc) - ts).total_seconds() < ttl
@@ -130,7 +144,26 @@ async def _fetch_matches_paginated(team_id: int, max_matches: int = 200) -> list
     Fetch finished matches for a team using cursor pagination.
     Returns up to max_matches match objects, newest first.
     Per_page=100 (API max) keeps the number of page fetches to ≤2.
+
+    Short-TTL cached so multiple settles for the same team — across users
+    and across the user's own picks — share one API call. This is the
+    single most important defence against the 429 storm.
     """
+    # Settle path needs ~25 matches, history needs up to 200. Always read the
+    # larger cache first (it satisfies smaller requests too); fall back to the
+    # small bucket if only that one is warm. Write to the bucket sized for
+    # *this* call so we don't pollute "lg" with truncated lists.
+    bucket   = "lg" if max_matches > 50 else "sm"
+    key      = f"cs2_matches_{team_id}_{bucket}"
+    key_lg   = f"cs2_matches_{team_id}_lg"
+    doc_lg   = await _cache_get(key_lg)
+    if _fresh(doc_lg, CACHE_TTL["team_matches"]) and doc_lg.get("data") is not None:
+        return list(doc_lg["data"])[:max_matches]
+    if bucket == "sm":
+        doc_sm = await _cache_get(key)
+        if _fresh(doc_sm, CACHE_TTL["team_matches"]) and doc_sm.get("data") is not None:
+            return list(doc_sm["data"])[:max_matches]
+
     matches = []
     params  = {"team_ids[]": team_id, "per_page": 100, "status": "finished"}
     while len(matches) < max_matches:
@@ -141,7 +174,13 @@ async def _fetch_matches_paginated(team_id: int, max_matches: int = 200) -> list
         if not cursor or not page:
             break
         params = {**params, "cursor": cursor}
-    return matches[:max_matches]
+
+    matches = matches[:max_matches]
+    try:
+        await _cache_set(key, matches)
+    except Exception:
+        pass
+    return matches
 
 
 def _parse_date_from_slug(slug: str) -> str:
@@ -208,8 +247,20 @@ async def _fetch_match_maps_and_stats(match: dict, team_id: int, player_id: int)
     """
     Fetch all maps for a match and all player stats in parallel.
     Returns list of per-map stat dicts (only maps where player appeared).
+
+    Cached per (match_id, team_id, player_id) for CACHE_TTL["match_maps"]
+    so multiple settle attempts for the same pick (and concurrent settles
+    for the same player from any poll/cron) don't re-fetch.
     """
     match_id = match.get("id")
+    if not match_id:
+        return []
+
+    key = f"cs2_mstats_{match_id}_{team_id}_{player_id}"
+    doc = await _cache_get(key)
+    if _fresh(doc, CACHE_TTL["match_maps"]) and doc.get("data") is not None:
+        return list(doc["data"])
+
     try:
         maps_r = await _get("/match_maps", {"match_ids[]": match_id, "per_page": 10})
         maps   = maps_r.get("data", [])
@@ -224,7 +275,15 @@ async def _fetch_match_maps_and_stats(match: dict, team_id: int, player_id: int)
         *[_fetch_map_player_stat(m, team_id, player_id) for m in maps],
         return_exceptions=True,
     )
-    return [r for r in results if r and not isinstance(r, Exception)]
+    stats = [r for r in results if r and not isinstance(r, Exception)]
+    # Only cache once we have real data — empty result may just mean the API
+    # hasn't ingested player stats yet, and we want to retry shortly.
+    if stats:
+        try:
+            await _cache_set(key, stats)
+        except Exception:
+            pass
+    return stats
 
 
 async def get_player_recent_map_stats(player_id: int, team_id: int, limit: int = 30) -> list:
@@ -539,21 +598,9 @@ async def get_cs2_completed_match_result(
                 except Exception:
                     pass
 
-            # Fetch maps — completed matches have round scores
-            maps_r = await _get("/match_maps", {"match_ids[]": match.get("id"), "per_page": 10})
-            maps   = maps_r.get("data", [])
-            if not maps:
-                continue
-
-            # A finished match has at least one map with actual scores
-            finished_maps = [
-                m for m in maps
-                if (m.get("team1_score") or 0) + (m.get("team2_score") or 0) > 0
-            ]
-            if not finished_maps:
-                continue   # match not yet complete
-
-            # Fetch player stats from this match
+            # Fetch maps + per-player stats in one cached call (CACHE_TTL["match_maps"]).
+            # The previous uncached /match_maps "finished check" was redundant — if
+            # the player appeared on any map there are by definition real scores.
             per_map_stats = await _fetch_match_maps_and_stats(match, team_id, player_id)
             if not per_map_stats:
                 continue
@@ -612,17 +659,15 @@ async def get_cs2_completed_match_result(
             if actual is None:
                 continue
 
-            # Build score string (e.g. "TYLOO 2 – 1 5star")
-            mt1_name = (mt1.get("name") or "")
-            mt2_name = (mt2.get("name") or "")
-            map_scores = [(m.get("team1_score", 0) or 0) for m in finished_maps]
-            opp_scores = [(m.get("team2_score", 0) or 0) for m in finished_maps]
-            # Count map wins per side
-            team_map_wins = sum(
-                1 for m in finished_maps
-                if ((m.get("winner") or {}).get("id") == team_id)
-            )
-            opp_map_wins  = len(finished_maps) - team_map_wins
+            # Build score string from per_map_stats (which carries wonMap per
+            # map the player appeared in). This is an approximation when the
+            # player sat out a map — but per-map stat rows are the only source
+            # we still have once we removed the redundant /match_maps call.
+            mt1_name      = (mt1.get("name") or "")
+            mt2_name      = (mt2.get("name") or "")
+            maps_played   = len(per_map_stats)
+            team_map_wins = sum(1 for ms in per_map_stats if ms.get("wonMap"))
+            opp_map_wins  = maps_played - team_map_wins
             home_name = mt1_name if mt1.get("id") == team_id else mt2_name
             away_name = mt2_name if mt1.get("id") == team_id else mt1_name
             score_str = f"{home_name} {team_map_wins}–{opp_map_wins} {away_name}"
@@ -636,7 +681,7 @@ async def get_cs2_completed_match_result(
                 "matchScore":  score_str,
                 "matchDate":   date_str,
                 "opponent":    opp.get("name", opponent_name),
-                "mapsPlayed":  len(finished_maps),
+                "mapsPlayed":  maps_played,
             }
 
         # No match found — log what we DID see so the failure mode is obvious
