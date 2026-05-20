@@ -141,6 +141,26 @@ async def send_message(req: SendMessageRequest):
     except Exception as _pe:
         print(f"[PUSH] notification dispatch error: {_pe}")
 
+    # ── In-app mention notifications ──────────────────────────────────────────
+    if req.mentions and not is_everyone:
+        try:
+            import asyncio as _aio2
+            from routes.notifications import create_notification
+            for _m_email in [m.lower() for m in req.mentions if m]:
+                _aio2.create_task(create_notification(
+                    email=_m_email,
+                    ntype="mention",
+                    title=f"💬 {display_name} mentioned you",
+                    body=text_body[:200],
+                    data={
+                        "messageId":   msg["messageId"],
+                        "senderName":  display_name,
+                        "senderEmail": req.email.lower().strip(),
+                    },
+                ))
+        except Exception:
+            pass
+
     return _serialize(msg)
 
 

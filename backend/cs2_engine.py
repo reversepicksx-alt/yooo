@@ -50,6 +50,8 @@ CS2_PROPS = {
     "maps_1_2_assists":     "maps_1_2_assists",
     "maps_1_2_adr":         "maps_1_2_adr",
     "maps_1_2_headshots":   "maps_1_2_headshots",
+    # Map 1 only props
+    "map1_kills":           "map1_kills",
     # Map 3 props — from match logs, only valid when map3 was played
     "map3_kills":           "map3_kills",
     "map3_headshots":       "map3_headshots",
@@ -62,6 +64,7 @@ CS2_PROPS = {
 MATCH_LEVEL_PROPS = {
     "maps_1_2_kills", "maps_1_2_deaths", "maps_1_2_assists",
     "maps_1_2_adr", "maps_1_2_headshots",
+    "map1_kills",
     "map3_kills", "map3_headshots", "map3_deaths", "map3_assists", "map3_adr",
     "maps_1_3_kills", "maps_1_3_headshots",
 }
@@ -73,6 +76,7 @@ MAP3_PROPS = {"map3_kills", "map3_headshots", "map3_deaths", "map3_assists", "ma
 COUNT_PROPS = {
     "kills", "deaths", "assists", "first_kills", "clutches_won", "headshots",
     "maps_1_2_kills", "maps_1_2_deaths", "maps_1_2_assists", "maps_1_2_headshots",
+    "map1_kills",
     "map3_kills", "map3_headshots", "map3_deaths", "map3_assists",
     "maps_1_3_kills", "maps_1_3_headshots",
 }

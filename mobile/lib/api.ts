@@ -1198,6 +1198,8 @@ export const CS2_PROP_TYPES = [
   { value: 'maps_1_2_assists',    label: 'Maps 1-2 Assists' },
   { value: 'maps_1_2_adr',        label: 'Maps 1-2 ADR' },
   { value: 'maps_1_2_headshots',  label: 'Maps 1-2 Headshots' },
+  // Map 1 only
+  { value: 'map1_kills',          label: 'Map 1 Kills' },
   // Maps 1-3 (all 3 maps combined — when series plays out to map 3)
   { value: 'maps_1_3_kills',      label: 'Maps 1-3 Kills' },
   { value: 'maps_1_3_headshots',  label: 'Maps 1-3 Headshots' },
@@ -1391,6 +1393,38 @@ export async function fetchCommunityParticipants(): Promise<
   Array<{ email: string; displayName: string }>
 > {
   return apiCall('/api/community/participants');
+}
+
+// ─── In-App Notifications ──────────────────────────────────────────────────────
+
+export interface AppNotification {
+  notificationId: string;
+  email: string;
+  type: 'pick_settled' | 'mention' | string;
+  title: string;
+  body: string;
+  data: Record<string, unknown>;
+  read: boolean;
+  createdAt: string;
+}
+
+export async function getNotifications(email: string, limit = 40): Promise<AppNotification[]> {
+  return apiCall<AppNotification[]>(
+    `/api/notifications?email=${encodeURIComponent(email)}&limit=${limit}`,
+  );
+}
+
+export async function getNotificationsUnreadCount(email: string): Promise<{ count: number }> {
+  return apiCall<{ count: number }>(
+    `/api/notifications/unread-count?email=${encodeURIComponent(email)}`,
+  );
+}
+
+export async function markNotificationsRead(email: string, notificationIds?: string[]): Promise<void> {
+  await apiCall('/api/notifications/mark-read', {
+    method: 'POST',
+    body: JSON.stringify({ email, notificationIds: notificationIds ?? null }),
+  });
 }
 
 // ─── Push Notifications ────────────────────────────────────────────────────────

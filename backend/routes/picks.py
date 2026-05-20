@@ -1001,6 +1001,30 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str) -> dict:
             {"pickId": pick["pickId"], "email": email},
             {"$set": _settle_set}
         )
+        # ── In-app notification ──────────────────────────────────────────────
+        try:
+            from routes.notifications import create_notification
+            _emoji = "✅" if result_str == "hit" else ("❌" if result_str == "miss" else "↔️")
+            _prop  = pick.get("propType", "").replace("_", " ").title()
+            _label = "HIT" if result_str == "hit" else ("MISSED" if result_str == "miss" else "PUSH")
+            await create_notification(
+                email=email,
+                ntype="pick_settled",
+                title=f"{_emoji} {pick.get('playerName','?')} {_prop} — {_label}",
+                body=f"Actual: {current_value} · Line: {line} · {recommendation.upper()}",
+                data={
+                    "pickId":         pick.get("pickId"),
+                    "playerName":     pick.get("playerName"),
+                    "propType":       pick.get("propType"),
+                    "result":         result_str,
+                    "actualValue":    current_value,
+                    "line":           line,
+                    "recommendation": recommendation,
+                    "sport":          "soccer",
+                },
+            )
+        except Exception:
+            pass
     return update
 
 
@@ -1240,6 +1264,31 @@ async def _settle_cs2_pick(pick: dict) -> Optional[dict]:
         {"pickId": pick["pickId"], "email": pick.get("email", "")},
         {"$set": settle_set},
     )
+
+    # ── In-app notification ──────────────────────────────────────────────────
+    try:
+        from routes.notifications import create_notification
+        _emoji = "✅" if result_str == "hit" else ("❌" if result_str == "miss" else "↔️")
+        _prop  = prop_type.replace("_", " ").title()
+        _label = "HIT" if result_str == "hit" else ("MISSED" if result_str == "miss" else "PUSH")
+        await create_notification(
+            email=pick.get("email", ""),
+            ntype="pick_settled",
+            title=f"{_emoji} {pick.get('playerName','?')} {_prop} — {_label}",
+            body=f"Actual: {actual_value} · Line: {line} · {recommendation.upper()}",
+            data={
+                "pickId":         pick.get("pickId"),
+                "playerName":     pick.get("playerName"),
+                "propType":       prop_type,
+                "result":         result_str,
+                "actualValue":    actual_value,
+                "line":           line,
+                "recommendation": recommendation,
+                "sport":          "cs2",
+            },
+        )
+    except Exception:
+        pass
 
     print(
         f"[CS2 SETTLE] {pick.get('playerName','?')} {prop_type} "

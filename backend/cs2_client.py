@@ -552,6 +552,8 @@ async def get_cs2_completed_match_result(
                     all_maps = sorted(per_map_stats, key=lambda x: x.get("mapNumber", 0))[:3]
                 stat_key = "kills" if prop_type == "maps_1_3_kills" else "headshotCount"
                 actual = sum(m.get(stat_key, 0) or 0 for m in all_maps)
+            elif prop_type == "map1_kills":
+                actual = map_lookup.get(1, {}).get("kills")
             elif prop_type == "kills":
                 # Per-map prop — use map 1
                 actual = map_lookup.get(1, {}).get("kills")
