@@ -82,7 +82,7 @@ COUNT_PROPS = {
 }
 
 # Props where we normalise by rounds before projecting
-KILLS_CLASS_PROPS = {"kills", "maps_1_2_kills", "map3_kills", "maps_1_3_kills"}
+KILLS_CLASS_PROPS = {"kills", "map1_kills", "maps_1_2_kills", "map3_kills", "maps_1_3_kills"}
 
 # ── League-average hyper-priors ───────────────────────────────────────────────
 # Calibrated to realistic T2/T3 competition (not T1 which is only ~20 teams).
@@ -215,43 +215,47 @@ def _kast_weight(log_entry: dict, prop_type: str) -> float:
 
 def _opponent_rank_multiplier(rank: Optional[int], prop_type: str) -> float:
     """
-    Opponent rank adjustment — deliberately conservative for kills.
+    Opponent rank adjustment — reflects how hard it is to accumulate kills
+    against opponents of a given world ranking.
 
-    KEY INSIGHT: For raw kill TOTALS (maps_1_2_kills), two effects nearly cancel:
-      • Weaker opponent → more kills PER ROUND (easier duels) → pushes UP
-      • Weaker opponent → blowout → FEWER ROUNDS in the match → pushes DOWN
-    Net effect on raw kill count is small (±6% max).
+    NOTE: This function adjusts for the OPPONENT's absolute quality level.
+    The separate _underdog_compression() handles the RELATIVE gap between teams.
+    Together they capture both "this opponent is hard" and "we are heavy underdogs".
 
-    Deaths are less affected by round count (you still die even in blowouts),
-    so the rank effect on deaths is slightly larger.
+    Against elite opponents (top-10): structured CT setups, superior utility usage,
+    forced eco chains → meaningful kill suppression for BOTH teams' players, but
+    especially for the weaker team (see _underdog_compression).
+
+    Against weak opponents (100+): more chaotic rounds, easier duels, blowout
+    risk limits total round count — effects partially cancel for kill totals.
     """
     if not rank or rank <= 0:
         return 1.0
 
     kills_direction_props = {
-        "kills", "maps_1_2_kills", "map3_kills", "maps_1_3_kills",
+        "kills", "map1_kills", "maps_1_2_kills", "map3_kills", "maps_1_3_kills",
         "adr", "maps_1_2_adr", "map3_adr", "rating",
         "headshots", "maps_1_2_headshots", "map3_headshots", "maps_1_3_headshots",
     }
     deaths_direction_props = {"deaths", "maps_1_2_deaths", "map3_deaths"}
 
     if prop_type in kills_direction_props:
-        if rank <= 5:   return 0.94
-        if rank <= 10:  return 0.96
-        if rank <= 20:  return 0.98
-        if rank <= 50:  return 1.0
+        if rank <= 5:   return 0.91   # world-elite: tight CT setups, gun-game dominance
+        if rank <= 10:  return 0.93
+        if rank <= 20:  return 0.96
+        if rank <= 50:  return 1.0    # baseline range — most historical opponents
         if rank <= 100: return 1.02
         if rank <= 200: return 1.04
-        return 1.06
+        return 1.07
 
     if prop_type in deaths_direction_props:
-        if rank <= 5:   return 1.08
-        if rank <= 10:  return 1.05
-        if rank <= 20:  return 1.02
+        if rank <= 5:   return 1.10
+        if rank <= 10:  return 1.06
+        if rank <= 20:  return 1.03
         if rank <= 50:  return 1.0
         if rank <= 100: return 0.98
         if rank <= 200: return 0.96
-        return 0.94
+        return 0.93
 
     return 1.0
 
@@ -334,7 +338,7 @@ def _win_rate_adjustment(logs: list, prop_type: str) -> float:
     Winning teams kill more (CT holds, successful T attacks).
     Win rate → projection modifier for kills/deaths.
     """
-    if prop_type not in {"kills", "maps_1_2_kills", "map3_kills", "deaths", "maps_1_2_deaths", "map3_deaths"}:
+    if prop_type not in {"kills", "map1_kills", "maps_1_2_kills", "map3_kills", "deaths", "maps_1_2_deaths", "map3_deaths"}:
         return 1.0
 
     won_field = "wonMatch" if prop_type in MATCH_LEVEL_PROPS else "wonMap"
@@ -344,7 +348,7 @@ def _win_rate_adjustment(logs: list, prop_type: str) -> float:
 
     win_rate = sum(1 for w in won_vals if w) / len(won_vals)
 
-    if prop_type in {"kills", "maps_1_2_kills", "map3_kills"}:
+    if prop_type in {"kills", "map1_kills", "maps_1_2_kills", "map3_kills"}:
         return 0.97 + 0.06 * win_rate
 
     if prop_type in {"deaths", "maps_1_2_deaths", "map3_deaths"}:
@@ -445,7 +449,7 @@ def _h2h_momentum_boost(log_entry: dict, opponent_name: Optional[str]) -> float:
 
 def _h2h_form_multiplier(logs: list, opponent_name: Optional[str], prop_type: str) -> float:
     """H2H win rate vs this specific opponent → small projection adjustment (±4%)."""
-    if not opponent_name or prop_type not in {"kills", "maps_1_2_kills"}:
+    if not opponent_name or prop_type not in {"kills", "map1_kills", "maps_1_2_kills"}:
         return 1.0
     target   = opponent_name.lower()
     h2h_logs = [
@@ -471,7 +475,7 @@ def _h2h_form_multiplier(logs: list, opponent_name: Optional[str], prop_type: st
 
 def _h2h_kill_trend(logs: list, opponent_name: Optional[str], prop_type: str) -> float:
     """H2H actual kill average vs global average → small correction (±5%)."""
-    if not opponent_name or prop_type not in {"kills", "maps_1_2_kills"}:
+    if not opponent_name or prop_type not in {"kills", "map1_kills", "maps_1_2_kills"}:
         return 1.0
     target   = opponent_name.lower()
     h2h_logs = [
@@ -800,16 +804,21 @@ def _underdog_compression(
     prop_type: str,
 ) -> float:
     """
-    When a player's team is a significant underdog (large rank gap vs opponent),
-    the match is likely to be a blowout — fewer rounds AND lower kill rate per round.
-    The current opponent_rank_multiplier addresses opponent rank in isolation.
-    This layer addresses RELATIVE rank gap between the two teams.
+    Adjusts for the RELATIVE rank gap between the two teams — complementing the
+    absolute opponent-rank multiplier above.
 
-    Research: "When there is a significant rating gap between teams, individual
-    kill stats become misleading without context." A team ranked #100 vs #5 will
-    face eco round chains and CT resets → structural kill suppression.
+    When a player's team is a significant underdog:
+      • They lose map rounds more decisively → fewer total rounds → fewer kills
+      • They face disadvantageous gun economy (eco chains after pistol losses)
+      • CT setups and structured play from the stronger side further suppress KPR
 
-    Capped at ±8% — this complements (not replaces) the opponent rank multiplier.
+    The combined effect of _opponent_rank_multiplier × _underdog_compression
+    is the primary matchup-quality correction in the engine.
+
+    Example: Lynn Vision (#40) vs The MongolZ (#15) — rank_gap = +25
+      → opponent_rank_multiplier(15) = 0.96 (4% cut, strong opponent)
+      → underdog_compression(40, 15) = 0.96 (4% cut, clear underdog)
+      → combined ~0.92 — ~8% below baseline. Meaningfully suppresses projections.
     """
     if not player_team_rank or not opponent_rank:
         return 1.0
@@ -818,16 +827,23 @@ def _underdog_compression(
 
     rank_gap = player_team_rank - opponent_rank   # positive = player's team is worse
 
+    # Underdog (player's team worse):
     if rank_gap >= 50:
-        return 0.93   # heavy underdog: blowout risk, compressed kills
+        return 0.88   # severe underdog: structural kill suppression across all rounds
     if rank_gap >= 30:
-        return 0.96
+        return 0.92
     if rank_gap >= 15:
-        return 0.98
+        return 0.96
+    if rank_gap >= 5:
+        return 0.99   # slight underdog — minimal adjustment
+
+    # Favorite (player's team better):
     if rank_gap <= -30:
-        return 1.04   # heavy favorite: opponent passive play → more kills
+        return 1.07   # dominant favorite: opponent passive, more kills available
     if rank_gap <= -15:
-        return 1.02
+        return 1.04
+    if rank_gap <= -5:
+        return 1.01
     return 1.0
 
 

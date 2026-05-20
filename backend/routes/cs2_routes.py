@@ -177,6 +177,28 @@ async def _get_cs2_ai_analysis(
     rank_note = f"Opponent world rank: #{opp_rank}" if opp_rank else "Opponent rank: unknown"
     team_rank_note = f"Player team rank: #{player_team_rank}" if player_team_rank else ""
 
+    # Build matchup severity warning for large rank gaps
+    matchup_warning = ""
+    if player_team_rank and opp_rank:
+        gap = player_team_rank - opp_rank
+        if gap >= 15:
+            matchup_warning = f"""
+⚠️ MATCHUP CONTEXT — UNDERDOG ALERT (rank gap: +{gap}):
+Player's team (#{player_team_rank}) is a SIGNIFICANT UNDERDOG vs #{opp_rank} opponent.
+The Bayesian engine has applied underdog compression, but you MUST explicitly weight:
+- Historical stats were likely built against WEAKER/MID-TIER opponents (rank 30-80)
+- Elite CT setups from the higher-ranked side force eco chains → fewer kill opportunities
+- Gun-game disadvantage: eco buys, force buys reduce high-kill-ceiling rounds
+- H2H if available: check if player's actual output vs this team is below their season avg
+CRITICAL: Do NOT let the player's career average drive the recommendation here — the 
+matchup quality gap should meaningfully suppress your OVER conviction."""
+        elif gap <= -15:
+            matchup_warning = f"""
+💪 MATCHUP CONTEXT — FAVORITE BOOST (rank gap: {gap}):
+Player's team (#{player_team_rank}) is favored vs #{opp_rank} opponent.
+Dominant team typically has more kill opportunities (passive opponent CT, gun game advantage).
+Factor this into your confidence assessment."""
+
     prompt = f"""You are a sharp CS2 esports betting analyst with deep knowledge of Counter-Strike tactics.
 
 Player: {player_nickname} | {team_rank_note}
@@ -184,7 +206,7 @@ Prop: {prop_label} | Line: {line}
 Opponent: {opponent or 'TBD'} | {rank_note}
 Map: {map_name or 'TBD'}
 Season avg: {prior_mean:.1f} | Momentum avg: {momentum_mean:.1f}
-Model projection: {projection:.1f} → {recommendation.upper()} (P(OVER)={p_over}%, P(UNDER)={p_under}%)
+Model projection: {projection:.1f} → {recommendation.upper()} (P(OVER)={p_over}%, P(UNDER)={p_under}%){matchup_warning}
 
 v4 Tactical factors:
 {tactical_ctx}
