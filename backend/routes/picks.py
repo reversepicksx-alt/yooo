@@ -14,6 +14,7 @@ from models import (
 )
 from utils import api_football_request
 import cs2_client as _cs2_client
+import wta_client as _wta_client
 # auto_analyze_miss_background REMOVED — was draining AI tokens on every miss settlement
 
 router = APIRouter(prefix="/api", tags=["picks"])
@@ -28,6 +29,16 @@ router = APIRouter(prefix="/api", tags=["picks"])
 _cs2_settle_last_attempt: dict[str, float] = {}
 _cs2_settle_locks:        dict[str, aio.Lock] = {}
 CS2_SETTLE_COOLDOWN_SEC = 300   # 5 minutes between settle retries per pick
+
+# ── WTA settle cooldown (mirrors CS2 pattern) ─────────────────────────────
+_wta_settle_last_attempt: dict[str, float] = {}
+_wta_settle_locks:        dict[str, aio.Lock] = {}
+WTA_SETTLE_COOLDOWN_SEC = 300
+
+def _wta_settle_lock(pick_id: str) -> aio.Lock:
+    if pick_id not in _wta_settle_locks:
+        _wta_settle_locks[pick_id] = aio.Lock()
+    return _wta_settle_locks[pick_id]
 
 
 @router.post("/picks/cs2/admin-manual-settle")
@@ -279,6 +290,8 @@ async def save_pick(req: SavePickRequest):
         sport = "mlb"
     elif _sport_raw == "cs2":
         sport = "cs2"
+    elif _sport_raw == "wta":
+        sport = "wta"
     else:
         sport = "soccer"
 
@@ -657,9 +670,44 @@ async def list_picks(req: GetPicksRequest):
         except Exception:
             traceback.print_exc()
 
+    # ── WTA settle dispatch ────────────────────────────────────────────────
+    wta_live_picks = [p for p in live_picks if p.get("sport") == "wta"]
+    if wta_live_picks:
+        async def _settle_wta_with_cooldown(pick: dict) -> Optional[dict]:
+            pick_id = pick.get("pickId", "")
+            now  = _time.monotonic()
+            last = _wta_settle_last_attempt.get(pick_id, 0.0)
+            if now - last < WTA_SETTLE_COOLDOWN_SEC:
+                return None
+            lock = _wta_settle_lock(pick_id)
+            if lock.locked():
+                return None
+            async with lock:
+                now2  = _time.monotonic()
+                last2 = _wta_settle_last_attempt.get(pick_id, 0.0)
+                if now2 - last2 < WTA_SETTLE_COOLDOWN_SEC:
+                    return None
+                _wta_settle_last_attempt[pick_id] = now2
+                return await _settle_wta_pick({**pick, "email": req.email.lower()})
+
+        try:
+            wta_settle_tasks = [_settle_wta_with_cooldown(p) for p in wta_live_picks]
+            wta_results = await aio.gather(*wta_settle_tasks, return_exceptions=True)
+            for p, settled in zip(wta_live_picks, wta_results):
+                if isinstance(settled, Exception) or not settled:
+                    continue
+                p["status"]      = "settled"
+                p["result"]      = settled.get("result", "pending")
+                p["actualValue"] = settled.get("actualValue")
+                p["hitPct"]      = settled.get("hitPct")
+                p["matchScore"]  = settled.get("matchScore")
+                p["settledAt"]   = settled.get("settledAt")
+        except Exception:
+            traceback.print_exc()
+
     soccer_live_picks = [
         p for p in live_picks
-        if p.get("sport", "soccer") not in ("mlb", "cs2") and p.get("propType", "") not in _MLB_PROP_SET
+        if p.get("sport", "soccer") not in ("mlb", "cs2", "wta") and p.get("propType", "") not in _MLB_PROP_SET
     ]
     if soccer_live_picks:
         try:
@@ -1521,6 +1569,105 @@ async def _settle_cs2_pick(pick: dict) -> Optional[dict]:
         f"[CS2 SETTLE] {pick.get('playerName','?')} {prop_type} "
         f"actual={actual_value} line={line} → {result_str.upper()} "
         f"(match: {result.get('matchScore','')})"
+    )
+
+    return {
+        "pickId":      pick["pickId"],
+        "status":      "settled",
+        "result":      result_str,
+        "actualValue": actual_value,
+        "hitPct":      hit_pct,
+        "matchScore":  result.get("matchScore"),
+        "settledAt":   now_iso,
+    }
+
+
+async def _settle_wta_pick(pick: dict) -> Optional[dict]:
+    """
+    Auto-settle a WTA tennis pick once the match is finished.
+    Mirrors _settle_cs2_pick — finds the player's finished match vs the
+    opponent and resolves the prop's actual value from BDL WTA data.
+    """
+    player_id     = pick.get("playerId")
+    opponent_id   = pick.get("opponentId")
+    opponent_name = pick.get("opponentName") or ""
+    prop_type     = pick.get("propType", "total_games")
+    line          = pick.get("line", 0)
+    recommendation = pick.get("recommendation", "over")
+    timestamp     = pick.get("timestamp", "")
+
+    if not player_id or (not opponent_id and not opponent_name):
+        return None
+
+    if isinstance(timestamp, (int, float)) and timestamp > 0:
+        ts_iso = datetime.fromtimestamp(timestamp / 1000, tz=timezone.utc).isoformat()
+    elif isinstance(timestamp, str) and timestamp:
+        ts_iso = timestamp
+    else:
+        ts_iso = datetime.now(timezone.utc).isoformat()
+
+    try:
+        result = await _wta_client.get_wta_completed_match_result(
+            player_id=int(player_id),
+            opponent_id=int(opponent_id) if opponent_id else None,
+            opponent_name=opponent_name,
+            prop_type=prop_type,
+            after_iso=ts_iso,
+        )
+    except Exception as e:
+        print(f"[WTA SETTLE] error for {pick.get('playerName','?')}: {e}")
+        return None
+
+    if not result or result.get("actualValue") is None:
+        return None
+
+    actual_value = result["actualValue"]
+    result_str   = _settle_result(actual_value, line, recommendation)
+    hit_pct      = 100 if result_str == "hit" else (0 if result_str == "miss" else 50)
+    now_iso      = datetime.now(timezone.utc).isoformat()
+
+    settle_set = {
+        "status":      "settled",
+        "result":      result_str,
+        "actualValue": actual_value,
+        "hitPct":      hit_pct,
+        "matchScore":  result.get("matchScore"),
+        "settledAt":   now_iso,
+    }
+
+    await db.picks.update_one(
+        {"pickId": pick["pickId"], "email": pick.get("email", "")},
+        {"$set": settle_set},
+    )
+
+    try:
+        from routes.notifications import create_notification
+        _emoji = "✅" if result_str == "hit" else ("❌" if result_str == "miss" else "↔️")
+        _prop  = prop_type.replace("_", " ").title()
+        _label = "HIT" if result_str == "hit" else ("MISSED" if result_str == "miss" else "PUSH")
+        await create_notification(
+            email=pick.get("email", ""),
+            ntype="pick_settled",
+            title=f"{_emoji} {pick.get('playerName','?')} {_prop} — {_label}",
+            body=f"Actual: {actual_value} · Line: {line} · {recommendation.upper()}",
+            data={
+                "pickId":         pick.get("pickId"),
+                "playerName":     pick.get("playerName"),
+                "propType":       prop_type,
+                "result":         result_str,
+                "actualValue":    actual_value,
+                "line":           line,
+                "recommendation": recommendation,
+                "sport":          "wta",
+            },
+        )
+    except Exception:
+        pass
+
+    print(
+        f"[WTA SETTLE] {pick.get('playerName','?')} {prop_type} "
+        f"actual={actual_value} line={line} → {result_str.upper()} "
+        f"(score: {result.get('matchScore','')})"
     )
 
     return {

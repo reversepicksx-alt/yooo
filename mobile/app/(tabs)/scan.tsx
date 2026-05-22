@@ -11,7 +11,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import { useQueryClient } from '@tanstack/react-query';
-import { scanProp, predict, mlbPredict, searchMlbPlayers, getMlbTeams, getMlbGameContext, cs2Predict, searchCs2Players, searchCs2Teams, savePick, PROP_TYPES, MLB_PROP_TYPES, CS2_PROP_TYPES, LEAGUES, PredictionResult, ScanResult, MlbPlayer, Cs2Player, Cs2Team } from '@/lib/api';
+import { scanProp, predict, mlbPredict, searchMlbPlayers, getMlbTeams, getMlbGameContext, cs2Predict, searchCs2Players, searchCs2Teams, wtaPredict, searchWtaPlayers, savePick, PROP_TYPES, MLB_PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, LEAGUES, PredictionResult, ScanResult, MlbPlayer, Cs2Player, Cs2Team, WtaPlayer } from '@/lib/api';
 import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult, FuzzyLeagueResult } from '@/components/FuzzySearchInput';
 import LeaguePickerModal from '@/components/LeaguePickerModal';
 import { useAuth } from '@/contexts/AuthContext';
@@ -95,7 +95,7 @@ const BAND_LABEL: Record<string, string> = {
 
 type Mode = 'scan' | 'manual';
 type Phase = 'idle' | 'scanning' | 'detected' | 'analyzing' | 'result' | 'saved';
-type Sport = 'soccer' | 'mlb' | 'cs2';
+type Sport = 'soccer' | 'mlb' | 'cs2' | 'wta';
 
 export default function ScanScreen() {
   const insets = useSafeAreaInsets();
@@ -192,6 +192,24 @@ export default function ScanScreen() {
   const cs2SearchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cs2OppSearchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // WTA manual mode fields
+  const [wtaPlayerQuery, setWtaPlayerQuery] = useState('');
+  const [wtaPlayerSuggestions, setWtaPlayerSuggestions] = useState<WtaPlayer[]>([]);
+  const [wtaResolvedPlayer, setWtaResolvedPlayer] = useState<WtaPlayer | null>(null);
+  const [wtaSearching, setWtaSearching] = useState(false);
+  const [wtaOpponentQuery, setWtaOpponentQuery] = useState('');
+  const [wtaOpponentSuggestions, setWtaOpponentSuggestions] = useState<WtaPlayer[]>([]);
+  const [wtaResolvedOpponent, setWtaResolvedOpponent] = useState<WtaPlayer | null>(null);
+  const [wtaOppSearching, setWtaOppSearching] = useState(false);
+  const [wtaPropType, setWtaPropType] = useState('total_games');
+  const [wtaShowPropPicker, setWtaShowPropPicker] = useState(false);
+  const [wtaSurface, setWtaSurface] = useState<string>('Hard');
+  const [wtaShowSurfacePicker, setWtaShowSurfacePicker] = useState(false);
+  const [wtaRound, setWtaRound] = useState<string>('R32');
+  const [wtaShowRoundPicker, setWtaShowRoundPicker] = useState(false);
+  const wtaSearchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wtaOppSearchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     getMlbTeams().then(data => { if (data && data.length > 0) setMlbTeams(data); }).catch(() => {});
   }, []);
@@ -284,6 +302,15 @@ export default function ScanScreen() {
     setCs2ResolvedOpponent(null);
     setCs2MapName('');
     setCs2TeamStartsCt(null);
+    setWtaPlayerQuery('');
+    setWtaPlayerSuggestions([]);
+    setWtaResolvedPlayer(null);
+    setWtaOpponentQuery('');
+    setWtaOpponentSuggestions([]);
+    setWtaResolvedOpponent(null);
+    setWtaPropType('total_games');
+    setWtaSurface('Hard');
+    setWtaRound('R32');
   };
 
   const processImage = async (base64: string, uri: string) => {
@@ -576,6 +603,75 @@ export default function ScanScreen() {
     }
   };
 
+  // ── WTA handlers ─────────────────────────────────────────────────────────
+  const handleWtaPlayerSearch = (text: string) => {
+    setWtaPlayerQuery(text);
+    if (!text.trim()) { setWtaResolvedPlayer(null); setWtaPlayerSuggestions([]); return; }
+    setWtaResolvedPlayer(null);
+    if (wtaSearchTimeout.current) clearTimeout(wtaSearchTimeout.current);
+    wtaSearchTimeout.current = setTimeout(async () => {
+      setWtaSearching(true);
+      try {
+        const results = await searchWtaPlayers(text.trim());
+        setWtaPlayerSuggestions(results || []);
+      } catch { setWtaPlayerSuggestions([]); }
+      finally { setWtaSearching(false); }
+    }, 280);
+  };
+
+  const handleWtaOpponentSearch = (text: string) => {
+    setWtaOpponentQuery(text);
+    setWtaResolvedOpponent(null);
+    if (!text.trim()) { setWtaOpponentSuggestions([]); return; }
+    if (wtaOppSearchTimeout.current) clearTimeout(wtaOppSearchTimeout.current);
+    wtaOppSearchTimeout.current = setTimeout(async () => {
+      setWtaOppSearching(true);
+      try {
+        const results = await searchWtaPlayers(text.trim());
+        setWtaOpponentSuggestions(results || []);
+      } catch { setWtaOpponentSuggestions([]); }
+      finally { setWtaOppSearching(false); }
+    }, 280);
+  };
+
+  const handleWtaAnalyze = async () => {
+    if (!wtaPlayerQuery.trim()) { setManualError('Enter a player name.'); return; }
+    if (!line.trim() || isNaN(parseFloat(line))) { setManualError('Enter a valid line value (e.g. 22.5).'); return; }
+    setManualError(null);
+    setPhase('analyzing');
+    setWtaPlayerSuggestions([]);
+    setWtaOpponentSuggestions([]);
+    try {
+      const result = await wtaPredict({
+        playerName:   wtaPlayerQuery.trim(),
+        playerId:     wtaResolvedPlayer?.id || null,
+        opponentName: wtaResolvedOpponent?.fullName || wtaOpponentQuery.trim() || '',
+        opponentId:   wtaResolvedOpponent?.id || null,
+        propType:     wtaPropType,
+        line:         parseFloat(line),
+        surface:      wtaSurface,
+        round:        wtaRound,
+        subjectRank:  wtaResolvedPlayer?.currentRank ?? null,
+        opponentRank: wtaResolvedOpponent?.currentRank ?? null,
+      });
+      if ((result as any).error) { setManualError((result as any).error); setPhase('idle'); return; }
+      setScanResult({
+        playerName:   result.playerName || wtaPlayerQuery.trim(),
+        propType:     wtaPropType,
+        line:         parseFloat(line),
+        teamName:     '',
+        opponentName: wtaResolvedOpponent?.fullName || wtaOpponentQuery.trim() || '',
+        leagueId:     0,
+      });
+      setPrediction(result);
+      setPhase('result');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e: unknown) {
+      setManualError(e instanceof Error ? e.message : 'WTA analysis failed — try again');
+      setPhase('idle');
+    }
+  };
+
   const handleSavePick = async () => {
     if (!session || !prediction) return;
     setSaving(true);
@@ -594,8 +690,8 @@ export default function ScanScreen() {
         projection: prediction.projection ?? prediction.bayesianProjection,
         recommendation: prediction.recommendation,
         confidence: prediction.confidence,
-        confidenceScore: prediction.confidence,
-        rawConfidence: prediction.rawConfidence ?? prediction.confidence,
+        confidenceScore: prediction.confidenceScore ?? (typeof prediction.confidence === 'number' && prediction.confidence <= 1 ? Math.round(prediction.confidence * 100) : prediction.confidence),
+        rawConfidence: prediction.rawConfidence ?? prediction.confidenceScore ?? (typeof prediction.confidence === 'number' && prediction.confidence <= 1 ? Math.round(prediction.confidence * 100) : prediction.confidence),
         confidenceLevel: prediction.confidenceLevel,
         confidenceInterval: prediction.confidenceInterval,
         position: prediction.playerPosition || undefined,
@@ -603,6 +699,25 @@ export default function ScanScreen() {
         sport: sport,
         projHomePoss: sport === 'soccer' && Number.isFinite(projHomePoss) ? projHomePoss : undefined,
         projAwayPoss: Number.isFinite(projAwayPoss) ? projAwayPoss : undefined,
+        // WTA: persist tennis-specific fields and AI analysis
+        ...(sport === 'wta' ? {
+          playerId:        prediction.playerId,
+          opponentId:      (prediction as any).opponentId,
+          surface:         (prediction as any).surface,
+          round:           (prediction as any).round,
+          tournament:      (prediction as any).tournament,
+          subjectRank:     (prediction as any).subjectRank,
+          opponentRank:    (prediction as any).opponentRank,
+          sharpSummary:    prediction.sharpSummary  || undefined,
+          reasoning:       prediction.reasoning      || undefined,
+          tacticalMetrics: (prediction as any).bayesianMetrics?.tacticalMetrics || undefined,
+          projectedValue:  prediction.projection,
+          pOver:           prediction.pOver,
+          pUnder:          prediction.pUnder,
+          priorMean:       (prediction as any).bayesianMetrics?.priorMean,
+          momentumMean:    (prediction as any).bayesianMetrics?.momentumMean,
+          sampleSize:      (prediction as any).bayesianMetrics?.sampleSize,
+        } : {}),
         // CS2: persist AI analysis directly on the pick so the analysis modal can show it
         ...(sport === 'cs2' ? {
           sharpSummary:    prediction.sharpSummary  || undefined,
@@ -685,6 +800,13 @@ export default function ScanScreen() {
             activeOpacity={0.8}
           >
             <Text style={[styles.sportTabText, sport === 'cs2' && styles.sportTabTextActive]}>🎮  CS2</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.sportTab, sport === 'wta' && styles.sportTabActive]}
+            onPress={() => { setSport('wta'); reset(); setMode('manual'); }}
+            activeOpacity={0.8}
+          >
+            <Text style={[styles.sportTabText, sport === 'wta' && styles.sportTabTextActive]}>🎾  WTA</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -1601,6 +1723,148 @@ export default function ScanScreen() {
             <TouchableOpacity
               style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnLoading]}
               onPress={handleCs2Analyze}
+              disabled={phase === 'analyzing'}
+              activeOpacity={0.85}
+            >
+              {phase === 'analyzing' ? (
+                <>
+                  <ActivityIndicator color="#000" size="small" />
+                  <Text style={styles.predictBtnText}>Analyzing…</Text>
+                </>
+              ) : (
+                <>
+                  <Ionicons name="analytics-outline" size={16} color="#000" />
+                  <Text style={styles.predictBtnText}>Analyze</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* ─── WTA MANUAL FORM ─── */}
+        {sport === 'wta' && phase !== 'result' && phase !== 'saved' && (
+          <View style={styles.manualForm}>
+            <Text style={styles.fieldLabel}>Player</Text>
+            <View style={{ position: 'relative' }}>
+              <TextInput
+                style={[styles.textInput, INPUT_STYLE, { paddingRight: wtaSearching ? 36 : 14 }]}
+                placeholder="e.g. Iga Swiatek"
+                placeholderTextColor={Colors.textTertiary}
+                value={wtaPlayerQuery}
+                onChangeText={handleWtaPlayerSearch}
+                autoCapitalize="words"
+                autoCorrect={false}
+              />
+              {wtaSearching && (
+                <View style={{ position: 'absolute', right: 12, top: 14 }}>
+                  <ActivityIndicator size="small" color={Colors.primary} />
+                </View>
+              )}
+            </View>
+            {wtaPlayerSuggestions.length > 0 && (
+              <View style={styles.suggestList}>
+                {wtaPlayerSuggestions.slice(0, 6).map(p => (
+                  <TouchableOpacity
+                    key={p.id}
+                    style={styles.suggestItem}
+                    onPress={() => {
+                      setWtaResolvedPlayer(p);
+                      setWtaPlayerQuery(p.fullName);
+                      setWtaPlayerSuggestions([]);
+                      Haptics.selectionAsync();
+                    }}
+                  >
+                    <Text style={styles.suggestItemText}>{p.fullName}</Text>
+                    <Text style={styles.suggestItemSub}>
+                      {p.country || ''}{p.currentRank ? ` · #${p.currentRank}` : ''}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+            {wtaResolvedPlayer && wtaPlayerSuggestions.length === 0 && (
+              <Text style={styles.resolvedHint}>
+                ✓ {wtaResolvedPlayer.country || ''}{wtaResolvedPlayer.currentRank ? `  ·  #${wtaResolvedPlayer.currentRank}` : ''}
+              </Text>
+            )}
+
+            <Text style={styles.fieldLabel}>Opponent</Text>
+            <View style={{ position: 'relative' }}>
+              <TextInput
+                style={[styles.textInput, INPUT_STYLE, { paddingRight: wtaOppSearching ? 36 : 14 }]}
+                placeholder="e.g. Aryna Sabalenka"
+                placeholderTextColor={Colors.textTertiary}
+                value={wtaOpponentQuery}
+                onChangeText={handleWtaOpponentSearch}
+                autoCapitalize="words"
+                autoCorrect={false}
+              />
+              {wtaOppSearching && (
+                <View style={{ position: 'absolute', right: 12, top: 14 }}>
+                  <ActivityIndicator size="small" color={Colors.primary} />
+                </View>
+              )}
+            </View>
+            {wtaOpponentSuggestions.length > 0 && (
+              <View style={styles.suggestList}>
+                {wtaOpponentSuggestions.slice(0, 6).map(p => (
+                  <TouchableOpacity
+                    key={p.id}
+                    style={styles.suggestItem}
+                    onPress={() => {
+                      setWtaResolvedOpponent(p);
+                      setWtaOpponentQuery(p.fullName);
+                      setWtaOpponentSuggestions([]);
+                      Haptics.selectionAsync();
+                    }}
+                  >
+                    <Text style={styles.suggestItemText}>{p.fullName}</Text>
+                    <Text style={styles.suggestItemSub}>
+                      {p.country || ''}{p.currentRank ? ` · #${p.currentRank}` : ''}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+
+            <Text style={styles.fieldLabel}>Surface</Text>
+            <TouchableOpacity style={styles.pickerBtn} onPress={() => setWtaShowSurfacePicker(true)}>
+              <Text style={styles.pickerBtnText}>{wtaSurface}</Text>
+              <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
+            </TouchableOpacity>
+
+            <Text style={styles.fieldLabel}>Round</Text>
+            <TouchableOpacity style={styles.pickerBtn} onPress={() => setWtaShowRoundPicker(true)}>
+              <Text style={styles.pickerBtnText}>{wtaRound}</Text>
+              <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
+            </TouchableOpacity>
+
+            <Text style={styles.fieldLabel}>Prop Type</Text>
+            <TouchableOpacity style={styles.pickerBtn} onPress={() => setWtaShowPropPicker(true)}>
+              <Text style={styles.pickerBtnText}>{WTA_PROP_TYPES.find(p => p.value === wtaPropType)?.label || 'Select'}</Text>
+              <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
+            </TouchableOpacity>
+
+            <Text style={styles.fieldLabel}>Line Value</Text>
+            <TextInput
+              style={[styles.textInput, INPUT_STYLE]}
+              placeholder="e.g. 22.5"
+              placeholderTextColor={Colors.textTertiary}
+              value={line}
+              onChangeText={setLine}
+              keyboardType="decimal-pad"
+            />
+
+            {manualError && (
+              <View style={styles.inlineError}>
+                <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />
+                <Text style={styles.inlineErrorText}>{manualError}</Text>
+              </View>
+            )}
+
+            <TouchableOpacity
+              style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnLoading]}
+              onPress={handleWtaAnalyze}
               disabled={phase === 'analyzing'}
               activeOpacity={0.85}
             >
@@ -3400,6 +3664,69 @@ export default function ScanScreen() {
                 >
                   <Text style={[styles.modalItemText, p.value === cs2PropType && styles.modalItemTextActive]}>{p.label}</Text>
                   {p.value === cs2PropType && <Ionicons name="checkmark" size={16} color={Colors.primary} />}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* WTA Prop Picker Modal */}
+      <Modal visible={wtaShowPropPicker} transparent animationType="slide">
+        <TouchableOpacity style={styles.modalOverlay} onPress={() => setWtaShowPropPicker(false)}>
+          <View style={styles.modalSheet}>
+            <Text style={styles.modalTitle}>WTA Prop Type</Text>
+            <ScrollView>
+              {WTA_PROP_TYPES.map(p => (
+                <TouchableOpacity
+                  key={p.value}
+                  style={[styles.modalItem, p.value === wtaPropType && styles.modalItemActive]}
+                  onPress={() => { setWtaPropType(p.value); setWtaShowPropPicker(false); Haptics.selectionAsync(); }}
+                >
+                  <Text style={[styles.modalItemText, p.value === wtaPropType && styles.modalItemTextActive]}>{p.label}</Text>
+                  {p.value === wtaPropType && <Ionicons name="checkmark" size={16} color={Colors.primary} />}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* WTA Surface Picker Modal */}
+      <Modal visible={wtaShowSurfacePicker} transparent animationType="slide">
+        <TouchableOpacity style={styles.modalOverlay} onPress={() => setWtaShowSurfacePicker(false)}>
+          <View style={styles.modalSheet}>
+            <Text style={styles.modalTitle}>Surface</Text>
+            <ScrollView>
+              {WTA_SURFACES.map(s => (
+                <TouchableOpacity
+                  key={s}
+                  style={[styles.modalItem, s === wtaSurface && styles.modalItemActive]}
+                  onPress={() => { setWtaSurface(s); setWtaShowSurfacePicker(false); Haptics.selectionAsync(); }}
+                >
+                  <Text style={[styles.modalItemText, s === wtaSurface && styles.modalItemTextActive]}>{s}</Text>
+                  {s === wtaSurface && <Ionicons name="checkmark" size={16} color={Colors.primary} />}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* WTA Round Picker Modal */}
+      <Modal visible={wtaShowRoundPicker} transparent animationType="slide">
+        <TouchableOpacity style={styles.modalOverlay} onPress={() => setWtaShowRoundPicker(false)}>
+          <View style={styles.modalSheet}>
+            <Text style={styles.modalTitle}>Round</Text>
+            <ScrollView>
+              {WTA_ROUNDS.map(r => (
+                <TouchableOpacity
+                  key={r}
+                  style={[styles.modalItem, r === wtaRound && styles.modalItemActive]}
+                  onPress={() => { setWtaRound(r); setWtaShowRoundPicker(false); Haptics.selectionAsync(); }}
+                >
+                  <Text style={[styles.modalItemText, r === wtaRound && styles.modalItemTextActive]}>{r}</Text>
+                  {r === wtaRound && <Ionicons name="checkmark" size={16} color={Colors.primary} />}
                 </TouchableOpacity>
               ))}
             </ScrollView>

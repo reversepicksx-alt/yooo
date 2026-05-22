@@ -12,7 +12,7 @@ const getApiBase = (): string => {
 };
 
 // Endpoints that involve AI synthesis — give them a generous timeout
-const LONG_TIMEOUT_PATHS = ['/api/predict', '/api/mlb/predict', '/api/scan-prop'];
+const LONG_TIMEOUT_PATHS = ['/api/predict', '/api/mlb/predict', '/api/wta/predict', '/api/scan-prop'];
 const CS2_PREDICT_PATH   = '/api/cs2/predict';
 const LONG_TIMEOUT_MS    = 90_000;   // 90 s — soccer / MLB / scan
 const CS2_TIMEOUT_MS     = 150_000;  // 150 s — CS2 first-call cold cache hits 20+ BDL endpoints
@@ -1247,6 +1247,101 @@ export interface Cs2Team {
 export async function searchCs2Teams(query: string): Promise<Cs2Team[]> {
   if (!query || query.length < 2) return [];
   return apiCall<Cs2Team[]>(`/api/cs2/teams/search?q=${encodeURIComponent(query)}`);
+}
+
+// ─── WTA Tennis ─────────────────────────────────────────────────────────────
+
+export const WTA_PROP_TYPES = [
+  { value: 'total_games',        label: 'Total Games (Match)' },
+  { value: 'player_games_won',   label: 'Player Games Won' },
+  { value: 'opponent_games_won', label: 'Opponent Games Won' },
+  { value: 'total_sets',         label: 'Total Sets' },
+  { value: 'player_sets_won',    label: 'Player Sets Won' },
+  { value: 'set_1_total_games',  label: 'Set 1 Total Games' },
+  { value: 'set_1_player_games', label: 'Set 1 Player Games' },
+  { value: 'match_winner',       label: 'Match Winner' },
+  { value: 'first_set_winner',   label: 'First Set Winner' },
+];
+
+export const WTA_SURFACES = ['Hard', 'Clay', 'Grass'];
+export const WTA_ROUNDS   = ['F', 'SF', 'QF', 'R16', 'R32', 'R64', 'R128', 'Qualifying'];
+
+export interface WtaPlayer {
+  id:           number;
+  firstName:    string;
+  lastName:     string;
+  fullName:     string;
+  country?:     string | null;
+  currentRank?: number | null;
+  isActive?:    boolean;
+}
+
+export async function searchWtaPlayers(query: string): Promise<WtaPlayer[]> {
+  if (!query || query.length < 2) return [];
+  return apiCall<WtaPlayer[]>(`/api/wta/players/search?q=${encodeURIComponent(query)}`);
+}
+
+export async function wtaPredict(request: Record<string, unknown>): Promise<PredictionResult> {
+  const raw = await apiCall<any>('/api/wta/predict', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+  if (raw.error) return { error: raw.error } as PredictionResult;
+  const bm  = raw.bayesianMetrics || {};
+  const rec = (raw.recommendation || '').toUpperCase() as 'OVER' | 'UNDER' | 'PASS';
+
+  const gameLogs = (raw.matchLogs || raw.gameLogs || []).map((g: any) => ({
+    date:     g.date ?? '',
+    opponent: g.opponent ?? '',
+    venue:    g.wonMatch === true ? 'home' : g.wonMatch === false ? 'away' : '',
+    value:    g.totalGames ?? g.playerGamesWon ?? null,
+    minutes:  0,
+    sport:    'wta',
+    surface:  g.surface ?? '',
+    round:    g.round ?? '',
+    tournament: g.tournament ?? '',
+    setScores: g.setScores ?? [],
+    playerGamesWon:   g.playerGamesWon,
+    opponentGamesWon: g.opponentGamesWon,
+    totalGames:       g.totalGames,
+    setsPlayed:       g.setsPlayed,
+    wonMatch:         g.wonMatch,
+  }));
+
+  return {
+    sport:               'wta',
+    playerName:          raw.playerName,
+    playerId:            raw.playerId,
+    teamName:            raw.opponentName ? '' : '',
+    opponentName:        raw.opponentName,
+    opponentId:          raw.opponentId,
+    propType:            raw.propType,
+    propLabel:           raw.propLabel,
+    line:                raw.line,
+    projection:          raw.projection,
+    bayesianProjection:  raw.projection,
+    confidence:          raw.confidenceScore != null ? raw.confidenceScore / 100 : null,
+    confidenceScore:     raw.confidenceScore,
+    confidenceLevel:     raw.confidenceLevel,
+    recommendation:      rec,
+    pOver:               raw.pOver,
+    pUnder:              raw.pUnder,
+    sharpSummary:        raw.sharpSummary,
+    reasoning:           raw.reasoning,
+    surface:             raw.surface,
+    round:               raw.round,
+    tournament:          raw.tournament,
+    subjectRank:         raw.subjectRank,
+    opponentRank:        raw.opponentRank,
+    h2h:                 raw.h2h,
+    gameLogs,
+    bayesianMetrics: {
+      priorMean:       bm.priorMean,
+      momentumMean:    bm.momentumMean,
+      sampleSize:      bm.sampleSize,
+      tacticalMetrics: bm.tacticalMetrics,
+    },
+  } as unknown as PredictionResult;
 }
 
 export async function cs2Predict(request: Record<string, unknown>): Promise<PredictionResult> {

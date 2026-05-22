@@ -37,6 +37,7 @@ from routes.support import router as support_router
 from routes.push import router as push_router
 from routes.mlb_routes import router as mlb_router
 from routes.cs2_routes import router as cs2_router
+from routes.wta_routes import router as wta_router
 from routes.notifications import router as notifications_router
 from cache import seed_cache, background_refresh_loop
 
@@ -58,6 +59,7 @@ app.include_router(miss_router)
 app.include_router(manual_router)
 app.include_router(intel_router)
 app.include_router(search_router)
+app.include_router(wta_router)
 app.include_router(support_router)
 app.include_router(push_router)
 app.include_router(mlb_router)
