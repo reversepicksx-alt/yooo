@@ -347,25 +347,32 @@ export default function ScanScreen() {
         return;
       }
 
-      // ── Soccer: existing detected-card flow ──
-      if (scanned.error || !scanned.playerName) {
-        const hasPartialData = scanned.propType || scanned.line || scanned.playerTeam || scanned.opponentName;
-        if (hasPartialData) {
-          setScanResult(scanned);
-          setAnalyzeError('Some fields could not be read — please correct below and run prediction.');
-          setPhase('detected');
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-        } else {
-          setAnalyzeError(scanned.error || 'Could not read prop slip. Try a clearer screenshot.');
-          setPhase('idle');
-        }
+      // ── Soccer: fill manual form, same as other sports ──
+      if (scanned.error && !scanned.playerName && !scanned.propType && !scanned.line && !scanned.opponentName) {
+        setAnalyzeError(scanned.error || 'Could not read prop slip. Try a clearer screenshot.');
+        setPhase('idle');
         return;
       }
+      const soccerKeys = PROP_TYPES.map((p: { value: string }) => p.value);
+      if (scanned.playerName) setPlayerQuery(scanned.playerName);
+      if (scanned.opponentName) setManualOpponentQuery(scanned.opponentName);
+      if (scanned.leagueId) { setLeagueId(scanned.leagueId); setLeagueQuery(scanned.leagueName || ''); }
       const detectedVenue = (scanned.venue || 'home').toLowerCase();
       setVenueOverride(detectedVenue === 'away' ? 'away' : 'home');
-      setScanResult(scanned);
-      setPhase('detected');
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setPropType(mapProp(scanned.propType, soccerKeys, PROP_TYPES[0].value));
+      if (scanned.line) setLine(String(scanned.line));
+
+      const filledMsg = scanned.playerName
+        ? `✓ Scanned "${scanned.playerName}" — review and adjust below`
+        : `⚠ Partial scan — fill in missing fields`;
+      setScanFillHint(filledMsg);
+      setMode('manual');
+      setPhase('idle');
+      Haptics.notificationAsync(
+        scanned.playerName
+          ? Haptics.NotificationFeedbackType.Success
+          : Haptics.NotificationFeedbackType.Warning
+      );
     } catch (e: unknown) {
       setAnalyzeError(e instanceof Error ? e.message : 'Failed to scan image');
       setPhase('idle');
@@ -1132,6 +1139,12 @@ export default function ScanScreen() {
         {/* ─── MANUAL MODE — Soccer ─── */}
         {mode === 'manual' && sport === 'soccer' && phase !== 'result' && phase !== 'saved' && (
           <View style={styles.manualForm}>
+            {scanFillHint && (
+              <View style={styles.scanFillHint}>
+                <Ionicons name={scanFillHint.startsWith('✓') ? 'checkmark-circle-outline' : 'warning-outline'} size={13} color={scanFillHint.startsWith('✓') ? Colors.primary : '#f0a500'} />
+                <Text style={[styles.scanFillHintText, !scanFillHint.startsWith('✓') && { color: '#f0a500' }]}>{scanFillHint}</Text>
+              </View>
+            )}
             <Text style={styles.fieldLabel}>Player Name</Text>
             <FuzzySearchInput
               value={playerQuery}
