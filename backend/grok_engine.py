@@ -862,9 +862,11 @@ async def _run_auto_settlement():
         if p.get("sport") == "cs2"
         or str(p.get("propType", "")).startswith(_CS2_PROP_PREFIXES)
     ]
-    # Re-partition: remove cs2 from both mlb and soccer pools
-    mlb_picks   = [p for p in mlb_picks   if p not in cs2_picks]
-    soccer_picks = [p for p in live_picks if p not in mlb_picks and p not in cs2_picks]
+    # WTA picks by sport field
+    wta_picks = [p for p in live_picks if p.get("sport") == "wta"]
+    # Re-partition: remove cs2/wta from mlb and soccer pools
+    mlb_picks    = [p for p in mlb_picks if p not in cs2_picks and p not in wta_picks]
+    soccer_picks = [p for p in live_picks if p not in mlb_picks and p not in cs2_picks and p not in wta_picks]
 
     for pick in mlb_picks:
         try:
@@ -1048,6 +1050,17 @@ async def _run_auto_settlement():
                 continue
 
             if not result or result.get("actualValue") is None:
+                # Stale-void: if pick is > 7 days old with no data, push it so it never hangs forever
+                if pick_ts and (datetime.now(timezone.utc) - pick_ts).days >= 7:
+                    now_iso = datetime.now(timezone.utc).isoformat()
+                    await db.picks.update_one(
+                        {"pickId": pick_id, "email": email},
+                        {"$set": {"status": "settled", "result": "push", "hitPct": 50,
+                                  "settledAt": now_iso, "sport": "cs2",
+                                  "voidReason": "No match data found after 7 days — voided as push"}},
+                    )
+                    settled_count += 1
+                    print(f"[CS2 AUTO-SETTLE] Stale-void push: {pick.get('playerName','?')} (7d+ no data)")
                 continue
 
             actual_value = result["actualValue"]
@@ -1110,6 +1123,134 @@ async def _run_auto_settlement():
                     print(f"[CS2 AUTO-SETTLE] notification error: {_ne}")
             except Exception as _ue:
                 print(f"[CS2 AUTO-SETTLE] DB write error: {_ue}")
+
+    # ── WTA background settlement ───────────────────────────────────────────────
+    # Settle WTA picks that have been live/pending for > 90 min (match duration).
+    if wta_picks:
+        import wta_client as _wta_client_ge
+        wta_settle_cutoff = datetime.now(timezone.utc) - timedelta(minutes=90)
+
+        for pick in wta_picks:
+            player_id     = pick.get("playerId")
+            opponent_id   = pick.get("opponentId")
+            opponent_name = pick.get("opponentName", "")
+            prop_type     = pick.get("propType", "total_games")
+            line          = pick.get("line", 0)
+            rec           = pick.get("recommendation", "over")
+            pick_id       = pick.get("pickId", "")
+            email         = pick.get("email", "")
+
+            if not player_id or (not opponent_id and not opponent_name):
+                continue
+
+            # Skip picks saved in the last 90 min — match can't be over yet
+            pick_ts = None
+            for tf in ("timestamp", "createdAt"):
+                raw_ts = pick.get(tf)
+                if not raw_ts:
+                    continue
+                try:
+                    if isinstance(raw_ts, (int, float)) and raw_ts > 1_000_000_000:
+                        pick_ts = datetime.fromtimestamp(raw_ts / 1000, tz=timezone.utc)
+                    else:
+                        pick_ts = datetime.fromisoformat(str(raw_ts).replace("Z", "+00:00"))
+                        if pick_ts.tzinfo is None:
+                            pick_ts = pick_ts.replace(tzinfo=timezone.utc)
+                    break
+                except Exception:
+                    continue
+
+            if pick_ts and pick_ts > wta_settle_cutoff:
+                continue
+
+            ts_iso = pick.get("timestamp") or pick.get("createdAt", "")
+            if isinstance(ts_iso, (int, float)) and ts_iso > 0:
+                ts_iso = datetime.fromtimestamp(ts_iso / 1000, tz=timezone.utc).isoformat()
+
+            try:
+                result = await _wta_client_ge.get_wta_completed_match_result(
+                    player_id=int(player_id),
+                    opponent_id=int(opponent_id) if opponent_id else None,
+                    opponent_name=opponent_name,
+                    prop_type=prop_type,
+                    after_iso=str(ts_iso),
+                )
+            except Exception as _we:
+                print(f"[WTA AUTO-SETTLE] error for {pick.get('playerName','?')}: {_we}")
+                continue
+
+            if not result or result.get("actualValue") is None:
+                # Stale-void: WTA matches are weekly so allow 14 days
+                if pick_ts and (datetime.now(timezone.utc) - pick_ts).days >= 14:
+                    now_iso = datetime.now(timezone.utc).isoformat()
+                    await db.picks.update_one(
+                        {"pickId": pick_id, "email": email},
+                        {"$set": {"status": "settled", "result": "push", "hitPct": 50,
+                                  "settledAt": now_iso, "sport": "wta",
+                                  "voidReason": "No match data found after 14 days — voided as push"}},
+                    )
+                    settled_count += 1
+                    print(f"[WTA AUTO-SETTLE] Stale-void push: {pick.get('playerName','?')} (14d+ no data)")
+                continue
+
+            actual_value = result["actualValue"]
+            _diff = actual_value - float(line)
+            if abs(_diff) < 0.001:
+                result_str = "push"
+            elif rec.lower() == "over":
+                result_str = "hit" if actual_value > float(line) else "miss"
+            else:
+                result_str = "hit" if actual_value < float(line) else "miss"
+
+            hit_pct  = 100 if result_str == "hit" else (0 if result_str == "miss" else 50)
+            now_iso  = datetime.now(timezone.utc).isoformat()
+            settle_set = {
+                "status":      "settled",
+                "result":      result_str,
+                "actualValue": actual_value,
+                "hitPct":      hit_pct,
+                "matchScore":  result.get("matchScore"),
+                "settledAt":   now_iso,
+                "sport":       "wta",
+            }
+            try:
+                current = await db.picks.find_one({"pickId": pick_id, "email": email}, {"_id": 0, "status": 1})
+                if current and current.get("status") == "settled":
+                    continue
+                await db.picks.update_one(
+                    {"pickId": pick_id, "email": email},
+                    {"$set": settle_set},
+                )
+                settled_count += 1
+                print(
+                    f"[WTA AUTO-SETTLE] {pick.get('playerName','?')} {prop_type} "
+                    f"actual={actual_value} line={line} → {result_str}"
+                )
+                try:
+                    from routes.notifications import create_notification
+                    _emoji = "✅" if result_str == "hit" else ("❌" if result_str == "miss" else "↔️")
+                    _prop  = prop_type.replace("_", " ").title()
+                    _label = "HIT" if result_str == "hit" else ("MISSED" if result_str == "miss" else "PUSH")
+                    await create_notification(
+                        email=email,
+                        ntype="pick_settled",
+                        title=f"{_emoji} {pick.get('playerName','?')} {_prop} — {_label}",
+                        body=f"Actual: {actual_value} · Line: {line} · {rec.upper()}",
+                        data={
+                            "pickId":         pick_id,
+                            "playerName":     pick.get("playerName"),
+                            "propType":       prop_type,
+                            "result":         result_str,
+                            "actualValue":    actual_value,
+                            "line":           line,
+                            "recommendation": rec,
+                            "sport":          "wta",
+                        },
+                    )
+                except Exception as _ne:
+                    print(f"[WTA AUTO-SETTLE] notification error: {_ne}")
+            except Exception as _ue:
+                print(f"[WTA AUTO-SETTLE] DB write error: {_ue}")
 
     if settled_count > 0:
         print(f"[AUTO-SETTLE] Settled {settled_count} picks")

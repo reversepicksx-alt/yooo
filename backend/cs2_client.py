@@ -535,8 +535,9 @@ async def get_cs2_completed_match_result(
         after_dt = None
 
     try:
-        # Scan the 25 most recent finished team matches (cheap — usually 1-2 pages)
-        matches = await _fetch_matches_paginated(team_id, max_matches=25)
+        # Scan the 60 most recent finished team matches — wider window catches
+        # picks that are several days old when the team plays frequently.
+        matches = await _fetch_matches_paginated(team_id, max_matches=60)
         if not matches:
             log.info(f"[CS2 SETTLE] team={team_id} vs '{opponent_name}': no recent matches returned by API")
             return None

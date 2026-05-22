@@ -376,7 +376,7 @@ async def get_wta_completed_match_result(
         after_dt = None
 
     try:
-        matches = await get_player_recent_matches(player_id, limit=15)
+        matches = await get_player_recent_matches(player_id, limit=30)
         if not matches:
             log.info(f"[WTA SETTLE] no recent matches for player {player_id}")
             return None
