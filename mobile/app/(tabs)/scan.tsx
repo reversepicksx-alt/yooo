@@ -300,17 +300,18 @@ export default function ScanScreen() {
     try {
       const scanned = await scanProp(base64, sport);
 
+      // Shared prop-type fuzzy mapper — used for all sports
+      const mapProp = (raw: string | undefined, validKeys: string[], defaultKey: string): string => {
+        if (!raw) return defaultKey;
+        const r = raw.toLowerCase().replace(/[^a-z0-9_]/g, '_');
+        const exact = validKeys.find(k => k === r);
+        if (exact) return exact;
+        const partial = validKeys.find(k => r.includes(k) || k.includes(r.split('_')[0]));
+        return partial || defaultKey;
+      };
+
       // ── Non-soccer: fill sport-specific manual form, never show soccer detected card ──
       if (sport !== 'soccer') {
-        const mapProp = (raw: string | undefined, validKeys: string[], defaultKey: string): string => {
-          if (!raw) return defaultKey;
-          const r = raw.toLowerCase().replace(/[^a-z0-9_]/g, '_');
-          const exact = validKeys.find(k => k === r);
-          if (exact) return exact;
-          const partial = validKeys.find(k => r.includes(k) || k.includes(r.split('_')[0]));
-          return partial || defaultKey;
-        };
-
         if (sport === 'mlb') {
           const mlbKeys = MLB_PROP_TYPES.map((p: { value: string }) => p.value);
           if (scanned.playerName) setMlbPlayerQuery(scanned.playerName);
