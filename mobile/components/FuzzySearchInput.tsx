@@ -5,9 +5,16 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/colors';
-import { searchTeams, searchPlayersQuick, searchLeagues, TeamSearchResult, PlayerSearchResult, LeagueSearchResult, LEAGUES } from '@/lib/api';
+import {
+  searchTeams, searchPlayersQuick, searchLeagues,
+  searchMlbPlayers, searchCs2Players, searchCs2Teams, searchWtaPlayers,
+  TeamSearchResult, PlayerSearchResult, LeagueSearchResult, LEAGUES,
+  MlbPlayer, Cs2Player, Cs2Team, WtaPlayer,
+} from '@/lib/api';
 
-type SearchType = 'teams' | 'players' | 'leagues';
+export type SearchType =
+  | 'teams' | 'players' | 'leagues'
+  | 'mlb_players' | 'cs2_players' | 'cs2_teams' | 'wta_players';
 
 export interface FuzzyTeamResult {
   teamId: number;
@@ -30,12 +37,16 @@ export interface FuzzyLeagueResult {
   country: string;
 }
 
+export type StaticItem = {
+  id: number | string;
+  primary: string;
+  secondary?: string;
+  raw?: any;
+};
+
 interface FuzzySearchInputProps {
   value: string;
   onChangeText: (text: string) => void;
-  onSelectTeam?: (result: FuzzyTeamResult) => void;
-  onSelectPlayer?: (result: FuzzyPlayerResult) => void;
-  onSelectLeague?: (result: FuzzyLeagueResult) => void;
   searchType: SearchType;
   leagueId?: number;
   placeholder?: string;
@@ -44,22 +55,54 @@ interface FuzzySearchInputProps {
   autoFocus?: boolean;
   returnKeyType?: 'done' | 'search' | 'next';
   onSubmitEditing?: () => void;
+  autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
+  confirmed?: boolean;
+  staticItems?: StaticItem[];
+
+  onSelectTeam?: (result: FuzzyTeamResult) => void;
+  onSelectPlayer?: (result: FuzzyPlayerResult) => void;
+  onSelectLeague?: (result: FuzzyLeagueResult) => void;
+  onSelectMlbPlayer?: (p: MlbPlayer) => void;
+  onSelectCs2Player?: (p: Cs2Player) => void;
+  onSelectCs2Team?: (t: Cs2Team) => void;
+  onSelectWtaPlayer?: (p: WtaPlayer) => void;
+  onSelectStaticItem?: (raw: any, primary: string) => void;
 }
 
 const IS_WEB = Platform.OS === 'web';
 const INPUT_STYLE = IS_WEB ? { outlineWidth: 0 } as object : {};
-const DEBOUNCE_MS = 150;   // tighter than the old 280ms so results feel instant
+const DEBOUNCE_MS = 150;
 
-function leagueName(leagueId: number): string {
-  return LEAGUES.find(l => l.id === leagueId)?.name || '';
+function leagueName(id: number): string {
+  return LEAGUES.find(l => l.id === id)?.name || '';
+}
+
+function localFuzzy(items: StaticItem[], q: string): StaticItem[] {
+  if (!q || q.length < 1) return [];
+  const ql = q.toLowerCase().trim();
+  const words = ql.split(/\s+/).filter(Boolean);
+  const scored = items.map(item => {
+    const p = item.primary.toLowerCase();
+    const s = (item.secondary || '').toLowerCase();
+    let score = 0;
+    if (p === ql || s === ql)            score = 100;
+    else if (p.startsWith(ql))           score = 90;
+    else if (p.includes(ql))             score = 80;
+    else if (s.includes(ql))             score = 70;
+    else if (words.length > 0 && words.every(w => p.includes(w))) score = 65;
+    else if (words.some(w => w.length > 2 && p.includes(w)))      score = 40;
+    return { item, score };
+  });
+  return scored
+    .filter(x => x.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 7)
+    .map(x => x.item);
 }
 
 export default function FuzzySearchInput({
   value,
   onChangeText,
-  onSelectTeam,
-  onSelectPlayer,
-  onSelectLeague,
   searchType,
   leagueId,
   placeholder = 'Search...',
@@ -68,30 +111,48 @@ export default function FuzzySearchInput({
   autoFocus = false,
   returnKeyType = 'done',
   onSubmitEditing,
+  autoCapitalize = 'words',
+  confirmed = false,
+  staticItems,
+  onSelectTeam,
+  onSelectPlayer,
+  onSelectLeague,
+  onSelectMlbPlayer,
+  onSelectCs2Player,
+  onSelectCs2Team,
+  onSelectWtaPlayer,
+  onSelectStaticItem,
 }: FuzzySearchInputProps) {
-  const [results, setResults] = useState<(TeamSearchResult | PlayerSearchResult | LeagueSearchResult)[]>([]);
+  const [results, setResults] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastQueryRef = useRef('');
 
   const doSearch = useCallback(async (q: string) => {
-    if (q.length < 2) { setResults([]); setShowDropdown(false); return; }
+    if (q.length < 2) { setResults([]); setShowDropdown(false); setHasSearched(false); return; }
+
+    if (staticItems) {
+      const filtered = localFuzzy(staticItems, q);
+      setResults(filtered);
+      setShowDropdown(true);
+      setHasSearched(true);
+      return;
+    }
+
     setLoading(true);
     try {
+      let r: any[] = [];
       if (searchType === 'teams') {
         const data = await searchTeams(q, leagueId);
-        const r = data.results || [];
-        setResults(r);
-        setShowDropdown(r.length > 0);
+        r = data.results || [];
       } else if (searchType === 'leagues') {
         const data = await searchLeagues(q);
-        const r = data.leagues || [];
-        setResults(r);
-        setShowDropdown(r.length > 0);
-      } else {
+        r = data.leagues || [];
+      } else if (searchType === 'players') {
         const data = await searchPlayersQuick(q, leagueId);
-        const mapped = (data.players || []).map((p: Record<string, unknown>) => ({
+        r = (data.players || []).map((p: Record<string, unknown>) => ({
           playerId: (p.id as number) || 0,
           playerName: (p.name as string) || '',
           teamId: (p.teamId as number) || 0,
@@ -99,106 +160,188 @@ export default function FuzzySearchInput({
           leagueId: (p.leagueId as number) || 0,
           position: (p.position as string) || '',
         }));
-        setResults(mapped);
-        setShowDropdown(mapped.length > 0);
+      } else if (searchType === 'mlb_players') {
+        r = await searchMlbPlayers(q);
+      } else if (searchType === 'cs2_players') {
+        r = (await searchCs2Players(q)).filter((p: Cs2Player) => p.isActive !== false);
+      } else if (searchType === 'cs2_teams') {
+        r = await searchCs2Teams(q);
+      } else if (searchType === 'wta_players') {
+        r = await searchWtaPlayers(q);
       }
+      setResults(r);
+      setShowDropdown(r.length > 0);
+      setHasSearched(true);
     } catch {
       setResults([]); setShowDropdown(false);
     } finally {
       setLoading(false);
     }
-  }, [searchType, leagueId]);
+  }, [searchType, leagueId, staticItems]);
 
   const handleChange = (text: string) => {
     onChangeText(text);
     lastQueryRef.current = text;
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    if (text.length < 2) { setResults([]); setShowDropdown(false); return; }
+    if (text.length < 2) {
+      setResults([]); setShowDropdown(false); setHasSearched(false); return;
+    }
+    const delay = staticItems ? 60 : DEBOUNCE_MS;
     debounceRef.current = setTimeout(() => {
       if (lastQueryRef.current === text) doSearch(text);
-    }, DEBOUNCE_MS);
+    }, delay);
   };
 
   useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
 
+  const dismiss = () => { setShowDropdown(false); };
+
   const handleSelectTeam = (item: TeamSearchResult) => {
-    onChangeText(item.teamName); setShowDropdown(false); setResults([]); onSelectTeam?.(item);
+    onChangeText(item.teamName); dismiss(); setResults([]);
+    onSelectTeam?.({ teamId: item.teamId || (item as any).id, teamName: item.teamName, leagueId: item.leagueId || 0 });
   };
   const handleSelectPlayer = (item: FuzzyPlayerResult) => {
-    onChangeText(item.playerName); setShowDropdown(false); setResults([]); onSelectPlayer?.(item);
+    onChangeText(item.playerName); dismiss(); setResults([]);
+    onSelectPlayer?.(item);
   };
-  const handleSelectLeague = (item: LeagueSearchResult) => {
-    onChangeText(item.name); setShowDropdown(false); setResults([]); onSelectLeague?.(item);
+  const handleSelectLeague = (item: any) => {
+    onChangeText(item.name); dismiss(); setResults([]);
+    onSelectLeague?.({ id: item.id, name: item.name, country: item.country || '' });
   };
-
-  const renderTeamItem = ({ item }: { item: TeamSearchResult }) => {
-    const lg = leagueName(item.leagueId);
-    return (
-      <TouchableOpacity style={styles.dropdownItem} onPress={() => handleSelectTeam(item)} activeOpacity={0.7}>
-        <Ionicons name="shield-outline" size={13} color={Colors.primary} style={styles.dropdownIcon} />
-        <View style={styles.dropdownTextWrap}>
-          <Text style={styles.dropdownMain} numberOfLines={1}>{item.teamName}</Text>
-          {lg ? <Text style={styles.dropdownSub} numberOfLines={1}>{lg}</Text> : null}
-        </View>
-      </TouchableOpacity>
-    );
+  const handleSelectMlbPlayer = (p: MlbPlayer) => {
+    onChangeText(p.fullName || p.firstName + ' ' + p.lastName); dismiss(); setResults([]);
+    onSelectMlbPlayer?.(p);
   };
-
-  const renderPlayerItem = ({ item }: { item: FuzzyPlayerResult }) => {
-    const sub = [item.teamName, item.position].filter(Boolean).join(' · ');
-    return (
-      <TouchableOpacity style={styles.dropdownItem} onPress={() => handleSelectPlayer(item)} activeOpacity={0.7}>
-        <Ionicons name="person-outline" size={13} color={Colors.primary} style={styles.dropdownIcon} />
-        <View style={styles.dropdownTextWrap}>
-          <Text style={styles.dropdownMain} numberOfLines={1}>{item.playerName}</Text>
-          {sub ? <Text style={styles.dropdownSub} numberOfLines={1}>{sub}</Text> : null}
-        </View>
-      </TouchableOpacity>
-    );
+  const handleSelectCs2Player = (p: Cs2Player) => {
+    onChangeText(p.nickname); dismiss(); setResults([]);
+    onSelectCs2Player?.(p);
+  };
+  const handleSelectCs2Team = (t: Cs2Team) => {
+    onChangeText(t.name); dismiss(); setResults([]);
+    onSelectCs2Team?.(t);
+  };
+  const handleSelectWtaPlayer = (p: WtaPlayer) => {
+    onChangeText(p.fullName); dismiss(); setResults([]);
+    onSelectWtaPlayer?.(p);
+  };
+  const handleSelectStatic = (item: StaticItem) => {
+    onChangeText(item.primary); dismiss(); setResults([]);
+    onSelectStaticItem?.(item.raw ?? item, item.primary);
   };
 
-  const renderLeagueItem = ({ item }: { item: LeagueSearchResult }) => (
-    <TouchableOpacity style={styles.dropdownItem} onPress={() => handleSelectLeague(item)} activeOpacity={0.7}>
-      <Ionicons name="trophy-outline" size={13} color={Colors.primary} style={styles.dropdownIcon} />
-      <View style={styles.dropdownTextWrap}>
-        <Text style={styles.dropdownMain} numberOfLines={1}>{item.name}</Text>
-        {item.country ? <Text style={styles.dropdownSub} numberOfLines={1}>{item.country}</Text> : null}
-      </View>
-    </TouchableOpacity>
-  );
+  const showEmpty = !loading && hasSearched && results.length === 0 && value.length >= 2;
+  const shouldShow = (showDropdown && results.length > 0) || showEmpty;
 
-  const renderList = () => {
-    // ScrollView (not FlatList) so the dropdown sits inline as a normal block
-    // element. iOS Safari's auto-scroll-into-view on focus then naturally keeps
-    // the input + dropdown visible together, with no viewport math required.
-    const items = (searchType === 'teams'
-      ? (results as TeamSearchResult[]).map((it, i) => (
-          <View key={i}>{renderTeamItem({ item: it })}</View>
-        ))
-      : searchType === 'leagues'
-      ? (results as LeagueSearchResult[]).map((it, i) => (
-          <View key={i}>{renderLeagueItem({ item: it })}</View>
-        ))
-      : (results as FuzzyPlayerResult[]).map((it, i) => (
-          <View key={i}>{renderPlayerItem({ item: it })}</View>
-        ))
-    );
-    return (
-      <ScrollView
-        style={styles.dropdownScroll}
-        keyboardShouldPersistTaps="always"
-        nestedScrollEnabled
-      >
-        {items}
-      </ScrollView>
-    );
+  const renderItem = (item: any, index: number) => {
+    if (staticItems) {
+      return (
+        <TouchableOpacity key={index} style={styles.dropdownItem} onPress={() => handleSelectStatic(item)} activeOpacity={0.7}>
+          <Ionicons name="ellipse-outline" size={13} color={Colors.primary} style={styles.dropdownIcon} />
+          <View style={styles.dropdownTextWrap}>
+            <Text style={styles.dropdownMain} numberOfLines={1}>{item.primary}</Text>
+            {item.secondary ? <Text style={styles.dropdownSub} numberOfLines={1}>{item.secondary}</Text> : null}
+          </View>
+        </TouchableOpacity>
+      );
+    }
+    if (searchType === 'teams') {
+      const lg = leagueName(item.leagueId);
+      return (
+        <TouchableOpacity key={index} style={styles.dropdownItem} onPress={() => handleSelectTeam(item)} activeOpacity={0.7}>
+          <Ionicons name="shield-outline" size={13} color={Colors.primary} style={styles.dropdownIcon} />
+          <View style={styles.dropdownTextWrap}>
+            <Text style={styles.dropdownMain} numberOfLines={1}>{item.teamName}</Text>
+            {lg ? <Text style={styles.dropdownSub} numberOfLines={1}>{lg}</Text> : null}
+          </View>
+        </TouchableOpacity>
+      );
+    }
+    if (searchType === 'leagues') {
+      return (
+        <TouchableOpacity key={index} style={styles.dropdownItem} onPress={() => handleSelectLeague(item)} activeOpacity={0.7}>
+          <Ionicons name="trophy-outline" size={13} color={Colors.primary} style={styles.dropdownIcon} />
+          <View style={styles.dropdownTextWrap}>
+            <Text style={styles.dropdownMain} numberOfLines={1}>{item.name}</Text>
+            {item.country ? <Text style={styles.dropdownSub} numberOfLines={1}>{item.country}</Text> : null}
+          </View>
+        </TouchableOpacity>
+      );
+    }
+    if (searchType === 'players') {
+      const sub = [item.teamName, item.position].filter(Boolean).join(' · ');
+      return (
+        <TouchableOpacity key={index} style={styles.dropdownItem} onPress={() => handleSelectPlayer(item)} activeOpacity={0.7}>
+          <Ionicons name="person-outline" size={13} color={Colors.primary} style={styles.dropdownIcon} />
+          <View style={styles.dropdownTextWrap}>
+            <Text style={styles.dropdownMain} numberOfLines={1}>{item.playerName}</Text>
+            {sub ? <Text style={styles.dropdownSub} numberOfLines={1}>{sub}</Text> : null}
+          </View>
+        </TouchableOpacity>
+      );
+    }
+    if (searchType === 'mlb_players') {
+      const team = item.team?.displayName || '';
+      const pos  = item.position || '';
+      const sub  = [team, pos].filter(Boolean).join(' · ');
+      return (
+        <TouchableOpacity key={index} style={styles.dropdownItem} onPress={() => handleSelectMlbPlayer(item)} activeOpacity={0.7}>
+          <Ionicons name="baseball-outline" size={13} color={Colors.primary} style={styles.dropdownIcon} />
+          <View style={styles.dropdownTextWrap}>
+            <Text style={styles.dropdownMain} numberOfLines={1}>{item.fullName}</Text>
+            {sub ? <Text style={styles.dropdownSub} numberOfLines={1}>{sub}</Text> : null}
+          </View>
+        </TouchableOpacity>
+      );
+    }
+    if (searchType === 'cs2_players') {
+      const sub = [item.team?.name, item.fullName].filter(Boolean).join(' · ');
+      return (
+        <TouchableOpacity key={index} style={styles.dropdownItem} onPress={() => handleSelectCs2Player(item)} activeOpacity={0.7}>
+          <Ionicons name="game-controller-outline" size={13} color={Colors.primary} style={styles.dropdownIcon} />
+          <View style={styles.dropdownTextWrap}>
+            <Text style={styles.dropdownMain} numberOfLines={1}>{item.nickname}</Text>
+            {sub ? <Text style={styles.dropdownSub} numberOfLines={1}>{sub}</Text> : null}
+          </View>
+        </TouchableOpacity>
+      );
+    }
+    if (searchType === 'cs2_teams') {
+      return (
+        <TouchableOpacity key={index} style={styles.dropdownItem} onPress={() => handleSelectCs2Team(item)} activeOpacity={0.7}>
+          <Ionicons name="shield-half-outline" size={13} color={Colors.primary} style={styles.dropdownIcon} />
+          <View style={styles.dropdownTextWrap}>
+            <Text style={styles.dropdownMain} numberOfLines={1}>{item.name}</Text>
+            {item.shortName ? <Text style={styles.dropdownSub} numberOfLines={1}>{item.shortName}</Text> : null}
+          </View>
+        </TouchableOpacity>
+      );
+    }
+    if (searchType === 'wta_players') {
+      const rank = item.currentRank ? `#${item.currentRank}` : '';
+      const sub  = [item.country, rank].filter(Boolean).join(' · ');
+      return (
+        <TouchableOpacity key={index} style={styles.dropdownItem} onPress={() => handleSelectWtaPlayer(item)} activeOpacity={0.7}>
+          <Ionicons name="tennisball-outline" size={13} color={Colors.primary} style={styles.dropdownIcon} />
+          <View style={styles.dropdownTextWrap}>
+            <Text style={styles.dropdownMain} numberOfLines={1}>{item.fullName}</Text>
+            {sub ? <Text style={styles.dropdownSub} numberOfLines={1}>{sub}</Text> : null}
+          </View>
+        </TouchableOpacity>
+      );
+    }
+    return null;
   };
 
-  const shouldShow = showDropdown && results.length > 0;
+  const leadingIcon = confirmed
+    ? <Ionicons name="checkmark-circle" size={16} color={Colors.primary} style={styles.leadIcon} />
+    : loading
+    ? <ActivityIndicator size="small" color={Colors.primary} style={styles.leadIcon} />
+    : <Ionicons name="search-outline" size={15} color="#555" style={styles.leadIcon} />;
 
   return (
     <View style={[styles.container, style]}>
-      <View style={styles.inputRow}>
+      <View style={[styles.inputRow, confirmed && styles.inputRowConfirmed]}>
+        {leadingIcon}
         <TextInput
           style={[styles.input, inputStyle, INPUT_STYLE]}
           value={value}
@@ -207,30 +350,38 @@ export default function FuzzySearchInput({
           placeholderTextColor={Colors.textTertiary}
           autoFocus={autoFocus}
           autoCorrect={false}
-          autoCapitalize="words"
+          autoCapitalize={autoCapitalize}
           returnKeyType={returnKeyType}
-          onSubmitEditing={() => { setShowDropdown(false); onSubmitEditing?.(); }}
-          onFocus={() => {
-            if (value.length >= 2 && results.length > 0) setShowDropdown(true);
-          }}
-          onBlur={() => { setTimeout(() => setShowDropdown(false), 200); }}
+          onSubmitEditing={() => { dismiss(); onSubmitEditing?.(); }}
+          onFocus={() => { if (value.length >= 2 && results.length > 0) setShowDropdown(true); }}
+          onBlur={() => { setTimeout(dismiss, 200); }}
         />
-        {loading && <ActivityIndicator size="small" color={Colors.primary} style={styles.spinner} />}
         {!loading && value.length > 0 && (
-          <TouchableOpacity onPress={() => { onChangeText(''); setResults([]); setShowDropdown(false); }} style={styles.clearBtn}>
+          <TouchableOpacity
+            onPress={() => { onChangeText(''); setResults([]); setShowDropdown(false); setHasSearched(false); }}
+            style={styles.clearBtn}
+          >
             <Ionicons name="close-circle" size={15} color="#555" />
           </TouchableOpacity>
         )}
       </View>
 
-      {/* Inline dropdown, directly under the input — no fixed/absolute positioning.
-          On web, react-native-web's transform ancestors can break position:fixed,
-          and on mobile the keyboard makes absolute overlays a guessing game. By
-          living in normal layout flow, the dropdown is ALWAYS visually attached
-          to the input it belongs to, and the host ScrollView handles scrolling. */}
       {shouldShow && (
         <View style={styles.dropdownInline}>
-          {renderList()}
+          <ScrollView
+            style={styles.dropdownScroll}
+            keyboardShouldPersistTaps="always"
+            nestedScrollEnabled
+          >
+            {showEmpty ? (
+              <View style={styles.emptyRow}>
+                <Ionicons name="search-outline" size={13} color="#555" style={{ marginRight: 6 }} />
+                <Text style={styles.emptyText}>No results for "{value}"</Text>
+              </View>
+            ) : (
+              results.map((item, i) => renderItem(item, i))
+            )}
+          </ScrollView>
         </View>
       )}
     </View>
@@ -244,23 +395,25 @@ const styles = StyleSheet.create({
     backgroundColor: '#1a1a1a', borderRadius: 8,
     borderWidth: 1, borderColor: '#2a2a2a', paddingHorizontal: 10,
   },
+  inputRowConfirmed: {
+    borderColor: Colors.primary,
+    borderWidth: 1.5,
+  },
+  leadIcon: { marginRight: 7 },
   input: {
     flex: 1, height: 40, color: Colors.text,
     fontSize: 16, fontFamily: 'Inter_400Regular',
   },
-  spinner: { marginLeft: 6 },
   clearBtn: { marginLeft: 4, padding: 2 },
   dropdownInline: {
-    marginTop: 6,
+    marginTop: 4,
     backgroundColor: '#111', borderRadius: 8,
     borderWidth: 1, borderColor: '#2a2a2a',
     overflow: 'hidden',
     shadowColor: '#000', shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.6, shadowRadius: 8, elevation: 12,
   },
-  dropdownScroll: {
-    maxHeight: 240,
-  },
+  dropdownScroll: { maxHeight: 248 },
   dropdownItem: {
     flexDirection: 'row', alignItems: 'center',
     paddingVertical: 10, paddingHorizontal: 12,
@@ -270,4 +423,9 @@ const styles = StyleSheet.create({
   dropdownTextWrap: { flex: 1 },
   dropdownMain: { color: Colors.text, fontSize: 13, fontFamily: 'Inter_500Medium' },
   dropdownSub: { color: Colors.textSecondary, fontSize: 11, fontFamily: 'Inter_400Regular', marginTop: 1 },
+  emptyRow: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingVertical: 12, paddingHorizontal: 12,
+  },
+  emptyText: { color: '#555', fontSize: 12, fontFamily: 'Inter_400Regular', fontStyle: 'italic' },
 });

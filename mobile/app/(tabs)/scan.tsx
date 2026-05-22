@@ -11,7 +11,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import { useQueryClient } from '@tanstack/react-query';
-import { scanProp, predict, mlbPredict, searchMlbPlayers, getMlbTeams, getMlbGameContext, cs2Predict, searchCs2Players, searchCs2Teams, wtaPredict, searchWtaPlayers, savePick, PROP_TYPES, MLB_PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, LEAGUES, PredictionResult, ScanResult, MlbPlayer, Cs2Player, Cs2Team, WtaPlayer } from '@/lib/api';
+import { scanProp, predict, mlbPredict, getMlbGameContext, cs2Predict, wtaPredict, savePick, PROP_TYPES, MLB_PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, LEAGUES, PredictionResult, ScanResult, MlbPlayer, Cs2Player, Cs2Team, WtaPlayer } from '@/lib/api';
 import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult, FuzzyLeagueResult } from '@/components/FuzzySearchInput';
 import LeaguePickerModal from '@/components/LeaguePickerModal';
 import { useAuth } from '@/contexts/AuthContext';
@@ -155,16 +155,12 @@ export default function ScanScreen() {
 
   // MLB manual mode fields
   const [mlbPlayerQuery, setMlbPlayerQuery] = useState('');
-  const [mlbPlayerSuggestions, setMlbPlayerSuggestions] = useState<MlbPlayer[]>([]);
   const [mlbResolvedPlayer, setMlbResolvedPlayer] = useState<MlbPlayer | null>(null);
-  const [mlbSearching, setMlbSearching] = useState(false);
   const [mlbOpponentQuery, setMlbOpponentQuery] = useState('');
-  const [mlbOpponentSuggestions, setMlbOpponentSuggestions] = useState<MlbTeam[]>([]);
   const [mlbResolvedOpponent, setMlbResolvedOpponent] = useState<MlbTeam | null>(null);
-  const [mlbTeams, setMlbTeams] = useState<MlbTeam[]>(MLB_TEAMS_STATIC);
+  const [mlbTeams] = useState<MlbTeam[]>(MLB_TEAMS_STATIC);
   const [mlbPropType, setMlbPropType] = useState('hits');
   const [mlbShowPropPicker, setMlbShowPropPicker] = useState(false);
-  const mlbSearchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   // MLB v2 Ultra fields
   const [mlbBatterHand, setMlbBatterHand] = useState<'L'|'R'|'S'|null>(null);
   const [mlbPitcherHand, setMlbPitcherHand] = useState<'L'|'R'|null>(null);
@@ -178,41 +174,26 @@ export default function ScanScreen() {
 
   // CS2 manual mode fields
   const [cs2PlayerQuery, setCs2PlayerQuery] = useState('');
-  const [cs2PlayerSuggestions, setCs2PlayerSuggestions] = useState<Cs2Player[]>([]);
   const [cs2ResolvedPlayer, setCs2ResolvedPlayer] = useState<Cs2Player | null>(null);
-  const [cs2Searching, setCs2Searching] = useState(false);
   const [cs2OpponentQuery, setCs2OpponentQuery] = useState('');
-  const [cs2OpponentSuggestions, setCs2OpponentSuggestions] = useState<Cs2Team[]>([]);
   const [cs2ResolvedOpponent, setCs2ResolvedOpponent] = useState<Cs2Team | null>(null);
-  const [cs2OppSearching, setCs2OppSearching] = useState(false);
   const [cs2PropType, setCs2PropType] = useState('maps_1_2_kills');
   const [cs2ShowPropPicker, setCs2ShowPropPicker] = useState(false);
   const [cs2MapName, setCs2MapName] = useState('');
   const [cs2TeamStartsCt, setCs2TeamStartsCt] = useState<boolean | null>(null);
-  const cs2SearchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const cs2OppSearchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // WTA manual mode fields
   const [wtaPlayerQuery, setWtaPlayerQuery] = useState('');
-  const [wtaPlayerSuggestions, setWtaPlayerSuggestions] = useState<WtaPlayer[]>([]);
   const [wtaResolvedPlayer, setWtaResolvedPlayer] = useState<WtaPlayer | null>(null);
-  const [wtaSearching, setWtaSearching] = useState(false);
   const [wtaOpponentQuery, setWtaOpponentQuery] = useState('');
-  const [wtaOpponentSuggestions, setWtaOpponentSuggestions] = useState<WtaPlayer[]>([]);
   const [wtaResolvedOpponent, setWtaResolvedOpponent] = useState<WtaPlayer | null>(null);
-  const [wtaOppSearching, setWtaOppSearching] = useState(false);
   const [wtaPropType, setWtaPropType] = useState('total_games');
   const [wtaShowPropPicker, setWtaShowPropPicker] = useState(false);
   const [wtaSurface, setWtaSurface] = useState<string>('Hard');
   const [wtaShowSurfacePicker, setWtaShowSurfacePicker] = useState(false);
   const [wtaRound, setWtaRound] = useState<string>('R32');
   const [wtaShowRoundPicker, setWtaShowRoundPicker] = useState(false);
-  const wtaSearchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const wtaOppSearchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
-    getMlbTeams().then(data => { if (data && data.length > 0) setMlbTeams(data); }).catch(() => {});
-  }, []);
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const analysisRef = useRef<any>(null);
@@ -284,10 +265,8 @@ export default function ScanScreen() {
     setShowLeagueEditScan(false);
     setResolvedScanPlayer(null);
     setMlbPlayerQuery('');
-    setMlbPlayerSuggestions([]);
     setMlbResolvedPlayer(null);
     setMlbOpponentQuery('');
-    setMlbOpponentSuggestions([]);
     setMlbResolvedOpponent(null);
     setMlbBatterHand(null);
     setMlbPitcherHand(null);
@@ -295,18 +274,14 @@ export default function ScanScreen() {
     setMlbGameTotal('');
     setMlbLineupSpot('');
     setCs2PlayerQuery('');
-    setCs2PlayerSuggestions([]);
     setCs2ResolvedPlayer(null);
     setCs2OpponentQuery('');
-    setCs2OpponentSuggestions([]);
     setCs2ResolvedOpponent(null);
     setCs2MapName('');
     setCs2TeamStartsCt(null);
     setWtaPlayerQuery('');
-    setWtaPlayerSuggestions([]);
     setWtaResolvedPlayer(null);
     setWtaOpponentQuery('');
-    setWtaOpponentSuggestions([]);
     setWtaResolvedOpponent(null);
     setWtaPropType('total_games');
     setWtaSurface('Hard');
@@ -412,21 +387,6 @@ export default function ScanScreen() {
     await runPredict(data, true);
   };
 
-  const handleMlbPlayerSearch = (text: string) => {
-    setMlbPlayerQuery(text);
-    if (!text.trim()) { setMlbResolvedPlayer(null); setMlbPlayerSuggestions([]); return; }
-    if (mlbSearchTimeout.current) clearTimeout(mlbSearchTimeout.current);
-    mlbSearchTimeout.current = setTimeout(async () => {
-      if (text.trim().length < 2) return;
-      setMlbSearching(true);
-      try {
-        const results = await searchMlbPlayers(text.trim());
-        setMlbPlayerSuggestions(results || []);
-      } catch { setMlbPlayerSuggestions([]); }
-      finally { setMlbSearching(false); }
-    }, 280);
-  };
-
   const fetchMlbGameContext = async (player: MlbPlayer) => {
     const teamName = player.team?.displayName || '';
     if (!teamName) return;
@@ -458,49 +418,11 @@ export default function ScanScreen() {
     finally { setMlbAutoFilling(false); }
   };
 
-  const handleMlbOpponentSearch = (text: string) => {
-    setMlbOpponentQuery(text);
-    setMlbResolvedOpponent(null);
-    if (!text.trim()) { setMlbOpponentSuggestions([]); return; }
-    const q = text.toLowerCase().trim();
-    const qShort = q.length > 2 ? q.slice(0, -1) : q; // strip trailing typo char
-    const words = q.split(/\s+/).filter(Boolean);
-
-    const score = (t: MlbTeam): number => {
-      const fields = [
-        t.displayName.toLowerCase(),
-        t.name.toLowerCase(),
-        t.location.toLowerCase(),
-        t.abbreviation.toLowerCase(),
-      ];
-      let best = 0;
-      for (const f of fields) {
-        if (f === q)                                      best = Math.max(best, 100);
-        else if (f.startsWith(q))                         best = Math.max(best, 90);
-        else if (f.includes(q))                           best = Math.max(best, 80);
-        else if (q.length > 2 && f.includes(qShort))     best = Math.max(best, 65); // trailing typo
-        else if (words.length > 0 && words.every(w => f.includes(w))) best = Math.max(best, 70);
-        else if (words.length > 1 && words.some(w => w.length > 2 && f.includes(w))) best = Math.max(best, 40);
-      }
-      return best;
-    };
-
-    const results = mlbTeams
-      .map(t => ({ t, s: score(t) }))
-      .filter(x => x.s > 0)
-      .sort((a, b) => b.s - a.s)
-      .slice(0, 6)
-      .map(x => x.t);
-
-    setMlbOpponentSuggestions(results);
-  };
-
   const handleMlbAnalyze = async () => {
     if (!mlbPlayerQuery.trim()) { setManualError('Enter a player name.'); return; }
     if (!line.trim() || isNaN(parseFloat(line))) { setManualError('Enter a valid line value (e.g. 0.5).'); return; }
     setManualError(null);
     setPhase('analyzing');
-    setMlbPlayerSuggestions([]);
     try {
       const result = await mlbPredict({
         playerName:        mlbPlayerQuery.trim(),
@@ -536,43 +458,11 @@ export default function ScanScreen() {
     }
   };
 
-  const handleCs2PlayerSearch = (text: string) => {
-    setCs2PlayerQuery(text);
-    if (!text.trim()) { setCs2ResolvedPlayer(null); setCs2PlayerSuggestions([]); return; }
-    if (cs2SearchTimeout.current) clearTimeout(cs2SearchTimeout.current);
-    cs2SearchTimeout.current = setTimeout(async () => {
-      if (text.trim().length < 2) return;
-      setCs2Searching(true);
-      try {
-        const results = await searchCs2Players(text.trim());
-        setCs2PlayerSuggestions(results || []);
-      } catch { setCs2PlayerSuggestions([]); }
-      finally { setCs2Searching(false); }
-    }, 280);
-  };
-
-  const handleCs2OpponentSearch = (text: string) => {
-    setCs2OpponentQuery(text);
-    setCs2ResolvedOpponent(null);
-    if (!text.trim()) { setCs2OpponentSuggestions([]); return; }
-    if (cs2OppSearchTimeout.current) clearTimeout(cs2OppSearchTimeout.current);
-    cs2OppSearchTimeout.current = setTimeout(async () => {
-      if (text.trim().length < 2) return;
-      setCs2OppSearching(true);
-      try {
-        const results = await searchCs2Teams(text.trim());
-        setCs2OpponentSuggestions(results || []);
-      } catch { setCs2OpponentSuggestions([]); }
-      finally { setCs2OppSearching(false); }
-    }, 280);
-  };
-
   const handleCs2Analyze = async () => {
     if (!cs2PlayerQuery.trim()) { setManualError('Enter a player nickname.'); return; }
     if (!line.trim() || isNaN(parseFloat(line))) { setManualError('Enter a valid line value (e.g. 21.5).'); return; }
     setManualError(null);
     setPhase('analyzing');
-    setCs2PlayerSuggestions([]);
     try {
       const result = await cs2Predict({
         playerNickname:     cs2PlayerQuery.trim(),
@@ -604,43 +494,11 @@ export default function ScanScreen() {
   };
 
   // ── WTA handlers ─────────────────────────────────────────────────────────
-  const handleWtaPlayerSearch = (text: string) => {
-    setWtaPlayerQuery(text);
-    if (!text.trim()) { setWtaResolvedPlayer(null); setWtaPlayerSuggestions([]); return; }
-    setWtaResolvedPlayer(null);
-    if (wtaSearchTimeout.current) clearTimeout(wtaSearchTimeout.current);
-    wtaSearchTimeout.current = setTimeout(async () => {
-      setWtaSearching(true);
-      try {
-        const results = await searchWtaPlayers(text.trim());
-        setWtaPlayerSuggestions(results || []);
-      } catch { setWtaPlayerSuggestions([]); }
-      finally { setWtaSearching(false); }
-    }, 280);
-  };
-
-  const handleWtaOpponentSearch = (text: string) => {
-    setWtaOpponentQuery(text);
-    setWtaResolvedOpponent(null);
-    if (!text.trim()) { setWtaOpponentSuggestions([]); return; }
-    if (wtaOppSearchTimeout.current) clearTimeout(wtaOppSearchTimeout.current);
-    wtaOppSearchTimeout.current = setTimeout(async () => {
-      setWtaOppSearching(true);
-      try {
-        const results = await searchWtaPlayers(text.trim());
-        setWtaOpponentSuggestions(results || []);
-      } catch { setWtaOpponentSuggestions([]); }
-      finally { setWtaOppSearching(false); }
-    }, 280);
-  };
-
   const handleWtaAnalyze = async () => {
     if (!wtaPlayerQuery.trim()) { setManualError('Enter a player name.'); return; }
     if (!line.trim() || isNaN(parseFloat(line))) { setManualError('Enter a valid line value (e.g. 22.5).'); return; }
     setManualError(null);
     setPhase('analyzing');
-    setWtaPlayerSuggestions([]);
-    setWtaOpponentSuggestions([]);
     try {
       const result = await wtaPredict({
         playerName:   wtaPlayerQuery.trim(),
@@ -1345,94 +1203,40 @@ export default function ScanScreen() {
         {sport === 'mlb' && phase !== 'result' && phase !== 'saved' && (
           <View style={styles.manualForm}>
             <Text style={styles.fieldLabel}>Player Name</Text>
-            <View style={{ position: 'relative', marginBottom: 2 }}>
-              <TextInput
-                style={[styles.textInput, INPUT_STYLE, { paddingRight: mlbSearching ? 36 : 14 }]}
-                placeholder="e.g. Shohei Ohtani"
-                placeholderTextColor={Colors.textTertiary}
-                value={mlbPlayerQuery}
-                onChangeText={handleMlbPlayerSearch}
-                autoCorrect={false}
-                autoCapitalize="words"
-              />
-              {mlbSearching && (
-                <ActivityIndicator color={Colors.primary} size="small"
-                  style={{ position: 'absolute', right: 12, top: 12 }} />
-              )}
-            </View>
-            {mlbPlayerSuggestions.length > 0 && (
-              <View style={styles.mlbDropdown}>
-                {mlbPlayerSuggestions.slice(0, 6).map(p => (
-                  <TouchableOpacity
-                    key={p.id}
-                    style={styles.mlbDropdownItem}
-                    onPress={() => {
-                      setMlbResolvedPlayer(p);
-                      setMlbPlayerQuery(p.fullName);
-                      setMlbPlayerSuggestions([]);
-                      // Auto-fill batter hand from batsThrows (e.g. "R/R" → R, "L/R" → L, "S/R" → S)
-                      if (p.batsThrows) {
-                        const bh = p.batsThrows[0]?.toUpperCase();
-                        if (bh === 'L' || bh === 'R' || bh === 'S') {
-                          setMlbBatterHand(bh as 'L' | 'R' | 'S');
-                        }
-                      }
-                      fetchMlbGameContext(p);
-                      Haptics.selectionAsync();
-                    }}
-                  >
-                    <Text style={styles.mlbDropdownName}>{p.fullName}</Text>
-                    <Text style={styles.mlbDropdownSub}>
-                      {p.team?.displayName || ''}
-                      {p.position ? `  ·  ${p.position}` : ''}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )}
-            {mlbResolvedPlayer && mlbPlayerSuggestions.length === 0 && (
-              <Text style={{ color: Colors.primary, fontSize: 11, marginBottom: 4, marginLeft: 2 }}>
-                ✓ {mlbResolvedPlayer.team?.displayName || ''}
-                {mlbResolvedPlayer.position ? `  ·  ${mlbResolvedPlayer.position}` : ''}
-              </Text>
-            )}
+            <FuzzySearchInput
+              searchType="mlb_players"
+              value={mlbPlayerQuery}
+              onChangeText={(t) => { setMlbPlayerQuery(t); if (!t) setMlbResolvedPlayer(null); }}
+              placeholder="e.g. Shohei Ohtani"
+              confirmed={!!mlbResolvedPlayer}
+              autoCapitalize="words"
+              onSelectMlbPlayer={(p) => {
+                setMlbResolvedPlayer(p);
+                setMlbPlayerQuery(p.fullName || '');
+                if (p.batsThrows) {
+                  const bh = p.batsThrows[0]?.toUpperCase();
+                  if (bh === 'L' || bh === 'R' || bh === 'S') setMlbBatterHand(bh as 'L'|'R'|'S');
+                }
+                fetchMlbGameContext(p);
+                Haptics.selectionAsync();
+              }}
+            />
 
             <Text style={styles.fieldLabel}>Opponent Team <Text style={styles.fieldLabelOpt}>(optional)</Text></Text>
-            <View style={{ marginBottom: 2 }}>
-              <TextInput
-                style={[styles.textInput, INPUT_STYLE]}
-                placeholder="e.g. Rangers, Yankees, LAD…"
-                placeholderTextColor={Colors.textTertiary}
-                value={mlbOpponentQuery}
-                onChangeText={handleMlbOpponentSearch}
-                autoCorrect={false}
-                autoCapitalize="words"
-              />
-            </View>
-            {mlbOpponentSuggestions.length > 0 && (
-              <View style={styles.mlbDropdown}>
-                {mlbOpponentSuggestions.map(t => (
-                  <TouchableOpacity
-                    key={t.id}
-                    style={styles.mlbDropdownItem}
-                    onPress={() => {
-                      setMlbOpponentQuery(t.displayName);
-                      setMlbResolvedOpponent(t);
-                      setMlbOpponentSuggestions([]);
-                      Haptics.selectionAsync();
-                    }}
-                  >
-                    <Text style={styles.mlbDropdownName}>{t.displayName}</Text>
-                    <Text style={styles.mlbDropdownSub}>{t.league} League · {t.division}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )}
-            {mlbResolvedOpponent && mlbOpponentSuggestions.length === 0 && (
-              <Text style={{ color: Colors.primary, fontSize: 11, marginBottom: 4, marginLeft: 2 }}>
-                ✓ {mlbResolvedOpponent.displayName}
-              </Text>
-            )}
+            <FuzzySearchInput
+              searchType="teams"
+              value={mlbOpponentQuery}
+              onChangeText={(t) => { setMlbOpponentQuery(t); if (!t) setMlbResolvedOpponent(null); }}
+              placeholder="e.g. Rangers, Yankees, LAD…"
+              confirmed={!!mlbResolvedOpponent}
+              autoCapitalize="words"
+              staticItems={mlbTeams.map(t => ({ id: t.id, primary: t.displayName, secondary: `${t.league} League · ${t.division}`, raw: t }))}
+              onSelectStaticItem={(raw) => {
+                setMlbResolvedOpponent(raw);
+                setMlbOpponentQuery(raw.displayName);
+                Haptics.selectionAsync();
+              }}
+            />
 
             <Text style={styles.fieldLabel}>Prop Type</Text>
             <TouchableOpacity style={styles.pickerBtn} onPress={() => setMlbShowPropPicker(true)}>
@@ -1612,90 +1416,34 @@ export default function ScanScreen() {
         {sport === 'cs2' && phase !== 'result' && phase !== 'saved' && (
           <View style={styles.manualForm}>
             <Text style={styles.fieldLabel}>Player Nickname</Text>
-            <View style={{ position: 'relative', marginBottom: 2 }}>
-              <TextInput
-                style={[styles.textInput, INPUT_STYLE, { paddingRight: cs2Searching ? 36 : 14 }]}
-                placeholder="e.g. ZywOo, s1mple, NiKo"
-                placeholderTextColor={Colors.textTertiary}
-                value={cs2PlayerQuery}
-                onChangeText={handleCs2PlayerSearch}
-                autoCorrect={false}
-                autoCapitalize="none"
-              />
-              {cs2Searching && (
-                <ActivityIndicator color={Colors.primary} size="small"
-                  style={{ position: 'absolute', right: 12, top: 12 }} />
-              )}
-            </View>
-            {cs2PlayerSuggestions.length > 0 && (
-              <View style={styles.mlbDropdown}>
-                {cs2PlayerSuggestions.slice(0, 6).filter(p => p.isActive !== false && p.team).map(p => (
-                  <TouchableOpacity
-                    key={p.id}
-                    style={styles.mlbDropdownItem}
-                    onPress={() => {
-                      setCs2ResolvedPlayer(p);
-                      setCs2PlayerQuery(p.nickname);
-                      setCs2PlayerSuggestions([]);
-                      Haptics.selectionAsync();
-                    }}
-                  >
-                    <Text style={styles.mlbDropdownName}>{p.nickname}</Text>
-                    <Text style={styles.mlbDropdownSub}>
-                      {p.team?.name || ''}
-                      {p.fullName ? `  ·  ${p.fullName}` : ''}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )}
-            {cs2ResolvedPlayer && cs2PlayerSuggestions.length === 0 && (
-              <Text style={{ color: Colors.primary, fontSize: 11, marginBottom: 4, marginLeft: 2 }}>
-                ✓ {cs2ResolvedPlayer.team?.name || ''}
-                {cs2ResolvedPlayer.fullName ? `  ·  ${cs2ResolvedPlayer.fullName}` : ''}
-              </Text>
-            )}
+            <FuzzySearchInput
+              searchType="cs2_players"
+              value={cs2PlayerQuery}
+              onChangeText={(t) => { setCs2PlayerQuery(t); if (!t) setCs2ResolvedPlayer(null); }}
+              placeholder="e.g. ZywOo, s1mple, NiKo"
+              confirmed={!!cs2ResolvedPlayer}
+              autoCapitalize="none"
+              onSelectCs2Player={(p) => {
+                setCs2ResolvedPlayer(p);
+                setCs2PlayerQuery(p.nickname);
+                Haptics.selectionAsync();
+              }}
+            />
 
             <Text style={styles.fieldLabel}>Opponent Team <Text style={styles.fieldLabelOpt}>(optional)</Text></Text>
-            <View style={{ position: 'relative', marginBottom: 2 }}>
-              <TextInput
-                style={[styles.textInput, INPUT_STYLE, { paddingRight: cs2OppSearching ? 36 : 14 }]}
-                placeholder="e.g. NAVI, FaZe, Vitality…"
-                placeholderTextColor={Colors.textTertiary}
-                value={cs2OpponentQuery}
-                onChangeText={handleCs2OpponentSearch}
-                autoCorrect={false}
-                autoCapitalize="none"
-              />
-              {cs2OppSearching && (
-                <ActivityIndicator color={Colors.primary} size="small"
-                  style={{ position: 'absolute', right: 12, top: 12 }} />
-              )}
-            </View>
-            {cs2OpponentSuggestions.length > 0 && !cs2ResolvedOpponent && (
-              <View style={styles.mlbDropdown}>
-                {cs2OpponentSuggestions.slice(0, 6).map(t => (
-                  <TouchableOpacity
-                    key={t.id}
-                    style={styles.mlbDropdownItem}
-                    onPress={() => {
-                      setCs2ResolvedOpponent(t);
-                      setCs2OpponentQuery(t.name);
-                      setCs2OpponentSuggestions([]);
-                      Haptics.selectionAsync();
-                    }}
-                  >
-                    <Text style={styles.mlbDropdownName}>{t.name}</Text>
-                    {t.shortName ? <Text style={styles.mlbDropdownSub}>{t.shortName}</Text> : null}
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )}
-            {cs2ResolvedOpponent && cs2OpponentSuggestions.length === 0 && (
-              <Text style={{ color: Colors.primary, fontSize: 11, marginBottom: 4, marginLeft: 2 }}>
-                ✓ {cs2ResolvedOpponent.name} (id {cs2ResolvedOpponent.id})
-              </Text>
-            )}
+            <FuzzySearchInput
+              searchType="cs2_teams"
+              value={cs2OpponentQuery}
+              onChangeText={(t) => { setCs2OpponentQuery(t); if (!t) setCs2ResolvedOpponent(null); }}
+              placeholder="e.g. NAVI, FaZe, Vitality…"
+              confirmed={!!cs2ResolvedOpponent}
+              autoCapitalize="none"
+              onSelectCs2Team={(t) => {
+                setCs2ResolvedOpponent(t);
+                setCs2OpponentQuery(t.name);
+                Haptics.selectionAsync();
+              }}
+            />
 
             <Text style={styles.fieldLabel}>Prop Type</Text>
             <TouchableOpacity style={styles.pickerBtn} onPress={() => setCs2ShowPropPicker(true)}>
@@ -1745,87 +1493,34 @@ export default function ScanScreen() {
         {sport === 'wta' && phase !== 'result' && phase !== 'saved' && (
           <View style={styles.manualForm}>
             <Text style={styles.fieldLabel}>Player</Text>
-            <View style={{ position: 'relative' }}>
-              <TextInput
-                style={[styles.textInput, INPUT_STYLE, { paddingRight: wtaSearching ? 36 : 14 }]}
-                placeholder="e.g. Iga Swiatek"
-                placeholderTextColor={Colors.textTertiary}
-                value={wtaPlayerQuery}
-                onChangeText={handleWtaPlayerSearch}
-                autoCapitalize="words"
-                autoCorrect={false}
-              />
-              {wtaSearching && (
-                <View style={{ position: 'absolute', right: 12, top: 14 }}>
-                  <ActivityIndicator size="small" color={Colors.primary} />
-                </View>
-              )}
-            </View>
-            {wtaPlayerSuggestions.length > 0 && (
-              <View style={styles.suggestList}>
-                {wtaPlayerSuggestions.slice(0, 6).map(p => (
-                  <TouchableOpacity
-                    key={p.id}
-                    style={styles.suggestItem}
-                    onPress={() => {
-                      setWtaResolvedPlayer(p);
-                      setWtaPlayerQuery(p.fullName);
-                      setWtaPlayerSuggestions([]);
-                      Haptics.selectionAsync();
-                    }}
-                  >
-                    <Text style={styles.suggestItemText}>{p.fullName}</Text>
-                    <Text style={styles.suggestItemSub}>
-                      {p.country || ''}{p.currentRank ? ` · #${p.currentRank}` : ''}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )}
-            {wtaResolvedPlayer && wtaPlayerSuggestions.length === 0 && (
-              <Text style={styles.resolvedHint}>
-                ✓ {wtaResolvedPlayer.country || ''}{wtaResolvedPlayer.currentRank ? `  ·  #${wtaResolvedPlayer.currentRank}` : ''}
-              </Text>
-            )}
+            <FuzzySearchInput
+              searchType="wta_players"
+              value={wtaPlayerQuery}
+              onChangeText={(t) => { setWtaPlayerQuery(t); if (!t) setWtaResolvedPlayer(null); }}
+              placeholder="e.g. Iga Swiatek"
+              confirmed={!!wtaResolvedPlayer}
+              autoCapitalize="words"
+              onSelectWtaPlayer={(p) => {
+                setWtaResolvedPlayer(p);
+                setWtaPlayerQuery(p.fullName);
+                Haptics.selectionAsync();
+              }}
+            />
 
             <Text style={styles.fieldLabel}>Opponent</Text>
-            <View style={{ position: 'relative' }}>
-              <TextInput
-                style={[styles.textInput, INPUT_STYLE, { paddingRight: wtaOppSearching ? 36 : 14 }]}
-                placeholder="e.g. Aryna Sabalenka"
-                placeholderTextColor={Colors.textTertiary}
-                value={wtaOpponentQuery}
-                onChangeText={handleWtaOpponentSearch}
-                autoCapitalize="words"
-                autoCorrect={false}
-              />
-              {wtaOppSearching && (
-                <View style={{ position: 'absolute', right: 12, top: 14 }}>
-                  <ActivityIndicator size="small" color={Colors.primary} />
-                </View>
-              )}
-            </View>
-            {wtaOpponentSuggestions.length > 0 && (
-              <View style={styles.suggestList}>
-                {wtaOpponentSuggestions.slice(0, 6).map(p => (
-                  <TouchableOpacity
-                    key={p.id}
-                    style={styles.suggestItem}
-                    onPress={() => {
-                      setWtaResolvedOpponent(p);
-                      setWtaOpponentQuery(p.fullName);
-                      setWtaOpponentSuggestions([]);
-                      Haptics.selectionAsync();
-                    }}
-                  >
-                    <Text style={styles.suggestItemText}>{p.fullName}</Text>
-                    <Text style={styles.suggestItemSub}>
-                      {p.country || ''}{p.currentRank ? ` · #${p.currentRank}` : ''}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )}
+            <FuzzySearchInput
+              searchType="wta_players"
+              value={wtaOpponentQuery}
+              onChangeText={(t) => { setWtaOpponentQuery(t); if (!t) setWtaResolvedOpponent(null); }}
+              placeholder="e.g. Aryna Sabalenka"
+              confirmed={!!wtaResolvedOpponent}
+              autoCapitalize="words"
+              onSelectWtaPlayer={(p) => {
+                setWtaResolvedOpponent(p);
+                setWtaOpponentQuery(p.fullName);
+                Haptics.selectionAsync();
+              }}
+            />
 
             <Text style={styles.fieldLabel}>Surface</Text>
             <TouchableOpacity style={styles.pickerBtn} onPress={() => setWtaShowSurfacePicker(true)}>
