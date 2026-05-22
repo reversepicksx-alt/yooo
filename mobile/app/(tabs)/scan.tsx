@@ -114,6 +114,9 @@ export default function ScanScreen() {
   const [saving, setSaving] = useState(false);
   const [pickSaved, setPickSaved] = useState(false);
 
+  // Scan-fill hint shown at top of manual form after a non-soccer scan
+  const [scanFillHint, setScanFillHint] = useState<string | null>(null);
+
   // User-controlled venue override
   const [venueOverride, setVenueOverride] = useState<'home' | 'away'>('home');
   const [gameLogFilter, setGameLogFilter] = useState<'all' | 'home' | 'away'>('all');
@@ -249,6 +252,7 @@ export default function ScanScreen() {
     setAnalyzeError(null);
     setManualError(null);
     setSaveError(null);
+    setScanFillHint(null);
     setPickSaved(false);
     setPlayerQuery('');
     setResolvedPlayer(null);
@@ -292,10 +296,59 @@ export default function ScanScreen() {
     setScannedImageUri(uri);
     setPhase('scanning');
     setAnalyzeError(null);
+    setScanFillHint(null);
     try {
       const scanned = await scanProp(base64, sport);
+
+      // ── Non-soccer: fill sport-specific manual form, never show soccer detected card ──
+      if (sport !== 'soccer') {
+        const mapProp = (raw: string | undefined, validKeys: string[], defaultKey: string): string => {
+          if (!raw) return defaultKey;
+          const r = raw.toLowerCase().replace(/[^a-z0-9_]/g, '_');
+          const exact = validKeys.find(k => k === r);
+          if (exact) return exact;
+          const partial = validKeys.find(k => r.includes(k) || k.includes(r.split('_')[0]));
+          return partial || defaultKey;
+        };
+
+        if (sport === 'mlb') {
+          const mlbKeys = MLB_PROP_TYPES.map((p: { value: string }) => p.value);
+          if (scanned.playerName) setMlbPlayerQuery(scanned.playerName);
+          if (scanned.opponentName) setMlbOpponentQuery(scanned.opponentName);
+          setMlbPropType(mapProp(scanned.propType, mlbKeys, 'hits'));
+          if (scanned.line) setLine(String(scanned.line));
+        } else if (sport === 'cs2') {
+          const cs2Keys = CS2_PROP_TYPES.map((p: { value: string }) => p.value);
+          if (scanned.playerName) setCs2PlayerQuery(scanned.playerName);
+          if (scanned.opponentName) setCs2OpponentQuery(scanned.opponentName);
+          setCs2PropType(mapProp(scanned.propType, cs2Keys, 'maps_1_2_kills'));
+          if (scanned.line) setLine(String(scanned.line));
+        } else if (sport === 'wta') {
+          const wtaKeys = WTA_PROP_TYPES.map((p: { value: string }) => p.value);
+          if (scanned.playerName) setWtaPlayerQuery(scanned.playerName);
+          if (scanned.opponentName) setWtaOpponentQuery(scanned.opponentName);
+          setWtaPropType(mapProp(scanned.propType, wtaKeys, 'total_games'));
+          if (scanned.line) setLine(String(scanned.line));
+        }
+
+        const filled = scanned.playerName
+          ? `✓ Scanned "${scanned.playerName}" — review and adjust below`
+          : scanned.error
+          ? `⚠ Partial scan — fill in missing fields`
+          : `✓ Scanned — review and adjust below`;
+        setScanFillHint(filled);
+        setMode('manual');
+        setPhase('idle');
+        Haptics.notificationAsync(
+          scanned.playerName
+            ? Haptics.NotificationFeedbackType.Success
+            : Haptics.NotificationFeedbackType.Warning
+        );
+        return;
+      }
+
+      // ── Soccer: existing detected-card flow ──
       if (scanned.error || !scanned.playerName) {
-        // If we got partial data, show the detected screen so the user can correct fields
         const hasPartialData = scanned.propType || scanned.line || scanned.playerTeam || scanned.opponentName;
         if (hasPartialData) {
           setScanResult(scanned);
@@ -308,7 +361,6 @@ export default function ScanScreen() {
         }
         return;
       }
-      // Set venue override from scan result, defaulting to 'home'
       const detectedVenue = (scanned.venue || 'home').toLowerCase();
       setVenueOverride(detectedVenue === 'away' ? 'away' : 'home');
       setScanResult(scanned);
@@ -1202,6 +1254,12 @@ export default function ScanScreen() {
         {/* ─── MANUAL MODE — MLB ─── */}
         {sport === 'mlb' && phase !== 'result' && phase !== 'saved' && (
           <View style={styles.manualForm}>
+            {scanFillHint && (
+              <View style={styles.scanFillHint}>
+                <Ionicons name={scanFillHint.startsWith('✓') ? 'checkmark-circle-outline' : 'warning-outline'} size={13} color={scanFillHint.startsWith('✓') ? Colors.primary : '#f0a500'} />
+                <Text style={[styles.scanFillHintText, !scanFillHint.startsWith('✓') && { color: '#f0a500' }]}>{scanFillHint}</Text>
+              </View>
+            )}
             <Text style={styles.fieldLabel}>Player Name</Text>
             <FuzzySearchInput
               searchType="mlb_players"
@@ -1415,6 +1473,12 @@ export default function ScanScreen() {
         {/* ─── MANUAL MODE — CS2 ─── */}
         {sport === 'cs2' && phase !== 'result' && phase !== 'saved' && (
           <View style={styles.manualForm}>
+            {scanFillHint && (
+              <View style={styles.scanFillHint}>
+                <Ionicons name={scanFillHint.startsWith('✓') ? 'checkmark-circle-outline' : 'warning-outline'} size={13} color={scanFillHint.startsWith('✓') ? Colors.primary : '#f0a500'} />
+                <Text style={[styles.scanFillHintText, !scanFillHint.startsWith('✓') && { color: '#f0a500' }]}>{scanFillHint}</Text>
+              </View>
+            )}
             <Text style={styles.fieldLabel}>Player Nickname</Text>
             <FuzzySearchInput
               searchType="cs2_players"
@@ -1492,6 +1556,12 @@ export default function ScanScreen() {
         {/* ─── WTA MANUAL FORM ─── */}
         {sport === 'wta' && phase !== 'result' && phase !== 'saved' && (
           <View style={styles.manualForm}>
+            {scanFillHint && (
+              <View style={styles.scanFillHint}>
+                <Ionicons name={scanFillHint.startsWith('✓') ? 'checkmark-circle-outline' : 'warning-outline'} size={13} color={scanFillHint.startsWith('✓') ? Colors.primary : '#f0a500'} />
+                <Text style={[styles.scanFillHintText, !scanFillHint.startsWith('✓') && { color: '#f0a500' }]}>{scanFillHint}</Text>
+              </View>
+            )}
             <Text style={styles.fieldLabel}>Player</Text>
             <FuzzySearchInput
               searchType="wta_players"
@@ -3592,6 +3662,12 @@ const styles = StyleSheet.create({
     padding: 12, marginTop: 10, borderWidth: 1, borderColor: Colors.error + '40',
   },
   inlineErrorText: { color: Colors.error, fontSize: 13, flex: 1, lineHeight: 18 },
+  scanFillHint: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: '#0d1f0d', borderRadius: 8,
+    padding: 10, marginBottom: 12, borderWidth: 1, borderColor: Colors.primary + '40',
+  },
+  scanFillHintText: { color: Colors.primary, fontSize: 12, flex: 1, fontFamily: 'Inter_400Regular' },
 
   /* Loading */
   loadingCard: {
