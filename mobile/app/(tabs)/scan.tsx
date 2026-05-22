@@ -101,7 +101,7 @@ export default function ScanScreen() {
   const insets = useSafeAreaInsets();
   const { session } = useAuth();
   const qc = useQueryClient();
-  const [mode, setMode] = useState<Mode>('scan');
+  const [mode, setMode] = useState<Mode>('manual');
   const [phase, setPhase] = useState<Phase>('idle');
   const [sport, setSport] = useState<Sport>('soccer');
 
@@ -632,7 +632,7 @@ export default function ScanScreen() {
       <View style={styles.header}>
         <Image source={require('../../assets/logo.png')} style={styles.logoImg} resizeMode="contain" />
         <Text style={styles.logoText}>ReversePicks</Text>
-        <Text style={styles.tagline}>{sport === 'mlb' ? 'MLB Prop Analytics' : sport === 'cs2' ? 'CS2 Prop Analytics' : 'Soccer Prop Analytics'}</Text>
+        <Text style={styles.tagline}>{sport === 'mlb' ? 'MLB Prop Analytics' : sport === 'cs2' ? 'CS2 Prop Analytics' : sport === 'wta' ? 'WTA Prop Analytics' : 'Soccer Prop Analytics'}</Text>
       </View>
 
       {/* ─── Sport Toggle ─── */}
@@ -647,21 +647,21 @@ export default function ScanScreen() {
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.sportTab, sport === 'mlb' && styles.sportTabActive]}
-            onPress={() => { setSport('mlb'); reset(); setMode('manual'); }}
+            onPress={() => { setSport('mlb'); reset(); }}
             activeOpacity={0.8}
           >
             <Text style={[styles.sportTabText, sport === 'mlb' && styles.sportTabTextActive]}>⚾  MLB</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.sportTab, sport === 'cs2' && styles.sportTabActive]}
-            onPress={() => { setSport('cs2'); reset(); setMode('manual'); }}
+            onPress={() => { setSport('cs2'); reset(); }}
             activeOpacity={0.8}
           >
             <Text style={[styles.sportTabText, sport === 'cs2' && styles.sportTabTextActive]}>🎮  CS2</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.sportTab, sport === 'wta' && styles.sportTabActive]}
-            onPress={() => { setSport('wta'); reset(); setMode('manual'); }}
+            onPress={() => { setSport('wta'); reset(); }}
             activeOpacity={0.8}
           >
             <Text style={[styles.sportTabText, sport === 'wta' && styles.sportTabTextActive]}>🎾  WTA</Text>
@@ -669,17 +669,9 @@ export default function ScanScreen() {
         </View>
       )}
 
-      {/* ─── Mode Toggle (idle only, soccer only) ─── */}
-      {sport === 'soccer' && (phase === 'idle' || mode === 'manual') && (
+      {/* ─── Mode Toggle (all sports) ─── */}
+      {(phase === 'idle' || mode === 'manual') && (
         <View style={styles.modeRow}>
-          <TouchableOpacity
-            style={[styles.modeTab, mode === 'scan' && styles.modeTabActive]}
-            onPress={() => { setMode('scan'); setPhase('idle'); }}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="scan" size={14} color={mode === 'scan' ? Colors.primary : Colors.textSecondary} />
-            <Text style={[styles.modeTabText, mode === 'scan' && styles.modeTabTextActive]}>Scan</Text>
-          </TouchableOpacity>
           <TouchableOpacity
             style={[styles.modeTab, mode === 'manual' && styles.modeTabActive]}
             onPress={() => { setMode('manual'); setPhase('idle'); }}
@@ -687,6 +679,14 @@ export default function ScanScreen() {
           >
             <Ionicons name="create-outline" size={14} color={mode === 'manual' ? Colors.primary : Colors.textSecondary} />
             <Text style={[styles.modeTabText, mode === 'manual' && styles.modeTabTextActive]}>Manual</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.modeTab, mode === 'scan' && styles.modeTabActive]}
+            onPress={() => { setMode('scan'); setPhase('idle'); }}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="scan" size={14} color={mode === 'scan' ? Colors.primary : Colors.textSecondary} />
+            <Text style={[styles.modeTabText, mode === 'scan' && styles.modeTabTextActive]}>Scan</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -712,7 +712,7 @@ export default function ScanScreen() {
                   <Ionicons name="image-outline" size={22} color={Colors.primary} />
                   <Text style={styles.heroTitle}>Scan a Prop Slip</Text>
                   <Text style={styles.heroSub}>
-                    Upload a screenshot of any {sport === 'mlb' ? 'MLB' : 'soccer'} prop slip and get ReverseScan insights in seconds.
+                    Upload a screenshot of any {sport === 'mlb' ? 'MLB' : sport === 'cs2' ? 'CS2' : sport === 'wta' ? 'WTA tennis' : 'soccer'} prop slip and get ReverseScan insights in seconds.
                   </Text>
                   <TouchableOpacity style={styles.heroBtnBig} onPress={handleGallery} activeOpacity={0.8}>
                     <Ionicons name="images-outline" size={15} color="#000" />
