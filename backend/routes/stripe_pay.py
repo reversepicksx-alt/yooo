@@ -447,13 +447,33 @@ async def stripe_webhook(request: Request):
             await db.sessions.delete_many({"email": email})
 
     elif etype == "invoice.payment_failed":
+        # Policy: ONE failed payment = subscription canceled immediately.
+        # No retries, no past_due loop, no surprise late charges. The user
+        # will lose access on next auth check and can come back and resubscribe
+        # cleanly (the hardened pre-checkout cleanup will wipe this canceled
+        # sub state automatically).
         invoice = event.get("data", {}).get("object", {})
         email = await _email_from_customer(invoice.get("customer", ""))
+        sub_id = invoice.get("subscription", "") or ""
+        if sub_id:
+            try:
+                stripe.Subscription.cancel(sub_id)
+                print(f"[STRIPE] Payment FAILED for {email} sub={sub_id} — canceled immediately (no retries)")
+            except Exception as _e:
+                print(f"[STRIPE] Could not cancel sub {sub_id} on payment_failed: {_e}")
         if email:
+            now = datetime.now(timezone.utc).isoformat()
             await db.stripe_subscriptions.update_one(
                 {"email": email},
-                {"$set": {"status": "past_due", "updatedAt": datetime.now(timezone.utc).isoformat()}}
+                {"$set": {
+                    "status": "canceled",
+                    "canceledAt": now,
+                    "updatedAt": now,
+                    "canceledReason": "payment_failed",
+                }}
             )
+            # Kill active sessions so the user is logged out immediately
+            await db.sessions.delete_many({"email": email})
 
     return {"received": True}
 
