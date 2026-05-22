@@ -158,26 +158,32 @@ async def create_checkout(req: CheckoutRequest):
         # Reuse existing Stripe customer to prevent duplicate accounts
         customer_id = _get_or_create_stripe_customer(email_lower)
 
-        # ── Duplicate-subscription guard ─────────────────────────────────────
-        # Cancel any existing active/trialing subscriptions before creating a
-        # new checkout. Without this, tapping "subscribe" more than once (or
-        # completing two checkout flows) stacks multiple live subscriptions and
-        # the customer is charged for all of them every billing cycle.
+        # ── Duplicate-subscription guard (HARDENED) ──────────────────────────
+        # Cancel EVERY non-terminal subscription across EVERY Stripe Customer
+        # record that shares this email — not just the one we're using for the
+        # new checkout. Past-due / unpaid / incomplete subs still retry charges
+        # on the user's card (that's the $15 bug Isaiah hit), and the same
+        # email can legitimately have multiple Customer records from prior
+        # signups. We must wipe them all before starting a fresh subscription.
+        #
+        # Stripe sub statuses we MUST cancel:
+        #   active, trialing, past_due, unpaid, incomplete
+        # Terminal (leave alone):
+        #   canceled, incomplete_expired
         try:
-            existing_subs = stripe.Subscription.list(
-                customer=customer_id, status="active", limit=10
-            )
-            for esub in existing_subs.auto_paging_iter():
-                stripe.Subscription.cancel(esub.id)
-                print(f"[STRIPE] Canceled duplicate active sub {esub.id} for {email_lower} before new checkout")
-            trialing_subs = stripe.Subscription.list(
-                customer=customer_id, status="trialing", limit=10
-            )
-            for esub in trialing_subs.auto_paging_iter():
-                stripe.Subscription.cancel(esub.id)
-                print(f"[STRIPE] Canceled duplicate trialing sub {esub.id} for {email_lower} before new checkout")
+            all_custs = list(stripe.Customer.list(email=email_lower, limit=20).auto_paging_iter())
+            for ac in all_custs:
+                for status in ("active", "trialing", "past_due", "unpaid", "incomplete"):
+                    for esub in stripe.Subscription.list(
+                        customer=ac.id, status=status, limit=20
+                    ).auto_paging_iter():
+                        try:
+                            stripe.Subscription.cancel(esub.id)
+                            print(f"[STRIPE] Pre-checkout cleanup: canceled {status} sub {esub.id} on cust {ac.id} for {email_lower}")
+                        except Exception as _se:
+                            print(f"[STRIPE] Could not cancel sub {esub.id} ({status}): {_se}")
         except Exception as _cancel_err:
-            print(f"[STRIPE] Warning: could not cancel existing subs for {email_lower}: {_cancel_err}")
+            print(f"[STRIPE] Warning: pre-checkout sub cleanup failed for {email_lower}: {_cancel_err}")
 
         # Try with expanded payment methods first (Cash App Pay + Stripe Link).
         # Cash App Pay / Link let users pay even if their bank blocks card subscriptions.
