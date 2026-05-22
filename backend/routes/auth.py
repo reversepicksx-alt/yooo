@@ -14,6 +14,39 @@ from models import (
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
+
+def _sub_period_end_ts(sub_data: dict) -> int:
+    """
+    Stripe API ≥2024 moved current_period_end (and _start) OFF the top-level
+    Subscription object and INTO each subscription item: items.data[i].current_period_end.
+    Reading the deprecated top-level field returns None and incorrectly locks out
+    users who have time remaining on their paid period.
+
+    Returns a unix-timestamp int, or 0 if none can be found. Checks, in order:
+      1. top-level current_period_end (legacy)
+      2. items.data[0].current_period_end (current API)
+      3. cancel_at (when sub is set to cancel at a specific moment)
+    """
+    if not isinstance(sub_data, dict):
+        return 0
+    cpe = sub_data.get("current_period_end")
+    if cpe:
+        try: return int(cpe)
+        except Exception: pass
+    try:
+        items = (sub_data.get("items") or {}).get("data") or []
+        if items:
+            ic = items[0].get("current_period_end")
+            if ic:
+                return int(ic)
+    except Exception:
+        pass
+    ca = sub_data.get("cancel_at")
+    if ca:
+        try: return int(ca)
+        except Exception: pass
+    return 0
+
 async def _check_access_local(email_lower: str):
     if email_lower in OWNER_EMAILS:
         return "Owner"
@@ -157,7 +190,7 @@ async def _check_stripe_live(email_lower: str):
         # If cancel_at_period_end is true the user has canceled — we store as "canceled"
         # and only grant access while current_period_end is still in the future.
         if sub_data.get("cancel_at_period_end"):
-            cpe = sub_data.get("current_period_end", 0) or 0
+            cpe = _sub_period_end_ts(sub_data)
             end_iso_tmp = datetime.fromtimestamp(int(cpe), tz=timezone.utc).isoformat() if cpe else ""
             if cpe and cpe > now_ts:
                 print(f"[STRIPE LIVE FALLBACK] cancel_at_period_end for {email_lower} — access until {datetime.fromtimestamp(cpe, tz=timezone.utc).date()}")
@@ -183,7 +216,7 @@ async def _check_stripe_live(email_lower: str):
                 return None
 
         if st == "past_due":
-            cpe = sub_data.get("current_period_end", 0)
+            cpe = _sub_period_end_ts(sub_data)
             if cpe:
                 print(f"[STRIPE LIVE FALLBACK] past_due sub found for {email_lower}, period ends {datetime.fromtimestamp(cpe, tz=timezone.utc).date()}")
             else:
@@ -209,10 +242,10 @@ async def _check_stripe_live(email_lower: str):
         except Exception:
             pass
 
-        # Get period end
+        # Get period end (Stripe ≥2024 stores this under items[0], not top-level)
         end_iso = ""
         try:
-            ts = sub_data.get("current_period_end")
+            ts = _sub_period_end_ts(sub_data)
             if ts:
                 end_iso = datetime.fromtimestamp(int(ts), tz=timezone.utc).isoformat()
         except Exception:
