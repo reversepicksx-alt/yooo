@@ -101,7 +101,7 @@ export default function ScanScreen() {
   const insets = useSafeAreaInsets();
   const { session } = useAuth();
   const qc = useQueryClient();
-  const [mode, setMode] = useState<Mode>('manual');
+  const [mode, setMode] = useState<Mode>('scan');
   const [phase, setPhase] = useState<Phase>('idle');
   const [sport, setSport] = useState<Sport>('soccer');
 
@@ -733,20 +733,20 @@ export default function ScanScreen() {
       {(phase === 'idle' || mode === 'manual') && (
         <View style={styles.modeRow}>
           <TouchableOpacity
-            style={[styles.modeTab, mode === 'manual' && styles.modeTabActive]}
-            onPress={() => { setMode('manual'); setPhase('idle'); }}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="create-outline" size={14} color={mode === 'manual' ? Colors.primary : Colors.textSecondary} />
-            <Text style={[styles.modeTabText, mode === 'manual' && styles.modeTabTextActive]}>Manual</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
             style={[styles.modeTab, mode === 'scan' && styles.modeTabActive]}
             onPress={() => { setMode('scan'); setPhase('idle'); }}
             activeOpacity={0.8}
           >
             <Ionicons name="scan" size={14} color={mode === 'scan' ? Colors.primary : Colors.textSecondary} />
             <Text style={[styles.modeTabText, mode === 'scan' && styles.modeTabTextActive]}>Scan</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.modeTab, mode === 'manual' && styles.modeTabActive]}
+            onPress={() => { setMode('manual'); setPhase('idle'); }}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="create-outline" size={14} color={mode === 'manual' ? Colors.primary : Colors.textSecondary} />
+            <Text style={[styles.modeTabText, mode === 'manual' && styles.modeTabTextActive]}>Manual</Text>
           </TouchableOpacity>
         </View>
       )}
