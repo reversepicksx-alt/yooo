@@ -656,14 +656,14 @@ async def auto_settlement_loop():
     runs burn quota fast. 15 min is plenty since picks resolve after the match.
     """
     await asyncio.sleep(5)   # Short delay then run immediately on startup
-    print("[GROK ENGINE] Auto-settlement bot started (15 min interval)")
+    print("[GROK ENGINE] Auto-settlement bot started (5 min interval)")
 
     while True:
         try:
             await _run_auto_settlement()
         except Exception as e:
             print(f"[AUTO-SETTLE] Error: {e}")
-        await asyncio.sleep(900)  # Check every 15 minutes
+        await asyncio.sleep(300)  # Check every 5 minutes
 
 
 async def _try_settle_mlb(pick: dict) -> bool:

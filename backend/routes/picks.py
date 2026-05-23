@@ -614,7 +614,7 @@ async def list_picks(req: GetPicksRequest):
             except Exception:
                 pass
 
-    live_picks = [p for p in picks if p.get("status") == "live"]
+    live_picks = [p for p in picks if p.get("status") in ("live", "pending")]
     # MLB picks are handled by the mlb_live_loop background task which writes
     # currentValue / matchStatus directly to MongoDB — don't pass them to the
     # soccer pipeline or it will overwrite their matchStatus with "scheduled".
