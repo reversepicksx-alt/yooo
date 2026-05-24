@@ -16,6 +16,7 @@ from config import (
 )
 from models import PredictionRequest
 from utils import api_football_request, get_recent_fixtures_fast, strip_accents, get_soccer_odds, decimal_to_american
+from grok_engine import fetch_web_intel
 from prop_safety_cache import get_prop_safety as _get_prop_safety
 # game_script_intelligence removed — was distorting confidence scores for GK pass picks
 
@@ -1233,9 +1234,15 @@ async def predict(req: PredictionRequest):
             opponent_id=req.opponentId,
         )
 
-        # web_intel and ai_press_intensity removed — Grok is summary-only.
-        # Press intensity falls back to heuristic; web search was only context for the prompt.
-        web_intel_task = _noop_str()
+        # Web intel: live injury/lineup news from Grok web search
+        web_intel_task = fetch_web_intel(
+            player_team=corrected_team_name or req.teamName or "",
+            opponent=req.opponentName or "",
+            match_date=(match_odds or {}).get("matchDate", ""),
+            match_round=(match_odds or {}).get("matchRound", ""),
+            league=(match_odds or {}).get("matchLeague", ""),
+            timeout=18,
+        )
         ai_press_task = _noop_none()
 
         all_wave2 = aio.gather(
@@ -3981,8 +3988,8 @@ Analyze ALL data thoroughly. Return JSON only."""
         # pv is set from early_bayes here as a temporary anchor; real_bayes overwrites it later.
         pv = early_bayes["posteriorMean"] if early_bayes and early_bayes.get("posteriorMean") else req.line
 
-        # Grok removed — pure Bayesian math only. call_grok() is never invoked.
-        print("[PURE MATH] Skipping Grok call — Bayesian engine is the sole analysis source.")
+        # AI synthesis: Grok analyses all data and produces tacticalBreakdown + reasoning
+        grok_result = await call_grok()
 
         # BAYESIAN FALLBACK: If ALL Grok models failed (no text), build minimal result from math
         if not grok_result or not isinstance(grok_result, dict) or not grok_result.get("tacticalBreakdown"):
