@@ -119,7 +119,7 @@ async def cs2_admin_force_settle_all(payload: dict):
         {"$or": [
             {"status": {"$in": ["pending", "live"]}, "sport": "cs2"},
             {"status": {"$in": ["pending", "live"]},
-             "propType": {"$regex": "^(map1_|maps_1_2_)"}},
+             "propType": {"$regex": "^(map1_|maps_1_2_|map3_)"}},
         ]},
         {"_id": 0}
     ).to_list(500)
@@ -540,7 +540,7 @@ async def list_picks(req: GetPicksRequest):
             # Repair picks already wrongly stamped as soccer: if the pick has
             # a CS2 propType it must be cs2 regardless of what sport says.
             p.get("sport") == "soccer"
-            and str(p.get("propType", "")).startswith(("map1_", "maps_1_2_"))
+            and str(p.get("propType", "")).startswith(("map1_", "maps_1_2_", "map3_"))
         ):
             # Detect sport from propType so old picks saved before the sport
             # field was added are not permanently mis-labelled as soccer.
@@ -549,13 +549,15 @@ async def list_picks(req: GetPicksRequest):
                 "map1_rating", "map1_first_kills", "map1_clutches_won",
                 "map1_headshot_pct", "maps_1_2_kills", "maps_1_2_deaths",
                 "maps_1_2_assists", "maps_1_2_headshots",
+                "map3_kills", "map3_deaths", "map3_assists", "map3_headshots",
+                "map3_adr",
             }
             _MLB_PROPS = {
                 "hits", "home_runs", "rbi", "walks", "strikeouts", "runs",
                 "total_bases", "stolen_bases", "doubles", "plate_appearances",
             }
             _pt = p.get("propType", "")
-            if _pt in _CS2_PROPS or str(_pt).startswith(("map1_", "maps_1_2_")):
+            if _pt in _CS2_PROPS or str(_pt).startswith(("map1_", "maps_1_2_", "map3_")):
                 _detected = "cs2"
             elif _pt in _MLB_PROPS:
                 _detected = "mlb"

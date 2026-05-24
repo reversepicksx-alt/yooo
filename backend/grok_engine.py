@@ -856,7 +856,7 @@ async def _run_auto_settlement():
     mlb_picks    = [p for p in live_picks if p.get("sport") == "mlb" or p.get("propType", "") in _MLB_PROP_TYPES]
     # Detect CS2 picks by sport field OR propType (catches picks saved before
     # the sport-field repair was deployed — same logic as picks.py repair block).
-    _CS2_PROP_PREFIXES = ("map1_", "maps_1_2_")
+    _CS2_PROP_PREFIXES = ("map1_", "maps_1_2_", "map3_")
     cs2_picks = [
         p for p in live_picks
         if p.get("sport") == "cs2"
@@ -1005,8 +1005,10 @@ async def _run_auto_settlement():
             pick_id   = pick.get("pickId", "")
             email     = pick.get("email", "")
 
-            if not team_id or not player_id or not opp_name:
+            if not team_id or not player_id:
                 continue
+            # opp_name may be empty — cs2_client will fall back to the most
+            # recent finished match for the team when opponent_name is blank.
 
             # Skip picks saved in the last 30 min — match can't be over yet
             # Parse pick timestamp (may be Unix-ms int OR ISO string)
@@ -1050,9 +1052,39 @@ async def _run_auto_settlement():
                 continue
 
             if not result or result.get("actualValue") is None:
+                now_iso = datetime.now(timezone.utc).isoformat()
+                pname = pick.get("playerName", "?")
+
+                # Player DNP — finished match but player not in any map stats
+                if result and result.get("playerDNP"):
+                    void_reason = "Player did not appear in match stats (DNP) — voided as push"
+                    await db.picks.update_one(
+                        {"pickId": pick_id, "email": email},
+                        {"$set": {"status": "settled", "result": "push", "hitPct": 50,
+                                  "settledAt": now_iso, "sport": "cs2",
+                                  "matchScore": result.get("matchScore"),
+                                  "voidReason": void_reason}},
+                    )
+                    settled_count += 1
+                    print(f"[CS2 AUTO-SETTLE] DNP push: {pname} — {void_reason}")
+                    continue
+
+                # Map 3 wasn't played (match went 2-0 or 0-2)
+                if result and result.get("noMap3"):
+                    void_reason = f"Map 3 not played ({result.get('mapsPlayed', '?')} maps total) — voided as push"
+                    await db.picks.update_one(
+                        {"pickId": pick_id, "email": email},
+                        {"$set": {"status": "settled", "result": "push", "hitPct": 50,
+                                  "settledAt": now_iso, "sport": "cs2",
+                                  "matchScore": result.get("matchScore"),
+                                  "voidReason": void_reason}},
+                    )
+                    settled_count += 1
+                    print(f"[CS2 AUTO-SETTLE] No-map3 push: {pname} — {void_reason}")
+                    continue
+
                 # Stale-void: if pick is > 7 days old with no data, push it so it never hangs forever
                 if pick_ts and (datetime.now(timezone.utc) - pick_ts).days >= 7:
-                    now_iso = datetime.now(timezone.utc).isoformat()
                     await db.picks.update_one(
                         {"pickId": pick_id, "email": email},
                         {"$set": {"status": "settled", "result": "push", "hitPct": 50,
@@ -1060,7 +1092,7 @@ async def _run_auto_settlement():
                                   "voidReason": "No match data found after 7 days — voided as push"}},
                     )
                     settled_count += 1
-                    print(f"[CS2 AUTO-SETTLE] Stale-void push: {pick.get('playerName','?')} (7d+ no data)")
+                    print(f"[CS2 AUTO-SETTLE] Stale-void push: {pname} (7d+ no data)")
                 continue
 
             actual_value = result["actualValue"]

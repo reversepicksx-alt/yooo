@@ -554,8 +554,9 @@ async def get_cs2_completed_match_result(
             s = _re.sub(r"^the\s+", "", s)
             return _re.sub(r"[^a-z0-9]", "", s)
         target_norm = _norm(target)
+        blank_opponent = not target  # pick saved without opponentName
 
-        opponent_candidates = []   # [(name, has_id_match)] for diagnostics
+        opponent_candidates = []   # for diagnostics
         for match in matches:
             mt1 = match.get("team1") or {}
             mt2 = match.get("team2") or {}
@@ -563,26 +564,28 @@ async def get_cs2_completed_match_result(
             opp_name = (opp.get("name") or "").lower()
             opponent_candidates.append(opp_name)
 
-            # Fuzzy opponent match: substring, first-word, OR normalised match.
-            # Guard against false positives on short tokens (e.g. "OG", "G2",
-            # "9z", "MIBR") — for any name normalised to ≤4 chars we require
-            # an exact normalised equality, not a substring hit.
-            opp_word = opp_name.split()[0] if opp_name else ""
-            opp_norm = _norm(opp_name)
-            min_len  = min(len(target_norm or ""), len(opp_norm or ""))
-            if min_len <= 4:
-                norm_match = bool(target_norm) and (target_norm == opp_norm)
-            else:
-                norm_match = bool(target_norm) and bool(opp_norm) and (
-                    target_norm in opp_norm or opp_norm in target_norm
+            if not blank_opponent:
+                # Fuzzy opponent match: substring, first-word, OR normalised match.
+                # Guard against false positives on short tokens (e.g. "OG", "G2",
+                # "9z", "MIBR") — for any name normalised to ≤4 chars we require
+                # an exact normalised equality, not a substring hit.
+                opp_word = opp_name.split()[0] if opp_name else ""
+                opp_norm = _norm(opp_name)
+                min_len  = min(len(target_norm or ""), len(opp_norm or ""))
+                if min_len <= 4:
+                    norm_match = bool(target_norm) and (target_norm == opp_norm)
+                else:
+                    norm_match = bool(target_norm) and bool(opp_norm) and (
+                        target_norm in opp_norm or opp_norm in target_norm
+                    )
+                sub_match = (
+                    (len(target) >= 4 and target in opp_name) or
+                    (len(opp_name) >= 4 and opp_name in target) or
+                    (opp_word and len(opp_word) >= 4 and opp_word in target)
                 )
-            sub_match = (
-                (len(target) >= 4 and target in opp_name) or
-                (len(opp_name) >= 4 and opp_name in target) or
-                (opp_word and len(opp_word) >= 4 and opp_word in target)
-            )
-            if not (sub_match or norm_match):
-                continue
+                if not (sub_match or norm_match):
+                    continue
+            # blank_opponent: accept any finished match after pick timestamp
 
             # Date guard — match must be on or after the pick was saved.
             # Slug dates are day-only (e.g. "2026-05-19"), so compare at
@@ -600,10 +603,27 @@ async def get_cs2_completed_match_result(
                     pass
 
             # Fetch maps + per-player stats in one cached call (CACHE_TTL["match_maps"]).
-            # The previous uncached /match_maps "finished check" was redundant — if
-            # the player appeared on any map there are by definition real scores.
             per_map_stats = await _fetch_match_maps_and_stats(match, team_id, player_id)
             if not per_map_stats:
+                # If the match is finished but the player has no stats on ANY map,
+                # they were a DNP for this match → void as push so the pick never
+                # hangs live indefinitely.
+                if match.get("status") == "finished":
+                    mt1_n = (match.get("team1") or {}).get("name", "")
+                    mt2_n = (match.get("team2") or {}).get("name", "")
+                    score_str = f"{mt1_n} vs {mt2_n}"
+                    log.info(
+                        f"[CS2 SETTLE] Player {player_id} not in match stats (DNP) — "
+                        f"voiding as push: {prop_type} {score_str}"
+                    )
+                    return {
+                        "actualValue": None,
+                        "playerDNP": True,
+                        "matchScore": score_str,
+                        "matchDate": date_str or "",
+                        "opponent": opp.get("name", opponent_name),
+                        "mapsPlayed": 0,
+                    }
                 continue
 
             map_lookup = {ms["mapNumber"]: ms for ms in per_map_stats}
@@ -639,6 +659,34 @@ async def get_cs2_completed_match_result(
                 actual = sum(m.get(stat_key, 0) or 0 for m in all_maps)
             elif prop_type == "map1_kills":
                 actual = map_lookup.get(1, {}).get("kills")
+            elif prop_type == "map1_headshots":
+                actual = map_lookup.get(1, {}).get("headshotCount")
+            elif prop_type == "map1_deaths":
+                actual = map_lookup.get(1, {}).get("deaths")
+            elif prop_type == "map1_assists":
+                actual = map_lookup.get(1, {}).get("assists")
+            elif prop_type == "map1_adr":
+                actual = map_lookup.get(1, {}).get("adr")
+            # ── Map 3 props ───────────────────────────────────────────────────
+            elif prop_type == "map3_kills":
+                actual = map_lookup.get(3, {}).get("kills")
+            elif prop_type == "map3_headshots":
+                actual = map_lookup.get(3, {}).get("headshotCount")
+            elif prop_type == "map3_deaths":
+                actual = map_lookup.get(3, {}).get("deaths")
+            elif prop_type == "map3_assists":
+                actual = map_lookup.get(3, {}).get("assists")
+            elif prop_type == "map3_adr":
+                m3 = map_lookup.get(3, {})
+                actual = m3.get("adr") if m3 else None
+            # ── Maps 1-2 headshots (separate from kills) ──────────────────────
+            elif prop_type == "maps_1_2_headshots":
+                m1 = map_lookup.get(1, {})
+                m2 = map_lookup.get(2, {})
+                m12 = [m for m in (m1, m2) if m]
+                if not m12:
+                    m12 = sorted(per_map_stats, key=lambda x: x.get("mapNumber", 0))[:2]
+                actual = sum(m.get("headshotCount", 0) or 0 for m in m12)
             elif prop_type == "kills":
                 # Per-map prop — use map 1
                 actual = map_lookup.get(1, {}).get("kills")
@@ -658,6 +706,25 @@ async def get_cs2_completed_match_result(
                 actual = None
 
             if actual is None:
+                # For map3_ props: if the player appeared in the match but map 3
+                # simply wasn't played (match went 2-0 or 0-2), push the pick
+                # so it never hangs live indefinitely.
+                if prop_type.startswith("map3_") and per_map_stats and 3 not in map_lookup:
+                    mt1_n = (mt1.get("name") or "")
+                    mt2_n = (mt2.get("name") or "")
+                    maps_played_n = len(per_map_stats)
+                    log.info(
+                        f"[CS2 SETTLE] map3_ prop but only {maps_played_n} map(s) played — "
+                        f"voiding as push: {prop_type} vs {opp.get('name')}"
+                    )
+                    return {
+                        "actualValue": None,
+                        "noMap3": True,
+                        "matchScore": f"{mt1_n} vs {mt2_n}",
+                        "matchDate": date_str or "",
+                        "opponent": opp.get("name", opponent_name),
+                        "mapsPlayed": maps_played_n,
+                    }
                 continue
 
             # Build score string from per_map_stats (which carries wonMap per
