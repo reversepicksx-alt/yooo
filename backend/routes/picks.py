@@ -574,10 +574,33 @@ async def list_picks(req: GetPicksRequest):
             )
 
     for p in picks:
-        if p.get("status") == "settled" and p.get("actualValue") is not None:
+        if p.get("status") != "settled":
+            continue
+
+        # ── DNP / early-sub guard ────────────────────────────────────────────
+        # Voided picks (voidReason set OR <30 min played) must always be push.
+        # This branch ACTIVELY corrects them — not just skips — so that a race
+        # condition between a concurrent list_picks response and a DB fix can
+        # never leave result=miss permanently stuck in the DB.
+        is_dnp = bool(p.get("voidReason")) or (p.get("minutesPlayed") or 0) < 30
+        if is_dnp:
+            if p.get("result") != "push":
+                p["result"] = "push"
+                void_label = p.get("voidReason") or f"<30 min ({p.get('minutesPlayed',0)} min played)"
+                print(f"[CONSISTENCY] DNP→PUSH {p.get('playerName','')} {p.get('propType','')} ({void_label})")
+                await db.picks.update_one(
+                    {"pickId": p["pickId"], "email": req.email.lower()},
+                    {"$set": {"result": "push", "hitPct": 50,
+                              "voidReason": p.get("voidReason") or void_label}}
+                )
+            continue
+
+        # ── Normal result consistency check ──────────────────────────────────
+        if p.get("actualValue") is not None:
             correct = _settle_result(p["actualValue"], p.get("line", 0), p.get("recommendation", "over"))
             if correct != p.get("result"):
                 p["result"] = correct
+                print(f"[CONSISTENCY] Correcting {p.get('playerName','')} {p.get('propType','')} → {correct}")
                 await db.picks.update_one(
                     {"pickId": p["pickId"], "email": req.email.lower()},
                     {"$set": {"result": correct}}
@@ -754,6 +777,7 @@ async def list_picks(req: GetPicksRequest):
             p for p in picks
             if p.get("status") == "settled"
             and not p.get("correctedManually")
+            and not p.get("voidReason")  # never re-settle voided (DNP/early-sub) picks
             and p.get("settledAt")
             and (now_utc - datetime.fromisoformat(
                     p["settledAt"].replace("Z", "+00:00")
@@ -776,26 +800,47 @@ async def list_picks(req: GetPicksRequest):
                     if refreshed and refreshed.get("actualValue") is not None:
                         new_val = refreshed["actualValue"]
                         old_val = p.get("actualValue")
-                        # Always backfill any newly-available match metadata (score, teams, possession),
-                        # even if actualValue did not change. Costs nothing and lets older settled
-                        # picks pick up the new home/away team + possession fields gradually.
                         meta_set = {}
-                        for fld in ("homeTeam", "awayTeam", "finalHomeGoals", "finalAwayGoals",
-                                     "homePoss", "awayPoss"):
-                            v = refreshed.get(fld)
-                            if v is not None and v != "" and p.get(fld) != v:
-                                meta_set[fld] = v
-                                p[fld] = v
-                        if new_val != old_val:
-                            line    = p.get("line", 0)
-                            rec     = p.get("recommendation", "over")
-                            new_res = _settle_result(new_val, line, rec)
+
+                        # DNP void from _settle_soccer_pick: propagate push + voidReason
+                        if refreshed.get("voidReason"):
+                            new_res = "push"
+                            p["result"] = new_res
                             p["actualValue"] = new_val
-                            p["result"]      = new_res
-                            meta_set["actualValue"] = new_val
-                            meta_set["result"] = new_res
-                            print(f"[FINAL REFRESH] {p.get('playerName')} {prop_type}: "
-                                  f"actualValue {old_val} → {new_val}, result → {new_res}")
+                            p["voidReason"] = refreshed["voidReason"]
+                            meta_set = {
+                                "result": new_res,
+                                "actualValue": new_val,
+                                "hitPct": 50,
+                                "voidReason": refreshed["voidReason"],
+                            }
+                            for fld in ("homeTeam", "awayTeam", "finalHomeGoals", "finalAwayGoals",
+                                         "homePoss", "awayPoss", "minutesPlayed"):
+                                v = refreshed.get(fld)
+                                if v is not None and v != "":
+                                    meta_set[fld] = v
+                                    p[fld] = v
+                            print(f"[FINAL REFRESH] {p.get('playerName')} {prop_type}: VOID/PUSH ({refreshed['voidReason']})")
+                        else:
+                            # Always backfill any newly-available match metadata (score, teams, possession),
+                            # even if actualValue did not change.
+                            for fld in ("homeTeam", "awayTeam", "finalHomeGoals", "finalAwayGoals",
+                                         "homePoss", "awayPoss"):
+                                v = refreshed.get(fld)
+                                if v is not None and v != "" and p.get(fld) != v:
+                                    meta_set[fld] = v
+                                    p[fld] = v
+                            if new_val != old_val:
+                                line    = p.get("line", 0)
+                                rec     = p.get("recommendation", "over")
+                                new_res = _settle_result(new_val, line, rec)
+                                p["actualValue"] = new_val
+                                p["result"]      = new_res
+                                meta_set["actualValue"] = new_val
+                                meta_set["result"] = new_res
+                                print(f"[FINAL REFRESH] {p.get('playerName')} {prop_type}: "
+                                      f"actualValue {old_val} → {new_val}, result → {new_res}")
+
                         if meta_set:
                             await db.picks.update_one(
                                 {"pickId": p["pickId"], "email": req.email.lower()},
@@ -1217,7 +1262,10 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str) -> dict:
             if current_value is not None:
                 break
 
-    current_value = current_value or 0
+    # Keep None distinct from 0: None = stat not in API response, 0 = valid zero value.
+    # If stat is truly unavailable, don't settle now — the background loop will retry.
+    _stat_available = current_value is not None
+    current_value = current_value if current_value is not None else 0
     line = pick.get("line", 0)
     recommendation = pick.get("recommendation", "over")
 
@@ -1247,7 +1295,25 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str) -> dict:
     }
 
     if is_finished:
-        result_str = _settle_result(current_value, line, recommendation)
+        # Guard: never re-settle a pick that the background loop already settled
+        _current_status = pick.get("status", "live")
+        if _current_status == "settled":
+            update["matchStatus"] = "final"
+            return update
+
+        # If stat came back as None (API didn't return the field), defer to background loop
+        if not _stat_available and minutes_played >= 30:
+            print(f"[SETTLE-DEFER] {pick.get('playerName','')} {pick.get('propType','')} — stat unavailable despite {minutes_played} min played; deferring to background loop")
+            update["matchStatus"] = "final"
+            return update
+
+        # DNP / early-sub void guard — industry standard: < 30 min = void/push
+        _DNP_THRESHOLD = 30
+        if minutes_played < _DNP_THRESHOLD:
+            result_str = "push"
+            update["voidReason"] = f"Player only played {minutes_played} min (min {_DNP_THRESHOLD} required)"
+        else:
+            result_str = _settle_result(current_value, line, recommendation)
         update["result"] = result_str
         update["actualValue"] = current_value
         # Store hitPct so settled pick cards show 100%/0%/50% instead of "—"
@@ -1268,6 +1334,9 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str) -> dict:
                       "awayTeam": away_team_name,
                       "scenarioBucket": _scen_bucket,
                       "settledAt": datetime.now(timezone.utc).isoformat()}
+        # Persist voidReason to DB so the consistency fixer doesn't re-revert DNP pushes
+        if update.get("voidReason"):
+            _settle_set["voidReason"] = update["voidReason"]
         if home_poss is not None:
             _settle_set["homePoss"] = home_poss
         if away_poss is not None:
@@ -1439,34 +1508,58 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
     fixture_players = await api_football_request("fixtures/players", {"fixture": fixture_id})
     actual_value = None
 
+    minutes_played = 0
     if fixture_players:
         for team_data in fixture_players:
             for p in team_data.get("players", []):
                 if p.get("player", {}).get("id") == player_id:
                     pstats = p.get("statistics", [{}])[0]
+                    minutes_played = pstats.get("games", {}).get("minutes") or 0
                     getter = SOCCER_STAT_MAP.get(prop_type)
                     if getter:
                         actual_value = getter(pstats)
                     break
-            if actual_value is not None:
+            if actual_value is not None or minutes_played:
                 break
+
+    home_goals = recent.get("goals", {}).get("home", 0) or 0
+    away_goals = recent.get("goals", {}).get("away", 0) or 0
+    home_team_name = recent.get("teams", {}).get("home", {}).get("name", "") or ""
+    away_team_name = recent.get("teams", {}).get("away", {}).get("name", "") or ""
+    home_team_id = recent.get("teams", {}).get("home", {}).get("id")
+    away_team_id = recent.get("teams", {}).get("away", {}).get("id")
+    home_poss, away_poss = await _fetch_fixture_possession(fixture_id, home_team_id, away_team_id)
+
+    # DNP / early-sub void guard — players with < 30 min get push, not hit/miss
+    _DNP_THRESHOLD = 30
+    if minutes_played < _DNP_THRESHOLD and (minutes_played > 0 or actual_value is not None):
+        return {
+            "pickId": pick.get("id"),
+            "status": "settled",
+            "result": "push",
+            "actualValue": actual_value,
+            "minutesPlayed": minutes_played,
+            "voidReason": f"Player only played {minutes_played} min (min {_DNP_THRESHOLD} required)",
+            "fixtureDate": fixture_date,
+            "matchScore": f"{home_goals}-{away_goals}",
+            "homeTeam": home_team_name,
+            "awayTeam": away_team_name,
+            "finalHomeGoals": home_goals,
+            "finalAwayGoals": away_goals,
+            "homePoss": home_poss,
+            "awayPoss": away_poss,
+        }
 
     if actual_value is not None:
         line = pick.get("line", 0)
         recommendation = pick.get("recommendation", "over")
         result_str = _settle_result(actual_value, line, recommendation)
-        home_goals = recent.get("goals", {}).get("home", 0) or 0
-        away_goals = recent.get("goals", {}).get("away", 0) or 0
-        home_team_name = recent.get("teams", {}).get("home", {}).get("name", "") or ""
-        away_team_name = recent.get("teams", {}).get("away", {}).get("name", "") or ""
-        home_team_id = recent.get("teams", {}).get("home", {}).get("id")
-        away_team_id = recent.get("teams", {}).get("away", {}).get("id")
-        home_poss, away_poss = await _fetch_fixture_possession(fixture_id, home_team_id, away_team_id)
         return {
             "pickId": pick.get("id"),
             "status": "settled",
             "result": result_str,
             "actualValue": actual_value,
+            "minutesPlayed": minutes_played,
             "fixtureDate": fixture_date,
             "matchScore": f"{home_goals}-{away_goals}",
             "homeTeam": home_team_name,

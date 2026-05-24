@@ -386,7 +386,7 @@ STAT_LAMBDA_MAP = {
     "dribbles_success": lambda s: s.get("dribbles", {}).get("success"),
     "fouls_drawn": lambda s: s.get("fouls", {}).get("drawn"),
     "fouls_committed": lambda s: s.get("fouls", {}).get("committed"),
-    "crosses": lambda s: (s.get("passes", {}).get("crosses") if s.get("passes", {}).get("crosses") is not None else s.get("passes", {}).get("total")),
+    "crosses": lambda s: s.get("passes", {}).get("crosses"),
     "clearances": lambda s: s.get("tackles", {}).get("clearances"),
     "duels_won": lambda s: s.get("duels", {}).get("won"),
     "yellow_cards": lambda s: s.get("cards", {}).get("yellow"),
