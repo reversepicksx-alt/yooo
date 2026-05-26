@@ -88,36 +88,37 @@ KILLS_CLASS_PROPS = {"kills", "map1_kills", "maps_1_2_kills", "map3_kills", "map
 # Calibrated to realistic T2/T3 competition (not T1 which is only ~20 teams).
 # maps_1_2 figures account for blowout maps averaging ~18-20 rounds each.
 HYPER_PRIOR = {
-    "kills":                16.0,   # per-map: realistic T2 avg
-    "map1_kills":           16.0,   # map 1 only — same single-map baseline as kills
+    "kills":                14.0,   # per-map: calibrated down from 16 (settled data showed over-projection)
+    "map1_kills":           14.0,   # map 1 only — same single-map baseline as kills
     "deaths":               14.0,
     "assists":               3.5,
     "adr":                  72.0,
     "headshot_pct":         40.0,
-    "headshots":             6.5,   # per-map: ~16 kills × 40% hs rate
+    "headshots":             5.5,   # per-map: ~14 kills × 40% hs rate
     "first_kills":           2.0,
     "clutches_won":          0.4,
     "rating":                1.03,
-    "maps_1_2_kills":       27.0,
+    "maps_1_2_kills":       22.0,   # calibrated down from 27 — settled data: 10% OVER hit rate
     "maps_1_2_deaths":      26.0,
     "maps_1_2_assists":      7.0,
     "maps_1_2_adr":         72.0,
-    "maps_1_2_headshots":   11.0,   # ~27 kills × 40% hs rate
-    "map3_kills":           16.0,   # map 3 → competitive map, not a blowout
-    "map3_headshots":        6.5,
+    "maps_1_2_headshots":    9.0,   # calibrated down from 11 — settled data: 7% OVER hit rate
+    "map3_kills":           14.0,   # map 3 → calibrated down from 16
+    "map3_headshots":        5.5,   # calibrated down from 6.5
     "map3_deaths":          14.0,
     "map3_assists":          3.5,
     "map3_adr":             72.0,
-    "maps_1_3_kills":       43.0,   # maps 1-2 (~27) + map 3 (~16)
-    "maps_1_3_headshots":   17.5,   # maps 1-2 (~11) + map 3 (~6.5)
+    "maps_1_3_kills":       36.0,   # maps 1-2 (~22) + map 3 (~14)
+    "maps_1_3_headshots":   14.5,   # maps 1-2 (~9) + map 3 (~5.5)
 }
 
 # ── Kills-per-round hyper-prior (used when normalising) ──────────────────────
-KPR_HYPER = 0.63   # calibrated to T2/T3 global average
+KPR_HYPER = 0.58   # calibrated down from 0.63 — settled data confirms over-projection at 0.63
 
 # Standard expected rounds per map (before OT) — includes blowouts
-EXPECTED_ROUNDS_PER_MAP  = 22.0
-EXPECTED_ROUNDS_2MAPS    = 40.0
+# Reduced from 22/40: T2/T3 matches frequently see one-sided maps with 16-20 rounds
+EXPECTED_ROUNDS_PER_MAP  = 20.0
+EXPECTED_ROUNDS_2MAPS    = 36.0
 
 MIN_SAMPLE   = 12
 MC_TRIALS    = 60_000   # increased from 50k for more stable MC probabilities

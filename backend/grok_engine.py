@@ -668,7 +668,14 @@ async def auto_settlement_loop():
 
 async def _try_settle_mlb(pick: dict) -> bool:
     """
-    Settle an MLB pick using BallDontLie game logs.
+    Settle an MLB pick using the MLB Stats API game log.
+
+    Uses the Stats API (via get_player_game_logs) rather than BDL, because
+    player IDs stored on picks are Stats API IDs (≥100 000) and BDL uses a
+    separate 1-30 team-ID space that doesn't match what is stored on picks.
+    Game matching is done by date proximity to pick creation rather than by
+    gameId, since BDL game IDs are never reliably written to picks.
+
     Called from _run_auto_settlement() for picks with sport='mlb'.
     Returns True when a settlement was written.
     """
@@ -692,13 +699,6 @@ async def _try_settle_mlb(pick: dict) -> bool:
         print(f"[MLB SETTLE] Unknown prop_type={prop_type}, skipping")
         return False
 
-    # MLB settlement REQUIRES the live loop to have already confirmed today's game
-    # by writing a gameId onto the pick.  Without it we have no way to know which
-    # game to score — grabbing game_logs[0] would silently use a past start.
-    expected_game_id = pick.get("gameId")
-    if not expected_game_id:
-        return False  # Live loop hasn't confirmed today's game yet — wait
-
     # Only settle picks that are 4+ hours old (baseball games ~3–4 h)
     pick_created = None
     for ts_key in ("timestamp", "createdAt"):
@@ -715,24 +715,50 @@ async def _try_settle_mlb(pick: dict) -> bool:
         if hours_old < 4:
             return False  # Too early — game might still be in progress
 
-    # Always resolve against the current calendar year — picks saved in "season 2025"
-    # can run as actual 2026 calendar-year games on the BDL side.
+    # Always resolve against the current calendar year
     current_year = datetime.now(timezone.utc).year
+
+    # ── Fetch game logs via Stats API (correct ID space) ──────────────────────
     try:
-        recent = await mlb_client.get_game_player_stats(
-            int(player_id), int(expected_game_id), current_year
-        )
+        logs = await mlb_client.get_player_game_logs(int(player_id), current_year)
     except Exception as _e:
-        print(f"[MLB SETTLE] Stats fetch failed for player {player_id} game {expected_game_id}: {_e}")
+        print(f"[MLB SETTLE] Stats API log fetch failed player={player_id}: {_e}")
         return False
 
-    if not recent:
-        # Stats not yet available for this game — live loop may settle it instead
-        print(f"[MLB SETTLE] No stats yet for player {player_id} game {expected_game_id}")
+    if not logs:
+        print(f"[MLB SETTLE] No game logs for player {player_id} season {current_year}")
         return False
 
-    raw_val = recent.get(field)
+    # ── Match game log by date proximity to pick creation ─────────────────────
+    # Pick is created before the game. Find the first game played on pick_date
+    # or within 2 days after (handles late-night / next-day situations).
+    target_log = None
+    if pick_created:
+        from datetime import date as _date, timedelta as _td
+        target_date = pick_created.date()
+        window_end  = target_date + _td(days=2)
+        # logs are newest-first — iterate reversed (oldest-first) to find earliest match
+        for log in reversed(logs):
+            log_date_str = (log.get("date") or "")[:10]
+            if not log_date_str:
+                continue
+            try:
+                log_date = _date.fromisoformat(log_date_str)
+                if target_date <= log_date <= window_end:
+                    target_log = log
+                    break
+            except Exception:
+                pass
+        if not target_log:
+            # No game found in window — pick might be old; use most recent completed game
+            target_log = logs[0]
+    else:
+        target_log = logs[0]
+
+    raw_val = target_log.get(field)
     if raw_val is None:
+        print(f"[MLB SETTLE] Field '{field}' not in log for player {player_id} "
+              f"date={target_log.get('date','?')} — may be wrong group (hit vs pitch)")
         return False
 
     try:
@@ -759,7 +785,7 @@ async def _try_settle_mlb(pick: dict) -> bool:
         "pitcher_fantasy_score", "pitching_outs",
     }
     if prop_type in _PITCHER_PROP_SET and actual == 0.0:
-        ip_raw = recent.get("ip")
+        ip_raw = target_log.get("ip")
         if ip_raw is not None:
             try:
                 ip_parts = str(ip_raw).split(".")
@@ -1961,8 +1987,14 @@ async def _update_mlb_live_picks():
         if not team_id:
             continue
         try:
+            # ── Resolve BDL team ID (picks store Stats API IDs; BDL uses 1-30) ─
+            bdl_team_id = await mlb_client.get_bdl_team_id_for_statsapi(team_id, current_year)
+            effective_team_id = bdl_team_id or team_id  # fallback to original if lookup fails
+            if bdl_team_id and bdl_team_id != team_id:
+                print(f"[MLB LIVE] Resolved BDL team id: statsapi={team_id} → bdl={bdl_team_id}")
+
             # ── Fetch today's game for this team ─────────────────────────────
-            games = await mlb_client.get_today_and_live_games(team_id, current_year)
+            games = await mlb_client.get_today_and_live_games(effective_team_id, current_year)
             live_game   = next((g for g in games if "IN_PROGRESS" in (g.get("status") or "").upper()), None)
             today_game  = live_game or (games[0] if games else None)
             today_game_id = today_game.get("id") if today_game else None

@@ -415,6 +415,50 @@ async def get_teams() -> list:
     return teams
 
 
+async def get_bdl_team_id_for_statsapi(statsapi_team_id: int, season: int = 2026) -> int:
+    """
+    Resolve a BDL team ID (1-30) from a Stats API team ID (100+).
+
+    Stats API and BDL use different team ID spaces.  Picks store Stats API
+    team IDs; BDL's game/stats endpoints use BDL IDs.  This function
+    cross-references by team abbreviation (e.g. TOR → Blue Jays BDL id).
+
+    Result is cached 24 h to avoid repeated cross-API lookups.
+    """
+    cache_key = f"mlb_bdl_tid:{statsapi_team_id}"
+    doc = await _cache_get(cache_key)
+    if _cache_fresh(doc, 86400) and doc.get("data") is not None:
+        return int(doc["data"])
+
+    # Step 1: get the abbreviation from Stats API
+    try:
+        teams_data = await _statsapi_get("/teams", {"sportId": 1, "season": season})
+        abbr = ""
+        for t in teams_data.get("teams", []):
+            if t.get("id") == statsapi_team_id:
+                abbr = (t.get("abbreviation") or "").upper()
+                break
+    except Exception as _e:
+        log.debug(f"[MLB CLIENT] statsapi team lookup failed for {statsapi_team_id}: {_e}")
+        return 0
+
+    if not abbr:
+        return 0
+
+    # Step 2: match by abbreviation in BDL teams list
+    try:
+        bdl_teams = await get_teams()
+        for t in bdl_teams:
+            if (t.get("abbreviation") or "").upper() == abbr:
+                bdl_id = int(t["id"])
+                await _cache_set(cache_key, bdl_id)
+                return bdl_id
+    except Exception as _e:
+        log.debug(f"[MLB CLIENT] BDL team lookup failed for abbr={abbr}: {_e}")
+
+    return 0
+
+
 async def get_player_game_logs(player_id: int, season: int = 2026, limit: int = 30) -> list:
     """Per-game stats, newest first (API returns newest first via cursor pagination).
 

@@ -1,0 +1,3 @@
+- [MLB settlement architecture](mlb-settlement-arch.md) — Stats API IDs (≥100k) on picks; BDL uses 1-30 team IDs; settlement must use Stats API game logs not BDL stats endpoint.
+- [CS2 kills over-projection](cs2-kills-calibration.md) — Settled data showed 10% OVER hit rate; reduced HYPER_PRIOR, KPR_HYPER (0.63→0.58), EXPECTED_ROUNDS_2MAPS (40→36).
+- [Copa Lib / WC support](copa-lib-wc-support.md) — TEAM_LEAGUE_MAP expanded to all 10 SA domestic leagues; WC mode (league_id=1) skips venue split and fixture filter; player search correct URL is /api/players/search.
