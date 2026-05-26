@@ -5727,16 +5727,16 @@ Analyze ALL data thoroughly. Return JSON only."""
             f"{_m_conf}% confidence ({_m_lvl})"
         )
 
-        # Assemble tacticalBreakdown (pure math, no AI prose)
+        # ── Assemble the math engine block (always computed — used as footer
+        #    when Grok succeeded, or as full breakdown when Grok failed).
         _m_sections = [_m_verdict, _m_math]
         if _m_log_str:  _m_sections.append(_m_log_str)
         if _m_hr_str:   _m_sections.append(_m_hr_str)
         if _m_opp_str:  _m_sections.append(_m_opp_str)
         if _m_scen_str: _m_sections.append(_m_scen_str)
         _m_sections.append(_m_tldr)
-        prediction["tacticalBreakdown"] = "\n\n".join(_m_sections)
+        _m_full_block = "\n\n".join(_m_sections)
 
-        # sharpSummary — pure math statement (no AI narrative)
         _m_ev_note = ""
         if position_comp_data and position_comp_data.get("avgStatValue"):
             _m_ev_note = (
@@ -5744,12 +5744,27 @@ Analyze ALL data thoroughly. Return JSON only."""
                 f"to {position_comp_data.get('positionShort','pos')}s "
                 f"({position_comp_data.get('sampleSize',0)} matchups)."
             )
-        prediction["sharpSummary"] = (
+        _m_sharp_summary = (
             f"Reverse Formula: {_m_proj_s} {_m_rec} {_m_line_s} "
             f"(P({_m_rec}): {_m_pwin:.0f}%, edge: {_m_edge})."
             f"{_m_ev_note}"
         )
-        print(f"[PURE MATH] Built math-only tacticalBreakdown ({len(prediction['tacticalBreakdown'])} chars) + sharpSummary")
+
+        _grok_td = prediction.get("tacticalBreakdown", "")
+        _grok_ss = prediction.get("sharpSummary", "")
+
+        if _grok_td and len(_grok_td.strip()) > 100:
+            # ── Grok produced a real narrative — keep it, append math footer ──
+            prediction["tacticalBreakdown"] = _grok_td.strip() + "\n\n---\n" + _m_math + "\n" + _m_tldr
+            # Keep Grok's sharpSummary if it's non-empty and substantive
+            if not (_grok_ss and len(_grok_ss.strip()) > 20):
+                prediction["sharpSummary"] = _m_sharp_summary
+            print(f"[GROK SUMMARY] Using Grok tacticalBreakdown ({len(_grok_td)} chars) + math footer appended")
+        else:
+            # ── Grok failed or returned empty — fall back to pure-math breakdown ──
+            prediction["tacticalBreakdown"] = _m_full_block
+            prediction["sharpSummary"] = _m_sharp_summary
+            print(f"[PURE MATH] Grok summary absent — using math-only tacticalBreakdown ({len(_m_full_block)} chars)")
 
         # ── Game script disabled
         prediction["gameScript"] = {"key_finding": "Game script analysis disabled.", "scenarios": []}
