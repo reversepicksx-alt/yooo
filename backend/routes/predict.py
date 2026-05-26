@@ -105,6 +105,13 @@ async def predict(req: PredictionRequest):
 
         actual_team_id = req.teamId
         league_id = req.leagueId or 39
+        # ── World Cup / International tournament mode ──────────────────────────
+        # leagueId=1 = FIFA World Cup. Stats not available in API-Football for WC
+        # (statistics_players=False), so we use club stats as the prior and apply
+        # a neutral-venue + high-stakes treatment throughout the pipeline.
+        _is_wc = (league_id == 1)
+        if _is_wc:
+            print(f"[WC MODE] World Cup prediction — player={req.playerName}, venue will be treated as NEUTRAL")
 
         # ── AUTO-RESOLVE missing IDs from team/player names using local cache ──
         # This runs BEFORE ai_only_mode is decided, so predictions always have
@@ -1305,10 +1312,12 @@ async def predict(req: PredictionRequest):
                 _player_fixtures_raw = await api_football_request(
                     "fixtures", {"player": req.playerId, "last": 20}
                 )
-                if _player_fixtures_raw and actual_team_id:
+                if _player_fixtures_raw and actual_team_id and not _is_wc:
                     # Filter to ONLY fixtures where the player's club team appears.
                     # Fetching by player ID returns ALL competitions including national
                     # team games — strip those out so we only analyse club fixtures.
+                    # For WC (leagueId=1), skip this filter: we WANT club fixtures
+                    # since WC stats are not yet available from API-Football.
                     _before_filter = len(_player_fixtures_raw)
                     _player_fixtures_raw = [
                         fx for fx in _player_fixtures_raw
@@ -1317,6 +1326,8 @@ async def predict(req: PredictionRequest):
                     ]
                     if len(_player_fixtures_raw) < _before_filter:
                         print(f"[PLAYER-DIRECT] {req.playerName}: filtered {_before_filter} → {len(_player_fixtures_raw)} club fixtures (dropped national-team games)")
+                elif _player_fixtures_raw and _is_wc:
+                    print(f"[WC MODE] {req.playerName}: keeping all {len(_player_fixtures_raw)} fixtures as club-stat prior for WC")
 
                 if _player_fixtures_raw:
                     # For each fixture, fetch per-game stats
@@ -2261,7 +2272,11 @@ async def predict(req: PredictionRequest):
 
             _VENUE_SPLIT_PROPS = {"pass_attempts", "passes", "saves", "goalie_saves"}
             _bayes_logs = player_game_logs
-            if req.propType in _VENUE_SPLIT_PROPS and player_venue:
+            if _is_wc:
+                # World Cup: all games played at neutral venues — skip home/away split
+                # Club stats already include both home and away games which averages to neutral
+                print(f"[WC MODE] Neutral venue — skipping venue split, using all {len(player_game_logs)} club logs")
+            elif req.propType in _VENUE_SPLIT_PROPS and player_venue:
                 _venue_logs = [g for g in player_game_logs if g.get("venue") == player_venue]
                 # GK saves are HIGHLY venue-dependent (away GKs face far more shots
                 # than home GKs — e.g. Oblak home avg 2.3 vs away avg 5.8). Using
@@ -2496,6 +2511,8 @@ async def predict(req: PredictionRequest):
                     # direct-play debuff when possession shows dominance
                     "teamExpectedPoss": match_dominance.get("expectedPoss", 50.0),
                     "h2hPossAvg": match_dominance.get("h2hPossAvg"),
+                    # World Cup: every match is max-stakes elimination pressure
+                    "isWorldCup": _is_wc,
                 },
                 league_id=req.leagueId,
                 # ── Ultra v4 new layers ────────────────────────────────────
@@ -5015,6 +5032,9 @@ Analyze ALL data thoroughly. Return JSON only."""
         prediction["opponent"] = req.opponentName
         prediction["propType"] = req.propType
         prediction["line"] = req.line
+        # Tag WC predictions so the mobile UI / settlement loop can handle them correctly
+        if _is_wc:
+            prediction["wcMode"] = True
         prediction.setdefault("projectedValue", req.line)
         prediction.setdefault("recommendation", "over")
         prediction.setdefault("confidenceScore", 50)

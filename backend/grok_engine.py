@@ -937,6 +937,11 @@ async def _run_auto_settlement():
                     result = await _try_settle_soccer(pick, all_fixtures)
                     if result:
                         settled_count += 1
+                    elif pick.get("leagueId") == 1 or pick.get("wcMode"):
+                        # World Cup picks: API has no per-player stats → fall back to Grok web search
+                        wc_result = await _try_settle_wc_via_grok(pick)
+                        if wc_result:
+                            settled_count += 1
             except Exception:
                 continue
 
@@ -1286,6 +1291,91 @@ async def _run_auto_settlement():
 
     if settled_count > 0:
         print(f"[AUTO-SETTLE] Settled {settled_count} picks")
+
+
+async def _try_settle_wc_via_grok(pick: dict) -> bool:
+    """
+    Settle a World Cup (or any tournament with no API player stats) pick via Grok web search.
+    Called when API-Football returns no per-player stats for the fixture (e.g. WC 2026).
+    Returns True when the pick is settled, False if Grok couldn't find the stats.
+    """
+    player_name = pick.get("playerName", "")
+    prop_type   = pick.get("propType", "")
+    line        = pick.get("line", 0)
+    pick_id     = pick.get("pickId", "")
+    email       = pick.get("email", "")
+    team_name   = pick.get("teamName", "")
+    opp_name    = pick.get("opponentName", "")
+    rec         = pick.get("recommendation", "over")
+
+    if not player_name or not prop_type or not pick_id:
+        return False
+
+    # Map internal prop_type to natural-language search term
+    _PROP_LABELS = {
+        "pass_attempts": "passes attempted",
+        "passes": "passes completed",
+        "shots": "shots",
+        "shots_on_target": "shots on target",
+        "saves": "saves",
+        "goalie_saves": "goalkeeper saves",
+        "tackles": "tackles",
+        "key_passes": "key passes",
+        "goals": "goals",
+        "assists": "assists",
+        "crosses": "crosses",
+        "interceptions": "interceptions",
+        "clearances": "clearances",
+        "yellow_cards": "yellow cards",
+        "minutes": "minutes played",
+    }
+    prop_label = _PROP_LABELS.get(prop_type, prop_type.replace("_", " "))
+    match_desc = f"{team_name} vs {opp_name}" if opp_name else f"{team_name} match"
+
+    query = (
+        f"What were {player_name}'s exact {prop_label} stats in the {match_desc} "
+        f"World Cup 2026 match? Give me only the number, as a single integer or decimal."
+    )
+
+    try:
+        resp = await call_grok(
+            system="You are a sports stats lookup assistant. Answer ONLY with a single number (the stat value) and nothing else.",
+            user=query,
+            model="grok-3-mini-fast-beta",
+            web_search=True,
+            max_tokens=50,
+        )
+        raw = (resp or "").strip()
+        # Parse number from response
+        import re as _re
+        nums = _re.findall(r"\d+(?:\.\d+)?", raw)
+        if not nums:
+            print(f"[WC SETTLE] {player_name}/{prop_type}: Grok returned no number — '{raw}'")
+            return False
+
+        actual_value = float(nums[0])
+        result = "win" if (
+            (rec == "over" and actual_value > line) or
+            (rec == "under" and actual_value < line)
+        ) else "loss"
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        await db.picks.update_one(
+            {"pickId": pick_id},
+            {"$set": {
+                "status": "settled",
+                "result": result,
+                "actualValue": actual_value,
+                "settledAt": now_iso,
+                "wcSettled": True,
+            }}
+        )
+        print(f"[WC SETTLE] {player_name}/{prop_type} line={line} actual={actual_value} → {result.upper()} (pick={pick_id})")
+        return True
+
+    except Exception as e:
+        print(f"[WC SETTLE] {player_name}/{prop_type} error: {e}")
+        return False
 
 
 async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:

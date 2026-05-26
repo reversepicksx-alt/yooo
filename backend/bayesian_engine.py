@@ -913,6 +913,18 @@ def compute_bayesian_projection(
             _ms_mult = 1.04
             _ms_note = f"{_ms_team_level}: maximum motivation (+4%)"
 
+        # ── World Cup override ─────────────────────────────────────────────────
+        # WC is the highest-stakes competition: every player is at peak intensity,
+        # representing their nation. Apply a +5% volume boost across all props
+        # (players push harder, run more, attempt more — and WC opponents press hard).
+        # Copa Libertadores / Sudamericana finals also qualify as max-stakes.
+        if match_stakes.get("isWorldCup") and abs(_ms_mult - 1.0) < 0.005:
+            if prop_type in {"pass_attempts", "passes", "shots", "shots_on_target",
+                             "tackles", "clearances", "key_passes", "crosses", "dribbles",
+                             "interceptions", "saves", "goalie_saves"}:
+                _ms_mult = 1.05
+                _ms_note = "WORLD_CUP: maximum national-team intensity (+5% volume)"
+
         # Opponent in survival mode lifts the whole game's intensity
         if _ms_opp_level == "MUST_WIN_RELEGATION" and abs(_ms_mult - 1.0) < 0.005:
             if prop_type in {"tackles", "clearances", "shots"}:

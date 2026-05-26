@@ -174,6 +174,77 @@ TEAM_LEAGUE_MAP = {
     "angel city fc": 254, "north carolina": 254, "nc courage": 254,
     "nj/ny gotham": 254, "ny/nj gotham": 254, "portland thorns fc": 254,
     "tampa bay sun": 254, "brooklyn fc": 254,
+    # ── Copa Libertadores / Sudamericana clubs — Colombia (Primera A: 239) ──
+    "medellin": 239, "atletico medellin": 239, "independiente medellin": 239,
+    "ind. medellin": 239, "deportivo medellin": 239, "dep. independiente medellin": 239,
+    "atletico nacional": 239, "nacional medellin": 239,
+    "junior": 239, "junior fc": 239, "atletico junior": 239, "junior barranquilla": 239,
+    "junior de barranquilla": 239,
+    "bucaramanga": 239, "atletico bucaramanga": 239, "deportivo bucaramanga": 239,
+    "santa fe": 239, "independiente santa fe": 239,
+    "america de cali": 239, "america cali": 239,
+    "millonarios": 239, "millonarios fc": 239,
+    "deportes tolima": 239, "tolima": 239,
+    "once caldas": 239,
+    "envigado": 239, "envigado fc": 239,
+    # Bolivia (División de Fútbol Profesional: 21)
+    "always ready": 21, "club always ready": 21,
+    "bolivar": 21, "club bolivar": 21, "bolívar": 21,
+    "the strongest": 21, "strongest": 21,
+    "blooming": 21, "club blooming": 21,
+    "jorge wilstermann": 21, "wilstermann": 21,
+    "nacional potosi": 21, "nacional potosí": 21,
+    "aurora": 21, "club aurora": 21,
+    "san antonio bulo bulo": 21,
+    "universitario de vinto": 21,
+    # Peru (Primera División: 281)
+    "universitario": 281, "universitario de deportes": 281, "universitario lima": 281,
+    "alianza lima": 281, "alianza": 281,
+    "sporting cristal": 281,
+    "fbc melgar": 281, "melgar": 281,
+    "cienciano": 281, "club cienciano": 281,
+    "atletico grau": 281, "atlético grau": 281,
+    "cusco fc": 281,
+    "sport huancayo": 281, "adt": 281,
+    # Chile (Primera División: 265)
+    "colo colo": 265, "colo-colo": 265,
+    "universidad de chile": 265, "u. de chile": 265,
+    "universidad catolica": 265, "u. catolica": 265, "universidad católica": 265,
+    "palestino": 265, "cd palestino": 265,
+    "deportes iquique": 265, "iquique": 265,
+    "everton de vina": 265, "everton vina": 265, "everton chile": 265,
+    "nublense": 265, "cd nublense": 265,
+    "union espanola": 265, "unión española": 265,
+    "huachipato": 265, "cd huachipato": 265,
+    # Uruguay (Primera División: 270)
+    "penarol": 270, "peñarol": 270, "club atletico penarol": 270,
+    "nacional uruguay": 270, "nacional montevideo": 270, "club nacional de football": 270,
+    "defensor sporting": 270, "defensor": 270,
+    "danubio": 270, "danubio fc": 270,
+    "boston river": 270, "club boston river": 270,
+    "montevideo wanderers": 270,
+    "cerro largo": 270, "cerro largo fc": 270,
+    "racing montevideo": 270, "racing club montevideo": 270,
+    # Paraguay (Division Profesional: 250)
+    "olimpia paraguay": 250, "club olimpia": 250,
+    "cerro porteno": 250, "cerro porteño": 250,
+    "nacional asuncion": 250, "nacional paraguay": 250,
+    "libertad": 250, "club libertad": 250, "libertad asuncion": 250, "libertad asunción": 250,
+    "guarani paraguay": 250, "guaraní": 250, "club guarani": 250,
+    "sportivo luqueno": 250, "luqueno": 250, "luqueño": 250,
+    "2 de mayo": 250, "dos de mayo": 250,
+    "sportivo ameliano": 250, "ameliano": 250,
+    "olimpia asuncion": 250,
+    # Venezuela (Primera División: 299)
+    "deportivo tachira": 299, "tachira": 299, "táchira": 299,
+    "caracas fc": 299, "caracas": 299,
+    "monagas": 299, "monagas sc": 299,
+    "deportivo la guaira": 299, "la guaira": 299,
+    "metropolitanos": 299, "metropolitanos fc": 299,
+    "puerto cabello": 299, "fc puerto cabello": 299,
+    "carabobo": 299, "carabobo fc": 299,
+    "ucv": 299,
+    # ── National / International (World Cup, EUROS, Nations League, etc.) ──
     "italy": 5, "france": 5, "germany": 5, "spain": 5, "england": 5,
     "portugal": 5, "brazil": 5, "argentina": 5, "netherlands": 5, "belgium": 5,
     "croatia": 5, "usa": 5, "united states": 5, "mexico": 5, "japan": 5,
@@ -184,12 +255,29 @@ TEAM_LEAGUE_MAP = {
     "switzerland": 5, "austria": 5, "czech republic": 5, "czechia": 5, "ukraine": 5,
     "romania": 5, "greece": 5, "costa rica": 5, "canada": 5, "iran": 5,
     "algeria": 5, "cameroon": 5, "ghana": 5, "ivory coast": 5, "tunisia": 5,
+    "ecuador": 5, "peru": 5, "bolivia": 5, "venezuela": 5, "paraguay": 5,
+    "south africa": 5, "jordan": 5, "qatar": 5, "saudi arabia": 5, "iran": 5,
+    "new zealand": 5, "honduras": 5, "el salvador": 5, "panama": 5,
+    "czech republic": 5, "slovakia": 5, "hungary": 5, "israel": 5,
 }
 
 
 async def _infer_league_id(team_name: str, opponent_name: str, ai_league_id: int) -> int:
     """Infer league ID: check both teams for cross-country Copa/UCL detection first."""
-    SOUTH_AMERICAN_LEAGUES = {71, 128, 242}  # Brasileirao, Argentine Liga, Liga Pro Ecuador
+    # All South American domestic leagues — any two different SA leagues in the same match
+    # means Copa Libertadores (13) or Copa Sudamericana (11)
+    SOUTH_AMERICAN_LEAGUES = {
+        71,   # Brasil - Brasileirao
+        128,  # Argentina - Liga Profesional
+        242,  # Ecuador - Liga Pro
+        239,  # Colombia - Primera A
+        21,   # Bolivia - División de Fútbol Profesional
+        281,  # Peru - Primera División
+        265,  # Chile - Primera División
+        270,  # Uruguay - Primera División
+        299,  # Venezuela - Primera División
+        250,  # Paraguay - Division Profesional
+    }
     EUROPEAN_TOP_LEAGUES = {39, 140, 135, 78, 61}  # EPL, La Liga, Serie A, Bundesliga, Ligue 1
 
     # Step 1: Resolve league for BOTH teams (cache + map)
@@ -232,7 +320,10 @@ async def _infer_league_id(team_name: str, opponent_name: str, ai_league_id: int
     # Step 2: Cross-country detection → Copa / Champions League
     if team_league and opp_league and team_league != opp_league:
         if team_league in SOUTH_AMERICAN_LEAGUES and opp_league in SOUTH_AMERICAN_LEAGUES:
-            return 13  # Copa Libertadores
+            # Copa Sudamericana (11) if AI detected it; otherwise Copa Libertadores (13)
+            copa_league = 11 if ai_league_id == 11 else 13
+            print(f"[LEAGUE INFER] Cross-SA: {team_league} vs {opp_league} → Copa {'Sudamericana' if copa_league == 11 else 'Libertadores'} ({copa_league})")
+            return copa_league
         if team_league in EUROPEAN_TOP_LEAGUES and opp_league in EUROPEAN_TOP_LEAGUES:
             return 2  # Champions League
         # CRITICAL: When team and opponent leagues conflict (e.g. OCR read "Fulham" but
@@ -354,7 +445,7 @@ async def _resolve_player_via_cache(player_name: str, team_id: int = None, leagu
     # play in BOTH competitions and may be cached under the cup league instead of the
     # domestic league (e.g. Vélez players stored under league 13 instead of 128).
     _SA_CUPS = {13, 11}
-    _SA_DOMESTIC = {128, 71, 242}
+    _SA_DOMESTIC = {128, 71, 242, 239, 21, 281, 265, 270, 299, 250}  # All SA domestic leagues
     if league_id and player_league:
         if league_id in continental_cups:
             return player
