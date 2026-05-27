@@ -1,24 +1,38 @@
 ---
 name: Stale pick auto-void
-description: Global 7-day stale-void runs at end of _run_auto_settlement to clear orphaned pending/live picks.
+description: Multi-layer stale-void system preventing picks from hanging as pending forever.
 ---
 
-## Rule
-At the END of `_run_auto_settlement` (grok_engine.py), a global stale-void block
-queries for all non-MLB pending/live picks with `timestamp < (now - 7d)` and
-settles them as PUSH with `settledBy: "stale_void"` and a `voidReason` string.
+## Layers (innermost to outermost)
+
+### 1. Inline orphan-void (soccer loop, WTA loop)
+If a pick has NO opponentId AND NO opponentName it can never match a fixture.
+After 48h it is immediately voided as push with `settledBy: "stale_void_orphan"`.
+- Soccer: checked after each `_try_settle_soccer` call returns False
+- WTA: checked at the top of the WTA per-pick loop (before the 90-min guard)
+Both parse the timestamp inline (not relying on `pick_ts` from outer scope).
+
+### 2. Per-sport stale-voids in each sport loop
+- CS2: 7-day void when `get_cs2_completed_match_result` returns None
+- WTA: 14-day void when `get_wta_completed_match_result` returns None
+
+### 3. Global backstop (end of _run_auto_settlement)
+Catches anything the per-sport loops missed. Cutoff: **4 days** (tightened from 7d).
+Excludes MLB. Uses `timestamp < cutoff_4d` ISO string comparison.
+Sets `settledBy: "stale_void"` and `voidReason`.
 
 ## Why
-Soccer: API-Football fixture data expires; past match stats unreachable after ~2 weeks.
-WTA: 14-day per-pick limit exists in the WTA loop but picks missing opponentId are
-skipped — the global stale-void catches those.
-CS2: 7-day per-pick limit exists but may miss edge cases.
-Without this, picks accumulate as perpetually pending, inflating the pending count
-and distorting the pick history UI.
+Without this: picks accumulate as perpetually pending, distorting pick history UI
+and misleading the audit endpoint. Root cause of the original stale pick build-up:
+- Soccer picks without opponentName/opponentId had no fixture match path
+- WTA picks with opponentId=0 were silently skipped with `continue` (now voided)
+- CS2 old settlement code had a bug that wrote push instead of hit/miss (settledBy=None)
+- Global void was 7d, now 4d (soccer matches resolve in hours, not days)
 
 ## How to apply
-- MLB is excluded (`sport: {$nin: ["mlb"]}`): the live-loop's stale-final escape handles those.
-- The cutoff is 7 days for all sports. WTA picks with a known opponentId are already
-  handled at 14 days in the WTA loop — the global void is a backstop at 7d.
-- Timestamps on picks are ISO strings (e.g. "2026-05-20T21:32:40.241308+00:00").
-  MongoDB ISO string comparison is lexicographically correct for UTC timestamps.
+- All settlement writes must include `settledBy` so audits can distinguish
+  old-code pushes (settledBy=None) from current code (auto_soccer/auto_cs2).
+- Any new sport loop: add per-pick orphan void at the top when opponent info missing.
+- `picks-audit` endpoint excludes picks with `voidReason` from wrong-push count.
+- MLB is excluded from global void (`sport: {$nin: ["mlb"]}`): live-loop handles those.
+- Timestamps on picks are ISO strings. MongoDB ISO string comparison is correct for UTC.

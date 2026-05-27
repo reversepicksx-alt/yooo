@@ -991,7 +991,27 @@ async def _run_auto_settlement():
                     result = await _try_settle_soccer(pick, all_fixtures)
                     if result:
                         settled_count += 1
-                    elif pick.get("leagueId") == 1 or pick.get("wcMode"):
+                    else:
+                        # Inline orphan-void: pick >48h, no opponent info → will never settle
+                        _pick_ts_str = pick.get("timestamp") or pick.get("createdAt") or ""
+                        try:
+                            _pick_ts_dt = datetime.fromisoformat(str(_pick_ts_str).replace("Z", "+00:00"))
+                            _pick_age_h = (datetime.now(timezone.utc) - _pick_ts_dt).total_seconds() / 3600
+                        except Exception:
+                            _pick_age_h = 0
+                        _has_opp = bool(pick.get("opponentId") or pick.get("opponentName"))
+                        if _pick_age_h >= 48 and not _has_opp:
+                            _now_iso_sv = datetime.now(timezone.utc).isoformat()
+                            await db.picks.update_one(
+                                {"pickId": pick["pickId"]},
+                                {"$set": {"status":"settled","result":"push","hitPct":50,
+                                          "settledAt":_now_iso_sv,"settledBy":"stale_void_orphan",
+                                          "voidReason":"No opponent info on pick — cannot match fixture, voided as push"}},
+                            )
+                            settled_count += 1
+                            print(f"[ORPHAN-VOID] soccer {pick.get('playerName','?')} {pick.get('propType','?')} (no opponent)")
+                            continue
+                    if not result and (pick.get("leagueId") == 1 or pick.get("wcMode")):
                         # World Cup picks: API has no per-player stats → fall back to Grok web search
                         wc_result = await _try_settle_wc_via_grok(pick)
                         if wc_result:
@@ -1173,7 +1193,8 @@ async def _run_auto_settlement():
                 "hitPct":      hit_pct,
                 "matchScore":  result.get("matchScore"),
                 "settledAt":   now_iso,
-                "sport":       "cs2",   # also repair the sport field in DB
+                "settledBy":   "auto_cs2",
+                "sport":       "cs2",
             }
             try:
                 current = await db.picks.find_one({"pickId": pick_id, "email": email}, {"_id": 0, "status": 1, "sport": 1})
@@ -1232,6 +1253,32 @@ async def _run_auto_settlement():
             email         = pick.get("email", "")
 
             if not player_id or (not opponent_id and not opponent_name):
+                # If pick is >48h old with no opponent info it will never settle → void now
+                _orphan_ts = None
+                for _tf in ("timestamp", "createdAt"):
+                    _raw = pick.get(_tf)
+                    if not _raw:
+                        continue
+                    try:
+                        if isinstance(_raw, (int, float)) and _raw > 1_000_000_000:
+                            _orphan_ts = datetime.fromtimestamp(_raw / 1000, tz=timezone.utc)
+                        else:
+                            _orphan_ts = datetime.fromisoformat(str(_raw).replace("Z", "+00:00"))
+                            if _orphan_ts.tzinfo is None:
+                                _orphan_ts = _orphan_ts.replace(tzinfo=timezone.utc)
+                        break
+                    except Exception:
+                        pass
+                if _orphan_ts and (datetime.now(timezone.utc) - _orphan_ts).total_seconds() >= 172800:
+                    _now_iso_wta_sv = datetime.now(timezone.utc).isoformat()
+                    await db.picks.update_one(
+                        {"pickId": pick_id, "email": email},
+                        {"$set": {"status":"settled","result":"push","hitPct":50,
+                                  "settledAt":_now_iso_wta_sv,"settledBy":"stale_void_orphan",
+                                  "voidReason":"No opponent info stored — WTA pick cannot be settled, voided as push"}},
+                    )
+                    settled_count += 1
+                    print(f"[WTA ORPHAN-VOID] {pick.get('playerName','?')} — no opponent info")
                 continue
 
             # Skip picks saved in the last 90 min — match can't be over yet
@@ -1344,21 +1391,22 @@ async def _run_auto_settlement():
                 print(f"[WTA AUTO-SETTLE] DB write error: {_ue}")
 
     # ── Global stale-void: void picks that can never settle ────────────────────
-    # Soccer: API-Football data expires after a few weeks; past fixtures unreachable.
-    # WTA:    14-day limit already handled above per-pick; ensure any that slipped
-    #         through the opponentId=None guard (skipped) are also voided here.
-    # CS2:    7-day limit already handled per-pick in the CS2 block above.
+    # Soccer: matches end in 90 min; any pick >4d old that hasn't settled is
+    #         orphaned (opponent matched wrong window, league not supported, etc.)
+    # WTA:    14-day per-pick limit in loop above; 4d global backstop here catches
+    #         any that slipped through opponentId=None guard.
+    # CS2:    7-day per-pick limit in loop above; 4d global backstop here too.
     # MLB:    Excluded — the live-loop's stale-final escape handles those.
     # A pick with no sport field is assumed soccer.
     try:
         _now_sv = datetime.now(timezone.utc)
-        _cutoff_7d = (_now_sv - timedelta(days=7)).isoformat()
+        _cutoff_4d = (_now_sv - timedelta(days=4)).isoformat()
         _stale_candidates = await db.picks.find(
             {"status": {"$in": ["pending", "live"]},
              "sport": {"$nin": ["mlb"]},
              "$or": [
-                 {"timestamp": {"$lt": _cutoff_7d}},
-                 {"createdAt":  {"$lt": _cutoff_7d}},
+                 {"timestamp": {"$lt": _cutoff_4d}},
+                 {"createdAt":  {"$lt": _cutoff_4d}},
              ]},
             {"_id": 0, "pickId": 1, "playerName": 1, "propType": 1,
              "sport": 1, "timestamp": 1, "createdAt": 1}
@@ -1658,6 +1706,7 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
                 "awayTeam": away_team_name,
                 "scenarioBucket": _scen_bucket,
                 "settledAt": datetime.now(timezone.utc).isoformat(),
+                "settledBy": "auto_soccer",
                 "voidReason": f"Player only played {minutes_played} min (min {MIN_MINUTES} required)",
             }
             if home_poss is not None:
@@ -1713,6 +1762,7 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
             "awayTeam": away_team_name,
             "scenarioBucket": _scen_bucket,
             "settledAt": datetime.now(timezone.utc).isoformat(),
+            "settledBy": "auto_soccer",
         }
         if home_poss is not None:
             _settle_set["homePoss"] = home_poss

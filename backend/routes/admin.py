@@ -379,10 +379,13 @@ async def picks_audit(req: _PicksAuditRequest):
         matrix.setdefault(sport, {}).setdefault(status, {})[result] = row["count"]
 
     # ── 2. Wrong-push: settled=push but actualValue present and ≠ line ─────
+    # Only flag as wrong-push if there is NO voidReason — picks voided for DNP,
+    # <30 min played, no-data sentinels, etc. are legitimate pushes.
     wrong_pushes_raw = await db.picks.find(
         {"status": "settled", "result": "push",
          "actualValue": {"$exists": True, "$ne": None},
-         "line":        {"$exists": True, "$ne": None}},
+         "line":        {"$exists": True, "$nin": [None, 0]},
+         "voidReason":  {"$exists": False}},
         {"_id": 0, "pickId": 1, "playerName": 1, "propType": 1, "sport": 1,
          "line": 1, "actualValue": 1, "recommendation": 1,
          "settledAt": 1, "settledBy": 1}
