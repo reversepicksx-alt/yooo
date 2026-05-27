@@ -332,3 +332,170 @@ async def scenario_priors_refresh(req: _ScenarioPriorsRequest):
     from scenario_priors import _refresh as _refresh_scen, stats as _scen_stats
     await _refresh_scen(db)
     return {"success": True, "stats": _scen_stats()}
+
+
+# ── Picks Audit ────────────────────────────────────────────────────────────────
+
+class _PicksAuditRequest(BaseModel):
+    email: str
+    token: str
+
+
+@router.post("/picks-audit")
+async def picks_audit(req: _PicksAuditRequest):
+    """Full diagnostic snapshot of every pick in the DB (owner only).
+
+    Returns:
+      • matrix     — counts by sport × status × result
+      • wrong_push — picks settled as push but actualValue ≠ line (engine bug detector)
+      • stale      — pending/live picks by age bucket (>8 h, >24 h, >7 d)
+      • prop_rates — hit rate per propType+direction from settled picks (n≥5)
+      • recent_voids — last 20 stale-void picks
+      • totals     — aggregate hit/miss/push/pending counts
+    """
+    from datetime import datetime, timezone, timedelta
+    await verify_owner(req.email, req.token)
+
+    now = datetime.now(timezone.utc)
+
+    # ── 1. Full matrix: sport × status × result ────────────────────────────
+    matrix_raw = await db.picks.aggregate([
+        {"$group": {
+            "_id": {
+                "sport":  {"$ifNull": ["$sport",  "unknown"]},
+                "status": {"$ifNull": ["$status", "unknown"]},
+                "result": {"$ifNull": ["$result", "—"]},
+            },
+            "count": {"$sum": 1},
+        }},
+        {"$sort": {"_id.sport": 1, "_id.status": 1, "_id.result": 1}},
+    ]).to_list(None)
+
+    matrix = {}
+    for row in matrix_raw:
+        sport  = row["_id"]["sport"]
+        status = row["_id"]["status"]
+        result = row["_id"]["result"]
+        matrix.setdefault(sport, {}).setdefault(status, {})[result] = row["count"]
+
+    # ── 2. Wrong-push: settled=push but actualValue present and ≠ line ─────
+    wrong_pushes_raw = await db.picks.find(
+        {"status": "settled", "result": "push",
+         "actualValue": {"$exists": True, "$ne": None},
+         "line":        {"$exists": True, "$ne": None}},
+        {"_id": 0, "pickId": 1, "playerName": 1, "propType": 1, "sport": 1,
+         "line": 1, "actualValue": 1, "recommendation": 1,
+         "settledAt": 1, "settledBy": 1}
+    ).sort("settledAt", -1).to_list(200)
+
+    wrong_pushes = []
+    for p in wrong_pushes_raw:
+        try:
+            diff = abs(float(p.get("actualValue", 0)) - float(p.get("line", 0)))
+            if diff >= 0.01:
+                wrong_pushes.append({
+                    "pickId":      p.get("pickId"),
+                    "player":      p.get("playerName"),
+                    "prop":        p.get("propType"),
+                    "sport":       p.get("sport"),
+                    "line":        p.get("line"),
+                    "actual":      p.get("actualValue"),
+                    "diff":        round(diff, 3),
+                    "rec":         p.get("recommendation"),
+                    "settledAt":   p.get("settledAt"),
+                    "settledBy":   p.get("settledBy"),
+                })
+        except (TypeError, ValueError):
+            pass
+
+    # ── 3. Stale pending/live picks ────────────────────────────────────────
+    cutoff_8h  = (now - timedelta(hours=8)).isoformat()
+    cutoff_24h = (now - timedelta(hours=24)).isoformat()
+    cutoff_7d  = (now - timedelta(days=7)).isoformat()
+
+    stale_pipeline = [
+        {"$match": {"status": {"$in": ["pending", "live"]}}},
+        {"$addFields": {"ts": {"$ifNull": ["$timestamp", "$createdAt"]}}},
+        {"$match": {"ts": {"$lt": cutoff_8h}}},
+        {"$group": {
+            "_id": {"$ifNull": ["$sport", "unknown"]},
+            "over_8h":  {"$sum": 1},
+            "over_24h": {"$sum": {"$cond": [{"$lt": ["$ts", cutoff_24h]}, 1, 0]}},
+            "over_7d":  {"$sum": {"$cond": [{"$lt": ["$ts", cutoff_7d]},  1, 0]}},
+            "oldest":   {"$min": "$ts"},
+        }},
+        {"$sort": {"_id": 1}},
+    ]
+    stale_raw  = await db.picks.aggregate(stale_pipeline).to_list(None)
+    stale_by_sport = {
+        r["_id"]: {
+            "over_8h":  r["over_8h"],
+            "over_24h": r["over_24h"],
+            "over_7d":  r["over_7d"],
+            "oldest":   r.get("oldest", ""),
+        }
+        for r in stale_raw
+    }
+
+    # ── 4. Prop hit rates (settled picks, n≥5, exclude push) ──────────────
+    prop_pipeline = [
+        {"$match": {"status": "settled", "result": {"$in": ["hit", "miss"]}}},
+        {"$group": {
+            "_id": {
+                "prop": "$propType",
+                "dir":  {"$toUpper": "$recommendation"},
+            },
+            "hits":  {"$sum": {"$cond": [{"$eq": ["$result", "hit"]}, 1, 0]}},
+            "total": {"$sum": 1},
+        }},
+        {"$match": {"total": {"$gte": 5}}},
+        {"$addFields": {"hitRate": {"$round": [
+            {"$multiply": [{"$divide": ["$hits", "$total"]}, 100]}, 1
+        ]}}},
+        {"$sort": {"hitRate": 1}},
+    ]
+    prop_raw   = await db.picks.aggregate(prop_pipeline).to_list(None)
+    prop_rates = [
+        {
+            "prop":    r["_id"]["prop"],
+            "dir":     r["_id"]["dir"],
+            "hitRate": r["hitRate"],
+            "hits":    r["hits"],
+            "total":   r["total"],
+            "flag":    ("🚫 AVOID" if r["hitRate"] < 30 else
+                        "⚠️ RISKY" if r["hitRate"] < 45 else
+                        "✅ GOOD"  if r["hitRate"] >= 55 else ""),
+        }
+        for r in prop_raw
+    ]
+
+    # ── 5. Recent stale-voids ──────────────────────────────────────────────
+    recent_voids = await db.picks.find(
+        {"settledBy": "stale_void"},
+        {"_id": 0, "playerName": 1, "propType": 1, "sport": 1,
+         "settledAt": 1, "voidReason": 1}
+    ).sort("settledAt", -1).limit(20).to_list(20)
+
+    # ── 6. Totals ──────────────────────────────────────────────────────────
+    totals = {
+        "hit":     await db.picks.count_documents({"status": "settled", "result": "hit"}),
+        "miss":    await db.picks.count_documents({"status": "settled", "result": "miss"}),
+        "push":    await db.picks.count_documents({"status": "settled", "result": "push"}),
+        "pending": await db.picks.count_documents({"status": {"$in": ["pending", "live"]}}),
+        "total":   await db.picks.count_documents({}),
+    }
+    settled = totals["hit"] + totals["miss"]
+    totals["overall_hit_rate"] = (
+        round(totals["hit"] / settled * 100, 1) if settled > 0 else None
+    )
+    totals["wrong_push_count"] = len(wrong_pushes)
+
+    return {
+        "generatedAt":  now.isoformat(),
+        "totals":       totals,
+        "matrix":       matrix,
+        "wrong_pushes": wrong_pushes,
+        "stale":        stale_by_sport,
+        "prop_rates":   prop_rates,
+        "recent_voids": recent_voids,
+    }
