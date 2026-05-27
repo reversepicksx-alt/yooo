@@ -1,3 +1,5 @@
-- [MLB settlement architecture](mlb-settlement-arch.md) — Stats API IDs (≥100k) on picks; BDL uses 1-30 team IDs; settlement must use Stats API game logs not BDL stats endpoint.
+- [MLB settlement architecture](mlb-settlement-arch.md) — BDL IDs (<100k) now normalised via _transform_bdl_log; composite props via _COMPOSITE_HANDLERS; cache keys mlb_gl2/mlb_gps2.
 - [CS2 kills over-projection](cs2-kills-calibration.md) — Settled data showed 10% OVER hit rate; reduced HYPER_PRIOR, KPR_HYPER (0.63→0.58), EXPECTED_ROUNDS_2MAPS (40→36).
 - [Copa Lib / WC support](copa-lib-wc-support.md) — TEAM_LEAGUE_MAP expanded to all 10 SA domestic leagues; WC mode (league_id=1) skips venue split and fixture filter; player search correct URL is /api/players/search.
+- [Soccer prop hard blocks](soccer-prop-blocks.md) — clearances OVER: hard-blocked post-Bayesian-Truth (0% hit rate 13n); shots OVER: AVOID in prop safety (19% hit rate).
+- [Stale pick auto-void](stale-void.md) — Global 7d stale-void runs at end of _run_auto_settlement; skips MLB (live-loop handles those); voids as push with voidReason field.

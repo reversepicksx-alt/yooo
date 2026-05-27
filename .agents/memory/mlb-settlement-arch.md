@@ -1,19 +1,30 @@
 ---
 name: MLB settlement architecture
-description: Stats API vs BDL ID mismatch causes broken settlement; Stats API game logs are the correct source.
+description: BDL vs Stats-API ID handling, field normalisation, and composite prop settlement.
 ---
 
 ## Rule
-`_try_settle_mlb` (and the live loop) must use `mlb_client.get_player_game_logs()` (Stats API) — NOT `get_game_player_stats()` (BDL) — because picks store Stats API player IDs (≥100,000) and BDL uses a separate 1–30 team ID space.
+All player IDs go through `mlb_client.get_player_game_logs()` for settlement.
+BDL IDs (< 100_000) are normalised to Stats-API field shape by `_transform_bdl_log()`.
+Stats API IDs (≥ 100k) return native field names from statsapi.mlb.com.
+Both paths produce the same schema — `_try_settle_mlb` and the live loop use a
+single code path.
 
 ## Why
-- `search_players` returns Stats API IDs (≥100k, e.g. Gausman=592332)
-- These are stored as `playerId` and `teamId` on picks
-- BDL `get_game_player_stats(player_id, game_id)` also uses BDL-format game IDs which are never reliably written to picks
-- The old code required `expected_game_id` (a BDL ID) on the pick; without it the settlement returned `False` forever → 0%/0.9% settled hit rates
+BDL raw fields are `"strikeouts"`, `"hits"`, `"walks"` etc. while settlement
+code looked for `"p_k"`, `"p_hits"`, `"p_bb"`. This mismatch caused
+`current_value = None` → pick never settled → stale-final escape pushed it
+after 48h. 301 real hit/miss picks were wrongly recorded as PUSH and had to
+be repaired with a data script.
 
 ## How to apply
-- `_try_settle_mlb`: call `get_player_game_logs(player_id, current_year)` — returns transformed logs with `p_k`, `ip`, etc. Match by date proximity (pick creation date ± 2 days).
-- Live loop BDL game detection: call `get_bdl_team_id_for_statsapi(statsapi_team_id)` to resolve the BDL 1-30 ID before calling `get_today_and_live_games()`.
-- Stats API game logs from `_statsapi_game_logs` use `game_id = gamePk` (Stats API IDs), not BDL game IDs.
-- Verified: `get_player_game_logs(592332, 2026)` returns `p_k=8, ip=6.2` — correct field names for settlement.
+- `_transform_bdl_log(raw)` is called in BOTH `get_player_game_logs` (BDL path)
+  and `get_game_player_stats` (BDL path). Do not apply to Stats-API returns.
+- Cache keys are `mlb_gl2:` and `mlb_gps2:` (bumped to invalidate old BDL format).
+- Composite props (`hitter_fantasy_points`, `hits_runs_rbis`, `pitcher_fantasy_score`,
+  `pitching_outs`) use placeholder field names like `__fantasy_pts__`.
+  In `_try_settle_mlb` these are handled by `_COMPOSITE_HANDLERS` dict mapping
+  each placeholder to its compute function (`_compute_fantasy_pts`, etc. from mlb_engine.py).
+- `_try_settle_mlb` docstring updated to reflect both ID spaces.
+- Live loop: `get_bdl_team_id_for_statsapi()` resolves BDL 1-30 team ID before
+  calling `get_today_and_live_games()`.

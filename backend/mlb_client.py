@@ -128,6 +128,50 @@ MLBSTATS_BASE = "https://statsapi.mlb.com/api/v1"
 _STATSAPI_ID_THRESHOLD = 100_000  # IDs above this are MLB Stats API
 
 
+def _transform_bdl_log(raw: dict) -> dict:
+    """Normalise a raw BDL /stats entry to the same field schema as _statsapi_game_logs.
+
+    BDL stores the game date under raw["game"]["date"] and uses field names like
+    "strikeouts", "hits", "walks" that differ from the Stats-API names ("p_k",
+    "p_hits", "p_bb").  After this transform, _try_settle_mlb and the live loop
+    can use a single code path for both player-ID spaces.
+
+    Note: "strikeouts" is ambiguous — it means pitcher Ks for pitchers and batter
+    Ks for batters.  We copy it to BOTH slots (p_k and k) so whichever prop type
+    is being settled will find the right value.  Same for hits/walks.
+    """
+    game     = raw.get("game") or {}
+    date_str = (game.get("date") or "")[:10]
+    ks       = raw.get("strikeouts")
+    h        = raw.get("hits")
+    bb       = raw.get("walks")
+    pitches  = raw.get("pitches") or raw.get("number_of_pitches")
+    return {
+        "date":              date_str,
+        "game_id":           game.get("id"),
+        # pitcher Stats-API-shaped fields
+        "p_k":               ks,
+        "ip":                raw.get("innings_pitched"),   # kept as string "6.2"
+        "p_hits":            h,
+        "er":                raw.get("earned_runs"),
+        "p_bb":              bb,
+        "pitch_count":       pitches,
+        "batters_faced":     raw.get("batters_faced"),
+        # batter Stats-API-shaped fields
+        "hits":              h,
+        "hr":                raw.get("home_runs"),
+        "rbi":               raw.get("rbi"),
+        "bb":                bb,
+        "k":                 ks,
+        "runs":              raw.get("runs"),
+        "total_bases":       raw.get("total_bases"),
+        "stolen_bases":      raw.get("stolen_bases"),
+        "doubles":           raw.get("doubles"),
+        "plate_appearances": raw.get("plate_appearances"),
+        "_bdl_source":       True,
+    }
+
+
 async def _statsapi_get(path: str, params: dict = None) -> dict:
     try:
         async with httpx.AsyncClient(timeout=15) as c:
@@ -471,7 +515,7 @@ async def get_player_game_logs(player_id: int, season: int = 2026, limit: int = 
             logs = await _statsapi_game_logs(player_id, season, group="pitching")
         return logs[:limit]
 
-    key = f"mlb_gl:{player_id}:{season}"
+    key = f"mlb_gl2:{player_id}:{season}"
     doc = await _cache_get(key)
     if _cache_fresh(doc, CACHE_TTL["stats"]) and doc.get("data") is not None:
         return doc["data"]
@@ -488,6 +532,9 @@ async def get_player_game_logs(player_id: int, season: int = 2026, limit: int = 
         cursor = r2.get("meta", {}).get("next_cursor")
 
     logs = logs[:limit]
+    # Normalise BDL entries to the same field schema as _statsapi_game_logs
+    # so _try_settle_mlb and the live loop use a single code path.
+    logs = [_transform_bdl_log(l) for l in logs]
     await _cache_set(key, logs)
     return logs
 
@@ -638,7 +685,7 @@ async def get_game_player_stats(player_id: int, game_id: int, season: int = 2026
     every loop iteration reads the latest values from BDL.  Completed games
     are cached for 24 h (they won't change).
     """
-    key = f"mlb_gps:{player_id}:{game_id}"
+    key = f"mlb_gps2:{player_id}:{game_id}"
     if not live:
         doc = await _cache_get(key)
         if _cache_fresh(doc, 86400) and doc.get("data") is not None:
@@ -657,6 +704,9 @@ async def get_game_player_stats(player_id: int, game_id: int, season: int = 2026
     # Only cache completed-game stats — live stats must never be cached
     if data is not None and not live:
         await _cache_set(key, data)
+    # Normalise to Stats-API field names so live-loop can use a single lookup path
+    if data is not None:
+        data = _transform_bdl_log(data)
     return data
 
 

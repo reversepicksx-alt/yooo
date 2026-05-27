@@ -668,23 +668,42 @@ async def auto_settlement_loop():
 
 async def _try_settle_mlb(pick: dict) -> bool:
     """
-    Settle an MLB pick using the MLB Stats API game log.
+    Settle an MLB pick using game log data.
 
-    Uses the Stats API (via get_player_game_logs) rather than BDL, because
-    player IDs stored on picks are Stats API IDs (≥100 000) and BDL uses a
-    separate 1-30 team-ID space that doesn't match what is stored on picks.
-    Game matching is done by date proximity to pick creation rather than by
-    gameId, since BDL game IDs are never reliably written to picks.
+    Handles both ID spaces:
+      • Stats API IDs (≥ _STATSAPI_ID_THRESHOLD, ~100k) → mlb_client fetches
+        from statsapi.mlb.com directly with proper field names.
+      • BDL IDs (< _STATSAPI_ID_THRESHOLD) → mlb_client fetches from
+        BallDontLie and _transform_bdl_log normalises the field schema to
+        Stats-API shape (p_k, hits, rbi, ip, etc.) before caching/returning.
+      • Composite props (hitter_fantasy_points, hits_runs_rbis, etc.) are
+        detected via _COMPOSITE_HANDLERS and computed from sub-fields.
+
+    Game matching is done by date proximity to pick creation; BDL game IDs
+    are unreliable on picks so we never filter by ID.
 
     Called from _run_auto_settlement() for picks with sport='mlb'.
     Returns True when a settlement was written.
     """
     try:
         import mlb_client
-        from mlb_engine import ALL_PROP_FIELDS, PITCHER_PROPS
+        from mlb_engine import (
+            ALL_PROP_FIELDS, PITCHER_PROPS,
+            _compute_fantasy_pts, _compute_hits_runs_rbis,
+            _compute_pitcher_fantasy, _compute_pitching_outs,
+        )
     except ImportError as _ie:
         print(f"[MLB SETTLE] Import error: {_ie}")
         return False
+
+    # Composite props are stored in ALL_PROP_FIELDS as placeholder strings like
+    # "__fantasy_pts__".  We detect those and call the real compute function.
+    _COMPOSITE_HANDLERS = {
+        "__fantasy_pts__":      _compute_fantasy_pts,
+        "__hits_runs_rbis__":   _compute_hits_runs_rbis,
+        "__pitcher_fantasy__":  _compute_pitcher_fantasy,
+        "__pitching_outs__":    _compute_pitching_outs,
+    }
 
     player_id = pick.get("playerId")
     prop_type  = (pick.get("propType") or "").lower()
@@ -755,11 +774,20 @@ async def _try_settle_mlb(pick: dict) -> bool:
     else:
         target_log = logs[0]
 
-    raw_val = target_log.get(field)
-    if raw_val is None:
-        print(f"[MLB SETTLE] Field '{field}' not in log for player {player_id} "
-              f"date={target_log.get('date','?')} — may be wrong group (hit vs pitch)")
-        return False
+    # ── Composite props: compute from multiple fields ─────────────────────────
+    _composite_fn = _COMPOSITE_HANDLERS.get(field)
+    if _composite_fn:
+        raw_val = _composite_fn(target_log)
+        if raw_val is None:
+            print(f"[MLB SETTLE] Composite '{field}' returned None for player {player_id} "
+                  f"date={target_log.get('date','?')} — missing sub-fields")
+            return False
+    else:
+        raw_val = target_log.get(field)
+        if raw_val is None:
+            print(f"[MLB SETTLE] Field '{field}' not in log for player {player_id} "
+                  f"date={target_log.get('date','?')} — may be wrong group (hit vs pitch)")
+            return False
 
     try:
         if prop_type == "innings_pitched":
@@ -1314,6 +1342,52 @@ async def _run_auto_settlement():
                     print(f"[WTA AUTO-SETTLE] notification error: {_ne}")
             except Exception as _ue:
                 print(f"[WTA AUTO-SETTLE] DB write error: {_ue}")
+
+    # ── Global stale-void: void picks that can never settle ────────────────────
+    # Soccer: API-Football data expires after a few weeks; past fixtures unreachable.
+    # WTA:    14-day limit already handled above per-pick; ensure any that slipped
+    #         through the opponentId=None guard (skipped) are also voided here.
+    # CS2:    7-day limit already handled per-pick in the CS2 block above.
+    # MLB:    Excluded — the live-loop's stale-final escape handles those.
+    # A pick with no sport field is assumed soccer.
+    try:
+        _now_sv = datetime.now(timezone.utc)
+        _cutoff_7d = (_now_sv - timedelta(days=7)).isoformat()
+        _stale_candidates = await db.picks.find(
+            {"status": {"$in": ["pending", "live"]},
+             "sport": {"$nin": ["mlb"]},
+             "$or": [
+                 {"timestamp": {"$lt": _cutoff_7d}},
+                 {"createdAt":  {"$lt": _cutoff_7d}},
+             ]},
+            {"_id": 0, "pickId": 1, "playerName": 1, "propType": 1,
+             "sport": 1, "timestamp": 1, "createdAt": 1}
+        ).to_list(500)
+
+        _sv_count = 0
+        for _sp in _stale_candidates:
+            try:
+                _sport = _sp.get("sport") or "soccer"
+                await db.picks.update_one(
+                    {"pickId": _sp["pickId"]},
+                    {"$set": {
+                        "result":      "push",
+                        "status":      "settled",
+                        "matchStatus": "final",
+                        "settledAt":   _now_sv.isoformat(),
+                        "settledBy":   "stale_void",
+                        "voidReason":  f"No data found after 7+ days ({_sport}) — voided as push",
+                    }},
+                )
+                _sv_count += 1
+                print(f"[STALE-VOID] {_sp.get('playerName','?')} {_sp.get('propType','?')} ({_sport}) → push")
+            except Exception:
+                pass
+        if _sv_count:
+            settled_count += _sv_count
+            print(f"[STALE-VOID] Voided {_sv_count} stale picks as push")
+    except Exception as _sve:
+        print(f"[STALE-VOID] Error: {_sve}")
 
     if settled_count > 0:
         print(f"[AUTO-SETTLE] Settled {settled_count} picks")

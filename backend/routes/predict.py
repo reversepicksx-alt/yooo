@@ -5231,6 +5231,24 @@ Analyze ALL data thoroughly. Return JSON only."""
                 + (f" [FLIPPED from {_bt_old_rec.upper()} {_bt_old_conf}%]" if _bt_old_rec != _bt_dir else f" [confidence {_bt_old_conf}→{_bt_new_conf}]")
             )
 
+        # ── HARD BLOCK: clearances OVER (0% hit rate, runs AFTER Bayesian Truth) ──
+        # Bayesian Truth may still output OVER because the prior over-projects
+        # clearances for forwards/midfielders who rarely block crosses.
+        # 0W/11L empirical record → hard-flip to UNDER and set 60% Medium.
+        if req.propType == "clearances" and prediction.get("recommendation", "").lower() == "over":
+            prediction["recommendation"]  = "under"
+            prediction["confidenceScore"] = 60
+            prediction["confidenceLevel"] = "Medium"
+            prediction["coinFlip"]        = False
+            prediction["tacticalAlerts"]  = prediction.get("tacticalAlerts", []) + [
+                "CLEARANCES OVER → UNDER (data override): 0% hit rate on 11 settled clearances OVER picks. "
+                "Books set these lines precisely; clearances are volatile and hard to project. "
+                "Clearances UNDER is viable."
+            ]
+            if prediction.get("projectedValue") is not None and prediction["projectedValue"] > req.line:
+                prediction["projectedValue"] = round((req.line - 0.5) * 2) / 2
+            print(f"[HARD BLOCK] clearances OVER → forced UNDER 60% for {req.playerName}")
+
         # ── MARKET DISTANCE GUARD ────────────────────────────────────────────
         # When our projection is ≥35% away from the market line, the prior is
         # likely contaminated (stale seasons, old-club era, position mismatch).
