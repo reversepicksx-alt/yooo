@@ -1,11 +1,14 @@
-"""Grok-powered position resolution for players."""
+"""Gemini-powered position resolution for players."""
 import httpx
 import json
-from config import db, XAI_API_KEY
+from config import db, GEMINI_API_KEY
+
+GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
+GEMINI_FLASH = "gemini-2.5-flash"
 
 
 async def resolve_position_grok(player_name: str, sport: str = "soccer") -> dict:
-    """Resolve a single player's position using cache first, then Grok fallback.
+    """Resolve a single player's position using cache first, then Gemini fallback.
     Returns {"position": "XX", "role": "..."} or empty strings if failed."""
 
     # Try cache first
@@ -15,11 +18,10 @@ async def resolve_position_grok(player_name: str, sport: str = "soccer") -> dict
     if cached and cached.get("specificPosition"):
         return {"position": cached["specificPosition"], "role": cached.get("role", "")}
 
-    # Grok fallback
-    if not XAI_API_KEY:
+    if not GEMINI_API_KEY:
         return {"position": "", "role": ""}
 
-    return await _grok_resolve_batch([{"playerName": player_name, "sport": sport}])
+    return await _gemini_resolve_batch([{"playerName": player_name, "sport": sport}])
 
 
 async def resolve_positions_grok_batch(players: list) -> dict:
@@ -30,7 +32,6 @@ async def resolve_positions_grok_batch(players: list) -> dict:
     if not players:
         return {}
 
-    # Check cache first for each player
     results = {}
     unresolved = []
     for p in players:
@@ -45,18 +46,17 @@ async def resolve_positions_grok_batch(players: list) -> dict:
         else:
             unresolved.append(p)
 
-    if not unresolved or not XAI_API_KEY:
+    if not unresolved or not GEMINI_API_KEY:
         return results
 
-    # Batch Grok call
-    grok_results = await _grok_resolve_batch(unresolved)
-    results.update(grok_results)
+    gemini_results = await _gemini_resolve_batch(unresolved)
+    results.update(gemini_results)
     return results
 
 
-async def _grok_resolve_batch(players: list) -> dict:
-    """Call Grok API to resolve positions for a list of players."""
-    if not players or not XAI_API_KEY:
+async def _gemini_resolve_batch(players: list) -> dict:
+    """Call Gemini API to resolve positions for a list of players."""
+    if not players or not GEMINI_API_KEY:
         return {}
 
     results = {}
@@ -76,18 +76,18 @@ Return JSON array: [{{"name":"exact player name","position":"XX","role":"short t
 Only the JSON array, no markdown, no explanation."""
 
     try:
+        url = f"{GEMINI_BASE}/{GEMINI_FLASH}:generateContent?key={GEMINI_API_KEY}"
+        payload = {
+            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 0, "maxOutputTokens": 500,
+                                 "responseMimeType": "application/json"},
+        }
         async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(
-                "https://api.x.ai/v1/chat/completions",
-                headers={"Authorization": f"Bearer {XAI_API_KEY}", "Content-Type": "application/json"},
-                json={
-                    "model": "grok-4-1-fast-non-reasoning",
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0,
-                }
-            )
+            resp = await client.post(url, json=payload)
             if resp.status_code == 200:
-                content = resp.json()["choices"][0]["message"]["content"].strip()
+                data = resp.json()
+                parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+                content = "".join(p.get("text", "") for p in parts).strip()
                 if content.startswith("```"):
                     content = content.split("\n", 1)[1] if "\n" in content else content[3:]
                     content = content.rsplit("```", 1)[0]
@@ -98,7 +98,6 @@ Only the JSON array, no markdown, no explanation."""
                     rrole = r.get("role", "")
                     if rname and rpos:
                         results[rname] = {"position": rpos, "role": rrole}
-                        # Cache for future
                         matching = [p for p in players if p["playerName"] == rname]
                         pid = matching[0].get("playerId") if matching else None
                         cache_doc = {"playerName": rname, "specificPosition": rpos, "role": rrole}
@@ -110,6 +109,6 @@ Only the JSON array, no markdown, no explanation."""
                             upsert=True
                         )
     except Exception as e:
-        print(f"[GROK-POS] Error: {e}")
+        print(f"[GEMINI-POS] Error: {e}")
 
     return results

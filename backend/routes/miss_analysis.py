@@ -86,42 +86,53 @@ Respond in EXACTLY this JSON format:
 
 Return ONLY valid JSON, no markdown or explanation."""
 
-    models = [
-        ("gemini/gemini-2.0-flash", "GE"),
-        ("grok-4-1-fast-non-reasoning", "GK"),
-        ("gpt-5.2", "GP"),
-    ]
+    import httpx as _httpx
+    import os as _os
+    import json as jmod
 
+    GEMINI_KEY = _os.environ.get("GEMINI_API_KEY", "")
     EMERGENT_PROXY = "https://integrations.emergentagent.com/llm"
 
-    async def call_model(model_id, label):
+    async def call_gemini_direct(label: str) -> tuple:
+        """Direct Gemini call using JSON mode for reliable parsing."""
         try:
-            import json as jmod
-            from openai import OpenAI
-
-            if label == "GK":
-                import os
-                xai_key = os.environ.get("XAI_API_KEY", "")
-                if not xai_key:
+            if not GEMINI_KEY:
+                return label, None
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_KEY}"
+            payload = {
+                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                "generationConfig": {
+                    "temperature": 0, "maxOutputTokens": 500,
+                    "responseMimeType": "application/json",
+                },
+            }
+            async with _httpx.AsyncClient(timeout=20) as client:
+                resp = await client.post(url, json=payload)
+                if resp.status_code != 200:
                     return label, None
-                ai_client = OpenAI(api_key=xai_key, base_url="https://api.x.ai/v1")
-                use_model = "grok-4-1-fast-non-reasoning"
-            else:
-                ai_client = OpenAI(api_key=EMERGENT_LLM_KEY, base_url=EMERGENT_PROXY + "/v1")
-                use_model = model_id
+                data = resp.json()
+                parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+                text = "".join(p.get("text", "") for p in parts).strip()
+                return label, jmod.loads(text)
+        except Exception as e:
+            print(f"[MISS ANALYSIS] {label} error: {e}")
+            return label, None
 
+    async def call_emergent_model(model_id: str, label: str) -> tuple:
+        """Emergent proxy model call as secondary."""
+        try:
+            from openai import OpenAI
+            ai_client = OpenAI(api_key=EMERGENT_LLM_KEY, base_url=EMERGENT_PROXY + "/v1")
             loop = asyncio.get_event_loop()
             def _run():
                 return ai_client.chat.completions.create(
-                    model=use_model,
+                    model=model_id,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0,
                     max_tokens=500,
                 )
             resp = await asyncio.wait_for(loop.run_in_executor(None, _run), timeout=20)
             text = resp.choices[0].message.content.strip()
-
-            # Clean markdown fences
             if text.startswith("```"):
                 text = text.split("\n", 1)[1] if "\n" in text else text[3:]
             if text.endswith("```"):
@@ -133,7 +144,10 @@ Return ONLY valid JSON, no markdown or explanation."""
             print(f"[MISS ANALYSIS] {label} error: {e}")
             return label, None
 
-    tasks = [call_model(m, l) for m, l in models]
+    tasks = [
+        call_gemini_direct("GE"),
+        call_emergent_model("gemini/gemini-2.5-flash", "GF"),
+    ]
     results = await asyncio.gather(*tasks)
 
     analyses = {}

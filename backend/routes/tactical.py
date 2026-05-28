@@ -498,29 +498,31 @@ async def tactical_message(req: TacticalMessageRequest):
         except Exception as _e:
             print(f"[TACTICAL] Gemini primary failed: {_e}")
 
-    # ── FALLBACK: Grok tactical reasoning (if Gemini failed) ──
-    if not _gemini_ok and XAI_API_KEY:
+    # ── FALLBACK: second Gemini attempt with Flash if Pro failed ──
+    if not _gemini_ok and GEMINI_API_KEY:
         try:
-            grok_client = OpenAI(api_key=XAI_API_KEY, base_url="https://api.x.ai/v1")
-            grok_messages = [{"role": "system", "content": GROK_SYSTEM}]
+            _flash_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+            _flash_contents = []
             if history_text:
-                grok_messages.append({"role": "user", "content": f"[CONVERSATION CONTEXT]\n{history_text}\n[END CONTEXT]"})
-                grok_messages.append({"role": "assistant", "content": "Context acknowledged."})
-            grok_messages.append({"role": "user", "content": user_msg + full_context})
-            loop = aio.get_event_loop()
-            def _call_grok():
-                return grok_client.chat.completions.create(
-                    model="grok-4-1-fast-non-reasoning",
-                    messages=grok_messages,
-                    max_tokens=2000,
-                    temperature=0.7,
-                )
-            grok_result = await aio.wait_for(loop.run_in_executor(None, _call_grok), timeout=45)
-            grok_response = grok_result.choices[0].message.content
-        except aio.TimeoutError:
-            grok_response = "[Primary analysis timed out]"
-        except Exception as e:
-            grok_response = f"[Primary analysis unavailable: {str(e)[:100]}]"
+                _flash_contents.append({"role": "user", "parts": [{"text": f"[CONVERSATION CONTEXT]\n{history_text}\n[END CONTEXT]"}]})
+                _flash_contents.append({"role": "model", "parts": [{"text": "Context acknowledged."}]})
+            _flash_contents.append({"role": "user", "parts": [{"text": user_msg + full_context}]})
+            _flash_payload = {
+                "systemInstruction": {"parts": [{"text": GROK_SYSTEM}]},
+                "contents": _flash_contents,
+                "generationConfig": {"temperature": 0.7, "maxOutputTokens": 2000},
+            }
+            async with _httpx.AsyncClient(timeout=_httpx.Timeout(45, connect=10)) as _client:
+                _resp = await _client.post(_flash_url, json=_flash_payload)
+                if _resp.status_code == 200:
+                    _data = _resp.json()
+                    _parts = _data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+                    grok_response = "".join(p.get("text", "") for p in _parts).strip()
+                    _gemini_ok = bool(grok_response)
+                else:
+                    print(f"[TACTICAL] Gemini Flash fallback error {_resp.status_code}: {_resp.text[:200]}")
+        except Exception as _e:
+            print(f"[TACTICAL] Gemini Flash fallback failed: {_e}")
 
     # ── Synthesis layer ──
     try:

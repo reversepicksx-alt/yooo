@@ -63,40 +63,44 @@ async def _gemini_call(
     return ""
 
 
-async def _grok_call(prompt: str, temperature: float = 0, max_tokens: int = 2000, timeout: int = 30, reasoning: bool = False) -> str:
-    """Core Grok API call — kept as fallback when Gemini unavailable."""
-    if not XAI_API_KEY:
+async def _gemini_search_call(
+    prompt: str,
+    max_tokens: int = 500,
+    timeout: int = 25,
+    model: str = GEMINI_FLASH,
+) -> str:
+    """Gemini call with Google Search grounding for real-time web data."""
+    if not GEMINI_API_KEY:
         return ""
-    model = GROK_REASONING_MODEL if reasoning else GROK_MODEL
-    models_to_try = [model, GROK_MODEL if reasoning else GROK_REASONING_MODEL]
-
-    for attempt_model in models_to_try:
-        try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10)) as client:
-                resp = await client.post(
-                    GROK_URL,
-                    headers={"Authorization": f"Bearer {XAI_API_KEY}", "Content-Type": "application/json"},
-                    json={
-                        "model": attempt_model,
-                        "messages": [{"role": "user", "content": prompt}],
-                        "temperature": temperature,
-                        "max_tokens": max_tokens,
-                    }
-                )
-                if resp.status_code == 200:
-                    return resp.json()["choices"][0]["message"]["content"].strip()
-                else:
-                    print(f"[GROK] API error {resp.status_code} ({attempt_model}): {resp.text[:200]}")
-        except httpx.TimeoutException:
-            print(f"[GROK] Timeout ({attempt_model}, {timeout}s)")
-        except Exception as e:
-            print(f"[GROK] Call error ({attempt_model}): {type(e).__name__}: {e}")
+    url = f"{GEMINI_BASE}/{model}:generateContent?key={GEMINI_API_KEY}"
+    payload: dict = {
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "tools": [{"google_search": {}}],
+        "generationConfig": {"temperature": 0, "maxOutputTokens": max_tokens},
+    }
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10)) as client:
+            resp = await client.post(url, json=payload)
+            if resp.status_code == 200:
+                data = resp.json()
+                candidates = data.get("candidates", [])
+                if candidates:
+                    parts = candidates[0].get("content", {}).get("parts", [])
+                    text = "".join(p.get("text", "") for p in parts).strip()
+                    if text:
+                        return text
+            else:
+                print(f"[GEMINI SEARCH] API error {resp.status_code}: {resp.text[:200]}")
+    except httpx.TimeoutException:
+        print(f"[GEMINI SEARCH] Timeout ({timeout}s)")
+    except Exception as e:
+        print(f"[GEMINI SEARCH] Error: {type(e).__name__}: {e}")
     return ""
 
 
 async def _ai_call(prompt: str, system: str = "", temperature: float = 0, max_tokens: int = 2000, timeout: int = 35) -> str:
-    """Unified AI call: Grok only."""
-    return await _grok_call(prompt, temperature=temperature, max_tokens=max_tokens, timeout=timeout)
+    """Unified AI call: Gemini primary."""
+    return await _gemini_call(prompt, system=system, temperature=temperature, max_tokens=max_tokens, timeout=timeout)
 
 
 async def fetch_web_intel(
@@ -125,33 +129,16 @@ async def fetch_web_intel(
         f"Be factual and specific. Do not make up information. If nothing significant is confirmed, say so briefly."
     )
 
-    # Strategy 1: Grok web search
-    if XAI_API_KEY:
-        headers = {"Authorization": f"Bearer {XAI_API_KEY}", "Content-Type": "application/json"}
-        for model in [GROK_SEARCH_MODEL, GROK_REASONING_MODEL]:
-            try:
-                async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10)) as client:
-                    payload = {
-                        "model": model,
-                        "messages": [{"role": "user", "content": prompt}],
-                        "temperature": 0,
-                        "max_tokens": 500,
-                        "tools": [{"type": "web_search_preview"}],
-                        "tool_choice": "auto",
-                    }
-                    resp = await client.post(GROK_URL, headers=headers, json=payload)
-                    if resp.status_code == 200:
-                        msg = resp.json()["choices"][0].get("message", {})
-                        content = msg.get("content", "")
-                        if content:
-                            print(f"[WEB INTEL] Grok search ({model}): {content[:120]}...")
-                            return content.strip()
-                    elif resp.status_code in (400, 404, 422):
-                        break
-            except Exception as e:
-                print(f"[WEB INTEL] Grok error ({model}): {e}")
+    # Strategy 1: Gemini with Google Search grounding (live web data)
+    if GEMINI_API_KEY:
+        search_result = await _gemini_search_call(prompt, max_tokens=500, timeout=timeout)
+        if search_result:
+            import html as _html
+            search_result = _html.unescape(search_result)
+            print(f"[WEB INTEL] Gemini search: {search_result[:120]}...")
+            return search_result
 
-    # Strategy 3: Tactical knowledge (Gemini or Grok, no live search)
+    # Strategy 2: Gemini knowledge fallback (no live search)
     knowledge_prompt = (
         f"You are a professional soccer analyst. Provide a concise tactical briefing (max 180 words) for "
         f"{player_team} vs {opponent}"
@@ -205,7 +192,7 @@ async def fetch_opponent_ppda(opponent: str, league: str = "", timeout: int = 20
       11+    : Low press / deep block
     """
     import re as _re
-    if not XAI_API_KEY or not opponent:
+    if not GEMINI_API_KEY or not opponent:
         return None
 
     # Only fire for understat-covered major leagues
@@ -222,7 +209,7 @@ async def fetch_opponent_ppda(opponent: str, league: str = "", timeout: int = 20
 
     understat_url = f"https://understat.com/league/{understat_code}"
 
-    # Prompt Grok to search understat specifically for this team's PPDA
+    # Strategy 1: Gemini with Google Search grounding (live scrape of understat.com)
     search_prompt = (
         f"Go to {understat_url} and look at the team statistics table. "
         f"Find {opponent}'s PPDA (Passes Per Defensive Action) for the current 2025/2026 season. "
@@ -231,68 +218,23 @@ async def fetch_opponent_ppda(opponent: str, league: str = "", timeout: int = 20
         f"Reply with ONLY the PPDA number as a decimal (e.g. '7.8'). "
         f"If you cannot find {opponent} on that page or cannot confirm the value, reply with exactly 'unknown'."
     )
+    try:
+        text = await _gemini_search_call(search_prompt, max_tokens=30, timeout=timeout)
+        if text:
+            if "unknown" in text.lower():
+                print(f"[PPDA] understat: {opponent} not found ({understat_code})")
+                return None
+            m = _re.search(r'\b(\d{1,2}(?:\.\d{1,2})?)\b', text)
+            if m:
+                val = float(m.group(1))
+                if 3.0 <= val <= 30.0:
+                    print(f"[PPDA] Gemini search: {opponent} ({understat_code}) PPDA={val}")
+                    return val
+            print(f"[PPDA] Gemini search unparseable: '{text[:60]}'")
+    except Exception as e:
+        print(f"[PPDA] Gemini search exception: {e}")
 
-    headers = {"Authorization": f"Bearer {XAI_API_KEY}", "Content-Type": "application/json"}
-
-    # Strategy 1: Grok web search (live scrape of understat.com)
-    for model in [GROK_SEARCH_MODEL]:
-        try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=8)) as client:
-                payload = {
-                    "model": model,
-                    "messages": [{"role": "user", "content": search_prompt}],
-                    "temperature": 0,
-                    "max_tokens": 30,
-                    "tools": [{"type": "web_search_preview"}],
-                    "tool_choice": "required",
-                }
-                resp = await client.post(GROK_URL, headers=headers, json=payload)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    choice = data["choices"][0]
-                    msg = choice.get("message", {})
-                    content = msg.get("content", "")
-                    tool_calls = msg.get("tool_calls", [])
-                    if not content and tool_calls:
-                        messages = [
-                            {"role": "user", "content": search_prompt},
-                            {"role": "assistant", "tool_calls": tool_calls, "content": None},
-                        ]
-                        for tc in tool_calls:
-                            messages.append({
-                                "role": "tool",
-                                "tool_call_id": tc.get("id", ""),
-                                "content": "[Search results integrated by model]",
-                            })
-                        payload2 = {**payload, "messages": messages, "tool_choice": "auto", "max_tokens": 30}
-                        resp2 = await client.post(GROK_URL, headers=headers, json=payload2)
-                        if resp2.status_code == 200:
-                            content = resp2.json()["choices"][0]["message"].get("content", "")
-                    if content:
-                        text = content.strip()
-                        if "unknown" in text.lower():
-                            print(f"[PPDA] understat: {opponent} not found ({understat_code})")
-                            return None
-                        m = _re.search(r'\b(\d{1,2}(?:\.\d{1,2})?)\b', text)
-                        if m:
-                            val = float(m.group(1))
-                            if 3.0 <= val <= 30.0:
-                                print(f"[PPDA] understat scrape: {opponent} ({understat_code}) PPDA={val}")
-                                return val
-                        print(f"[PPDA] understat unparseable: '{text}'")
-                        return None
-                elif resp.status_code in (400, 404, 422):
-                    print(f"[PPDA] Web search not available ({resp.status_code}) — falling through")
-                    break
-                else:
-                    print(f"[PPDA] Web search error {resp.status_code}: {resp.text[:100]}")
-        except asyncio.TimeoutError:
-            print(f"[PPDA] understat scrape timeout ({model})")
-        except Exception as e:
-            print(f"[PPDA] understat scrape exception: {e}")
-
-    # Strategy 2: Grok knowledge fallback — only for understat-covered leagues
-    # Ask directly about the team's known PPDA from training data
+    # Strategy 2: Gemini knowledge fallback
     knowledge_prompt = (
         f"What is {opponent}'s PPDA (Passes Per Defensive Action) in the current or most recent "
         f"{league} season, based on understat.com data? "
@@ -300,27 +242,17 @@ async def fetch_opponent_ppda(opponent: str, league: str = "", timeout: int = 20
         f"Reply with ONLY a single decimal number. If unsure, reply 'unknown'."
     )
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(15, connect=8)) as client:
-            resp = await client.post(
-                GROK_URL, headers=headers,
-                json={
-                    "model": GROK_REASONING_MODEL,
-                    "messages": [{"role": "user", "content": knowledge_prompt}],
-                    "temperature": 0,
-                    "max_tokens": 15,
-                }
-            )
-            if resp.status_code == 200:
-                text = resp.json()["choices"][0]["message"]["content"].strip()
-                if "unknown" in text.lower():
-                    print(f"[PPDA] Knowledge fallback: {opponent} unknown")
-                    return None
-                m = _re.search(r'\b(\d{1,2}(?:\.\d{1,2})?)\b', text)
-                if m:
-                    val = float(m.group(1))
-                    if 3.0 <= val <= 30.0:
-                        print(f"[PPDA] Knowledge fallback: {opponent} PPDA={val}")
-                        return val
+        text = await _gemini_call(knowledge_prompt, max_tokens=15, timeout=15)
+        if text:
+            if "unknown" in text.lower():
+                print(f"[PPDA] Knowledge fallback: {opponent} unknown")
+                return None
+            m = _re.search(r'\b(\d{1,2}(?:\.\d{1,2})?)\b', text)
+            if m:
+                val = float(m.group(1))
+                if 3.0 <= val <= 30.0:
+                    print(f"[PPDA] Knowledge fallback: {opponent} PPDA={val}")
+                    return val
     except Exception as e:
         print(f"[PPDA] Knowledge fallback exception: {e}")
 
@@ -374,7 +306,7 @@ async def fetch_ai_press_intensity(
     `compute_press_intensity_score` stays as a structural fallback.
     """
     import re as _re
-    if not XAI_API_KEY or not opponent:
+    if not GEMINI_API_KEY or not opponent:
         return None
 
     cache_key = (opponent.lower().strip(), (league or "").lower().strip(), (season or "").strip())
@@ -425,62 +357,22 @@ async def _fetch_ai_press_intensity_inner(
         f"If you cannot make a confident assessment, reply: {{\"score\": null}}"
     )
 
-    headers = {"Authorization": f"Bearer {XAI_API_KEY}", "Content-Type": "application/json"}
-
-    # Strategy 1: Grok web search (live tactical reports + understat)
+    # Strategy 1: Gemini with Google Search grounding (live tactical reports + understat)
     parsed = None
     used_source = None
-    for model in [GROK_SEARCH_MODEL]:
-        try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=8)) as client:
-                payload = {
-                    "model": model,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0,
-                    "max_tokens": 200,
-                    "tools": [{"type": "web_search_preview"}],
-                    "tool_choice": "required",
-                }
-                resp = await client.post(GROK_URL, headers=headers, json=payload)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    msg = data["choices"][0].get("message", {})
-                    content = msg.get("content", "")
-                    tool_calls = msg.get("tool_calls", [])
-                    if not content and tool_calls:
-                        messages = [
-                            {"role": "user", "content": prompt},
-                            {"role": "assistant", "tool_calls": tool_calls, "content": None},
-                        ]
-                        for tc in tool_calls:
-                            messages.append({
-                                "role": "tool",
-                                "tool_call_id": tc.get("id", ""),
-                                "content": "[Search results integrated by model]",
-                            })
-                        payload2 = {**payload, "messages": messages, "tool_choice": "auto", "max_tokens": 200}
-                        resp2 = await client.post(GROK_URL, headers=headers, json=payload2)
-                        if resp2.status_code == 200:
-                            content = resp2.json()["choices"][0]["message"].get("content", "")
-                    if content:
-                        parsed = _parse_json(content)
-                        if parsed and isinstance(parsed, dict) and parsed.get("score") is not None:
-                            used_source = "ai_web"
-                            break
-                elif resp.status_code in (400, 404, 422):
-                    print(f"[AI PRESS] Web search not available ({resp.status_code}) — trying knowledge fallback")
-                    break
-                else:
-                    print(f"[AI PRESS] Web search error {resp.status_code}: {resp.text[:120]}")
-        except asyncio.TimeoutError:
-            print(f"[AI PRESS] Web search timeout ({model})")
-        except Exception as e:
-            print(f"[AI PRESS] Web search exception: {e}")
+    try:
+        txt = await _gemini_search_call(prompt, max_tokens=200, timeout=timeout)
+        if txt:
+            parsed = _parse_json(txt)
+            if parsed and isinstance(parsed, dict) and parsed.get("score") is not None:
+                used_source = "ai_web"
+    except Exception as e:
+        print(f"[AI PRESS] Gemini search exception: {e}")
 
-    # Strategy 2: Grok knowledge fallback (no web search)
+    # Strategy 2: Gemini knowledge fallback (no web search)
     if not parsed or parsed.get("score") is None:
         try:
-            txt = await _grok_call(prompt, temperature=0, max_tokens=200, timeout=15, reasoning=True)
+            txt = await _gemini_call(prompt, temperature=0, max_tokens=200, timeout=15)
             if txt:
                 parsed = _parse_json(txt)
                 if parsed and isinstance(parsed, dict) and parsed.get("score") is not None:
@@ -1486,14 +1378,11 @@ async def _try_settle_wc_via_grok(pick: dict) -> bool:
     )
 
     try:
-        resp = await call_grok(
-            system="You are a sports stats lookup assistant. Answer ONLY with a single number (the stat value) and nothing else.",
-            user=query,
-            model="grok-3-mini-fast-beta",
-            web_search=True,
-            max_tokens=50,
+        full_prompt = (
+            "You are a sports stats lookup assistant. Answer ONLY with a single number (the stat value) and nothing else.\n\n"
+            + query
         )
-        raw = (resp or "").strip()
+        raw = (await _gemini_search_call(full_prompt, max_tokens=50, timeout=20) or "").strip()
         # Parse number from response
         import re as _re
         nums = _re.findall(r"\d+(?:\.\d+)?", raw)
@@ -2013,37 +1902,35 @@ Return ONLY a valid JSON object (not an array):
             result["playerTeam"] = result.pop("teamName")
         return result
 
-    # Strategy 1: Grok vision
-    if XAI_API_KEY:
+    # Gemini vision (primary and only strategy)
+    if GEMINI_API_KEY:
         try:
-            async with httpx.AsyncClient(timeout=20) as client:
-                resp = await client.post(
-                    GROK_URL,
-                    headers={"Authorization": f"Bearer {XAI_API_KEY}", "Content-Type": "application/json"},
-                    json={
-                        "model": "grok-4-1-fast-non-reasoning",
-                        "messages": [{"role": "user", "content": [
-                            {"type": "text", "text": prompt},
-                            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_base64}"}}
-                        ]}],
-                        "temperature": 0,
-                        "max_tokens": 500,
-                    }
-                )
+            url = f"{GEMINI_BASE}/{GEMINI_FLASH}:generateContent?key={GEMINI_API_KEY}"
+            payload = {
+                "contents": [{"role": "user", "parts": [
+                    {"text": prompt},
+                    {"inline_data": {"mime_type": "image/png", "data": image_base64}},
+                ]}],
+                "generationConfig": {"temperature": 0, "maxOutputTokens": 500},
+            }
+            async with httpx.AsyncClient(timeout=25) as client:
+                resp = await client.post(url, json=payload)
                 if resp.status_code == 200:
-                    content = resp.json()["choices"][0]["message"]["content"]
+                    data = resp.json()
+                    parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+                    content = "".join(p.get("text", "") for p in parts).strip()
                     result = _parse_json(content)
                     if result:
                         if isinstance(result, list) and len(result) > 0:
                             result = result[0]
                         if isinstance(result, dict):
                             result = _normalize(result)
-                            print(f"[SCAN] Grok vision fallback: {result.get('playerName','')} {result.get('propType','')} {result.get('line','')}")
+                            print(f"[SCAN] Gemini vision: {result.get('playerName','')} {result.get('propType','')} {result.get('line','')}")
                             return result
                 else:
-                    print(f"[SCAN] Grok vision error: {resp.status_code} — {resp.text[:300]}")
+                    print(f"[SCAN] Gemini vision error: {resp.status_code} — {resp.text[:300]}")
         except Exception as e:
-            print(f"[SCAN] Grok vision error: {e}")
+            print(f"[SCAN] Gemini vision error: {e}")
 
     return {}
 
