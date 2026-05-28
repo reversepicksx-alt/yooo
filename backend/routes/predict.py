@@ -157,6 +157,7 @@ async def predict(req: PredictionRequest):
                         actual_team_id if actual_team_id and actual_team_id != 0 else None,
                         league_id=league_id if league_id and league_id != 39 else None,
                         team_name_hint=req.teamName or None,
+                        prop_type=req.propType or None,
                     )
                     if _p and _p.get("playerId"):
                         _resolved_player_id = _p["playerId"]

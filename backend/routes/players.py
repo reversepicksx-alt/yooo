@@ -212,6 +212,30 @@ async def search_players(req: PlayerSearchRequest):
             seen_ids[pid] = p
     players = list(seen_ids.values())
 
+    # Enrich the player cache with full firstNameClean so future disambiguation
+    # in get_player_by_name can use first-name matching (e.g. "Jhojan" → "Jhohan").
+    # Fire-and-forget — don't block the response.
+    async def _enrich_player_cache(player_list):
+        try:
+            from config import db
+            from cache import COL_PLAYERS
+            import unicodedata as _ud
+            def _clean(s):
+                return ''.join(c for c in _ud.normalize('NFD', (s or '').lower()) if _ud.category(c) != 'Mn')
+            for pl in player_list:
+                pid = pl.get("id")
+                fn = pl.get("firstname") or ""
+                if pid and fn:
+                    fn_clean = _clean(fn)
+                    await db[COL_PLAYERS].update_many(
+                        {"playerId": pid},
+                        {"$set": {"firstNameClean": fn_clean}},
+                    )
+        except Exception:
+            pass
+
+    aio.ensure_future(_enrich_player_cache(players))
+
     # Sort — all_match is the PRIMARY criterion so a perfect name match
     # (e.g. "van de Ven") always beats a team-enriched partial match (e.g. "Aravena").
     def _strip(s):

@@ -194,11 +194,19 @@ async def sync_squad(team_id: int, team_name: str = "", league_id: int = 0):
         ops = []
         for p in players:
             name = html_module.unescape(p.get("name", ""))
+            # Extract first name from abbreviated display name when possible.
+            # Squad endpoint returns abbreviated names like "J. Valencia" — we
+            # can only extract the initial here. Player search enriches this with
+            # the full firstName via a separate update pass.
+            _name_parts = name.strip().split()
+            _first_part = _name_parts[0] if _name_parts else ""
+            _first_name_clean = strip_accents(_first_part.lower()) if _first_part else ""
             doc = {
                 "playerId": p.get("id"),
                 "name": name,
                 "nameLower": name.lower(),
                 "nameClean": strip_accents(name.lower()),
+                "firstNameClean": _first_name_clean,
                 "age": p.get("age"),
                 "number": p.get("number"),
                 "position": p.get("position", ""),
@@ -517,7 +525,7 @@ async def get_team_info(team_name: str) -> dict:
     return None
 
 
-async def get_player_by_name(player_name: str, team_id: int = None, league_id: int = None, team_name_hint: str = None) -> dict:
+async def get_player_by_name(player_name: str, team_id: int = None, league_id: int = None, team_name_hint: str = None, prop_type: str = None) -> dict:
     """Look up a player by name, optionally filtered by team/league. Returns player doc or None.
     
     Handles common OCR patterns:
@@ -531,10 +539,29 @@ async def get_player_by_name(player_name: str, team_id: int = None, league_id: i
     2. Last name at end with word boundary
     3. Full name as word-boundary substring
     4. Last name word-boundary anywhere
+
+    prop_type hint: when multiple abbreviated-name players exist (e.g. "J. Valencia"),
+    prefer the one whose registered position matches the prop context.
     """
     from utils import strip_accents
     name_clean = strip_accents(player_name.lower().strip())
     international_leagues = {1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 29, 30, 31, 32, 33, 34, 115, 960}
+
+    # prop_type → preferred API-Football generic position category
+    _PROP_PREFERRED_POS = {
+        "pass_attempts": "Midfielder", "passes": "Midfielder",
+        "key_passes": "Midfielder", "crosses": "Midfielder",
+        "tackles": "Midfielder", "interceptions": "Midfielder",
+        "dribbles": "Midfielder",
+        "shots": "Attacker", "shots_on_target": "Attacker",
+        "goals": "Attacker",
+        "saves": "Goalkeeper", "goals_conceded": "Goalkeeper",
+    }
+    _preferred_pos = _PROP_PREFERRED_POS.get(prop_type or "", None)
+
+    # Also extract the query's full first word (for first-name matching when > 1 char)
+    _query_first_word = strip_accents(player_name.strip().split()[0].lower()) if player_name.strip().split() else ""
+    _query_has_full_first = len(_query_first_word) > 1  # more than just an initial
 
     # Precompute the first-initial form: "julian alvarez" → "j. alvarez"
     parts = name_clean.split()
@@ -579,16 +606,36 @@ async def get_player_by_name(player_name: str, team_id: int = None, league_id: i
                 if club_docs:
                     return club_docs[0]
 
+        # 2b. First-name tiebreaker — when query has a full first word (not just an initial)
+        # prefer the player whose firstNameClean starts with the same letters.
+        # e.g. "Jhojan Valencia" → prefer player whose firstNameClean starts with "jhojan"
+        if _query_has_full_first:
+            first_match_docs = [
+                d for d in docs
+                if (d.get("firstNameClean") or "").startswith(_query_first_word)
+                or (d.get("firstNameClean") or "").startswith(_query_first_word[:4])  # fuzzy prefix (4-char)
+            ]
+            if first_match_docs:
+                docs = first_match_docs  # narrow candidates before further disambiguation
+
         # 3. Prefer club entry over national team
         club_docs = [d for d in docs if d.get("leagueId") not in international_leagues]
-        if club_docs:
-            # Among clubs, prefer top-5 leagues (39,140,135,78,61)
-            top5 = {39, 140, 135, 78, 61}
-            top5_docs = [d for d in club_docs if d.get("leagueId") in top5]
-            if top5_docs:
-                return top5_docs[0]
-            return club_docs[0]
-        return docs[0]
+        if not club_docs:
+            club_docs = docs  # all are national teams; fall through
+
+        # 3b. prop_type position preference — e.g. pass_attempts → prefer "Midfielder"
+        # over "Attacker" when multiple abbreviated-name players exist.
+        if _preferred_pos and len(club_docs) > 1:
+            pos_match = [d for d in club_docs if (d.get("position") or "") == _preferred_pos]
+            if pos_match:
+                club_docs = pos_match
+
+        # 4. Among remaining candidates, prefer top-5 leagues (39,140,135,78,61)
+        top5 = {39, 140, 135, 78, 61}
+        top5_docs = [d for d in club_docs if d.get("leagueId") in top5]
+        if top5_docs:
+            return top5_docs[0]
+        return club_docs[0]
 
     # 1. Exact match on full cleaned name
     doc = await _best_match(_q({"nameClean": name_clean}))
