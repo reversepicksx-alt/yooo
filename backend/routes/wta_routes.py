@@ -19,7 +19,7 @@ log    = logging.getLogger("wta_routes")
 router = APIRouter(prefix="/api/wta", tags=["wta"])
 
 
-# ── AI analysis helper (Grok) ────────────────────────────────────────────────
+# ── AI analysis helper (Gemini) ────────────────────────────────────────────────
 
 async def _get_wta_ai_analysis(
     player_name: str,

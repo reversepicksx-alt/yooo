@@ -384,7 +384,7 @@ async def save_pick(req: SavePickRequest):
     # ── MLB / CS2 position fix ─────────────────────────────────────────────────
     # MLB picks: always set baseball-appropriate position/role.  Old picks were
     # saved without a sport field so picks.py defaulted to "soccer" and called
-    # resolve_position_grok — giving pitchers labels like "GK · Shot-Stopper".
+    # resolve_position_ai — giving pitchers labels like "GK · Shot-Stopper".
     _MLB_PROP_TYPES_SET = {
         "pitcher_strikeouts", "innings_pitched", "hits_allowed", "earned_runs",
         "walks_allowed", "pitches_thrown", "batters_faced",
@@ -422,12 +422,12 @@ async def save_pick(req: SavePickRequest):
                 doc["position"] = "Batter"
                 doc["role"] = "Batter"
 
-    # Grok-powered position resolution if position is missing (soccer only,
+    # AI-powered position resolution if position is missing (soccer only,
     # never for MLB/CS2 prop types).
     elif sport == "soccer" and doc["propType"] not in _MLB_PROP_TYPES_SET and (not doc["position"] or doc["position"] in ("Unknown", "unknown", "")):
         try:
-            from grok_positions import resolve_position_grok
-            resolved = await resolve_position_grok(doc["playerName"], "soccer")
+            from grok_positions import resolve_position_ai
+            resolved = await resolve_position_ai(doc["playerName"], "soccer")
             if resolved.get("position"):
                 doc["position"] = resolved["position"]
                 doc["role"] = resolved.get("role", doc["role"])

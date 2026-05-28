@@ -13,7 +13,7 @@ Bayesian + AI models cannot derive from season averages alone:
 3. Situational Pressure Scoring  — converts aggregate deficit + knockout
    context into concrete multipliers that adjust possession and Bayesian output.
 
-4. (Web intel handled separately in grok_engine.py via Grok Live Search)
+4. (Web intel handled separately in grok_engine.py via Gemini web search)
 """
 
 import asyncio
@@ -414,7 +414,7 @@ def classify_match_stakes(
           "opponentSituation": str,
           "overallIntensityBoost": float,  # 0.0 - 1.0
           "directPlayTendency": float,     # 0.0 - 1.0  (relegation → more direct)
-          "contextBlock": str,             # ready for Grok injection
+          "contextBlock": str,             # ready for AI injection
           "teamRank": int | None,
           "opponentRank": int | None,
           "totalTeams": int,
@@ -564,7 +564,7 @@ def classify_match_stakes(
     }
     direct_tendency = _DIRECT_PLAY.get(team_level, 0.0)
 
-    # ── Grok context block ─────────────────────────────────────────────────
+    # ── AI context block ─────────────────────────────────────────────────
     ctx_lines = []
     any_stakes = team_level not in ("NORMAL", "LOW_STAKES_SAFE") or \
                  opp_level  not in ("NORMAL", "LOW_STAKES_SAFE")
@@ -705,7 +705,7 @@ async def build_game_situation(
         print(f"[STAKES] {player_team_name} ({match_stakes['teamStakeLevel']}) "
               f"vs {opponent_name} ({match_stakes['opponentStakeLevel']})")
 
-    # ── Build context block for Grok ─────────────────────────────────────────
+    # ── Build context block for AI ─────────────────────────────────────────
     lines = []
 
     if is_knockout:

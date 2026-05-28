@@ -24,7 +24,7 @@ router = APIRouter(prefix="/api", tags=["tactical"])
 
 tactical_sessions = {}
 
-GROK_SYSTEM = """You are REVERSE TACTICAL — an elite soccer intelligence system that combines deep tactical knowledge, real-time web data, and statistical modeling to deliver institutional-grade analysis.
+TACTICAL_SYSTEM = """You are REVERSE TACTICAL — an elite soccer intelligence system that combines deep tactical knowledge, real-time web data, and statistical modeling to deliver institutional-grade analysis.
 
 CORE CAPABILITIES:
 1. TACTICAL ANALYSIS: Formations (4-3-3, 3-5-2, 4-2-3-1 etc.), pressing triggers, build-up patterns, defensive blocks, transition speed, set piece structures, player roles within systems.
@@ -471,7 +471,7 @@ async def tactical_message(req: TacticalMessageRequest):
 
     # ── PRIMARY: Gemini 2.5 Pro — tactical reasoning ──
     import httpx as _httpx
-    grok_response = ""
+    ai_response = ""
     _gemini_ok = False
     if GEMINI_API_KEY:
         try:
@@ -482,7 +482,7 @@ async def tactical_message(req: TacticalMessageRequest):
                 _gem_contents.append({"role": "model", "parts": [{"text": "Context acknowledged."}]})
             _gem_contents.append({"role": "user", "parts": [{"text": user_msg + full_context}]})
             _gem_payload = {
-                "systemInstruction": {"parts": [{"text": GROK_SYSTEM}]},
+                "systemInstruction": {"parts": [{"text": TACTICAL_SYSTEM}]},
                 "contents": _gem_contents,
                 "generationConfig": {"temperature": 0.7, "maxOutputTokens": 2000,
                                      "thinkingConfig": {"thinkingBudget": 1024}},
@@ -492,8 +492,8 @@ async def tactical_message(req: TacticalMessageRequest):
                 if _resp.status_code == 200:
                     _data = _resp.json()
                     _parts = _data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-                    grok_response = "".join(p.get("text", "") for p in _parts).strip()
-                    _gemini_ok = bool(grok_response)
+                    ai_response = "".join(p.get("text", "") for p in _parts).strip()
+                    _gemini_ok = bool(ai_response)
                 else:
                     print(f"[TACTICAL] Gemini error {_resp.status_code}: {_resp.text[:200]}")
         except Exception as _e:
@@ -509,7 +509,7 @@ async def tactical_message(req: TacticalMessageRequest):
                 _flash_contents.append({"role": "model", "parts": [{"text": "Context acknowledged."}]})
             _flash_contents.append({"role": "user", "parts": [{"text": user_msg + full_context}]})
             _flash_payload = {
-                "systemInstruction": {"parts": [{"text": GROK_SYSTEM}]},
+                "systemInstruction": {"parts": [{"text": TACTICAL_SYSTEM}]},
                 "contents": _flash_contents,
                 "generationConfig": {"temperature": 0.7, "maxOutputTokens": 2000,
                                      "thinkingConfig": {"thinkingBudget": 1024}},
@@ -519,8 +519,8 @@ async def tactical_message(req: TacticalMessageRequest):
                 if _resp.status_code == 200:
                     _data = _resp.json()
                     _parts = _data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-                    grok_response = "".join(p.get("text", "") for p in _parts).strip()
-                    _gemini_ok = bool(grok_response)
+                    ai_response = "".join(p.get("text", "") for p in _parts).strip()
+                    _gemini_ok = bool(ai_response)
                 else:
                     print(f"[TACTICAL] Gemini Flash fallback error {_resp.status_code}: {_resp.text[:200]}")
         except Exception as _e:
@@ -539,7 +539,7 @@ async def tactical_message(req: TacticalMessageRequest):
 {full_context if full_context else "[No live data]"}
 
 Tactical analysis:
-{grok_response}
+{ai_response}
 
 Synthesize into a polished response. Format with markdown. NEVER mention any AI model names."""
 
@@ -548,7 +548,7 @@ Synthesize into a polished response. Format with markdown. NEVER mention any AI 
 
         final_response = await gemini.send_message(UserMessage(text=synth_prompt))
     except Exception:
-        final_response = grok_response if grok_response and not grok_response.startswith("[") else "Analysis failed. Please try again."
+        final_response = ai_response if ai_response and not ai_response.startswith("[") else "Analysis failed. Please try again."
 
     session["history"].append({"role": "user", "content": user_msg})
     session["history"].append({"role": "assistant", "content": final_response})

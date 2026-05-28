@@ -1,6 +1,6 @@
 """
 AI ENGINE — The data backbone powering the ReversePicks prediction system.
-Primary AI: Gemini 2.5 Pro/Flash. Fallback: Grok.
+Primary AI: Gemini 2.5 Pro/Flash. Fallback: Gemini.
 """
 import json
 import httpx
@@ -9,10 +9,10 @@ import traceback
 from datetime import datetime, timezone, timedelta
 from config import db, XAI_API_KEY, GEMINI_API_KEY
 
-GROK_MODEL = "grok-4-1-fast-non-reasoning"
-GROK_REASONING_MODEL = "grok-4-1-fast-non-reasoning"
-GROK_SEARCH_MODEL = "grok-3"
-GROK_URL = "https://api.x.ai/v1/chat/completions"
+AI_MODEL = "gemini-4-1-fast-non-reasoning"
+AI_REASONING_MODEL = "gemini-4-1-fast-non-reasoning"
+GEMINI_SEARCH_MODEL = "gemini-3"
+AI_URL = "https://api.x.ai/v1/chat/completions"
 
 GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 GEMINI_PRO = "gemini-2.5-pro"
@@ -128,7 +128,7 @@ async def fetch_web_intel(
     WEB INTELLIGENCE: Fetches real-time match preview data — injuries, suspensions,
     lineup news, tactical shifts, manager quotes.
     Primary: Gemini 2.5 Flash with Google Search grounding.
-    Fallback: Grok web search → tactical knowledge.
+    Fallback: Gemini web search → tactical knowledge.
     """
     date_str = match_date[:10] if match_date else ""
     context_str = f"{league} — {match_round}" if (league or match_round) else "upcoming match"
@@ -192,7 +192,7 @@ _UNDERSTAT_LEAGUE_MAP = {
 
 async def fetch_opponent_ppda(opponent: str, league: str = "", timeout: int = 20) -> float | None:
     """
-    Scrape understat.com via Grok's live web search for the opponent's real PPDA
+    Scrape understat.com via Gemini's live web search for the opponent's real PPDA
     (Passes Per Defensive Action) for the current season.
 
     Understat covers: EPL, La Liga, Bundesliga, Serie A, Ligue 1.
@@ -277,7 +277,7 @@ async def fetch_opponent_ppda(opponent: str, league: str = "", timeout: int = 20
 # ═══════════════════════════════════════════════════════════════
 # Replaces the heuristic compute_press_intensity_score for opponents
 # whose press style isn't well captured by raw tackles+interceptions.
-# Asks Grok to rate opponent on 0–1 press scale using web search +
+# Asks Gemini to rate opponent on 0–1 press scale using web search +
 # tactical knowledge, returns a structured score the Bayesian engine
 # uses directly (same direction matrix and ±20% caps still apply).
 # ═══════════════════════════════════════════════════════════════
@@ -305,13 +305,13 @@ async def fetch_ai_press_intensity(
     timeout: int = 18,
 ) -> dict | None:
     """
-    Ask Grok to rate the opponent's pressing intensity on a 0–1 scale.
+    Ask Gemini to rate the opponent's pressing intensity on a 0–1 scale.
 
     Returns dict with:
       score      : 0.0 – 1.0  (0 = deep block, 1 = elite high press)
       label      : "Low" / "Moderate" / "High" / "Elite"
-      ppda       : float | None   (if Grok found/knew it)
-      reasoning  : short string from Grok
+      ppda       : float | None   (if Gemini found/knew it)
+      reasoning  : short string from Gemini
       source     : "ai_web" or "ai_knowledge"
     Returns None if AI couldn't produce a confident answer.
 
@@ -328,7 +328,7 @@ async def fetch_ai_press_intensity(
     if cached and cached[0] > now:
         return cached[1]
 
-    # In-flight dedupe — concurrent predictions for the same opponent share one Grok call
+    # In-flight dedupe — concurrent predictions for the same opponent share one Gemini call
     lock = _PRESS_INTENSITY_LOCKS.get(cache_key)
     if lock is None:
         lock = asyncio.Lock()
@@ -414,7 +414,7 @@ async def _fetch_ai_press_intensity_inner(
 
     # Sanity guard: season-average PPDA below 7.5 is implausible.
     # Real-world historic-elite pressers (Klopp '18/19=7.9, Bielsa Leeds '20/21=7.4) bottom out near 7.5.
-    # If Grok returns sub-7.5, floor to 7.5 (matches the documented score-to-PPDA mapping at the elite tier)
+    # If Gemini returns sub-7.5, floor to 7.5 (matches the documented score-to-PPDA mapping at the elite tier)
     # and log so we know the model is over-stating.
     ppda_warning = None
     if ppda is not None and ppda < 7.5:
@@ -438,7 +438,7 @@ async def _fetch_ai_press_intensity_inner(
 
 
 def _parse_json(raw: str) -> dict | list | None:
-    """Parse JSON from Grok response, stripping markdown wrappers."""
+    """Parse JSON from Gemini response, stripping markdown wrappers."""
     raw = raw.strip()
     if raw.startswith("```"):
         raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
@@ -451,11 +451,11 @@ def _parse_json(raw: str) -> dict | list | None:
 
 # ═══════════════════════════════════════════════════════════════
 # PHASE 1: PRE-PREDICTION DATA DIGEST
-# Grok crunches raw API data into a focused, insight-rich brief
+# Gemini crunches raw API data into a focused, insight-rich brief
 # that feeds GPT-5.2 a shorter, smarter prompt
 # ═══════════════════════════════════════════════════════════════
 
-async def build_grok_digest(
+async def build_gemini_digest(
     player_name: str, team_name: str, opponent_name: str,
     prop_type: str, line: float, venue: str,
     player_stats: dict, team_stats: dict, opponent_stats: dict,
@@ -464,10 +464,10 @@ async def build_grok_digest(
     opponent_fixture_stats: list, match_dominance: dict,
     sport: str = "soccer"
 ) -> str:
-    """Build a Grok-processed data digest. Runs in ~2-3s.
+    """Build a Gemini-processed data digest. Runs in ~2-3s.
     Returns a compact string of key insights for GPT-5.2."""
 
-    # Build raw data summary for Grok to analyze
+    # Build raw data summary for Gemini to analyze
     parts = []
 
     # Player season stats
@@ -561,7 +561,7 @@ async def auto_settlement_loop():
     runs burn quota fast. 15 min is plenty since picks resolve after the match.
     """
     await asyncio.sleep(5)   # Short delay then run immediately on startup
-    print("[GROK ENGINE] Auto-settlement bot started (5 min interval)")
+    print("[GEMINI ENGINE] Auto-settlement bot started (5 min interval)")
 
     while True:
         try:
@@ -917,8 +917,8 @@ async def _run_auto_settlement():
                             print(f"[ORPHAN-VOID] soccer {pick.get('playerName','?')} {pick.get('propType','?')} (no opponent)")
                             continue
                     if not result and (pick.get("leagueId") == 1 or pick.get("wcMode")):
-                        # World Cup picks: API has no per-player stats → fall back to Grok web search
-                        wc_result = await _try_settle_wc_via_grok(pick)
+                        # World Cup picks: API has no per-player stats → fall back to Gemini web search
+                        wc_result = await _try_settle_wc_via_gemini(pick)
                         if wc_result:
                             settled_count += 1
             except Exception:
@@ -1346,11 +1346,11 @@ async def _run_auto_settlement():
         print(f"[AUTO-SETTLE] Settled {settled_count} picks")
 
 
-async def _try_settle_wc_via_grok(pick: dict) -> bool:
+async def _try_settle_wc_via_gemini(pick: dict) -> bool:
     """
-    Settle a World Cup (or any tournament with no API player stats) pick via Grok web search.
+    Settle a World Cup (or any tournament with no API player stats) pick via Gemini web search.
     Called when API-Football returns no per-player stats for the fixture (e.g. WC 2026).
-    Returns True when the pick is settled, False if Grok couldn't find the stats.
+    Returns True when the pick is settled, False if Gemini couldn't find the stats.
     """
     player_name = pick.get("playerName", "")
     prop_type   = pick.get("propType", "")
@@ -1400,7 +1400,7 @@ async def _try_settle_wc_via_grok(pick: dict) -> bool:
         import re as _re
         nums = _re.findall(r"\d+(?:\.\d+)?", raw)
         if not nums:
-            print(f"[WC SETTLE] {player_name}/{prop_type}: Grok returned no number — '{raw}'")
+            print(f"[WC SETTLE] {player_name}/{prop_type}: Gemini returned no number — '{raw}'")
             return False
 
         actual_value = float(nums[0])
@@ -1689,7 +1689,7 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
 async def auto_scout_loop():
     """Background loop: pre-fetch data for upcoming games every 6 hours."""
     await asyncio.sleep(60)  # Wait for caches
-    print("[GROK ENGINE] Auto-scout started")
+    print("[GEMINI ENGINE] Auto-scout started")
 
     while True:
         try:
@@ -1759,13 +1759,13 @@ async def _run_auto_scout():
 
 # ═══════════════════════════════════════════════════════════════
 # PHASE 4: INTEL PATTERN MINING
-# Grok analyzes historical picks to find calibration insights
+# Gemini analyzes historical picks to find calibration insights
 # ═══════════════════════════════════════════════════════════════
 
 async def pattern_mining_loop():
     """Background loop: analyze settled picks for patterns daily."""
     await asyncio.sleep(300)  # Wait 5 min for startup
-    print("[GROK ENGINE] Pattern mining started")
+    print("[GEMINI ENGINE] Pattern mining started")
 
     while True:
         try:
@@ -1855,7 +1855,7 @@ async def _run_pattern_mining():
 
     data_text = "\n".join(summary_lines)
 
-    # Ask Grok to find actionable patterns
+    # Ask Gemini to find actionable patterns
     prompt = f"""Analyze this sports prediction model's performance data. Find the 5 most actionable calibration rules.
 
 {data_text}
@@ -1885,11 +1885,11 @@ Only JSON, no markdown."""
         )
         print(f"[PATTERN MINE] Stored {len(insights)} insights from {len(picks)} picks")
     else:
-        print(f"[PATTERN MINE] Grok returned no parseable insights")
+        print(f"[PATTERN MINE] Gemini returned no parseable insights")
 
 
 # ═══════════════════════════════════════════════════════════════
-# PHASE 5: SMART SCAN (Grok Vision for OCR)
+# PHASE 5: SMART SCAN (Gemini Vision for OCR)
 # ═══════════════════════════════════════════════════════════════
 
 _SCAN_PROMPTS = {
@@ -1948,7 +1948,7 @@ Return ONLY a valid JSON object (not an array):
 }
 
 
-async def grok_scan_prop(image_base64: str, sport: str = "soccer") -> dict:
+async def gemini_scan_prop(image_base64: str, sport: str = "soccer") -> dict:
     """Extract prop details from a screenshot using AI vision.
     Primary: Gemini 2.5 Flash (vision).
     Returns: {"playerName": "...", "propType": "...", "line": 0, "teamName": "...", "opponentName": "...", "leagueName": "..."}"""

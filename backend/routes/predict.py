@@ -1204,14 +1204,14 @@ async def predict(req: PredictionRequest):
         match_dominance = {"expectedPoss": 50.0, "oppExpectedPoss": 50.0, "multiplier": 1.0, "notes": []}
 
         # Wave 2: Fetch deep fixture data + Situation Engine in parallel
-        # Grok digest, web intel, and AI press intensity removed — Grok is summary-only.
+        # AI digest, web intel, and AI press intensity removed — Gemini is summary-only.
         # Press intensity falls back to the heuristic engine; digest/web intel were
-        # pre-processing context that Grok no longer needs for math.
+        # pre-processing context that AI no longer needs for math.
         from situation_engine import build_game_situation
 
         async def _noop_str(): return ""
         async def _noop_none(): return None
-        grok_digest_task = _noop_str()
+        ai_digest_task = _noop_str()
 
         # Situation engine inputs
         _sit_is_home = player_venue == "home"
@@ -1241,7 +1241,7 @@ async def predict(req: PredictionRequest):
             opponent_id=req.opponentId,
         )
 
-        # Web intel: live injury/lineup news from Grok web search
+        # Web intel: live injury/lineup news from AI web search
         web_intel_task = fetch_web_intel(
             player_team=corrected_team_name or req.teamName or "",
             opponent=req.opponentName or "",
@@ -1254,7 +1254,7 @@ async def predict(req: PredictionRequest):
 
         all_wave2 = aio.gather(
             team_fixture_stats_task, opponent_fixture_stats_task, player_game_logs_task,
-            grok_digest_task, situation_task, web_intel_task, ai_press_task,
+            ai_digest_task, situation_task, web_intel_task, ai_press_task,
             return_exceptions=True
         )
         try:
@@ -1266,7 +1266,7 @@ async def predict(req: PredictionRequest):
         team_fixture_stats = results[0] if not isinstance(results[0], (Exception, type(None))) else []
         opponent_fixture_stats = results[1] if not isinstance(results[1], (Exception, type(None))) else []
         player_game_logs = results[2] if not isinstance(results[2], (Exception, type(None))) else []
-        grok_digest = results[3] if len(results) > 3 and not isinstance(results[3], (Exception, type(None))) else ""
+        ai_digest = results[3] if len(results) > 3 and not isinstance(results[3], (Exception, type(None))) else ""
         game_situation = results[4] if len(results) > 4 and not isinstance(results[4], (Exception, type(None))) else {}
         web_intel = results[5] if len(results) > 5 and not isinstance(results[5], (Exception, type(None))) else ""
         ai_press_intensity = results[6] if len(results) > 6 and not isinstance(results[6], (Exception, type(None))) else None
@@ -2696,9 +2696,9 @@ async def predict(req: PredictionRequest):
                 # early_bayes.posteriorMean is the raw Bayesian estimate BEFORE
                 # H2H, OPP-profile, and dominance adjustments that happen later.
                 # If the dominance boost (Ball-Playing CB, GK inverted etc.) will
-                # significantly move the final projection, we must tell Grok the
+                # significantly move the final projection, we must tell AI the
                 # RIGHT direction now — not the pre-adjustment direction.
-                # Without this, Grok writes "57.8 under" and the badge shows 66 OVER,
+                # Without this, AI writes "57.8 under" and the badge shows 66 OVER,
                 # which is the exact contradiction the user is complaining about.
                 _pf_proj = early_bayes["posteriorMean"]
                 _pf_poss_props = {"pass_attempts", "passes", "key_passes", "crosses", "dribbles"}
@@ -3028,7 +3028,7 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
 
         # =============================================
         # AI POSITION RESOLVER: Get specific position (RW, CM, CB, etc.)
-        # Uses cache first, then Grok as fallback with API-Sports context
+        # Uses cache first, then AI as fallback with API-Sports context
         # =============================================
         specific_position = ""
         player_role = ""
@@ -3199,7 +3199,7 @@ POSITION CLUES: CB=high tackles/blocks/aerial duels, low crosses/key passes/drib
                         pos_text = await resolve_pos_gemini()
                         pos_code, role_text = parse_pos_response(pos_text, valid_positions)
                         if not pos_code:
-                            raise ValueError("Grok returned invalid position")
+                            raise ValueError("AI returned invalid position on retry")
 
                     if pos_code:
                         specific_position = pos_code
@@ -3267,7 +3267,7 @@ POSITION CLUES: CB=high tackles/blocks/aerial duels, low crosses/key passes/drib
 
         # =============================================
         # MULTI-AI CONSENSUS ENGINE (3 AIs)
-        # Grok 3 Mini (GK) — single AI engine
+        # Gemini Flash (GK) — single AI engine
         # =============================================
         PREDICTION_SYSTEM = """You are a soccer prop analyst. The Reverse Formula math engine has ALREADY computed the final projection and recommendation — your ONLY job is to explain the tactical reasons WHY that math verdict is correct. You are an explainer and narrator of the model's output, NOT an independent analyst reaching your own conclusions.
 
@@ -3747,10 +3747,10 @@ Average {req.propType}: {comp_avg} | Per-90 avg: {comp_per90_avg} | Sample: {len
             except Exception as _fge:
                 print(f"[FIRST GOAL] engine failed: {_fge}")
 
-        # Compose data for Grok prediction
+        # Compose data for AI prediction
         final_data_parts = []
-        if grok_digest:
-            final_data_parts.append(f"[GROK INTEL BRIEF]\n{grok_digest}")
+        if ai_digest:
+            final_data_parts.append(f"[AI INTEL BRIEF]\n{ai_digest}")
         if data_digest:
             final_data_parts.append(f"[DATA DIGEST]\n{data_digest}")
         if wave2_supplement:
@@ -3879,9 +3879,9 @@ Season avg: {_gl_raw_avg} | Home avg: {_gl_home_avg} | Away avg: {_gl_away_avg} 
 
         # ── SUPPRESSION / AMPLIFICATION CONTEXT ─────────────────────────────────
         # When the model's projection is significantly below the player's season avg
-        # (UNDER call) or above it (OVER call), Grok tends to anchor on the season avg
+        # (UNDER call) or above it (OVER call), AI tends to anchor on the season avg
         # and argue the wrong direction.  Inject an explicit "here is the gap and why"
-        # block so Grok explains the suppression/amplification instead of fighting it.
+        # block so Gemini explains the suppression/amplification instead of fighting it.
         _suppression_context = ""
         if early_bayes and early_bayes.get("priorMean") and bayesian_prompt_anchor:
             _eb_prior = early_bayes["priorMean"]
@@ -3926,8 +3926,8 @@ Odds: {json.dumps(match_odds.get('bookmakerOdds',{}), default=str) if match_odds
 
 Analyze ALL data thoroughly. Return JSON only."""
 
-        async def call_grok(label="gemini", model="gemini-2.5-flash"):
-            """Gemini — primary AI synthesis engine (replaces Grok)."""
+        async def call_gemini(label="gemini", model="gemini-2.5-flash"):
+            """Gemini — primary AI synthesis engine ."""
             if not GEMINI_API_KEY:
                 return None
             import httpx as _httpx
@@ -3989,54 +3989,54 @@ Analyze ALL data thoroughly. Return JSON only."""
                 return None
 
         # =============================================
-        # AI SYNTHESIS: Grok only
+        # AI SYNTHESIS: Gemini
         # Projection comes ONLY from the math engine — AI projectedValue is NEVER used.
         # =============================================
-        grok_result = None
+        ai_result = None
 
         # pv is set from early_bayes here as a temporary anchor; real_bayes overwrites it later.
         pv = early_bayes["posteriorMean"] if early_bayes and early_bayes.get("posteriorMean") else req.line
 
-        # AI synthesis: Grok analyses all data and produces tacticalBreakdown + reasoning
-        grok_result = await call_grok()
+        # AI synthesis: Gemini analyses all data and produces tacticalBreakdown + reasoning
+        ai_result = await call_gemini()
 
-        # BAYESIAN FALLBACK: If ALL Grok models failed (no text), build minimal result from math
-        if not grok_result or not isinstance(grok_result, dict) or not grok_result.get("tacticalBreakdown"):
+        # BAYESIAN FALLBACK: If Gemini AI failed (no text), build minimal result from math
+        if not ai_result or not isinstance(ai_result, dict) or not ai_result.get("tacticalBreakdown"):
             if early_bayes and early_bayes.get("posteriorMean"):
                 pv = early_bayes["posteriorMean"]
-                # Cap confidence at 72% (shows "High") when Grok fails — the math had
+                # Cap confidence at 72% (shows "High") when AI fails — the math had
                 # no AI sanity check so claiming "Very High" confidence would be misleading.
                 _raw_bayes_conf = max(early_bayes.get("pOver", 50), early_bayes.get("pUnder", 50))
                 _capped_conf = min(_raw_bayes_conf, 72)
-                grok_result = {
+                ai_result = {
                     "projectedValue": pv,
                     "recommendation": early_bayes.get("recommendation", "over"),
                     "confidenceScore": _capped_conf,
                     "reasoning": "AI models unavailable — projection based on Reverse Formula mathematical analysis.",
                     "_source": "bayesian_fallback",
                 }
-                print(f"[BAYESIAN FALLBACK] All Grok models failed — using Bayesian projection: {pv}")
+                print(f"[BAYESIAN FALLBACK] All AI models failed — using Bayesian projection: {pv}")
             else:
                 # No Bayesian data either — use the line as last resort
                 pv = req.line
-                grok_result = {
+                ai_result = {
                     "projectedValue": pv,
                     "recommendation": "over",
                     "confidenceScore": 50,
                     "reasoning": "Insufficient data for mathematical projection. AI models unavailable.",
                     "_source": "fallback",
                 }
-                print(f"[FALLBACK] No Bayesian data and all Grok models failed — using line: {pv}")
+                print(f"[FALLBACK] No Bayesian data and all AI models failed — using line: {pv}")
 
-        source_model = grok_result.get("_source", "grok3mini")
+        source_model = ai_result.get("_source", "gemini")
         print(f"[TIMING] {source_model} done: {_t.time()-_t0:.1f}s, proj={pv}")
 
-        prediction = grok_result.copy()
+        prediction = ai_result.copy()
         prediction.pop("_source", None)
         prediction["projectedValue"] = pv
         prediction["recommendation"] = "over" if pv > req.line else "under"
 
-        # scenarioProbabilities: prefer Grok-assigned values; fall back to first-goal math
+        # scenarioProbabilities: prefer AI-assigned values; fall back to first-goal math
         _sp = prediction.get("scenarioProbabilities")
         if (not isinstance(_sp, dict) or
                 not all(isinstance(_sp.get(k), (int, float)) for k in ("best", "base", "worst")) or
@@ -4044,7 +4044,7 @@ Analyze ALL data thoroughly. Return JSON only."""
             if _fg_scenario_weights:
                 prediction["scenarioProbabilities"] = _fg_scenario_weights
         else:
-            # Normalise Grok's values (they may not sum to 1.0 exactly)
+            # Normalise AI's values (they may not sum to 1.0 exactly)
             _sp_total = sum(_sp[k] for k in ("best", "base", "worst"))
             if _sp_total > 0:
                 prediction["scenarioProbabilities"] = {
@@ -4127,7 +4127,7 @@ Analyze ALL data thoroughly. Return JSON only."""
         # BAYESIAN-ONLY PROJECTION
         #
         # The math OWNS the number. Period.
-        # Grok provides tactical reasoning text only — no numeric influence.
+        # Gemini provides tactical reasoning text only — no numeric influence.
         # The Bayesian posterior IS the projected value.
         # =============================================
         if real_bayes and real_bayes.get("priorSamples", 0) >= 3:
@@ -4413,7 +4413,7 @@ Analyze ALL data thoroughly. Return JSON only."""
             if divergence_pct > 10 and bayesian_rec != early_rec:
                 print(f"[BAYES ADJUST] Early={early_proj}({early_rec}) → Full Bayes={bayesian_posterior}({bayesian_rec}) — {divergence_pct:.0f}% shift after all adjustments.")
 
-            print(f"[PROJECTION] Bayesian={bayesian_posterior}({bayesian_rec}, {bayesian_prob:.0%}) | Early estimate={early_proj}({early_rec}) — MATH IS FINAL. Grok = explanation only.")
+            print(f"[PROJECTION] Bayesian={bayesian_posterior}({bayesian_rec}, {bayesian_prob:.0%}) | Early estimate={early_proj}({early_rec}) — MATH IS FINAL. Gemini = explanation only.")
 
             # ── Apply nightly-learned bias offsets ──────────────────────────
             # GK pass_attempts UNDER: the GK inverted possession model already achieves
@@ -4474,10 +4474,10 @@ Analyze ALL data thoroughly. Return JSON only."""
                 "bayesianConfidence": round(bayesian_prob * 100, 1),
                 "fusedProjection": bayesian_posterior,
                 "fusedRecommendation": bayesian_rec,
-                "weights": {"math": 1.0, "grok": 0},  # Grok = explanation only, zero weight in projection
+                "weights": {"math": 1.0, "gemini": 0},  # Gemini = explanation only, zero weight in projection
                 "agreement": bayesian_rec == early_rec,
                 "divergencePct": round(divergence_pct, 1),
-                "note": "projectedValue is determined entirely by the Reverse Formula math engine. Grok writes explanation text only.",
+                "note": "projectedValue is determined entirely by the Reverse Formula math engine. Gemini writes explanation text only.",
             }
 
             pass  # Math Lock runs after PASS GATE below — see [MATH LOCK] block
@@ -5072,8 +5072,8 @@ Analyze ALL data thoroughly. Return JSON only."""
         # the line when the AI disagreed, silently flipping the recommendation
         # against the math. The user's money follows the math — the math decides.
         _ai_proj_raw = None
-        if grok_result:
-            _ai_proj_raw = grok_result.get("aiProjection") or grok_result.get("projectedValue") or None
+        if ai_result:
+            _ai_proj_raw = ai_result.get("aiProjection") or ai_result.get("projectedValue") or None
         _bayes_final = prediction.get("projectedValue", req.line)
         prediction["bayesianComponent"] = _bayes_final
         if _ai_proj_raw and isinstance(_ai_proj_raw, (int, float)) and 0 < _ai_proj_raw < 500:
@@ -5295,7 +5295,7 @@ Analyze ALL data thoroughly. Return JSON only."""
                 f"{prediction.get('recommendation')}: {_pre_pos_cap}% → {_pos_cap}%"
             )
 
-        # MATH LOCK removed — pure math analysis is built below, no Grok text to patch.
+        # MATH LOCK removed — pure math analysis is built below, no AI text to patch.
         _lock_final_rec = str(prediction.get("recommendation", "")).upper()  # PASS, OVER, or UNDER
         _lock_proj_raw  = prediction.get("projectedValue", req.line)
         _lock_proj_str  = str(int(_lock_proj_raw)) if _lock_proj_raw == int(_lock_proj_raw) else f"{_lock_proj_raw:.1f}"
@@ -5445,7 +5445,7 @@ Analyze ALL data thoroughly. Return JSON only."""
             if match_odds.get("favorite"):
                 real_matchup["favorite"] = match_odds["favorite"]
         # 3. Game type from real stats — deterministic classification
-        # ALWAYS override Grok's expectedGameType. Grok invents values like
+        # ALWAYS override AI's expectedGameType. AI invents values like
         # "KNOCKOUT (HIGH-PRESSURE, END-TO-END)" for group stage matches.
         # Valid labels: open | cagey | one-sided | high-tempo only.
         _poss_diff = abs((real_matchup.get("expectedPossession", {}).get("home", 50)) - 50)
@@ -5473,7 +5473,7 @@ Analyze ALL data thoroughly. Return JSON only."""
             else:
                 real_matchup["expectedGameType"] = "open"
 
-        # Final sanitisation — reject any value Grok invented that isn't in the approved set
+        # Final sanitisation — reject any value AI invented that isn't in the approved set
         _valid_game_types = {"open", "cagey", "one-sided", "high-tempo"}
         if real_matchup.get("expectedGameType", "open").lower().strip() not in _valid_game_types:
             real_matchup["expectedGameType"] = "one-sided" if _poss_diff >= 12 else "open"
@@ -5758,7 +5758,7 @@ Analyze ALL data thoroughly. Return JSON only."""
         )
 
         # ── Assemble the math engine block (always computed — used as footer
-        #    when Grok succeeded, or as full breakdown when Grok failed).
+        #    when AI succeeded, or as full breakdown when AI failed).
         _m_sections = [_m_verdict, _m_math]
         if _m_log_str:  _m_sections.append(_m_log_str)
         if _m_hr_str:   _m_sections.append(_m_hr_str)
@@ -5780,21 +5780,21 @@ Analyze ALL data thoroughly. Return JSON only."""
             f"{_m_ev_note}"
         )
 
-        _grok_td = prediction.get("tacticalBreakdown", "")
-        _grok_ss = prediction.get("sharpSummary", "")
+        _ai_td = prediction.get("tacticalBreakdown", "")
+        _ai_ss = prediction.get("sharpSummary", "")
 
-        if _grok_td and len(_grok_td.strip()) > 100:
-            # ── Grok produced a real narrative — keep it, append math footer ──
-            prediction["tacticalBreakdown"] = _grok_td.strip() + "\n\n---\n" + _m_math + "\n" + _m_tldr
-            # Keep Grok's sharpSummary if it's non-empty and substantive
-            if not (_grok_ss and len(_grok_ss.strip()) > 20):
+        if _ai_td and len(_ai_td.strip()) > 100:
+            # ── AI produced a real narrative — keep it, append math footer ──
+            prediction["tacticalBreakdown"] = _ai_td.strip() + "\n\n---\n" + _m_math + "\n" + _m_tldr
+            # Keep AI's sharpSummary if it's non-empty and substantive
+            if not (_ai_ss and len(_ai_ss.strip()) > 20):
                 prediction["sharpSummary"] = _m_sharp_summary
-            print(f"[GROK SUMMARY] Using Grok tacticalBreakdown ({len(_grok_td)} chars) + math footer appended")
+            print(f"[AI SUMMARY] Using AI tacticalBreakdown ({len(_ai_td)} chars) + math footer appended")
         else:
-            # ── Grok failed or returned empty — fall back to pure-math breakdown ──
+            # ── AI failed or returned empty — fall back to pure-math breakdown ──
             prediction["tacticalBreakdown"] = _m_full_block
             prediction["sharpSummary"] = _m_sharp_summary
-            print(f"[PURE MATH] Grok summary absent — using math-only tacticalBreakdown ({len(_m_full_block)} chars)")
+            print(f"[PURE MATH] AI summary absent — using math-only tacticalBreakdown ({len(_m_full_block)} chars)")
 
         # ── Game script disabled
         prediction["gameScript"] = {"key_finding": "Game script analysis disabled.", "scenarios": []}

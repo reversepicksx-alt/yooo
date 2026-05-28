@@ -50,7 +50,7 @@ async def _get_mlb_ai_analysis(
     pitcher_role: str = "",
     pitch_traj_mult: float = 1.0,
 ) -> dict:
-    """Call Grok for MLB sharp verdict + reasoning — v2 Ultra with all 9 model layers."""
+    """Gemini AI: MLB sharp verdict + reasoning — v2 Ultra with all 9 model layers."""
     is_pitcher = prop_type in mlb_engine.PITCHER_PROPS
     prop_label = prop_type.replace("_", " ").title()
 

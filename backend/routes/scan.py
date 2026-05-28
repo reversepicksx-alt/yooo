@@ -917,22 +917,22 @@ async def scan_prop(req: ScanPropRequest):
 
         # ── Step 1: Gemini Vision OCR ──
         extracted = None
-        from grok_engine import grok_scan_prop
-        grok_result = await grok_scan_prop(req.image_base64, sport=sport)
-        if grok_result and grok_result.get("playerName"):
+        from grok_engine import gemini_scan_prop
+        scan_result = await gemini_scan_prop(req.image_base64, sport=sport)
+        if scan_result and scan_result.get("playerName"):
             # For non-soccer sports: skip soccer validation, return extracted data directly
             if sport != "soccer":
-                player_name = (grok_result.get("playerName") or "").strip()
-                print(f"[SCAN:{sport}] Extracted: {player_name} {grok_result.get('propType','')} {grok_result.get('line','')}")
+                player_name = (scan_result.get("playerName") or "").strip()
+                print(f"[SCAN:{sport}] Extracted: {player_name} {scan_result.get('propType','')} {scan_result.get('line','')}")
                 return {
                     "success": True,
                     "picks": [{
                         "extracted": {
                             "playerName": player_name,
-                            "propType": grok_result.get("propType", ""),
-                            "line": grok_result.get("line") or 0,
-                            "opponentName": grok_result.get("opponentName") or grok_result.get("playerTeam", ""),
-                            "teamName": grok_result.get("playerTeam") or grok_result.get("teamName", ""),
+                            "propType": scan_result.get("propType", ""),
+                            "line": scan_result.get("line") or 0,
+                            "opponentName": scan_result.get("opponentName") or scan_result.get("playerTeam", ""),
+                            "teamName": scan_result.get("playerTeam") or scan_result.get("teamName", ""),
                             "sport": sport,
                         },
                         "resolved": None,
@@ -940,10 +940,10 @@ async def scan_prop(req: ScanPropRequest):
                 }
 
             # Soccer: validate and proceed with full resolution
-            is_valid, issues = _validate_extraction(grok_result)
+            is_valid, issues = _validate_extraction(scan_result)
             if is_valid:
-                print(f"[SCAN] Gemini extracted (validated): {grok_result.get('playerName')}")
-                extracted = [grok_result]
+                print(f"[SCAN] Gemini extracted (validated): {scan_result.get('playerName')}")
+                extracted = [scan_result]
             else:
                 print(f"[SCAN] Gemini extraction FAILED validation ({issues})")
 

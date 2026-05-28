@@ -7,7 +7,7 @@ GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 GEMINI_FLASH = "gemini-2.5-flash"
 
 
-async def resolve_position_grok(player_name: str, sport: str = "soccer") -> dict:
+async def resolve_position_ai(player_name: str, sport: str = "soccer") -> dict:
     """Resolve a single player's position using cache first, then Gemini fallback.
     Returns {"position": "XX", "role": "..."} or empty strings if failed."""
 
@@ -24,7 +24,7 @@ async def resolve_position_grok(player_name: str, sport: str = "soccer") -> dict
     return await _gemini_resolve_batch([{"playerName": player_name, "sport": sport}])
 
 
-async def resolve_positions_grok_batch(players: list) -> dict:
+async def resolve_positions_ai_batch(players: list) -> dict:
     """Batch-resolve positions for multiple players.
     Input: [{"playerName": "...", "sport": "soccer", "playerId": optional}]
     Returns: {"PlayerName": {"position": "XX", "role": "..."}, ...}

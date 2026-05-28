@@ -750,7 +750,7 @@ async def apply_elite_calibration(
 ) -> dict:
     """
     Master function: Apply all 5 elite calibration corrections post-consensus.
-    Also incorporates Grok pattern mining insights when available.
+    Also incorporates AI pattern mining insights when available.
     """
     cal_stats = await get_calibration_stats(sport)
     if not cal_stats or cal_stats.get("total", 0) < MIN_SAMPLES_FOR_CORRECTION:
@@ -761,13 +761,13 @@ async def apply_elite_calibration(
     original_conf = prediction.get("confidenceScore", 50)
     corrections = []
 
-    # --- Grok Pattern Mining Insights ---
+    # --- AI Pattern Mining Insights ---
     try:
-        grok_insights = await db.calibration_insights.find_one(
+        ai_insights = await db.calibration_insights.find_one(
             {"type": "pattern_mining"}, {"_id": 0, "insights": 1, "raw_stats": 1}
         )
-        if grok_insights and grok_insights.get("raw_stats"):
-            rs = grok_insights["raw_stats"]
+        if ai_insights and ai_insights.get("raw_stats"):
+            rs = ai_insights["raw_stats"]
             # Check if this prop type has a notably bad hit rate
             prop_stats = rs.get("by_prop", {}).get(prop_type)
             if prop_stats:
@@ -775,7 +775,7 @@ async def apply_elite_calibration(
                 if total >= 10:
                     rate = prop_stats["hit"] / total
                     if rate < 0.40:
-                        corrections.append(f"GROK PATTERN: {prop_type} hit rate only {rate*100:.0f}% — extra caution")
+                        corrections.append(f"AI PATTERN: {prop_type} hit rate only {rate*100:.0f}% — extra caution")
             # Check venue bias from patterns
             venue_stats = rs.get("by_venue", {}).get(venue)
             if venue_stats:
@@ -783,7 +783,7 @@ async def apply_elite_calibration(
                 if vt >= 15:
                     vrate = venue_stats["hit"] / vt
                     if vrate < 0.45:
-                        corrections.append(f"GROK PATTERN: {venue} picks hit only {vrate*100:.0f}%")
+                        corrections.append(f"AI PATTERN: {venue} picks hit only {vrate*100:.0f}%")
     except Exception:
         pass
 

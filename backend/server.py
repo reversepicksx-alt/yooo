@@ -125,7 +125,7 @@ async def seed_grants():
     asyncio.create_task(_auto_backfill_positions())
     # Fix MLB picks saved with sport='soccer' before the sport-detection fix
     asyncio.create_task(_backfill_mlb_sport())
-    # Grok Engine background tasks
+    # AI Engine background tasks
     from grok_engine import auto_settlement_loop, auto_scout_loop, pattern_mining_loop, mlb_live_loop
     asyncio.create_task(auto_settlement_loop())
     asyncio.create_task(auto_scout_loop())
@@ -285,7 +285,7 @@ async def _backfill_mlb_sport():
 
 
 async def _auto_backfill_positions():
-    """Auto-backfill missing positions on startup using cache + Grok AI fallback."""
+    """Auto-backfill missing positions on startup using cache + Gemini AI fallback."""
     import asyncio
     await asyncio.sleep(15)  # Wait for caches to load first
     try:
@@ -431,13 +431,13 @@ Only the JSON array, no markdown."""
                                                 upsert=True
                                             )
                                     gemini_updated += 1
-                            print(f"[AUTO-BACKFILL] Grok resolved: {gemini_updated} players (batch {i//30+1})")
+                            print(f"[AUTO-BACKFILL] Gemini resolved: {gemini_updated} players (batch {i//30+1})")
                         else:
                             print(f"[AUTO-BACKFILL] Gemini API error: {resp.status_code}")
                 except Exception as e:
                     print(f"[AUTO-BACKFILL] Gemini batch error: {e}")
 
-        print(f"[AUTO-BACKFILL] Done. Total cache-resolved: {updated}, Grok batches sent: {(len(unresolved)+29)//30 if unresolved else 0}")
+        print(f"[AUTO-BACKFILL] Done. Total cache-resolved: {updated}, AI batches sent: {(len(unresolved)+29)//30 if unresolved else 0}")
     except Exception as e:
         print(f"[AUTO-BACKFILL] Error: {e}")
 

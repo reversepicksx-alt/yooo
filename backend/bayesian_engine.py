@@ -1158,7 +1158,7 @@ def compute_bayesian_projection(
         "avg_poss": None, "avg_passes": None,
     }
     if prop_type in PRESS_AFFECTED_PROPS:
-        # ── PRIMARY: AI-supplied press intensity (Grok web search + tactical knowledge) ──
+        # ── PRIMARY: AI-supplied press intensity (Gemini web search + tactical knowledge) ──
         # This is opponent-specific and works for ALL leagues. The structural heuristic
         # (tackles+interceptions) only fires as a fallback when AI couldn't produce a
         # confident answer, because it inverts for elite-press teams (more press → fewer
