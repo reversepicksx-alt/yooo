@@ -1633,7 +1633,7 @@ export default function ScanScreen() {
                                   <TouchableOpacity
                                     onPress={async () => {
                                       if (!predictionRequest) return;
-                                      setPhase('loading');
+                                      setPhase('analyzing');
                                       setShowAltPlayers(false);
                                       try {
                                         const req = { ...predictionRequest, playerId: c.playerId, teamName: c.teamName, teamId: undefined };
