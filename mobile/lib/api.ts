@@ -273,6 +273,9 @@ export interface PredictionResult {
   confidenceLevel?: string;
   confidenceInterval?: [number, number];
   priorMean?: number;
+  priorWeight?: number;
+  momentumWeight?: number;
+  covariateWeight?: number;
   lineDeviationBand?: string;
   lineDeviationPct?: number;
   lineDeviationHitRate?: number;
@@ -578,6 +581,9 @@ export async function predict(request: Record<string, unknown>): Promise<Predict
     pUnder: bm.pUnder,
     volatility: bm.volatility,
     priorSamples: bm.priorSamples,
+    priorWeight: bm.priorWeight,
+    momentumWeight: bm.momentumWeight,
+    covariateWeight: bm.covariateWeight,
     covariateAdjustment: bm.covariateAdjustment,
     reversalFlag: bm.reversalFlag,
     gameLogs: gameLogs.length > 0 ? gameLogs : undefined,

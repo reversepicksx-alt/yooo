@@ -2541,42 +2541,55 @@ export default function ScanScreen() {
                 </View>
 
                 {/* SEASON row */}
-                <View style={styles.rfRow}>
-                  <Text style={styles.rfRowLabel}>SEASON</Text>
-                  <View style={styles.rfBarTrack}>
-                    <View style={[styles.rfBarFill, { width: '45%', backgroundColor: '#4DA6FF' }]} />
-                  </View>
-                  <Text style={[styles.rfPct, { color: '#4DA6FF' }]}>45%</Text>
-                  <Text style={[styles.rfVal, { color: '#4DA6FF' }]}>
-                    {prediction.priorMean != null ? prediction.priorMean.toFixed(1) : '—'}
-                  </Text>
-                </View>
+                {(() => {
+                  const _wP = prediction.priorWeight ?? 45;
+                  const _wM = prediction.momentumWeight ?? 30;
+                  const _wC = prediction.covariateWeight ?? 25;
+                  const _wT = (_wP + _wM + _wC) || 100;
+                  const rfPriorPct  = Math.round(_wP / _wT * 100);
+                  const rfMomPct    = Math.round(_wM / _wT * 100);
+                  const rfCovPct    = Math.round(_wC / _wT * 100);
+                  return (
+                    <>
+                      <View style={styles.rfRow}>
+                        <Text style={styles.rfRowLabel}>SEASON</Text>
+                        <View style={styles.rfBarTrack}>
+                          <View style={[styles.rfBarFill, { width: `${rfPriorPct}%`, backgroundColor: '#4DA6FF' }]} />
+                        </View>
+                        <Text style={[styles.rfPct, { color: '#4DA6FF' }]}>{rfPriorPct}%</Text>
+                        <Text style={[styles.rfVal, { color: '#4DA6FF' }]}>
+                          {prediction.priorMean != null ? prediction.priorMean.toFixed(1) : '—'}
+                        </Text>
+                      </View>
 
-                {/* MOMENTUM row */}
-                <View style={styles.rfRow}>
-                  <Text style={styles.rfRowLabel}>MOMENTUM</Text>
-                  <View style={styles.rfBarTrack}>
-                    <View style={[styles.rfBarFill, { width: '30%', backgroundColor: '#FF8C42' }]} />
-                  </View>
-                  <Text style={[styles.rfPct, { color: '#FF8C42' }]}>30%</Text>
-                  <Text style={[styles.rfVal, { color: '#FF8C42' }]}>
-                    {prediction.momentumMean != null ? prediction.momentumMean.toFixed(1) : '—'}
-                  </Text>
-                </View>
+                      {/* MOMENTUM row */}
+                      <View style={styles.rfRow}>
+                        <Text style={styles.rfRowLabel}>MOMENTUM</Text>
+                        <View style={styles.rfBarTrack}>
+                          <View style={[styles.rfBarFill, { width: `${rfMomPct}%`, backgroundColor: '#FF8C42' }]} />
+                        </View>
+                        <Text style={[styles.rfPct, { color: '#FF8C42' }]}>{rfMomPct}%</Text>
+                        <Text style={[styles.rfVal, { color: '#FF8C42' }]}>
+                          {prediction.momentumMean != null ? prediction.momentumMean.toFixed(1) : '—'}
+                        </Text>
+                      </View>
 
-                {/* CONTEXT row */}
-                <View style={styles.rfRow}>
-                  <Text style={styles.rfRowLabel}>CONTEXT</Text>
-                  <View style={styles.rfBarTrack}>
-                    <View style={[styles.rfBarFill, { width: '25%', backgroundColor: '#A084E8' }]} />
-                  </View>
-                  <Text style={[styles.rfPct, { color: '#A084E8' }]}>25%</Text>
-                  <Text style={[styles.rfVal, { color: '#A084E8' }]}>
-                    {prediction.covariateAdjustment != null
-                      ? (prediction.covariateAdjustment >= 0 ? '+' : '') + prediction.covariateAdjustment.toFixed(2)
-                      : '—'}
-                  </Text>
-                </View>
+                      {/* CONTEXT row */}
+                      <View style={styles.rfRow}>
+                        <Text style={styles.rfRowLabel}>CONTEXT</Text>
+                        <View style={styles.rfBarTrack}>
+                          <View style={[styles.rfBarFill, { width: `${rfCovPct}%`, backgroundColor: '#A084E8' }]} />
+                        </View>
+                        <Text style={[styles.rfPct, { color: '#A084E8' }]}>{rfCovPct}%</Text>
+                        <Text style={[styles.rfVal, { color: '#A084E8' }]}>
+                          {prediction.covariateAdjustment != null
+                            ? (prediction.covariateAdjustment >= 0 ? '+' : '') + prediction.covariateAdjustment.toFixed(2)
+                            : '—'}
+                        </Text>
+                      </View>
+                    </>
+                  );
+                })()}
 
                 {/* Badges */}
                 <View style={styles.rfBadgeRow}>

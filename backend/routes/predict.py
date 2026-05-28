@@ -5250,9 +5250,11 @@ Analyze ALL data thoroughly. Return JSON only."""
         # Fires AFTER BAYESIAN TRUTH so the cap applies to the final Bayesian
         # confidence, not an intermediate AI estimate.
         _mg_proj = prediction.get("projectedValue", req.line)
+        _market_distance_fired = False
         if req.line > 0 and _mg_proj is not None:
             _mg_gap_pct = abs(_mg_proj - req.line) / req.line * 100
             if _mg_gap_pct >= 35:
+                _market_distance_fired = True
                 _mg_pre = prediction.get("confidenceScore", 50)
                 if _mg_pre > 55:
                     prediction["confidenceScore"] = 55
@@ -5264,6 +5266,13 @@ Analyze ALL data thoroughly. Return JSON only."""
                     ]
                     print(f"[MARKET DIST] {req.playerName}: proj={_mg_proj} line={req.line} "
                           f"gap={_mg_gap_pct:.0f}% → confidence capped {_mg_pre}→55%")
+                # When the gap is extreme (≥60%), the direction is so obvious the pick cannot
+                # be a coin-flip. Clear any coinFlip flag set by upstream guards so the edge
+                # rating uses the real projection margin instead of forcing NO EDGE.
+                if _mg_gap_pct >= 60 and prediction.get("coinFlip"):
+                    prediction["coinFlip"] = False
+                    print(f"[MARKET DIST] gap={_mg_gap_pct:.0f}% ≥ 60% — coinFlip cleared; "
+                          f"direction is structural, not a near-line coin-flip")
 
         # ── POSITION-SPECIFIC CONFIDENCE CAP ─────────────────────────────────────
         # Empirical data (1291 settled picks) shows certain position+prop+direction
@@ -5344,6 +5353,10 @@ Analyze ALL data thoroughly. Return JSON only."""
         # ── Edge: projection margin, gated by safety ──────────────────────────
         # SHARP EDGE requires both a meaningful margin AND a historically SAFE prop.
         # AVOID/RISKY props are capped at MARGINAL even with large projection margins.
+        # MARKET DISTANCE override: when the line is structurally far from projection
+        # (gap ≥ 60%), even a RISKY prop gets at least MARGINAL if margin is large —
+        # the line itself is the anomaly, not the model.
+        _er_market_dist = _market_distance_fired and _er_margin >= 10
         if _er_rec == "PASS" or _er_coin:
             _edge_rating = "NO EDGE"
         elif _safety_rating == "AVOID":
@@ -5371,8 +5384,18 @@ Analyze ALL data thoroughly. Return JSON only."""
             # Even with a big margin, a historically unreliable prop can't be SHARP EDGE
             if _er_margin >= 10 and _er_conf >= 70:
                 _edge_rating = "MARGINAL"
+            elif _er_market_dist:
+                # Market distance override: the line itself is the anomaly, margin is real
+                _edge_rating = "MARGINAL"
             else:
                 _edge_rating = "NO EDGE"
+
+        # Market distance structural override: when the projection gap is extreme (≥60%
+        # from line) AND the model has a clear direction, floor the edge at MARGINAL
+        # regardless of safety rating. The line is the outlier — not the model.
+        if _er_market_dist and _edge_rating == "NO EDGE":
+            _edge_rating = "MARGINAL"
+            print(f"[MARKET DIST EDGE] margin={_er_margin:.1f} gap≥60% → floor to MARGINAL")
 
         prediction["edgeRating"]        = _edge_rating
         prediction["safetyRating"]      = _safety_rating
