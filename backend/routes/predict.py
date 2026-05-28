@@ -118,6 +118,7 @@ async def predict(req: PredictionRequest):
         # real fixture data even when the scan didn't return numeric IDs.
         _resolved_opp_id = req.opponentId or 0
         _resolved_player_id = req.playerId or 0
+        _player_candidates: list = []  # populated when name-based resolution finds multiple matches
 
         try:
             from team_resolver import find_team as _find_team
@@ -164,6 +165,33 @@ async def predict(req: PredictionRequest):
                         if not actual_team_id or actual_team_id == 0:
                             actual_team_id = _p.get("teamId") or actual_team_id
                         print(f"[ID RESOLVE] '{req.playerName}' → playerId={_resolved_player_id}, teamId={actual_team_id}")
+
+                        # [PLAYER AMBIGUITY] If the player was resolved by name (no playerId supplied),
+                        # check whether the cache holds multiple players with the same abbreviated nameClean.
+                        # If so, surface all candidates in the response so the frontend can warn the user.
+                        try:
+                            _nc = (_p.get("nameClean") or "").strip()
+                            if _nc:
+                                from cache import COL_PLAYERS
+                                _all_nc = await db[COL_PLAYERS].find(
+                                    {"nameClean": _nc},
+                                    {"playerId": 1, "name": 1, "teamName": 1, "position": 1, "leagueId": 1, "_id": 0}
+                                ).to_list(15)
+                                if len(_all_nc) > 1:
+                                    _player_candidates = [
+                                        {
+                                            "playerId": m["playerId"],
+                                            "playerName": m.get("name", ""),
+                                            "teamName":   m.get("teamName", ""),
+                                            "position":   m.get("position", ""),
+                                            "leagueId":   m.get("leagueId"),
+                                        }
+                                        for m in _all_nc
+                                    ]
+                                    print(f"[PLAYER AMBIGUITY] '{_nc}' — {len(_all_nc)} candidates: "
+                                          f"{[m.get('teamName','?') for m in _all_nc]}")
+                        except Exception as _ae:
+                            print(f"[PLAYER AMBIGUITY] check failed: {_ae}")
                 except Exception as _re:
                     print(f"[ID RESOLVE] player lookup failed: {_re}")
 
@@ -5822,6 +5850,10 @@ Analyze ALL data thoroughly. Return JSON only."""
 
         # ── Game script disabled
         prediction["gameScript"] = {"key_finding": "Game script analysis disabled.", "scenarios": []}
+
+        # Attach player disambiguation candidates when the name was ambiguous
+        if _player_candidates:
+            prediction["playerCandidates"] = _player_candidates
 
         # Save to MongoDB
         prediction["_created"] = datetime.now(timezone.utc).isoformat()

@@ -385,6 +385,10 @@ export interface PredictionResult {
   propHistoricalRate?: number;
   propHistoricalN?: number;
   coinFlip?: boolean;
+  /** Populated when the player was resolved by name and multiple cache entries share the same
+   *  abbreviated name (e.g. "J. Valencia" for three different players). The frontend should
+   *  show a disambiguation banner so the user can verify the correct player was selected. */
+  playerCandidates?: Array<{ playerId: number; playerName: string; teamName: string; position: string; leagueId?: number }>;
   error?: string;
 }
 
@@ -658,6 +662,7 @@ export async function predict(request: Record<string, unknown>): Promise<Predict
     propHistoricalRate: (raw as any).propHistoricalRate ?? undefined,
     propHistoricalN: (raw as any).propHistoricalN ?? undefined,
     coinFlip: raw.coinFlip ?? undefined,
+    playerCandidates: raw.playerCandidates ?? undefined,
   };
 }
 

@@ -108,6 +108,8 @@ export default function ScanScreen() {
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [scannedImageUri, setScannedImageUri] = useState<string | null>(null);
   const [prediction, setPrediction] = useState<PredictionResult | null>(null);
+  const [predictionRequest, setPredictionRequest] = useState<Record<string, unknown> | null>(null);
+  const [showAltPlayers, setShowAltPlayers] = useState(false);
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
   const [manualError, setManualError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -419,6 +421,8 @@ export default function ScanScreen() {
         return;
       }
       setPrediction(result);
+      setPredictionRequest(req);
+      setShowAltPlayers(false);
       setPhase('result');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e: unknown) {
@@ -1597,6 +1601,61 @@ export default function ScanScreen() {
                     <Text style={styles.matchContextText} numberOfLines={1}>
                       {[prediction.matchContext.league, prediction.matchContext.round, prediction.matchContext.date].filter(Boolean).join('  ·  ')}
                     </Text>
+                  )}
+                  {/* Player disambiguation warning — shown when multiple players share the same abbreviated name */}
+                  {prediction.playerCandidates && prediction.playerCandidates.length > 1 &&
+                    prediction.playerCandidates.some(c => c.playerId !== prediction.playerId) && (
+                    <View>
+                      <TouchableOpacity
+                        onPress={() => setShowAltPlayers(v => !v)}
+                        style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6, gap: 4 }}
+                        activeOpacity={0.7}
+                      >
+                        <Ionicons name="warning-outline" size={12} color="#f0a500" />
+                        <Text style={{ color: '#f0a500', fontSize: 11 }}>
+                          {prediction.playerCandidates.length} players share this name — tap to verify
+                        </Text>
+                        <Ionicons name={showAltPlayers ? 'chevron-up' : 'chevron-down'} size={11} color="#f0a500" />
+                      </TouchableOpacity>
+                      {showAltPlayers && (
+                        <View style={{ marginTop: 4, backgroundColor: '#1a1a00', borderRadius: 6, padding: 8, gap: 4 }}>
+                          {prediction.playerCandidates.map((c, i) => {
+                            const isCurrent = c.playerId === prediction.playerId;
+                            return (
+                              <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                {isCurrent
+                                  ? <Ionicons name="checkmark-circle" size={12} color={Colors.primary} />
+                                  : <Ionicons name="ellipse-outline" size={12} color="#555" />}
+                                <Text style={{ color: isCurrent ? Colors.primary : '#888', fontSize: 11, flex: 1 }}>
+                                  {c.teamName}{c.position ? ` · ${c.position}` : ''}
+                                </Text>
+                                {!isCurrent && (
+                                  <TouchableOpacity
+                                    onPress={async () => {
+                                      if (!predictionRequest) return;
+                                      setPhase('loading');
+                                      setShowAltPlayers(false);
+                                      try {
+                                        const req = { ...predictionRequest, playerId: c.playerId, teamName: c.teamName, teamId: undefined };
+                                        const result = await predict(req);
+                                        if (!result.error) {
+                                          setPrediction(result);
+                                          setPredictionRequest(req);
+                                        }
+                                        setPhase('result');
+                                      } catch { setPhase('result'); }
+                                    }}
+                                    style={{ backgroundColor: '#333', borderRadius: 4, paddingHorizontal: 8, paddingVertical: 3 }}
+                                  >
+                                    <Text style={{ color: '#ccc', fontSize: 10 }}>Use this</Text>
+                                  </TouchableOpacity>
+                                )}
+                              </View>
+                            );
+                          })}
+                        </View>
+                      )}
+                    </View>
                   )}
                 </View>
                 {prediction.recommendation && (
