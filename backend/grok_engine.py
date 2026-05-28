@@ -27,8 +27,15 @@ async def _gemini_call(
     timeout: int = 40,
     model: str = GEMINI_FLASH,
     json_mode: bool = False,
+    thinking_budget: int = 0,
 ) -> str:
-    """Core Gemini API call. Returns raw text (or JSON string if json_mode=True)."""
+    """Core Gemini API call. Returns raw text (or JSON string if json_mode=True).
+
+    thinking_budget=0 (default) disables the thinking phase on 2.5 Flash — required
+    for short-answer calls because thinking tokens eat into maxOutputTokens and leave
+    nothing for the actual response. Pass thinking_budget>0 only for deep-reasoning
+    tasks (e.g. synthesis, tactical analysis).
+    """
     if not GEMINI_API_KEY:
         return ""
     url = f"{GEMINI_BASE}/{model}:generateContent?key={GEMINI_API_KEY}"
@@ -37,6 +44,7 @@ async def _gemini_call(
         "generationConfig": {
             "temperature": temperature,
             "maxOutputTokens": max_tokens,
+            "thinkingConfig": {"thinkingBudget": thinking_budget},
         },
     }
     if system:
@@ -69,14 +77,19 @@ async def _gemini_search_call(
     timeout: int = 25,
     model: str = GEMINI_FLASH,
 ) -> str:
-    """Gemini call with Google Search grounding for real-time web data."""
+    """Gemini call with Google Search grounding for real-time web data.
+    thinkingBudget=0 so search tokens are not consumed by the thinking phase."""
     if not GEMINI_API_KEY:
         return ""
     url = f"{GEMINI_BASE}/{model}:generateContent?key={GEMINI_API_KEY}"
     payload: dict = {
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
         "tools": [{"google_search": {}}],
-        "generationConfig": {"temperature": 0, "maxOutputTokens": max_tokens},
+        "generationConfig": {
+            "temperature": 0,
+            "maxOutputTokens": max_tokens,
+            "thinkingConfig": {"thinkingBudget": 0},
+        },
     }
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10)) as client:
