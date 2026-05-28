@@ -913,20 +913,41 @@ def _validate_extraction(entry: dict) -> tuple:
 async def scan_prop(req: ScanPropRequest):
     """Use AI vision to extract player prop data from a screenshot."""
     try:
-        # ── Step 1: Grok Vision OCR ──
+        sport = (req.sport or "soccer").lower()
+
+        # ── Step 1: Gemini Vision OCR ──
         extracted = None
         from grok_engine import grok_scan_prop
-        grok_result = await grok_scan_prop(req.image_base64)
+        grok_result = await grok_scan_prop(req.image_base64, sport=sport)
         if grok_result and grok_result.get("playerName"):
-            # Validate Grok's extraction before accepting
+            # For non-soccer sports: skip soccer validation, return extracted data directly
+            if sport != "soccer":
+                player_name = (grok_result.get("playerName") or "").strip()
+                print(f"[SCAN:{sport}] Extracted: {player_name} {grok_result.get('propType','')} {grok_result.get('line','')}")
+                return {
+                    "success": True,
+                    "picks": [{
+                        "extracted": {
+                            "playerName": player_name,
+                            "propType": grok_result.get("propType", ""),
+                            "line": grok_result.get("line") or 0,
+                            "opponentName": grok_result.get("opponentName") or grok_result.get("playerTeam", ""),
+                            "teamName": grok_result.get("playerTeam") or grok_result.get("teamName", ""),
+                            "sport": sport,
+                        },
+                        "resolved": None,
+                    }],
+                }
+
+            # Soccer: validate and proceed with full resolution
             is_valid, issues = _validate_extraction(grok_result)
             if is_valid:
-                print(f"[SCAN] Grok extracted (validated): {grok_result.get('playerName')}")
+                print(f"[SCAN] Gemini extracted (validated): {grok_result.get('playerName')}")
                 extracted = [grok_result]
             else:
-                print(f"[SCAN] Grok extraction FAILED validation ({issues}), retrying not available")
+                print(f"[SCAN] Gemini extraction FAILED validation ({issues})")
 
-        # Fallback: return error if Grok Vision didn't extract
+        # Fallback: return error if Vision didn't extract
         if not extracted:
             return {"success": False, "error": "Could not extract prop details from this image. Please try a clearer screenshot."}
 

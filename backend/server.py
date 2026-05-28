@@ -1,7 +1,7 @@
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from config import db, LIFETIME_SUB_EMAILS, OWNER_EMAIL, COMPLIMENTARY_MEMBERS, init_dynamic_settings, get_dynamic_setting
+from config import db, LIFETIME_SUB_EMAILS, OWNER_EMAIL, COMPLIMENTARY_MEMBERS, init_dynamic_settings, get_dynamic_setting, GEMINI_API_KEY
 
 # ── Create App ──
 app = FastAPI(title="ReversePicks API")

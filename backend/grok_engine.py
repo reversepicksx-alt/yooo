@@ -1892,12 +1892,8 @@ Only JSON, no markdown."""
 # PHASE 5: SMART SCAN (Grok Vision for OCR)
 # ═══════════════════════════════════════════════════════════════
 
-async def grok_scan_prop(image_base64: str) -> dict:
-    """Extract prop details from a screenshot using AI vision.
-    Primary: Gemini 2.5 Flash (vision). Fallback: Grok vision.
-    Returns: {"playerName": "...", "propType": "...", "line": 0, "teamName": "...", "opponentName": "...", "leagueName": "..."}"""
-
-    prompt = """Extract the FIRST player prop bet from this image. Focus on the top-left or most prominent player card.
+_SCAN_PROMPTS = {
+    "soccer": """Extract the FIRST player prop bet from this soccer/football image. Focus on the top-left or most prominent player card.
 
 Extract:
 - Player name (exact spelling from image)
@@ -1908,7 +1904,56 @@ Extract:
 - League name (if visible, e.g., Champions League, La Liga, Premier League)
 
 Return ONLY a valid JSON object (not an array):
-{"playerName":"","propType":"","line":0,"teamName":"","opponentName":"","leagueName":""}"""
+{"playerName":"","propType":"","line":0,"teamName":"","opponentName":"","leagueName":""}""",
+
+    "mlb": """Extract the FIRST player prop bet from this MLB baseball image. Focus on the most prominent player card.
+
+Extract:
+- Player name (exact spelling from image — batter or pitcher)
+- Team name (the player's team, NOT the opponent)
+- Prop type (use EXACTLY one of: hits, home_runs, rbi, runs, walks, strikeouts, total_bases, stolen_bases, hits_runs_rbis, hitter_fantasy_points, pitcher_strikeouts, innings_pitched, earned_runs, hits_allowed, walks_allowed, pitches_thrown, pitcher_fantasy_score, plate_appearances)
+- Line/number (the over/under value, e.g., 1.5, 6.5, 0.5)
+- Opponent team name (the opposing team)
+
+Return ONLY a valid JSON object (not an array):
+{"playerName":"","propType":"","line":0,"teamName":"","opponentName":""}""",
+
+    "cs2": """Extract the FIRST player prop bet from this CS2/Counter-Strike esports image. Focus on the most prominent player card.
+
+Extract:
+- Player nickname/handle (exact spelling — e.g., "s1mple", "ZywOo", "NiKo")
+- Team name (the player's team/org, NOT the opponent — e.g., "NAVI", "Vitality", "FaZe")
+- Prop type (use EXACTLY one of: maps_1_2_kills, maps_1_2_headshots, map1_kills, map3_kills)
+  - If the image shows "kills" over multiple maps → maps_1_2_kills
+  - If it shows "headshots" → maps_1_2_headshots
+  - If it shows kills for a single map → map1_kills
+- Line/number (the over/under value, e.g., 32.5, 45.5)
+- Opponent team name
+
+Return ONLY a valid JSON object (not an array):
+{"playerName":"","propType":"","line":0,"teamName":"","opponentName":""}""",
+
+    "wta": """Extract the FIRST player prop bet from this WTA tennis image. Focus on the most prominent player card.
+
+Extract:
+- Player name (exact spelling from image)
+- Prop type (use EXACTLY one of: total_games, player_games_won, games_won_by_player)
+  - If the image shows total games in the match → total_games
+  - If it shows games won by a specific player → player_games_won
+- Line/number (the over/under value, e.g., 20.5, 8.5)
+- Opponent player name (who they are playing against)
+
+Return ONLY a valid JSON object (not an array):
+{"playerName":"","propType":"","line":0,"teamName":"","opponentName":""}""",
+}
+
+
+async def grok_scan_prop(image_base64: str, sport: str = "soccer") -> dict:
+    """Extract prop details from a screenshot using AI vision.
+    Primary: Gemini 2.5 Flash (vision).
+    Returns: {"playerName": "...", "propType": "...", "line": 0, "teamName": "...", "opponentName": "...", "leagueName": "..."}"""
+
+    prompt = _SCAN_PROMPTS.get(sport.lower(), _SCAN_PROMPTS["soccer"])
 
     def _normalize(result: dict) -> dict:
         if "teamName" in result and "playerTeam" not in result:
@@ -1926,8 +1971,9 @@ Return ONLY a valid JSON object (not an array):
                 ]}],
                 "generationConfig": {
                     "temperature": 0,
-                    "maxOutputTokens": 1024,
+                    "maxOutputTokens": 256,
                     "thinkingConfig": {"thinkingBudget": 0},
+                    "responseMimeType": "application/json",
                 },
             }
             async with httpx.AsyncClient(timeout=25) as client:
@@ -1942,12 +1988,12 @@ Return ONLY a valid JSON object (not an array):
                             result = result[0]
                         if isinstance(result, dict):
                             result = _normalize(result)
-                            print(f"[SCAN] Gemini vision: {result.get('playerName','')} {result.get('propType','')} {result.get('line','')}")
+                            print(f"[SCAN:{sport}] Gemini vision: {result.get('playerName','')} {result.get('propType','')} {result.get('line','')}")
                             return result
                 else:
-                    print(f"[SCAN] Gemini vision error: {resp.status_code} — {resp.text[:300]}")
+                    print(f"[SCAN:{sport}] Gemini vision error: {resp.status_code} — {resp.text[:300]}")
         except Exception as e:
-            print(f"[SCAN] Gemini vision error: {e}")
+            print(f"[SCAN:{sport}] Gemini vision error: {e}")
 
     return {}
 
