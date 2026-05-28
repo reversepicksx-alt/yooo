@@ -1868,7 +1868,7 @@ For each pattern, give:
 Return JSON: [{{"pattern":"...","adjustment":"...","impact":"..."}}]
 Only JSON, no markdown."""
 
-    result = await _grok_call(prompt, temperature=0, max_tokens=1000, timeout=15, reasoning=True)
+    result = await _gemini_call(prompt, temperature=0, max_tokens=1000, timeout=15)
     insights = _parse_json(result)
 
     if insights:

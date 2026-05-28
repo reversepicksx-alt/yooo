@@ -359,8 +359,8 @@ async def _auto_backfill_positions():
 
         print(f"[AUTO-BACKFILL] Cache resolved: {updated}/{len(picks)}. Unresolved: {len(unresolved)}")
 
-        # Step 3: Use Grok to batch-resolve remaining positions
-        if unresolved and XAI_API_KEY:
+        # Step 3: Use Gemini to batch-resolve remaining positions
+        if unresolved and GEMINI_API_KEY:
             # Deduplicate by player name+sport
             unique_players = {}
             for u in unresolved:
@@ -389,37 +389,39 @@ Return JSON array: [{{"name":"...","position":"XX","role":"..."}}]
 Only the JSON array, no markdown."""
 
                 try:
-                    async with httpx.AsyncClient(timeout=20) as client:
+                    from config import GEMINI_API_KEY as _gem_key
+                    import json as _json
+                    _gem_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={_gem_key}"
+                    async with httpx.AsyncClient(timeout=25) as client:
                         resp = await client.post(
-                            "https://api.x.ai/v1/chat/completions",
-                            headers={"Authorization": f"Bearer {XAI_API_KEY}", "Content-Type": "application/json"},
+                            _gem_url,
                             json={
-                                "model": "grok-4-1-fast-non-reasoning",
-                                "messages": [{"role": "user", "content": prompt}],
-                                "temperature": 0,
+                                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                                "generationConfig": {
+                                    "temperature": 0,
+                                    "maxOutputTokens": 1000,
+                                    "thinkingConfig": {"thinkingBudget": 0},
+                                    "responseMimeType": "application/json",
+                                },
                             }
                         )
                         if resp.status_code == 200:
-                            import json
-                            content = resp.json()["choices"][0]["message"]["content"]
-                            # Clean markdown wrapping if present
-                            content = content.strip()
+                            parts = resp.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
+                            content = "".join(p.get("text", "") for p in parts).strip()
                             if content.startswith("```"):
                                 content = content.split("\n", 1)[1] if "\n" in content else content[3:]
                                 content = content.rsplit("```", 1)[0]
-                            resolved = json.loads(content.strip())
-                            grok_updated = 0
+                            resolved = _json.loads(content.strip())
+                            gemini_updated = 0
                             for r in resolved:
                                 rname = r.get("name", "")
                                 rpos = r.get("position", "")
                                 rrole = r.get("role", "")
                                 if rname and rpos:
-                                    # Update all picks for this player
                                     await db.picks.update_many(
                                         {"playerName": rname, "$or": [{"position": {"$exists": False}}, {"position": ""}, {"position": None}]},
                                         {"$set": {"position": rpos, "role": rrole or ""}}
                                     )
-                                    # Cache for future lookups
                                     matching = [u for u in batch if u["playerName"] == rname]
                                     for m in matching:
                                         if m.get("playerId"):
@@ -428,12 +430,12 @@ Only the JSON array, no markdown."""
                                                 {"$set": {"playerId": m["playerId"], "specificPosition": rpos, "role": rrole or ""}},
                                                 upsert=True
                                             )
-                                    grok_updated += 1
-                            print(f"[AUTO-BACKFILL] Grok resolved: {grok_updated} players (batch {i//30+1})")
+                                    gemini_updated += 1
+                            print(f"[AUTO-BACKFILL] Grok resolved: {gemini_updated} players (batch {i//30+1})")
                         else:
-                            print(f"[AUTO-BACKFILL] Grok API error: {resp.status_code}")
+                            print(f"[AUTO-BACKFILL] Gemini API error: {resp.status_code}")
                 except Exception as e:
-                    print(f"[AUTO-BACKFILL] Grok batch error: {e}")
+                    print(f"[AUTO-BACKFILL] Gemini batch error: {e}")
 
         print(f"[AUTO-BACKFILL] Done. Total cache-resolved: {updated}, Grok batches sent: {(len(unresolved)+29)//30 if unresolved else 0}")
     except Exception as e:

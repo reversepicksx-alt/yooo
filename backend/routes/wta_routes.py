@@ -11,7 +11,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from config import db, XAI_API_KEY
+from config import db, XAI_API_KEY, GEMINI_API_KEY
 import wta_client
 import wta_engine
 
@@ -96,23 +96,27 @@ Be precise. Use tennis terminology. Return JSON ONLY:
 {{"sharpSummary": "<1 tight sentence under 22 words>", "reasoning": "<2-3 sharp sentences with specific numbers>"}}"""
 
     try:
-        from openai import AsyncOpenAI
-        client = AsyncOpenAI(api_key=XAI_API_KEY, base_url="https://api.x.ai/v1")
-        resp   = await asyncio.wait_for(
-            client.chat.completions.create(
-                model="grok-4-1-fast-non-reasoning",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=450,
-                temperature=0.35,
-            ),
-            timeout=14,
-        )
-        raw = resp.choices[0].message.content.strip()
-        m   = re.search(r'\{[\s\S]*\}', raw)
-        if m:
-            return json.loads(m.group(0))
+        import httpx as _httpx
+        if GEMINI_API_KEY:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+            payload = {
+                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                "generationConfig": {
+                    "temperature": 0.35, "maxOutputTokens": 550,
+                    "thinkingConfig": {"thinkingBudget": 0},
+                    "responseMimeType": "application/json",
+                },
+            }
+            async with _httpx.AsyncClient(timeout=18) as c:
+                r = await c.post(url, json=payload)
+                if r.status_code == 200:
+                    parts = r.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
+                    raw = "".join(p.get("text", "") for p in parts).strip()
+                    m = re.search(r'\{[\s\S]*\}', raw)
+                    if m:
+                        return json.loads(m.group(0))
     except Exception as e:
-        log.warning(f"[WTA AI] Grok failed: {e}")
+        log.warning(f"[WTA AI] Gemini failed: {e}")
     return {}
 
 

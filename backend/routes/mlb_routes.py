@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional
 
-from config import db, XAI_API_KEY, EMERGENT_LLM_KEY
+from config import db, XAI_API_KEY, EMERGENT_LLM_KEY, GEMINI_API_KEY
 import mlb_client
 import mlb_engine
 
@@ -169,28 +169,31 @@ Write sharp analysis covering ALL relevant factors above. Be specific about whic
 Return JSON ONLY:
 {{"sharpSummary": "<1 tight sentence with core edge + biggest factor>", "reasoning": "<2-4 sharp sentences covering platoon split, ERA tier, game environment, BABIP/contact quality, and park — only mention factors that are actually provided above>"}}"""
 
-    # Try Grok first
+    # Gemini AI synthesis
     try:
-        from openai import AsyncOpenAI
-        client = AsyncOpenAI(api_key=XAI_API_KEY, base_url="https://api.x.ai/v1")
-        resp = await asyncio.wait_for(
-            client.chat.completions.create(
-                model="grok-4-1-fast-non-reasoning",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=300,
-                temperature=0.5,
-            ),
-            timeout=8,
-        )
-        raw = resp.choices[0].message.content.strip()
-        import json, re
-        m = re.search(r'\{[\s\S]*\}', raw)
-        if m:
-            data = json.loads(m.group(0))
-            log.info(f"[MLB AI] Grok OK for {player_name}")
-            return data
+        import httpx, json, re
+        if GEMINI_API_KEY:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+            payload = {
+                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                "generationConfig": {
+                    "temperature": 0.5, "maxOutputTokens": 400,
+                    "thinkingConfig": {"thinkingBudget": 0},
+                    "responseMimeType": "application/json",
+                },
+            }
+            async with httpx.AsyncClient(timeout=12) as c:
+                r = await c.post(url, json=payload)
+                if r.status_code == 200:
+                    parts = r.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
+                    raw = "".join(p.get("text", "") for p in parts).strip()
+                    m = re.search(r'\{[\s\S]*\}', raw)
+                    if m:
+                        data = json.loads(m.group(0))
+                        log.info(f"[MLB AI] Gemini OK for {player_name}")
+                        return data
     except Exception as e:
-        log.warning(f"[MLB AI] Grok failed: {e}")
+        log.warning(f"[MLB AI] Gemini failed: {e}")
 
     return {}
 
