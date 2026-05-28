@@ -104,6 +104,7 @@ Return ONLY valid JSON, no markdown or explanation."""
                 "generationConfig": {
                     "temperature": 0, "maxOutputTokens": 500,
                     "responseMimeType": "application/json",
+                    "thinkingConfig": {"thinkingBudget": 0},
                 },
             }
             async with _httpx.AsyncClient(timeout=20) as client:

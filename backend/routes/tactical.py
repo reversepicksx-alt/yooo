@@ -484,7 +484,8 @@ async def tactical_message(req: TacticalMessageRequest):
             _gem_payload = {
                 "systemInstruction": {"parts": [{"text": GROK_SYSTEM}]},
                 "contents": _gem_contents,
-                "generationConfig": {"temperature": 0.7, "maxOutputTokens": 2000},
+                "generationConfig": {"temperature": 0.7, "maxOutputTokens": 2000,
+                                     "thinkingConfig": {"thinkingBudget": 1024}},
             }
             async with _httpx.AsyncClient(timeout=_httpx.Timeout(45, connect=10)) as _client:
                 _resp = await _client.post(_gem_url, json=_gem_payload)
@@ -510,7 +511,8 @@ async def tactical_message(req: TacticalMessageRequest):
             _flash_payload = {
                 "systemInstruction": {"parts": [{"text": GROK_SYSTEM}]},
                 "contents": _flash_contents,
-                "generationConfig": {"temperature": 0.7, "maxOutputTokens": 2000},
+                "generationConfig": {"temperature": 0.7, "maxOutputTokens": 2000,
+                                     "thinkingConfig": {"thinkingBudget": 1024}},
             }
             async with _httpx.AsyncClient(timeout=_httpx.Timeout(45, connect=10)) as _client:
                 _resp = await _client.post(_flash_url, json=_flash_payload)

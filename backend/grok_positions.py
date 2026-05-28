@@ -80,7 +80,8 @@ Only the JSON array, no markdown, no explanation."""
         payload = {
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
             "generationConfig": {"temperature": 0, "maxOutputTokens": 500,
-                                 "responseMimeType": "application/json"},
+                                 "responseMimeType": "application/json",
+                                 "thinkingConfig": {"thinkingBudget": 0}},
         }
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.post(url, json=payload)

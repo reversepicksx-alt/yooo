@@ -1924,7 +1924,11 @@ Return ONLY a valid JSON object (not an array):
                     {"text": prompt},
                     {"inline_data": {"mime_type": "image/png", "data": image_base64}},
                 ]}],
-                "generationConfig": {"temperature": 0, "maxOutputTokens": 500},
+                "generationConfig": {
+                    "temperature": 0,
+                    "maxOutputTokens": 1024,
+                    "thinkingConfig": {"thinkingBudget": 0},
+                },
             }
             async with httpx.AsyncClient(timeout=25) as client:
                 resp = await client.post(url, json=payload)

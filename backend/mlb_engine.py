@@ -1021,7 +1021,7 @@ def compute_mlb_projection(
             continue
         valid_games.append({"val": val, "game": g})
 
-    valid_games.sort(key=lambda x: x["game"].get("game_id", 0), reverse=True)
+    valid_games.sort(key=lambda x: x["game"].get("game_id") or 0, reverse=True)
 
     n_games   = len(valid_games)
     game_vals = [g["val"] for g in valid_games]
