@@ -125,20 +125,25 @@ async def _check_access_local(email_lower: str):
     if stripe_sub:
         return "Premium (Stripe)"
     # Stripe: canceled but still within paid period (cancel_at_period_end flow)
+    # NEVER grant grace period for payment_failed cancellations — they did not pay.
     stripe_canceled = await db.stripe_subscriptions.find_one(
         {"email": email_lower, "status": "canceled"}, {"_id": 0}
     )
     if stripe_canceled:
-        cpe_raw = stripe_canceled.get("currentPeriodEnd")
-        if cpe_raw:
-            try:
-                cpe_dt = datetime.fromisoformat(str(cpe_raw).replace(" ", "T"))
-                if cpe_dt.tzinfo is None:
-                    cpe_dt = cpe_dt.replace(tzinfo=timezone.utc)
-                if datetime.now(timezone.utc) < cpe_dt:
-                    return "Premium (Stripe)"  # paid period not yet over
-            except Exception:
-                pass
+        if stripe_canceled.get("canceledReason") == "payment_failed":
+            print(f"[ACCESS BLOCK] {email_lower}: Stripe sub canceled due to payment_failed — no grace period")
+            # fall through to None (blocked)
+        else:
+            cpe_raw = stripe_canceled.get("currentPeriodEnd")
+            if cpe_raw:
+                try:
+                    cpe_dt = datetime.fromisoformat(str(cpe_raw).replace(" ", "T"))
+                    if cpe_dt.tzinfo is None:
+                        cpe_dt = cpe_dt.replace(tzinfo=timezone.utc)
+                    if datetime.now(timezone.utc) < cpe_dt:
+                        return "Premium (Stripe)"  # paid period not yet over
+                except Exception:
+                    pass
     # Stripe: past_due — fall through to live Stripe check.
     # The live check only grants access for active/trialing subs, so a genuinely
     # past_due user will still be blocked. But if they've since resubscribed and

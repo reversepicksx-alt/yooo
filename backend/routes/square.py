@@ -1091,15 +1091,71 @@ async def square_webhook(event: dict):
                     await _activate_pending_checkout(pending, source="webhook_order")
                     return {"received": True, "activated": True}
 
-        # ── subscription.updated (legacy) ──
+        # ── invoice.payment_failed — IMMEDIATE LOCKOUT ──
+        elif event_type == "invoice.payment_failed":
+            invoice = data.get("invoice", data)
+            sub_id = invoice.get("subscription_id", "")
+            buyer_email = (invoice.get("primary_recipient", {}).get("email_address") or "").lower().strip()
+            print(f"[SQUARE WEBHOOK] invoice.payment_failed — email={buyer_email}, sub={sub_id}")
+            matched = False
+            if buyer_email:
+                sub_doc = await db.square_subscriptions.find_one({"email": buyer_email})
+                if sub_doc:
+                    await db.square_subscriptions.update_one(
+                        {"email": buyer_email},
+                        {"$set": {
+                            "status": "EXPIRED",
+                            "expiredReason": "payment_failed",
+                            "updatedAt": datetime.now(timezone.utc).isoformat(),
+                        }}
+                    )
+                    killed = await db.sessions.delete_many({"email": buyer_email})
+                    print(f"[SQUARE WEBHOOK] LOCKED OUT {buyer_email} — payment_failed (sessions killed: {killed.deleted_count})")
+                    matched = True
+            if not matched and sub_id:
+                sub_doc = await db.square_subscriptions.find_one({"squareSubscriptionId": sub_id})
+                if sub_doc:
+                    target_email = sub_doc.get("email", "")
+                    await db.square_subscriptions.update_one(
+                        {"squareSubscriptionId": sub_id},
+                        {"$set": {
+                            "status": "EXPIRED",
+                            "expiredReason": "payment_failed",
+                            "updatedAt": datetime.now(timezone.utc).isoformat(),
+                        }}
+                    )
+                    killed = await db.sessions.delete_many({"email": target_email})
+                    print(f"[SQUARE WEBHOOK] LOCKED OUT {target_email} via sub_id — payment_failed (sessions killed: {killed.deleted_count})")
+                    matched = True
+            if not matched:
+                print(f"[SQUARE WEBHOOK] invoice.payment_failed — no matching subscriber found for email={buyer_email} sub={sub_id}")
+
+        # ── subscription.updated — status sync + lockout on DEACTIVATED/PAUSED ──
         elif event_type == "subscription.updated":
-            sq_sub_id = data.get("subscription", {}).get("id") or data.get("id")
-            new_status = data.get("subscription", {}).get("status") or data.get("status")
+            sq_sub = data.get("subscription", data)
+            sq_sub_id = sq_sub.get("id", "")
+            new_status = sq_sub.get("status", "")
+            print(f"[SQUARE WEBHOOK] subscription.updated — sub={sq_sub_id}, status={new_status}")
             if sq_sub_id and new_status:
-                await db.square_subscriptions.update_one(
-                    {"squareSubscriptionId": sq_sub_id},
-                    {"$set": {"status": new_status, "updatedAt": datetime.now(timezone.utc).isoformat()}}
-                )
+                sub_doc = await db.square_subscriptions.find_one({"squareSubscriptionId": sq_sub_id})
+                lock_statuses = {"DEACTIVATED", "PAUSED"}
+                if new_status in lock_statuses and sub_doc:
+                    target_email = sub_doc.get("email", "")
+                    await db.square_subscriptions.update_one(
+                        {"squareSubscriptionId": sq_sub_id},
+                        {"$set": {
+                            "status": "EXPIRED",
+                            "expiredReason": f"sq_{new_status.lower()}",
+                            "updatedAt": datetime.now(timezone.utc).isoformat(),
+                        }}
+                    )
+                    killed = await db.sessions.delete_many({"email": target_email})
+                    print(f"[SQUARE WEBHOOK] LOCKED OUT {target_email} — sq status={new_status} (sessions killed: {killed.deleted_count})")
+                else:
+                    await db.square_subscriptions.update_one(
+                        {"squareSubscriptionId": sq_sub_id},
+                        {"$set": {"status": new_status, "updatedAt": datetime.now(timezone.utc).isoformat()}}
+                    )
 
         # ── invoice.payment_made ──
         elif event_type == "invoice.payment_made":

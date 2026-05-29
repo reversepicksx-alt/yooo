@@ -470,10 +470,13 @@ async def stripe_webhook(request: Request):
                     "canceledAt": now,
                     "updatedAt": now,
                     "canceledReason": "payment_failed",
+                    # Backdate the period end so the grace-period check never fires
+                    "currentPeriodEnd": now,
                 }}
             )
             # Kill active sessions so the user is logged out immediately
-            await db.sessions.delete_many({"email": email})
+            killed = await db.sessions.delete_many({"email": email})
+            print(f"[STRIPE] Locked out {email} — payment_failed, sessions killed: {killed.deleted_count}")
 
     return {"received": True}
 
