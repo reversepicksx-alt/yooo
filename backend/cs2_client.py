@@ -164,16 +164,30 @@ async def _fetch_matches_paginated(team_id: int, max_matches: int = 200) -> list
         if _fresh(doc_sm, CACHE_TTL["team_matches"]) and doc_sm.get("data") is not None:
             return list(doc_sm["data"])[:max_matches]
 
+    # Fetch finished matches first, then also fetch "current" matches that
+    # have a winner set — the BDL API sometimes marks completed matches as
+    # "current" for a few minutes while they ingest final data.
     matches = []
-    params  = {"team_ids[]": team_id, "per_page": 100, "status": "finished"}
-    while len(matches) < max_matches:
-        r      = await _get("/matches", params)
-        page   = r.get("data", [])
-        matches.extend(page)
-        cursor = (r.get("meta") or {}).get("next_cursor")
-        if not cursor or not page:
-            break
-        params = {**params, "cursor": cursor}
+    seen    = set()
+    for _status in ("finished", "current"):
+        params = {"team_ids[]": team_id, "per_page": 100, "status": _status}
+        while len(matches) < max_matches:
+            r      = await _get("/matches", params)
+            page   = r.get("data", [])
+            for m in page:
+                m_id = m.get("id")
+                if m_id not in seen:
+                    seen.add(m_id)
+                    # Only accept "current" matches that have a winner (meaning
+                    # the match is truly finished even if the API hasn't flipped
+                    # the status yet).  "current" without a winner = truly ongoing.
+                    if _status == "current" and not (m.get("winner") or {}).get("id"):
+                        continue
+                    matches.append(m)
+            cursor = (r.get("meta") or {}).get("next_cursor")
+            if not cursor or not page:
+                break
+            params = {**params, "cursor": cursor}
 
     matches = matches[:max_matches]
     try:
@@ -605,10 +619,12 @@ async def get_cs2_completed_match_result(
             # Fetch maps + per-player stats in one cached call (CACHE_TTL["match_maps"]).
             per_map_stats = await _fetch_match_maps_and_stats(match, team_id, player_id)
             if not per_map_stats:
-                # If the match is finished but the player has no stats on ANY map,
-                # they were a DNP for this match → void as push so the pick never
-                # hangs live indefinitely.
-                if match.get("status") == "finished":
+                # If the match is finished (or "current" with a winner) but the
+                # player has no stats on ANY map, they were a DNP → void as push.
+                _is_done = match.get("status") == "finished" or (
+                    match.get("status") == "current" and (match.get("winner") or {}).get("id")
+                )
+                if _is_done:
                     mt1_n = (match.get("team1") or {}).get("name", "")
                     mt2_n = (match.get("team2") or {}).get("name", "")
                     score_str = f"{mt1_n} vs {mt2_n}"

@@ -580,16 +580,24 @@ async def list_picks(req: GetPicksRequest):
             continue
 
         # ── DNP / early-sub guard ────────────────────────────────────────────
-        # Voided picks (voidReason set OR <30 min played) must always be push.
+        # Voided picks (voidReason set OR <30 min played) must always be DNP.
         # This branch ACTIVELY corrects them — not just skips — so that a race
         # condition between a concurrent list_picks response and a DB fix can
         # never leave result=miss permanently stuck in the DB.
+        # CRITICAL: only applies to soccer — minutesPlayed is meaningless for
+        # CS2/MLB/WTA and would falsely DNP every non-soccer pick.
+        _sport = p.get("sport", "soccer")
         _min_played = p.get("minutesPlayed")
-        is_dnp = bool(p.get("voidReason")) or (_min_played is not None and _min_played < 30)
+        is_dnp = bool(p.get("voidReason")) or (
+            _sport == "soccer" and _min_played is not None and _min_played < 30
+        )
         if is_dnp:
             if p.get("result") != "dnp":
                 p["result"] = "dnp"
-                void_label = p.get("voidReason") or f"<30 min ({p.get('minutesPlayed',0)} min played)"
+                void_label = p.get("voidReason") or (
+                    f"<30 min ({p.get('minutesPlayed',0)} min played)"
+                    if _sport == "soccer" else f"DNP ({_sport})"
+                )
                 print(f"[CONSISTENCY] DNP→dnp {p.get('playerName','')} {p.get('propType','')} ({void_label})")
                 await db.picks.update_one(
                     {"pickId": p["pickId"], "email": req.email.lower()},
