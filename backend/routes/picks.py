@@ -584,7 +584,8 @@ async def list_picks(req: GetPicksRequest):
         # This branch ACTIVELY corrects them — not just skips — so that a race
         # condition between a concurrent list_picks response and a DB fix can
         # never leave result=miss permanently stuck in the DB.
-        is_dnp = bool(p.get("voidReason")) or (p.get("minutesPlayed") or 0) < 30
+        _min_played = p.get("minutesPlayed")
+        is_dnp = bool(p.get("voidReason")) or (_min_played is not None and _min_played < 30)
         if is_dnp:
             if p.get("result") != "push":
                 p["result"] = "push"
