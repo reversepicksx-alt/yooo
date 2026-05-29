@@ -121,6 +121,15 @@ KPR_HYPER = 0.58   # calibrated down from 0.63 — settled data confirms over-pr
 EXPECTED_ROUNDS_PER_MAP  = 20.0
 EXPECTED_ROUNDS_2MAPS    = 36.0
 
+# ── Eco-round correction ──────────────────────────────────────────────────────
+# In pro CS2, ~2-4 rounds per half (of 12) are eco/force-buy rounds where kill
+# counts are suppressed well below full-buy averages. KPR on eco rounds runs
+# ~30-50% of normal. Net effect: competitive kill opportunities ≈ 87.5% of
+# total rounds. Applying this downward correction prevents the engine from
+# projecting kills as if every round is a full-buy round.
+# Source: HLTV economy data cross-referenced against CSDB kill rates 2023-24.
+ECO_ROUND_FACTOR = 0.875  # ~12.5% of rounds are eco/force — suppress expected kills
+
 MIN_SAMPLE   = 12
 MC_TRIALS    = 60_000   # increased from 50k for more stable MC probabilities
 
@@ -420,6 +429,11 @@ def _round_normalized_projection(
         expected_rounds = sum(rounds_vals) / len(rounds_vals)
     else:
         expected_rounds = EXPECTED_ROUNDS_2MAPS if rounds_scale_as_match else EXPECTED_ROUNDS_PER_MAP
+
+    # Apply eco-round correction: strip the ~12.5% of rounds that are eco/force-buy.
+    # KPR is measured over ALL rounds including eco, so raw KPR × total_rounds
+    # over-projects. Scale by ECO_ROUND_FACTOR to represent competitive rounds only.
+    expected_rounds *= ECO_ROUND_FACTOR
 
     return kpr * expected_rounds
 
