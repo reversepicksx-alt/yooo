@@ -617,6 +617,52 @@ async def list_picks(req: GetPicksRequest):
                     {"$set": {"result": correct}}
                 )
 
+    # ── CS2 settled-pick data repair ────────────────────────────────────────────
+    # Some CS2 picks were settled with wrong actualValue (e.g., 1 or 4 instead
+    # of real kills) because the BDL API returned the match as "current" while
+    # the old code only scanned "finished" matches.  Re-settle any settled
+    # CS2 pick with a suspicious actualValue to fix the data.
+    for p in picks:
+        if p.get("sport") != "cs2" or p.get("status") != "settled":
+            continue
+        prop = p.get("propType", "")
+        actual = p.get("actualValue")
+        if not (prop.startswith(("maps_1_2_", "map1_", "map3_")) and actual is not None):
+            continue
+        # For kills/deaths/assists, actualValue < 5 is almost always wrong
+        # (no pro player has < 5 kills across 2 maps).  For ADR, < 30 is wrong.
+        if prop in ("maps_1_2_kills", "maps_1_3_kills", "map1_kills", "map3_kills") and actual < 5:
+            pass
+        elif prop in ("maps_1_2_deaths", "maps_1_3_deaths", "map1_deaths", "map3_deaths") and actual < 5:
+            pass
+        elif prop in ("maps_1_2_assists", "maps_1_3_assists", "map1_assists", "map3_assists") and actual < 2:
+            pass
+        elif prop in ("maps_1_2_adr", "map1_adr", "map3_adr") and actual < 30:
+            pass
+        else:
+            continue
+        try:
+            settled = await _settle_cs2_pick({**p, "email": req.email.lower()})
+            if settled and settled.get("actualValue") is not None:
+                p["actualValue"] = settled["actualValue"]
+                p["result"]      = settled["result"]
+                p["hitPct"]      = settled["hitPct"]
+                if settled.get("matchScore"):
+                    p["matchScore"] = settled["matchScore"]
+                print(f"[CS2 REPAIR] {p.get('playerName','')} {prop}: actualValue {actual} → {settled['actualValue']}")
+                # CRITICAL: persist the fix so the pick stays correct forever
+                await db.picks.update_one(
+                    {"pickId": p["pickId"], "email": req.email.lower()},
+                    {"$set": {
+                        "actualValue": settled["actualValue"],
+                        "result":      settled["result"],
+                        "hitPct":      settled["hitPct"],
+                        "matchScore":  settled.get("matchScore"),
+                    }}
+                )
+        except Exception as e:
+            print(f"[CS2 REPAIR] error for {p.get('playerName','')}: {e}")
+
     needs_proj = [p for p in picks if not p.get("projectedValue")]
     if needs_proj:
         for p in needs_proj:
