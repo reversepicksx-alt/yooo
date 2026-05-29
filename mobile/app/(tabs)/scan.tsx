@@ -11,7 +11,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import { useQueryClient } from '@tanstack/react-query';
-import { scanProp, predict, mlbPredict, getMlbGameContext, cs2Predict, wtaPredict, savePick, PROP_TYPES, MLB_PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, LEAGUES, PredictionResult, ScanResult, MlbPlayer, Cs2Player, Cs2Team, WtaPlayer } from '@/lib/api';
+import { scanProp, predict, mlbPredict, getMlbGameContext, cs2Predict, wtaPredict, savePick, searchMlbPlayers, searchCs2Players, searchCs2Teams, searchWtaPlayers, PROP_TYPES, MLB_PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, LEAGUES, PredictionResult, ScanResult, MlbPlayer, Cs2Player, Cs2Team, WtaPlayer } from '@/lib/api';
 import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult, FuzzyLeagueResult } from '@/components/FuzzySearchInput';
 import LeaguePickerModal from '@/components/LeaguePickerModal';
 import { useAuth } from '@/contexts/AuthContext';
@@ -320,18 +320,58 @@ export default function ScanScreen() {
           if (scanned.opponentName) setMlbOpponentQuery(scanned.opponentName);
           setMlbPropType(mapProp(scanned.propType, mlbKeys, 'hits'));
           if (scanned.line) setLine(String(scanned.line));
+          // Auto-resolve player so playerId is populated (no manual selection needed)
+          if (scanned.playerName) {
+            searchMlbPlayers(scanned.playerName).then(results => {
+              if (results && results.length > 0) setMlbResolvedPlayer(results[0]);
+            }).catch(() => {});
+          }
         } else if (sport === 'cs2') {
           const cs2Keys = CS2_PROP_TYPES.map((p: { value: string }) => p.value);
           if (scanned.playerName) setCs2PlayerQuery(scanned.playerName);
           if (scanned.opponentName) setCs2OpponentQuery(scanned.opponentName);
           setCs2PropType(mapProp(scanned.propType, cs2Keys, 'maps_1_2_kills'));
           if (scanned.line) setLine(String(scanned.line));
+          // Auto-resolve player and opponent so IDs are populated
+          if (scanned.playerName) {
+            searchCs2Players(scanned.playerName).then(results => {
+              if (results && results.length > 0) {
+                setCs2ResolvedPlayer(results[0]);
+                setCs2PlayerQuery(results[0].nickname || scanned.playerName!);
+              }
+            }).catch(() => {});
+          }
+          if (scanned.opponentName) {
+            searchCs2Teams(scanned.opponentName).then(results => {
+              if (results && results.length > 0) {
+                setCs2ResolvedOpponent(results[0]);
+                setCs2OpponentQuery(results[0].name || scanned.opponentName!);
+              }
+            }).catch(() => {});
+          }
         } else if (sport === 'wta') {
           const wtaKeys = WTA_PROP_TYPES.map((p: { value: string }) => p.value);
           if (scanned.playerName) setWtaPlayerQuery(scanned.playerName);
           if (scanned.opponentName) setWtaOpponentQuery(scanned.opponentName);
           setWtaPropType(mapProp(scanned.propType, wtaKeys, 'total_games'));
           if (scanned.line) setLine(String(scanned.line));
+          // Auto-resolve player and opponent
+          if (scanned.playerName) {
+            searchWtaPlayers(scanned.playerName).then(results => {
+              if (results && results.length > 0) {
+                setWtaResolvedPlayer(results[0]);
+                setWtaPlayerQuery(results[0].fullName || scanned.playerName!);
+              }
+            }).catch(() => {});
+          }
+          if (scanned.opponentName) {
+            searchWtaPlayers(scanned.opponentName).then(results => {
+              if (results && results.length > 0) {
+                setWtaResolvedOpponent(results[0]);
+                setWtaOpponentQuery(results[0].fullName || scanned.opponentName!);
+              }
+            }).catch(() => {});
+          }
         }
 
         const filled = scanned.playerName
@@ -733,8 +773,8 @@ export default function ScanScreen() {
         </View>
       )}
 
-      {/* ─── Mode Toggle (all sports) ─── */}
-      {(phase === 'idle' || mode === 'manual') && (
+      {/* ─── Mode Toggle (soccer only — other sports have dedicated manual sections) ─── */}
+      {sport === 'soccer' && (phase === 'idle' || mode === 'manual') && (
         <View style={styles.modeRow}>
           <TouchableOpacity
             style={[styles.modeTab, mode === 'scan' && styles.modeTabActive]}
