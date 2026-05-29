@@ -74,7 +74,7 @@ if (IS_PRODUCTION) {
 
   app.use(express.static(distPath));
 
-  // SPA fallback — inject PWA tags into index.html at serve-time
+  // SPA fallback — inject PWA tags + loading screen into index.html at serve-time
   const fs = require('fs');
   const PWA_TAGS = `    <meta name="theme-color" content="#050505" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -82,15 +82,37 @@ if (IS_PRODUCTION) {
     <meta name="apple-mobile-web-app-title" content="ReversePicks" />
     <link rel="apple-touch-icon" href="/rp-icon.png" />
     <link rel="manifest" href="/manifest.json" />`;
+
+  const LOADING_SCREEN = `
+    <div id="rp-loading-screen" style="position:fixed;top:0;left:0;right:0;bottom:0;background:#050505;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:99999;transition:opacity 0.3s ease-out">
+      <div style="width:80px;height:80px;border:3px solid #39FF14;border-radius:50%;display:flex;align-items:center;justify-content:center;margin-bottom:24px;animation:rpPulse 2s ease-in-out infinite">
+        <span style="color:#39FF14;font-family:system-ui,-apple-system,sans-serif;font-size:28px;font-weight:800;letter-spacing:-1px">RP</span>
+      </div>
+      <div style="color:#888;font-family:system-ui,-apple-system,sans-serif;font-size:14px;letter-spacing:2px;text-transform:uppercase">Loading...</div>
+    </div>
+    <style>@keyframes rpPulse {0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.05);opacity:0.8}}</style>
+    <script>
+      (function() {
+        var hide = function() {
+          var el = document.getElementById('rp-loading-screen');
+          if (el) { el.style.opacity='0'; setTimeout(function(){el.style.display='none'},300); }
+        };
+        window.addEventListener('load', hide);
+        setTimeout(hide, 8000);
+      })();
+    </script>`;
+
   app.use((req, res) => {
     const indexPath = path.join(distPath, 'index.html');
     if (!fs.existsSync(indexPath)) {
-      res.status(503).send('<html><body style="font-family:sans-serif;padding:2rem"><h2>Starting up…</h2><p>The app is initialising. Please refresh in a few seconds.</p><script>setTimeout(()=>location.reload(),5000)</script></body></html>');
+      res.status(503).send('<html><body style="font-family:sans-serif;padding:2rem;background:#050505;color:#fff"><h2>Starting up...</h2><p>The app is initialising. Please refresh in a few seconds.</p><script>setTimeout(()=>location.reload(),5000)</script></body></html>');
       return;
     }
     try {
       let html = fs.readFileSync(indexPath, 'utf8');
       html = html.replace('</head>', `${PWA_TAGS}\n  </head>`);
+      // Inject loading screen before the closing </body> tag
+      html = html.replace('</body>', `${LOADING_SCREEN}\n</body>`);
       res.setHeader('Content-Type', 'text/html');
       res.send(html);
     } catch {
