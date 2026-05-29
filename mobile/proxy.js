@@ -3,6 +3,15 @@ const path = require('path');
 const fs = require('fs');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 
+// ── Global safety net — prevent ANY uncaught error from killing the process ──
+// EIO: i/o error (broken pipes, socket resets) must never take down the server.
+process.on('uncaughtException', (err) => {
+  console.error('[Proxy] Uncaught exception (survived):', err.message);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[Proxy] Unhandled rejection (survived):', reason);
+});
+
 const app = express();
 const IS_PRODUCTION = process.env.PRODUCTION === 'true';
 
@@ -12,12 +21,27 @@ app.use(
     pathFilter: '/api',
     target: 'http://localhost:8000',
     changeOrigin: true,
+    proxyTimeout: 30000,
+    timeout: 30000,
     on: {
       error: (err, req, res) => {
         console.error('[Proxy] API error:', err.message);
-        if (res && typeof res.status === 'function') {
-          res.status(502).json({ detail: 'Backend unavailable' });
-        }
+        try {
+          if (res && !res.headersSent && typeof res.status === 'function') {
+            res.status(502).json({ detail: 'Backend unavailable' });
+          }
+        } catch (_) {}
+      },
+      proxyReq: (proxyReq, req) => {
+        // Absorb socket errors on the outbound request so they never propagate
+        proxyReq.on('error', (err) => {
+          console.error('[Proxy] proxyReq socket error (suppressed):', err.message);
+        });
+      },
+      proxyRes: (proxyRes) => {
+        proxyRes.on('error', (err) => {
+          console.error('[Proxy] proxyRes socket error (suppressed):', err.message);
+        });
       },
     },
   })

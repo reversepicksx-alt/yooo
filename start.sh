@@ -31,9 +31,20 @@ fi
 # MongoDB or the FastAPI backend to answer GET / with HTTP 200. Starting it
 # first means the platform health check passes as soon as Node.js binds the
 # port, while MongoDB and Python initialise in the background.
+#
+# The proxy is wrapped in a watchdog loop: if it ever exits (due to an
+# uncaught EIO / socket error), it is immediately restarted. This prevents
+# the container from going dark and showing users a blank white page.
 echo "[START] Starting production proxy on port 5000..."
 cd /home/runner/workspace/mobile
-PRODUCTION=true node proxy.js &
+_proxy_watchdog() {
+  while true; do
+    PRODUCTION=true node proxy.js
+    echo "[START] Proxy exited — restarting in 1s..."
+    sleep 1
+  done
+}
+_proxy_watchdog &
 PROXY_PID=$!
 
 # Give Node a moment to bind the port before we start the heavier processes
