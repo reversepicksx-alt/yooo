@@ -725,16 +725,18 @@ async def _try_settle_mlb(pick: dict) -> bool:
                 ip_float = int(ip_parts[0]) + (int(ip_parts[1]) / 3.0 if len(ip_parts) > 1 else 0)
                 if ip_float == 0.0:
                     print(f"[MLB SETTLE] DNP detected for {pick.get('playerName')} {prop_type} "
-                          f"(IP=0, stat=0) — voiding pick as push")
+                          f"(IP=0, stat=0) — voiding as DNP")
                     await db.picks.update_one(
                         {"pickId": pick["pickId"]},
                         {"$set": {
                             "actualValue":  0.0,
-                            "result":       "push",
+                            "result":       "dnp",
+                            "hitPct":       0,
                             "status":       "settled",
                             "matchStatus":  "final",
                             "settledAt":    datetime.now(timezone.utc).isoformat(),
                             "settledBy":    "mlb_auto_dnp",
+                            "voidReason":   "Player did not pitch (IP=0, stat=0)",
                         }},
                     )
                     return True
@@ -1041,10 +1043,10 @@ async def _run_auto_settlement():
 
                 # Player DNP — finished match but player not in any map stats
                 if result and result.get("playerDNP"):
-                    void_reason = "Player did not appear in match stats (DNP) — voided as push"
+                    void_reason = "Player did not appear in match stats (DNP)"
                     await db.picks.update_one(
                         {"pickId": pick_id, "email": email},
-                        {"$set": {"status": "settled", "result": "push", "hitPct": 50,
+                        {"$set": {"status": "settled", "result": "dnp", "hitPct": 0,
                                   "settledAt": now_iso, "sport": "cs2",
                                   "matchScore": result.get("matchScore"),
                                   "voidReason": void_reason}},
@@ -1055,10 +1057,10 @@ async def _run_auto_settlement():
 
                 # Map 3 wasn't played (match went 2-0 or 0-2)
                 if result and result.get("noMap3"):
-                    void_reason = f"Map 3 not played ({result.get('mapsPlayed', '?')} maps total) — voided as push"
+                    void_reason = f"Map 3 not played ({result.get('mapsPlayed', '?')} maps total) — voided as DNP"
                     await db.picks.update_one(
                         {"pickId": pick_id, "email": email},
-                        {"$set": {"status": "settled", "result": "push", "hitPct": 50,
+                        {"$set": {"status": "settled", "result": "dnp", "hitPct": 0,
                                   "settledAt": now_iso, "sport": "cs2",
                                   "matchScore": result.get("matchScore"),
                                   "voidReason": void_reason}},
@@ -1067,13 +1069,13 @@ async def _run_auto_settlement():
                     print(f"[CS2 AUTO-SETTLE] No-map3 push: {pname} — {void_reason}")
                     continue
 
-                # Stale-void: if pick is > 7 days old with no data, push it so it never hangs forever
+                # Stale-void: if pick is > 7 days old with no data, DNP it so it never hangs forever
                 if pick_ts and (datetime.now(timezone.utc) - pick_ts).days >= 7:
                     await db.picks.update_one(
                         {"pickId": pick_id, "email": email},
-                        {"$set": {"status": "settled", "result": "push", "hitPct": 50,
+                        {"$set": {"status": "settled", "result": "dnp", "hitPct": 0,
                                   "settledAt": now_iso, "sport": "cs2",
-                                  "voidReason": "No match data found after 7 days — voided as push"}},
+                                  "voidReason": "No match data found after 7 days — voided as DNP"}},
                     )
                     settled_count += 1
                     print(f"[CS2 AUTO-SETTLE] Stale-void push: {pname} (7d+ no data)")

@@ -587,13 +587,13 @@ async def list_picks(req: GetPicksRequest):
         _min_played = p.get("minutesPlayed")
         is_dnp = bool(p.get("voidReason")) or (_min_played is not None and _min_played < 30)
         if is_dnp:
-            if p.get("result") != "push":
-                p["result"] = "push"
+            if p.get("result") != "dnp":
+                p["result"] = "dnp"
                 void_label = p.get("voidReason") or f"<30 min ({p.get('minutesPlayed',0)} min played)"
-                print(f"[CONSISTENCY] DNP→PUSH {p.get('playerName','')} {p.get('propType','')} ({void_label})")
+                print(f"[CONSISTENCY] DNP→dnp {p.get('playerName','')} {p.get('propType','')} ({void_label})")
                 await db.picks.update_one(
                     {"pickId": p["pickId"], "email": req.email.lower()},
-                    {"$set": {"result": "push", "hitPct": 50,
+                    {"$set": {"result": "dnp", "hitPct": 0,
                               "voidReason": p.get("voidReason") or void_label}}
                 )
             continue
@@ -805,9 +805,9 @@ async def list_picks(req: GetPicksRequest):
                         old_val = p.get("actualValue")
                         meta_set = {}
 
-                        # DNP void from _settle_soccer_pick: propagate push + voidReason
+                        # DNP void from _settle_soccer_pick: propagate DNP + voidReason
                         if refreshed.get("voidReason"):
-                            new_res = "push"
+                            new_res = "dnp"
                             p["result"] = new_res
                             p["actualValue"] = new_val
                             p["voidReason"] = refreshed["voidReason"]
@@ -1310,10 +1310,10 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str) -> dict:
             update["matchStatus"] = "final"
             return update
 
-        # DNP / early-sub void guard — industry standard: < 30 min = void/push
+        # DNP / early-sub void guard — industry standard: < 30 min = DNP
         _DNP_THRESHOLD = 30
         if minutes_played < _DNP_THRESHOLD:
-            result_str = "push"
+            result_str = "dnp"
             update["voidReason"] = f"Player only played {minutes_played} min (min {_DNP_THRESHOLD} required)"
         else:
             result_str = _settle_result(current_value, line, recommendation)
@@ -1321,6 +1321,8 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str) -> dict:
         update["actualValue"] = current_value
         # Store hitPct so settled pick cards show 100%/0%/50% instead of "—"
         settled_hit_pct = 100 if result_str == "hit" else (0 if result_str == "miss" else 50)
+        if result_str == "dnp":
+            settled_hit_pct = 0
         update["hitPct"] = settled_hit_pct
         # Capture final score + scenario bucket for scenario_priors mining
         try:
@@ -1533,13 +1535,13 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
     away_team_id = recent.get("teams", {}).get("away", {}).get("id")
     home_poss, away_poss = await _fetch_fixture_possession(fixture_id, home_team_id, away_team_id)
 
-    # DNP / early-sub void guard — players with < 30 min get push, not hit/miss
+    # DNP / early-sub void guard — players with < 30 min get DNP, not hit/miss
     _DNP_THRESHOLD = 30
     if minutes_played < _DNP_THRESHOLD and (minutes_played > 0 or actual_value is not None):
         return {
             "pickId": pick.get("id"),
             "status": "settled",
-            "result": "push",
+            "result": "dnp",
             "actualValue": actual_value,
             "minutesPlayed": minutes_played,
             "voidReason": f"Player only played {minutes_played} min (min {_DNP_THRESHOLD} required)",

@@ -61,10 +61,10 @@ const SPORT_META: Record<SportKey, { label: string; icon: string }> = {
 };
 
 function isLive(p: Pick) {
-  return p.matchStatus === 'live' || p.status === 'live' || p.status === 'pending' || (!p.status && !['hit','miss','push','won','lost'].includes(p.result));
+  return p.matchStatus === 'live' || p.status === 'live' || p.status === 'pending' || (!p.status && !['hit','miss','push','won','lost','dnp'].includes(p.result));
 }
 function isSettled(p: Pick) {
-  return p.matchStatus === 'final' || p.status === 'settled' || ['hit','miss','push','won','lost'].includes(p.result);
+  return p.matchStatus === 'final' || p.status === 'settled' || ['hit','miss','push','won','lost','dnp'].includes(p.result);
 }
 function pickWon(p: Pick) {
   return p.result === 'hit' || p.result === 'won' || p.status === 'won';
@@ -74,6 +74,9 @@ function pickLost(p: Pick) {
 }
 function pickPush(p: Pick) {
   return p.result === 'push';
+}
+function pickDnp(p: Pick) {
+  return p.result === 'dnp';
 }
 
 function SwipeLeftAction({
@@ -200,7 +203,8 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete?: () => void }) {
   const live = isLive(pick);
 
   const push = pickPush(pick);
-  const statusColor = won ? Colors.success : lost ? Colors.error : push ? Colors.push : Colors.textTertiary;
+  const dnp = pickDnp(pick);
+  const statusColor = won ? Colors.success : lost ? Colors.error : push ? Colors.push : dnp ? Colors.dnp : Colors.textTertiary;
 
   const propLabel = PROP_LABELS[pick.propType] || pick.propType?.replace(/_/g, ' ') || '—';
   const venueStr = pick.venue ? pick.venue.toUpperCase() : '';
@@ -254,13 +258,15 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete?: () => void }) {
     ? Colors.error
     : push
     ? Colors.push
+    : dnp
+    ? Colors.dnp
     : trackValue != null && lineValue != null
     ? ((isOver && trackValue > lineValue) || (isUnder && trackValue < lineValue) ? Colors.success : Colors.error)
     : Colors.textSecondary;
   const paceColor = trackValue != null ? Colors.primary : Colors.textSecondary;
 
-  const nowLabel = (won || lost || push) ? 'FINAL' : (hasLiveData ? 'NOW' : null);
-  const paceLabel = settled ? 'PROJ' : (livePace != null && livePace > 0 ? 'PACE' : 'PROJ');
+  const nowLabel = (won || lost || push) ? 'FINAL' : dnp ? 'DNP' : (hasLiveData ? 'NOW' : null);
+  const paceLabel = dnp ? 'DNP' : settled ? 'PROJ' : (livePace != null && livePace > 0 ? 'PACE' : 'PROJ');
 
   // Determine home/away team labels.
   // PREFERRED path: backend resolved fixture → both `homeTeam` and `awayTeam` set.
@@ -363,6 +369,12 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete?: () => void }) {
             <View style={styles.pushBadge}>
               <Ionicons name="remove-outline" size={9} color={Colors.push} />
               <Text style={styles.pushText}>PUSH</Text>
+            </View>
+          )}
+          {dnp && (
+            <View style={styles.dnpBadge}>
+              <Ionicons name="close" size={9} color={Colors.dnp} />
+              <Text style={styles.dnpText}>DNP</Text>
             </View>
           )}
         </View>
@@ -530,6 +542,7 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete?: () => void }) {
 function RecordBar({ picks }: { picks: Pick[] }) {
   const hits = picks.filter(pickWon).length;
   const misses = picks.filter(pickLost).length;
+  const dnps = picks.filter(pickDnp).length;
   const pending = picks.filter(isLive).length;
   const settled = hits + misses;
   const winPct = settled > 0 ? Math.round((hits / settled) * 100) : null;
@@ -540,7 +553,7 @@ function RecordBar({ picks }: { picks: Pick[] }) {
   );
   for (const p of sorted) {
     if (pickWon(p)) streak++;
-    else if (pickLost(p)) break;
+    else if (pickLost(p) || pickDnp(p)) break;
   }
 
   return (
@@ -558,6 +571,10 @@ function RecordBar({ picks }: { picks: Pick[] }) {
         <View style={styles.recordStat}>
           <Text style={[styles.recordVal, { color: Colors.textSecondary }]}>{pending}</Text>
           <Text style={styles.recordKey}>LIVE</Text>
+        </View>
+        <View style={styles.recordStat}>
+          <Text style={[styles.recordVal, { color: Colors.dnp }]}>{dnps}</Text>
+          <Text style={styles.recordKey}>DNP</Text>
         </View>
         <View style={styles.recordStat}>
           <Text style={[styles.recordVal, { color: Colors.primary }]}>
@@ -1244,7 +1261,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6, paddingVertical: 2,
   },
   pushText: { fontSize: 8, color: Colors.push, fontWeight: '800', letterSpacing: 0.5 },
-
+  dnpBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    backgroundColor: Colors.dnpDim, borderRadius: 5,
+    borderWidth: 1, borderColor: 'rgba(255,149,0,0.3)',
+    paddingHorizontal: 6, paddingVertical: 2,
+  },
+  dnpText: { fontSize: 8, color: Colors.dnp, fontWeight: '800', letterSpacing: 0.5 },
   pickRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   recPill: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
   recPillText: { fontSize: 9, fontWeight: '800', letterSpacing: 0.5 },
