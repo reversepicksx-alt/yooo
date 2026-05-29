@@ -7,6 +7,7 @@ Output: projection, pOver, pUnder, recommendation, confidence, tactical metrics.
 import math
 import statistics
 from typing import Optional
+from bayesian_engine import _monte_carlo_probability as _baye_mc
 
 # Supported prop types
 WTA_PROPS = {
@@ -229,9 +230,13 @@ def compute_wta_projection(
     # Stdev for over/under probability
     std = statistics.pstdev(series) if len(series) >= 2 else 1.0
     std = max(std, 1.0)
-    p_over_raw = _prob_over_normal(projection, line, std)
-    p_over     = round(p_over_raw * 100, 1)
-    p_under    = round((1 - p_over_raw) * 100, 1)
+    mc_variance   = std ** 2
+    _po, _pu, _, _ = _baye_mc(
+        mean=projection, std=std, line=line,
+        n_sims=10_000, is_count_stat=is_count, variance=mc_variance,
+    )
+    p_over  = round(_po * 100, 1)
+    p_under = round(_pu * 100, 1)
     rec        = "over" if p_over >= p_under else "under"
     conf       = round(max(p_over, p_under), 0)
     level      = "High" if conf >= 70 else ("Medium" if conf >= 60 else "Low")

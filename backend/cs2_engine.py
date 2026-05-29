@@ -29,6 +29,7 @@ import math
 import random
 import statistics as stats_mod
 from typing import Optional
+from bayesian_engine import _monte_carlo_probability as _baye_mc
 
 # ── Prop definitions ─────────────────────────────────────────────────────────
 CS2_PROPS = {
@@ -1083,28 +1084,15 @@ def compute_cs2_projection(
 
     std_dev = max(std_dev, 1.5)
 
-    # ── Layer 5: Monte Carlo (Negative-Binomial for counts) ───────────────────
-    is_count  = prop_type in COUNT_PROPS
-    over_count = 0
-
-    for _ in range(MC_TRIALS):
-        proj_sample = random.gauss(projection, std_dev * 0.25)
-        proj_sample = max(proj_sample, 0.0)
-
-        if is_count:
-            lam = max(proj_sample, 0.01)
-            r   = max(lam / 0.40, 1.0)
-            p   = r / (r + lam)
-            gamma_sample = random.gammavariate(r, (1 - p) / p) if r > 0 else lam
-            val = max(round(random.gauss(gamma_sample, math.sqrt(max(gamma_sample, 0.01)))), 0)
-        else:
-            val = random.gauss(proj_sample, std_dev)
-
-        if val > line:
-            over_count += 1
-
-    p_over  = round(over_count / MC_TRIALS * 100, 1)
-    p_under = round(100 - p_over, 1)
+    # ── Layer 5: Monte Carlo — shared Bayesian engine ─────────────────────────
+    is_count    = prop_type in COUNT_PROPS
+    mc_variance = std_dev ** 2
+    _po, _pu, _, _ = _baye_mc(
+        mean=projection, std=std_dev, line=line,
+        n_sims=MC_TRIALS, is_count_stat=is_count, variance=mc_variance,
+    )
+    p_over  = round(_po * 100, 1)
+    p_under = round(_pu * 100, 1)
 
     # ── Layer 5c: Streak momentum enhancement (NEW) ───────────────────────────
     streak_p_adj = _streak_momentum_p_adjust(values, line)

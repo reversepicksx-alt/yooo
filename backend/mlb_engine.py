@@ -32,6 +32,7 @@ import math
 import random
 import statistics as stats_mod
 from typing import Optional
+from bayesian_engine import _monte_carlo_probability as _baye_mc
 
 # ── Prop type → per-game API field ──────────────────────────────────────────
 BATTER_PROPS = {
@@ -1203,15 +1204,23 @@ def compute_mlb_projection(
     if is_count and prop_type not in {"innings_pitched"}:
         posterior_std = max(posterior_std, math.sqrt(max(0.1, posterior_mean)))
 
-    # ── MONTE CARLO (Negative Binomial for counts) ───────────────────────────
+    # ── MONTE CARLO — shared Bayesian engine (Negative Binomial / Gaussian) ──
     if is_count and prop_type != "innings_pitched":
-        mc_lambda = posterior_mean * scratch_discount if prop_type == "pitcher_strikeouts" else posterior_mean
-        # Use prop-specific overdispersion ratio
+        mc_lambda  = posterior_mean * scratch_discount if prop_type == "pitcher_strikeouts" else posterior_mean
         dispersion = _NB_DISPERSION.get(prop_type, 1.60)
-        p_over, p_under, ci_low, ci_high = _negative_binomial_mc(mc_lambda, dispersion, line)
+        mc_var     = max(mc_lambda * dispersion, mc_lambda * 1.01)
+        _po, _pu, ci_low, ci_high = _baye_mc(
+            mean=mc_lambda, std=math.sqrt(mc_var),
+            line=line, n_sims=10_000, is_count_stat=True, variance=mc_var,
+        )
     else:
         effective_std = max(posterior_std, posterior_mean * 0.12, 0.33)
-        p_over, p_under, ci_low, ci_high = _gaussian_mc(posterior_mean, effective_std, line)
+        _po, _pu, ci_low, ci_high = _baye_mc(
+            mean=posterior_mean, std=effective_std,
+            line=line, n_sims=10_000, is_count_stat=False,
+        )
+    p_over  = round(_po * 100, 1)
+    p_under = round(_pu * 100, 1)
 
     # ── BAYESIAN TRUTH OVERRIDE ───────────────────────────────────────────────
     recommendation = "OVER" if p_over >= p_under else "UNDER"
