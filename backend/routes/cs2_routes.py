@@ -214,14 +214,14 @@ v4 Tactical factors:
 Recent match/map log (newest first, with ADR and KPR when available):
 {game_ctx}
 
-Write a sharp, specific CS2 betting analysis using ALL the tactical data above:
-1. Why the model projects {projection:.1f} vs {line} line — cite KPR, ADR trend, role, or map-side context
-2. Key matchup factor — rank gap, LAN/online environment, H2H history, or CT/T-side advantage
-3. Main edge or risk — streak, role volatility, underdog compression, or map KPR adjustment
+You are explaining WHY the model's verdict is correct — not reaching your own conclusion. The math has already decided: {recommendation.upper()} {projection:.1f} vs {line} line.
 
-Be precise. Use CS2 terminology. Reference specific numbers from the tactical factors.
-Return JSON ONLY:
-{{"sharpSummary": "<1 tight sentence under 22 words>", "reasoning": "<2-3 sharp sentences with specific numbers>"}}"""
+Return JSON ONLY (no markdown outside the JSON values):
+{{
+  "sharpSummary": "<1 decisive sentence under 22 words committing to {recommendation.upper()} — state the single biggest factor>",
+  "reasoning": "<2-3 sharp sentences with specific numbers from the data above>",
+  "tacticalBreakdown": "## Model Verdict\\n**{recommendation.upper()} {projection:.1f}** vs {line} line — P(OVER)={p_over}%, P(UNDER)={p_under}%\\n\\n## Kill Volume Analysis\\n<2-3 sentences: cite KPR {momentum_mean:.2f}/round, eco-round factor, ADR trend, map pool>\\n\\n## Matchup Context\\n<2-3 sentences: rank gap #{player_team_rank or '?'} vs #{opp_rank or '?'}, LAN/online environment, CT/T-side start, any H2H context>\\n\\n## Recent Form\\n<2 sentences summarising last 3-5 matches with specific kill numbers — support the direction>\\n\\n## Key Risk\\n<1-2 sentences: what single factor could invalidate this pick, and why it is outweighed>"
+}}"""
 
     try:
         import httpx as _httpx
@@ -230,7 +230,7 @@ Return JSON ONLY:
             payload = {
                 "contents": [{"role": "user", "parts": [{"text": prompt}]}],
                 "generationConfig": {
-                    "temperature": 0.35, "maxOutputTokens": 550,
+                    "temperature": 0.35, "maxOutputTokens": 1400,
                     "thinkingConfig": {"thinkingBudget": 0},
                     "responseMimeType": "application/json",
                 },
@@ -463,6 +463,7 @@ async def cs2_predict(req: Cs2PredictRequest):
         "streakFlag":          result.get("streakFlag", ""),
         "sharpSummary":        ai.get("sharpSummary", ""),
         "reasoning":           ai.get("reasoning", ""),
+        "tacticalBreakdown":   ai.get("tacticalBreakdown", ""),
         "gameLogs":            map_logs[:15],
         "bayesianMetrics": {
             "priorMean":        result["priorMean"],

@@ -165,9 +165,14 @@ Model projection: {projection:.1f} → {recommendation} (P(OVER)={p_over}%, P(UN
 Recent game log (G1 = most recent):
 {game_ctx}
 
-Write sharp analysis covering ALL relevant factors above. Be specific about which factors move the needle most.
-Return JSON ONLY:
-{{"sharpSummary": "<1 tight sentence with core edge + biggest factor>", "reasoning": "<2-4 sharp sentences covering platoon split, ERA tier, game environment, BABIP/contact quality, and park — only mention factors that are actually provided above>"}}"""
+You are explaining WHY the model's verdict is correct — not reaching your own conclusion. The math has already decided: {recommendation} {projection:.1f} vs {line} line.
+
+Return JSON ONLY (no markdown outside the JSON values):
+{{
+  "sharpSummary": "<1 decisive sentence under 22 words committing to {recommendation} — state the single biggest factor>",
+  "reasoning": "<2-4 sharp sentences covering platoon split, ERA tier, game environment, BABIP/contact quality, and park — only mention factors that are actually provided above>",
+  "tacticalBreakdown": "## Model Verdict\\n**{recommendation} {projection:.1f}** vs {line} line — P(OVER)={p_over}%, P(UNDER)={p_under}%\\n\\n## Pitching Environment\\n<2-3 sentences: ERA tier, handedness matchup, park factor — use the numbers provided above>\\n\\n## Batter / Pitcher Context\\n<2-3 sentences: platoon advantage, lineup spot, BABIP regression signal, K-rate trend, pitch count trajectory — cite specific multipliers>\\n\\n## Recent Form\\n<2 sentences: summarise last 4-5 game log values with specific numbers to support the direction>\\n\\n## Key Risk\\n<1-2 sentences: the single factor most likely to invalidate this pick, and why the model still favours the stated direction>"
+}}"""
 
     # Gemini AI synthesis
     try:
@@ -177,7 +182,7 @@ Return JSON ONLY:
             payload = {
                 "contents": [{"role": "user", "parts": [{"text": prompt}]}],
                 "generationConfig": {
-                    "temperature": 0.5, "maxOutputTokens": 400,
+                    "temperature": 0.4, "maxOutputTokens": 1400,
                     "thinkingConfig": {"thinkingBudget": 0},
                     "responseMimeType": "application/json",
                 },
@@ -536,13 +541,15 @@ async def mlb_predict(req: MlbPredictRequest):
     try:
         ai_data = await asyncio.wait_for(asyncio.shield(ai_task), timeout=12)
         if ai_data:
-            response["sharpSummary"] = ai_data.get("sharpSummary", "")
-            response["reasoning"]    = ai_data.get("reasoning", "")
-            print(f"[MLB AI] summary: {str(ai_data.get('sharpSummary',''))[:80]}")
+            response["sharpSummary"]      = ai_data.get("sharpSummary", "")
+            response["reasoning"]         = ai_data.get("reasoning", "")
+            response["tacticalBreakdown"] = ai_data.get("tacticalBreakdown", "")
+            print(f"[MLB AI] summary: {str(ai_data.get('sharpSummary',''))[:80]} | td={len(ai_data.get('tacticalBreakdown',''))}c")
     except Exception as e:
         log.warning(f"[MLB AI] timed out or failed: {e}")
         response.setdefault("sharpSummary", "")
         response.setdefault("reasoning", "")
+        response.setdefault("tacticalBreakdown", "")
 
     # Cache prediction in MongoDB for analytics (upsert by player+prop+line+date)
     today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")

@@ -87,13 +87,14 @@ Tactical factors:
 Recent match log (newest first):
 {game_ctx}
 
-Write a sharp, specific WTA tennis betting analysis:
-1. Why the model projects {projection} vs {line} — cite surface, round, ranking gap, or recent form
-2. Key matchup factor — H2H, surface specialty, or court speed
-3. Main edge or risk — streak, fitness, scheduling
+You are explaining WHY the model's verdict is correct — not reaching your own conclusion. The math has already decided: {recommendation.upper()} {projection} vs {line} line.
 
-Be precise. Use tennis terminology. Return JSON ONLY:
-{{"sharpSummary": "<1 tight sentence under 22 words>", "reasoning": "<2-3 sharp sentences with specific numbers>"}}"""
+Return JSON ONLY (no markdown outside the JSON values):
+{{
+  "sharpSummary": "<1 decisive sentence under 22 words committing to {recommendation.upper()} — state the single biggest factor>",
+  "reasoning": "<2-3 sharp sentences with specific numbers from the data above>",
+  "tacticalBreakdown": "## Model Verdict\\n**{recommendation.upper()} {projection}** vs {line} line — P(OVER)={p_over}%, P(UNDER)={p_under}%\\n\\n## Surface & Tournament Context\\n<2-3 sentences: surface multiplier, round difficulty, tournament tier — use specific adjustment values if available>\\n\\n## Matchup Analysis\\n<2-3 sentences: ranking gap #{subject_rank or '?'} vs #{opp_rank or '?'}, H2H record, playing style clash on this surface>\\n\\n## Recent Form\\n<2 sentences: summarise last 4 matches with game totals and set scores to support the direction>\\n\\n## Key Risk\\n<1-2 sentences: main factor that could invalidate this pick — scheduling, fitness, surface mismatch — and why the model still favours the stated direction>"
+}}"""
 
     try:
         import httpx as _httpx
@@ -102,7 +103,7 @@ Be precise. Use tennis terminology. Return JSON ONLY:
             payload = {
                 "contents": [{"role": "user", "parts": [{"text": prompt}]}],
                 "generationConfig": {
-                    "temperature": 0.35, "maxOutputTokens": 550,
+                    "temperature": 0.35, "maxOutputTokens": 1400,
                     "thinkingConfig": {"thinkingBudget": 0},
                     "responseMimeType": "application/json",
                 },
@@ -330,8 +331,9 @@ async def wta_predict(req: WtaPredictRequest):
         "sampleSize":      result["sampleSize"],
         "streakFlag":      result.get("streakFlag", ""),
         "h2h":             h2h,
-        "sharpSummary":    ai.get("sharpSummary", ""),
-        "reasoning":       ai.get("reasoning", ""),
+        "sharpSummary":      ai.get("sharpSummary", ""),
+        "reasoning":         ai.get("reasoning", ""),
+        "tacticalBreakdown": ai.get("tacticalBreakdown", ""),
         "matchLogs":       match_logs[:15],
         "gameLogs":        match_logs[:15],   # alias for shared mobile renderer
         "bayesianMetrics": {
