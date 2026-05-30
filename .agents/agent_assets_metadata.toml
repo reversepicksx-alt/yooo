@@ -11,3 +11,9 @@ id = "IdBO4fXLAJGGVIzxE-3A1"
 uri = "file://attached_assets/cheat_sheet_2_1.png"
 type = "image"
 title = "Cheat Sheet 2.1 — built from 497 live settled picks"
+
+[[outputs]]
+id = "S3qZLjvvLhgm6Aii4xxzP"
+uri = "file://attached_assets/SOCCER_PROP_CHEAT_SHEET.md"
+type = "text"
+title = "ReversePicks Soccer Prop Cheat Sheet"
