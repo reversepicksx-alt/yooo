@@ -1039,6 +1039,47 @@ export default function PicksScreen() {
             );
           })()}
 
+          {/* ── Game Script Banner (on analysis modal) ── */}
+          {(() => {
+            const gs = (analysisModal?.data as any)?.gameScript;
+            if (!gs || !gs.dominant) return null;
+            const color = gs.color || '#60A5FA';
+            const iconMap: Record<string, string> = {
+              'low_scoring': 'shield', 'high_scoring': 'flame',
+              'open_close': 'analytics', 'home_blowout': 'trending-up',
+              'away_blowout': 'trending-down',
+            };
+            const icon = (iconMap[gs.dominant] || 'analytics') as any;
+            return (
+              <View style={[mStyles.gsBanner, { borderColor: color + '44' }]}>
+                <View style={[mStyles.gsBannerStripe, { backgroundColor: color }]} />
+                <View style={mStyles.gsBannerBody}>
+                  <View style={mStyles.gsBannerHeader}>
+                    <Ionicons name={icon} size={14} color={color} />
+                    <Text style={[mStyles.gsBannerLabel, { color }]}>GAME SCRIPT</Text>
+                    <Text style={mStyles.gsBannerProb}>{Math.round((gs.dominant_probability || 0) * 100)}%</Text>
+                  </View>
+                  <Text style={[mStyles.gsBannerTitle, { color }]}>{gs.key_finding}</Text>
+                  {gs.scenarios && gs.scenarios.length > 1 && (
+                    <View style={mStyles.gsBannerScenarios}>
+                      {gs.scenarios.slice(0, 3).map((s: any, i: number) => (
+                        <View key={i} style={mStyles.gsBannerChip}>
+                          <Text style={mStyles.gsBannerChipName}>{s.name}</Text>
+                          <Text style={[mStyles.gsBannerChipPct, { color }]}>{Math.round(s.probability * 100)}%</Text>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+                  {gs.expected_total_goals != null && (
+                    <Text style={mStyles.gsBannerSub}>
+                      Expected {gs.expected_total_goals} total goals
+                    </Text>
+                  )}
+                </View>
+              </View>
+            );
+          })()}
+
           <View style={mStyles.modalDivider} />
 
           {/* Body */}
@@ -1159,6 +1200,31 @@ const mStyles = StyleSheet.create({
   aiSection: { gap: 5 },
   aiSectionTitle: { fontSize: 10, fontWeight: '800', color: Colors.primary, letterSpacing: 1.2 },
   aiSectionBody: { fontSize: 13, color: Colors.textSecondary, lineHeight: 20 },
+  // ── Game Script Banner (analysis modal)
+  gsBanner: {
+    flexDirection: 'row',
+    marginHorizontal: 16,
+    marginBottom: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    overflow: 'hidden',
+    backgroundColor: '#0a0a0a',
+  },
+  gsBannerStripe: { width: 4 },
+  gsBannerBody: { flex: 1, padding: 12, gap: 6 },
+  gsBannerHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  gsBannerLabel: { fontSize: 9, fontWeight: '800', letterSpacing: 1.2 },
+  gsBannerProb: { fontSize: 11, fontWeight: '800', color: '#fff', marginLeft: 'auto' },
+  gsBannerTitle: { fontSize: 15, fontWeight: '800', letterSpacing: 0.3 },
+  gsBannerScenarios: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 2 },
+  gsBannerChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: '#151515', borderRadius: 5,
+    paddingHorizontal: 7, paddingVertical: 3,
+  },
+  gsBannerChipName: { fontSize: 9, color: '#9CA3AF', fontWeight: '600' },
+  gsBannerChipPct: { fontSize: 9, fontWeight: '800' },
+  gsBannerSub: { fontSize: 10, color: '#6B7280', fontWeight: '500', marginTop: 2 },
 });
 
 const styles = StyleSheet.create({

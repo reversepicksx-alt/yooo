@@ -340,6 +340,7 @@ async def save_pick(req: SavePickRequest):
         "coinFlip": pick.get("coinFlip", False),
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "settledAt": None,
+        "gameScript": pick.get("gameScript") or {},
     }
 
     # Persist the model's projected ball-possession split so we can compare
@@ -938,6 +939,7 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
         "recentSamples": 1, "bayesianMetrics": 1,
         "playerGameLogs": 1, "tacticalAlerts": 1,
         "positionComparison": 1, "h2hPlayerStats": 1,
+        "gameScript": 1, "matchFactors": 1,
         "_created": 1,
     }
 

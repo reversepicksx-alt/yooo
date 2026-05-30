@@ -1,0 +1,110 @@
+REVERSEPICKS SOCCER PROP CHEAT SHEET
+Position & Game Script Rules – Home vs Away Edition
+Generated from 2,426 settled picks. Focus: Script-specific Over/Under by position, split by Home and Away.
+Last Updated: 2026-05-30
+
+CORE PRINCIPLES
+•  Default Edge: UNDER dominates pass_attempts and shots. OVER stronger on tackles and dribbles.
+•  Script Priority: Possession > Result > Scoring Scenario.
+•  Home Advantage: Stronger UNDER on pass_attempts (especially RW/RB).
+•  Away Edge: Stronger OVER on tackles (CDM/RB) and dribbles (LW/CF).
+
+1. POSSESSION SCRIPTS
+Low Possession (<50%)
+Home Team Positions
+•  RW / RB / LB / CB / CM / LW: Pass Attempts UNDER + Shots UNDER
+•  CDM / RB: Tackles OVER
+•  GK: Saves OVER
+•  CF / ST / SS: Dribbles OVER (moderate)
+Away Team Positions
+•  RW / RB / LB / CB / CM / LW: Pass Attempts UNDER + Shots UNDER
+•  CDM / RB / LB: Tackles OVER (stronger away)
+•  GK: Saves OVER
+•  LW / CF / ST: Dribbles OVER (stronger away)
+High Possession (61%+)
+Home Team Positions
+•  CF / SS / RW: Pass Attempts OVER
+•  CB / CM / LW / RW: Shots UNDER
+•  GK: Saves UNDER
+•  LW / CF / ST: Dribbles OVER
+Away Team Positions
+•  CF / SS: Pass Attempts OVER
+•  CB / CM / LW / RW: Shots UNDER
+•  GK: Saves UNDER
+•  LW / CF / ST: Dribbles OVER (enhanced)
+•  Defenders (RB / LB / CDM): Tackles OVER
+
+2. RESULT SCRIPTS
+Win Script (Home or Away Team Wins)
+Winning Team Positions
+•  RW / RB / LB / CB / CM / LW: Pass Attempts UNDER + Shots UNDER
+•  GK: Saves UNDER
+•  LW / CF / ST: Dribbles OVER
+•  CDM / RB: Tackles neutral-slight OVER
+Losing Team Positions (Opponent)
+•  RW / RB / LB / CM / LW: Pass Attempts OVER
+•  GK: Saves OVER
+•  CDM / RB: Tackles OVER
+•  CB / CM / LW: Shots UNDER (remains strong)
+•  CF / SS: Pass Attempts OVER
+Draw Script
+Home Team Positions
+•  GK: Saves OVER
+•  LW / CF / ST: Dribbles OVER
+•  Pass Attempts: Default to position rules (RW/LB/RB UNDER)
+Away Team Positions
+•  GK: Saves OVER
+•  LW / CF / ST: Dribbles OVER (stronger)
+•  Pass Attempts: Default to position rules
+
+3. SCORING & SPECIAL SCRIPTS
+Low Scoring (0-2 Goals Total)
+Home Team Positions
+•  RW / RB / LB / CB / CM / LW: Pass Attempts UNDER + Shots UNDER
+•  CDM / RB: Tackles OVER
+•  LW / CF / ST: Dribbles OVER
+•  GK: Saves UNDER
+Away Team Positions
+•  Same as Home, but Tackles OVER stronger for CDM/RB/LB and Dribbles OVER stronger for LW/CF/ST
+High Scoring (4+ Goals) or Blowout (3+ Goal Margin)
+Dominant Team Positions (Home or Away)
+•  RW / CB / CM / LW: Pass Attempts UNDER + Shots UNDER
+•  GK: Saves UNDER
+Trailing Team Positions (Opponent)
+•  RW / RB / LB / CM / LW: Pass Attempts OVER
+•  GK: Saves OVER
+•  CDM / RB: Tackles OVER
+•  Crosses: OVER (both sides)
+Clean Sheet (Opponent Scores 0)
+Defending Team Positions (Home or Away)
+•  GK: Saves UNDER
+•  CB / RB / LB / CDM: Pass Attempts UNDER + Tackles OVER
+•  LW / RW / CF: Shots UNDER
+Opponent Scores 2+
+Defending Team Positions
+•  GK: Saves OVER
+•  RB / LB / CDM: Tackles OVER + Pass Attempts OVER
+Attacking Team Positions
+•  CF / SS / LW: Pass Attempts OVER + Dribbles OVER
+•  CB / CM: Shots UNDER
+
+4. VENUE-SPECIFIC ADJUSTMENTS
+Home Team General Edge
+•  RW / RB / LB: Pass Attempts UNDER (strongest)
+•  Overall volume props lean UNDER more reliably
+Away Team General Edge
+•  CDM / RB / LB: Tackles OVER (massive edge)
+•  LW / CF / ST: Dribbles OVER (improved)
+•  RW: Pass Attempts UNDER (still solid but slightly weaker than home)
+
+QUICK DECISION CHECKLIST
+1.  Identify Team Role (Home vs Away)
+2.  Primary Script (Possession → Result → Scoring)
+3.  Apply Position Rule from above
+4.  Filter by Edge: Prioritize SHARP/MARGINAL + SAFE ratings when available
+Highest-Conviction Combos
+•  Home RW: Pass Attempts UNDER in Win + Low Possession
+•  Away CDM/RB: Tackles OVER in Loss + Low Possession
+•  Any CB/CM/LW: Shots UNDER across nearly all scripts
+•  Home/Away GK: Saves UNDER in Win + Clean Sheet + High Possession
+•  Away LW/CF: Dribbles OVER in High Possession

@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   TextInput, ActivityIndicator, Alert, Platform, Modal, Image, Dimensions,
-  KeyboardAvoidingView,
+  KeyboardAvoidingView, Animated,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
@@ -659,6 +659,7 @@ export default function ScanScreen() {
         position: prediction.playerPosition || undefined,
         role: prediction.playerRole || undefined,
         sport: sport,
+        gameScript: prediction.gameScript || undefined,
         projHomePoss: sport === 'soccer' && Number.isFinite(projHomePoss) ? projHomePoss : undefined,
         projAwayPoss: Number.isFinite(projAwayPoss) ? projAwayPoss : undefined,
         // WTA: persist tennis-specific fields and AI analysis
@@ -1924,142 +1925,60 @@ export default function ScanScreen() {
                 );
               })()}
 
-              {/* Game Script Intelligence */}
+              {/* ─── GAME SCRIPT BANNER — big, animated, highlighted, smart-remapped ─── */}
               {(() => {
                 const gs = prediction.gameScript;
-                if (!gs || (!gs.trailing_avg && !gs.normal_avg)) return null;
-                const infl = gs.inflation_factor ?? 1;
-                const pTrail = gs.p_team_trails ?? 0;
-                const pFirst = gs.p_opponent_scores_first ?? 0;
-                const isInflated = infl >= 1.10;
-                const isDeflated = infl <= 0.90;
-                const accentColor = isInflated ? '#F97316' : isDeflated ? '#60A5FA' : '#9CA3AF';
-                const iconName = isInflated ? 'flame' : isDeflated ? 'snow' : 'analytics';
+                if (!gs || !gs.dominant) return null;
+                const color = gs.color || '#60A5FA';
+                const iconMap: Record<string, string> = {
+                  'low_scoring': 'shield', 'high_scoring': 'flame',
+                  'open_close': 'analytics', 'home_blowout': 'trending-up',
+                  'away_blowout': 'trending-down',
+                };
+                const icon = (iconMap[gs.dominant] || 'analytics') as any;
                 return (
-                  <View style={styles.gsCard}>
-                    <View style={styles.gsHeader}>
-                      <Ionicons name={iconName as any} size={12} color={accentColor} />
-                      <Text style={[styles.gsTitle, { color: accentColor }]}>GAME SCRIPT INTELLIGENCE</Text>
-                    </View>
-
-                    {/* Layer 1: Probability scenario bars */}
-                    {(gs.scenarios ?? []).filter(s => s.probability != null).map((s, i) => {
-                      const isTrailScenario = s.label.toLowerCase().includes('trail');
-                      const scenarioAccent = isTrailScenario
-                        ? (infl >= 1.10 ? '#F97316' : infl <= 0.90 ? '#60A5FA' : '#9CA3AF')
-                        : '#6B7280';
-                      const prob = s.probability ?? 0;
-                      const barPct = Math.min(100, Math.round(prob * 100));
-                      const vsLine = s.vs_line;
-                      return (
-                        <View key={i} style={styles.gsScenario}>
-                          <View style={styles.gsScenarioHeader}>
-                            <Text style={[styles.gsScenarioLabel, { color: scenarioAccent }]}>
-                              {s.label.toUpperCase()}
-                            </Text>
-                            <Text style={styles.gsScenarioProb}>{Math.round(prob * 100)}% chance</Text>
-                          </View>
-                          <View style={styles.gsBarBg}>
-                            <View style={[styles.gsBarFill, { width: `${barPct}%` as any, backgroundColor: scenarioAccent }]} />
-                          </View>
-                          <View style={styles.gsScenarioStats}>
-                            <Text style={styles.gsStatVal}>
-                              Proj: <Text style={{ color: scenarioAccent }}>{s.projected_stat}</Text>
-                            </Text>
-                            {/* Show overall × inflation formula for trailing scenario */}
-                            {isTrailScenario && gs.overall_avg && gs.inflation_factor && gs.inflated_proj && (
-                              <Text style={{ fontSize: 9, color: '#6B7280' }}>
-                                {gs.overall_avg} avg × {gs.inflation_factor}x = {gs.inflated_proj}
-                              </Text>
-                            )}
-                            {vsLine !== undefined && vsLine !== null && (
-                              <Text style={[styles.gsStatVal, { color: vsLine >= 0 ? '#4ADE80' : '#F87171' }]}>
-                                {vsLine >= 0 ? `+${vsLine}` : `${vsLine}`} vs line
-                              </Text>
-                            )}
-                            <Text style={[styles.gsStatBadge, {
-                              color: s.direction === 'OVER' ? '#4ADE80' : '#F87171',
-                              borderColor: s.direction === 'OVER' ? '#4ADE80' : '#F87171',
-                            }]}>
-                              {s.direction}
-                            </Text>
-                          </View>
+                  <Animated.View style={[styles.gsBanner, { borderColor: color + '55' }]}>
+                    {/* Glow accent stripe */}
+                    <View style={[styles.gsBannerStripe, { backgroundColor: color }]} />
+                    <View style={styles.gsBannerBody}>
+                      {/* Top row: label + icon + probability */}
+                      <View style={styles.gsBannerHeader}>
+                        <View style={[styles.gsBannerIconWrap, { backgroundColor: color + '22' }]}>
+                          <Ionicons name={icon} size={16} color={color} />
                         </View>
-                      );
-                    })}
-
-                    {/* Layer 2 + 3: Deep intel chips (no probability) */}
-                    {(() => {
-                      const intel = (gs.scenarios ?? []).filter(s => s.probability == null);
-                      if (!intel.length) return null;
-                      return (
-                        <View style={styles.gsIntelSection}>
-                          <Text style={styles.gsIntelTitle}>DEEP INTEL</Text>
-                          <View style={styles.gsIntelRow}>
-                            {intel.map((s, i) => {
-                              const chipColor = '#EF4444';
-                              const vsLine = s.vs_line;
-                              return (
-                                <View key={i} style={[styles.gsIntelChip, { borderColor: chipColor + '55' }]}>
-                                  <Text style={[styles.gsIntelChipLabel, { color: chipColor }]}>
-                                    📊 VS DOMINANT OPP
-                                  </Text>
-                                  <Text style={[styles.gsIntelChipVal, { color: chipColor }]}>
-                                    {s.projected_stat}
-                                  </Text>
-                                  <Text style={styles.gsIntelChipSub}>
-                                    {s.label.includes('(') ? s.label.split('(')[1]?.replace(')', '') : s.label}
-                                  </Text>
-                                  {vsLine !== undefined && vsLine !== null && (
-                                    <Text style={[styles.gsIntelChipDir, {
-                                      color: s.direction === 'OVER' ? '#4ADE80' : '#F87171'
-                                    }]}>
-                                      {vsLine >= 0 ? `+${vsLine}` : `${vsLine}`} {s.direction}
-                                    </Text>
-                                  )}
-                                </View>
-                              );
-                            })}
-                          </View>
+                        <Text style={[styles.gsBannerLabel, { color }]}>GAME SCRIPT</Text>
+                        <View style={[styles.gsBannerProbBadge, { backgroundColor: color + '22', borderColor: color + '44' }]}>
+                          <Text style={[styles.gsBannerProb, { color }]}>{Math.round((gs.dominant_probability || 0) * 100)}%</Text>
                         </View>
-                      );
-                    })()}
-
-                    {/* Summary row */}
-                    <View style={styles.gsSummaryRow}>
-                      {pTrail > 0 && (
-                        <View style={styles.gsSummaryPill}>
-                          <Text style={styles.gsSummaryLabel}>P(TRAIL)</Text>
-                          <Text style={[styles.gsSummaryVal, { color: pTrail > 0.45 ? '#F97316' : '#9CA3AF' }]}>
-                            {Math.round(pTrail * 100)}%
-                          </Text>
-                        </View>
-                      )}
-                      {infl !== 1 && (
-                        <View style={styles.gsSummaryPill}>
-                          <Text style={styles.gsSummaryLabel}>TRAIL INFLATION</Text>
-                          <Text style={[styles.gsSummaryVal, { color: accentColor }]}>
-                            {infl >= 1 ? `+${Math.round((infl - 1) * 100)}%` : `${Math.round((infl - 1) * 100)}%`}
-                          </Text>
-                        </View>
-                      )}
-                    </View>
-
-                    {/* Knife-edge warning */}
-                    {gs.trailing_near_line && (
-                      <View style={styles.gsWarningBanner}>
-                        <Ionicons name="warning" size={11} color="#FBBF24" />
-                        <Text style={styles.gsWarningText}>
-                          KNIFE EDGE — Trailing scenario lands right on the line. This bet is thin in a chasing game.
-                        </Text>
                       </View>
-                    )}
-
-                    {/* Key finding */}
-                    {gs.key_finding ? (
-                      <Text style={styles.gsFinding}>{gs.key_finding}</Text>
-                    ) : null}
-                  </View>
+                      {/* Big title — the script prediction */}
+                      <Text style={[styles.gsBannerTitle, { color }]}>{gs.key_finding}</Text>
+                      {/* Scenario chips — top 3 other scenarios */}
+                      {gs.scenarios && gs.scenarios.length > 1 && (
+                        <View style={styles.gsBannerScenarios}>
+                          {gs.scenarios.slice(0, 3).map((s: any, i: number) => (
+                            <View key={i} style={[styles.gsBannerChip, { borderColor: color + '33' }]}>
+                              <Text style={styles.gsBannerChipName}>{s.name}</Text>
+                              <Text style={[styles.gsBannerChipPct, { color }]}>{Math.round(s.probability * 100)}%</Text>
+                            </View>
+                          ))}
+                        </View>
+                      )}
+                      {/* Bottom line: expected goals + implied win probs */}
+                      {gs.expected_total_goals != null && (
+                        <View style={styles.gsBannerBottom}>
+                          <Text style={styles.gsBannerSub}>
+                            Expected {gs.expected_total_goals} total goals
+                          </Text>
+                          <View style={styles.gsBannerImplied}>
+                            <Text style={[styles.gsBannerImpliedText, { color }]}>{gs.implied_home ? `${Math.round((gs.implied_home as number) * 100)}%` : ''} home</Text>
+                            <Text style={styles.gsBannerImpliedDivider}> / </Text>
+                            <Text style={[styles.gsBannerImpliedText, { color }]}>{gs.implied_away ? `${Math.round((gs.implied_away as number) * 100)}%` : ''} away</Text>
+                          </View>
+                        </View>
+                      )}
+                    </View>
+                  </Animated.View>
                 );
               })()}
 
@@ -4708,4 +4627,45 @@ const styles = StyleSheet.create({
     flex: 1,
     lineHeight: 15,
   },
+  // ── New Game Script Banner (big + highlighted)
+  gsBanner: {
+    flexDirection: 'row',
+    marginHorizontal: 16,
+    marginBottom: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    overflow: 'hidden',
+    backgroundColor: '#0a0a0a',
+  },
+  gsBannerStripe: { width: 4 },
+  gsBannerBody: { flex: 1, padding: 14, gap: 6 },
+  gsBannerHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  gsBannerIconWrap: {
+    width: 30, height: 30, borderRadius: 8,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  gsBannerLabel: { fontSize: 9, fontWeight: '800', letterSpacing: 1.2 },
+  gsBannerProbBadge: {
+    borderRadius: 8, borderWidth: 1,
+    paddingHorizontal: 10, paddingVertical: 4,
+    marginLeft: 'auto',
+  },
+  gsBannerProb: { fontSize: 12, fontWeight: '800' },
+  gsBannerTitle: { fontSize: 18, fontWeight: '900', letterSpacing: 0.3 },
+  gsBannerScenarios: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 },
+  gsBannerChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: '#151515', borderRadius: 5, borderWidth: 1,
+    paddingHorizontal: 8, paddingVertical: 4,
+  },
+  gsBannerChipName: { fontSize: 9, color: '#9CA3AF', fontWeight: '600' },
+  gsBannerChipPct: { fontSize: 9, fontWeight: '800' },
+  gsBannerBottom: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: '#1a1a1a',
+  },
+  gsBannerSub: { fontSize: 10, color: '#6B7280', fontWeight: '500' },
+  gsBannerImplied: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  gsBannerImpliedText: { fontSize: 10, fontWeight: '700' },
+  gsBannerImpliedDivider: { fontSize: 10, color: '#444' },
 });
