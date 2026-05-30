@@ -183,6 +183,7 @@ export default function FuzzySearchInput({
     onChangeText(text);
     lastQueryRef.current = text;
     if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (confirmed) { setResults([]); setShowDropdown(false); return; }
     if (text.length < 2) {
       setResults([]); setShowDropdown(false); setHasSearched(false); return;
     }
@@ -230,7 +231,7 @@ export default function FuzzySearchInput({
   };
 
   const showEmpty = !loading && hasSearched && results.length === 0 && value.length >= 2;
-  const shouldShow = (showDropdown && results.length > 0) || showEmpty;
+  const shouldShow = !confirmed && ((showDropdown && results.length > 0) || showEmpty);
 
   const renderItem = (item: any, index: number) => {
     if (staticItems) {
@@ -353,10 +354,11 @@ export default function FuzzySearchInput({
           autoCapitalize={autoCapitalize}
           returnKeyType={returnKeyType}
           onSubmitEditing={() => { dismiss(); onSubmitEditing?.(); }}
-          onFocus={() => { if (value.length >= 2 && results.length > 0) setShowDropdown(true); }}
+          onFocus={() => { if (!confirmed && value.length >= 2 && results.length > 0) setShowDropdown(true); }}
           onBlur={() => { setTimeout(dismiss, 200); }}
+          editable={!confirmed}
         />
-        {!loading && value.length > 0 && (
+        {!loading && value.length > 0 && !confirmed && (
           <TouchableOpacity
             onPress={() => { onChangeText(''); setResults([]); setShowDropdown(false); setHasSearched(false); }}
             style={styles.clearBtn}
@@ -392,12 +394,15 @@ const styles = StyleSheet.create({
   container: { position: 'relative', zIndex: 100 },
   inputRow: {
     flexDirection: 'row', alignItems: 'center',
-    backgroundColor: '#1a1a1a', borderRadius: 8,
-    borderWidth: 1, borderColor: '#2a2a2a', paddingHorizontal: 10,
+    backgroundColor: 'rgba(17,17,17,0.8)', borderRadius: 12,
+    borderWidth: 1, borderColor: 'rgba(57,255,20,0.12)', paddingHorizontal: 12,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3, shadowRadius: 6,
   },
   inputRowConfirmed: {
-    borderColor: Colors.primary,
+    borderColor: 'rgba(57,255,20,0.5)',
     borderWidth: 1.5,
+    backgroundColor: 'rgba(57,255,20,0.06)',
   },
   leadIcon: { marginRight: 7 },
   input: {
@@ -407,11 +412,11 @@ const styles = StyleSheet.create({
   clearBtn: { marginLeft: 4, padding: 2 },
   dropdownInline: {
     marginTop: 4,
-    backgroundColor: '#111', borderRadius: 8,
-    borderWidth: 1, borderColor: '#2a2a2a',
+    backgroundColor: 'rgba(10,10,10,0.98)', borderRadius: 12,
+    borderWidth: 1, borderColor: 'rgba(57,255,20,0.15)',
     overflow: 'hidden',
-    shadowColor: '#000', shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.6, shadowRadius: 8, elevation: 12,
+    shadowColor: Colors.primary, shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.15, shadowRadius: 20, elevation: 16,
   },
   dropdownScroll: { maxHeight: 248 },
   dropdownItem: {

@@ -740,7 +740,7 @@ export default function ScanScreen() {
         <Text style={styles.tagline}>{sport === 'mlb' ? 'MLB Prop Analytics' : sport === 'cs2' ? 'CS2 Prop Analytics' : sport === 'wta' ? 'WTA Prop Analytics' : 'Soccer Prop Analytics'}</Text>
       </View>
 
-      {/* ─── Sport Toggle ─── */}
+      {/* ─── Sport Toggle — premium glassmorphism ─── */}
       {(phase === 'idle' || phase === 'result' || phase === 'saved' || mode === 'manual') && (
         <View style={styles.sportRow}>
           <TouchableOpacity
@@ -748,28 +748,32 @@ export default function ScanScreen() {
             onPress={() => { setSport('soccer'); reset(); }}
             activeOpacity={0.8}
           >
-            <Text style={[styles.sportTabText, sport === 'soccer' && styles.sportTabTextActive]}>⚽  Soccer</Text>
+            <Ionicons name="football" size={15} color={sport === 'soccer' ? Colors.primary : Colors.textSecondary} style={{ marginRight: 6 }} />
+            <Text style={[styles.sportTabText, sport === 'soccer' && styles.sportTabTextActive]}>Soccer</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.sportTab, sport === 'mlb' && styles.sportTabActive]}
             onPress={() => { setSport('mlb'); reset(); }}
             activeOpacity={0.8}
           >
-            <Text style={[styles.sportTabText, sport === 'mlb' && styles.sportTabTextActive]}>⚾  MLB</Text>
+            <Ionicons name="baseball" size={15} color={sport === 'mlb' ? Colors.primary : Colors.textSecondary} style={{ marginRight: 6 }} />
+            <Text style={[styles.sportTabText, sport === 'mlb' && styles.sportTabTextActive]}>MLB</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.sportTab, sport === 'cs2' && styles.sportTabActive]}
             onPress={() => { setSport('cs2'); reset(); }}
             activeOpacity={0.8}
           >
-            <Text style={[styles.sportTabText, sport === 'cs2' && styles.sportTabTextActive]}>🎮  CS2</Text>
+            <Ionicons name="game-controller" size={15} color={sport === 'cs2' ? Colors.primary : Colors.textSecondary} style={{ marginRight: 6 }} />
+            <Text style={[styles.sportTabText, sport === 'cs2' && styles.sportTabTextActive]}>CS2</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.sportTab, sport === 'wta' && styles.sportTabActive]}
             onPress={() => { setSport('wta'); reset(); }}
             activeOpacity={0.8}
           >
-            <Text style={[styles.sportTabText, sport === 'wta' && styles.sportTabTextActive]}>🎾  WTA</Text>
+            <Ionicons name="tennisball" size={15} color={sport === 'wta' ? Colors.primary : Colors.textSecondary} style={{ marginRight: 6 }} />
+            <Text style={[styles.sportTabText, sport === 'wta' && styles.sportTabTextActive]}>WTA</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -1175,6 +1179,7 @@ export default function ScanScreen() {
               searchType="players"
               placeholder="e.g. Kevin De Bruyne"
               style={{ marginBottom: 2 }}
+              confirmed={!!resolvedPlayer}
               onSelectPlayer={(p) => {
                 setPlayerQuery(p.playerName);
                 setResolvedPlayer(p);
@@ -1199,6 +1204,7 @@ export default function ScanScreen() {
               searchType="teams"
               placeholder="e.g. Real Madrid"
               style={{ marginBottom: 2 }}
+              confirmed={!!resolvedManualOpponent}
               onSelectTeam={(t) => {
                 setManualOpponentQuery(t.teamName);
                 setResolvedManualOpponent(t);
@@ -1218,6 +1224,7 @@ export default function ScanScreen() {
               searchType="leagues"
               placeholder="Search league…"
               style={{ marginBottom: 2 }}
+              confirmed={!!leagueId}
               onSelectLeague={(l: FuzzyLeagueResult) => {
                 setLeagueId(l.id);
                 setLeagueQuery(l.name);
@@ -3476,37 +3483,55 @@ const styles = StyleSheet.create({
   modeRow: {
     flexDirection: 'row',
     marginHorizontal: 20,
-    backgroundColor: Colors.card,
-    borderRadius: Colors.radius,
+    backgroundColor: 'rgba(26,26,26,0.6)',
+    borderRadius: 14,
     padding: 3,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: 'rgba(57,255,20,0.12)',
   },
   modeTab: {
     flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    paddingVertical: 9, gap: 6, borderRadius: 9,
+    paddingVertical: 9, gap: 6, borderRadius: 11,
   },
-  modeTabActive: { backgroundColor: Colors.primaryDim },
-  modeTabText: { fontSize: 13, color: Colors.textSecondary, fontWeight: '600' },
-  modeTabTextActive: { color: Colors.primary },
+  modeTabActive: {
+    backgroundColor: 'rgba(57,255,20,0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(57,255,20,0.35)',
+    shadowColor: Colors.primary,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+  },
+  modeTabText: { fontSize: 13, color: Colors.textSecondary, fontWeight: '600', letterSpacing: 0.3 },
+  modeTabTextActive: { color: Colors.primary, fontWeight: '700' },
   sportRow: {
     flexDirection: 'row',
     marginHorizontal: 20,
-    backgroundColor: Colors.card,
-    borderRadius: Colors.radius,
+    backgroundColor: 'rgba(26,26,26,0.6)',
+    borderRadius: 14,
     padding: 3,
     marginBottom: 10,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: 'rgba(57,255,20,0.12)',
+    backdropFilter: 'blur(10px)' as any,
   },
   sportTab: {
     flex: 1, alignItems: 'center', justifyContent: 'center',
-    paddingVertical: 8, borderRadius: 9,
+    paddingVertical: 8, borderRadius: 11,
+    flexDirection: 'row',
   },
-  sportTabActive: { backgroundColor: Colors.primaryDim },
-  sportTabText: { fontSize: 14, color: Colors.textSecondary, fontWeight: '700' },
-  sportTabTextActive: { color: Colors.primary },
+  sportTabActive: {
+    backgroundColor: 'rgba(57,255,20,0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(57,255,20,0.35)',
+    shadowColor: Colors.primary,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+  },
+  sportTabText: { fontSize: 13, color: Colors.textSecondary, fontWeight: '700', letterSpacing: 0.3 },
+  sportTabTextActive: { color: Colors.primary, fontWeight: '800' },
   mlbDropdown: {
     backgroundColor: '#1a1a1a',
     borderRadius: 10,
@@ -3532,9 +3557,11 @@ const styles = StyleSheet.create({
 
   /* Upload box */
   uploadBox: {
-    backgroundColor: Colors.card, borderRadius: Colors.radiusLg,
+    backgroundColor: 'rgba(17,17,17,0.95)', borderRadius: Colors.radiusLg,
     padding: 32, alignItems: 'center', borderWidth: 1.5,
-    borderColor: Colors.border, borderStyle: 'dashed', gap: 10,
+    borderColor: 'rgba(57,255,20,0.25)', borderStyle: 'dashed', gap: 10,
+    shadowColor: Colors.primary, shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.1, shadowRadius: 20,
   },
   uploadTitle: { fontSize: 18, fontWeight: '700', color: Colors.text },
   uploadSub: { fontSize: 13, color: Colors.textSecondary, textAlign: 'center' },
@@ -3550,8 +3577,10 @@ const styles = StyleSheet.create({
   /* ─── HERO UPLOAD BOX (Scan idle state) ─── */
   heroUploadBox: {
     borderRadius: Colors.radiusLg, overflow: 'hidden',
-    borderWidth: 2, borderColor: Colors.primary,
+    borderWidth: 2, borderColor: 'rgba(57,255,20,0.4)',
     borderStyle: 'dashed', minHeight: 170,
+    shadowColor: Colors.primary, shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.15, shadowRadius: 20,
   },
   heroImage: {
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
@@ -3575,12 +3604,13 @@ const styles = StyleSheet.create({
   },
   heroBtnBig: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: Colors.primary, paddingVertical: 10, paddingHorizontal: 22,
-    borderRadius: Colors.radius,
-    shadowColor: Colors.primary, shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.45, shadowRadius: 8, elevation: 6,
+    backgroundColor: Colors.primary, paddingVertical: 12, paddingHorizontal: 26,
+    borderRadius: 12,
+    shadowColor: Colors.primary, shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.55, shadowRadius: 14, elevation: 8,
+    borderWidth: 1, borderColor: 'rgba(57,255,20,0.3)',
   },
-  heroBtnBigText: { color: '#000', fontWeight: '800', fontSize: 14 },
+  heroBtnBigText: { color: '#000', fontWeight: '900', fontSize: 14, letterSpacing: 0.5 },
 
   /* Capture container (wraps analysis content for html2canvas) */
   captureContainer: { backgroundColor: '#000' },
@@ -3601,8 +3631,10 @@ const styles = StyleSheet.create({
 
   /* Loading */
   loadingCard: {
-    backgroundColor: Colors.card, borderRadius: Colors.radiusLg,
-    overflow: 'hidden', borderWidth: 1, borderColor: Colors.borderSubtle,
+    backgroundColor: 'rgba(17,17,17,0.95)', borderRadius: Colors.radiusLg,
+    overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(57,255,20,0.08)',
+    shadowColor: Colors.primary, shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.06, shadowRadius: 14,
   },
   scannedThumb: { width: '100%', height: 160 },
   scannedPreview: { width: '100%', height: 180, borderRadius: Colors.radius, marginBottom: 16 },
@@ -3615,9 +3647,11 @@ const styles = StyleSheet.create({
     letterSpacing: 1.5, marginBottom: 10,
   },
   detectedCard: {
-    backgroundColor: Colors.card, borderRadius: Colors.radiusLg,
-    borderWidth: 1, borderColor: Colors.borderSubtle, marginBottom: 14,
+    backgroundColor: 'rgba(17,17,17,0.95)', borderRadius: Colors.radiusLg,
+    borderWidth: 1, borderColor: 'rgba(57,255,20,0.1)', marginBottom: 14,
     zIndex: 50,
+    shadowColor: Colors.primary, shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.06, shadowRadius: 14,
   },
   detectedTop: { flexDirection: 'row', alignItems: 'flex-start', padding: 16, gap: 12 },
   playerAvatarWrap: {
@@ -3657,17 +3691,20 @@ const styles = StyleSheet.create({
   },
   venueLabel: { fontSize: 10, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 1 },
   venueToggle: {
-    flexDirection: 'row', backgroundColor: Colors.cardSecondary,
-    borderRadius: 10, padding: 3, gap: 2, flex: 1,
-    borderWidth: 1, borderColor: Colors.borderSubtle,
+    flexDirection: 'row', backgroundColor: 'rgba(26,26,26,0.6)',
+    borderRadius: 12, padding: 3, gap: 2, flex: 1,
+    borderWidth: 1, borderColor: 'rgba(57,255,20,0.12)',
   },
   venueOption: {
     flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    paddingVertical: 8, gap: 5, borderRadius: 8,
+    paddingVertical: 8, gap: 5, borderRadius: 10,
   },
-  venueOptionActive: { backgroundColor: Colors.primaryDim },
+  venueOptionActive: {
+    backgroundColor: 'rgba(57,255,20,0.15)',
+    borderWidth: 1, borderColor: 'rgba(57,255,20,0.35)',
+  },
   venueOptionText: { fontSize: 12, color: Colors.textSecondary, fontWeight: '700', letterSpacing: 0.5 },
-  venueOptionTextActive: { color: Colors.primary },
+  venueOptionTextActive: { color: Colors.primary, fontWeight: '800' },
 
   detectedStats: { flexDirection: 'row', borderTopWidth: 1, borderTopColor: Colors.borderSubtle },
   detectedStat: { flex: 1, padding: 14, alignItems: 'center', gap: 4 },
@@ -3677,10 +3714,11 @@ const styles = StyleSheet.create({
 
   /* Prediction button */
   predictBtn: {
-    backgroundColor: Colors.primary, borderRadius: Colors.radius, height: 52,
+    backgroundColor: Colors.primary, borderRadius: 14, height: 54,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-    shadowColor: Colors.primary, shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.4, shadowRadius: 14, elevation: 8,
+    shadowColor: Colors.primary, shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.55, shadowRadius: 20, elevation: 10,
+    borderWidth: 1, borderColor: 'rgba(57,255,20,0.4)',
   },
   predictBtnLoading: { opacity: 0.8 },
   predictBtnText: { color: '#000', fontWeight: '800', fontSize: 16, letterSpacing: 0.5 },
@@ -3693,28 +3731,34 @@ const styles = StyleSheet.create({
   /* Manual form */
   manualForm: { gap: 8 },
   fieldLabel: {
-    fontSize: 11, color: Colors.textSecondary, fontWeight: '700',
-    letterSpacing: 0.8, marginBottom: 4, marginTop: 8, textTransform: 'uppercase',
+    fontSize: 10, color: Colors.primary, fontWeight: '800',
+    letterSpacing: 1.2, marginBottom: 4, marginTop: 10, textTransform: 'uppercase',
   },
   fieldLabelOpt: {
     fontSize: 10, color: Colors.textTertiary, fontWeight: '400', textTransform: 'none', letterSpacing: 0,
   },
   textInput: {
-    backgroundColor: Colors.card, borderRadius: Colors.radius, borderWidth: 1,
-    borderColor: Colors.borderSubtle, color: Colors.text, fontSize: 16,
+    backgroundColor: 'rgba(17,17,17,0.8)', borderRadius: 12, borderWidth: 1,
+    borderColor: 'rgba(57,255,20,0.12)', color: Colors.text, fontSize: 16,
     paddingHorizontal: 14, height: 48,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3, shadowRadius: 6,
   },
   pickerBtn: {
-    backgroundColor: Colors.card, borderRadius: Colors.radius, borderWidth: 1,
-    borderColor: Colors.borderSubtle, paddingHorizontal: 14, height: 48,
+    backgroundColor: 'rgba(17,17,17,0.8)', borderRadius: 12, borderWidth: 1,
+    borderColor: 'rgba(57,255,20,0.12)', paddingHorizontal: 14, height: 48,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3, shadowRadius: 6,
   },
   pickerBtnText: { color: Colors.text, fontSize: 15 },
 
   /* Analysis card */
   analysisCard: {
-    backgroundColor: Colors.card, borderRadius: Colors.radiusLg,
-    borderWidth: 1, borderColor: Colors.borderSubtle, overflow: 'hidden', marginBottom: 14,
+    backgroundColor: 'rgba(17,17,17,0.95)', borderRadius: Colors.radiusLg,
+    borderWidth: 1, borderColor: 'rgba(57,255,20,0.08)', overflow: 'hidden', marginBottom: 14,
+    shadowColor: Colors.primary, shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08, shadowRadius: 16,
   },
   analysisHeader: {
     flexDirection: 'row', justifyContent: 'space-between',
