@@ -662,6 +662,12 @@ export default function ScanScreen() {
         gameScript: prediction.gameScript || undefined,
         projHomePoss: sport === 'soccer' && Number.isFinite(projHomePoss) ? projHomePoss : undefined,
         projAwayPoss: Number.isFinite(projAwayPoss) ? projAwayPoss : undefined,
+        // Soccer: persist AI analysis on the pick so the analysis modal can show it
+        ...(sport === 'soccer' ? {
+          sharpSummary:    prediction.sharpSummary  || undefined,
+          reasoning:       prediction.reasoning      || prediction.tacticalBreakdown || undefined,
+          tacticalAlerts:  prediction.tacticalAlerts || undefined,
+        } : {}),
         // WTA: persist tennis-specific fields and AI analysis
         ...(sport === 'wta' ? {
           playerId:        prediction.playerId,
@@ -2812,6 +2818,60 @@ export default function ScanScreen() {
                 </View>
               );
             })()}
+
+            {/* ─── SOCCER AI ANALYSIS CARD ─── */}
+            {prediction.sport === 'soccer' && (
+              (prediction.sharpSummary || prediction.reasoning || prediction.tacticalBreakdown || (prediction.tacticalAlerts && prediction.tacticalAlerts.length > 0)) && (() => {
+                const isOver = prediction.recommendation === 'OVER';
+                const isUnder = prediction.recommendation === 'UNDER';
+                const recColor = isOver ? Colors.success : isUnder ? Colors.error : Colors.textSecondary;
+                const borderColor = isOver ? Colors.success : isUnder ? Colors.error : '#333';
+                const summary = prediction.sharpSummary || '';
+                const body = prediction.reasoning || prediction.tacticalBreakdown || '';
+                const alerts = (prediction.tacticalAlerts || []) as string[];
+                return (
+                  <View style={[styles.scoutCard, { borderColor: borderColor + '44' }]}>
+                    <View style={styles.scoutHeader}>
+                      <Ionicons name="flash-outline" size={13} color={Colors.primary} />
+                      <Text style={styles.scoutTitle}>SHARP ANGLE</Text>
+                      <View style={[styles.sharpVerdictPill, { backgroundColor: recColor + '22', borderColor, marginLeft: 'auto' }]}>
+                        <Text style={[styles.sharpVerdictPillText, { color: recColor }]}>
+                          {isOver ? 'OVER' : isUnder ? 'UNDER' : 'PASS'} {prediction.line ?? ''}
+                        </Text>
+                      </View>
+                    </View>
+                    {summary ? (
+                      <Text style={[styles.scoutSectionBody, { color: Colors.text, fontWeight: '600', marginBottom: 8 }]}>
+                        {summary}
+                      </Text>
+                    ) : null}
+                    {body ? (
+                      <Text style={[styles.scoutSectionBody, { color: Colors.textSecondary }]}>
+                        {body}
+                      </Text>
+                    ) : null}
+                    {alerts.length > 0 && (
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
+                        {alerts.slice(0, 3).map((alert, i) => {
+                          const isRisk = alert.toLowerCase().includes('risk') || alert.toLowerCase().includes('invalid') || alert.toLowerCase().includes('flip');
+                          const isBoost = alert.toLowerCase().includes('boost') || alert.toLowerCase().includes('infl') || alert.toLowerCase().includes('rise');
+                          const alertColor = isRisk ? '#FF6B35' : isBoost ? Colors.primary : '#60A5FA';
+                          return (
+                            <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 4,
+                              backgroundColor: alertColor + '11', borderRadius: 6, paddingHorizontal: 7, paddingVertical: 3,
+                              borderWidth: 1, borderColor: alertColor + '33',
+                            }}>
+                              <Ionicons name={isRisk ? 'warning' : isBoost ? 'trending-up' : 'information-circle'} size={10} color={alertColor} />
+                              <Text style={{ fontSize: 10, color: alertColor, fontWeight: '700' }}>{alert}</Text>
+                            </View>
+                          );
+                        })}
+                      </View>
+                    )}
+                  </View>
+                );
+              })()
+            )}
 
             {/* ─── GAME LOG GRID ─── */}
             {prediction.gameLogs && prediction.gameLogs.length > 0 && (() => {

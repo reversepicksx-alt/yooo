@@ -829,7 +829,8 @@ export default function PicksScreen() {
   const modalIsOver = modalRec === 'OVER';
   const modalIsUnder = modalRec === 'UNDER';
   const modalRecColor = modalIsOver ? Colors.success : modalIsUnder ? Colors.error : Colors.textSecondary;
-  const modalText = (analysisModal?.data?.reasoning ?? analysisModal?.data?.tacticalBreakdown ?? analysisModal?.data?.explanation) as string | undefined;
+  const modalText = (analysisModal?.data?.reasoning ?? analysisModal?.data?.tacticalBreakdown ?? analysisModal?.data?.explanation ?? analysisModal?.data?.sharpSummary) as string | undefined;
+  const modalAlerts = (analysisModal?.data?.tacticalAlerts ?? []) as string[];
 
   return (
     <View style={[styles.root, { paddingTop: topPad }]}>
@@ -1097,6 +1098,26 @@ export default function PicksScreen() {
             ) : (
               <View style={mStyles.aiBlocks}>
                 {renderAnalysisBlocks(modalText, modalRec)}
+                {modalAlerts.length > 0 && (
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 12 }}>
+                    {modalAlerts.slice(0, 4).map((alert, i) => {
+                      const lower = alert.toLowerCase();
+                      const isRisk = lower.includes('risk') || lower.includes('invalid') || lower.includes('flip') || lower.includes('void');
+                      const isBoost = lower.includes('boost') || lower.includes('infl') || lower.includes('rise') || lower.includes('high');
+                      const alertColor = isRisk ? '#FF6B35' : isBoost ? Colors.primary : '#60A5FA';
+                      return (
+                        <View key={i} style={{
+                          flexDirection: 'row', alignItems: 'center', gap: 4,
+                          backgroundColor: alertColor + '11', borderRadius: 6, paddingHorizontal: 7, paddingVertical: 3,
+                          borderWidth: 1, borderColor: alertColor + '33',
+                        }}>
+                          <Ionicons name={isRisk ? 'warning' : isBoost ? 'trending-up' : 'information-circle'} size={10} color={alertColor} />
+                          <Text style={{ fontSize: 10, color: alertColor, fontWeight: '700' }}>{alert}</Text>
+                        </View>
+                      );
+                    })}
+                  </View>
+                )}
               </View>
             )}
           </ScrollView>

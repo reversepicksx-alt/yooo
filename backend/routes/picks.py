@@ -357,16 +357,19 @@ async def save_pick(req: SavePickRequest):
     except (TypeError, ValueError):
         pass
 
-    # Store AI analysis fields directly on CS2 picks (no separate predictions collection)
-    if sport == "cs2":
-        for field in ("sharpSummary", "reasoning", "tacticalBreakdown"):
+    # Store AI analysis fields directly on sport picks (no separate predictions collection)
+    # Soccer, CS2, and WTA all persist AI analysis on the pick for offline analysis modal access.
+    if sport in ("cs2", "soccer", "wta"):
+        for field in ("sharpSummary", "reasoning", "tacticalBreakdown", "tacticalAlerts"):
             val = pick.get(field)
             if val:
                 doc[field] = val
         # Store tactical metrics so the analysis modal can show them
-        tm = pick.get("tacticalMetrics")
-        if tm:
-            doc["tacticalMetrics"] = tm
+        for field in ("projectedValue", "recommendation", "confidenceScore", "confidenceLevel", "pOver", "pUnder"):
+            val = pick.get(field)
+            if val is not None:
+                doc[field] = val
+    if sport == "cs2":
         # ── CS2 position/role cleanup ──────────────────────────────────────
         # Soccer position fields (e.g. "CM · Box-to-Box", "ST · Poacher")
         # were leaking onto CS2 picks because the player.position/role were
@@ -964,18 +967,21 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
                 sort=[("_created", -1)]
             )
 
-    # Strategy 3: CS2 picks store analysis directly in the pick document
-    if not prediction and pick.get("sport") == "cs2":
-        cs2_analysis = {}
-        for field in ("sharpSummary", "reasoning", "tacticalBreakdown", "tacticalMetrics",
+    # Strategy 3: CS2 / Soccer / WTA picks store analysis directly in the pick document
+    # because the predictions collection may have been rotated or the lookup missed.
+    pick_sport = pick.get("sport", "soccer")
+    if not prediction and pick_sport in ("cs2", "soccer", "wta"):
+        inline_analysis = {}
+        for field in ("sharpSummary", "reasoning", "tacticalBreakdown", "tacticalAlerts",
                       "projectedValue", "recommendation", "confidenceScore", "confidenceLevel",
                       "pOver", "pUnder", "priorMean", "momentumMean", "sampleSize",
-                      "streakFlag", "propType", "line", "playerName", "opponentName"):
+                      "streakFlag", "propType", "line", "playerName", "opponentName",
+                      "tacticalMetrics", "gameScript"):
             val = pick.get(field)
             if val is not None:
-                cs2_analysis[field] = val
-        if cs2_analysis.get("reasoning") or cs2_analysis.get("sharpSummary"):
-            return {"found": True, "analysis": cs2_analysis}
+                inline_analysis[field] = val
+        if inline_analysis.get("reasoning") or inline_analysis.get("sharpSummary") or inline_analysis.get("tacticalBreakdown"):
+            return {"found": True, "analysis": inline_analysis}
         return {"found": False}
 
     # Strategy 4: check MLB predictions collection when soccer lookup missed
