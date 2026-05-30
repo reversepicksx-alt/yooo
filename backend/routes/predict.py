@@ -3182,13 +3182,14 @@ ACTUAL SEASON STATS (use these to determine position — stats don't lie):
 - Yellow cards: {cards.get('yellow', 0)}, Red: {cards.get('red', 0)}
 POSITION CLUES — distinguish DEEP vs ADVANCED roles:
 - CB: very high tackles/blocks, low key passes, low dribbles
-- CDM (deep pivot): HIGH interceptions, HIGH pass accuracy, LOW key passes (0-2/game), LOW shots, LOW dribbles. Plays BEHIND the midfield line. Vitinha at PSG = CDM, NOT CAM.
-- CM: balanced tackles + passes + key passes, moderate shots
+- CDM / deep-lying playmaker (regista): the team's tempo-setter and build-up hub. HIGHEST pass volume on the team (touches the ball most when in possession), VERY HIGH pass accuracy, sits DEEPEST in midfield, LOW shots, LOW dribbles. Interceptions can be moderate (a regista is a passer first, not a destroyer). Role = "Deep-Lying Playmaker". Vitinha at PSG = CDM / Deep-Lying Playmaker (regista) — he is the metronome who orchestrates from deep and leads the team in touches/passes. He is NOT a Box-to-Box runner and NOT a CAM.
+- CDM (ball-winning pivot): HIGH interceptions/tackles, high pass accuracy, LOW key passes, LOW shots. Role = "Ball Winner" or "Anchor".
+- CM (box-to-box): balanced tackles + passes + key passes, MODERATE shots AND noticeable dribbles/forward runs, contributes goals/assists. Role = "Box-to-Box". Only pick this when the player visibly gets forward (shots + key passes + dribbles all moderate-to-high), NOT for a deep metronome.
 - CAM (advanced playmaker): HIGH key passes (3+), moderate dribbles, LOW tackles. Plays AHEAD of midfield.
 - Winger: high dribbles/crosses, low tackles
 - ST: high shots/goals, low tackles
 
-CRITICAL: High passes + high pass accuracy + moderate tackles + moderate interceptions + LOW key passes + LOW shots + LOW dribbles = CDM (deep pivot), NOT CAM. CAM must have high key passes (3+)."""
+CRITICAL: The single highest-pass-volume midfielder who sits deepest, dictates tempo, with VERY HIGH pass accuracy + LOW shots + LOW dribbles = CDM / Deep-Lying Playmaker (regista), NOT Box-to-Box and NOT CAM. Box-to-Box requires visible forward output (shots + dribbles + goal contributions). CAM requires high key passes (3+)."""
 
                     pos_prompt = f"What is {req.playerName}'s primary position and tactical role at {corrected_team_name}?{category_hint}{stats_evidence}\nPosition must be one of: {pos_list}\nRole must be one of: Shot-Stopper, Sweeper Keeper, Ball-Playing CB, Stopper, Fullback, Wing-Back, Inverted Fullback, Anchor, Box-to-Box, Deep-Lying Playmaker, Ball Winner, Mezzala, Advanced Playmaker, Wide Playmaker, Traditional Winger, Inverted Winger, Progressive Carrier, Inside Forward, Target Man, Poacher, False 9, Shadow Striker, Complete Forward, Pressing Forward\nReply ONLY: POSITION|ROLE"
 
