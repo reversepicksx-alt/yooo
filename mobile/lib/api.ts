@@ -393,6 +393,7 @@ export interface PredictionResult {
 }
 
 interface RawPrediction {
+  sport?: string;
   player?: { id?: number; name?: string; team?: string; position?: string; role?: string };
   propType?: string;
   line?: number;
@@ -403,6 +404,8 @@ interface RawPrediction {
   confidenceInterval?: [number, number];
   reasoning?: string;
   tacticalBreakdown?: string;
+  sharpSummary?: string;
+  tacticalAlerts?: string[];
   blendNote?: string;
   aiProjection?: number;
   bayesianComponent?: number;

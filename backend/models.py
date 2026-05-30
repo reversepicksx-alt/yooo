@@ -45,6 +45,7 @@ class PredictionRequest(BaseModel):
     line: float = 0
     positionOverride: str = ""
     roleOverride: str = ""
+    sport: str = "soccer"
 
 
 class ComboRequest(BaseModel):

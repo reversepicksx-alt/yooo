@@ -453,6 +453,7 @@ export default function ScanScreen() {
         leagueId: data.leagueId || leagueId,
         propType: data.propType || propType,
         line: data.line || 0,
+        sport: sport,
       };
       const result = await predict(req);
       if (result.error) {
@@ -1667,7 +1668,7 @@ export default function ScanScreen() {
                                       setPhase('analyzing');
                                       setShowAltPlayers(false);
                                       try {
-                                        const req = { ...predictionRequest, playerId: c.playerId, teamName: c.teamName, teamId: undefined };
+                                        const req = { ...predictionRequest, playerId: c.playerId, teamName: c.teamName, teamId: undefined, sport: sport };
                                         const result = await predict(req);
                                         if (!result.error) {
                                           setPrediction(result);

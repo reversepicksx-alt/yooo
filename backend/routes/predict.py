@@ -4064,6 +4064,7 @@ Analyze ALL data thoroughly. Return JSON only."""
         prediction.pop("_source", None)
         prediction["projectedValue"] = pv
         prediction["recommendation"] = "over" if pv > req.line else "under"
+        prediction["sport"] = req.sport
 
         # scenarioProbabilities: prefer AI-assigned values; fall back to first-goal math
         _sp = prediction.get("scenarioProbabilities")
