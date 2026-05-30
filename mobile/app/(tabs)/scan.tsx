@@ -1009,6 +1009,13 @@ export default function ScanScreen() {
                               setScanResult(prev => prev ? { ...prev, opponentName: t.teamName, opponentId: t.teamId } : prev);
                               setShowOppEdit(false);
                               Haptics.selectionAsync();
+                              // Cross-league detection: if opponent is from a different league,
+                              // clear the scan league so user can pick correct competition.
+                              if (scanResult?.leagueId && t.leagueId && scanResult.leagueId !== t.leagueId) {
+                                setScanResult(prev => prev ? { ...prev, leagueId: 0, leagueName: '' } : prev);
+                                setLeagueId(0);
+                                setLeagueQuery('');
+                              }
                             }}
                           />
                           <TouchableOpacity
@@ -1216,6 +1223,12 @@ export default function ScanScreen() {
                 setManualOpponentQuery(t.teamName);
                 setResolvedManualOpponent(t);
                 Haptics.selectionAsync();
+                // Cross-league detection: if opponent is from a different league than the player's domestic league,
+                // we must clear the auto-locked league so the user can pick the correct competition (e.g. Champions League).
+                if (resolvedPlayer?.leagueId && t.leagueId && resolvedPlayer.leagueId !== t.leagueId) {
+                  setLeagueId(0);
+                  setLeagueQuery('');
+                }
               }}
             />
             {resolvedManualOpponent && (
