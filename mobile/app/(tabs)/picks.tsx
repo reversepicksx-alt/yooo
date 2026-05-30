@@ -829,8 +829,8 @@ export default function PicksScreen() {
   const modalIsOver = modalRec === 'OVER';
   const modalIsUnder = modalRec === 'UNDER';
   const modalRecColor = modalIsOver ? Colors.success : modalIsUnder ? Colors.error : Colors.textSecondary;
-  const modalText = (analysisModal?.data?.reasoning ?? analysisModal?.data?.tacticalBreakdown ?? analysisModal?.data?.explanation ?? analysisModal?.data?.sharpSummary) as string | undefined;
-  const modalAlerts = (analysisModal?.data?.tacticalAlerts ?? []) as string[];
+  const modalText = (analysisModal?.data?.reasoning ?? analysisModal?.pick?.reasoning ?? analysisModal?.data?.tacticalBreakdown ?? analysisModal?.pick?.tacticalBreakdown ?? analysisModal?.data?.explanation ?? analysisModal?.data?.sharpSummary ?? analysisModal?.pick?.sharpSummary) as string | undefined;
+  const modalAlerts = (analysisModal?.data?.tacticalAlerts ?? analysisModal?.pick?.tacticalAlerts ?? []) as string[];
 
   return (
     <View style={[styles.root, { paddingTop: topPad }]}>
@@ -1003,7 +1003,7 @@ export default function PicksScreen() {
           {/* Edge-gap pill row — surfaces how far projection sits from the line
               and whether league calibration / game-script informed the call. */}
           {(() => {
-            const bm: any = (analysisModal?.data as any)?.bayesianMetrics ?? {};
+            const bm: any = (analysisModal?.data as any)?.bayesianMetrics ?? (analysisModal?.pick?.bayesianMetrics as any) ?? {};
             const gapPct = bm.edgeGapPct;
             const gapBand = bm.edgeGapBand;
             const lcal = bm.leagueCalibration;
@@ -1042,7 +1042,7 @@ export default function PicksScreen() {
 
           {/* ── Game Script Banner (on analysis modal) ── */}
           {(() => {
-            const gs = (analysisModal?.data as any)?.gameScript;
+            const gs = (analysisModal?.data as any)?.gameScript ?? analysisModal?.pick?.gameScript;
             if (!gs || !gs.dominant) return null;
             const color = gs.color || '#60A5FA';
             const iconMap: Record<string, string> = {

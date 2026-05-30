@@ -279,6 +279,8 @@ export interface PredictionResult {
   lineDeviationBand?: string;
   lineDeviationPct?: number;
   lineDeviationHitRate?: number;
+  sport?: string;
+  tacticalAlerts?: string[];
   gameScript?: {
     p_team_trails?: number;
     p_opponent_scores_first?: number;
@@ -643,6 +645,8 @@ export async function predict(request: Record<string, unknown>): Promise<Predict
     playerId: raw._request?.playerId || raw.player?.id || undefined,
     playerPosition: raw.player?.position || undefined,
     playerRole: raw.player?.role || undefined,
+    sport: raw.sport || (request.sport as string) || undefined,
+    tacticalAlerts: raw.tacticalAlerts || undefined,
     sharpSummary: raw.sharpSummary || undefined,
     keyEvidence: raw.keyEvidence || undefined,
     gameFlowDynamics: raw.gameFlowDynamics || undefined,
@@ -709,6 +713,13 @@ export interface Pick {
   awayPoss?: number | null;
   projHomePoss?: number | null;
   projAwayPoss?: number | null;
+  // AI analysis fields (persisted for offline analysis modal)
+  sharpSummary?: string;
+  reasoning?: string;
+  tacticalBreakdown?: string;
+  tacticalAlerts?: string[];
+  gameScript?: Record<string, unknown>;
+  bayesianMetrics?: Record<string, unknown>;
 }
 
 export async function listPicks(email: string, token: string): Promise<Pick[]> {
@@ -759,6 +770,13 @@ export async function listPicks(email: string, token: string): Promise<Pick[]> {
     awayPoss: (p.awayPoss as number) ?? null,
     projHomePoss: (p.projHomePoss as number) ?? null,
     projAwayPoss: (p.projAwayPoss as number) ?? null,
+    // AI analysis fields persisted on pick
+    sharpSummary: (p.sharpSummary as string) || undefined,
+    reasoning: (p.reasoning as string) || undefined,
+    tacticalBreakdown: (p.tacticalBreakdown as string) || undefined,
+    tacticalAlerts: (p.tacticalAlerts as string[]) || undefined,
+    gameScript: (p.gameScript as Record<string, unknown>) || undefined,
+    bayesianMetrics: (p.bayesianMetrics as Record<string, unknown>) || undefined,
   }));
 }
 
