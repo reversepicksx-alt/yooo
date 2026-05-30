@@ -2257,7 +2257,7 @@ async def predict(req: PredictionRequest):
             # inflate the expectation. Clamp to [30, 90].
             _all_mins = sorted([
                 g.get("minutes", 90) for g in player_game_logs
-                if g.get("minutes", 0) > 0
+                if (g.get("minutes") or 0) > 0
             ])
             if _all_mins:
                 _mid = len(_all_mins) // 2
@@ -3491,12 +3491,12 @@ KEY PRINCIPLE: A GK defending deep = maximum back-pass recycling. A GK on a domi
             # mixing home/away inflates the save-rate baseline in the wrong direction).
             gk_saves_list = []
             gk_ga_from_logs = []
-            _saves_venue_logs = [g for g in player_game_logs if g.get("venue") == player_venue and g.get("goals_saves") is not None and g.get("minutes", 0) > 0]
+            _saves_venue_logs = [g for g in player_game_logs if g.get("venue") == player_venue and g.get("goals_saves") is not None and (g.get("minutes") or 0) > 0]
             # Lower threshold to 3 for GK saves (same as Bayesian venue-split fix):
             # away GK save averages are radically different from home averages.
             # 3 venue-specific samples are enough to anchor the gk_avg_saves here.
             _saves_pool = _saves_venue_logs if len(_saves_venue_logs) >= 3 else player_game_logs
-            recent_gk_logs = [g for g in _saves_pool if g.get("goals_saves") is not None and g.get("minutes", 0) > 0][:7]
+            recent_gk_logs = [g for g in _saves_pool if g.get("goals_saves") is not None and (g.get("minutes") or 0) > 0][:7]
             for g in recent_gk_logs:
                 gk_saves_list.append(g.get("goals_saves"))
                 # Compute GA directly from game score + venue (most reliable source)

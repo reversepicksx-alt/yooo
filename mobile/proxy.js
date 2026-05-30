@@ -21,8 +21,8 @@ app.use(
     pathFilter: '/api',
     target: 'http://localhost:8000',
     changeOrigin: true,
-    proxyTimeout: 30000,
-    timeout: 30000,
+    proxyTimeout: 120000,
+    timeout: 120000,
     on: {
       error: (err, req, res) => {
         console.error('[Proxy] API error:', err.message);

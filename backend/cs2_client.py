@@ -445,7 +445,7 @@ async def get_player_recent_match_stats(player_id: int, team_id: int, limit: int
                     m1m2_maps = sorted(per_map_stats, key=lambda x: x.get("mapNumber", 0))[:2]
 
                 total_rounds_m1m2  = sum(m.get("totalRounds", 0) for m in m1m2_maps)
-                total_kast_vals    = [m.get("kast", 0) for m in m1m2_maps if m.get("kast", 0) > 0]
+                total_kast_vals    = [m.get("kast", 0) for m in m1m2_maps if (m.get("kast") or 0) > 0]
                 total_first_kills  = sum(m.get("firstKills", 0) for m in m1m2_maps)
                 total_first_deaths = sum(m.get("firstDeaths", 0) for m in m1m2_maps)
 
@@ -453,7 +453,7 @@ async def get_player_recent_match_stats(player_id: int, team_id: int, limit: int
                     return sum(m.get(field, 0) for m in maps)
 
                 def _avg(field, maps=m1m2_maps):
-                    vals = [m.get(field, 0) for m in maps if m.get(field, 0) > 0]
+                    vals = [m.get(field, 0) for m in maps if (m.get(field) or 0) > 0]
                     return sum(vals) / len(vals) if vals else 0.0
 
                 # Map 3 aggregates (None when match didn't go to map 3)
@@ -484,7 +484,7 @@ async def get_player_recent_match_stats(player_id: int, team_id: int, limit: int
                     "killsPerRound_m1m2":   round(_sum("kills") / total_rounds_m1m2, 3) if total_rounds_m1m2 > 0 else 0,
                     "map1_kills":           m1.get("kills", 0),
                     "map1_rounds":          m1.get("totalRounds", 0),
-                    "map1_kpr":             round(m1.get("kills", 0) / m1.get("totalRounds", 1), 3) if m1.get("totalRounds", 0) > 0 else 0,
+                    "map1_kpr":             round(m1.get("kills", 0) / m1.get("totalRounds", 1), 3) if (m1.get("totalRounds") or 0) > 0 else 0,
                     "map1_kast":            m1.get("kast", 0),
                     "map2_kills":           m2.get("kills", 0) if m2 else 0,
                     # Map 3 aggregates (None = match didn't go to map 3)
@@ -661,7 +661,7 @@ async def get_cs2_completed_match_result(
                 m1 = map_lookup.get(1, {})
                 m2 = map_lookup.get(2, {})
                 m12 = [m for m in (m1, m2) if m]
-                adrs = [m.get("adr", 0) for m in m12 if m.get("adr", 0) > 0]
+                adrs = [m.get("adr", 0) for m in m12 if (m.get("adr") or 0) > 0]
                 actual = round(sum(adrs) / len(adrs), 1) if adrs else None
             elif prop_type in ("maps_1_3_kills", "maps_1_3_headshots"):
                 # All 3 maps combined (maps 1-2 + map 3 if played)

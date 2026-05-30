@@ -409,8 +409,8 @@ def _round_normalized_projection(
     # rounds_is_single: map1_kills lives in match-level logs but is a single-map count
     rounds_is_single = locals().get("rounds_is_single", False)
 
-    kpr_vals    = [m.get(kpr_field, 0) for m in logs if m.get(kpr_field, 0) > 0]
-    rounds_vals = [m.get(rounds_field, 0) for m in logs if m.get(rounds_field, 0) > 0]
+    kpr_vals    = [m.get(kpr_field, 0) for m in logs if (m.get(kpr_field) or 0) > 0]
+    rounds_vals = [m.get(rounds_field, 0) for m in logs if (m.get(rounds_field) or 0) > 0]
 
     if not kpr_vals:
         return prior_mean
@@ -1139,8 +1139,8 @@ def compute_cs2_projection(
             streak_flag = "❄️ UNDER streak (4+ of last 5)"
 
     # ── Tactical metrics (exposed to AI analysis & response) ─────────────────
-    kpr_vals_out = [m.get("killsPerRound_m1m2" if prop_type in MATCH_LEVEL_PROPS else "killsPerRound", 0)
-                    for m in map_logs if m.get("killsPerRound_m1m2" if prop_type in MATCH_LEVEL_PROPS else "killsPerRound", 0) > 0]
+    _kpr_field_out = "killsPerRound_m1m2" if prop_type in MATCH_LEVEL_PROPS else "killsPerRound"
+    kpr_vals_out = [m.get(_kpr_field_out, 0) for m in map_logs if (m.get(_kpr_field_out) or 0) > 0]
 
     fk_field_out  = "maps_1_2_firstKills" if prop_type in MATCH_LEVEL_PROPS else "firstKills"
     fd_field_out  = "maps_1_2_firstDeaths" if prop_type in MATCH_LEVEL_PROPS else "firstDeaths"

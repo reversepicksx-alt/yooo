@@ -4,3 +4,5 @@
 - [Soccer prop hard blocks](soccer-prop-blocks.md) — clearances OVER: hard-blocked post-Bayesian-Truth (0% hit rate 13n); shots OVER: AVOID in prop safety (19% hit rate).
 - [Stale pick auto-void](stale-void.md) — Multi-layer stale-void; global cutoff 4d; orphan-void at 48h; audit endpoint excludes voidReason picks from wrong-push count.
 - [Gemini migration](gemini-migration.md) — Full Grok→Gemini swap; thinkingBudget=0 required on 2.5 Flash or short calls return empty parts.
+- [Proxy timeout for predictions](proxy-timeout.md) — proxyTimeout=30s caused 500s on long predictions (AI synthesis). Bumped to 120s in mobile/proxy.js to match frontend's 90s/150s AbortController limits.
+- [CS2 NoneType comparison crashes](cs2-none-crashes.md) — `dict.get(key, 0) > 0` crashes when value is `None` (key exists but set to null). Always use `(dict.get(key) or 0) > 0` for numeric comparisons in CS2 engine/client and any dict with BDL/API-fetched data.
