@@ -665,9 +665,11 @@ export default function ScanScreen() {
         projAwayPoss: Number.isFinite(projAwayPoss) ? projAwayPoss : undefined,
         // Soccer: persist AI analysis on the pick so the analysis modal can show it
         ...(sport === 'soccer' ? {
-          sharpSummary:    prediction.sharpSummary  || undefined,
-          reasoning:       prediction.reasoning      || prediction.tacticalBreakdown || undefined,
-          tacticalAlerts:  prediction.tacticalAlerts || undefined,
+          sharpSummary:      prediction.sharpSummary  || undefined,
+          reasoning:         prediction.reasoning      || prediction.tacticalBreakdown || undefined,
+          tacticalBreakdown: prediction.tacticalBreakdown || undefined,
+          tacticalAlerts:    prediction.tacticalAlerts || undefined,
+          bayesianMetrics:   (prediction as any).bayesianMetrics || undefined,
         } : {}),
         // WTA: persist tennis-specific fields and AI analysis
         ...(sport === 'wta' ? {

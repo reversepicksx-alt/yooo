@@ -261,6 +261,8 @@ export interface PredictionResult {
   confidence?: number;
   rawConfidence?: number;
   recommendation?: 'OVER' | 'UNDER' | 'PASS';
+  confidenceScore?: number;
+  bayesianMetrics?: Record<string, unknown>;
   reasoning?: string;
   tacticalBreakdown?: string;
   blendNote?: string;
