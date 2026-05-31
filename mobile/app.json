@@ -15,7 +15,15 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.reversepicks.app"
+      "bundleIdentifier": "com.reversepicks.app",
+      "buildNumber": "1",
+      "infoPlist": {
+        "CFBundleURLTypes": [
+          {
+            "CFBundleURLSchemes": ["reversepicks"]
+          }
+        ]
+      }
     },
     "android": {
       "adaptiveIcon": {

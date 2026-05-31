@@ -12,6 +12,7 @@ import {
   getSubscriptionStatus, cancelSubscription, changePlan,
   resubscribeCheckout, PLAN_OPTIONS, type SubscriptionStatus,
 } from '@/lib/api';
+import IOSubscriptionLink from '@/components/IOSubscriptionLink';
 
 function getErrorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
@@ -307,7 +308,17 @@ export default function AccountScreen() {
           <MenuRow icon="shield-outline" label="Access Level" value={accessLabel} />
         </View>
 
-        {showSubManagement && (
+        {/* iOS App Store compliance: payment / subscription UI must redirect to
+            the website (Stripe). Apple IAP is not used. The web app keeps the
+            native subscription management unchanged. */}
+        {showSubManagement && Platform.OS === 'ios' && (
+          <>
+            <Text style={styles.sectionLabel}>Subscription</Text>
+            <IOSubscriptionLink />
+          </>
+        )}
+
+        {showSubManagement && Platform.OS !== 'ios' && (
           <>
             <Text style={styles.sectionLabel}>Subscription</Text>
             {isSquareSub && (
