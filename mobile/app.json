@@ -18,9 +18,12 @@
       "bundleIdentifier": "com.reversepicks.app",
       "buildNumber": "1",
       "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
         "CFBundleURLTypes": [
           {
-            "CFBundleURLSchemes": ["reversepicks"]
+            "CFBundleURLSchemes": [
+              "reversepicks"
+            ]
           }
         ]
       }
@@ -31,7 +34,10 @@
         "backgroundColor": "#0A0E1A"
       },
       "package": "com.reversepicks.app",
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "bundler": "metro"
@@ -46,6 +52,13 @@
           "cameraPermission": "ReversePicks needs camera access to scan prop slips."
         }
       ]
-    ]
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "cb70df32-f8c3-4bbd-9190-fb9cfd8b1599"
+      }
+    },
+    "owner": "josselgoateds-organization"
   }
 }
