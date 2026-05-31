@@ -77,3 +77,7 @@ externalPort = 8000
 deploymentTarget = "vm"
 run = ["bash", "start.sh"]
 build = ["bash", "-c", "echo \"Build timestamp: 1780076804948\" && cd mobile && ([ -d node_modules ] || npm install --legacy-peer-deps --silent 2>&1 | tail -3) && npx expo export -p web --output-dir dist 2>&1 | tail -8 && echo '[BUILD] dist ready.'"]
+
+[postMerge]
+path = "scripts/post-merge.sh"
+timeoutMs = 120000
