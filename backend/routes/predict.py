@@ -3098,25 +3098,32 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                 player_role = req.roleOverride or ""
                 print(f"[POS RESOLVE] User override: {req.playerName} → {specific_position} ({player_role})")
             else:
-                # Check cache (with 30-day expiry)
+                # Check cache (with 30-day expiry and prompt-version check)
+                from config import POSITION_PROMPT_VERSION
                 cached_pos = await db.player_positions.find_one(
-                    {"playerId": req.playerId}, {"_id": 0, "specificPosition": 1, "role": 1, "updatedAt": 1}
+                    {"playerId": req.playerId}, {"_id": 0, "specificPosition": 1, "role": 1, "updatedAt": 1, "promptVersion": 1}
                 )
                 cache_valid = False
                 if cached_pos and cached_pos.get("specificPosition"):
-                    # Check if cache is fresh (< 30 days)
-                    cached_at = cached_pos.get("updatedAt", "")
-                    if cached_at:
-                        try:
-                            cached_dt = datetime.fromisoformat(cached_at.replace("Z", "+00:00"))
-                            age_days = (datetime.now(timezone.utc) - cached_dt).days
-                            cache_valid = age_days < 30
-                            if not cache_valid:
-                                print(f"[POS RESOLVE] Cache expired ({age_days} days): {req.playerName}")
-                        except Exception:
-                            cache_valid = True  # If we can't parse date, trust the cache
+                    # Check prompt version first — stale version always forces re-resolution
+                    stored_version = cached_pos.get("promptVersion", 0)
+                    if stored_version < POSITION_PROMPT_VERSION:
+                        print(f"[POS RESOLVE] Prompt version outdated (v{stored_version} < v{POSITION_PROMPT_VERSION}): {req.playerName} — re-resolving")
+                        cache_valid = False
                     else:
-                        cache_valid = True  # Legacy cache entries without updatedAt
+                        # Check if cache is fresh (< 30 days)
+                        cached_at = cached_pos.get("updatedAt", "")
+                        if cached_at:
+                            try:
+                                cached_dt = datetime.fromisoformat(cached_at.replace("Z", "+00:00"))
+                                age_days = (datetime.now(timezone.utc) - cached_dt).days
+                                cache_valid = age_days < 30
+                                if not cache_valid:
+                                    print(f"[POS RESOLVE] Cache expired ({age_days} days): {req.playerName}")
+                            except Exception:
+                                cache_valid = True  # If we can't parse date, trust the cache
+                        else:
+                            cache_valid = True  # Legacy cache entries without updatedAt
 
                 if cache_valid:
                     specific_position = cached_pos["specificPosition"]
@@ -3258,6 +3265,7 @@ CRITICAL: The single highest-pass-volume midfielder who sits deepest, dictates t
                                 "genericPosition": player_position,
                                 "specificPosition": specific_position,
                                 "role": player_role,
+                                "promptVersion": POSITION_PROMPT_VERSION,
                                 "updatedAt": datetime.now(timezone.utc).isoformat(),
                             }},
                             upsert=True

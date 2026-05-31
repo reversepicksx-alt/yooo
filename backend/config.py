@@ -178,6 +178,10 @@ CURRENT_SEASON = 2025
 WOMENS_LEAGUE_IDS = {254}
 TOP_5_LEAGUES = [39, 140, 135, 78, 61]
 
+# ── Position prompt version — increment when the resolution prompt/logic changes
+# to force re-resolution of any cached positions on next predict call ──
+POSITION_PROMPT_VERSION = 3
+
 # ── Rate limiter ──
 api_semaphore = aio.Semaphore(10)
 
