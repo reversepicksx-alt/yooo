@@ -19,3 +19,5 @@ coverage/
 # Environment files
 *.env
 *.env.*
+.pythonlibs/
+.local/
