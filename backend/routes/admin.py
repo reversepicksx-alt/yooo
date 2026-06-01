@@ -502,3 +502,51 @@ async def picks_audit(req: _PicksAuditRequest):
         "prop_rates":   prop_rates,
         "recent_voids": recent_voids,
     }
+
+
+# ── Position Cache Invalidation ────────────────────────────────────────────────
+
+class _PositionInvalidateRequest(BaseModel):
+    email: str
+    token: str
+    playerIds: list[int] = []
+
+
+@router.post("/positions/invalidate")
+async def invalidate_position_cache(req: _PositionInvalidateRequest):
+    """Force re-resolution of position cache for specific players (or all).
+
+    Sets promptVersion=0 on targeted entries so the next predict call
+    re-resolves their position via Gemini.
+
+    - Pass a non-empty `playerIds` list to target specific players.
+    - Pass an empty list (or omit the field) to reset ALL cached positions.
+
+    Owner-only.
+    """
+    await verify_owner(req.email, req.token)
+
+    if req.playerIds:
+        filter_query = {"playerId": {"$in": req.playerIds}}
+        result = await db.player_positions.update_many(
+            filter_query,
+            {"$set": {"promptVersion": 0}},
+        )
+        return {
+            "success": True,
+            "scope": "targeted",
+            "playerIds": req.playerIds,
+            "matched": result.matched_count,
+            "modified": result.modified_count,
+        }
+    else:
+        result = await db.player_positions.update_many(
+            {},
+            {"$set": {"promptVersion": 0}},
+        )
+        return {
+            "success": True,
+            "scope": "all",
+            "matched": result.matched_count,
+            "modified": result.modified_count,
+        }
