@@ -1,0 +1,17 @@
+.git/
+.git/lfs/
+.pythonlibs/
+.local/
+node_modules/
+backend/.env
+frontend/.env
+*.env
+*.env.*
+.env.example
+*.log
+build/
+dist/
+coverage/
+.DS_Store
+attached_assets/
+mongodb_data/
