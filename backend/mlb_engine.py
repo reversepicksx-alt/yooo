@@ -863,9 +863,11 @@ def _get_park_factor(park_team: str, prop_type: str) -> float:
 
 def _compute_hits_runs_rbis(game: dict) -> Optional[float]:
     hits = game.get("hits")
-    if hits is None:
+    runs = game.get("runs")
+    rbi  = game.get("rbi")
+    if any(v is None for v in [hits, runs, rbi]):
         return None
-    return float(hits) + float(game.get("runs") or 0) + float(game.get("rbi") or 0)
+    return float(hits) + float(runs) + float(rbi)
 
 
 def _compute_hits_runs_rbis_from_season(season: dict) -> Optional[float]:
@@ -886,12 +888,14 @@ def _compute_pitcher_fantasy(game: dict) -> Optional[float]:
     ip_dec = _ip_to_float(ip)
     if ip_dec is None:
         return None
-    k  = float(game.get("p_k")    or 0)
-    h  = float(game.get("p_hits") or 0)
-    er = float(game.get("er")     or 0)
-    bb = float(game.get("p_bb")   or 0)
+    k  = game.get("p_k")
+    h  = game.get("p_hits")
+    er = game.get("er")
+    bb = game.get("p_bb")
+    if any(v is None for v in [k, h, er, bb]):
+        return None
     outs = ip_dec * 3
-    return round(outs + k * 2 - h * 0.6 - er * 2.25 - bb * 0.6, 1)
+    return round(outs + float(k) * 2 - float(h) * 0.6 - float(er) * 2.25 - float(bb) * 0.6, 1)
 
 
 def _compute_pitcher_fantasy_from_season(season: dict) -> Optional[float]:
@@ -932,18 +936,27 @@ def _compute_pitching_outs_from_season(season: dict) -> Optional[float]:
 
 
 def _compute_fantasy_pts(game: dict) -> Optional[float]:
+    # All sub-fields must be present (not None) to avoid partial-data bugs
     hits = game.get("hits")
     if hits is None:
         return None
+    hr      = game.get("hr")
+    rbi     = game.get("rbi")
+    bb      = game.get("bb")
+    runs    = game.get("runs")
+    sb      = game.get("stolen_bases")
+    doubles = game.get("doubles")
+    if any(v is None for v in [hr, rbi, bb, runs, sb, doubles]):
+        return None
     h       = float(hits)
-    hr      = float(game.get("hr")           or 0)
-    rbi     = float(game.get("rbi")          or 0)
-    bb      = float(game.get("bb")           or 0)
-    runs    = float(game.get("runs")         or 0)
-    sb      = float(game.get("stolen_bases") or 0)
-    doubles = float(game.get("doubles")      or 0)
-    singles = max(0.0, h - doubles - hr)
-    return round(singles * 3 + doubles * 5 + hr * 10 + rbi * 2 + runs * 2 + bb * 2 + sb * 5, 1)
+    hr_f    = float(hr)
+    rbi_f   = float(rbi)
+    bb_f    = float(bb)
+    runs_f  = float(runs)
+    sb_f    = float(sb)
+    doubles_f = float(doubles)
+    singles = max(0.0, h - doubles_f - hr_f)
+    return round(singles * 3 + doubles_f * 5 + hr_f * 10 + rbi_f * 2 + runs_f * 2 + bb_f * 2 + sb_f * 5, 1)
 
 
 def _compute_fantasy_pts_from_season(season: dict) -> Optional[float]:
