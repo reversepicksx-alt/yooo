@@ -814,36 +814,13 @@ export default function ScanScreen() {
               />
             )}
 
-            {/* Detected: image-only scan result + compact summary */}
+            {/* Detected: image-only scan result */}
             {(phase === 'detected' || phase === 'analyzing') && scanResult && (
               <>
-                {/* Full-width image */}
+                {/* Full-width image only */}
                 {scannedImageUri && (
                   <Image source={{ uri: scannedImageUri }} style={styles.scannedPreview} resizeMode="cover" />
                 )}
-
-                {/* Compact summary overlay */}
-                <View style={styles.scanSummaryCard}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                    <View style={styles.detectedBadge}>
-                      <Text style={styles.detectedBadgeText}>DETECTED</Text>
-                    </View>
-                  </View>
-                  <Text style={styles.scanSummaryName} numberOfLines={1}>
-                    {scanResult.playerName || 'Unknown Player'}
-                  </Text>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
-                    <Text style={styles.scanSummaryMeta}>
-                      {PROP_LABELS[scanResult.propType || ''] || scanResult.propType?.replace(/_/g, ' ') || '—'}
-                    </Text>
-                    <Text style={styles.scanSummaryDot}>·</Text>
-                    <Text style={[styles.scanSummaryMeta, { color: Colors.primary }]}>
-                      {scanResult.line ?? '—'}
-                    </Text>
-                    <Text style={styles.scanSummaryDot}>·</Text>
-                    <Text style={styles.scanSummaryMeta}>{venueOverride.toUpperCase()}</Text>
-                  </View>
-                </View>
 
                 {/* Inline error */}
                 {analyzeError && (
