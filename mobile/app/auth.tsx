@@ -1,9 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   Platform, ActivityIndicator, Image, Linking, Modal, ScrollView, KeyboardAvoidingView,
 } from 'react-native';
-import { router, useLocalSearchParams } from 'expo-router';
+import { Redirect, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
@@ -27,15 +27,12 @@ export default function AuthScreen() {
   const insets = useSafeAreaInsets();
   const { loginWithResponse } = useAuth();
 
-  // Preview mode: redirect to scan immediately
+  // Preview mode: auto-redirect to scan
   const isPreviewMode = Platform.OS === 'web' && typeof window !== 'undefined' &&
     window.location?.hostname?.includes('picard');
-  useEffect(() => {
-    if (isPreviewMode) {
-      const id = setTimeout(() => router.replace('/(tabs)/scan'), 300);
-      return () => clearTimeout(id);
-    }
-  }, [isPreviewMode]);
+  if (isPreviewMode) {
+    return <Redirect href="/(tabs)/scan" />;
+  }
   const params = useLocalSearchParams<{ stripe_success?: string }>();
   const [step, setStep] = useState<Step>('email');
   const [email, setEmail] = useState('');

@@ -755,13 +755,13 @@ export default function ScanScreen() {
             {/* Idle: cartoon sports image only */}
             {phase === 'idle' && (
               <>
-                <TouchableOpacity onPress={handleGallery} activeOpacity={0.85} style={styles.heroImageWrap}>
+                <View style={styles.heroImageWrap}>
                   <Image
                     source={require('@/assets/sports-hero.png')}
                     style={styles.heroImage}
                     resizeMode="cover"
                   />
-                </TouchableOpacity>
+                </View>
                 {analyzeError && (
                   <View style={styles.inlineError}>
                     <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />
