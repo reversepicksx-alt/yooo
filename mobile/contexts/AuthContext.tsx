@@ -35,18 +35,10 @@ const storage = {
 };
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const isPreview = typeof window !== 'undefined' && (
-    window.location?.hostname?.includes('picard') ||
-    window.location?.hostname?.includes('replit.dev') ||
-    localStorage.getItem('rp_token') === 'preview'
-  );
-  const [session, setSession] = useState<Session | null>(
-    isPreview ? { email: 'preview@reversepicks.com', token: 'preview', accessType: 'lifetime' } : null
-  );
-  const [isLoading, setIsLoading] = useState(!isPreview);
+  const [session, setSession] = useState<Session | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    if (isPreview) return;
     (async () => {
       try {
         const email = await storage.get('rp_email');
@@ -65,7 +57,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setIsLoading(false);
       }
     })();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const saveSession = async (resp: AuthResponse) => {

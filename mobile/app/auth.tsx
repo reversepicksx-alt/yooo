@@ -1,9 +1,9 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   Platform, ActivityIndicator, Image, Linking, Modal, ScrollView, KeyboardAvoidingView,
 } from 'react-native';
-import { Redirect, useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
@@ -42,16 +42,6 @@ export default function AuthScreen() {
   const [supportSent, setSupportSent] = useState(false);
   const [supportLoading, setSupportLoading] = useState(false);
   const [supportError, setSupportError] = useState('');
-
-  // Preview mode: auto-redirect to scan
-  const isPreviewMode = Platform.OS === 'web' && typeof window !== 'undefined' && (
-    window.location?.hostname?.includes('picard') ||
-    window.location?.hostname?.includes('replit.dev') ||
-    localStorage.getItem('rp_token') === 'preview'
-  );
-  if (isPreviewMode) {
-    return <Redirect href="/(tabs)/scan" />;
-  }
 
   // When Stripe redirects back with ?stripe_success=1, pre-fill the email
   // (saved before redirect) and auto-trigger verification so the user lands
