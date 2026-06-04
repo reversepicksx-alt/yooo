@@ -762,6 +762,24 @@ export default function ScanScreen() {
                     resizeMode="cover"
                   />
                 </View>
+                {/* Sport selector button */}
+                <TouchableOpacity
+                  style={styles.sportSelectorBtn}
+                  onPress={() => setShowSportPicker(true)}
+                  activeOpacity={0.85}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Ionicons
+                      name={sport === 'soccer' ? 'football' : sport === 'mlb' ? 'baseball' : sport === 'cs2' ? 'game-controller' : 'tennisball'}
+                      size={18}
+                      color={Colors.primary}
+                    />
+                    <Text style={styles.sportSelectorText}>
+                      {sport === 'soccer' ? 'Soccer' : sport === 'mlb' ? 'MLB' : sport === 'cs2' ? 'CS2' : 'WTA'}
+                    </Text>
+                  </View>
+                  <Text style={styles.sportSelectorChange}>Change</Text>
+                </TouchableOpacity>
                 {analyzeError && (
                   <View style={styles.inlineError}>
                     <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />

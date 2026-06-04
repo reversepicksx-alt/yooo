@@ -35,8 +35,10 @@ export default function TabLayout() {
   const [unreadCount, setUnreadCount] = useState(0);
 
   // Preview mode: skip auth redirect
-  const isPreviewMode = Platform.OS === 'web' && typeof window !== 'undefined' &&
-    window.location?.hostname?.includes('picard');
+  const isPreviewMode = Platform.OS === 'web' && typeof window !== 'undefined' && (
+    (window.location?.hostname?.includes('picard') || window.location?.hostname?.includes('replit.dev')) ||
+    localStorage.getItem('rp_token') === 'preview'
+  );
 
   useEffect(() => {
     if (isPreviewMode) return;

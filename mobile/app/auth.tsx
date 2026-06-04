@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   Platform, ActivityIndicator, Image, Linking, Modal, ScrollView, KeyboardAvoidingView,
@@ -26,14 +26,8 @@ const PLANS = [
 export default function AuthScreen() {
   const insets = useSafeAreaInsets();
   const { loginWithResponse } = useAuth();
-
-  // Preview mode: auto-redirect to scan
-  const isPreviewMode = Platform.OS === 'web' && typeof window !== 'undefined' &&
-    window.location?.hostname?.includes('picard');
-  if (isPreviewMode) {
-    return <Redirect href="/(tabs)/scan" />;
-  }
   const params = useLocalSearchParams<{ stripe_success?: string }>();
+
   const [step, setStep] = useState<Step>('email');
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
@@ -48,6 +42,16 @@ export default function AuthScreen() {
   const [supportSent, setSupportSent] = useState(false);
   const [supportLoading, setSupportLoading] = useState(false);
   const [supportError, setSupportError] = useState('');
+
+  // Preview mode: auto-redirect to scan
+  const isPreviewMode = Platform.OS === 'web' && typeof window !== 'undefined' && (
+    window.location?.hostname?.includes('picard') ||
+    window.location?.hostname?.includes('replit.dev') ||
+    localStorage.getItem('rp_token') === 'preview'
+  );
+  if (isPreviewMode) {
+    return <Redirect href="/(tabs)/scan" />;
+  }
 
   // When Stripe redirects back with ?stripe_success=1, pre-fill the email
   // (saved before redirect) and auto-trigger verification so the user lands
