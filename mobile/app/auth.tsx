@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   Platform, ActivityIndicator, Image, Linking, Modal, ScrollView, KeyboardAvoidingView,
@@ -34,6 +34,7 @@ export default function AuthScreen() {
   const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
+  const noMembershipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showPaymentEmail, setShowPaymentEmail] = useState(false);
   const [paymentEmail, setPaymentEmail] = useState('');
   const [showSupport, setShowSupport] = useState(false);
@@ -98,6 +99,13 @@ export default function AuthScreen() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Cleanup the no-membership auto-redirect timer on unmount
+  useEffect(() => {
+    return () => {
+      if (noMembershipTimerRef.current) clearTimeout(noMembershipTimerRef.current);
+    };
+  }, []);
+
   const handleCheckEmail = async () => {
     const trimmed = email.trim().toLowerCase();
     if (!trimmed) { setError('Enter your email address.'); return; }
@@ -118,8 +126,13 @@ export default function AuthScreen() {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         router.replace('/(tabs)/scan');
       } else {
-        setError(result.message || 'No active membership found. Subscribe below to get access.');
+        setError('No membership found — taking you to plans now...');
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        if (noMembershipTimerRef.current) clearTimeout(noMembershipTimerRef.current);
+        noMembershipTimerRef.current = setTimeout(() => {
+          setError('');
+          setStep('pricing');
+        }, 1000);
       }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to verify access.');
