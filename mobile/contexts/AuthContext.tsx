@@ -35,17 +35,19 @@ const storage = {
 };
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  // PREVIEW MODE: auto-login for web preview so changes are visible immediately
-  const isPreviewMode = typeof window !== 'undefined' &&
-    window.location?.hostname?.includes('picard');
-
-  const [session, setSession] = useState<Session | null>(
-    isPreviewMode ? { email: 'preview@reversepicks.com', token: 'preview', accessType: 'lifetime' } : null
-  );
-  const [isLoading, setIsLoading] = useState(!isPreviewMode);
+  const [session, setSession] = useState<Session | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    if (isPreviewMode) return;
+    const isPreview = typeof window !== 'undefined' && (
+      window.location?.hostname?.includes('picard') ||
+      localStorage.getItem('rp_token') === 'preview'
+    );
+    if (isPreview) {
+      setSession({ email: 'preview@reversepicks.com', token: 'preview', accessType: 'lifetime' });
+      setIsLoading(false);
+      return;
+    }
     (async () => {
       try {
         const email = await storage.get('rp_email');

@@ -34,11 +34,17 @@ export default function TabLayout() {
   const isOwner = session?.accessType?.toLowerCase() === 'owner';
   const [unreadCount, setUnreadCount] = useState(0);
 
+  // Preview mode: skip auth redirect
+  const isPreviewMode = Platform.OS === 'web' && typeof window !== 'undefined' &&
+    window.location?.hostname?.includes('picard');
+
   useEffect(() => {
+    if (isPreviewMode) return;
     if (!isLoading && !session) {
-      router.replace('/auth');
+      const id = setTimeout(() => router.replace('/auth'), 50);
+      return () => clearTimeout(id);
     }
-  }, [session, isLoading]);
+  }, [session, isLoading, isPreviewMode]);
 
   // Poll for unread notification count every 30 s
   useEffect(() => {

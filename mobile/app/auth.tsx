@@ -32,7 +32,8 @@ export default function AuthScreen() {
     window.location?.hostname?.includes('picard');
   useEffect(() => {
     if (isPreviewMode) {
-      router.replace('/(tabs)/scan');
+      const id = setTimeout(() => router.replace('/(tabs)/scan'), 300);
+      return () => clearTimeout(id);
     }
   }, [isPreviewMode]);
   const params = useLocalSearchParams<{ stripe_success?: string }>();

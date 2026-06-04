@@ -745,30 +745,6 @@ export default function ScanScreen() {
       keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
     >
     <View style={[styles.root, { paddingTop: topPad }]}>
-      <View style={styles.header}>
-        <Image source={require('../../assets/logo.png')} style={styles.logoImg} resizeMode="contain" />
-        <Text style={styles.logoText}>ReversePicks</Text>
-        <Text style={styles.tagline}>{sport === 'mlb' ? 'MLB Prop Analytics' : sport === 'cs2' ? 'CS2 Prop Analytics' : sport === 'wta' ? 'WTA Prop Analytics' : 'Soccer Prop Analytics'}</Text>
-      </View>
-
-      {/* ─── Sport Selector — modal button ─── */}
-      {(phase === 'idle' || phase === 'result' || phase === 'saved' || mode === 'manual') && (
-        <TouchableOpacity style={styles.sportSelectorBtn} onPress={() => setShowSportPicker(true)} activeOpacity={0.8}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-            <Ionicons
-              name={sport === 'soccer' ? 'football' : sport === 'mlb' ? 'baseball' : sport === 'cs2' ? 'game-controller' : 'tennisball'}
-              size={18}
-              color={Colors.primary}
-            />
-            <Text style={styles.sportSelectorText}>
-              {sport === 'soccer' ? 'Soccer' : sport === 'mlb' ? 'MLB' : sport === 'cs2' ? 'CS2' : 'WTA'}
-            </Text>
-          </View>
-          <Text style={styles.sportSelectorChange}>Change sport</Text>
-        </TouchableOpacity>
-      )}
-
-
       <ScrollView
         contentContainerStyle={styles.body}
         keyboardShouldPersistTaps="handled"
@@ -776,29 +752,23 @@ export default function ScanScreen() {
       >
         {/* ─── SCAN SECTION ─── */}
         <>
-            {/* Idle: clean upload area — no cartoon image */}
+            {/* Idle: cartoon sports image only */}
             {phase === 'idle' && (
-              <View style={styles.heroUploadBox}>
-                <View style={styles.heroContent}>
-                  <View style={styles.heroIconRing}>
-                    <Ionicons name="image-outline" size={28} color={Colors.primary} />
+              <>
+                <TouchableOpacity onPress={handleGallery} activeOpacity={0.85} style={styles.heroImageWrap}>
+                  <Image
+                    source={require('@/assets/sports-hero.png')}
+                    style={styles.heroImage}
+                    resizeMode="cover"
+                  />
+                </TouchableOpacity>
+                {analyzeError && (
+                  <View style={styles.inlineError}>
+                    <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />
+                    <Text style={styles.inlineErrorText}>{analyzeError}</Text>
                   </View>
-                  <Text style={styles.heroTitle}>Scan a Prop Slip</Text>
-                  <Text style={styles.heroSub}>
-                    Upload a screenshot of any {sport === 'mlb' ? 'MLB' : sport === 'cs2' ? 'CS2' : sport === 'wta' ? 'WTA tennis' : 'soccer'} prop slip and get ReverseScan insights in seconds.
-                  </Text>
-                  <TouchableOpacity style={styles.heroBtnBig} onPress={handleGallery} activeOpacity={0.8}>
-                    <Ionicons name="images-outline" size={15} color="#000" />
-                    <Text style={styles.heroBtnBigText}>Choose from Photos</Text>
-                  </TouchableOpacity>
-                  {analyzeError && (
-                    <View style={styles.inlineError}>
-                      <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />
-                      <Text style={styles.inlineErrorText}>{analyzeError}</Text>
-                    </View>
-                  )}
-                </View>
-              </View>
+                )}
+              </>
             )}
 
             {/* Scanning */}
@@ -3403,40 +3373,17 @@ const styles = StyleSheet.create({
   galleryBtnBigText: { color: '#000', fontWeight: '800', fontSize: 15 },
 
   /* ─── HERO UPLOAD BOX (Scan idle state — clean, no image) ─── */
-  heroUploadBox: {
+  heroImageWrap: {
+    width: '100%',
+    aspectRatio: 1.5,
     borderRadius: Colors.radiusLg,
-    borderWidth: 2, borderColor: 'rgba(57,255,20,0.4)',
-    borderStyle: 'dashed',
-    backgroundColor: '#0a0a0a',
-    shadowColor: Colors.primary, shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.15, shadowRadius: 20,
+    overflow: 'hidden',
+    marginBottom: 10,
   },
-  heroContent: {
-    alignItems: 'center',
-    padding: 24, gap: 10,
+  heroImage: {
+    width: '100%',
+    height: '100%',
   },
-  heroIconRing: {
-    width: 56, height: 56, borderRadius: 28,
-    borderWidth: 1.5, borderColor: 'rgba(57,255,20,0.25)',
-    alignItems: 'center', justifyContent: 'center',
-    marginBottom: 4,
-  },
-  heroTitle: {
-    fontSize: 17, fontWeight: '800', color: Colors.text, textAlign: 'center',
-  },
-  heroSub: {
-    fontSize: 12, color: Colors.textSecondary, textAlign: 'center',
-    lineHeight: 17, marginBottom: 4,
-  },
-  heroBtnBig: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: Colors.primary, paddingVertical: 12, paddingHorizontal: 26,
-    borderRadius: 12,
-    shadowColor: Colors.primary, shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.55, shadowRadius: 14, elevation: 8,
-    borderWidth: 1, borderColor: 'rgba(57,255,20,0.3)',
-  },
-  heroBtnBigText: { color: '#000', fontWeight: '900', fontSize: 14, letterSpacing: 0.5 },
 
   /* Capture container (wraps analysis content for html2canvas) */
   captureContainer: { backgroundColor: '#000' },
