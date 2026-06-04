@@ -4035,7 +4035,7 @@ Analyze ALL data thoroughly. Return JSON only."""
                 return None
 
         # =============================================
-        # AI SYNTHESIS: Gemini
+        # AI SYNTHESIS: Grok primary, Gemini fallback
         # Projection comes ONLY from the math engine — AI projectedValue is NEVER used.
         # =============================================
         ai_result = None
@@ -4043,10 +4043,76 @@ Analyze ALL data thoroughly. Return JSON only."""
         # pv is set from early_bayes here as a temporary anchor; real_bayes overwrites it later.
         pv = early_bayes["posteriorMean"] if early_bayes and early_bayes.get("posteriorMean") else req.line
 
-        # AI synthesis: Gemini analyses all data and produces tacticalBreakdown + reasoning
-        ai_result = await call_gemini()
+        async def call_grok(label="grok", model="grok-2-1212"):
+            """Grok — primary AI synthesis engine."""
+            if not XAI_API_KEY:
+                return None
+            import re as _re
+            import html as _html
+            try:
+                url = "https://api.x.ai/v1/chat/completions"
+                payload = {
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": PREDICTION_SYSTEM},
+                        {"role": "user", "content": prompt},
+                    ],
+                    "temperature": 0.0,
+                    "max_tokens": 4000,
+                }
+                import httpx as _httpx
+                async with _httpx.AsyncClient(timeout=_httpx.Timeout(45, connect=10)) as _c:
+                    resp = await _c.post(url, json=payload, headers={"Authorization": f"Bearer {XAI_API_KEY}", "Content-Type": "application/json"})
+                    if resp.status_code != 200:
+                        print(f"[MULTI-AI] Grok error {resp.status_code}: {resp.text[:200]}")
+                        return None
+                    text = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+                text = _re.sub(r"```(?:json)?\s*", "", text)
+                text = _re.sub(r"```\s*$", "", text, flags=_re.MULTILINE)
+                text = _html.unescape(text).strip()
+                start = text.find("{")
+                if start >= 0:
+                    candidate = text[start:]
+                    try:
+                        result = json.loads(candidate)
+                        result["_source"] = label
+                        return result
+                    except json.JSONDecodeError:
+                        pass
+                    for end_pos in range(len(text), start, -1):
+                        if text[end_pos - 1] == "}":
+                            try:
+                                result = json.loads(text[start:end_pos])
+                                result["_source"] = label
+                                return result
+                            except json.JSONDecodeError:
+                                continue
+                    _repaired: dict = {"_source": label, "_repaired": True}
+                    for _key in ("sharpSummary", "tacticalBreakdown", "reasoning", "aiProjection",
+                                 "confidenceScore", "confidenceLevel", "recommendation"):
+                        _m = _re.search(rf'"{_key}"\s*:\s*"((?:[^"\\]|\\.)*)', text[start:])
+                        if _m:
+                            _repaired[_key] = _m.group(1)
+                    if _repaired.get("tacticalBreakdown") or _repaired.get("sharpSummary"):
+                        print(f"[MULTI-AI] {label} — JSON truncated, repaired: {list(_repaired.keys())}")
+                        return _repaired
+                print(f"[MULTI-AI] {label} non-JSON response: {text[:300]!r}")
+                raise ValueError("No valid JSON in Grok response")
+            except Exception as e:
+                print(f"[MULTI-AI] {label} failed: {e}")
+                return None
 
-        # BAYESIAN FALLBACK: If Gemini AI failed (no text), build minimal result from math
+        # AI synthesis: Grok primary, Gemini fallback
+        ai_result = await call_grok()
+        if ai_result:
+            print("[AI] Grok synthesis succeeded")
+
+        # BAYESIAN FALLBACK: If Grok AI failed (no text), try Gemini, then build minimal result from math
+        if not ai_result or not isinstance(ai_result, dict) or not ai_result.get("tacticalBreakdown"):
+            ai_result = await call_gemini()
+            if ai_result:
+                print("[AI] Gemini fallback synthesis succeeded")
+
         if not ai_result or not isinstance(ai_result, dict) or not ai_result.get("tacticalBreakdown"):
             if early_bayes and early_bayes.get("posteriorMean"):
                 pv = early_bayes["posteriorMean"]

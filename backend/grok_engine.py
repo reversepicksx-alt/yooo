@@ -1,6 +1,7 @@
 """
 AI ENGINE — The data backbone powering the ReversePicks prediction system.
-Primary AI: Gemini 2.5 Pro/Flash. Fallback: Gemini.
+Primary AI: Grok-2-1212 (prediction synthesis).
+Secondary: Gemini 2.5 Pro/Flash (explanations, web search, tactical chat, OCR).
 """
 import json
 import httpx
@@ -9,8 +10,8 @@ import traceback
 from datetime import datetime, timezone, timedelta
 from config import db, XAI_API_KEY, GEMINI_API_KEY
 
-AI_MODEL = "gemini-4-1-fast-non-reasoning"
-AI_REASONING_MODEL = "gemini-4-1-fast-non-reasoning"
+AI_MODEL = "grok-2-1212"
+AI_REASONING_MODEL = "grok-2-1212"
 GEMINI_SEARCH_MODEL = "gemini-3"
 AI_URL = "https://api.x.ai/v1/chat/completions"
 

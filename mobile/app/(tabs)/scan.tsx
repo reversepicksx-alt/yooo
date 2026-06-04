@@ -15,6 +15,7 @@ import { scanProp, predict, mlbPredict, getMlbGameContext, cs2Predict, wtaPredic
 import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult, FuzzyLeagueResult } from '@/components/FuzzySearchInput';
 import LeaguePickerModal from '@/components/LeaguePickerModal';
 import { useAuth } from '@/contexts/AuthContext';
+import LoadingScreen from '@/components/LoadingScreen';
 
 type MlbTeam = { id: number; displayName: string; abbreviation: string; location: string; name: string; league: string; division: string; };
 
@@ -157,6 +158,7 @@ export default function ScanScreen() {
   const [leagueQuery, setLeagueQuery] = useState('Premier League');
   const [showPropPicker, setShowPropPicker] = useState(false);
   const [showLeaguePicker, setShowLeaguePicker] = useState(false);
+  const [showSportPicker, setShowSportPicker] = useState(false);
 
   // MLB manual mode fields
   const [mlbPlayerQuery, setMlbPlayerQuery] = useState('');
@@ -749,42 +751,21 @@ export default function ScanScreen() {
         <Text style={styles.tagline}>{sport === 'mlb' ? 'MLB Prop Analytics' : sport === 'cs2' ? 'CS2 Prop Analytics' : sport === 'wta' ? 'WTA Prop Analytics' : 'Soccer Prop Analytics'}</Text>
       </View>
 
-      {/* ─── Sport Toggle — premium glassmorphism ─── */}
+      {/* ─── Sport Selector — modal button ─── */}
       {(phase === 'idle' || phase === 'result' || phase === 'saved' || mode === 'manual') && (
-        <View style={styles.sportRow}>
-          <TouchableOpacity
-            style={[styles.sportTab, sport === 'soccer' && styles.sportTabActive]}
-            onPress={() => { setSport('soccer'); reset(); }}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="football" size={15} color={sport === 'soccer' ? Colors.primary : Colors.textSecondary} style={{ marginRight: 6 }} />
-            <Text style={[styles.sportTabText, sport === 'soccer' && styles.sportTabTextActive]}>Soccer</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.sportTab, sport === 'mlb' && styles.sportTabActive]}
-            onPress={() => { setSport('mlb'); reset(); }}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="baseball" size={15} color={sport === 'mlb' ? Colors.primary : Colors.textSecondary} style={{ marginRight: 6 }} />
-            <Text style={[styles.sportTabText, sport === 'mlb' && styles.sportTabTextActive]}>MLB</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.sportTab, sport === 'cs2' && styles.sportTabActive]}
-            onPress={() => { setSport('cs2'); reset(); }}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="game-controller" size={15} color={sport === 'cs2' ? Colors.primary : Colors.textSecondary} style={{ marginRight: 6 }} />
-            <Text style={[styles.sportTabText, sport === 'cs2' && styles.sportTabTextActive]}>CS2</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.sportTab, sport === 'wta' && styles.sportTabActive]}
-            onPress={() => { setSport('wta'); reset(); }}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="tennisball" size={15} color={sport === 'wta' ? Colors.primary : Colors.textSecondary} style={{ marginRight: 6 }} />
-            <Text style={[styles.sportTabText, sport === 'wta' && styles.sportTabTextActive]}>WTA</Text>
-          </TouchableOpacity>
-        </View>
+        <TouchableOpacity style={styles.sportSelectorBtn} onPress={() => setShowSportPicker(true)} activeOpacity={0.8}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <Ionicons
+              name={sport === 'soccer' ? 'football' : sport === 'mlb' ? 'baseball' : sport === 'cs2' ? 'game-controller' : 'tennisball'}
+              size={18}
+              color={Colors.primary}
+            />
+            <Text style={styles.sportSelectorText}>
+              {sport === 'soccer' ? 'Soccer' : sport === 'mlb' ? 'MLB' : sport === 'cs2' ? 'CS2' : 'WTA'}
+            </Text>
+          </View>
+          <Text style={styles.sportSelectorChange}>Change sport</Text>
+        </TouchableOpacity>
       )}
 
 
@@ -826,321 +807,45 @@ export default function ScanScreen() {
 
             {/* Scanning */}
             {phase === 'scanning' && (
-              <View style={styles.loadingCard}>
-                {scannedImageUri && (
-                  <Image source={{ uri: scannedImageUri }} style={styles.scannedThumb} resizeMode="cover" />
-                )}
-                <View style={styles.loadingRow}>
-                  <ActivityIndicator color={Colors.primary} size="small" />
-                  <Text style={styles.loadingText}>ReverseScan reading prop slip…</Text>
-                </View>
-              </View>
+              <LoadingScreen
+                label="SCANNING"
+                statuses={[
+                  'INITIALIZING OCR ENGINE',
+                  'READING PROP SLIP',
+                  'EXTRACTING PLAYER DATA',
+                  'READY',
+                ]}
+              />
             )}
 
-            {/* Detected: player card + venue toggle + RUN PREDICTION */}
+            {/* Detected: image-only scan result + compact summary */}
             {(phase === 'detected' || phase === 'analyzing') && scanResult && (
               <>
+                {/* Full-width image */}
                 {scannedImageUri && (
                   <Image source={{ uri: scannedImageUri }} style={styles.scannedPreview} resizeMode="cover" />
                 )}
 
-                <Text style={styles.sectionLabel}>PROPS DETECTED</Text>
-
-                <View style={styles.detectedCard}>
-                  <View style={styles.detectedTop}>
-                    <View style={styles.playerAvatarWrap}>
-                      <Ionicons name="person-outline" size={22} color={Colors.textSecondary} />
-                    </View>
-                    <View style={styles.detectedInfo}>
-                      {/* Player name — tappable to edit with fuzzy search */}
-                      {!showPlayerEdit ? (
-                        <TouchableOpacity
-                          onPress={() => {
-                            setPlayerEditValue(scanResult.playerName || '');
-                            setShowPlayerEdit(true);
-                            Haptics.selectionAsync();
-                          }}
-                          activeOpacity={0.7}
-                          style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}
-                        >
-                          <Text style={[styles.detectedName, !scanResult.playerName && { color: Colors.error }]}>
-                            {scanResult.playerName || 'Tap to set player name'}
-                          </Text>
-                          <Ionicons name="pencil-outline" size={11} color="#aaa" style={{ marginLeft: 5 }} />
-                        </TouchableOpacity>
-                      ) : (
-                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-                          <FuzzySearchInput
-                            value={playerEditValue}
-                            onChangeText={(t) => { setPlayerEditValue(t); if (!t) setResolvedScanPlayer(null); }}
-                            searchType="players"
-                            leagueId={scanResult?.leagueId}
-                            placeholder="Search player…"
-                            autoFocus
-                            style={{ flex: 1 }}
-                            returnKeyType="done"
-                            onSubmitEditing={() => {
-                              const v = playerEditValue.trim();
-                              if (v) setScanResult(prev => prev ? { ...prev, playerName: v } : prev);
-                              setShowPlayerEdit(false);
-                              Haptics.selectionAsync();
-                            }}
-                            onSelectPlayer={(p) => {
-                              setScanResult(prev => prev ? {
-                                ...prev,
-                                playerName: p.playerName,
-                                playerId: p.playerId,
-                                teamName: p.teamName,
-                                teamId: p.teamId,
-                                leagueId: p.leagueId,
-                              } : prev);
-                              setResolvedScanPlayer(p);
-                              setShowPlayerEdit(false);
-                              Haptics.selectionAsync();
-                            }}
-                          />
-                          <TouchableOpacity
-                            onPress={() => {
-                              const v = playerEditValue.trim();
-                              if (v) setScanResult(prev => prev ? { ...prev, playerName: v } : prev);
-                              setShowPlayerEdit(false);
-                              Haptics.selectionAsync();
-                            }}
-                            style={styles.teamEditConfirm}
-                          >
-                            <Ionicons name="checkmark" size={14} color={Colors.primary} />
-                          </TouchableOpacity>
-                          <TouchableOpacity onPress={() => setShowPlayerEdit(false)} style={styles.teamEditCancel}>
-                            <Ionicons name="close" size={14} color="#888" />
-                          </TouchableOpacity>
-                        </View>
-                      )}
-                      <View style={styles.badgeRow}>
-                        {!showTeamEdit ? (
-                          <TouchableOpacity
-                            style={styles.teamBadgeTouchable}
-                            onPress={() => {
-                              setTeamEditValue(scanResult.teamName || scanResult.playerTeam || '');
-                              setShowTeamEdit(true);
-                              Haptics.selectionAsync();
-                            }}
-                            activeOpacity={0.7}
-                          >
-                            <Text style={styles.teamBadgeText}>
-                              {scanResult.teamName || scanResult.playerTeam || '—'}
-                            </Text>
-                            <Ionicons name="pencil-outline" size={10} color="#aaa" style={{ marginLeft: 4 }} />
-                          </TouchableOpacity>
-                        ) : (
-                          <View style={[styles.teamEditRow, { flex: 1 }]}>
-                            <FuzzySearchInput
-                              value={teamEditValue}
-                              onChangeText={setTeamEditValue}
-                              searchType="teams"
-                              leagueId={scanResult?.leagueId}
-                              placeholder="Search team…"
-                              autoFocus
-                              style={{ flex: 1 }}
-                              inputStyle={styles.teamEditInput}
-                              returnKeyType="done"
-                              onSubmitEditing={() => {
-                                const v = teamEditValue.trim();
-                                if (v) setScanResult(prev => prev ? { ...prev, teamName: v, teamId: 0 } : prev);
-                                setShowTeamEdit(false);
-                                Haptics.selectionAsync();
-                              }}
-                              onSelectTeam={(t) => {
-                                setScanResult(prev => prev ? { ...prev, teamName: t.teamName, teamId: t.teamId, leagueId: t.leagueId } : prev);
-                                setShowTeamEdit(false);
-                                Haptics.selectionAsync();
-                              }}
-                            />
-                            <TouchableOpacity
-                              onPress={() => {
-                                const v = teamEditValue.trim();
-                                if (v) setScanResult(prev => prev ? { ...prev, teamName: v, teamId: 0 } : prev);
-                                setShowTeamEdit(false);
-                                Haptics.selectionAsync();
-                              }}
-                              style={styles.teamEditConfirm}
-                            >
-                              <Ionicons name="checkmark" size={14} color={Colors.primary} />
-                            </TouchableOpacity>
-                            <TouchableOpacity onPress={() => setShowTeamEdit(false)} style={styles.teamEditCancel}>
-                              <Ionicons name="close" size={14} color="#888" />
-                            </TouchableOpacity>
-                          </View>
-                        )}
-                        <View style={styles.matchedBadge}>
-                          <Text style={styles.matchedText}>MATCHED</Text>
-                        </View>
-                      </View>
-                      {/* Opponent — tappable to edit with fuzzy search */}
-                      {!showOppEdit ? (
-                        <TouchableOpacity
-                          onPress={() => {
-                            setOppEditValue(scanResult.opponentName || '');
-                            setShowOppEdit(true);
-                            Haptics.selectionAsync();
-                          }}
-                          activeOpacity={0.7}
-                        >
-                          <Text style={styles.vsText}>
-                            {scanResult.opponentName ? `vs ${scanResult.opponentName}` : '+ Add opponent'}
-                            <Text style={{ color: '#555', fontSize: 10 }}>  ✎</Text>
-                          </Text>
-                        </TouchableOpacity>
-                      ) : (
-                        <View style={styles.oppEditRow}>
-                          <FuzzySearchInput
-                            value={oppEditValue}
-                            onChangeText={setOppEditValue}
-                            searchType="teams"
-                            leagueId={scanResult?.leagueId}
-                            placeholder="Search opponent…"
-                            autoFocus
-                            style={{ flex: 1 }}
-                            returnKeyType="done"
-                            onSubmitEditing={() => {
-                              const v = oppEditValue.trim();
-                              if (v) setScanResult(prev => prev ? { ...prev, opponentName: v, opponentId: 0 } : prev);
-                              setShowOppEdit(false);
-                              Haptics.selectionAsync();
-                            }}
-                            onSelectTeam={(t) => {
-                              setScanResult(prev => prev ? { ...prev, opponentName: t.teamName, opponentId: t.teamId } : prev);
-                              setShowOppEdit(false);
-                              Haptics.selectionAsync();
-                              // Cross-league detection: if opponent is from a different league,
-                              // clear the scan league so user can pick correct competition.
-                              if (scanResult?.leagueId && t.leagueId && scanResult.leagueId !== t.leagueId) {
-                                setScanResult(prev => prev ? { ...prev, leagueId: 0, leagueName: '' } : prev);
-                                setLeagueId(0);
-                                setLeagueQuery('');
-                              }
-                            }}
-                          />
-                          <TouchableOpacity
-                            onPress={() => {
-                              const v = oppEditValue.trim();
-                              if (v) setScanResult(prev => prev ? { ...prev, opponentName: v, opponentId: 0 } : prev);
-                              setShowOppEdit(false);
-                              Haptics.selectionAsync();
-                            }}
-                            style={styles.teamEditConfirm}
-                          >
-                            <Ionicons name="checkmark" size={14} color={Colors.primary} />
-                          </TouchableOpacity>
-                          <TouchableOpacity onPress={() => setShowOppEdit(false)} style={styles.teamEditCancel}>
-                            <Ionicons name="close" size={14} color="#888" />
-                          </TouchableOpacity>
-                        </View>
-                      )}
+                {/* Compact summary overlay */}
+                <View style={styles.scanSummaryCard}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                    <View style={styles.detectedBadge}>
+                      <Text style={styles.detectedBadgeText}>DETECTED</Text>
                     </View>
                   </View>
-
-                  {/* VENUE TOGGLE */}
-                  <View style={styles.venueRow}>
-                    <Text style={styles.venueLabel}>VENUE</Text>
-                    <View style={styles.venueToggle}>
-                      <TouchableOpacity
-                        style={[styles.venueOption, venueOverride === 'home' && styles.venueOptionActive]}
-                        onPress={() => { setVenueOverride('home'); Haptics.selectionAsync(); }}
-                      >
-                        <Ionicons
-                          name="home-outline"
-                          size={13}
-                          color={venueOverride === 'home' ? Colors.primary : Colors.textSecondary}
-                        />
-                        <Text style={[styles.venueOptionText, venueOverride === 'home' && styles.venueOptionTextActive]}>
-                          HOME
-                        </Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={[styles.venueOption, venueOverride === 'away' && styles.venueOptionActive]}
-                        onPress={() => { setVenueOverride('away'); Haptics.selectionAsync(); }}
-                      >
-                        <Ionicons
-                          name="airplane-outline"
-                          size={13}
-                          color={venueOverride === 'away' ? Colors.primary : Colors.textSecondary}
-                        />
-                        <Text style={[styles.venueOptionText, venueOverride === 'away' && styles.venueOptionTextActive]}>
-                          AWAY
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-
-                  <View style={styles.detectedStats}>
-                    {/* PROP — tappable */}
-                    <TouchableOpacity
-                      style={styles.detectedStat}
-                      onPress={() => { setShowPropEditScan(true); Haptics.selectionAsync(); }}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={styles.detectedStatLabel}>PROP <Ionicons name="pencil-outline" size={9} color="#555" /></Text>
-                      <Text style={[styles.detectedStatVal, !scanResult.propType && { color: Colors.error }]} numberOfLines={1}>
-                        {PROP_LABELS[scanResult.propType || ''] || scanResult.propType?.replace(/_/g, ' ') || 'Tap to set'}
-                      </Text>
-                    </TouchableOpacity>
-                    <View style={styles.detectedStatDivider} />
-                    {/* LINE — tappable inline edit */}
-                    {!showLineEdit ? (
-                      <TouchableOpacity
-                        style={styles.detectedStat}
-                        onPress={() => { setLineEditValue(String(scanResult.line ?? '')); setShowLineEdit(true); Haptics.selectionAsync(); }}
-                        activeOpacity={0.7}
-                      >
-                        <Text style={styles.detectedStatLabel}>LINE <Ionicons name="pencil-outline" size={9} color="#555" /></Text>
-                        <Text style={[styles.detectedStatVal, !scanResult.line && { color: Colors.error }]}>
-                          {scanResult.line ?? 'Tap to set'}
-                        </Text>
-                      </TouchableOpacity>
-                    ) : (
-                      <View style={[styles.detectedStat, { flex: 1 }]}>
-                        <Text style={styles.detectedStatLabel}>LINE</Text>
-                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                          <TextInput
-                            style={[styles.detectedStatVal, { borderBottomWidth: 1, borderBottomColor: Colors.primary, minWidth: 40, padding: 0 }, INPUT_STYLE]}
-                            value={lineEditValue}
-                            onChangeText={setLineEditValue}
-                            keyboardType="decimal-pad"
-                            autoFocus
-                            returnKeyType="done"
-                            onSubmitEditing={() => {
-                              const v = parseFloat(lineEditValue);
-                              if (!isNaN(v) && v > 0) setScanResult(prev => prev ? { ...prev, line: v } : prev);
-                              setShowLineEdit(false);
-                              Haptics.selectionAsync();
-                            }}
-                          />
-                          <TouchableOpacity
-                            onPress={() => {
-                              const v = parseFloat(lineEditValue);
-                              if (!isNaN(v) && v > 0) setScanResult(prev => prev ? { ...prev, line: v } : prev);
-                              setShowLineEdit(false);
-                              Haptics.selectionAsync();
-                            }}
-                            style={{ marginLeft: 4 }}
-                          >
-                            <Ionicons name="checkmark" size={14} color={Colors.primary} />
-                          </TouchableOpacity>
-                        </View>
-                      </View>
-                    )}
-                    <View style={styles.detectedStatDivider} />
-                    {/* LEAGUE — tappable */}
-                    <TouchableOpacity
-                      style={styles.detectedStat}
-                      onPress={() => { setShowLeagueEditScan(true); Haptics.selectionAsync(); }}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={styles.detectedStatLabel}>LEAGUE <Ionicons name="pencil-outline" size={9} color="#555" /></Text>
-                      <Text style={styles.detectedStatVal} numberOfLines={1}>
-                        {scanResult.leagueName || LEAGUES.find(l => l.id === scanResult.leagueId)?.name || 'Auto'}
-                      </Text>
-                    </TouchableOpacity>
+                  <Text style={styles.scanSummaryName} numberOfLines={1}>
+                    {scanResult.playerName || 'Unknown Player'}
+                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
+                    <Text style={styles.scanSummaryMeta}>
+                      {PROP_LABELS[scanResult.propType || ''] || scanResult.propType?.replace(/_/g, ' ') || '—'}
+                    </Text>
+                    <Text style={styles.scanSummaryDot}>·</Text>
+                    <Text style={[styles.scanSummaryMeta, { color: Colors.primary }]}>
+                      {scanResult.line ?? '—'}
+                    </Text>
+                    <Text style={styles.scanSummaryDot}>·</Text>
+                    <Text style={styles.scanSummaryMeta}>{venueOverride.toUpperCase()}</Text>
                   </View>
                 </View>
 
@@ -3544,6 +3249,54 @@ export default function ScanScreen() {
         }}
         title="League"
       />
+
+      {/* Sport Picker Modal — 2x2 grid */}
+      <Modal visible={showSportPicker} transparent animationType="fade">
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          onPress={() => setShowSportPicker(false)}
+          activeOpacity={1}
+        >
+          <View style={styles.sportPickerSheet}>
+            <View style={styles.sportPickerHeader}>
+              <Text style={styles.modalTitle}>SELECT SPORT</Text>
+              <TouchableOpacity onPress={() => setShowSportPicker(false)}>
+                <Text style={styles.sportPickerClose}>Close</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={styles.sportGrid}>
+              {[
+                { id: 'soccer' as Sport, label: 'Soccer', icon: 'football' as const },
+                { id: 'mlb' as Sport, label: 'MLB', icon: 'baseball' as const },
+                { id: 'cs2' as Sport, label: 'CS2', icon: 'game-controller' as const },
+                { id: 'wta' as Sport, label: 'WTA', icon: 'tennisball' as const },
+              ].map((s) => {
+                const active = s.id === sport;
+                return (
+                  <TouchableOpacity
+                    key={s.id}
+                    style={[
+                      styles.sportGridItem,
+                      active && styles.sportGridItemActive,
+                    ]}
+                    onPress={() => {
+                      setSport(s.id);
+                      reset();
+                      setShowSportPicker(false);
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name={s.icon} size={24} color={active ? Colors.primary : Colors.textSecondary} />
+                    <Text style={[styles.sportGridLabel, active && styles.sportGridLabelActive]}>
+                      {s.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </View>
     </KeyboardAvoidingView>
   );
@@ -3590,8 +3343,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     borderWidth: 1,
     borderColor: 'rgba(57,255,20,0.12)',
-    backdropFilter: 'blur(10px)' as any,
-  },
+  } as any,
   sportTab: {
     flex: 1, alignItems: 'center', justifyContent: 'center',
     paddingVertical: 8, borderRadius: 11,
@@ -3608,6 +3360,58 @@ const styles = StyleSheet.create({
   },
   sportTabText: { fontSize: 13, color: Colors.textSecondary, fontWeight: '700', letterSpacing: 0.3 },
   sportTabTextActive: { color: Colors.primary, fontWeight: '800' },
+  sportSelectorBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginHorizontal: 20,
+    backgroundColor: '#111111',
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#222',
+  },
+  sportSelectorText: { fontSize: 14, fontWeight: '700', color: Colors.text, letterSpacing: 0.3 },
+  sportSelectorChange: { fontSize: 11, color: Colors.primary, fontWeight: '600' },
+  sportPickerSheet: {
+    backgroundColor: '#111111',
+    borderRadius: 20,
+    padding: 20,
+    width: 280,
+    borderWidth: 1,
+    borderColor: '#222',
+  },
+  sportPickerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  sportPickerClose: { fontSize: 12, color: '#888', backgroundColor: '#1a1a1a', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12 },
+  sportGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  sportGridItem: {
+    width: '47%',
+    aspectRatio: 1,
+    backgroundColor: '#1a1a1a',
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    borderWidth: 1,
+    borderColor: '#222',
+  },
+  sportGridItemActive: {
+    backgroundColor: 'rgba(57,255,20,0.08)',
+    borderColor: 'rgba(57,255,20,0.35)',
+  },
+  sportGridLabel: { fontSize: 13, fontWeight: '600', color: '#bbb' },
+  sportGridLabelActive: { color: Colors.primary, fontWeight: '700' },
   mlbDropdown: {
     backgroundColor: '#1a1a1a',
     borderRadius: 10,
@@ -3705,18 +3509,42 @@ const styles = StyleSheet.create({
   },
   scanFillHintText: { color: Colors.primary, fontSize: 12, flex: 1, fontFamily: 'Inter_400Regular' },
 
-  /* Loading */
-  loadingCard: {
-    backgroundColor: 'rgba(17,17,17,0.95)', borderRadius: Colors.radiusLg,
-    overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(57,255,20,0.08)',
-    shadowColor: Colors.primary, shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.06, shadowRadius: 14,
+  scannedPreview: { width: '100%', height: 280, borderRadius: Colors.radius, marginBottom: 12 },
+  scanSummaryCard: {
+    backgroundColor: '#111111',
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#222',
   },
-  scannedThumb: { width: '100%', height: 160 },
-  scannedPreview: { width: '100%', height: 180, borderRadius: Colors.radius, marginBottom: 16 },
-  loadingRow: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 16 },
-  loadingText: { color: Colors.textSecondary, fontSize: 14 },
-
+  detectedBadge: {
+    backgroundColor: Colors.primary,
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  detectedBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#000',
+    letterSpacing: 0.5,
+  },
+  scanSummaryName: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: Colors.text,
+  },
+  scanSummaryMeta: {
+    fontSize: 13,
+    color: Colors.textSecondary,
+    fontWeight: '600',
+  },
+  scanSummaryDot: {
+    fontSize: 13,
+    color: '#444',
+    fontWeight: '700',
+  },
   /* Detected card */
   sectionLabel: {
     fontSize: 11, fontWeight: '700', color: Colors.primary,
