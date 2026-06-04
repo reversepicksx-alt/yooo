@@ -35,14 +35,17 @@ const storage = {
 };
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-
   // PREVIEW MODE: auto-login for web preview so changes are visible immediately
   const isPreviewMode = typeof window !== 'undefined' &&
     window.location?.hostname?.includes('picard');
 
+  const [session, setSession] = useState<Session | null>(
+    isPreviewMode ? { email: 'preview@reversepicks.com', token: 'preview', accessType: 'lifetime' } : null
+  );
+  const [isLoading, setIsLoading] = useState(!isPreviewMode);
+
   useEffect(() => {
+    if (isPreviewMode) return;
     (async () => {
       try {
         const email = await storage.get('rp_email');
@@ -52,9 +55,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (result?.valid === false) throw new Error('Session invalid');
           const accessType = await storage.get('rp_access_type') || undefined;
           setSession({ email, token, accessType });
-        } else if (isPreviewMode) {
-          // Preview mode: auto-login so the scan screen shows immediately
-          setSession({ email: 'preview@reversepicks.com', token: 'preview', accessType: 'lifetime' });
         }
       } catch {
         await storage.delete('rp_email');

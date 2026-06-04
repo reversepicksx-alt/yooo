@@ -26,6 +26,15 @@ const PLANS = [
 export default function AuthScreen() {
   const insets = useSafeAreaInsets();
   const { loginWithResponse } = useAuth();
+
+  // Preview mode: redirect to scan immediately
+  const isPreviewMode = Platform.OS === 'web' && typeof window !== 'undefined' &&
+    window.location?.hostname?.includes('picard');
+  useEffect(() => {
+    if (isPreviewMode) {
+      router.replace('/(tabs)/scan');
+    }
+  }, [isPreviewMode]);
   const params = useLocalSearchParams<{ stripe_success?: string }>();
   const [step, setStep] = useState<Step>('email');
   const [email, setEmail] = useState('');
