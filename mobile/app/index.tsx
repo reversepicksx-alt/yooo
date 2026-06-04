@@ -1,25 +1,40 @@
-import { useEffect } from 'react';
-import { View, ActivityIndicator } from 'react-native';
+import { useEffect, useState } from 'react';
 import { router } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
-import Colors from '@/constants/colors';
+import LoadingScreen from '@/components/LoadingScreen';
 
 export default function Index() {
   const { session, isLoading } = useAuth();
+  const [showLoading, setShowLoading] = useState(true);
 
   useEffect(() => {
     if (!isLoading) {
-      if (session) {
-        router.replace('/(tabs)/scan');
-      } else {
-        router.replace('/auth');
-      }
+      // Show loading screen for at least 1.5s so the splash animation plays
+      const timer = setTimeout(() => {
+        setShowLoading(false);
+        if (session) {
+          router.replace('/(tabs)/scan');
+        } else {
+          router.replace('/auth');
+        }
+      }, 1500);
+      return () => clearTimeout(timer);
     }
   }, [session, isLoading]);
 
-  return (
-    <View style={{ flex: 1, backgroundColor: Colors.background, alignItems: 'center', justifyContent: 'center' }}>
-      <ActivityIndicator color={Colors.primary} size="large" />
-    </View>
-  );
+  if (showLoading) {
+    return (
+      <LoadingScreen
+        label="LOADING"
+        statuses={[
+          'INITIALIZING ENGINES',
+          'LOADING PLAYER DATABASE',
+          'CALIBRATING PROBABILITY MODELS',
+          'READY',
+        ]}
+      />
+    );
+  }
+
+  return null;
 }

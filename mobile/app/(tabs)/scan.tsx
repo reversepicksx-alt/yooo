@@ -776,17 +776,13 @@ export default function ScanScreen() {
       >
         {/* ─── SCAN SECTION ─── */}
         <>
-            {/* Idle: hero upload box */}
+            {/* Idle: clean upload area — no cartoon image */}
             {phase === 'idle' && (
               <View style={styles.heroUploadBox}>
-                <Image
-                  source={require('../../assets/soccer-hero.png')}
-                  style={styles.heroImage}
-                  resizeMode="cover"
-                />
-                <View style={styles.heroOverlay} />
                 <View style={styles.heroContent}>
-                  <Ionicons name="image-outline" size={22} color={Colors.primary} />
+                  <View style={styles.heroIconRing}>
+                    <Ionicons name="image-outline" size={28} color={Colors.primary} />
+                  </View>
                   <Text style={styles.heroTitle}>Scan a Prop Slip</Text>
                   <Text style={styles.heroSub}>
                     Upload a screenshot of any {sport === 'mlb' ? 'MLB' : sport === 'cs2' ? 'CS2' : sport === 'wta' ? 'WTA tennis' : 'soccer'} prop slip and get ReverseScan insights in seconds.
@@ -3334,32 +3330,7 @@ const styles = StyleSheet.create({
   },
   modeTabText: { fontSize: 13, color: Colors.textSecondary, fontWeight: '600', letterSpacing: 0.3 },
   modeTabTextActive: { color: Colors.primary, fontWeight: '700' },
-  sportRow: {
-    flexDirection: 'row',
-    marginHorizontal: 20,
-    backgroundColor: 'rgba(26,26,26,0.6)',
-    borderRadius: 14,
-    padding: 3,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: 'rgba(57,255,20,0.12)',
-  } as any,
-  sportTab: {
-    flex: 1, alignItems: 'center', justifyContent: 'center',
-    paddingVertical: 8, borderRadius: 11,
-    flexDirection: 'row',
-  },
-  sportTabActive: {
-    backgroundColor: 'rgba(57,255,20,0.15)',
-    borderWidth: 1,
-    borderColor: 'rgba(57,255,20,0.35)',
-    shadowColor: Colors.primary,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-  },
-  sportTabText: { fontSize: 13, color: Colors.textSecondary, fontWeight: '700', letterSpacing: 0.3 },
-  sportTabTextActive: { color: Colors.primary, fontWeight: '800' },
+  // Sport selector uses modal (2×2 grid) — sportTab styles removed
   sportSelectorBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -3454,32 +3425,30 @@ const styles = StyleSheet.create({
   },
   galleryBtnBigText: { color: '#000', fontWeight: '800', fontSize: 15 },
 
-  /* ─── HERO UPLOAD BOX (Scan idle state) ─── */
+  /* ─── HERO UPLOAD BOX (Scan idle state — clean, no image) ─── */
   heroUploadBox: {
-    borderRadius: Colors.radiusLg, overflow: 'hidden',
+    borderRadius: Colors.radiusLg,
     borderWidth: 2, borderColor: 'rgba(57,255,20,0.4)',
-    borderStyle: 'dashed', minHeight: 170,
+    borderStyle: 'dashed',
+    backgroundColor: '#0a0a0a',
     shadowColor: Colors.primary, shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.15, shadowRadius: 20,
   },
-  heroImage: {
-    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-    width: '100%', height: '100%',
-  },
-  heroOverlay: {
-    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.60)',
-  },
   heroContent: {
-    position: 'relative', alignItems: 'center',
-    paddingTop: 18, paddingBottom: 18, paddingHorizontal: 20, gap: 8,
+    alignItems: 'center',
+    padding: 24, gap: 10,
+  },
+  heroIconRing: {
+    width: 56, height: 56, borderRadius: 28,
+    borderWidth: 1.5, borderColor: 'rgba(57,255,20,0.25)',
+    alignItems: 'center', justifyContent: 'center',
+    marginBottom: 4,
   },
   heroTitle: {
     fontSize: 17, fontWeight: '800', color: Colors.text, textAlign: 'center',
-    textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 6,
   },
   heroSub: {
-    fontSize: 12, color: 'rgba(255,255,255,0.70)', textAlign: 'center',
+    fontSize: 12, color: Colors.textSecondary, textAlign: 'center',
     lineHeight: 17, marginBottom: 4,
   },
   heroBtnBig: {
