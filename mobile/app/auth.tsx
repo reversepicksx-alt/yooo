@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   Platform, ActivityIndicator, Image, Linking, Modal, ScrollView, KeyboardAvoidingView,
+  Animated,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -35,6 +36,9 @@ export default function AuthScreen() {
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
   const noMembershipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [showSplash, setShowSplash] = useState(true);
+  const splashOpacity = useRef(new Animated.Value(1)).current;
+  const splashScale = useRef(new Animated.Value(1)).current;
   const [showPaymentEmail, setShowPaymentEmail] = useState(false);
   const [paymentEmail, setPaymentEmail] = useState('');
   const [showSupport, setShowSupport] = useState(false);
@@ -104,6 +108,18 @@ export default function AuthScreen() {
     return () => {
       if (noMembershipTimerRef.current) clearTimeout(noMembershipTimerRef.current);
     };
+  }, []);
+
+  // Splash screen: hold for 3s then fade out
+  useEffect(() => {
+    const hold = setTimeout(() => {
+      Animated.parallel([
+        Animated.timing(splashOpacity, { toValue: 0, duration: 600, useNativeDriver: true }),
+        Animated.timing(splashScale, { toValue: 1.08, duration: 600, useNativeDriver: true }),
+      ]).start(() => setShowSplash(false));
+    }, 3000);
+    return () => clearTimeout(hold);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleCheckEmail = async () => {
@@ -326,6 +342,7 @@ export default function AuthScreen() {
   return (
     <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom + 20 }]}>
       <View style={styles.inner}>
+
         <View style={styles.hero}>
           <Image
             source={require('../assets/logo.png')}
@@ -552,6 +569,24 @@ export default function AuthScreen() {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* ── Splash screen overlay ── */}
+      {showSplash && (
+        <Animated.View
+          style={[
+            styles.splashOverlay,
+            { opacity: splashOpacity, transform: [{ scale: splashScale }], pointerEvents: 'none' },
+          ]}
+        >
+          <Image
+            source={require('../assets/rp-splash.png')}
+            style={styles.splashLogo}
+            resizeMode="contain"
+          />
+          <Text style={styles.splashName}>REVERSEPICKS</Text>
+          <Text style={styles.splashTagline}>ELITE PROP INTELLIGENCE</Text>
+        </Animated.View>
+      )}
     </View>
   );
 }
@@ -585,6 +620,32 @@ function InfoBox({ message }: { message: string }) {
 }
 
 const styles = StyleSheet.create({
+  splashOverlay: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: '#000000',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 9999,
+  },
+  splashLogo: {
+    width: 260,
+    height: 260,
+    marginBottom: 32,
+  },
+  splashName: {
+    color: '#FFFFFF',
+    fontSize: 26,
+    fontWeight: '800',
+    letterSpacing: 5,
+    marginBottom: 6,
+  },
+  splashTagline: {
+    color: '#39FF14',
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 4,
+  },
   root: {
     flex: 1,
     backgroundColor: Colors.background,
