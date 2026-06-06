@@ -11,7 +11,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import { useQueryClient } from '@tanstack/react-query';
-import { scanProp, predict, mlbPredict, getMlbGameContext, cs2Predict, wtaPredict, nbaPredict, nflPredict, nhlPredict, wnbaPredict, ncaabPredict, ncaawPredict, atpPredict, aiSportPredict, searchNbaPlayers, searchNflPlayers, searchNhlPlayers, searchWnbaPlayers, searchNcaabPlayers, searchNcaawPlayers, searchAtpPlayers, searchWtaPlayers, savePick, searchMlbPlayers, searchCs2Players, searchCs2Teams, PROP_TYPES, MLB_PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, NBA_PROP_TYPES, NFL_PROP_TYPES, NHL_PROP_TYPES, WNBA_PROP_TYPES, NCAAB_PROP_TYPES, NCAAW_PROP_TYPES, ATP_PROP_TYPES, NCAAF_PROP_TYPES, F1_PROP_TYPES, MMA_PROP_TYPES, PGA_PROP_TYPES, DOTA2_PROP_TYPES, LOL_PROP_TYPES, CBASE_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, LEAGUES, PredictionResult, ScanResult, MlbPlayer, Cs2Player, Cs2Team, WtaPlayer } from '@/lib/api';
+import { scanProp, predict, mlbPredict, getMlbGameContext, cs2Predict, wtaPredict, nbaPredict, nflPredict, nhlPredict, wnbaPredict, ncaabPredict, ncaawPredict, atpPredict, ncaafPredict, f1Predict, mmaPredict, pgaPredict, dota2Predict, lolPredict, cbasePredict, aiSportPredict, searchNbaPlayers, searchNflPlayers, searchNhlPlayers, searchWnbaPlayers, searchNcaabPlayers, searchNcaawPlayers, searchAtpPlayers, searchWtaPlayers, searchNcaafPlayers, searchF1Drivers, searchMmaFighters, searchPgaPlayers, searchDota2Players, searchLolPlayers, searchCbasePlayers, savePick, searchMlbPlayers, searchCs2Players, searchCs2Teams, PROP_TYPES, MLB_PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, NBA_PROP_TYPES, NFL_PROP_TYPES, NHL_PROP_TYPES, WNBA_PROP_TYPES, NCAAB_PROP_TYPES, NCAAW_PROP_TYPES, ATP_PROP_TYPES, NCAAF_PROP_TYPES, F1_PROP_TYPES, MMA_PROP_TYPES, PGA_PROP_TYPES, DOTA2_PROP_TYPES, LOL_PROP_TYPES, CBASE_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, LEAGUES, PredictionResult, ScanResult, MlbPlayer, Cs2Player, Cs2Team, WtaPlayer } from '@/lib/api';
 import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult, FuzzyLeagueResult } from '@/components/FuzzySearchInput';
 import LeaguePickerModal from '@/components/LeaguePickerModal';
 import { useAuth } from '@/contexts/AuthContext';
@@ -273,20 +273,62 @@ export default function ScanScreen() {
   const [atpOppResults, setAtpOppResults] = useState<any[]>([]);
   const [atpOppSearching, setAtpOppSearching] = useState(false);
 
-  // AI Sports (NCAAF, F1, MMA, PGA, Dota2, LoL, College Baseball) — shared generic form
-  const [aiPlayerQuery, setAiPlayerQuery] = useState('');
-  const [aiTeamQuery, setAiTeamQuery] = useState('');
-  const [aiOpponentQuery, setAiOpponentQuery] = useState('');
-  const [aiTournament, setAiTournament] = useState('');
-  const [aiPropType, setAiPropType] = useState('');
-  const [aiShowPropPicker, setAiShowPropPicker] = useState(false);
-
-  // Prop types for current AI sport
-  const AI_SPORT_PROPS: Record<string, { value: string; label: string }[]> = {
-    ncaaf: NCAAF_PROP_TYPES, f1: F1_PROP_TYPES, mma: MMA_PROP_TYPES,
-    pga: PGA_PROP_TYPES, dota2: DOTA2_PROP_TYPES, lol: LOL_PROP_TYPES, cbase: CBASE_PROP_TYPES,
-  };
-  const currentAiProps = AI_SPORT_PROPS[sport] || NCAAF_PROP_TYPES;
+  // NCAAF
+  const [ncaafPlayerQuery, setNcaafPlayerQuery] = useState('');
+  const [ncaafResolvedPlayer, setNcaafResolvedPlayer] = useState<any>(null);
+  const [ncaafPlayerResults, setNcaafPlayerResults] = useState<any[]>([]);
+  const [ncaafSearching, setNcaafSearching] = useState(false);
+  const [ncaafOpponentQuery, setNcaafOpponentQuery] = useState('');
+  const [ncaafPropType, setNcaafPropType] = useState('passing_yards');
+  const [ncaafShowPropPicker, setNcaafShowPropPicker] = useState(false);
+  // F1
+  const [f1DriverQuery, setF1DriverQuery] = useState('');
+  const [f1ResolvedDriver, setF1ResolvedDriver] = useState<any>(null);
+  const [f1DriverResults, setF1DriverResults] = useState<any[]>([]);
+  const [f1Searching, setF1Searching] = useState(false);
+  const [f1RaceName, setF1RaceName] = useState('');
+  const [f1PropType, setF1PropType] = useState('finish_position');
+  const [f1ShowPropPicker, setF1ShowPropPicker] = useState(false);
+  // MMA
+  const [mmaFighterQuery, setMmaFighterQuery] = useState('');
+  const [mmaResolvedFighter, setMmaResolvedFighter] = useState<any>(null);
+  const [mmaFighterResults, setMmaFighterResults] = useState<any[]>([]);
+  const [mmaSearching, setMmaSearching] = useState(false);
+  const [mmaOpponentQuery, setMmaOpponentQuery] = useState('');
+  const [mmaPropType, setMmaPropType] = useState('significant_strikes');
+  const [mmaShowPropPicker, setMmaShowPropPicker] = useState(false);
+  // PGA
+  const [pgaPlayerQuery, setPgaPlayerQuery] = useState('');
+  const [pgaResolvedPlayer, setPgaResolvedPlayer] = useState<any>(null);
+  const [pgaPlayerResults, setPgaPlayerResults] = useState<any[]>([]);
+  const [pgaSearching, setPgaSearching] = useState(false);
+  const [pgaTournament, setPgaTournament] = useState('');
+  const [pgaPropType, setPgaPropType] = useState('birdies');
+  const [pgaShowPropPicker, setPgaShowPropPicker] = useState(false);
+  // Dota 2
+  const [dota2PlayerQuery, setDota2PlayerQuery] = useState('');
+  const [dota2ResolvedPlayer, setDota2ResolvedPlayer] = useState<any>(null);
+  const [dota2PlayerResults, setDota2PlayerResults] = useState<any[]>([]);
+  const [dota2Searching, setDota2Searching] = useState(false);
+  const [dota2OpponentQuery, setDota2OpponentQuery] = useState('');
+  const [dota2PropType, setDota2PropType] = useState('kills');
+  const [dota2ShowPropPicker, setDota2ShowPropPicker] = useState(false);
+  // LoL
+  const [lolPlayerQuery, setLolPlayerQuery] = useState('');
+  const [lolResolvedPlayer, setLolResolvedPlayer] = useState<any>(null);
+  const [lolPlayerResults, setLolPlayerResults] = useState<any[]>([]);
+  const [lolSearching, setLolSearching] = useState(false);
+  const [lolOpponentQuery, setLolOpponentQuery] = useState('');
+  const [lolPropType, setLolPropType] = useState('kills');
+  const [lolShowPropPicker, setLolShowPropPicker] = useState(false);
+  // College Baseball
+  const [cbasePlayerQuery, setCbasePlayerQuery] = useState('');
+  const [cbaseResolvedPlayer, setCbaseResolvedPlayer] = useState<any>(null);
+  const [cbasePlayerResults, setCbasePlayerResults] = useState<any[]>([]);
+  const [cbaseSearching, setCbaseSearching] = useState(false);
+  const [cbaseOpponentQuery, setCbaseOpponentQuery] = useState('');
+  const [cbasePropType, setCbasePropType] = useState('hits');
+  const [cbaseShowPropPicker, setCbaseShowPropPicker] = useState(false);
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const analysisRef = useRef<any>(null);
@@ -420,12 +462,20 @@ export default function ScanScreen() {
     setAtpOppResults([]);
     setAtpSurface('Hard');
     setAtpRound('R32');
-    // AI Sports
-    setAiPlayerQuery('');
-    setAiTeamQuery('');
-    setAiOpponentQuery('');
-    setAiTournament('');
-    setAiPropType('');
+    // NCAAF
+    setNcaafPlayerQuery(''); setNcaafResolvedPlayer(null); setNcaafPlayerResults([]); setNcaafOpponentQuery(''); setNcaafPropType('passing_yards');
+    // F1
+    setF1DriverQuery(''); setF1ResolvedDriver(null); setF1DriverResults([]); setF1RaceName(''); setF1PropType('finish_position');
+    // MMA
+    setMmaFighterQuery(''); setMmaResolvedFighter(null); setMmaFighterResults([]); setMmaOpponentQuery(''); setMmaPropType('significant_strikes');
+    // PGA
+    setPgaPlayerQuery(''); setPgaResolvedPlayer(null); setPgaPlayerResults([]); setPgaTournament(''); setPgaPropType('birdies');
+    // Dota 2
+    setDota2PlayerQuery(''); setDota2ResolvedPlayer(null); setDota2PlayerResults([]); setDota2OpponentQuery(''); setDota2PropType('kills');
+    // LoL
+    setLolPlayerQuery(''); setLolResolvedPlayer(null); setLolPlayerResults([]); setLolOpponentQuery(''); setLolPropType('kills');
+    // College Baseball
+    setCbasePlayerQuery(''); setCbaseResolvedPlayer(null); setCbasePlayerResults([]); setCbaseOpponentQuery(''); setCbasePropType('hits');
   };
 
   const processImage = async (base64: string, uri: string) => {
@@ -925,25 +975,149 @@ export default function ScanScreen() {
     } catch (e: unknown) { setManualError(e instanceof Error ? e.message : 'ATP analysis failed'); setPhase('idle'); }
   };
 
-  // ── AI Sports analyze (NCAAF / F1 / MMA / PGA / Dota2 / LoL / CBase) ──────
-  const handleAiSportAnalyze = async () => {
-    if (!aiPlayerQuery.trim()) { setManualError('Enter a player/athlete name.'); return; }
-    if (!aiPropType) { setManualError('Select a prop type.'); return; }
+  // ── NCAAF analyze ──────────────────────────────────────────────────────────
+  const handleNcaafAnalyze = async () => {
+    if (!ncaafResolvedPlayer && !ncaafPlayerQuery.trim()) { setManualError('Search and select a player.'); return; }
+    if (!ncaafPropType) { setManualError('Select a prop type.'); return; }
     if (!line.trim() || isNaN(parseFloat(line))) { setManualError('Enter a valid line value.'); return; }
     setManualError(null); setPhase('analyzing');
     try {
-      const result = await aiSportPredict({
-        sport: sport, playerName: aiPlayerQuery.trim(),
-        teamName: aiTeamQuery.trim() || '',
-        opponentName: aiOpponentQuery.trim() || '',
-        propType: aiPropType, line: parseFloat(line),
-        venue: venueOverride, tournament: aiTournament.trim() || '',
+      const result = await ncaafPredict({
+        playerName: ncaafResolvedPlayer?.display_name || ncaafPlayerQuery.trim(),
+        playerId: ncaafResolvedPlayer?.id || null,
+        teamName: ncaafResolvedPlayer?.team?.name || '',
+        opponentName: ncaafOpponentQuery.trim() || '',
+        propType: ncaafPropType, line: parseFloat(line),
       });
       if ((result as any).error) { setManualError((result as any).error); setPhase('idle'); return; }
-      setScanResult({ playerName: aiPlayerQuery.trim(), propType: aiPropType, line: parseFloat(line), teamName: aiTeamQuery.trim() || '', opponentName: aiOpponentQuery.trim() || '', leagueId: 0 });
+      setScanResult({ playerName: result.playerName || ncaafPlayerQuery.trim(), propType: ncaafPropType, line: parseFloat(line), teamName: result.teamName || '', opponentName: ncaafOpponentQuery.trim() || '', leagueId: 0 });
       setPrediction(result); setPhase('result');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch (e: unknown) { setManualError(e instanceof Error ? e.message : 'AI analysis failed — try again'); setPhase('idle'); }
+    } catch (e: unknown) { setManualError(e instanceof Error ? e.message : 'NCAAF analysis failed'); setPhase('idle'); }
+  };
+
+  // ── F1 analyze ─────────────────────────────────────────────────────────────
+  const handleF1Analyze = async () => {
+    if (!f1ResolvedDriver && !f1DriverQuery.trim()) { setManualError('Search and select a driver.'); return; }
+    if (!f1PropType) { setManualError('Select a prop type.'); return; }
+    if (!line.trim() || isNaN(parseFloat(line))) { setManualError('Enter a valid line value.'); return; }
+    setManualError(null); setPhase('analyzing');
+    try {
+      const result = await f1Predict({
+        playerName: f1ResolvedDriver?.name || f1DriverQuery.trim(),
+        playerId: f1ResolvedDriver?.id || null,
+        teamName: f1ResolvedDriver?.constructor_name || '',
+        raceName: f1RaceName.trim() || '',
+        propType: f1PropType, line: parseFloat(line),
+      });
+      if ((result as any).error) { setManualError((result as any).error); setPhase('idle'); return; }
+      setScanResult({ playerName: result.playerName || f1DriverQuery.trim(), propType: f1PropType, line: parseFloat(line), teamName: result.teamName || '', opponentName: f1RaceName.trim() || '', leagueId: 0 });
+      setPrediction(result); setPhase('result');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e: unknown) { setManualError(e instanceof Error ? e.message : 'F1 analysis failed'); setPhase('idle'); }
+  };
+
+  // ── MMA analyze ────────────────────────────────────────────────────────────
+  const handleMmaAnalyze = async () => {
+    if (!mmaResolvedFighter && !mmaFighterQuery.trim()) { setManualError('Search and select a fighter.'); return; }
+    if (!mmaPropType) { setManualError('Select a prop type.'); return; }
+    if (!line.trim() || isNaN(parseFloat(line))) { setManualError('Enter a valid line value.'); return; }
+    setManualError(null); setPhase('analyzing');
+    try {
+      const result = await mmaPredict({
+        playerName: mmaResolvedFighter?.name || mmaFighterQuery.trim(),
+        playerId: mmaResolvedFighter?.id || null,
+        opponentName: mmaOpponentQuery.trim() || '',
+        propType: mmaPropType, line: parseFloat(line),
+      });
+      if ((result as any).error) { setManualError((result as any).error); setPhase('idle'); return; }
+      setScanResult({ playerName: result.playerName || mmaFighterQuery.trim(), propType: mmaPropType, line: parseFloat(line), teamName: '', opponentName: mmaOpponentQuery.trim() || '', leagueId: 0 });
+      setPrediction(result); setPhase('result');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e: unknown) { setManualError(e instanceof Error ? e.message : 'MMA analysis failed'); setPhase('idle'); }
+  };
+
+  // ── PGA analyze ────────────────────────────────────────────────────────────
+  const handlePgaAnalyze = async () => {
+    if (!pgaResolvedPlayer && !pgaPlayerQuery.trim()) { setManualError('Search and select a golfer.'); return; }
+    if (!pgaPropType) { setManualError('Select a prop type.'); return; }
+    if (!line.trim() || isNaN(parseFloat(line))) { setManualError('Enter a valid line value.'); return; }
+    setManualError(null); setPhase('analyzing');
+    try {
+      const result = await pgaPredict({
+        playerName: pgaResolvedPlayer?.name || pgaPlayerQuery.trim(),
+        playerId: pgaResolvedPlayer?.id || null,
+        tournament: pgaTournament.trim() || '',
+        propType: pgaPropType, line: parseFloat(line),
+      });
+      if ((result as any).error) { setManualError((result as any).error); setPhase('idle'); return; }
+      setScanResult({ playerName: result.playerName || pgaPlayerQuery.trim(), propType: pgaPropType, line: parseFloat(line), teamName: '', opponentName: pgaTournament.trim() || '', leagueId: 0 });
+      setPrediction(result); setPhase('result');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e: unknown) { setManualError(e instanceof Error ? e.message : 'PGA analysis failed'); setPhase('idle'); }
+  };
+
+  // ── Dota 2 analyze ─────────────────────────────────────────────────────────
+  const handleDota2Analyze = async () => {
+    if (!dota2ResolvedPlayer && !dota2PlayerQuery.trim()) { setManualError('Search and select a player.'); return; }
+    if (!dota2PropType) { setManualError('Select a prop type.'); return; }
+    if (!line.trim() || isNaN(parseFloat(line))) { setManualError('Enter a valid line value.'); return; }
+    setManualError(null); setPhase('analyzing');
+    try {
+      const result = await dota2Predict({
+        playerName: dota2ResolvedPlayer?.name || dota2PlayerQuery.trim(),
+        playerId: dota2ResolvedPlayer?.id || null,
+        teamName: dota2ResolvedPlayer?.team?.name || '',
+        opponentName: dota2OpponentQuery.trim() || '',
+        propType: dota2PropType, line: parseFloat(line),
+      });
+      if ((result as any).error) { setManualError((result as any).error); setPhase('idle'); return; }
+      setScanResult({ playerName: result.playerName || dota2PlayerQuery.trim(), propType: dota2PropType, line: parseFloat(line), teamName: result.teamName || '', opponentName: dota2OpponentQuery.trim() || '', leagueId: 0 });
+      setPrediction(result); setPhase('result');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e: unknown) { setManualError(e instanceof Error ? e.message : 'Dota 2 analysis failed'); setPhase('idle'); }
+  };
+
+  // ── LoL analyze ────────────────────────────────────────────────────────────
+  const handleLolAnalyze = async () => {
+    if (!lolResolvedPlayer && !lolPlayerQuery.trim()) { setManualError('Search and select a player.'); return; }
+    if (!lolPropType) { setManualError('Select a prop type.'); return; }
+    if (!line.trim() || isNaN(parseFloat(line))) { setManualError('Enter a valid line value.'); return; }
+    setManualError(null); setPhase('analyzing');
+    try {
+      const result = await lolPredict({
+        playerName: lolResolvedPlayer?.name || lolPlayerQuery.trim(),
+        playerId: lolResolvedPlayer?.id || null,
+        teamName: lolResolvedPlayer?.team?.name || '',
+        opponentName: lolOpponentQuery.trim() || '',
+        propType: lolPropType, line: parseFloat(line),
+      });
+      if ((result as any).error) { setManualError((result as any).error); setPhase('idle'); return; }
+      setScanResult({ playerName: result.playerName || lolPlayerQuery.trim(), propType: lolPropType, line: parseFloat(line), teamName: result.teamName || '', opponentName: lolOpponentQuery.trim() || '', leagueId: 0 });
+      setPrediction(result); setPhase('result');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e: unknown) { setManualError(e instanceof Error ? e.message : 'LoL analysis failed'); setPhase('idle'); }
+  };
+
+  // ── College Baseball analyze ────────────────────────────────────────────────
+  const handleCbaseAnalyze = async () => {
+    if (!cbaseResolvedPlayer && !cbasePlayerQuery.trim()) { setManualError('Search and select a player.'); return; }
+    if (!cbasePropType) { setManualError('Select a prop type.'); return; }
+    if (!line.trim() || isNaN(parseFloat(line))) { setManualError('Enter a valid line value.'); return; }
+    setManualError(null); setPhase('analyzing');
+    try {
+      const result = await cbasePredict({
+        playerName: cbaseResolvedPlayer?.display_name || cbasePlayerQuery.trim(),
+        playerId: cbaseResolvedPlayer?.id || null,
+        teamName: cbaseResolvedPlayer?.team?.name || '',
+        opponentName: cbaseOpponentQuery.trim() || '',
+        propType: cbasePropType, line: parseFloat(line),
+      });
+      if ((result as any).error) { setManualError((result as any).error); setPhase('idle'); return; }
+      setScanResult({ playerName: result.playerName || cbasePlayerQuery.trim(), propType: cbasePropType, line: parseFloat(line), teamName: result.teamName || '', opponentName: cbaseOpponentQuery.trim() || '', leagueId: 0 });
+      setPrediction(result); setPhase('result');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e: unknown) { setManualError(e instanceof Error ? e.message : 'College Baseball analysis failed'); setPhase('idle'); }
   };
 
   // ── WTA handlers ─────────────────────────────────────────────────────────
@@ -2060,36 +2234,311 @@ export default function ScanScreen() {
           </View>
         )}
 
-        {/* ─── AI Sports Generic Form (NCAAF / F1 / MMA / PGA / Dota2 / LoL / CBase) ─── */}
-        {(['ncaaf','f1','mma','pga','dota2','lol','cbase'] as Sport[]).includes(sport) && phase === 'idle' && mode === 'manual' && (
+        {/* ─── NCAAF Form ─── */}
+        {sport === 'ncaaf' && phase === 'idle' && mode === 'manual' && (
           <View style={styles.manualForm}>
-            {sport === 'f1' || sport === 'pga' ? null : (
-              <View style={{ backgroundColor: 'rgba(57,255,20,0.06)', borderRadius: 10, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: 'rgba(57,255,20,0.15)' }}>
-                <Text style={{ fontSize: 11, color: Colors.primary, fontWeight: '600' }}>AI-POWERED ANALYSIS</Text>
-                <Text style={{ fontSize: 11, color: Colors.textSecondary, marginTop: 2 }}>Uses Gemini AI for deep prediction based on known stats & form.</Text>
+            <Text style={styles.fieldLabel}>Player</Text>
+            <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. Arch Manning" placeholderTextColor={Colors.textTertiary} value={ncaafPlayerQuery}
+              onChangeText={async (q) => { setNcaafPlayerQuery(q); setNcaafResolvedPlayer(null); if (q.length >= 2) { setNcaafSearching(true); const r = await searchNcaafPlayers(q).catch(() => []); setNcaafPlayerResults(r); setNcaafSearching(false); } else { setNcaafPlayerResults([]); } }} autoCapitalize="words" />
+            {ncaafSearching && <ActivityIndicator size="small" color={Colors.primary} style={{ marginBottom: 6 }} />}
+            {ncaafPlayerResults.length > 0 && !ncaafResolvedPlayer && (
+              <View style={styles.autocompleteList}>
+                {ncaafPlayerResults.slice(0, 6).map((p: any) => (
+                  <TouchableOpacity key={p.id} style={styles.autocompleteItem} onPress={() => { setNcaafResolvedPlayer(p); setNcaafPlayerQuery(p.display_name || p.name || ''); setNcaafPlayerResults([]); }}>
+                    <Text style={styles.autocompleteText}>{p.display_name || p.name}</Text>
+                    {p.team?.name && <Text style={styles.autocompleteSubText}>{p.team.name} · {p.position || ''}</Text>}
+                  </TouchableOpacity>
+                ))}
               </View>
             )}
-            <Text style={styles.fieldLabel}>{sport === 'f1' ? 'Driver' : sport === 'pga' ? 'Golfer' : sport === 'mma' ? 'Fighter' : 'Player'}</Text>
-            <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder={sport === 'f1' ? 'e.g. Max Verstappen' : sport === 'pga' ? 'e.g. Scottie Scheffler' : sport === 'mma' ? 'e.g. Jon Jones' : sport === 'lol' ? 'e.g. Faker' : sport === 'dota2' ? 'e.g. Miracle-' : 'e.g. Arch Manning'} placeholderTextColor={Colors.textTertiary} value={aiPlayerQuery} onChangeText={setAiPlayerQuery} autoCapitalize="words" />
-            {sport !== 'f1' && sport !== 'pga' && (
-              <>
-                <Text style={styles.fieldLabel}>Team <Text style={styles.fieldLabelOpt}>(optional)</Text></Text>
-                <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder={sport === 'mma' ? 'e.g. American Top Team' : sport === 'lol' ? 'e.g. T1' : sport === 'dota2' ? 'e.g. Team Liquid' : sport === 'cbase' ? 'e.g. Texas Longhorns' : 'e.g. Alabama Crimson Tide'} placeholderTextColor={Colors.textTertiary} value={aiTeamQuery} onChangeText={setAiTeamQuery} autoCapitalize="words" />
-              </>
-            )}
-            <Text style={styles.fieldLabel}>Opponent / Event <Text style={styles.fieldLabelOpt}>(optional)</Text></Text>
-            <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder={sport === 'f1' ? 'e.g. Monaco Grand Prix' : sport === 'pga' ? 'e.g. The Masters' : sport === 'mma' ? 'e.g. Stipe Miocic' : 'e.g. Georgia Bulldogs'} placeholderTextColor={Colors.textTertiary} value={aiOpponentQuery} onChangeText={setAiOpponentQuery} autoCapitalize="words" />
+            <Text style={styles.fieldLabel}>Opponent <Text style={styles.fieldLabelOpt}>(optional)</Text></Text>
+            <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. Georgia Bulldogs" placeholderTextColor={Colors.textTertiary} value={ncaafOpponentQuery} onChangeText={setNcaafOpponentQuery} autoCapitalize="words" />
             <Text style={styles.fieldLabel}>Prop Type</Text>
-            <TouchableOpacity style={styles.pickerBtn} onPress={() => setAiShowPropPicker(true)}>
-              <Text style={styles.pickerBtnText}>{currentAiProps.find(p => p.value === aiPropType)?.label || 'Select prop…'}</Text>
+            <TouchableOpacity style={styles.pickerBtn} onPress={() => setNcaafShowPropPicker(true)}>
+              <Text style={styles.pickerBtnText}>{NCAAF_PROP_TYPES.find(p => p.value === ncaafPropType)?.label || 'Select prop…'}</Text>
+              <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
+            </TouchableOpacity>
+            <Text style={styles.fieldLabel}>Line Value</Text>
+            <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. 247.5" placeholderTextColor={Colors.textTertiary} value={line} onChangeText={setLine} keyboardType="decimal-pad" />
+            {manualError && <View style={styles.inlineError}><Ionicons name="alert-circle-outline" size={14} color={Colors.error} /><Text style={styles.inlineErrorText}>{manualError}</Text></View>}
+            <TouchableOpacity style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnLoading]} onPress={handleNcaafAnalyze} disabled={phase === 'analyzing'} activeOpacity={0.85}>
+              {phase === 'analyzing' ? <><ActivityIndicator color="#000" size="small" /><Text style={styles.predictBtnText}>Analyzing…</Text></> : <><Ionicons name="analytics-outline" size={16} color="#000" /><Text style={styles.predictBtnText}>Analyze</Text></>}
+            </TouchableOpacity>
+            <Modal visible={ncaafShowPropPicker} transparent animationType="slide" onRequestClose={() => setNcaafShowPropPicker(false)}>
+              <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setNcaafShowPropPicker(false)}>
+                <View style={styles.pickerModal}>
+                  {NCAAF_PROP_TYPES.map(p => (
+                    <TouchableOpacity key={p.value} style={[styles.pickerOption, ncaafPropType === p.value && styles.pickerOptionActive]} onPress={() => { setNcaafPropType(p.value); setNcaafShowPropPicker(false); }}>
+                      <Text style={[styles.pickerOptionText, ncaafPropType === p.value && styles.pickerOptionTextActive]}>{p.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </TouchableOpacity>
+            </Modal>
+          </View>
+        )}
+
+        {/* ─── F1 Form ─── */}
+        {sport === 'f1' && phase === 'idle' && mode === 'manual' && (
+          <View style={styles.manualForm}>
+            <Text style={styles.fieldLabel}>Driver</Text>
+            <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. Max Verstappen" placeholderTextColor={Colors.textTertiary} value={f1DriverQuery}
+              onChangeText={async (q) => { setF1DriverQuery(q); setF1ResolvedDriver(null); if (q.length >= 2) { setF1Searching(true); const r = await searchF1Drivers(q).catch(() => []); setF1DriverResults(r); setF1Searching(false); } else { setF1DriverResults([]); } }} autoCapitalize="words" />
+            {f1Searching && <ActivityIndicator size="small" color={Colors.primary} style={{ marginBottom: 6 }} />}
+            {f1DriverResults.length > 0 && !f1ResolvedDriver && (
+              <View style={styles.autocompleteList}>
+                {f1DriverResults.slice(0, 6).map((d: any) => (
+                  <TouchableOpacity key={d.id} style={styles.autocompleteItem} onPress={() => { setF1ResolvedDriver(d); setF1DriverQuery(d.name || ''); setF1DriverResults([]); }}>
+                    <Text style={styles.autocompleteText}>{d.name}</Text>
+                    {d.constructor_name && <Text style={styles.autocompleteSubText}>{d.constructor_name} · {d.nationality || ''}</Text>}
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+            <Text style={styles.fieldLabel}>Race / Event <Text style={styles.fieldLabelOpt}>(optional)</Text></Text>
+            <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. Monaco Grand Prix" placeholderTextColor={Colors.textTertiary} value={f1RaceName} onChangeText={setF1RaceName} autoCapitalize="words" />
+            <Text style={styles.fieldLabel}>Prop Type</Text>
+            <TouchableOpacity style={styles.pickerBtn} onPress={() => setF1ShowPropPicker(true)}>
+              <Text style={styles.pickerBtnText}>{F1_PROP_TYPES.find(p => p.value === f1PropType)?.label || 'Select prop…'}</Text>
+              <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
+            </TouchableOpacity>
+            <Text style={styles.fieldLabel}>Line Value</Text>
+            <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. 5.5" placeholderTextColor={Colors.textTertiary} value={line} onChangeText={setLine} keyboardType="decimal-pad" />
+            {manualError && <View style={styles.inlineError}><Ionicons name="alert-circle-outline" size={14} color={Colors.error} /><Text style={styles.inlineErrorText}>{manualError}</Text></View>}
+            <TouchableOpacity style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnLoading]} onPress={handleF1Analyze} disabled={phase === 'analyzing'} activeOpacity={0.85}>
+              {phase === 'analyzing' ? <><ActivityIndicator color="#000" size="small" /><Text style={styles.predictBtnText}>Analyzing…</Text></> : <><Ionicons name="analytics-outline" size={16} color="#000" /><Text style={styles.predictBtnText}>Analyze</Text></>}
+            </TouchableOpacity>
+            <Modal visible={f1ShowPropPicker} transparent animationType="slide" onRequestClose={() => setF1ShowPropPicker(false)}>
+              <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setF1ShowPropPicker(false)}>
+                <View style={styles.pickerModal}>
+                  {F1_PROP_TYPES.map(p => (
+                    <TouchableOpacity key={p.value} style={[styles.pickerOption, f1PropType === p.value && styles.pickerOptionActive]} onPress={() => { setF1PropType(p.value); setF1ShowPropPicker(false); }}>
+                      <Text style={[styles.pickerOptionText, f1PropType === p.value && styles.pickerOptionTextActive]}>{p.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </TouchableOpacity>
+            </Modal>
+          </View>
+        )}
+
+        {/* ─── MMA Form ─── */}
+        {sport === 'mma' && phase === 'idle' && mode === 'manual' && (
+          <View style={styles.manualForm}>
+            <Text style={styles.fieldLabel}>Fighter</Text>
+            <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. Jon Jones" placeholderTextColor={Colors.textTertiary} value={mmaFighterQuery}
+              onChangeText={async (q) => { setMmaFighterQuery(q); setMmaResolvedFighter(null); if (q.length >= 2) { setMmaSearching(true); const r = await searchMmaFighters(q).catch(() => []); setMmaFighterResults(r); setMmaSearching(false); } else { setMmaFighterResults([]); } }} autoCapitalize="words" />
+            {mmaSearching && <ActivityIndicator size="small" color={Colors.primary} style={{ marginBottom: 6 }} />}
+            {mmaFighterResults.length > 0 && !mmaResolvedFighter && (
+              <View style={styles.autocompleteList}>
+                {mmaFighterResults.slice(0, 6).map((f: any) => (
+                  <TouchableOpacity key={f.id} style={styles.autocompleteItem} onPress={() => { setMmaResolvedFighter(f); setMmaFighterQuery(f.name || ''); setMmaFighterResults([]); }}>
+                    <Text style={styles.autocompleteText}>{f.name}</Text>
+                    {(f.weight_class || f.nationality) && <Text style={styles.autocompleteSubText}>{[f.weight_class, f.nationality].filter(Boolean).join(' · ')}</Text>}
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+            <Text style={styles.fieldLabel}>Opponent <Text style={styles.fieldLabelOpt}>(optional)</Text></Text>
+            <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. Stipe Miocic" placeholderTextColor={Colors.textTertiary} value={mmaOpponentQuery} onChangeText={setMmaOpponentQuery} autoCapitalize="words" />
+            <Text style={styles.fieldLabel}>Prop Type</Text>
+            <TouchableOpacity style={styles.pickerBtn} onPress={() => setMmaShowPropPicker(true)}>
+              <Text style={styles.pickerBtnText}>{MMA_PROP_TYPES.find(p => p.value === mmaPropType)?.label || 'Select prop…'}</Text>
               <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
             </TouchableOpacity>
             <Text style={styles.fieldLabel}>Line Value</Text>
             <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. 2.5" placeholderTextColor={Colors.textTertiary} value={line} onChangeText={setLine} keyboardType="decimal-pad" />
             {manualError && <View style={styles.inlineError}><Ionicons name="alert-circle-outline" size={14} color={Colors.error} /><Text style={styles.inlineErrorText}>{manualError}</Text></View>}
-            <TouchableOpacity style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnLoading]} onPress={handleAiSportAnalyze} disabled={phase === 'analyzing'} activeOpacity={0.85}>
+            <TouchableOpacity style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnLoading]} onPress={handleMmaAnalyze} disabled={phase === 'analyzing'} activeOpacity={0.85}>
               {phase === 'analyzing' ? <><ActivityIndicator color="#000" size="small" /><Text style={styles.predictBtnText}>Analyzing…</Text></> : <><Ionicons name="analytics-outline" size={16} color="#000" /><Text style={styles.predictBtnText}>Analyze</Text></>}
             </TouchableOpacity>
+            <Modal visible={mmaShowPropPicker} transparent animationType="slide" onRequestClose={() => setMmaShowPropPicker(false)}>
+              <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setMmaShowPropPicker(false)}>
+                <View style={styles.pickerModal}>
+                  {MMA_PROP_TYPES.map(p => (
+                    <TouchableOpacity key={p.value} style={[styles.pickerOption, mmaPropType === p.value && styles.pickerOptionActive]} onPress={() => { setMmaPropType(p.value); setMmaShowPropPicker(false); }}>
+                      <Text style={[styles.pickerOptionText, mmaPropType === p.value && styles.pickerOptionTextActive]}>{p.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </TouchableOpacity>
+            </Modal>
+          </View>
+        )}
+
+        {/* ─── PGA Form ─── */}
+        {sport === 'pga' && phase === 'idle' && mode === 'manual' && (
+          <View style={styles.manualForm}>
+            <Text style={styles.fieldLabel}>Golfer</Text>
+            <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. Scottie Scheffler" placeholderTextColor={Colors.textTertiary} value={pgaPlayerQuery}
+              onChangeText={async (q) => { setPgaPlayerQuery(q); setPgaResolvedPlayer(null); if (q.length >= 2) { setPgaSearching(true); const r = await searchPgaPlayers(q).catch(() => []); setPgaPlayerResults(r); setPgaSearching(false); } else { setPgaPlayerResults([]); } }} autoCapitalize="words" />
+            {pgaSearching && <ActivityIndicator size="small" color={Colors.primary} style={{ marginBottom: 6 }} />}
+            {pgaPlayerResults.length > 0 && !pgaResolvedPlayer && (
+              <View style={styles.autocompleteList}>
+                {pgaPlayerResults.slice(0, 6).map((p: any) => (
+                  <TouchableOpacity key={p.id} style={styles.autocompleteItem} onPress={() => { setPgaResolvedPlayer(p); setPgaPlayerQuery(p.name || ''); setPgaPlayerResults([]); }}>
+                    <Text style={styles.autocompleteText}>{p.name}</Text>
+                    {p.nationality && <Text style={styles.autocompleteSubText}>{p.nationality}</Text>}
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+            <Text style={styles.fieldLabel}>Tournament <Text style={styles.fieldLabelOpt}>(optional)</Text></Text>
+            <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. The Masters" placeholderTextColor={Colors.textTertiary} value={pgaTournament} onChangeText={setPgaTournament} autoCapitalize="words" />
+            <Text style={styles.fieldLabel}>Prop Type</Text>
+            <TouchableOpacity style={styles.pickerBtn} onPress={() => setPgaShowPropPicker(true)}>
+              <Text style={styles.pickerBtnText}>{PGA_PROP_TYPES.find(p => p.value === pgaPropType)?.label || 'Select prop…'}</Text>
+              <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
+            </TouchableOpacity>
+            <Text style={styles.fieldLabel}>Line Value</Text>
+            <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. 4.5" placeholderTextColor={Colors.textTertiary} value={line} onChangeText={setLine} keyboardType="decimal-pad" />
+            {manualError && <View style={styles.inlineError}><Ionicons name="alert-circle-outline" size={14} color={Colors.error} /><Text style={styles.inlineErrorText}>{manualError}</Text></View>}
+            <TouchableOpacity style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnLoading]} onPress={handlePgaAnalyze} disabled={phase === 'analyzing'} activeOpacity={0.85}>
+              {phase === 'analyzing' ? <><ActivityIndicator color="#000" size="small" /><Text style={styles.predictBtnText}>Analyzing…</Text></> : <><Ionicons name="analytics-outline" size={16} color="#000" /><Text style={styles.predictBtnText}>Analyze</Text></>}
+            </TouchableOpacity>
+            <Modal visible={pgaShowPropPicker} transparent animationType="slide" onRequestClose={() => setPgaShowPropPicker(false)}>
+              <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setPgaShowPropPicker(false)}>
+                <View style={styles.pickerModal}>
+                  {PGA_PROP_TYPES.map(p => (
+                    <TouchableOpacity key={p.value} style={[styles.pickerOption, pgaPropType === p.value && styles.pickerOptionActive]} onPress={() => { setPgaPropType(p.value); setPgaShowPropPicker(false); }}>
+                      <Text style={[styles.pickerOptionText, pgaPropType === p.value && styles.pickerOptionTextActive]}>{p.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </TouchableOpacity>
+            </Modal>
+          </View>
+        )}
+
+        {/* ─── Dota 2 Form ─── */}
+        {sport === 'dota2' && phase === 'idle' && mode === 'manual' && (
+          <View style={styles.manualForm}>
+            <Text style={styles.fieldLabel}>Player</Text>
+            <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. Miracle-" placeholderTextColor={Colors.textTertiary} value={dota2PlayerQuery}
+              onChangeText={async (q) => { setDota2PlayerQuery(q); setDota2ResolvedPlayer(null); if (q.length >= 2) { setDota2Searching(true); const r = await searchDota2Players(q).catch(() => []); setDota2PlayerResults(r); setDota2Searching(false); } else { setDota2PlayerResults([]); } }} autoCapitalize="none" />
+            {dota2Searching && <ActivityIndicator size="small" color={Colors.primary} style={{ marginBottom: 6 }} />}
+            {dota2PlayerResults.length > 0 && !dota2ResolvedPlayer && (
+              <View style={styles.autocompleteList}>
+                {dota2PlayerResults.slice(0, 6).map((p: any) => (
+                  <TouchableOpacity key={p.id} style={styles.autocompleteItem} onPress={() => { setDota2ResolvedPlayer(p); setDota2PlayerQuery(p.name || ''); setDota2PlayerResults([]); }}>
+                    <Text style={styles.autocompleteText}>{p.name}</Text>
+                    {p.team?.name && <Text style={styles.autocompleteSubText}>{p.team.name}</Text>}
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+            <Text style={styles.fieldLabel}>Opponent Team <Text style={styles.fieldLabelOpt}>(optional)</Text></Text>
+            <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. Team Spirit" placeholderTextColor={Colors.textTertiary} value={dota2OpponentQuery} onChangeText={setDota2OpponentQuery} autoCapitalize="words" />
+            <Text style={styles.fieldLabel}>Prop Type</Text>
+            <TouchableOpacity style={styles.pickerBtn} onPress={() => setDota2ShowPropPicker(true)}>
+              <Text style={styles.pickerBtnText}>{DOTA2_PROP_TYPES.find(p => p.value === dota2PropType)?.label || 'Select prop…'}</Text>
+              <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
+            </TouchableOpacity>
+            <Text style={styles.fieldLabel}>Line Value</Text>
+            <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. 6.5" placeholderTextColor={Colors.textTertiary} value={line} onChangeText={setLine} keyboardType="decimal-pad" />
+            {manualError && <View style={styles.inlineError}><Ionicons name="alert-circle-outline" size={14} color={Colors.error} /><Text style={styles.inlineErrorText}>{manualError}</Text></View>}
+            <TouchableOpacity style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnLoading]} onPress={handleDota2Analyze} disabled={phase === 'analyzing'} activeOpacity={0.85}>
+              {phase === 'analyzing' ? <><ActivityIndicator color="#000" size="small" /><Text style={styles.predictBtnText}>Analyzing…</Text></> : <><Ionicons name="analytics-outline" size={16} color="#000" /><Text style={styles.predictBtnText}>Analyze</Text></>}
+            </TouchableOpacity>
+            <Modal visible={dota2ShowPropPicker} transparent animationType="slide" onRequestClose={() => setDota2ShowPropPicker(false)}>
+              <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setDota2ShowPropPicker(false)}>
+                <View style={styles.pickerModal}>
+                  {DOTA2_PROP_TYPES.map(p => (
+                    <TouchableOpacity key={p.value} style={[styles.pickerOption, dota2PropType === p.value && styles.pickerOptionActive]} onPress={() => { setDota2PropType(p.value); setDota2ShowPropPicker(false); }}>
+                      <Text style={[styles.pickerOptionText, dota2PropType === p.value && styles.pickerOptionTextActive]}>{p.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </TouchableOpacity>
+            </Modal>
+          </View>
+        )}
+
+        {/* ─── LoL Form ─── */}
+        {sport === 'lol' && phase === 'idle' && mode === 'manual' && (
+          <View style={styles.manualForm}>
+            <Text style={styles.fieldLabel}>Player</Text>
+            <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. Faker" placeholderTextColor={Colors.textTertiary} value={lolPlayerQuery}
+              onChangeText={async (q) => { setLolPlayerQuery(q); setLolResolvedPlayer(null); if (q.length >= 2) { setLolSearching(true); const r = await searchLolPlayers(q).catch(() => []); setLolPlayerResults(r); setLolSearching(false); } else { setLolPlayerResults([]); } }} autoCapitalize="none" />
+            {lolSearching && <ActivityIndicator size="small" color={Colors.primary} style={{ marginBottom: 6 }} />}
+            {lolPlayerResults.length > 0 && !lolResolvedPlayer && (
+              <View style={styles.autocompleteList}>
+                {lolPlayerResults.slice(0, 6).map((p: any) => (
+                  <TouchableOpacity key={p.id} style={styles.autocompleteItem} onPress={() => { setLolResolvedPlayer(p); setLolPlayerQuery(p.name || ''); setLolPlayerResults([]); }}>
+                    <Text style={styles.autocompleteText}>{p.name}</Text>
+                    {p.team?.name && <Text style={styles.autocompleteSubText}>{p.team.name} · {p.role || ''}</Text>}
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+            <Text style={styles.fieldLabel}>Opponent Team <Text style={styles.fieldLabelOpt}>(optional)</Text></Text>
+            <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. Cloud9" placeholderTextColor={Colors.textTertiary} value={lolOpponentQuery} onChangeText={setLolOpponentQuery} autoCapitalize="words" />
+            <Text style={styles.fieldLabel}>Prop Type</Text>
+            <TouchableOpacity style={styles.pickerBtn} onPress={() => setLolShowPropPicker(true)}>
+              <Text style={styles.pickerBtnText}>{LOL_PROP_TYPES.find(p => p.value === lolPropType)?.label || 'Select prop…'}</Text>
+              <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
+            </TouchableOpacity>
+            <Text style={styles.fieldLabel}>Line Value</Text>
+            <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. 5.5" placeholderTextColor={Colors.textTertiary} value={line} onChangeText={setLine} keyboardType="decimal-pad" />
+            {manualError && <View style={styles.inlineError}><Ionicons name="alert-circle-outline" size={14} color={Colors.error} /><Text style={styles.inlineErrorText}>{manualError}</Text></View>}
+            <TouchableOpacity style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnLoading]} onPress={handleLolAnalyze} disabled={phase === 'analyzing'} activeOpacity={0.85}>
+              {phase === 'analyzing' ? <><ActivityIndicator color="#000" size="small" /><Text style={styles.predictBtnText}>Analyzing…</Text></> : <><Ionicons name="analytics-outline" size={16} color="#000" /><Text style={styles.predictBtnText}>Analyze</Text></>}
+            </TouchableOpacity>
+            <Modal visible={lolShowPropPicker} transparent animationType="slide" onRequestClose={() => setLolShowPropPicker(false)}>
+              <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setLolShowPropPicker(false)}>
+                <View style={styles.pickerModal}>
+                  {LOL_PROP_TYPES.map(p => (
+                    <TouchableOpacity key={p.value} style={[styles.pickerOption, lolPropType === p.value && styles.pickerOptionActive]} onPress={() => { setLolPropType(p.value); setLolShowPropPicker(false); }}>
+                      <Text style={[styles.pickerOptionText, lolPropType === p.value && styles.pickerOptionTextActive]}>{p.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </TouchableOpacity>
+            </Modal>
+          </View>
+        )}
+
+        {/* ─── College Baseball Form ─── */}
+        {sport === 'cbase' && phase === 'idle' && mode === 'manual' && (
+          <View style={styles.manualForm}>
+            <Text style={styles.fieldLabel}>Player</Text>
+            <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. Paul Skenes" placeholderTextColor={Colors.textTertiary} value={cbasePlayerQuery}
+              onChangeText={async (q) => { setCbasePlayerQuery(q); setCbaseResolvedPlayer(null); if (q.length >= 2) { setCbaseSearching(true); const r = await searchCbasePlayers(q).catch(() => []); setCbasePlayerResults(r); setCbaseSearching(false); } else { setCbasePlayerResults([]); } }} autoCapitalize="words" />
+            {cbaseSearching && <ActivityIndicator size="small" color={Colors.primary} style={{ marginBottom: 6 }} />}
+            {cbasePlayerResults.length > 0 && !cbaseResolvedPlayer && (
+              <View style={styles.autocompleteList}>
+                {cbasePlayerResults.slice(0, 6).map((p: any) => (
+                  <TouchableOpacity key={p.id} style={styles.autocompleteItem} onPress={() => { setCbaseResolvedPlayer(p); setCbasePlayerQuery(p.display_name || p.name || ''); setCbasePlayerResults([]); }}>
+                    <Text style={styles.autocompleteText}>{p.display_name || p.name}</Text>
+                    {p.team?.name && <Text style={styles.autocompleteSubText}>{p.team.name} · {p.position || ''}</Text>}
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+            <Text style={styles.fieldLabel}>Opponent <Text style={styles.fieldLabelOpt}>(optional)</Text></Text>
+            <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. Florida Gators" placeholderTextColor={Colors.textTertiary} value={cbaseOpponentQuery} onChangeText={setCbaseOpponentQuery} autoCapitalize="words" />
+            <Text style={styles.fieldLabel}>Prop Type</Text>
+            <TouchableOpacity style={styles.pickerBtn} onPress={() => setCbaseShowPropPicker(true)}>
+              <Text style={styles.pickerBtnText}>{CBASE_PROP_TYPES.find(p => p.value === cbasePropType)?.label || 'Select prop…'}</Text>
+              <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
+            </TouchableOpacity>
+            <Text style={styles.fieldLabel}>Line Value</Text>
+            <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. 1.5" placeholderTextColor={Colors.textTertiary} value={line} onChangeText={setLine} keyboardType="decimal-pad" />
+            {manualError && <View style={styles.inlineError}><Ionicons name="alert-circle-outline" size={14} color={Colors.error} /><Text style={styles.inlineErrorText}>{manualError}</Text></View>}
+            <TouchableOpacity style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnLoading]} onPress={handleCbaseAnalyze} disabled={phase === 'analyzing'} activeOpacity={0.85}>
+              {phase === 'analyzing' ? <><ActivityIndicator color="#000" size="small" /><Text style={styles.predictBtnText}>Analyzing…</Text></> : <><Ionicons name="analytics-outline" size={16} color="#000" /><Text style={styles.predictBtnText}>Analyze</Text></>}
+            </TouchableOpacity>
+            <Modal visible={cbaseShowPropPicker} transparent animationType="slide" onRequestClose={() => setCbaseShowPropPicker(false)}>
+              <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setCbaseShowPropPicker(false)}>
+                <View style={styles.pickerModal}>
+                  {CBASE_PROP_TYPES.map(p => (
+                    <TouchableOpacity key={p.value} style={[styles.pickerOption, cbasePropType === p.value && styles.pickerOptionActive]} onPress={() => { setCbasePropType(p.value); setCbaseShowPropPicker(false); }}>
+                      <Text style={[styles.pickerOptionText, cbasePropType === p.value && styles.pickerOptionTextActive]}>{p.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </TouchableOpacity>
+            </Modal>
           </View>
         )}
 
@@ -4243,21 +4692,6 @@ export default function ScanScreen() {
         </TouchableOpacity>
       </Modal>
 
-      {/* AI Sport Prop Picker */}
-      <Modal visible={aiShowPropPicker} transparent animationType="fade">
-        <TouchableOpacity style={styles.modalOverlay} onPress={() => setAiShowPropPicker(false)} activeOpacity={1}>
-          <View style={styles.propPickerSheet}>
-            <Text style={styles.propPickerTitle}>Select Prop</Text>
-            <ScrollView>
-              {currentAiProps.map(p => (
-                <TouchableOpacity key={p.value} style={[styles.propPickerItem, aiPropType === p.value && styles.propPickerItemActive]} onPress={() => { setAiPropType(p.value); setAiShowPropPicker(false); }}>
-                  <Text style={[styles.propPickerText, aiPropType === p.value && { color: Colors.primary }]}>{p.label}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-        </TouchableOpacity>
-      </Modal>
     </View>
     </KeyboardAvoidingView>
   );

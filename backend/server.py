@@ -46,6 +46,13 @@ from routes.ncaab_routes import router as ncaab_router
 from routes.ncaaw_routes import router as ncaaw_router
 from routes.atp_routes import router as atp_router
 from routes.ai_sports_routes import router as ai_sport_router
+from routes.ncaaf_routes import router as ncaaf_router
+from routes.f1_routes import router as f1_router
+from routes.mma_routes import router as mma_router
+from routes.pga_routes import router as pga_router
+from routes.dota2_routes import router as dota2_router
+from routes.lol_routes import router as lol_router
+from routes.cbase_routes import router as cbase_router
 from routes.notifications import router as notifications_router
 from cache import seed_cache, background_refresh_loop
 
@@ -80,6 +87,13 @@ app.include_router(ncaab_router)
 app.include_router(ncaaw_router)
 app.include_router(atp_router)
 app.include_router(ai_sport_router)
+app.include_router(ncaaf_router)
+app.include_router(f1_router)
+app.include_router(mma_router)
+app.include_router(pga_router)
+app.include_router(dota2_router)
+app.include_router(lol_router)
+app.include_router(cbase_router)
 app.include_router(notifications_router)
 
 
