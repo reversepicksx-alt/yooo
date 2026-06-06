@@ -42,6 +42,10 @@ from routes.nba_routes import router as nba_router
 from routes.nfl_routes import router as nfl_router
 from routes.nhl_routes import router as nhl_router
 from routes.wnba_routes import router as wnba_router
+from routes.ncaab_routes import router as ncaab_router
+from routes.ncaaw_routes import router as ncaaw_router
+from routes.atp_routes import router as atp_router
+from routes.ai_sports_routes import router as ai_sport_router
 from routes.notifications import router as notifications_router
 from cache import seed_cache, background_refresh_loop
 
@@ -72,6 +76,10 @@ app.include_router(nba_router)
 app.include_router(nfl_router)
 app.include_router(nhl_router)
 app.include_router(wnba_router)
+app.include_router(ncaab_router)
+app.include_router(ncaaw_router)
+app.include_router(atp_router)
+app.include_router(ai_sport_router)
 app.include_router(notifications_router)
 
 
