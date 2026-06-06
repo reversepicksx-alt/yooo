@@ -5,17 +5,24 @@ from fastapi import APIRouter
 
 from config import CURRENT_SEASON, db
 from models import PlayerSearchRequest
-from utils import api_football_request
+from utils import api_football_request, is_quota_exhausted
 
 router = APIRouter(prefix="/api", tags=["players"])
 
+# Tournament / cup leagues — players aren't stored in cache under these IDs
+# (e.g. Messi is cached under his club league, not under World Cup league 1)
+_TOURNAMENT_LEAGUES = {1, 9, 10, 11, 13, 15, 16, 17, 18}
 
-async def _search_players_cache(query: str, league_id: int = None) -> list:
+
+async def _search_players_cache(query: str, league_id: int = None, relaxed: bool = False) -> list:
     """Fast MongoDB cache lookup for player search. Returns list of player dicts.
 
     For multi-word queries we require ALL words to appear in nameClean so that
     searching "van de ven" cannot accidentally match "Aravena" (contains "ven"
     but not "van" or "de").
+
+    ``relaxed=True`` skips the top-5-league gate so that quota-exhausted mode
+    still returns any name-matched player (e.g. Messi at Inter Miami).
     """
     from cache import COL_PLAYERS
     from utils import strip_accents
@@ -29,20 +36,28 @@ async def _search_players_cache(query: str, league_id: int = None) -> list:
 
     # Build filter: every word in the query must appear in nameClean
     if len(parts) == 1:
-        filt: dict = {"nameClean": {"$regex": re.escape(parts[0])}}
+        name_filt: dict = {"nameClean": {"$regex": re.escape(parts[0])}}
     else:
-        filt = {"$and": [{"nameClean": {"$regex": re.escape(w)}} for w in parts]}
+        name_filt = {"$and": [{"nameClean": {"$regex": re.escape(w)}} for w in parts]}
 
-    if league_id:
-        filt["leagueId"] = league_id
+    # Don't filter cache by tournament/cup league IDs — players are stored
+    # under their club leagues, not the competition they appeared in.
+    effective_league_id = None if (league_id in _TOURNAMENT_LEAGUES) else league_id
+
+    filt = dict(name_filt)
+    if effective_league_id:
+        filt["leagueId"] = effective_league_id
 
     docs = await db[COL_PLAYERS].find(filt, {"_id": 0}).limit(20).to_list(20)
 
+    # If league-constrained search returned nothing, retry without the league filter
+    if not docs and effective_league_id:
+        docs = await db[COL_PLAYERS].find(name_filt, {"_id": 0}).limit(20).to_list(20)
+
     # For single-word queries without a league constraint: only use the cache if
-    # it contains at least one top-5 European league player. Otherwise the cache
-    # may return e.g. Ecuadorian "Caicedos" while Chelsea's Moisés Caicedo is
-    # actually findable via the live API — so let Strategy 2 run instead.
-    if not league_id and len(parts) == 1 and docs:
+    # it contains at least one top-5 European league player — UNLESS relaxed mode
+    # is on (quota exhausted) in which case we accept any cached result.
+    if not effective_league_id and len(parts) == 1 and docs and not relaxed:
         if not any(d.get("leagueId") in TOP_LEAGUES for d in docs):
             return []
 
@@ -96,18 +111,62 @@ async def search_players(req: PlayerSearchRequest):
             "position": position,
         }
 
+    quota_gone = is_quota_exhausted()
+
+    # Sort helpers — defined early so they can be applied to cache hits too.
+    def _strip(s):
+        return ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn')
+    query_parts = [_strip(w.lower()) for w in req.query.strip().split()]
+    _TOP5_LEAGUES = {39, 140, 135, 78, 61}   # EPL, LaLiga, SerieA, Bund., Ligue1
+
+    def sort_key(p):
+        has_team    = 0 if p["teamName"] else 1
+        name_norm   = _strip(p["name"].lower())
+        first_norm  = _strip((p.get("firstname") or "").lower())
+        name_words  = set(name_norm.split())
+        all_match   = 0 if all(w in name_norm for w in query_parts) else 1
+        # Exact-word match: every query part appears as a complete word in the name.
+        # e.g. "messi" is a word in "l. messi" but NOT in "messias".
+        exact_word  = 0 if all(w in name_words for w in query_parts) else 1
+        first_match = 0 if query_parts and first_norm.startswith(query_parts[0]) else 1
+        top_league  = 0 if p.get("leagueId") in _TOP5_LEAGUES else 1
+        return (all_match, exact_word, top_league, has_team, first_match, p["name"])
+
+    def _apply_sort_and_quality(player_list):
+        player_list.sort(key=sort_key)
+        # Drop partial matches when any perfect (all-words) match exists
+        if any(sort_key(p)[0] == 0 for p in player_list):
+            player_list = [p for p in player_list if sort_key(p)[0] == 0]
+        return player_list[:15]
+
     # Strategy 0: MongoDB cache-first (fast, no quota usage)
+    # When quota is exhausted use relaxed mode — accept any name-matched player
+    # (e.g. Messi cached under Inter Miami, not World Cup league_id=1).
     try:
-        cache_results = await _search_players_cache(req.query, req.league_id)
+        cache_results = await _search_players_cache(req.query, req.league_id, relaxed=quota_gone)
         if cache_results:
-            return {"players": cache_results[:15]}
+            return {"players": _apply_sort_and_quality(cache_results)}
     except Exception:
         pass
 
+    # If quota is gone, relaxed cache already ran above and returned nothing —
+    # no point hitting the (circuit-broken) API; return empty cleanly.
+    if quota_gone:
+        return {"players": []}
+
     all_players = []
+
+    # For World Cup (league_id=1) and other tournament leagues the relevant
+    # seasons are fixed WC years, not current club season.
+    _WC_SEASONS = [2026, 2022, 2018, 2014]
 
     # Strategy 1: Search within specified league
     if req.league_id:
+        seasons_to_try = (
+            _WC_SEASONS if req.league_id == 1
+            else [season + 1, season, season - 1, season - 2]
+        )
+
         async def search_season(s):
             try:
                 data = await api_football_request("players", {"search": req.query, "league": req.league_id, "season": s})
@@ -115,7 +174,7 @@ async def search_players(req: PlayerSearchRequest):
             except Exception:
                 return []
 
-        results_by_season = await aio.gather(search_season(season + 1), search_season(season))
+        results_by_season = await aio.gather(*[search_season(s) for s in seasons_to_try[:2]])
         season_data = {}
         for season_results in results_by_season:
             for player_data, found_season in season_results:
@@ -125,7 +184,7 @@ async def search_players(req: PlayerSearchRequest):
         all_players = [v[0] for v in season_data.values()]
 
         if not all_players:
-            for s in [season - 1, season - 2]:
+            for s in seasons_to_try[2:]:
                 try:
                     data = await api_football_request("players", {"search": req.query, "league": req.league_id, "season": s})
                     if data:
@@ -143,7 +202,7 @@ async def search_players(req: PlayerSearchRequest):
                     return [(extract_player(item), s) for item in (data or [])]
                 except Exception:
                     return []
-            results_by_season = await aio.gather(search_season_lastname(season + 1), search_season_lastname(season))
+            results_by_season = await aio.gather(*[search_season_lastname(s) for s in seasons_to_try[:2]])
             season_data = {}
             for season_results in results_by_season:
                 for player_data, found_season in season_results:
@@ -152,7 +211,7 @@ async def search_players(req: PlayerSearchRequest):
                         season_data[pid] = (player_data, found_season)
             all_players = [v[0] for v in season_data.values()]
             if not all_players:
-                for s in [season - 1]:
+                for s in seasons_to_try[2:3]:
                     try:
                         data = await api_football_request("players", {"search": last_name, "league": req.league_id, "season": s})
                         if data:
@@ -236,32 +295,10 @@ async def search_players(req: PlayerSearchRequest):
 
     aio.ensure_future(_enrich_player_cache(players))
 
-    # Sort — all_match is the PRIMARY criterion so a perfect name match
-    # (e.g. "van de Ven") always beats a team-enriched partial match (e.g. "Aravena").
-    def _strip(s):
-        return ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn')
-    query_parts = [_strip(w.lower()) for w in req.query.strip().split()]
-    _TOP5_LEAGUES = {39, 140, 135, 78, 61}   # EPL, LaLiga, SerieA, Bund., Ligue1
-
-    def sort_key(p):
-        has_team    = 0 if p["teamName"] else 1
-        name_norm   = _strip(p["name"].lower())
-        first_norm  = _strip((p["firstname"] or "").lower())
-        all_match   = 0 if all(w in name_norm for w in query_parts) else 1
-        first_match = 0 if query_parts and first_norm.startswith(query_parts[0]) else 1
-        # Prefer top-5 European leagues — e.g. Chelsea's Moisés Caicedo over
-        # Ecuadorian Caicedos when the user just types "caicedo".
-        top_league  = 0 if p.get("leagueId") in _TOP5_LEAGUES else 1
-        return (all_match, top_league, has_team, first_match, p["name"])
-    players.sort(key=sort_key)
-
-    # Quality filter: if we have any perfect-match player (all query words in name),
-    # drop the partial-match players — they are almost always wrong (e.g. "Aravena"
-    # when searching "van de ven" because they share the letters "ven").
-    if any(sort_key(p)[0] == 0 for p in players):
-        players = [p for p in players if sort_key(p)[0] == 0]
-
-    return {"players": players[:15]}
+    # Sort and quality-filter using helpers defined at the top of the handler.
+    # all_match is the PRIMARY criterion so a perfect name match (e.g. "van de Ven")
+    # always beats a team-enriched partial match (e.g. "Aravena").
+    return {"players": _apply_sort_and_quality(players)}
 
 
 @router.get("/leagues/search")
