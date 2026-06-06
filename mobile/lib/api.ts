@@ -1581,3 +1581,281 @@ export async function unregisterPushToken(payload: {
     body: JSON.stringify(payload),
   });
 }
+
+// ─── NBA ─────────────────────────────────────────────────────────────────────
+
+export const NBA_PROP_TYPES = [
+  { value: 'points',        label: 'Points' },
+  { value: 'rebounds',      label: 'Rebounds' },
+  { value: 'assists',       label: 'Assists' },
+  { value: 'steals',        label: 'Steals' },
+  { value: 'blocks',        label: 'Blocks' },
+  { value: 'turnovers',     label: 'Turnovers' },
+  { value: 'three_pointers', label: '3-Pointers Made' },
+  { value: 'pts_reb_ast',   label: 'Pts+Reb+Ast' },
+  { value: 'pts_reb',       label: 'Pts+Reb' },
+  { value: 'pts_ast',       label: 'Pts+Ast' },
+  { value: 'reb_ast',       label: 'Reb+Ast' },
+  { value: 'stl_blk',       label: 'Stl+Blk' },
+  { value: 'free_throws',   label: 'Free Throws Made' },
+  { value: 'field_goals',   label: 'Field Goals Made' },
+  { value: 'fantasy_points', label: 'Fantasy Points (DK)' },
+];
+
+export async function searchNbaPlayers(query: string): Promise<any[]> {
+  if (!query || query.length < 2) return [];
+  const data = await apiCall<any[]>(`/api/nba/players/search?q=${encodeURIComponent(query)}`);
+  return Array.isArray(data) ? data : [];
+}
+
+export async function nbaPredict(request: Record<string, unknown>): Promise<PredictionResult> {
+  const raw = await apiCall<any>('/api/nba/predict', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+  if (raw.error) return { error: raw.error } as PredictionResult;
+  const rec = (raw.recommendation || '').toUpperCase() as 'OVER' | 'UNDER' | 'PASS';
+  const gameLogs = (raw.gameLogs || []).map((g: any) => ({
+    date:     g.date ?? '',
+    opponent: g.opponent ?? '',
+    venue:    g.venue ?? '',
+    value:    g.value ?? null,
+    minutes:  g.minutes ?? null,
+    pts:      g.pts ?? null,
+    reb:      g.reb ?? null,
+    ast:      g.ast ?? null,
+    sport:    'nba',
+  }));
+  return {
+    sport:              'nba',
+    playerName:         raw.playerName || '',
+    playerId:           raw.playerId,
+    teamName:           raw.teamName || '',
+    opponentName:       raw.opponentName || '',
+    propType:           raw.propType || '',
+    line:               raw.line ?? 0,
+    projection:         raw.projection,
+    bayesianProjection: raw.projection,
+    confidence:         raw.confidenceScore,
+    confidenceScore:    raw.confidenceScore,
+    rawConfidence:      raw.rawConfidence ?? raw.confidenceScore,
+    confidenceLevel:    raw.confidenceLevel,
+    recommendation:     rec,
+    pOver:              raw.pOver,
+    pUnder:             raw.pUnder,
+    sharpSummary:       raw.sharpSummary,
+    reasoning:          raw.reasoning,
+    tacticalBreakdown:  raw.tacticalBreakdown,
+    streakFlag:         raw.streakFlag,
+    priorMean:          raw.priorMean,
+    sampleSize:         raw.sampleSize,
+    gameLogs,
+    bayesianMetrics:    { priorMean: raw.priorMean, sampleSize: raw.sampleSize },
+  } as unknown as PredictionResult;
+}
+
+// ─── NFL ─────────────────────────────────────────────────────────────────────
+
+export const NFL_PROP_TYPES = [
+  { value: 'passing_yards',       label: 'Passing Yards' },
+  { value: 'passing_tds',         label: 'Passing TDs' },
+  { value: 'completions',         label: 'Completions' },
+  { value: 'pass_attempts',       label: 'Pass Attempts' },
+  { value: 'interceptions',       label: 'Interceptions' },
+  { value: 'rushing_yards',       label: 'Rushing Yards' },
+  { value: 'rushing_tds',         label: 'Rushing TDs' },
+  { value: 'carries',             label: 'Carries' },
+  { value: 'receiving_yards',     label: 'Receiving Yards' },
+  { value: 'receiving_tds',       label: 'Receiving TDs' },
+  { value: 'receptions',          label: 'Receptions' },
+  { value: 'targets',             label: 'Targets' },
+  { value: 'fantasy_points',      label: 'Fantasy Points (DK)' },
+  { value: 'passing_rushing_yards', label: 'Pass+Rush Yards' },
+];
+
+export async function searchNflPlayers(query: string): Promise<any[]> {
+  if (!query || query.length < 2) return [];
+  const data = await apiCall<any[]>(`/api/nfl/players/search?q=${encodeURIComponent(query)}`);
+  return Array.isArray(data) ? data : [];
+}
+
+export async function nflPredict(request: Record<string, unknown>): Promise<PredictionResult> {
+  const raw = await apiCall<any>('/api/nfl/predict', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+  if (raw.error) return { error: raw.error } as PredictionResult;
+  const rec = (raw.recommendation || '').toUpperCase() as 'OVER' | 'UNDER' | 'PASS';
+  const gameLogs = (raw.gameLogs || []).map((g: any) => ({
+    date:            g.date ?? '',
+    venue:           g.venue ?? '',
+    value:           g.value ?? null,
+    week:            g.week ?? null,
+    passing_yards:   g.passing_yards ?? null,
+    rushing_yards:   g.rushing_yards ?? null,
+    receiving_yards: g.receiving_yards ?? null,
+    receptions:      g.receptions ?? null,
+    sport:           'nfl',
+  }));
+  return {
+    sport:              'nfl',
+    playerName:         raw.playerName || '',
+    playerId:           raw.playerId,
+    teamName:           raw.teamName || '',
+    opponentName:       raw.opponentName || '',
+    propType:           raw.propType || '',
+    line:               raw.line ?? 0,
+    projection:         raw.projection,
+    bayesianProjection: raw.projection,
+    confidence:         raw.confidenceScore,
+    confidenceScore:    raw.confidenceScore,
+    rawConfidence:      raw.rawConfidence ?? raw.confidenceScore,
+    confidenceLevel:    raw.confidenceLevel,
+    recommendation:     rec,
+    pOver:              raw.pOver,
+    pUnder:             raw.pUnder,
+    sharpSummary:       raw.sharpSummary,
+    reasoning:          raw.reasoning,
+    tacticalBreakdown:  raw.tacticalBreakdown,
+    streakFlag:         raw.streakFlag,
+    priorMean:          raw.priorMean,
+    sampleSize:         raw.sampleSize,
+    gameLogs,
+    bayesianMetrics:    { priorMean: raw.priorMean, sampleSize: raw.sampleSize },
+  } as unknown as PredictionResult;
+}
+
+// ─── NHL ─────────────────────────────────────────────────────────────────────
+
+export const NHL_PROP_TYPES = [
+  { value: 'goals',         label: 'Goals' },
+  { value: 'assists',       label: 'Assists' },
+  { value: 'points',        label: 'Points (G+A)' },
+  { value: 'shots',         label: 'Shots on Goal' },
+  { value: 'blocked_shots', label: 'Blocked Shots' },
+  { value: 'hits',          label: 'Hits' },
+  { value: 'pim',           label: 'Penalty Minutes' },
+  { value: 'saves',         label: 'Saves (Goalie)' },
+  { value: 'goals_against', label: 'Goals Against (Goalie)' },
+  { value: 'save_pct',      label: 'Save % (Goalie)' },
+];
+
+export async function searchNhlPlayers(query: string): Promise<any[]> {
+  if (!query || query.length < 2) return [];
+  const data = await apiCall<any[]>(`/api/nhl/players/search?q=${encodeURIComponent(query)}`);
+  return Array.isArray(data) ? data : [];
+}
+
+export async function nhlPredict(request: Record<string, unknown>): Promise<PredictionResult> {
+  const raw = await apiCall<any>('/api/nhl/predict', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+  if (raw.error) return { error: raw.error } as PredictionResult;
+  const rec = (raw.recommendation || '').toUpperCase() as 'OVER' | 'UNDER' | 'PASS';
+  const gameLogs = (raw.gameLogs || []).map((g: any) => ({
+    date:    g.date ?? '',
+    venue:   g.venue ?? '',
+    value:   g.value ?? null,
+    goals:   g.goals ?? null,
+    assists: g.assists ?? null,
+    shots:   g.shots ?? null,
+    toi:     g.toi ?? null,
+    saves:   g.saves ?? null,
+    sport:   'nhl',
+  }));
+  return {
+    sport:              'nhl',
+    playerName:         raw.playerName || '',
+    playerId:           raw.playerId,
+    teamName:           raw.teamName || '',
+    opponentName:       raw.opponentName || '',
+    propType:           raw.propType || '',
+    line:               raw.line ?? 0,
+    projection:         raw.projection,
+    bayesianProjection: raw.projection,
+    confidence:         raw.confidenceScore,
+    confidenceScore:    raw.confidenceScore,
+    rawConfidence:      raw.rawConfidence ?? raw.confidenceScore,
+    confidenceLevel:    raw.confidenceLevel,
+    recommendation:     rec,
+    pOver:              raw.pOver,
+    pUnder:             raw.pUnder,
+    sharpSummary:       raw.sharpSummary,
+    reasoning:          raw.reasoning,
+    tacticalBreakdown:  raw.tacticalBreakdown,
+    streakFlag:         raw.streakFlag,
+    priorMean:          raw.priorMean,
+    sampleSize:         raw.sampleSize,
+    gameLogs,
+    bayesianMetrics:    { priorMean: raw.priorMean, sampleSize: raw.sampleSize },
+  } as unknown as PredictionResult;
+}
+
+// ─── WNBA ────────────────────────────────────────────────────────────────────
+
+export const WNBA_PROP_TYPES = [
+  { value: 'points',        label: 'Points' },
+  { value: 'rebounds',      label: 'Rebounds' },
+  { value: 'assists',       label: 'Assists' },
+  { value: 'steals',        label: 'Steals' },
+  { value: 'blocks',        label: 'Blocks' },
+  { value: 'turnovers',     label: 'Turnovers' },
+  { value: 'three_pointers', label: '3-Pointers Made' },
+  { value: 'pts_reb_ast',   label: 'Pts+Reb+Ast' },
+  { value: 'pts_reb',       label: 'Pts+Reb' },
+  { value: 'pts_ast',       label: 'Pts+Ast' },
+  { value: 'reb_ast',       label: 'Reb+Ast' },
+  { value: 'free_throws',   label: 'Free Throws Made' },
+  { value: 'fantasy_points', label: 'Fantasy Points' },
+];
+
+export async function searchWnbaPlayers(query: string): Promise<any[]> {
+  if (!query || query.length < 2) return [];
+  const data = await apiCall<any[]>(`/api/wnba/players/search?q=${encodeURIComponent(query)}`);
+  return Array.isArray(data) ? data : [];
+}
+
+export async function wnbaPredict(request: Record<string, unknown>): Promise<PredictionResult> {
+  const raw = await apiCall<any>('/api/wnba/predict', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+  if (raw.error) return { error: raw.error } as PredictionResult;
+  const rec = (raw.recommendation || '').toUpperCase() as 'OVER' | 'UNDER' | 'PASS';
+  const gameLogs = (raw.gameLogs || []).map((g: any) => ({
+    date:  g.date ?? '',
+    venue: g.venue ?? '',
+    value: g.value ?? null,
+    pts:   g.pts ?? null,
+    reb:   g.reb ?? null,
+    ast:   g.ast ?? null,
+    sport: 'wnba',
+  }));
+  return {
+    sport:              'wnba',
+    playerName:         raw.playerName || '',
+    playerId:           raw.playerId,
+    teamName:           raw.teamName || '',
+    opponentName:       raw.opponentName || '',
+    propType:           raw.propType || '',
+    line:               raw.line ?? 0,
+    projection:         raw.projection,
+    bayesianProjection: raw.projection,
+    confidence:         raw.confidenceScore,
+    confidenceScore:    raw.confidenceScore,
+    rawConfidence:      raw.rawConfidence ?? raw.confidenceScore,
+    confidenceLevel:    raw.confidenceLevel,
+    recommendation:     rec,
+    pOver:              raw.pOver,
+    pUnder:             raw.pUnder,
+    sharpSummary:       raw.sharpSummary,
+    reasoning:          raw.reasoning,
+    tacticalBreakdown:  raw.tacticalBreakdown,
+    streakFlag:         raw.streakFlag,
+    priorMean:          raw.priorMean,
+    sampleSize:         raw.sampleSize,
+    gameLogs,
+    bayesianMetrics:    { priorMean: raw.priorMean, sampleSize: raw.sampleSize },
+  } as unknown as PredictionResult;
+}

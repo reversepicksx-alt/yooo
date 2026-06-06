@@ -11,7 +11,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import { useQueryClient } from '@tanstack/react-query';
-import { scanProp, predict, mlbPredict, getMlbGameContext, cs2Predict, wtaPredict, savePick, searchMlbPlayers, searchCs2Players, searchCs2Teams, searchWtaPlayers, PROP_TYPES, MLB_PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, LEAGUES, PredictionResult, ScanResult, MlbPlayer, Cs2Player, Cs2Team, WtaPlayer } from '@/lib/api';
+import { scanProp, predict, mlbPredict, getMlbGameContext, cs2Predict, wtaPredict, nbaPredict, nflPredict, nhlPredict, wnbaPredict, searchNbaPlayers, searchNflPlayers, searchNhlPlayers, searchWnbaPlayers, savePick, searchMlbPlayers, searchCs2Players, searchCs2Teams, searchWtaPlayers, PROP_TYPES, MLB_PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, NBA_PROP_TYPES, NFL_PROP_TYPES, NHL_PROP_TYPES, WNBA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, LEAGUES, PredictionResult, ScanResult, MlbPlayer, Cs2Player, Cs2Team, WtaPlayer } from '@/lib/api';
 import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult, FuzzyLeagueResult } from '@/components/FuzzySearchInput';
 import LeaguePickerModal from '@/components/LeaguePickerModal';
 import { useAuth } from '@/contexts/AuthContext';
@@ -96,7 +96,7 @@ const BAND_LABEL: Record<string, string> = {
 
 type Mode = 'scan' | 'manual';
 type Phase = 'idle' | 'scanning' | 'detected' | 'analyzing' | 'result' | 'saved';
-type Sport = 'soccer' | 'mlb' | 'cs2' | 'wta';
+type Sport = 'soccer' | 'mlb' | 'cs2' | 'wta' | 'nba' | 'nfl' | 'nhl' | 'wnba';
 
 export default function ScanScreen() {
   const insets = useSafeAreaInsets();
@@ -201,6 +201,42 @@ export default function ScanScreen() {
   const [wtaRound, setWtaRound] = useState<string>('R32');
   const [wtaShowRoundPicker, setWtaShowRoundPicker] = useState(false);
 
+  // NBA manual mode fields
+  const [nbaPlayerQuery, setNbaPlayerQuery] = useState('');
+  const [nbaResolvedPlayer, setNbaResolvedPlayer] = useState<any | null>(null);
+  const [nbaOpponentQuery, setNbaOpponentQuery] = useState('');
+  const [nbaPropType, setNbaPropType] = useState('points');
+  const [nbaShowPropPicker, setNbaShowPropPicker] = useState(false);
+  const [nbaPlayerResults, setNbaPlayerResults] = useState<any[]>([]);
+  const [nbaSearching, setNbaSearching] = useState(false);
+
+  // NFL manual mode fields
+  const [nflPlayerQuery, setNflPlayerQuery] = useState('');
+  const [nflResolvedPlayer, setNflResolvedPlayer] = useState<any | null>(null);
+  const [nflOpponentQuery, setNflOpponentQuery] = useState('');
+  const [nflPropType, setNflPropType] = useState('passing_yards');
+  const [nflShowPropPicker, setNflShowPropPicker] = useState(false);
+  const [nflPlayerResults, setNflPlayerResults] = useState<any[]>([]);
+  const [nflSearching, setNflSearching] = useState(false);
+  const [nflGameTotal, setNflGameTotal] = useState('');
+
+  // NHL manual mode fields
+  const [nhlPlayerQuery, setNhlPlayerQuery] = useState('');
+  const [nhlResolvedPlayer, setNhlResolvedPlayer] = useState<any | null>(null);
+  const [nhlOpponentQuery, setNhlOpponentQuery] = useState('');
+  const [nhlPropType, setNhlPropType] = useState('points');
+  const [nhlShowPropPicker, setNhlShowPropPicker] = useState(false);
+  const [nhlPlayerResults, setNhlPlayerResults] = useState<any[]>([]);
+  const [nhlSearching, setNhlSearching] = useState(false);
+
+  // WNBA manual mode fields
+  const [wnbaPlayerQuery, setWnbaPlayerQuery] = useState('');
+  const [wnbaResolvedPlayer, setWnbaResolvedPlayer] = useState<any | null>(null);
+  const [wnbaOpponentQuery, setWnbaOpponentQuery] = useState('');
+  const [wnbaPropType, setWnbaPropType] = useState('points');
+  const [wnbaShowPropPicker, setWnbaShowPropPicker] = useState(false);
+  const [wnbaPlayerResults, setWnbaPlayerResults] = useState<any[]>([]);
+  const [wnbaSearching, setWnbaSearching] = useState(false);
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const analysisRef = useRef<any>(null);
@@ -294,6 +330,27 @@ export default function ScanScreen() {
     setWtaPropType('total_games');
     setWtaSurface('Hard');
     setWtaRound('R32');
+    // NBA
+    setNbaPlayerQuery('');
+    setNbaResolvedPlayer(null);
+    setNbaOpponentQuery('');
+    setNbaPlayerResults([]);
+    // NFL
+    setNflPlayerQuery('');
+    setNflResolvedPlayer(null);
+    setNflOpponentQuery('');
+    setNflPlayerResults([]);
+    setNflGameTotal('');
+    // NHL
+    setNhlPlayerQuery('');
+    setNhlResolvedPlayer(null);
+    setNhlOpponentQuery('');
+    setNhlPlayerResults([]);
+    // WNBA
+    setWnbaPlayerQuery('');
+    setWnbaResolvedPlayer(null);
+    setWnbaOpponentQuery('');
+    setWnbaPlayerResults([]);
   };
 
   const processImage = async (base64: string, uri: string) => {
@@ -600,6 +657,139 @@ export default function ScanScreen() {
     }
   };
 
+  // ── NBA/NFL/NHL/WNBA player search helpers ───────────────────────────────
+  const searchBdlPlayers = async (
+    query: string,
+    searchFn: (q: string) => Promise<any[]>,
+    setResults: (r: any[]) => void,
+    setSearching: (b: boolean) => void,
+  ) => {
+    if (!query || query.length < 2) { setResults([]); return; }
+    setSearching(true);
+    try {
+      const r = await searchFn(query);
+      setResults(r || []);
+    } catch { setResults([]); }
+    finally { setSearching(false); }
+  };
+
+  // ── NBA analyze ────────────────────────────────────────────────────────────
+  const handleNbaAnalyze = async () => {
+    if (!nbaPlayerQuery.trim()) { setManualError('Enter a player name.'); return; }
+    if (!line.trim() || isNaN(parseFloat(line))) { setManualError('Enter a valid line value.'); return; }
+    setManualError(null);
+    setPhase('analyzing');
+    try {
+      const result = await nbaPredict({
+        playerName:   nbaPlayerQuery.trim(),
+        playerId:     nbaResolvedPlayer?.id || null,
+        teamName:     nbaResolvedPlayer?.team?.full_name || nbaResolvedPlayer?.team?.fullName || '',
+        position:     nbaResolvedPlayer?.position || '',
+        propType:     nbaPropType,
+        line:         parseFloat(line),
+        opponentName: nbaOpponentQuery.trim() || '',
+        venue:        venueOverride,
+        season:       2024,
+      });
+      if ((result as any).error) { setManualError((result as any).error); setPhase('idle'); return; }
+      setScanResult({ playerName: result.playerName || nbaPlayerQuery.trim(), propType: nbaPropType, line: parseFloat(line), teamName: result.teamName || '', opponentName: nbaOpponentQuery.trim() || '', leagueId: 0 });
+      setPrediction(result);
+      setPhase('result');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e: unknown) {
+      setManualError(e instanceof Error ? e.message : 'NBA analysis failed — try again');
+      setPhase('idle');
+    }
+  };
+
+  // ── NFL analyze ────────────────────────────────────────────────────────────
+  const handleNflAnalyze = async () => {
+    if (!nflPlayerQuery.trim()) { setManualError('Enter a player name.'); return; }
+    if (!line.trim() || isNaN(parseFloat(line))) { setManualError('Enter a valid line value.'); return; }
+    setManualError(null);
+    setPhase('analyzing');
+    try {
+      const result = await nflPredict({
+        playerName:   nflPlayerQuery.trim(),
+        playerId:     nflResolvedPlayer?.id || null,
+        teamName:     nflResolvedPlayer?.team?.full_name || nflResolvedPlayer?.team?.fullName || '',
+        position:     nflResolvedPlayer?.position || '',
+        propType:     nflPropType,
+        line:         parseFloat(line),
+        opponentName: nflOpponentQuery.trim() || '',
+        venue:        venueOverride,
+        season:       2024,
+        gameTotal:    nflGameTotal ? parseFloat(nflGameTotal) : undefined,
+      });
+      if ((result as any).error) { setManualError((result as any).error); setPhase('idle'); return; }
+      setScanResult({ playerName: result.playerName || nflPlayerQuery.trim(), propType: nflPropType, line: parseFloat(line), teamName: result.teamName || '', opponentName: nflOpponentQuery.trim() || '', leagueId: 0 });
+      setPrediction(result);
+      setPhase('result');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e: unknown) {
+      setManualError(e instanceof Error ? e.message : 'NFL analysis failed — try again');
+      setPhase('idle');
+    }
+  };
+
+  // ── NHL analyze ────────────────────────────────────────────────────────────
+  const handleNhlAnalyze = async () => {
+    if (!nhlPlayerQuery.trim()) { setManualError('Enter a player name.'); return; }
+    if (!line.trim() || isNaN(parseFloat(line))) { setManualError('Enter a valid line value.'); return; }
+    setManualError(null);
+    setPhase('analyzing');
+    try {
+      const result = await nhlPredict({
+        playerName:   nhlPlayerQuery.trim(),
+        playerId:     nhlResolvedPlayer?.id || null,
+        teamName:     nhlResolvedPlayer?.team?.full_name || nhlResolvedPlayer?.team?.fullName || '',
+        position:     nhlResolvedPlayer?.position || '',
+        propType:     nhlPropType,
+        line:         parseFloat(line),
+        opponentName: nhlOpponentQuery.trim() || '',
+        venue:        venueOverride,
+        season:       '20242025',
+      });
+      if ((result as any).error) { setManualError((result as any).error); setPhase('idle'); return; }
+      setScanResult({ playerName: result.playerName || nhlPlayerQuery.trim(), propType: nhlPropType, line: parseFloat(line), teamName: result.teamName || '', opponentName: nhlOpponentQuery.trim() || '', leagueId: 0 });
+      setPrediction(result);
+      setPhase('result');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e: unknown) {
+      setManualError(e instanceof Error ? e.message : 'NHL analysis failed — try again');
+      setPhase('idle');
+    }
+  };
+
+  // ── WNBA analyze ───────────────────────────────────────────────────────────
+  const handleWnbaAnalyze = async () => {
+    if (!wnbaPlayerQuery.trim()) { setManualError('Enter a player name.'); return; }
+    if (!line.trim() || isNaN(parseFloat(line))) { setManualError('Enter a valid line value.'); return; }
+    setManualError(null);
+    setPhase('analyzing');
+    try {
+      const result = await wnbaPredict({
+        playerName:   wnbaPlayerQuery.trim(),
+        playerId:     wnbaResolvedPlayer?.id || null,
+        teamName:     wnbaResolvedPlayer?.team?.full_name || wnbaResolvedPlayer?.team?.fullName || '',
+        position:     wnbaResolvedPlayer?.position || '',
+        propType:     wnbaPropType,
+        line:         parseFloat(line),
+        opponentName: wnbaOpponentQuery.trim() || '',
+        venue:        venueOverride,
+        season:       2025,
+      });
+      if ((result as any).error) { setManualError((result as any).error); setPhase('idle'); return; }
+      setScanResult({ playerName: result.playerName || wnbaPlayerQuery.trim(), propType: wnbaPropType, line: parseFloat(line), teamName: result.teamName || '', opponentName: wnbaOpponentQuery.trim() || '', leagueId: 0 });
+      setPrediction(result);
+      setPhase('result');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e: unknown) {
+      setManualError(e instanceof Error ? e.message : 'WNBA analysis failed — try again');
+      setPhase('idle');
+    }
+  };
+
   // ── WTA handlers ─────────────────────────────────────────────────────────
   const handleWtaAnalyze = async () => {
     if (!wtaPlayerQuery.trim()) { setManualError('Enter a player name.'); return; }
@@ -770,12 +960,12 @@ export default function ScanScreen() {
                 >
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                     <Ionicons
-                      name={sport === 'soccer' ? 'football' : sport === 'mlb' ? 'baseball' : sport === 'cs2' ? 'game-controller' : 'tennisball'}
+                      name={sport === 'soccer' ? 'football' : sport === 'mlb' ? 'baseball' : sport === 'cs2' ? 'game-controller' : sport === 'wta' ? 'tennisball' : sport === 'nba' ? 'basketball' : sport === 'nfl' ? 'american-football' : sport === 'nhl' ? 'snow' : 'star'}
                       size={18}
                       color={Colors.primary}
                     />
                     <Text style={styles.sportSelectorText}>
-                      {sport === 'soccer' ? 'Soccer' : sport === 'mlb' ? 'MLB' : sport === 'cs2' ? 'CS2' : 'WTA'}
+                      {sport === 'soccer' ? 'Soccer' : sport === 'mlb' ? 'MLB' : sport === 'cs2' ? 'CS2' : sport === 'wta' ? 'WTA' : sport === 'nba' ? 'NBA' : sport === 'nfl' ? 'NFL' : sport === 'nhl' ? 'NHL' : 'WNBA'}
                     </Text>
                   </View>
                   <Text style={styles.sportSelectorChange}>Change</Text>
@@ -1283,6 +1473,267 @@ export default function ScanScreen() {
                   <Text style={styles.predictBtnText}>Analyze</Text>
                 </>
               )}
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* ─── NBA MANUAL FORM ─── */}
+        {sport === 'nba' && phase !== 'result' && phase !== 'saved' && (
+          <View style={styles.manualForm}>
+            {scanFillHint && (
+              <View style={styles.scanFillHint}>
+                <Ionicons name="checkmark-circle-outline" size={13} color={Colors.primary} />
+                <Text style={styles.scanFillHintText}>{scanFillHint}</Text>
+              </View>
+            )}
+            <Text style={styles.fieldLabel}>Player</Text>
+            <TextInput
+              style={[styles.textInput, INPUT_STYLE]}
+              placeholder="e.g. LeBron James, Stephen Curry"
+              placeholderTextColor={Colors.textTertiary}
+              value={nbaPlayerQuery}
+              onChangeText={(t) => {
+                setNbaPlayerQuery(t);
+                if (!t) { setNbaResolvedPlayer(null); setNbaPlayerResults([]); return; }
+                searchBdlPlayers(t, searchNbaPlayers, setNbaPlayerResults, setNbaSearching);
+              }}
+              autoCapitalize="words"
+            />
+            {nbaSearching && <ActivityIndicator size="small" color={Colors.primary} style={{ marginTop: 4 }} />}
+            {nbaPlayerResults.length > 0 && !nbaResolvedPlayer && (
+              <View style={styles.autocompleteList}>
+                {nbaPlayerResults.slice(0, 5).map((p) => (
+                  <TouchableOpacity key={p.id} style={styles.autocompleteItem} onPress={() => {
+                    setNbaResolvedPlayer(p);
+                    setNbaPlayerQuery(p.fullName || `${p.firstName || ''} ${p.lastName || ''}`.trim());
+                    setNbaPlayerResults([]);
+                    Haptics.selectionAsync();
+                  }}>
+                    <Text style={styles.autocompleteText}>{p.fullName || `${p.firstName || ''} ${p.lastName || ''}`.trim()}</Text>
+                    {p.team?.full_name || p.team?.fullName ? <Text style={styles.autocompleteSubText}>{p.team.full_name || p.team.fullName} · {p.position}</Text> : null}
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+            {nbaResolvedPlayer && (
+              <View style={styles.resolvedBadge}>
+                <Ionicons name="checkmark-circle" size={14} color={Colors.primary} />
+                <Text style={styles.resolvedBadgeText}>{nbaResolvedPlayer.team?.full_name || nbaResolvedPlayer.team?.fullName || ''} · {nbaResolvedPlayer.position || ''}</Text>
+                <TouchableOpacity onPress={() => { setNbaResolvedPlayer(null); setNbaPlayerQuery(''); }}>
+                  <Ionicons name="close-circle" size={14} color={Colors.textSecondary} />
+                </TouchableOpacity>
+              </View>
+            )}
+            <Text style={styles.fieldLabel}>Opponent <Text style={styles.fieldLabelOpt}>(optional)</Text></Text>
+            <TextInput
+              style={[styles.textInput, INPUT_STYLE]}
+              placeholder="e.g. Celtics, Lakers"
+              placeholderTextColor={Colors.textTertiary}
+              value={nbaOpponentQuery}
+              onChangeText={setNbaOpponentQuery}
+              autoCapitalize="words"
+            />
+            <Text style={styles.fieldLabel}>Prop Type</Text>
+            <TouchableOpacity style={styles.pickerBtn} onPress={() => setNbaShowPropPicker(true)}>
+              <Text style={styles.pickerBtnText}>{NBA_PROP_TYPES.find(p => p.value === nbaPropType)?.label || 'Select'}</Text>
+              <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
+            </TouchableOpacity>
+            <Text style={styles.fieldLabel}>Line Value</Text>
+            <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. 24.5" placeholderTextColor={Colors.textTertiary} value={line} onChangeText={setLine} keyboardType="decimal-pad" />
+            {manualError && <View style={styles.inlineError}><Ionicons name="alert-circle-outline" size={14} color={Colors.error} /><Text style={styles.inlineErrorText}>{manualError}</Text></View>}
+            <TouchableOpacity style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnLoading]} onPress={handleNbaAnalyze} disabled={phase === 'analyzing'} activeOpacity={0.85}>
+              {phase === 'analyzing' ? <><ActivityIndicator color="#000" size="small" /><Text style={styles.predictBtnText}>Analyzing…</Text></> : <><Ionicons name="analytics-outline" size={16} color="#000" /><Text style={styles.predictBtnText}>Analyze</Text></>}
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* ─── NFL MANUAL FORM ─── */}
+        {sport === 'nfl' && phase !== 'result' && phase !== 'saved' && (
+          <View style={styles.manualForm}>
+            {scanFillHint && (
+              <View style={styles.scanFillHint}>
+                <Ionicons name="checkmark-circle-outline" size={13} color={Colors.primary} />
+                <Text style={styles.scanFillHintText}>{scanFillHint}</Text>
+              </View>
+            )}
+            <Text style={styles.fieldLabel}>Player</Text>
+            <TextInput
+              style={[styles.textInput, INPUT_STYLE]}
+              placeholder="e.g. Patrick Mahomes, Justin Jefferson"
+              placeholderTextColor={Colors.textTertiary}
+              value={nflPlayerQuery}
+              onChangeText={(t) => {
+                setNflPlayerQuery(t);
+                if (!t) { setNflResolvedPlayer(null); setNflPlayerResults([]); return; }
+                searchBdlPlayers(t, searchNflPlayers, setNflPlayerResults, setNflSearching);
+              }}
+              autoCapitalize="words"
+            />
+            {nflSearching && <ActivityIndicator size="small" color={Colors.primary} style={{ marginTop: 4 }} />}
+            {nflPlayerResults.length > 0 && !nflResolvedPlayer && (
+              <View style={styles.autocompleteList}>
+                {nflPlayerResults.slice(0, 5).map((p) => (
+                  <TouchableOpacity key={p.id} style={styles.autocompleteItem} onPress={() => {
+                    setNflResolvedPlayer(p);
+                    setNflPlayerQuery(p.fullName || `${p.firstName || ''} ${p.lastName || ''}`.trim());
+                    setNflPlayerResults([]);
+                    Haptics.selectionAsync();
+                  }}>
+                    <Text style={styles.autocompleteText}>{p.fullName || `${p.firstName || ''} ${p.lastName || ''}`.trim()}</Text>
+                    {p.team?.full_name || p.team?.fullName ? <Text style={styles.autocompleteSubText}>{p.team.full_name || p.team.fullName} · {p.position}</Text> : null}
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+            {nflResolvedPlayer && (
+              <View style={styles.resolvedBadge}>
+                <Ionicons name="checkmark-circle" size={14} color={Colors.primary} />
+                <Text style={styles.resolvedBadgeText}>{nflResolvedPlayer.team?.full_name || nflResolvedPlayer.team?.fullName || ''} · {nflResolvedPlayer.position || ''}</Text>
+                <TouchableOpacity onPress={() => { setNflResolvedPlayer(null); setNflPlayerQuery(''); }}>
+                  <Ionicons name="close-circle" size={14} color={Colors.textSecondary} />
+                </TouchableOpacity>
+              </View>
+            )}
+            <Text style={styles.fieldLabel}>Opponent <Text style={styles.fieldLabelOpt}>(optional)</Text></Text>
+            <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. Bills, Chiefs" placeholderTextColor={Colors.textTertiary} value={nflOpponentQuery} onChangeText={setNflOpponentQuery} autoCapitalize="words" />
+            <Text style={styles.fieldLabel}>Game O/U Total <Text style={styles.fieldLabelOpt}>(optional)</Text></Text>
+            <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. 46.5" placeholderTextColor={Colors.textTertiary} value={nflGameTotal} onChangeText={setNflGameTotal} keyboardType="decimal-pad" />
+            <Text style={styles.fieldLabel}>Prop Type</Text>
+            <TouchableOpacity style={styles.pickerBtn} onPress={() => setNflShowPropPicker(true)}>
+              <Text style={styles.pickerBtnText}>{NFL_PROP_TYPES.find(p => p.value === nflPropType)?.label || 'Select'}</Text>
+              <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
+            </TouchableOpacity>
+            <Text style={styles.fieldLabel}>Line Value</Text>
+            <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. 254.5" placeholderTextColor={Colors.textTertiary} value={line} onChangeText={setLine} keyboardType="decimal-pad" />
+            {manualError && <View style={styles.inlineError}><Ionicons name="alert-circle-outline" size={14} color={Colors.error} /><Text style={styles.inlineErrorText}>{manualError}</Text></View>}
+            <TouchableOpacity style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnLoading]} onPress={handleNflAnalyze} disabled={phase === 'analyzing'} activeOpacity={0.85}>
+              {phase === 'analyzing' ? <><ActivityIndicator color="#000" size="small" /><Text style={styles.predictBtnText}>Analyzing…</Text></> : <><Ionicons name="analytics-outline" size={16} color="#000" /><Text style={styles.predictBtnText}>Analyze</Text></>}
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* ─── NHL MANUAL FORM ─── */}
+        {sport === 'nhl' && phase !== 'result' && phase !== 'saved' && (
+          <View style={styles.manualForm}>
+            {scanFillHint && (
+              <View style={styles.scanFillHint}>
+                <Ionicons name="checkmark-circle-outline" size={13} color={Colors.primary} />
+                <Text style={styles.scanFillHintText}>{scanFillHint}</Text>
+              </View>
+            )}
+            <Text style={styles.fieldLabel}>Player</Text>
+            <TextInput
+              style={[styles.textInput, INPUT_STYLE]}
+              placeholder="e.g. Connor McDavid, Nathan MacKinnon"
+              placeholderTextColor={Colors.textTertiary}
+              value={nhlPlayerQuery}
+              onChangeText={(t) => {
+                setNhlPlayerQuery(t);
+                if (!t) { setNhlResolvedPlayer(null); setNhlPlayerResults([]); return; }
+                searchBdlPlayers(t, searchNhlPlayers, setNhlPlayerResults, setNhlSearching);
+              }}
+              autoCapitalize="words"
+            />
+            {nhlSearching && <ActivityIndicator size="small" color={Colors.primary} style={{ marginTop: 4 }} />}
+            {nhlPlayerResults.length > 0 && !nhlResolvedPlayer && (
+              <View style={styles.autocompleteList}>
+                {nhlPlayerResults.slice(0, 5).map((p) => (
+                  <TouchableOpacity key={p.id} style={styles.autocompleteItem} onPress={() => {
+                    setNhlResolvedPlayer(p);
+                    setNhlPlayerQuery(p.fullName || `${p.firstName || ''} ${p.lastName || ''}`.trim());
+                    setNhlPlayerResults([]);
+                    Haptics.selectionAsync();
+                  }}>
+                    <Text style={styles.autocompleteText}>{p.fullName || `${p.firstName || ''} ${p.lastName || ''}`.trim()}</Text>
+                    {p.team?.full_name || p.team?.fullName ? <Text style={styles.autocompleteSubText}>{p.team.full_name || p.team.fullName} · {p.position}</Text> : null}
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+            {nhlResolvedPlayer && (
+              <View style={styles.resolvedBadge}>
+                <Ionicons name="checkmark-circle" size={14} color={Colors.primary} />
+                <Text style={styles.resolvedBadgeText}>{nhlResolvedPlayer.team?.full_name || nhlResolvedPlayer.team?.fullName || ''} · {nhlResolvedPlayer.position || ''}</Text>
+                <TouchableOpacity onPress={() => { setNhlResolvedPlayer(null); setNhlPlayerQuery(''); }}>
+                  <Ionicons name="close-circle" size={14} color={Colors.textSecondary} />
+                </TouchableOpacity>
+              </View>
+            )}
+            <Text style={styles.fieldLabel}>Opponent <Text style={styles.fieldLabelOpt}>(optional)</Text></Text>
+            <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. Avalanche, Rangers" placeholderTextColor={Colors.textTertiary} value={nhlOpponentQuery} onChangeText={setNhlOpponentQuery} autoCapitalize="words" />
+            <Text style={styles.fieldLabel}>Prop Type</Text>
+            <TouchableOpacity style={styles.pickerBtn} onPress={() => setNhlShowPropPicker(true)}>
+              <Text style={styles.pickerBtnText}>{NHL_PROP_TYPES.find(p => p.value === nhlPropType)?.label || 'Select'}</Text>
+              <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
+            </TouchableOpacity>
+            <Text style={styles.fieldLabel}>Line Value</Text>
+            <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. 0.5" placeholderTextColor={Colors.textTertiary} value={line} onChangeText={setLine} keyboardType="decimal-pad" />
+            {manualError && <View style={styles.inlineError}><Ionicons name="alert-circle-outline" size={14} color={Colors.error} /><Text style={styles.inlineErrorText}>{manualError}</Text></View>}
+            <TouchableOpacity style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnLoading]} onPress={handleNhlAnalyze} disabled={phase === 'analyzing'} activeOpacity={0.85}>
+              {phase === 'analyzing' ? <><ActivityIndicator color="#000" size="small" /><Text style={styles.predictBtnText}>Analyzing…</Text></> : <><Ionicons name="analytics-outline" size={16} color="#000" /><Text style={styles.predictBtnText}>Analyze</Text></>}
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* ─── WNBA MANUAL FORM ─── */}
+        {sport === 'wnba' && phase !== 'result' && phase !== 'saved' && (
+          <View style={styles.manualForm}>
+            {scanFillHint && (
+              <View style={styles.scanFillHint}>
+                <Ionicons name="checkmark-circle-outline" size={13} color={Colors.primary} />
+                <Text style={styles.scanFillHintText}>{scanFillHint}</Text>
+              </View>
+            )}
+            <Text style={styles.fieldLabel}>Player</Text>
+            <TextInput
+              style={[styles.textInput, INPUT_STYLE]}
+              placeholder="e.g. A'ja Wilson, Breanna Stewart"
+              placeholderTextColor={Colors.textTertiary}
+              value={wnbaPlayerQuery}
+              onChangeText={(t) => {
+                setWnbaPlayerQuery(t);
+                if (!t) { setWnbaResolvedPlayer(null); setWnbaPlayerResults([]); return; }
+                searchBdlPlayers(t, searchWnbaPlayers, setWnbaPlayerResults, setWnbaSearching);
+              }}
+              autoCapitalize="words"
+            />
+            {wnbaSearching && <ActivityIndicator size="small" color={Colors.primary} style={{ marginTop: 4 }} />}
+            {wnbaPlayerResults.length > 0 && !wnbaResolvedPlayer && (
+              <View style={styles.autocompleteList}>
+                {wnbaPlayerResults.slice(0, 5).map((p) => (
+                  <TouchableOpacity key={p.id} style={styles.autocompleteItem} onPress={() => {
+                    setWnbaResolvedPlayer(p);
+                    setWnbaPlayerQuery(p.fullName || `${p.firstName || ''} ${p.lastName || ''}`.trim());
+                    setWnbaPlayerResults([]);
+                    Haptics.selectionAsync();
+                  }}>
+                    <Text style={styles.autocompleteText}>{p.fullName || `${p.firstName || ''} ${p.lastName || ''}`.trim()}</Text>
+                    {p.team?.full_name || p.team?.fullName ? <Text style={styles.autocompleteSubText}>{p.team.full_name || p.team.fullName} · {p.position}</Text> : null}
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+            {wnbaResolvedPlayer && (
+              <View style={styles.resolvedBadge}>
+                <Ionicons name="checkmark-circle" size={14} color={Colors.primary} />
+                <Text style={styles.resolvedBadgeText}>{wnbaResolvedPlayer.team?.full_name || wnbaResolvedPlayer.team?.fullName || ''} · {wnbaResolvedPlayer.position || ''}</Text>
+                <TouchableOpacity onPress={() => { setWnbaResolvedPlayer(null); setWnbaPlayerQuery(''); }}>
+                  <Ionicons name="close-circle" size={14} color={Colors.textSecondary} />
+                </TouchableOpacity>
+              </View>
+            )}
+            <Text style={styles.fieldLabel}>Opponent <Text style={styles.fieldLabelOpt}>(optional)</Text></Text>
+            <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. Sparks, Sky" placeholderTextColor={Colors.textTertiary} value={wnbaOpponentQuery} onChangeText={setWnbaOpponentQuery} autoCapitalize="words" />
+            <Text style={styles.fieldLabel}>Prop Type</Text>
+            <TouchableOpacity style={styles.pickerBtn} onPress={() => setWnbaShowPropPicker(true)}>
+              <Text style={styles.pickerBtnText}>{WNBA_PROP_TYPES.find(p => p.value === wnbaPropType)?.label || 'Select'}</Text>
+              <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
+            </TouchableOpacity>
+            <Text style={styles.fieldLabel}>Line Value</Text>
+            <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. 18.5" placeholderTextColor={Colors.textTertiary} value={line} onChangeText={setLine} keyboardType="decimal-pad" />
+            {manualError && <View style={styles.inlineError}><Ionicons name="alert-circle-outline" size={14} color={Colors.error} /><Text style={styles.inlineErrorText}>{manualError}</Text></View>}
+            <TouchableOpacity style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnLoading]} onPress={handleWnbaAnalyze} disabled={phase === 'analyzing'} activeOpacity={0.85}>
+              {phase === 'analyzing' ? <><ActivityIndicator color="#000" size="small" /><Text style={styles.predictBtnText}>Analyzing…</Text></> : <><Ionicons name="analytics-outline" size={16} color="#000" /><Text style={styles.predictBtnText}>Analyze</Text></>}
             </TouchableOpacity>
           </View>
         )}
@@ -3115,6 +3566,74 @@ export default function ScanScreen() {
         </TouchableOpacity>
       </Modal>
 
+      {/* NBA Prop Picker Modal */}
+      <Modal visible={nbaShowPropPicker} transparent animationType="slide">
+        <TouchableOpacity style={styles.modalOverlay} onPress={() => setNbaShowPropPicker(false)}>
+          <View style={styles.modalSheet}>
+            <Text style={styles.modalTitle}>NBA Prop Type</Text>
+            <ScrollView>
+              {NBA_PROP_TYPES.map(p => (
+                <TouchableOpacity key={p.value} style={[styles.modalItem, p.value === nbaPropType && styles.modalItemActive]} onPress={() => { setNbaPropType(p.value); setNbaShowPropPicker(false); Haptics.selectionAsync(); }}>
+                  <Text style={[styles.modalItemText, p.value === nbaPropType && styles.modalItemTextActive]}>{p.label}</Text>
+                  {p.value === nbaPropType && <Ionicons name="checkmark" size={16} color={Colors.primary} />}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* NFL Prop Picker Modal */}
+      <Modal visible={nflShowPropPicker} transparent animationType="slide">
+        <TouchableOpacity style={styles.modalOverlay} onPress={() => setNflShowPropPicker(false)}>
+          <View style={styles.modalSheet}>
+            <Text style={styles.modalTitle}>NFL Prop Type</Text>
+            <ScrollView>
+              {NFL_PROP_TYPES.map(p => (
+                <TouchableOpacity key={p.value} style={[styles.modalItem, p.value === nflPropType && styles.modalItemActive]} onPress={() => { setNflPropType(p.value); setNflShowPropPicker(false); Haptics.selectionAsync(); }}>
+                  <Text style={[styles.modalItemText, p.value === nflPropType && styles.modalItemTextActive]}>{p.label}</Text>
+                  {p.value === nflPropType && <Ionicons name="checkmark" size={16} color={Colors.primary} />}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* NHL Prop Picker Modal */}
+      <Modal visible={nhlShowPropPicker} transparent animationType="slide">
+        <TouchableOpacity style={styles.modalOverlay} onPress={() => setNhlShowPropPicker(false)}>
+          <View style={styles.modalSheet}>
+            <Text style={styles.modalTitle}>NHL Prop Type</Text>
+            <ScrollView>
+              {NHL_PROP_TYPES.map(p => (
+                <TouchableOpacity key={p.value} style={[styles.modalItem, p.value === nhlPropType && styles.modalItemActive]} onPress={() => { setNhlPropType(p.value); setNhlShowPropPicker(false); Haptics.selectionAsync(); }}>
+                  <Text style={[styles.modalItemText, p.value === nhlPropType && styles.modalItemTextActive]}>{p.label}</Text>
+                  {p.value === nhlPropType && <Ionicons name="checkmark" size={16} color={Colors.primary} />}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* WNBA Prop Picker Modal */}
+      <Modal visible={wnbaShowPropPicker} transparent animationType="slide">
+        <TouchableOpacity style={styles.modalOverlay} onPress={() => setWnbaShowPropPicker(false)}>
+          <View style={styles.modalSheet}>
+            <Text style={styles.modalTitle}>WNBA Prop Type</Text>
+            <ScrollView>
+              {WNBA_PROP_TYPES.map(p => (
+                <TouchableOpacity key={p.value} style={[styles.modalItem, p.value === wnbaPropType && styles.modalItemActive]} onPress={() => { setWnbaPropType(p.value); setWnbaShowPropPicker(false); Haptics.selectionAsync(); }}>
+                  <Text style={[styles.modalItemText, p.value === wnbaPropType && styles.modalItemTextActive]}>{p.label}</Text>
+                  {p.value === wnbaPropType && <Ionicons name="checkmark" size={16} color={Colors.primary} />}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
       {/* WTA Prop Picker Modal */}
       <Modal visible={wtaShowPropPicker} transparent animationType="slide">
         <TouchableOpacity style={styles.modalOverlay} onPress={() => setWtaShowPropPicker(false)}>
@@ -3229,6 +3748,10 @@ export default function ScanScreen() {
               {[
                 { id: 'soccer' as Sport, label: 'Soccer', icon: 'football' as const },
                 { id: 'mlb' as Sport, label: 'MLB', icon: 'baseball' as const },
+                { id: 'nba' as Sport, label: 'NBA', icon: 'basketball' as const },
+                { id: 'nfl' as Sport, label: 'NFL', icon: 'american-football' as const },
+                { id: 'nhl' as Sport, label: 'NHL', icon: 'snow' as const },
+                { id: 'wnba' as Sport, label: 'WNBA', icon: 'star' as const },
                 { id: 'cs2' as Sport, label: 'CS2', icon: 'game-controller' as const },
                 { id: 'wta' as Sport, label: 'WTA', icon: 'tennisball' as const },
               ].map((s) => {
@@ -3401,6 +3924,51 @@ const styles = StyleSheet.create({
   heroImage: {
     width: '100%',
     height: '100%',
+  },
+
+  /* Autocomplete dropdown (used by NBA/NFL/NHL/WNBA player search) */
+  autocompleteList: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#333',
+    marginTop: 2,
+    marginBottom: 6,
+    overflow: 'hidden',
+  },
+  autocompleteItem: {
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#222',
+  },
+  autocompleteText: {
+    color: Colors.text,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  autocompleteSubText: {
+    color: Colors.textSecondary,
+    fontSize: 12,
+    marginTop: 2,
+  },
+  resolvedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#0d1f0d',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    marginTop: 4,
+    marginBottom: 6,
+    borderWidth: 1,
+    borderColor: Colors.primary + '30',
+  },
+  resolvedBadgeText: {
+    color: Colors.primary,
+    fontSize: 12,
+    flex: 1,
   },
 
   /* Capture container (wraps analysis content for html2canvas) */

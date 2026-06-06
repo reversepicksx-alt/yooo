@@ -767,6 +767,138 @@ async def _try_settle_mlb(pick: dict) -> bool:
     return True
 
 
+async def _try_settle_bdl(pick: dict, sport: str) -> bool:
+    """
+    Generic BDL settler for NBA / NFL / NHL / WNBA.
+    Fetches game logs from the matching client, finds the game by date,
+    reads the prop field, and writes the result to MongoDB.
+    """
+    try:
+        if sport == "nba":
+            import nba_client as bdl_client
+            import nba_engine as bdl_engine
+            PROP_MAP = bdl_engine.NBA_PROPS
+            min_hours = 3
+        elif sport == "nfl":
+            import nfl_client as bdl_client
+            import nfl_engine as bdl_engine
+            PROP_MAP = bdl_engine.NFL_PROPS
+            min_hours = 5
+        elif sport == "nhl":
+            import nhl_client as bdl_client
+            import nhl_engine as bdl_engine
+            PROP_MAP = bdl_engine.NHL_PROPS
+            min_hours = 3
+        elif sport == "wnba":
+            import wnba_client as bdl_client
+            import wnba_engine as bdl_engine
+            PROP_MAP = bdl_engine.WNBA_PROPS
+            min_hours = 3
+        else:
+            return False
+    except ImportError as e:
+        print(f"[{sport.upper()} SETTLE] Import error: {e}")
+        return False
+
+    player_id = pick.get("playerId")
+    prop_type = (pick.get("propType") or "").lower()
+    line      = pick.get("line")
+    rec       = (pick.get("recommendation") or "over").upper()
+
+    if not player_id or not prop_type or line is None:
+        return False
+
+    field = PROP_MAP.get(prop_type)
+    if not field:
+        return False
+
+    # Age gate
+    pick_created = None
+    for ts_key in ("timestamp", "createdAt"):
+        raw = pick.get(ts_key)
+        if raw:
+            try:
+                pick_created = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+                break
+            except Exception:
+                pass
+
+    if pick_created:
+        hours_old = (datetime.now(timezone.utc) - pick_created).total_seconds() / 3600
+        if hours_old < min_hours:
+            return False
+
+    # Fetch game logs
+    current_year = datetime.now(timezone.utc).year
+    try:
+        if sport == "nhl":
+            season = f"{current_year - 1}{current_year}"
+            logs = await bdl_client.get_player_game_logs(int(player_id), season)
+        elif sport == "wnba":
+            logs = await bdl_client.get_player_game_logs(int(player_id), current_year)
+        else:
+            logs = await bdl_client.get_player_game_logs(int(player_id), current_year)
+    except Exception as e:
+        print(f"[{sport.upper()} SETTLE] Log fetch failed player={player_id}: {e}")
+        return False
+
+    if not logs:
+        return False
+
+    # Match game by date
+    target_log = None
+    if pick_created:
+        from datetime import date as _date, timedelta as _td
+        target_date = pick_created.date()
+        window_end  = target_date + _td(days=2)
+        for log in reversed(logs):
+            log_date_str = (log.get("date") or "")[:10]
+            if not log_date_str:
+                continue
+            try:
+                log_date = _date.fromisoformat(log_date_str)
+                if target_date <= log_date <= window_end:
+                    target_log = log
+                    break
+            except Exception:
+                pass
+        if not target_log:
+            target_log = logs[0]
+    else:
+        target_log = logs[0]
+
+    raw_val = target_log.get(field)
+    if raw_val is None:
+        return False
+
+    try:
+        actual = float(raw_val)
+    except Exception:
+        return False
+
+    line_f = float(line)
+    if actual == line_f:
+        result = "push"
+    elif rec == "OVER":
+        result = "hit" if actual > line_f else "miss"
+    else:
+        result = "hit" if actual < line_f else "miss"
+
+    await db.picks.update_one(
+        {"pickId": pick["pickId"]},
+        {"$set": {
+            "actualValue":  round(actual, 2),
+            "result":       result,
+            "status":       "settled",
+            "matchStatus":  "final",
+            "settledAt":    datetime.now(timezone.utc).isoformat(),
+            "settledBy":    f"{sport}_auto",
+        }},
+    )
+    print(f"[{sport.upper()} SETTLE] ✓ {pick.get('playerName')} {prop_type} actual={actual:.2f} line={line_f} rec={rec} → {result}")
+    return True
+
+
 async def _run_auto_settlement():
     """Check all live picks and settle any finished games."""
     from utils import api_football_request, is_quota_exhausted
@@ -825,10 +957,16 @@ async def _run_auto_settlement():
         or str(p.get("propType", "")).startswith(_CS2_PROP_PREFIXES)
     ]
     # WTA picks by sport field
-    wta_picks = [p for p in live_picks if p.get("sport") == "wta"]
-    # Re-partition: remove cs2/wta from mlb and soccer pools
-    mlb_picks    = [p for p in mlb_picks if p not in cs2_picks and p not in wta_picks]
-    soccer_picks = [p for p in live_picks if p not in mlb_picks and p not in cs2_picks and p not in wta_picks]
+    wta_picks  = [p for p in live_picks if p.get("sport") == "wta"]
+    # BDL sports
+    nba_picks  = [p for p in live_picks if p.get("sport") == "nba"]
+    nfl_picks  = [p for p in live_picks if p.get("sport") == "nfl"]
+    nhl_picks  = [p for p in live_picks if p.get("sport") == "nhl"]
+    wnba_picks = [p for p in live_picks if p.get("sport") == "wnba"]
+    _bdl_picks = set(id(p) for p in nba_picks + nfl_picks + nhl_picks + wnba_picks)
+    # Re-partition: remove cs2/wta/bdl from mlb and soccer pools
+    mlb_picks    = [p for p in mlb_picks if p not in cs2_picks and p not in wta_picks and id(p) not in _bdl_picks]
+    soccer_picks = [p for p in live_picks if p not in mlb_picks and p not in cs2_picks and p not in wta_picks and id(p) not in _bdl_picks]
 
     for pick in mlb_picks:
         try:
@@ -838,6 +976,17 @@ async def _run_auto_settlement():
         except Exception as _me:
             print(f"[MLB SETTLE] Error: {_me}")
             continue
+
+    # ── NBA / NFL / NHL / WNBA settlement ────────────────────────────────────
+    for _sport, _picks in [("nba", nba_picks), ("nfl", nfl_picks), ("nhl", nhl_picks), ("wnba", wnba_picks)]:
+        for pick in _picks:
+            try:
+                settled = await _try_settle_bdl(pick, _sport)
+                if settled:
+                    settled_count += 1
+            except Exception as _be:
+                print(f"[{_sport.upper()} SETTLE] Error: {_be}")
+                continue
 
     # ── Soccer settlement ─────────────────────────────────────────────────────
     if soccer_picks:
