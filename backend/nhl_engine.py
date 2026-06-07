@@ -147,7 +147,9 @@ def compute_nhl_projection(
     # ── Monte Carlo ────────────────────────────────────────────────────────────
     variance = stats_mod.variance(vals) if len(vals) > 1 else max(projection * 0.35, 0.5)
     is_discrete = prop_type in COUNT_PROPS
-    p_over, p_under = _baye_mc(projection, variance, line, discrete=is_discrete)
+    _po, _pu, *_ = _baye_mc(projection, variance, line, is_count_stat=is_discrete)
+    p_over  = round(_po * 100, 2)
+    p_under = round(_pu * 100, 2)
 
     recommendation = "over" if p_over >= p_under else "under"
     confidence = round(max(p_over, p_under))

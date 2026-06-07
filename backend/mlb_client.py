@@ -20,9 +20,9 @@ MLB_API_BASE = "https://api.balldontlie.io/mlb/v1"
 # Key hardcoded as fallback; override via MLB_BDL_API_KEY env var
 MLB_API_KEY = os.environ.get("MLB_BDL_API_KEY", "951b8b73-a036-4b30-924f-19f322766545")
 
-_rate_sem = asyncio.Semaphore(3)   # paid tier: 600 req/min — allow 3 concurrent slots
+_rate_sem = asyncio.Semaphore(2)   # shared key across all BDL sports — keep 2 slots
 _last_req_time: float = 0.0
-_MIN_INTERVAL = 0.15  # seconds between requests — paid tier: 600 req/min ≈ 10/s; 0.15s is conservative
+_MIN_INTERVAL = 0.25  # 4 req/s per slot → ~8 req/s total; comfortable under 600 req/min
 
 CACHE_TTL = {
     "teams":         7 * 86400,   # 7 days

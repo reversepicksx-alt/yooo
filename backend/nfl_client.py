@@ -23,9 +23,9 @@ log = logging.getLogger("nfl_client")
 NFL_API_BASE = "https://api.balldontlie.io/nfl/v1"
 NFL_API_KEY  = os.environ.get("MLB_BDL_API_KEY", "")
 
-_rate_sem = asyncio.Semaphore(6)
+_rate_sem = asyncio.Semaphore(2)   # shared BDL key — keep burst low
 _last_req_time: float = 0.0
-_MIN_INTERVAL = 0.10
+_MIN_INTERVAL = 0.25               # max ~4 req/s from this client
 
 CACHE_TTL = {
     "teams":         7 * 86400,
@@ -34,7 +34,7 @@ CACHE_TTL = {
     "stats":         2 * 3600,
 }
 
-CURRENT_NFL_SEASON = 2024
+CURRENT_NFL_SEASON = 2025
 
 
 async def _get(path: str, params: dict = None) -> dict:
@@ -258,5 +258,6 @@ async def get_player_game_logs(player_id: int, season: int = CURRENT_NFL_SEASON)
 
     logs = [_transform_nfl_log(r) for r in all_rows]
     logs.sort(key=lambda x: x.get("date", ""), reverse=True)
-    await _cache_set(cache_key, logs)
+    if logs:
+        await _cache_set(cache_key, logs)
     return logs

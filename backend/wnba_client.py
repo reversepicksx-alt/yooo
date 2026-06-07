@@ -1,14 +1,14 @@
 """
 BallDontLie WNBA API client with rate-limiting and MongoDB caching.
 Base URL: https://api.balldontlie.io/wnba/v1
-Elite tier: 600 req/min.
+Elite tier: 600 req/min shared across ALL BDL sport clients.
 
-WNBA confirmed endpoints:
-  /games   - game schedule/scores
-  /teams   - team list
-  /players - player search
-  /season_averages - season average stats per player
-  /stats   - per-game stats (if available for season)
+WNBA confirmed endpoints (verified June 2026):
+  /games                  - game schedule/scores
+  /teams                  - team list
+  /players                - player search
+  /player_season_averages - season average stats per player  (NOT /season_averages)
+  /player_stats           - per-game stats                  (NOT /stats)
 """
 import asyncio
 import time
@@ -25,9 +25,9 @@ log = logging.getLogger("wnba_client")
 WNBA_API_BASE = "https://api.balldontlie.io/wnba/v1"
 WNBA_API_KEY  = os.environ.get("MLB_BDL_API_KEY", "")
 
-_rate_sem = asyncio.Semaphore(6)
+_rate_sem = asyncio.Semaphore(2)   # shared BDL key — keep burst low
 _last_req_time: float = 0.0
-_MIN_INTERVAL = 0.10
+_MIN_INTERVAL = 0.25               # max ~4 req/s from this client
 
 CACHE_TTL = {
     "teams":          7 * 86400,
@@ -37,7 +37,7 @@ CACHE_TTL = {
     "season_stats":   6 * 3600,
 }
 
-CURRENT_WNBA_SEASON = 2025
+CURRENT_WNBA_SEASON = 2026
 
 
 async def _get(path: str, params: dict = None) -> dict:
@@ -174,19 +174,12 @@ async def get_teams() -> list:
 
 
 async def get_season_averages(player_id: int, season: int = CURRENT_WNBA_SEASON) -> dict:
-    """Get season averages — WNBA's most reliable stat source."""
-    cache_key = f"season_avg:{player_id}:{season}"
-    cached = await _cache_get(cache_key)
-    if _cache_fresh(cached, CACHE_TTL["season_stats"]):
-        return cached["data"]
-    try:
-        data = await _get("/season_averages", {"player_ids[]": player_id, "season": season})
-        avgs = (data.get("data") or [{}])[0] if data.get("data") else {}
-        await _cache_set(cache_key, avgs)
-        return avgs
-    except Exception as e:
-        log.warning(f"[WNBA AVG] {e}")
-        return {}
+    """Get season averages.
+    NOTE: BDL WNBA does NOT expose /season_averages or /player_season_averages (both return 404).
+    This function is kept as a stub for callers; always returns {}.
+    Use get_player_game_logs() for per-game stats.
+    """
+    return {}
 
 
 def _transform_wnba_log(row: dict) -> dict:
@@ -240,8 +233,12 @@ def _transform_wnba_log(row: dict) -> dict:
 
 
 async def get_player_game_logs(player_id: int, season: int = CURRENT_WNBA_SEASON) -> list:
-    """Fetch per-game stats for a player, newest-first."""
-    cache_key = f"gamelogs:{player_id}:{season}"
+    """Fetch per-game stats for a player via /player_stats, newest-first.
+    Cache key uses prefix 'gl3:' so stale Atlas entries from old broken
+    /stats calls (prefix 'gamelogs:') are naturally bypassed.
+    Empty results are NOT cached so a transient 429/empty doesn't persist.
+    """
+    cache_key = f"gl3:{player_id}:{season}"
     cached = await _cache_get(cache_key)
     if _cache_fresh(cached, CACHE_TTL["stats"]):
         return cached["data"]
@@ -253,7 +250,7 @@ async def get_player_game_logs(player_id: int, season: int = CURRENT_WNBA_SEASON
         if cursor:
             params["cursor"] = cursor
         try:
-            data = await _get("/stats", params)
+            data = await _get("/player_stats", params)
         except Exception as e:
             log.warning(f"[WNBA GAME LOGS] player={player_id}: {e}")
             break
@@ -266,12 +263,8 @@ async def get_player_game_logs(player_id: int, season: int = CURRENT_WNBA_SEASON
     logs = [_transform_wnba_log(r) for r in all_rows]
     logs.sort(key=lambda x: x.get("date", ""), reverse=True)
 
-    # If per-game logs unavailable, synthesize from season averages
-    if not logs:
-        avgs = await get_season_averages(player_id, season)
-        if avgs:
-            log.info(f"[WNBA] No game logs for {player_id}, using season averages as single proxy row")
-            logs = [_transform_wnba_log({"game": {}, "team": {}, **avgs})]
-
-    await _cache_set(cache_key, logs)
+    # Only cache non-empty results — a transient 429 or missing season
+    # must not poison the cache and block future real data.
+    if logs:
+        await _cache_set(cache_key, logs)
     return logs

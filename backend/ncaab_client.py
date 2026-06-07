@@ -17,9 +17,9 @@ log = logging.getLogger("ncaab_client")
 NCAAB_API_BASE = "https://api.balldontlie.io/ncaab/v1"
 NCAAB_API_KEY  = os.environ.get("MLB_BDL_API_KEY", "")
 
-_rate_sem = asyncio.Semaphore(6)
+_rate_sem = asyncio.Semaphore(2)   # shared BDL key — keep burst low
 _last_req_time: float = 0.0
-_MIN_INTERVAL = 0.10
+_MIN_INTERVAL = 0.25               # max ~4 req/s from this client
 
 CACHE_TTL = {
     "teams":         7 * 86400,
@@ -29,7 +29,7 @@ CACHE_TTL = {
     "season_stats":  2 * 3600,
 }
 
-CURRENT_NCAAB_SEASON = 2025  # 2024-25 season
+CURRENT_NCAAB_SEASON = 2026  # 2025-26 season
 
 
 async def _get(path: str, params: dict = None) -> dict:
@@ -277,5 +277,7 @@ async def get_player_game_logs(player_id: int, season: int = CURRENT_NCAAB_SEASO
                 "_source": "bdl_avg",
             }]
 
-    await _cache_set(cache_key, logs)
+    # Only cache non-empty results — a transient 429 must not poison the cache
+    if logs:
+        await _cache_set(cache_key, logs)
     return logs

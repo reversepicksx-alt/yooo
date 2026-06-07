@@ -115,7 +115,10 @@ def compute_ncaab_projection(
     else:
         projection = round(posterior, 2)
 
-    p_over, p_under = _baye_mc(values[:12], line, prop_type in COUNT_PROPS)
+    _variance = stats_mod.variance(values) if len(values) > 1 else max(projection * 0.30, 0.5)
+    _po, _pu, *_ = _baye_mc(projection, _variance, line, is_count_stat=prop_type in COUNT_PROPS)
+    p_over  = round(_po * 100, 2)
+    p_under = round(_pu * 100, 2)
 
     streak_flag = "NEUTRAL"
     if len(values) >= 4:

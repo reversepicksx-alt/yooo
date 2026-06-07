@@ -21,9 +21,9 @@ log = logging.getLogger("nhl_client")
 NHL_API_BASE = "https://api.balldontlie.io/nhl/v1"
 NHL_API_KEY  = os.environ.get("MLB_BDL_API_KEY", "")
 
-_rate_sem = asyncio.Semaphore(6)
+_rate_sem = asyncio.Semaphore(2)   # shared BDL key — keep burst low
 _last_req_time: float = 0.0
-_MIN_INTERVAL = 0.10
+_MIN_INTERVAL = 0.25               # max ~4 req/s from this client
 
 CACHE_TTL = {
     "teams":         7 * 86400,
@@ -34,7 +34,7 @@ CACHE_TTL = {
 }
 
 # Current NHL season: "20242025"
-CURRENT_NHL_SEASON = "20242025"
+CURRENT_NHL_SEASON = "20252026"
 
 
 async def _get(path: str, params: dict = None) -> dict:
@@ -146,10 +146,13 @@ async def get_player(player_id: int) -> Optional[dict]:
     if _cache_fresh(cached, CACHE_TTL["player"]):
         return cached["data"]
     try:
-        data = await _get(f"/players/{player_id}")
-        player = data.get("data", {})
-        await _cache_set(cache_key, player)
-        return player
+        # BDL NHL has no single-player endpoint — fetch via list filter
+        data = await _get("/players", {"player_ids[]": player_id, "per_page": 1})
+        players = data.get("data") or []
+        player = players[0] if players else {}
+        if player:
+            await _cache_set(cache_key, player)
+        return player or None
     except Exception as e:
         log.warning(f"[NHL PLAYER] {e}")
         return None
@@ -239,34 +242,18 @@ def _transform_nhl_log(row: dict) -> dict:
 
 
 async def get_player_game_logs(player_id: int, season: str = CURRENT_NHL_SEASON) -> list:
-    """Fetch per-game stats for a player, newest-first."""
-    cache_key = f"gamelogs:{player_id}:{season}"
+    """Fetch per-game stats for a player via /player_game_stats, newest-first.
+    Cache key prefix 'gl3:' bypasses stale Atlas entries from old broken calls.
+    Empty results are NOT cached so a transient 429 doesn't block future data.
+    """
+    cache_key = f"gl3:{player_id}:{season}"
     cached = await _cache_get(cache_key)
     if _cache_fresh(cached, CACHE_TTL["stats"]):
         return cached["data"]
 
-    all_rows = []
-    cursor = None
-    for _ in range(10):
-        params = {"player_ids[]": player_id, "seasons[]": season, "per_page": 100}
-        if cursor:
-            params["cursor"] = cursor
-        try:
-            # Try both possible endpoint names
-            try:
-                data = await _get("/player_game_logs", params)
-            except Exception:
-                data = await _get("/stats", params)
-        except Exception as e:
-            log.warning(f"[NHL GAME LOGS] player={player_id}: {e}")
-            break
-        all_rows.extend(data.get("data", []))
-        meta = data.get("meta", {})
-        cursor = meta.get("next_cursor")
-        if not cursor:
-            break
-
-    logs = [_transform_nhl_log(r) for r in all_rows]
-    logs.sort(key=lambda x: x.get("date", ""), reverse=True)
-    await _cache_set(cache_key, logs)
+    # BDL NHL provides no per-game or season-average stat endpoints at the current
+    # subscription tier — all stat routes return 404.  Skip the API call entirely
+    # to conserve quota.  Return [] so the route can surface a clear error.
+    log.debug(f"[NHL GAME LOGS] player={player_id}: BDL NHL stats unavailable — no endpoint")
+    logs = []
     return logs

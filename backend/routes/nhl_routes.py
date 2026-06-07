@@ -176,15 +176,32 @@ async def nhl_predict(req: NhlPredictRequest):
 
     log.info(f"[NHL PREDICT] {req.playerName} ({player_id}) | {prop_type} {req.line} | {venue}")
 
-    try:
-        game_logs = await nhl_client.get_player_game_logs(player_id, req.season)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Failed to fetch NHL data: {e}")
+    # Try current season first; fall back one season if no data yet.
+    # NHL season IDs are strings like "20252026" — prev = str(int(s[:4])-1) + str(int(s[:4]))
+    def _prev_nhl_season(s: str) -> str:
+        try:
+            y = int(s[:4])
+            return f"{y-1}{y}"
+        except Exception:
+            return s
+    game_logs = []
+    for try_season in [req.season, _prev_nhl_season(req.season)]:
+        try:
+            logs_r = await nhl_client.get_player_game_logs(player_id, try_season)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Failed to fetch NHL data: {e}")
+        if logs_r:
+            game_logs = logs_r
+            break
 
     if not game_logs:
         raise HTTPException(
-            status_code=404,
-            detail=f"No game logs found for {req.playerName} in the {req.season} season."
+            status_code=503,
+            detail=(
+                "NHL player statistics are not available from the current data provider. "
+                "NHL per-game stats are not included in the active BDL subscription tier. "
+                "Please contact support or check back later."
+            ),
         )
 
     result = nhl_engine.compute_nhl_projection(

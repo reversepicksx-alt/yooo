@@ -562,14 +562,14 @@ async def auto_settlement_loop():
     runs burn quota fast. 15 min is plenty since picks resolve after the match.
     """
     await asyncio.sleep(5)   # Short delay then run immediately on startup
-    print("[GEMINI ENGINE] Auto-settlement bot started (5 min interval)")
+    print("[GEMINI ENGINE] Auto-settlement bot started (15 min interval)")
 
     while True:
         try:
             await _run_auto_settlement()
         except Exception as e:
             print(f"[AUTO-SETTLE] Error: {e}")
-        await asyncio.sleep(300)  # Check every 5 minutes
+        await asyncio.sleep(900)  # Check every 15 minutes — shared BDL key needs breathing room
 
 
 async def _try_settle_mlb(pick: dict) -> bool:
@@ -976,6 +976,7 @@ async def _run_auto_settlement():
         except Exception as _me:
             print(f"[MLB SETTLE] Error: {_me}")
             continue
+        await asyncio.sleep(2.0)  # pace BDL calls — shared key across all sport clients
 
     # ── NBA / NFL / NHL / WNBA settlement ────────────────────────────────────
     for _sport, _picks in [("nba", nba_picks), ("nfl", nfl_picks), ("nhl", nhl_picks), ("wnba", wnba_picks)]:
@@ -2172,7 +2173,7 @@ async def mlb_live_loop():
             await _update_mlb_live_picks()
         except Exception as e:
             print(f"[MLB LIVE] Loop error: {e}")
-        await asyncio.sleep(110)  # ~2-minute cadence
+        await asyncio.sleep(180)  # 3-minute cadence — shared BDL key
 
 
 async def _update_mlb_live_picks():
@@ -2404,3 +2405,5 @@ async def _update_mlb_live_picks():
 
         except Exception as _te:
             print(f"[MLB LIVE] Team {team_id}/{current_year} error: {_te}")
+        # Pace BDL calls between teams — shared API key across all sport clients
+        await asyncio.sleep(1.5)

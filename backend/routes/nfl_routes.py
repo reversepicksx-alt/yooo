@@ -180,16 +180,21 @@ async def nfl_predict(req: NflPredictRequest):
 
     log.info(f"[NFL PREDICT] {req.playerName} ({player_id}) | {prop_type} {req.line} | {venue}")
 
-    # ── Fetch game logs ───────────────────────────────────────────────────────
-    try:
-        game_logs = await nfl_client.get_player_game_logs(player_id, req.season)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Failed to fetch NFL data: {e}")
+    # ── Fetch game logs (with fallback to previous season) ────────────────────
+    game_logs = []
+    for try_season in [req.season, req.season - 1]:
+        try:
+            logs_r = await nfl_client.get_player_game_logs(player_id, try_season)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Failed to fetch NFL data: {e}")
+        if logs_r:
+            game_logs = logs_r
+            break
 
     if not game_logs:
         raise HTTPException(
             status_code=404,
-            detail=f"No stats found for {req.playerName} in the {req.season} season."
+            detail=f"No stats found for {req.playerName} in the {req.season} or {req.season - 1} season."
         )
 
     # ── Run engine ────────────────────────────────────────────────────────────

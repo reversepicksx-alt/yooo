@@ -180,20 +180,29 @@ async def nba_predict(req: NbaPredictRequest):
     if not player_id:
         raise HTTPException(status_code=404, detail=f"Player '{req.playerName}' not found in NBA database.")
 
-    # ── Fetch game logs + season averages ─────────────────────────────────────
+    # ── Fetch game logs + season averages (fallback to previous season) ────────
     log.info(f"[NBA PREDICT] {req.playerName} ({player_id}) | {prop_type} {req.line} | {venue}")
-    try:
-        game_logs, season_avg = await asyncio.gather(
-            nba_client.get_player_game_logs(player_id, req.season),
-            nba_client.get_season_averages(player_id, req.season),
-        )
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Failed to fetch NBA data: {e}")
+    game_logs = []
+    season_avg = {}
+    for try_season in [req.season, req.season - 1]:
+        try:
+            logs_r, avg_r = await asyncio.gather(
+                nba_client.get_player_game_logs(player_id, try_season),
+                nba_client.get_season_averages(player_id, try_season),
+            )
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Failed to fetch NBA data: {e}")
+        if logs_r:
+            game_logs = logs_r
+            season_avg = avg_r or {}
+            break
+        if avg_r:
+            season_avg = avg_r
 
     if not game_logs:
         raise HTTPException(
             status_code=404,
-            detail=f"No stats found for {req.playerName} in the {req.season} season."
+            detail=f"No stats found for {req.playerName} in the {req.season} or {req.season - 1} season."
         )
 
     # ── Run engine ────────────────────────────────────────────────────────────

@@ -29,7 +29,7 @@ CACHE_TTL = {
     "season_stats":  6 * 3600,
 }
 
-CURRENT_NCAAW_SEASON = 2025
+CURRENT_NCAAW_SEASON = 2026
 
 
 async def _get(path: str, params: dict = None) -> dict:

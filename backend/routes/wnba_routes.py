@@ -174,18 +174,33 @@ async def wnba_predict(req: WnbaPredictRequest):
 
     log.info(f"[WNBA PREDICT] {req.playerName} ({player_id}) | {prop_type} {req.line} | {venue}")
 
-    try:
-        game_logs, season_avg = await asyncio.gather(
-            wnba_client.get_player_game_logs(player_id, req.season),
-            wnba_client.get_season_averages(player_id, req.season),
-        )
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Failed to fetch WNBA data: {e}")
+    # Try requested season first; fall back one year if no game logs yet
+    # (common early in a new season before all players have played).
+    seasons_to_try = [req.season, req.season - 1]
+    game_logs = []
+    season_avg = {}
+    used_season = req.season
+
+    for try_season in seasons_to_try:
+        try:
+            logs_res, avg_res = await asyncio.gather(
+                wnba_client.get_player_game_logs(player_id, try_season),
+                wnba_client.get_season_averages(player_id, try_season),
+            )
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Failed to fetch WNBA data: {e}")
+        if logs_res:
+            game_logs  = logs_res
+            season_avg = avg_res
+            used_season = try_season
+            break
+        if avg_res:
+            season_avg = avg_res
 
     if not game_logs:
         raise HTTPException(
             status_code=404,
-            detail=f"No stats found for {req.playerName} in the {req.season} season."
+            detail=f"No stats found for {req.playerName} in the {req.season} or {req.season - 1} season."
         )
 
     result = wnba_engine.compute_wnba_projection(
