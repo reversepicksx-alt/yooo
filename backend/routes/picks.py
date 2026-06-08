@@ -15,6 +15,20 @@ from models import (
 from utils import api_football_request
 import cs2_client as _cs2_client
 import wta_client as _wta_client
+import httpx as _httpx
+import os as _os
+import time as _time_mod
+
+# ── BDL live cooldown (shared across NBA/NHL/WNBA/NFL) ────────────────────
+_bdl_live_last_attempt: dict[str, float] = {}
+_bdl_live_locks:        dict[str, aio.Lock] = {}
+BDL_LIVE_COOLDOWN_SEC = 120   # re-fetch every 2 min per pick
+
+def _bdl_live_lock(pick_id: str) -> aio.Lock:
+    if pick_id not in _bdl_live_locks:
+        _bdl_live_locks[pick_id] = aio.Lock()
+    return _bdl_live_locks[pick_id]
+
 # auto_analyze_miss_background REMOVED — was draining AI tokens on every miss settlement
 
 router = APIRouter(prefix="/api", tags=["picks"])
@@ -789,9 +803,41 @@ async def list_picks(req: GetPicksRequest):
         except Exception:
             traceback.print_exc()
 
+    _BDL_SPORTS = {"nba", "wnba", "nhl", "nfl"}
+    bdl_live_picks = [p for p in live_picks if p.get("sport") in _BDL_SPORTS]
+    if bdl_live_picks:
+        try:
+            bdl_updates = await _process_bdl_live(bdl_live_picks, req.email.lower())
+            bdl_update_map = {u["pickId"]: u for u in bdl_updates if u.get("pickId")}
+            for p in picks:
+                upd = bdl_update_map.get(p.get("pickId"))
+                if upd:
+                    p["currentValue"] = upd.get("currentValue")
+                    p["pace"]         = upd.get("pace")
+                    p["hitPct"]       = upd.get("hitPct")
+                    p["elapsed"]      = upd.get("elapsed")
+                    p["period"]       = upd.get("period")
+                    p["matchStatus"]  = upd.get("matchStatus")
+                    p["matchScore"]   = upd.get("matchScore")
+                    if upd.get("homeTeam"):
+                        p["homeTeam"] = upd.get("homeTeam")
+                    if upd.get("awayTeam"):
+                        p["awayTeam"] = upd.get("awayTeam")
+                    if upd.get("finalHomeGoals") is not None:
+                        p["finalHomeGoals"] = upd.get("finalHomeGoals")
+                    if upd.get("finalAwayGoals") is not None:
+                        p["finalAwayGoals"] = upd.get("finalAwayGoals")
+                    if upd.get("result") and upd["result"] != "pending":
+                        p["status"]      = "settled"
+                        p["result"]      = upd["result"]
+                        p["actualValue"] = upd.get("actualValue")
+        except Exception:
+            traceback.print_exc()
+
     soccer_live_picks = [
         p for p in live_picks
-        if p.get("sport", "soccer") not in ("mlb", "cs2", "wta") and p.get("propType", "") not in _MLB_PROP_SET
+        if p.get("sport", "soccer") not in {"mlb", "cs2", "wta", "nba", "wnba", "nhl", "nfl"}
+        and p.get("propType", "") not in _MLB_PROP_SET
     ]
     if soccer_live_picks:
         try:
@@ -1102,8 +1148,584 @@ async def live_update_picks(req: LiveUpdateRequest):
     if not live_picks:
         return {"updates": []}
 
-    updates = await _process_soccer_live(live_picks, req.email.lower())
+    _BDL_SP = {"nba", "wnba", "nhl", "nfl"}
+    bdl_picks    = [p for p in live_picks if p.get("sport") in _BDL_SP]
+    soccer_picks = [p for p in live_picks if p.get("sport") not in _BDL_SP]
+
+    async def _empty(): return []
+    bdl_upd, soccer_upd = await aio.gather(
+        _process_bdl_live(bdl_picks, req.email.lower())       if bdl_picks    else _empty(),
+        _process_soccer_live(soccer_picks, req.email.lower()) if soccer_picks else _empty(),
+        return_exceptions=True,
+    )
+    updates = []
+    if not isinstance(bdl_upd, Exception):
+        updates.extend(bdl_upd)
+    if not isinstance(soccer_upd, Exception):
+        updates.extend(soccer_upd)
     return {"updates": updates}
+
+
+async def _process_bdl_live(picks: list, email: str) -> list:
+    """Live tracking for NBA / WNBA / NHL / NFL picks via BDL APIs.
+
+    Strategy per sport:
+      NBA/WNBA : fetch today's games → match by team name → get player stats
+      NHL      : fetch today's games → match by team name → get box_score row
+      NFL      : fetch today's games → score-only (no live player stats endpoint)
+
+    Returns a list of update dicts with the same schema as _process_soccer_live:
+      { pickId, matchStatus, currentValue, pace, hitPct, elapsed,
+        period, matchScore, homeTeam, awayTeam, result?, actualValue? }
+    """
+    BDL_KEY = _os.environ.get("MLB_BDL_API_KEY", "")
+    if not BDL_KEY:
+        return []
+
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    results: list = []
+
+    # ── BDL GET helper (shared) ───────────────────────────────────────────
+    async def _bdl_get(url: str, params=None) -> dict:
+        headers = {"Authorization": BDL_KEY}
+        try:
+            async with _httpx.AsyncClient(timeout=15) as c:
+                r = await c.get(url, headers=headers, params=params or {})
+                if r.status_code == 200:
+                    return r.json()
+                return {}
+        except Exception:
+            return {}
+
+    # ── Stat prop maps ────────────────────────────────────────────────────
+    # NBA / WNBA  (BDL v1 /stats  and  /wnba/v1/player_stats)
+    _NBA_STAT = {
+        "points":    lambda s: s.get("pts"),
+        "rebounds":  lambda s: s.get("reb"),
+        "assists":   lambda s: s.get("ast"),
+        "steals":    lambda s: s.get("stl"),
+        "blocks":    lambda s: s.get("blk"),
+        "turnovers": lambda s: s.get("turnover"),
+        "threes":    lambda s: s.get("fg3m"),
+        "pts_reb_ast": lambda s: (s.get("pts") or 0) + (s.get("reb") or 0) + (s.get("ast") or 0),
+        "pts_reb":     lambda s: (s.get("pts") or 0) + (s.get("reb") or 0),
+        "pts_ast":     lambda s: (s.get("pts") or 0) + (s.get("ast") or 0),
+        "reb_ast":     lambda s: (s.get("reb") or 0) + (s.get("ast") or 0),
+    }
+    # NHL  (BDL /nhl/v1/box_scores)
+    _NHL_STAT = {
+        "goals":         lambda s: s.get("goals"),
+        "assists":       lambda s: s.get("assists"),
+        "points":        lambda s: (s.get("goals") or 0) + (s.get("assists") or 0),
+        "shots":         lambda s: s.get("shots_on_goal"),
+        "blocked_shots": lambda s: s.get("blocked_shots"),
+        "hits":          lambda s: s.get("hits"),
+        "saves":         lambda s: s.get("saves"),
+        "goals_against": lambda s: s.get("goals_against"),
+    }
+
+    # ── Generic live period / regulation duration ─────────────────────────
+    # Used for PACE extrapolation.  Soccer-style: extrapolate to 90 min,
+    # here we use the regulation-period count in the same way.
+    def _regulation(sport: str) -> int:
+        return {"nba": 48, "wnba": 40, "nhl": 60, "nfl": 60}.get(sport, 48)
+
+    def _calc_elapsed_pct(sport: str, period: int, time_str: str) -> float:
+        """Return elapsed fraction 0-1 through regulation."""
+        reg = _regulation(sport)
+        if sport in ("nba", "wnba"):
+            q_len = 12 if sport == "nba" else 10
+            quarters = 4
+            mins_per_q = q_len
+            if period <= 0:
+                return 0.0
+            elapsed_full_q = min(period - 1, quarters) * mins_per_q
+            # Parse time remaining in current quarter "MM:SS"
+            try:
+                parts = str(time_str or "").split(":")
+                rem = int(parts[0]) + (int(parts[1]) / 60 if len(parts) > 1 else 0)
+            except Exception:
+                rem = 0.0
+            elapsed = elapsed_full_q + (mins_per_q - rem)
+            return min(elapsed / reg, 1.0)
+        elif sport == "nhl":
+            # period 1/2/3, time_remaining "MM:SS"
+            if period <= 0:
+                return 0.0
+            elapsed_full_p = min(period - 1, 3) * 20
+            try:
+                parts = str(time_str or "20:00").split(":")
+                rem = int(parts[0]) + (int(parts[1]) / 60 if len(parts) > 1 else 0)
+            except Exception:
+                rem = 20.0
+            elapsed = elapsed_full_p + (20.0 - rem)
+            return min(elapsed / reg, 1.0)
+        elif sport == "nfl":
+            if period <= 0:
+                return 0.0
+            elapsed_full_q = min(period - 1, 4) * 15
+            return min(elapsed_full_q / reg, 1.0)
+        return 0.0
+
+    # ── Name matching helper ──────────────────────────────────────────────
+    def _name_matches(query: str, candidate: str) -> bool:
+        q = query.lower().strip()
+        c = candidate.lower().strip()
+        if not q or not c:
+            return False
+        if q in c or c in q:
+            return True
+        # Last-name match (min 4 chars)
+        q_last = q.rsplit(" ", 1)[-1]
+        if len(q_last) >= 4 and q_last in c:
+            return True
+        return False
+
+    # ── Group picks by sport ──────────────────────────────────────────────
+    nba_picks   = [p for p in picks if p.get("sport") == "nba"]
+    wnba_picks  = [p for p in picks if p.get("sport") == "wnba"]
+    nhl_picks   = [p for p in picks if p.get("sport") == "nhl"]
+    nfl_picks   = [p for p in picks if p.get("sport") == "nfl"]
+
+    # ── Fetch today's games for each sport in parallel ────────────────────
+    nba_games_task  = _bdl_get("https://api.balldontlie.io/v1/games",
+                                [("dates[]", today), ("per_page", 25)]) if nba_picks else aio.sleep(0)
+    wnba_games_task = _bdl_get("https://api.balldontlie.io/wnba/v1/games",
+                                [("dates[]", today), ("per_page", 25)]) if wnba_picks else aio.sleep(0)
+    nhl_games_task  = _bdl_get("https://api.balldontlie.io/nhl/v1/games",
+                                [("dates[]", today), ("per_page", 25)]) if nhl_picks else aio.sleep(0)
+    nfl_games_task  = _bdl_get("https://api.balldontlie.io/nfl/v1/games",
+                                [("dates[]", today), ("per_page", 25)]) if nfl_picks else aio.sleep(0)
+
+    nba_resp, wnba_resp, nhl_resp, nfl_resp = await aio.gather(
+        nba_games_task, wnba_games_task, nhl_games_task, nfl_games_task,
+        return_exceptions=True,
+    )
+
+    def _safe_games(resp) -> list:
+        if isinstance(resp, Exception) or not isinstance(resp, dict):
+            return []
+        return resp.get("data", [])
+
+    nba_games  = _safe_games(nba_resp)
+    wnba_games = _safe_games(wnba_resp)
+    nhl_games  = _safe_games(nhl_resp)
+    nfl_games  = _safe_games(nfl_resp)
+
+    # ── NBA live status helpers ───────────────────────────────────────────
+    # BDL NBA: status is either an ISO timestamp (scheduled), "Final", or
+    # a live string like "Q2 3:24".
+    def _nba_is_live(g: dict) -> bool:
+        s = str(g.get("status", ""))
+        return bool(s) and s not in ("Final",) and not s.startswith("20")
+    def _nba_is_final(g: dict) -> bool:
+        return g.get("status") == "Final" or g.get("period", 0) >= 4 and g.get("time") == "Final"
+    def _nba_period_time(g: dict):
+        # status = "Q3 4:12" → period=3, time="4:12"
+        # period field is also set by BDL
+        period = g.get("period", 0)
+        time_str = g.get("time") or ""
+        return period, time_str
+
+    # ── WNBA live status helpers ──────────────────────────────────────────
+    # BDL WNBA: status = "pre" | "in" | "final"
+    def _wnba_is_live(g: dict) -> bool:
+        return g.get("status") == "in"
+    def _wnba_is_final(g: dict) -> bool:
+        return g.get("status") == "final"
+
+    # ── NHL live status helpers ───────────────────────────────────────────
+    # BDL NHL: game_state = "PRE" | "LIVE" | "CRIT" | "OFF"
+    def _nhl_is_live(g: dict) -> bool:
+        return g.get("game_state") in ("LIVE", "CRIT")
+    def _nhl_is_final(g: dict) -> bool:
+        return g.get("game_state") == "OFF"
+
+    # ── NFL live status helpers ───────────────────────────────────────────
+    def _nfl_is_live(g: dict) -> bool:
+        return g.get("status") == "in_progress"
+    def _nfl_is_final(g: dict) -> bool:
+        return g.get("status") == "Final"
+
+    # ── Generic: find matching game for a pick ────────────────────────────
+    def _find_game(games: list, opp_name: str, team_name: str,
+                   home_key: str, away_key: str,
+                   is_live_fn, is_final_fn) -> dict:
+        """Find today's game for a pick by matching team/opponent names."""
+        opp_l  = (opp_name  or "").lower()
+        team_l = (team_name or "").lower()
+        # Prefer live games first
+        for g in games:
+            if not is_live_fn(g):
+                continue
+            h = g.get(home_key, {}).get("full_name", "")
+            a = g.get(away_key, {}).get("full_name", "")
+            if (_name_matches(team_l, h) or _name_matches(team_l, a)
+                    or (opp_l and (_name_matches(opp_l, h) or _name_matches(opp_l, a)))):
+                return g
+        # Fall back to final games
+        for g in games:
+            if not is_final_fn(g):
+                continue
+            h = g.get(home_key, {}).get("full_name", "")
+            a = g.get(away_key, {}).get("full_name", "")
+            if (_name_matches(team_l, h) or _name_matches(team_l, a)
+                    or (opp_l and (_name_matches(opp_l, h) or _name_matches(opp_l, a)))):
+                return g
+        return {}
+
+    # ── Settle helper ─────────────────────────────────────────────────────
+    async def _settle_bdl_pick(pick: dict, current_value: float, sport: str,
+                               home_score: int, away_score: int,
+                               home_name: str, away_name: str,
+                               period_label: str) -> dict:
+        """Settle a BDL pick and persist to DB."""
+        line = pick.get("line", 0)
+        rec  = pick.get("recommendation", "over")
+        if current_value > line:
+            result_str = "hit" if rec == "over" else "miss"
+        elif current_value < line:
+            result_str = "miss" if rec == "over" else "hit"
+        else:
+            result_str = "push"
+
+        venue = (pick.get("venue") or "home").lower()
+        p_score = home_score if venue == "home" else away_score
+        o_score = away_score if venue == "home" else home_score
+        match_score = f"{p_score}-{o_score}"
+
+        settled_hit_pct = 100 if result_str == "hit" else (0 if result_str == "miss" else 50)
+        settle_set = {
+            "status": "settled",
+            "result": result_str,
+            "actualValue": current_value,
+            "hitPct": settled_hit_pct,
+            "matchScore": match_score,
+            "homeTeam": home_name,
+            "awayTeam": away_name,
+            "finalHomeGoals": home_score,
+            "finalAwayGoals": away_score,
+            "settledAt": datetime.now(timezone.utc).isoformat(),
+        }
+        try:
+            await db.picks.update_one(
+                {"pickId": pick["pickId"], "email": email},
+                {"$set": settle_set}
+            )
+        except Exception:
+            pass
+        # In-app notification
+        try:
+            from routes.notifications import create_notification
+            _emoji = "✅" if result_str == "hit" else ("❌" if result_str == "miss" else "↔️")
+            _prop  = pick.get("propType", "").replace("_", " ").title()
+            _label = "HIT" if result_str == "hit" else ("MISSED" if result_str == "miss" else "PUSH")
+            await create_notification(
+                email=email,
+                ntype="pick_settled",
+                title=f"{_emoji} {pick.get('playerName','?')} {_prop} — {_label}",
+                body=f"Actual: {current_value} · Line: {line} · {rec.upper()}",
+                data={"pickId": pick.get("pickId"), "sport": sport},
+            )
+        except Exception:
+            pass
+
+        return {
+            "pickId": pick["pickId"],
+            "matchStatus": "final",
+            "currentValue": current_value,
+            "actualValue": current_value,
+            "pace": current_value,
+            "hitPct": settled_hit_pct,
+            "period": period_label,
+            "matchScore": match_score,
+            "homeTeam": home_name,
+            "awayTeam": away_name,
+            "finalHomeGoals": home_score,
+            "finalAwayGoals": away_score,
+            "result": result_str,
+        }
+
+    # ─────────────────────────────────────────────────────────────────────
+    # NBA
+    # ─────────────────────────────────────────────────────────────────────
+    for pick in nba_picks:
+        try:
+            game = _find_game(nba_games, pick.get("opponentName",""),
+                              pick.get("teamName",""),
+                              "home_team", "visitor_team",
+                              _nba_is_live, _nba_is_final)
+            if not game:
+                results.append({"pickId": pick["pickId"], "matchStatus": "scheduled"})
+                continue
+
+            game_id   = game["id"]
+            home_name = game["home_team"]["full_name"]
+            away_name = game["visitor_team"]["full_name"]
+            home_score = game.get("home_team_score") or 0
+            away_score = game.get("visitor_team_score") or 0
+            period, time_str = _nba_period_time(game)
+            is_final = _nba_is_final(game)
+            is_live  = _nba_is_live(game)
+            period_label = "Final" if is_final else (f"Q{period}" if period > 0 else "Pre")
+
+            # Fetch player stats for this game
+            p_id = pick.get("playerId")
+            player_name = pick.get("playerName", "")
+            stats_resp = await _bdl_get(
+                "https://api.balldontlie.io/v1/stats",
+                [("game_ids[]", game_id), ("per_page", 100)],
+            )
+            stat_rows = stats_resp.get("data", []) if isinstance(stats_resp, dict) else []
+
+            current_value = None
+            for row in stat_rows:
+                r_player = row.get("player", {})
+                if (p_id and r_player.get("id") == p_id) or \
+                        _name_matches(player_name, f"{r_player.get('first_name','')} {r_player.get('last_name','')}"):
+                    getter = _NBA_STAT.get(pick.get("propType", ""))
+                    if getter:
+                        current_value = getter(row)
+                    break
+
+            if current_value is None:
+                results.append({"pickId": pick["pickId"], "matchStatus": "live" if is_live else "scheduled"})
+                continue
+
+            elapsed_frac = _calc_elapsed_pct("nba", period, time_str)
+            reg = _regulation("nba")
+            elapsed_mins = round(elapsed_frac * reg, 1)
+            pace = round((current_value / max(elapsed_frac, 0.01)) * 1.0, 1) if elapsed_frac > 0 else current_value
+            hit_pct = _calc_hit_pct(current_value, pick.get("line", 0), pick.get("recommendation","over"),
+                                     int(elapsed_mins), reg, is_final, pace)
+
+            if is_final and pick.get("status") != "settled":
+                r = await _settle_bdl_pick(pick, current_value, "nba",
+                                           home_score, away_score, home_name, away_name, period_label)
+                results.append(r)
+            else:
+                venue = (pick.get("venue") or "home").lower()
+                p_score = home_score if venue == "home" else away_score
+                o_score = away_score if venue == "home" else home_score
+                results.append({
+                    "pickId": pick["pickId"],
+                    "matchStatus": "final" if is_final else "live",
+                    "currentValue": current_value,
+                    "pace": pace,
+                    "hitPct": hit_pct,
+                    "elapsed": elapsed_mins,
+                    "period": period_label,
+                    "matchScore": f"{p_score}-{o_score}",
+                    "homeTeam": home_name,
+                    "awayTeam": away_name,
+                    "finalHomeGoals": home_score,
+                    "finalAwayGoals": away_score,
+                })
+        except Exception:
+            traceback.print_exc()
+            results.append({"pickId": pick.get("pickId",""), "matchStatus": "scheduled"})
+
+    # ─────────────────────────────────────────────────────────────────────
+    # WNBA  (same structure as NBA, different base URL + endpoints)
+    # ─────────────────────────────────────────────────────────────────────
+    for pick in wnba_picks:
+        try:
+            game = _find_game(wnba_games, pick.get("opponentName",""),
+                              pick.get("teamName",""),
+                              "home_team", "visitor_team",
+                              _wnba_is_live, _wnba_is_final)
+            if not game:
+                results.append({"pickId": pick["pickId"], "matchStatus": "scheduled"})
+                continue
+
+            game_id   = game["id"]
+            home_name = game["home_team"]["full_name"]
+            away_name = game["visitor_team"]["full_name"]
+            home_score = game.get("home_score") or 0
+            away_score = game.get("away_score") or 0
+            period    = game.get("period", 0)
+            time_str  = str(game.get("time") or "")
+            is_final  = _wnba_is_final(game)
+            is_live   = _wnba_is_live(game)
+            period_label = "Final" if is_final else (f"Q{period}" if period > 0 else "Pre")
+
+            p_id = pick.get("playerId")
+            player_name = pick.get("playerName", "")
+            stats_resp = await _bdl_get(
+                "https://api.balldontlie.io/wnba/v1/player_stats",
+                [("game_ids[]", game_id), ("per_page", 100)],
+            )
+            stat_rows = stats_resp.get("data", []) if isinstance(stats_resp, dict) else []
+
+            current_value = None
+            for row in stat_rows:
+                r_player = row.get("player", {})
+                if (p_id and r_player.get("id") == p_id) or \
+                        _name_matches(player_name, f"{r_player.get('first_name','')} {r_player.get('last_name','')}"):
+                    getter = _NBA_STAT.get(pick.get("propType", ""))
+                    if getter:
+                        current_value = getter(row)
+                    break
+
+            if current_value is None:
+                results.append({"pickId": pick["pickId"], "matchStatus": "live" if is_live else "scheduled"})
+                continue
+
+            elapsed_frac = _calc_elapsed_pct("wnba", period, time_str)
+            reg = _regulation("wnba")
+            elapsed_mins = round(elapsed_frac * reg, 1)
+            pace = round(current_value / max(elapsed_frac, 0.01), 1) if elapsed_frac > 0 else current_value
+            hit_pct = _calc_hit_pct(current_value, pick.get("line", 0), pick.get("recommendation","over"),
+                                     int(elapsed_mins), reg, is_final, pace)
+
+            if is_final and pick.get("status") != "settled":
+                r = await _settle_bdl_pick(pick, current_value, "wnba",
+                                           home_score, away_score, home_name, away_name, period_label)
+                results.append(r)
+            else:
+                venue = (pick.get("venue") or "home").lower()
+                p_score = home_score if venue == "home" else away_score
+                o_score = away_score if venue == "home" else home_score
+                results.append({
+                    "pickId": pick["pickId"],
+                    "matchStatus": "final" if is_final else "live",
+                    "currentValue": current_value,
+                    "pace": pace,
+                    "hitPct": hit_pct,
+                    "elapsed": elapsed_mins,
+                    "period": period_label,
+                    "matchScore": f"{p_score}-{o_score}",
+                    "homeTeam": home_name,
+                    "awayTeam": away_name,
+                    "finalHomeGoals": home_score,
+                    "finalAwayGoals": away_score,
+                })
+        except Exception:
+            traceback.print_exc()
+            results.append({"pickId": pick.get("pickId",""), "matchStatus": "scheduled"})
+
+    # ─────────────────────────────────────────────────────────────────────
+    # NHL
+    # ─────────────────────────────────────────────────────────────────────
+    for pick in nhl_picks:
+        try:
+            game = _find_game(nhl_games, pick.get("opponentName",""),
+                              pick.get("teamName",""),
+                              "home_team", "away_team",
+                              _nhl_is_live, _nhl_is_final)
+            if not game:
+                results.append({"pickId": pick["pickId"], "matchStatus": "scheduled"})
+                continue
+
+            game_id    = game["id"]
+            home_name  = game["home_team"]["full_name"]
+            away_name  = game["away_team"]["full_name"]
+            home_score = game.get("home_score") or 0
+            away_score = game.get("away_score") or 0
+            period     = game.get("period", 0)
+            time_rem   = str(game.get("time_remaining") or "20:00")
+            is_final   = _nhl_is_final(game)
+            is_live    = _nhl_is_live(game)
+            period_label = "Final" if is_final else (f"P{period}" if period > 0 else "Pre")
+
+            p_id = pick.get("playerId")
+            player_name = pick.get("playerName", "")
+            box_resp = await _bdl_get(
+                "https://api.balldontlie.io/nhl/v1/box_scores",
+                [("game_ids[]", game_id), ("per_page", 100)],
+            )
+            box_rows = box_resp.get("data", []) if isinstance(box_resp, dict) else []
+
+            current_value = None
+            for row in box_rows:
+                r_player = row.get("player", {})
+                if (p_id and r_player.get("id") == p_id) or \
+                        _name_matches(player_name, r_player.get("full_name", "")):
+                    getter = _NHL_STAT.get(pick.get("propType", ""))
+                    if getter:
+                        current_value = getter(row)
+                    break
+
+            if current_value is None:
+                results.append({"pickId": pick["pickId"], "matchStatus": "live" if is_live else "scheduled"})
+                continue
+
+            elapsed_frac = _calc_elapsed_pct("nhl", period, time_rem)
+            reg = _regulation("nhl")
+            elapsed_mins = round(elapsed_frac * reg, 1)
+            pace = round(current_value / max(elapsed_frac, 0.01), 2) if elapsed_frac > 0 else current_value
+            hit_pct = _calc_hit_pct(current_value, pick.get("line", 0), pick.get("recommendation","over"),
+                                     int(elapsed_mins), reg, is_final, pace)
+
+            if is_final and pick.get("status") != "settled":
+                r = await _settle_bdl_pick(pick, current_value, "nhl",
+                                           home_score, away_score, home_name, away_name, period_label)
+                results.append(r)
+            else:
+                venue = (pick.get("venue") or "home").lower()
+                p_score = home_score if venue == "home" else away_score
+                o_score = away_score if venue == "home" else home_score
+                results.append({
+                    "pickId": pick["pickId"],
+                    "matchStatus": "final" if is_final else "live",
+                    "currentValue": current_value,
+                    "pace": pace,
+                    "hitPct": hit_pct,
+                    "elapsed": elapsed_mins,
+                    "period": period_label,
+                    "matchScore": f"{p_score}-{o_score}",
+                    "homeTeam": home_name,
+                    "awayTeam": away_name,
+                    "finalHomeGoals": home_score,
+                    "finalAwayGoals": away_score,
+                })
+        except Exception:
+            traceback.print_exc()
+            results.append({"pickId": pick.get("pickId",""), "matchStatus": "scheduled"})
+
+    # ─────────────────────────────────────────────────────────────────────
+    # NFL  (score-only — no live player stats endpoint)
+    # ─────────────────────────────────────────────────────────────────────
+    for pick in nfl_picks:
+        try:
+            game = _find_game(nfl_games, pick.get("opponentName",""),
+                              pick.get("teamName",""),
+                              "home_team", "visitor_team",
+                              _nfl_is_live, _nfl_is_final)
+            if not game:
+                results.append({"pickId": pick["pickId"], "matchStatus": "scheduled"})
+                continue
+
+            game_id    = game["id"]
+            home_name  = game["home_team"]["full_name"]
+            away_name  = game["visitor_team"]["full_name"]
+            home_score = game.get("home_team_score") or 0
+            away_score = game.get("visitor_team_score") or 0
+            is_final   = _nfl_is_final(game)
+            is_live    = _nfl_is_live(game)
+
+            # NFL: no per-player live stats — show score context only
+            # If finished, defer settlement to background (we can't compute actualValue)
+            venue = (pick.get("venue") or "home").lower()
+            p_score = home_score if venue == "home" else away_score
+            o_score = away_score if venue == "home" else home_score
+            period = game.get("period", 0)
+            period_label = "Final" if is_final else (f"Q{period}" if period > 0 else "Pre")
+            results.append({
+                "pickId": pick["pickId"],
+                "matchStatus": "final" if is_final else ("live" if is_live else "scheduled"),
+                "period": period_label,
+                "matchScore": f"{p_score}-{o_score}",
+                "homeTeam": home_name,
+                "awayTeam": away_name,
+                "finalHomeGoals": home_score,
+                "finalAwayGoals": away_score,
+            })
+        except Exception:
+            traceback.print_exc()
+            results.append({"pickId": pick.get("pickId",""), "matchStatus": "scheduled"})
+
+    return results
 
 
 async def _process_soccer_live(picks: list, email: str) -> list:
