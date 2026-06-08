@@ -114,7 +114,8 @@ async def _cache_set(key: str, data) -> None:
 
 
 async def search_players(query: str, limit: int = 15) -> list:
-    cache_key = f"search:{query.lower()}"
+    # search2: prefix busts stale caches poisoned by old-key 429 storms
+    cache_key = f"search3:{query.lower()}"
     cached = await _cache_get(cache_key)
     if _cache_fresh(cached, CACHE_TTL["player_search"]):
         return cached["data"][:limit]
@@ -130,13 +131,37 @@ async def search_players(query: str, limit: int = 15) -> list:
         except Exception as e:
             log.warning(f"[NFL SEARCH] {e}")
             break
-        results.extend(data.get("data", []))
+        rows = data.get("data", [])
+        # Synthesise full_name for NFL (BDL returns first_name + last_name only)
+        for p in rows:
+            if "full_name" not in p:
+                p["full_name"] = f"{p.get('first_name','')} {p.get('last_name','')}".strip()
+        results.extend(rows)
         meta = data.get("meta", {})
         cursor = meta.get("next_cursor")
         if not cursor or len(results) >= limit:
             break
 
-    await _cache_set(cache_key, results[:limit])
+    # BDL search only matches single name tokens — fall back to last name
+    if not results and " " in query:
+        last_name = query.rsplit(" ", 1)[-1]
+        try:
+            data = await _get("/players", {"search": last_name, "per_page": 25})
+        except Exception as e:
+            log.warning(f"[NFL SEARCH fallback] {e}")
+        else:
+            rows = data.get("data", [])
+            for p in rows:
+                if "full_name" not in p:
+                    p["full_name"] = f"{p.get('first_name','')} {p.get('last_name','')}".strip()
+            # Sort by how many original query tokens appear in the player name
+            q_tokens = query.lower().split()
+            rows.sort(key=lambda p: sum(1 for t in q_tokens if t in p.get("full_name","").lower()), reverse=True)
+            results = rows
+
+    # Only cache non-empty results — transient 429 must not poison cache
+    if results:
+        await _cache_set(cache_key, results[:limit])
     return results[:limit]
 
 
