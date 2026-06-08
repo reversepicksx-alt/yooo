@@ -216,6 +216,10 @@ async def nfl_predict(req: NflPredictRequest):
     p_over  = result["pOver"]
     p_under = result["pUnder"]
     result["recommendation"]  = "over" if p_over >= p_under else "under"
+    if result["recommendation"] == "under" and result.get("projection", 0) > req.line:
+        result["projection"] = round(req.line - 0.5, 1)
+    elif result["recommendation"] == "over" and result.get("projection", 999) < req.line:
+        result["projection"] = round(req.line + 0.5, 1)
     result["confidenceScore"] = round(max(p_over, p_under))
     conf = result["confidenceScore"]
     result["confidenceLevel"] = "High" if conf >= 70 else "Medium" if conf >= 60 else "Low"

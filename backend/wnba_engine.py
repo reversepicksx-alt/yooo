@@ -9,9 +9,14 @@ Multi-layer model for women's basketball player props:
   Layer 5: REST DAYS      — Back-to-back penalty / extra-rest boost
   Monte Carlo: Negative-Binomial for discrete counts
 """
+import math
 import statistics as stats_mod
 from typing import Optional
 from bayesian_engine import _monte_carlo_probability as _baye_mc
+
+def _mc(mean, var, line, is_count):
+    std = math.sqrt(max(var, 0.01))
+    return _baye_mc(mean, std, line, n_sims=5000, is_count_stat=is_count, variance=var)
 
 # ── Prop definitions ─────────────────────────────────────────────────────────
 WNBA_PROPS = {
@@ -142,7 +147,7 @@ def compute_wnba_projection(
 
     variance = stats_mod.variance(vals) if len(vals) > 1 else max(projection * 0.30, 1.0)
     is_discrete = prop_type in COUNT_PROPS
-    _po, _pu, *_ = _baye_mc(projection, variance, line, is_count_stat=is_discrete)
+    _po, _pu, *_ = _mc(projection, variance, line, is_discrete)
     # _monte_carlo_probability returns fractions (0–1); convert to percentages
     p_over  = round(_po * 100, 2)
     p_under = round(_pu * 100, 2)

@@ -276,6 +276,18 @@ async def wta_predict(req: WtaPredictRequest):
     if result.get("error"):
         raise HTTPException(status_code=400, detail=str(result["error"]))
 
+    # ── [BAYESIAN TRUTH] override ─────────────────────────────────────────────
+    _p_over  = result.get("pOver", 50)
+    _p_under = result.get("pUnder", 50)
+    result["recommendation"]  = "over" if _p_over >= _p_under else "under"
+    result["confidenceScore"] = round(max(_p_over, _p_under))
+    _conf = result["confidenceScore"]
+    result["confidenceLevel"] = "High" if _conf >= 70 else "Medium" if _conf >= 60 else "Low"
+    if result["recommendation"] == "under" and result.get("projection", 0) > req.line:
+        result["projection"] = round(req.line - 0.5, 1)
+    elif result["recommendation"] == "over" and result.get("projection", 999) < req.line:
+        result["projection"] = round(req.line + 0.5, 1)
+
     tactical_metrics = result.get("tacticalMetrics", {})
 
     # AI analysis (best-effort)

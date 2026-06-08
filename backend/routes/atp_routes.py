@@ -154,6 +154,10 @@ async def atp_predict(req: AtpPredictRequest):
     result["confidenceScore"] = round(max(p_over, p_under))
     conf = result["confidenceScore"]
     result["confidenceLevel"] = "High" if conf >= 70 else "Medium" if conf >= 60 else "Low"
+    if result["recommendation"] == "under" and result["projection"] > req.line:
+        result["projection"] = round(req.line - 0.5, 1)
+    elif result["recommendation"] == "over" and result["projection"] < req.line:
+        result["projection"] = round(req.line + 0.5, 1)
 
     ai_task = asyncio.create_task(_get_atp_ai_analysis(
         player_name=req.playerName, opponent=req.opponentName or "",

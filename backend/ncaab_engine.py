@@ -8,6 +8,10 @@ import statistics as stats_mod
 from typing import Optional
 from bayesian_engine import _monte_carlo_probability as _baye_mc
 
+def _mc(mean, var, line, is_count):
+    std = math.sqrt(max(var, 0.01))
+    return _baye_mc(mean, std, line, n_sims=5000, is_count_stat=is_count, variance=var)
+
 NCAAB_PROPS = {
     "points":        "pts",
     "rebounds":      "reb",
@@ -116,7 +120,7 @@ def compute_ncaab_projection(
         projection = round(posterior, 2)
 
     _variance = stats_mod.variance(values) if len(values) > 1 else max(projection * 0.30, 0.5)
-    _po, _pu, *_ = _baye_mc(projection, _variance, line, is_count_stat=prop_type in COUNT_PROPS)
+    _po, _pu, *_ = _mc(projection, _variance, line, prop_type in COUNT_PROPS)
     p_over  = round(_po * 100, 2)
     p_under = round(_pu * 100, 2)
 

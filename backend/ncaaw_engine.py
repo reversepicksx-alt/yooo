@@ -3,8 +3,15 @@ NCAAW Bayesian Projection Engine (College Basketball Women)
 Mirrors WNBA engine with college women's calibrated hyper-priors.
 """
 import math
+import statistics as _stats_mod
 from typing import Optional
 from bayesian_engine import _monte_carlo_probability as _baye_mc
+
+def _mc(projection, values, line, is_count):
+    var = _stats_mod.variance(values) if len(values) > 1 else max(projection * 0.30, 0.5)
+    var = max(var, 0.1)
+    std = math.sqrt(var)
+    return _baye_mc(projection, std, line, n_sims=5000, is_count_stat=is_count, variance=var)
 
 NCAAW_PROPS = {
     "points":        "pts",
@@ -103,7 +110,9 @@ def compute_ncaaw_projection(
     else:
         projection = round(posterior, 2)
 
-    p_over, p_under = _baye_mc(values[:12], line, prop_type in COUNT_PROPS)
+    _po, _pu, *_ = _mc(projection, values, line, prop_type in COUNT_PROPS)
+    p_over  = round(_po * 100, 2)
+    p_under = round(_pu * 100, 2)
 
     streak_flag = "NEUTRAL"
     if len(values) >= 4:

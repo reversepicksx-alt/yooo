@@ -8,4 +8,5 @@
 - [Position cache staleness](position-cache-staleness.md) — position resolved by Gemini but cached 30d in Atlas db.player_positions by playerId; prompt fixes invisible until cache cleared. Backend uses Atlas, not local mongod.
 - [Proxy timeout for predictions](proxy-timeout.md) — proxyTimeout=30s caused 500s on long predictions (AI synthesis). Bumped to 120s in mobile/proxy.js to match frontend's 90s/150s AbortController limits.
 - [CS2 NoneType comparison crashes](cs2-none-crashes.md) — `dict.get(key, 0) > 0` crashes when value is `None` (key exists but set to null). Always use `(dict.get(key) or 0) > 0` for numeric comparisons in CS2 engine/client and any dict with BDL/API-fetched data.
+- [Bayesian variance fix](bayesian-variance-fix.md) — Never pass raw variance as std to _monte_carlo_probability (gets squared again); use _mc() helper. NCAAW/ATP had a list-as-mean crash. All routes now have projection visual flip + [BAYESIAN TRUTH].
 - [BDL search quirks](bdl-search-quirks.md) — BDL search is single-token only; use last-name fallback + token-score sorting; NHL has no stat endpoints (503); search cache key currently search3:.

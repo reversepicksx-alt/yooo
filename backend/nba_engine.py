@@ -13,8 +13,18 @@ Multi-layer model for basketball player props:
 import math
 import random
 import statistics as stats_mod
+
 from typing import Optional
 from bayesian_engine import _monte_carlo_probability as _baye_mc
+
+# ── Monte Carlo helper (variance-correct wrapper) ────────────────────────────
+# _baye_mc signature: (mean, std, line, ...) — for count stats it uses std**2
+# as variance unless `variance=` kwarg is passed explicitly.  We always pass
+# math.sqrt(variance) as std AND the raw variance as the kwarg so the NegBin
+# is parameterised with the ACTUAL sample variance, not variance-squared.
+def _mc(mean, var, line, is_count):
+    std = math.sqrt(max(var, 0.01))
+    return _baye_mc(mean, std, line, n_sims=5000, is_count_stat=is_count, variance=var)
 
 # ── Prop definitions ─────────────────────────────────────────────────────────
 NBA_PROPS = {
@@ -178,9 +188,21 @@ def compute_nba_projection(
     # Override prior with season averages if available
     if season_avg:
         sa_map = {
-            "points": "pts", "rebounds": "reb", "assists": "ast",
-            "steals": "stl", "blocks": "blk", "turnovers": "turnover",
-            "three_pointers": "fg3m",
+            "points":        "pts",
+            "rebounds":      "reb",
+            "assists":       "ast",
+            "steals":        "stl",
+            "blocks":        "blk",
+            "turnovers":     "turnover",
+            "three_pointers":"fg3m",
+            "field_goals":   "fgm",
+            "free_throws":   "ftm",
+            "pts_reb_ast":   None,  # combo — no direct SA field; use game logs only
+            "pts_reb":       None,
+            "pts_ast":       None,
+            "reb_ast":       None,
+            "stl_blk":       None,
+            "fantasy_points":None,
         }
         sa_field = sa_map.get(prop_type)
         if sa_field and season_avg.get(sa_field) is not None:
@@ -211,7 +233,7 @@ def compute_nba_projection(
     # ── Monte Carlo ────────────────────────────────────────────────────────────
     variance = stats_mod.variance(vals) if len(vals) > 1 else max(projection * 0.30, 1.5)
     is_discrete = prop_type in COUNT_PROPS
-    _po, _pu, *_ = _baye_mc(projection, variance, line, is_count_stat=is_discrete)
+    _po, _pu, *_ = _mc(projection, variance, line, is_discrete)
     # _monte_carlo_probability returns fractions (0–1); convert to percentages
     p_over  = round(_po * 100, 2)
     p_under = round(_pu * 100, 2)
