@@ -4,7 +4,9 @@ description: BallDontLie API search limitations and workarounds for all sport cl
 ---
 
 ## Rule
-BDL `/players?search=` only matches **single name tokens** — multi-word queries like "LeBron James" return 0 results.
+BDL `/players?search=` behavior varies by sport:
+- **NBA / WNBA / NFL / NCAAB**: search param works but only for single tokens; multi-word queries return 0 results. Use last-name fallback + token-score sort.
+- **NHL**: search param is silently ignored — returns all players sorted by ID regardless of query. Must use `_get_all_current_players(season)` (full roster via `seasons[]=` filter, paginated, cached 7 days) and fuzzy-match locally.
 
 **Why:** BDL API does a prefix match on a single field; spaces cause no results, not a partial match.
 

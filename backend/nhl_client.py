@@ -1,10 +1,11 @@
 """
 BallDontLie NHL API client with rate-limiting and MongoDB caching.
 Base URL: https://api.balldontlie.io/nhl/v1
-Elite tier: 600 req/min.
+ALL-ACCESS tier: full player + game + box_score endpoints available.
 
-NHL seasons use format: "20232024" (start year + end year concatenated).
-Player stats endpoint: /player_season_stats (season averages) and /games for schedule.
+Season format: integer year (2025 = 2024-25 season, 2024 = 2023-24 season).
+Player stats: /players/{id}/season_stats?season={year}
+Game logs: /games?team_ids[]={id}&seasons[]={year} → /box_scores?game_ids[]=...
 """
 import asyncio
 import time
@@ -31,16 +32,24 @@ CACHE_TTL = {
     "player_search": 4 * 3600,
     "stats":         2 * 3600,
     "season_stats":  6 * 3600,
+    "games":         6 * 3600,
 }
 
-# Current NHL season: "20242025"
-CURRENT_NHL_SEASON = "20252026"
+# Current NHL season: 2025 = 2024-25 season (ended June 2025)
+CURRENT_NHL_SEASON = 2025
 
 
-async def _get(path: str, params: dict = None) -> dict:
+async def _get(path: str, params=None) -> dict:
+    """GET request — params may be a dict or a list of (key, value) tuples
+    (the latter supports repeated keys like game_ids[])."""
     global _last_req_time
     headers = {"Authorization": NHL_API_KEY}
-    url = f"{NHL_API_BASE}{path}"
+    # If path already contains a query string (pre-built), use it directly
+    if "?" in path:
+        url = f"{NHL_API_BASE}{path}"
+        params = None
+    else:
+        url = f"{NHL_API_BASE}{path}"
 
     async with _rate_sem:
         elapsed = time.monotonic() - _last_req_time
@@ -113,55 +122,70 @@ async def _cache_set(key: str, data) -> None:
         pass
 
 
+async def _get_all_current_players(season: int = CURRENT_NHL_SEASON) -> list:
+    """Fetch all NHL players for a given season and cache them.
+    BDL NHL ignores the search= param so we cache the full roster and search locally.
+    Uses cursor pagination; ~8-10 pages for a full NHL season roster.
+    """
+    cache_key = f"all_players:{season}"
+    cached = await _cache_get(cache_key)
+    if _cache_fresh(cached, 7 * 86400):  # 7-day TTL
+        return cached["data"]
+
+    all_players: list = []
+    cursor = None
+    for _ in range(20):  # safety cap — 20 × 100 = 2000 players max
+        params: list = [("seasons[]", season), ("per_page", 100)]
+        if cursor:
+            params.append(("cursor", cursor))
+        try:
+            data = await _get("/players", params)
+        except Exception as e:
+            log.warning(f"[NHL ALL PLAYERS] page fetch failed: {e}")
+            break
+        rows = data.get("data", [])
+        for p in rows:
+            if "full_name" not in p:
+                p["full_name"] = f"{p.get('first_name','')} {p.get('last_name','')}".strip()
+        all_players.extend(rows)
+        cursor = data.get("meta", {}).get("next_cursor")
+        if not cursor:
+            break
+
+    if all_players:
+        log.info(f"[NHL ALL PLAYERS] cached {len(all_players)} players for season {season}")
+        await _cache_set(cache_key, all_players)
+    return all_players
+
+
 async def search_players(query: str, limit: int = 15) -> list:
-    # search2: prefix busts stale caches poisoned by old-key 429 storms
-    cache_key = f"search3:{query.lower()}"
+    """Local fuzzy search from cached full-season player list.
+    BDL NHL /players?search= silently ignores the query and returns all players
+    sorted by ID — so we fetch the full current-season roster once, cache it,
+    and do token-overlap scoring locally.
+    """
+    cache_key = f"nhl_search:{query.lower()}"
     cached = await _cache_get(cache_key)
     if _cache_fresh(cached, CACHE_TTL["player_search"]):
         return cached["data"][:limit]
 
-    results = []
-    cursor = None
-    for _ in range(3):
-        params = {"search": query, "per_page": 25}
-        if cursor:
-            params["cursor"] = cursor
-        try:
-            data = await _get("/players", params)
-        except Exception as e:
-            log.warning(f"[NHL SEARCH] {e}")
-            break
-        rows = data.get("data", [])
-        # Synthesise full_name for NHL (BDL returns first_name + last_name only)
-        for p in rows:
-            if "full_name" not in p:
-                p["full_name"] = f"{p.get('first_name','')} {p.get('last_name','')}".strip()
-        results.extend(rows)
-        meta = data.get("meta", {})
-        cursor = meta.get("next_cursor")
-        if not cursor or len(results) >= limit:
-            break
+    all_players = await _get_all_current_players()
+    if not all_players:
+        all_players = await _get_all_current_players(CURRENT_NHL_SEASON - 1)
 
-    # BDL search only matches single name tokens — fall back to last name
-    if not results and " " in query:
-        last_name = query.rsplit(" ", 1)[-1]
-        try:
-            data = await _get("/players", {"search": last_name, "per_page": 25})
-        except Exception as e:
-            log.warning(f"[NHL SEARCH fallback] {e}")
-        else:
-            rows = data.get("data", [])
-            for p in rows:
-                if "full_name" not in p:
-                    p["full_name"] = f"{p.get('first_name','')} {p.get('last_name','')}".strip()
-            q_tokens = query.lower().split()
-            rows.sort(key=lambda p: sum(1 for t in q_tokens if t in p.get("full_name","").lower()), reverse=True)
-            results = rows
+    q_tokens = query.lower().split()
 
-    # Only cache non-empty results — transient 429 must not poison cache
+    def _score(p: dict) -> int:
+        name = p.get("full_name", "").lower()
+        return sum(1 for t in q_tokens if t in name)
+
+    matches = [p for p in all_players if _score(p) > 0]
+    matches.sort(key=_score, reverse=True)
+    results = matches[:limit]
+
     if results:
-        await _cache_set(cache_key, results[:limit])
-    return results[:limit]
+        await _cache_set(cache_key, results)
+    return results
 
 
 async def get_player(player_id: int) -> Optional[dict]:
@@ -170,8 +194,7 @@ async def get_player(player_id: int) -> Optional[dict]:
     if _cache_fresh(cached, CACHE_TTL["player"]):
         return cached["data"]
     try:
-        # BDL NHL has no single-player endpoint — fetch via list filter
-        data = await _get("/players", {"player_ids[]": player_id, "per_page": 1})
+        data = await _get("/players", [("player_ids[]", player_id), ("per_page", 1)])
         players = data.get("data") or []
         player = players[0] if players else {}
         if player:
@@ -197,16 +220,22 @@ async def get_teams() -> list:
         return []
 
 
-async def get_player_season_stats(player_id: int, season: str = CURRENT_NHL_SEASON) -> dict:
-    """Get season averages for a player. Season format: '20242025'."""
-    cache_key = f"season_stats:{player_id}:{season}"
+async def get_player_season_stats(player_id: int, season: int = CURRENT_NHL_SEASON) -> dict:
+    """Get season totals/averages for a player.
+    Endpoint: GET /players/{id}/season_stats?season={year}
+    Returns [{name: 'goals', value: 44}, ...] — converted to flat dict.
+    """
+    cache_key = f"season_stats4:{player_id}:{season}"
     cached = await _cache_get(cache_key)
     if _cache_fresh(cached, CACHE_TTL["season_stats"]):
         return cached["data"]
     try:
-        data = await _get("/player_season_stats", {"player_ids[]": player_id, "seasons[]": season, "per_page": 1})
-        stats = (data.get("data") or [{}])[0] if data.get("data") else {}
-        await _cache_set(cache_key, stats)
+        data = await _get(f"/players/{player_id}/season_stats", {"season": season})
+        raw = data.get("data") or []
+        # Convert [{name, value}, ...] → flat dict
+        stats = {item["name"]: item["value"] for item in raw if "name" in item and "value" in item}
+        if stats:
+            await _cache_set(cache_key, stats)
         return stats
     except Exception as e:
         log.warning(f"[NHL SEASON STATS] {e}")
@@ -214,39 +243,38 @@ async def get_player_season_stats(player_id: int, season: str = CURRENT_NHL_SEAS
 
 
 def _transform_nhl_log(row: dict) -> dict:
-    """Transform a BDL NHL stat row into unified schema."""
+    """Transform a BDL NHL box_score row into unified schema."""
     game = row.get("game") or {}
-    date_str = (game.get("date") or "")[:10]
+    date_str = (game.get("game_date") or "")[:10]
     home_team_id = (game.get("home_team") or {}).get("id")
     player_team_id = (row.get("team") or {}).get("id")
     venue = "home" if player_team_id == home_team_id else "away"
 
     goals   = (row.get("goals") or 0)
     assists = (row.get("assists") or 0)
-    shots   = (row.get("shots") or 0)
-    blocks  = (row.get("blocked_shots") or row.get("blocks") or 0)
+    # BDL box_score uses shots_on_goal (not shots)
+    shots   = (row.get("shots_on_goal") or row.get("shots") or 0)
+    blocks  = (row.get("blocked_shots") or 0)
     hits    = (row.get("hits") or 0)
     pm      = (row.get("plus_minus") or 0)
     pim     = (row.get("penalty_minutes") or 0)
     toi_str = row.get("time_on_ice") or "0:00"
-    # Parse TOI: "20:31" → float minutes
     try:
         toi_parts = str(toi_str).split(":")
         toi = int(toi_parts[0]) + (int(toi_parts[1]) / 60 if len(toi_parts) > 1 else 0)
     except Exception:
         toi = 0.0
 
-    # Goalie stats
-    saves        = (row.get("saves") or 0)
+    # Goalie stats (present if player is goalie)
+    saves         = (row.get("saves") or 0)
     goals_against = (row.get("goals_against") or 0)
     shots_against = saves + goals_against
-    save_pct     = round(saves / shots_against, 3) if shots_against > 0 else 0.0
+    save_pct      = round(saves / shots_against, 3) if shots_against > 0 else 0.0
 
     return {
         "date":          date_str,
         "game_id":       game.get("id"),
         "venue":         venue,
-        # Skater
         "goals":         goals,
         "assists":       assists,
         "points":        goals + assists,
@@ -256,7 +284,6 @@ def _transform_nhl_log(row: dict) -> dict:
         "plus_minus":    pm,
         "pim":           pim,
         "toi":           round(toi, 2),
-        # Goalie
         "saves":         saves,
         "goals_against": goals_against,
         "save_pct":      save_pct,
@@ -265,19 +292,94 @@ def _transform_nhl_log(row: dict) -> dict:
     }
 
 
-async def get_player_game_logs(player_id: int, season: str = CURRENT_NHL_SEASON) -> list:
-    """Fetch per-game stats for a player via /player_game_stats, newest-first.
-    Cache key prefix 'gl3:' bypasses stale Atlas entries from old broken calls.
-    Empty results are NOT cached so a transient 429 doesn't block future data.
+async def get_player_game_logs(player_id: int, season: int = CURRENT_NHL_SEASON) -> list:
+    """Fetch per-game stats for a player via games + box_scores.
+    Strategy:
+      1. Get player's current team from /players list
+      2. Fetch that team's completed games for the season
+      3. Batch-fetch box_scores (10 games per call)
+      4. Filter rows by player_id and transform
+    Cache key gl4: busts stale entries from old broken implementation.
     """
-    cache_key = f"gl3:{player_id}:{season}"
+    cache_key = f"gl4:{player_id}:{season}"
     cached = await _cache_get(cache_key)
     if _cache_fresh(cached, CACHE_TTL["stats"]):
         return cached["data"]
 
-    # BDL NHL provides no per-game or season-average stat endpoints at the current
-    # subscription tier — all stat routes return 404.  Skip the API call entirely
-    # to conserve quota.  Return [] so the route can surface a clear error.
-    log.debug(f"[NHL GAME LOGS] player={player_id}: BDL NHL stats unavailable — no endpoint")
-    logs = []
+    # Step 1: Get player to find team_id
+    player = await get_player(player_id)
+    if not player:
+        log.warning(f"[NHL GAME LOGS] player {player_id} not found")
+        return []
+
+    # Most-recent team from player.teams array
+    teams = player.get("teams") or []
+    if not teams:
+        log.warning(f"[NHL GAME LOGS] no team data for player {player_id}")
+        return []
+    teams_sorted = sorted(teams, key=lambda t: t.get("season", 0), reverse=True)
+    team_id = teams_sorted[0].get("id")
+    if not team_id:
+        return []
+
+    # Step 2: Get completed games for this team this season
+    games_cache_key = f"nhl_games:{team_id}:{season}"
+    games_cached = await _cache_get(games_cache_key)
+    if _cache_fresh(games_cached, CACHE_TTL["games"]):
+        target_games = games_cached["data"]
+    else:
+        try:
+            games_data = await _get("/games", [
+                ("team_ids[]", team_id),
+                ("seasons[]", season),
+                ("per_page", 100),
+            ])
+        except Exception as e:
+            log.warning(f"[NHL GAME LOGS] games fetch failed: {e}")
+            return []
+
+        all_games = sorted(
+            games_data.get("data", []),
+            key=lambda g: g.get("game_date", ""),
+            reverse=True,
+        )
+        # Only completed games (game_state = "OFF" = Official/Final)
+        target_games = [g for g in all_games if g.get("game_state") in ("OFF", "Final", "F")][:30]
+        if target_games:
+            await _cache_set(games_cache_key, target_games)
+
+    if not target_games:
+        log.info(f"[NHL GAME LOGS] no completed games for team={team_id} season={season}")
+        return []
+
+    game_ids = [g["id"] for g in target_games]
+
+    # Step 3: Batch-fetch box_scores (10 game IDs per call)
+    all_rows = []
+    batch_size = 10
+    for i in range(0, len(game_ids), batch_size):
+        batch = game_ids[i:i + batch_size]
+        params = [("game_ids[]", gid) for gid in batch] + [("per_page", 100)]
+        try:
+            data = await _get("/box_scores", params)
+        except Exception as e:
+            log.warning(f"[NHL GAME LOGS] box_scores batch {i//batch_size} failed: {e}")
+            continue
+        rows = data.get("data", [])
+        # Filter to this specific player
+        player_rows = [r for r in rows if (r.get("player") or {}).get("id") == player_id]
+        all_rows.extend(player_rows)
+
+    if not all_rows:
+        log.info(f"[NHL GAME LOGS] no box_score rows for player={player_id} season={season}")
+        return []
+
+    logs = sorted(
+        [_transform_nhl_log(r) for r in all_rows],
+        key=lambda l: l.get("date", ""),
+        reverse=True,
+    )
+
+    if logs:
+        await _cache_set(cache_key, logs)
     return logs

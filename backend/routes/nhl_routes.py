@@ -129,7 +129,7 @@ class NhlPredictRequest(BaseModel):
     line:              float
     opponentName:      Optional[str]   = ""
     venue:             Optional[str]   = "home"
-    season:            Optional[str]   = CURRENT_NHL_SEASON
+    season:            Optional[int]   = CURRENT_NHL_SEASON
     oppGoalsPerGame:   Optional[float] = None
     restDays:          Optional[int]   = None
 
@@ -168,24 +168,21 @@ async def nhl_predict(req: NhlPredictRequest):
             player_data = await nhl_client.get_player(player_id) or best
 
     if player_data:
-        position  = position or player_data.get("position", "")
-        team_name = team_name or (player_data.get("team") or {}).get("full_name", "")
+        position  = position or player_data.get("position_code", player_data.get("position", ""))
+        teams     = player_data.get("teams") or []
+        if teams and not team_name:
+            teams_sorted = sorted(teams, key=lambda t: t.get("season", 0), reverse=True)
+            team_name = teams_sorted[0].get("full_name", "")
 
     if not player_id:
         raise HTTPException(status_code=404, detail=f"Player '{req.playerName}' not found in NHL database.")
 
     log.info(f"[NHL PREDICT] {req.playerName} ({player_id}) | {prop_type} {req.line} | {venue}")
 
-    # Try current season first; fall back one season if no data yet.
-    # NHL season IDs are strings like "20252026" — prev = str(int(s[:4])-1) + str(int(s[:4]))
-    def _prev_nhl_season(s: str) -> str:
-        try:
-            y = int(s[:4])
-            return f"{y-1}{y}"
-        except Exception:
-            return s
-    game_logs = []
-    for try_season in [req.season, _prev_nhl_season(req.season)]:
+    # Try current season first; fall back one year if no data yet
+    cur_season  = req.season or CURRENT_NHL_SEASON
+    game_logs   = []
+    for try_season in [cur_season, cur_season - 1]:
         try:
             logs_r = await nhl_client.get_player_game_logs(player_id, try_season)
         except Exception as e:
@@ -196,12 +193,8 @@ async def nhl_predict(req: NhlPredictRequest):
 
     if not game_logs:
         raise HTTPException(
-            status_code=503,
-            detail=(
-                "NHL player statistics are not available from the current data provider. "
-                "NHL per-game stats are not included in the active BDL subscription tier. "
-                "Please contact support or check back later."
-            ),
+            status_code=422,
+            detail=f"No game log data found for {req.playerName} in NHL season {cur_season} or {cur_season - 1}.",
         )
 
     result = nhl_engine.compute_nhl_projection(
