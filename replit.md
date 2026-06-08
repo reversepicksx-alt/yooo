@@ -39,9 +39,9 @@ The project is structured into `backend/` (FastAPI, MongoDB) and `mobile/` (Expo
 - **Subscription Management**: Integrated into `account.tsx` with Square API wrappers for plan details, changes, cancellation, and resubscription.
 - **Line-Deviation Intelligence Engine**: `calibration.py` computes line deviation bands based on settled picks, providing data-driven hit rates and confidence adjustments for "UNDER" and "OVER" scenarios.
 - **AI Architecture**:
-    - **Primary AI**: Grok-2-1212 (prediction synthesis — all tactical reasoning, sharpSummary, and breakdown).
+    - **Primary AI**: Grok-3 (prediction synthesis — all tactical reasoning, sharpSummary, and breakdown).
     - **Secondary AI**: Google Gemini 2.5 Pro/Flash (explanations, web search, tactical chat, scan/OCR vision, position resolution).
-    - Models used: `grok-2-1212` (prediction synthesis), `gemini-2.5-flash` (web intel, MLB/CS2/WTA analysis, scan OCR, position resolution), `gemini-2.5-pro` (tactical chat).
+    - Models used: `grok-3` (prediction synthesis), `gemini-2.5-flash` (web intel, MLB/CS2/WTA analysis, scan OCR, position resolution), `gemini-2.5-pro` (tactical chat).
     - **Prediction flow**: (1) Bayesian engine computes projection + P(OVER)/P(UNDER); (2) Gemini web search fetches live injury/lineup intel (`fetch_web_intel`); (3) Grok synthesis call (`call_grok`) analyses all data and writes tacticalBreakdown + reasoning + sharpSummary; (4) Gemini fallback (`call_gemini`) if Grok fails; (5) [BAYESIAN TRUTH] override pins recommendation and confidenceScore to the Bayesian result. Grok/Gemini never override the math — they explain it.
 - **Bayesian Momentum Engine**: The `bayesian_engine.py` is configured to correctly process game logs sorted newest-first, applying decay weights accurately.
 - **Sample-Quality Filter ("luck strip")**: `backend/sample_quality.py` drops historical game logs distorted by game state — garbage-time cameos (sub-50min in ≥4-goal blowouts) and severe blowouts (≥5-goal margin) — from the prior calculation. Conservative: never reduces sample size below 6. Gated behind `LUCK_STRIP_ENABLED=1` env flag pending backtest validation. Wired in `routes/predict.py` after the venue split.

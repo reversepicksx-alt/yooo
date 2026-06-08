@@ -4043,7 +4043,7 @@ Analyze ALL data thoroughly. Return JSON only."""
         # pv is set from early_bayes here as a temporary anchor; real_bayes overwrites it later.
         pv = early_bayes["posteriorMean"] if early_bayes and early_bayes.get("posteriorMean") else req.line
 
-        async def call_grok(label="grok", model="grok-2-1212"):
+        async def call_grok(label="grok", model="grok-3"):
             """Grok — primary AI synthesis engine."""
             if not XAI_API_KEY:
                 return None

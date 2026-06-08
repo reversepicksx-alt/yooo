@@ -161,6 +161,40 @@ async def seed_grants():
     asyncio.create_task(auto_scout_loop())
     asyncio.create_task(pattern_mining_loop())
     asyncio.create_task(mlb_live_loop())
+
+    # ── XAI / Grok API readiness check ──
+    # grok-2-1212 was deprecated by xAI (HTTP 400 "Model not found").
+    # The engine now uses grok-3 (confirmed available via /v1/models probe).
+    # This check runs at startup to surface key/model problems immediately
+    # rather than letting them surface silently mid-prediction.
+    async def _check_grok_api():
+        import httpx as _httpx
+        from config import XAI_API_KEY
+        from grok_engine import AI_MODEL, AI_URL
+        _log = __import__("logging").getLogger("server")
+        if not XAI_API_KEY:
+            _log.warning("[GROK] XAI_API_KEY is NOT set — Grok synthesis will be skipped; Gemini fallback will be used.")
+            return
+        try:
+            async with _httpx.AsyncClient(timeout=_httpx.Timeout(15, connect=5)) as _c:
+                _resp = await _c.post(
+                    AI_URL,
+                    json={
+                        "model": AI_MODEL,
+                        "messages": [{"role": "user", "content": "ping"}],
+                        "temperature": 0.0,
+                        "max_tokens": 5,
+                    },
+                    headers={"Authorization": f"Bearer {XAI_API_KEY}", "Content-Type": "application/json"},
+                )
+            if _resp.status_code == 200:
+                print(f"[GROK] API key verified — model {AI_MODEL!r} reachable. Grok synthesis active.")
+            else:
+                _log.warning(f"[GROK] API probe failed ({_resp.status_code}): {_resp.text[:200]}")
+        except Exception as _ge:
+            _log.warning(f"[GROK] API probe error: {_ge}")
+    asyncio.create_task(_check_grok_api())
+
     # League-aware empirical calibration: load on startup, refresh every 6h
     from league_priors import ensure_loaded as ensure_league_priors_loaded
     asyncio.create_task(ensure_league_priors_loaded(db))
