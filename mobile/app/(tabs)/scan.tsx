@@ -1417,30 +1417,46 @@ export default function ScanScreen() {
               </Text>
             )}
 
-            <Text style={styles.fieldLabel}>Opponent Team <Text style={styles.fieldLabelOpt}>(optional)</Text></Text>
-            <FuzzySearchInput
-              value={manualOpponentQuery}
-              onChangeText={(t) => { setManualOpponentQuery(t); if (!t) setResolvedManualOpponent(null); }}
-              searchType="teams"
-              placeholder="e.g. Real Madrid"
-              style={{ marginBottom: 2 }}
-              confirmed={!!resolvedManualOpponent}
-              onSelectTeam={(t) => {
-                setManualOpponentQuery(t.teamName);
-                setResolvedManualOpponent(t);
-                Haptics.selectionAsync();
-                // Cross-league detection: if opponent is from a different league than the player's domestic league,
-                // we must clear the auto-locked league so the user can pick the correct competition (e.g. Champions League).
-                if (resolvedPlayer?.leagueId && t.leagueId && resolvedPlayer.leagueId !== t.leagueId) {
-                  setLeagueId(0);
-                  setLeagueQuery('');
-                }
-              }}
-            />
-            {resolvedManualOpponent && (
-              <Text style={{ color: Colors.primary, fontSize: 11, marginBottom: 4, marginLeft: 2 }}>
-                ✓ {resolvedManualOpponent.teamName}
-              </Text>
+            <Text style={styles.fieldLabel}>
+              {sport === 'world_cup' ? 'Opponent Country' : 'Opponent Team'}{' '}
+              <Text style={styles.fieldLabelOpt}>(optional)</Text>
+            </Text>
+            {sport === 'world_cup' ? (
+              <TextInput
+                style={[styles.textInput, INPUT_STYLE, { marginBottom: 6 }]}
+                placeholder="e.g. Brazil, France, Argentina"
+                placeholderTextColor={Colors.textTertiary}
+                value={manualOpponentQuery}
+                onChangeText={setManualOpponentQuery}
+                autoCapitalize="words"
+              />
+            ) : (
+              <>
+                <FuzzySearchInput
+                  value={manualOpponentQuery}
+                  onChangeText={(t) => { setManualOpponentQuery(t); if (!t) setResolvedManualOpponent(null); }}
+                  searchType="teams"
+                  placeholder="e.g. Real Madrid"
+                  style={{ marginBottom: 2 }}
+                  confirmed={!!resolvedManualOpponent}
+                  onSelectTeam={(t) => {
+                    setManualOpponentQuery(t.teamName);
+                    setResolvedManualOpponent(t);
+                    Haptics.selectionAsync();
+                    // Cross-league detection: if opponent is from a different league than the player's domestic league,
+                    // we must clear the auto-locked league so the user can pick the correct competition (e.g. Champions League).
+                    if (resolvedPlayer?.leagueId && t.leagueId && resolvedPlayer.leagueId !== t.leagueId) {
+                      setLeagueId(0);
+                      setLeagueQuery('');
+                    }
+                  }}
+                />
+                {resolvedManualOpponent && (
+                  <Text style={{ color: Colors.primary, fontSize: 11, marginBottom: 4, marginLeft: 2 }}>
+                    ✓ {resolvedManualOpponent.teamName}
+                  </Text>
+                )}
+              </>
             )}
 
             <Text style={styles.fieldLabel}>League</Text>
@@ -1474,23 +1490,27 @@ export default function ScanScreen() {
               keyboardType="decimal-pad"
             />
 
-            <Text style={styles.fieldLabel}>Venue</Text>
-            <View style={styles.venueToggle}>
-              <TouchableOpacity
-                style={[styles.venueOption, venueOverride === 'home' && styles.venueOptionActive]}
-                onPress={() => { setVenueOverride('home'); Haptics.selectionAsync(); }}
-              >
-                <Ionicons name="home-outline" size={13} color={venueOverride === 'home' ? Colors.primary : Colors.textSecondary} />
-                <Text style={[styles.venueOptionText, venueOverride === 'home' && styles.venueOptionTextActive]}>HOME</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.venueOption, venueOverride === 'away' && styles.venueOptionActive]}
-                onPress={() => { setVenueOverride('away'); Haptics.selectionAsync(); }}
-              >
-                <Ionicons name="airplane-outline" size={13} color={venueOverride === 'away' ? Colors.primary : Colors.textSecondary} />
-                <Text style={[styles.venueOptionText, venueOverride === 'away' && styles.venueOptionTextActive]}>AWAY</Text>
-              </TouchableOpacity>
-            </View>
+            {sport !== 'world_cup' && (
+              <>
+                <Text style={styles.fieldLabel}>Venue</Text>
+                <View style={styles.venueToggle}>
+                  <TouchableOpacity
+                    style={[styles.venueOption, venueOverride === 'home' && styles.venueOptionActive]}
+                    onPress={() => { setVenueOverride('home'); Haptics.selectionAsync(); }}
+                  >
+                    <Ionicons name="home-outline" size={13} color={venueOverride === 'home' ? Colors.primary : Colors.textSecondary} />
+                    <Text style={[styles.venueOptionText, venueOverride === 'home' && styles.venueOptionTextActive]}>HOME</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.venueOption, venueOverride === 'away' && styles.venueOptionActive]}
+                    onPress={() => { setVenueOverride('away'); Haptics.selectionAsync(); }}
+                  >
+                    <Ionicons name="airplane-outline" size={13} color={venueOverride === 'away' ? Colors.primary : Colors.textSecondary} />
+                    <Text style={[styles.venueOptionText, venueOverride === 'away' && styles.venueOptionTextActive]}>AWAY</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
 
             {manualError && (
               <View style={styles.inlineError}>
