@@ -1198,6 +1198,35 @@ async def _process_bdl_live(picks: list, email: str) -> list:
             return {}
 
     # ── Stat prop maps ────────────────────────────────────────────────────
+    # NFL  (BDL /nfl/v1/stats — all flat fields on the row itself)
+    _NFL_STAT = {
+        "passing_yards":        lambda s: s.get("passing_yards"),
+        "passing_touchdowns":   lambda s: s.get("passing_touchdowns"),
+        "passing_attempts":     lambda s: s.get("passing_attempts"),
+        "passing_completions":  lambda s: s.get("passing_completions"),
+        "passing_interceptions":lambda s: s.get("passing_interceptions"),
+        "rushing_yards":        lambda s: s.get("rushing_yards"),
+        "rushing_attempts":     lambda s: s.get("rushing_attempts"),
+        "rushing_touchdowns":   lambda s: s.get("rushing_touchdowns"),
+        "receptions":           lambda s: s.get("receptions"),
+        "receiving_yards":      lambda s: s.get("receiving_yards"),
+        "receiving_touchdowns": lambda s: s.get("receiving_touchdowns"),
+        "receiving_targets":    lambda s: s.get("receiving_targets"),
+        "targets":              lambda s: s.get("receiving_targets"),
+        "tackles":              lambda s: s.get("total_tackles"),
+        "total_tackles":        lambda s: s.get("total_tackles"),
+        "sacks":                lambda s: s.get("defensive_sacks"),
+        "defensive_sacks":      lambda s: s.get("defensive_sacks"),
+        "interceptions":        lambda s: s.get("defensive_interceptions"),
+        "rush_rec_yards":       lambda s: (s.get("rushing_yards") or 0) + (s.get("receiving_yards") or 0),
+        "pass_rush_yards":      lambda s: (s.get("passing_yards") or 0) + (s.get("rushing_yards") or 0),
+        "anytime_td":           lambda s: (
+            (s.get("passing_touchdowns") or 0) +
+            (s.get("rushing_touchdowns") or 0) +
+            (s.get("receiving_touchdowns") or 0)
+        ),
+        "kicking_points":       lambda s: s.get("total_points"),
+    }
     # NBA / WNBA  (BDL v1 /stats  and  /wnba/v1/player_stats)
     _NBA_STAT = {
         "points":    lambda s: s.get("pts"),
@@ -1684,7 +1713,7 @@ async def _process_bdl_live(picks: list, email: str) -> list:
             results.append({"pickId": pick.get("pickId",""), "matchStatus": "scheduled"})
 
     # ─────────────────────────────────────────────────────────────────────
-    # NFL  (score-only — no live player stats endpoint)
+    # NFL  (/nfl/v1/stats?game_ids[]= — full player stat tracking)
     # ─────────────────────────────────────────────────────────────────────
     for pick in nfl_picks:
         try:
@@ -1704,23 +1733,82 @@ async def _process_bdl_live(picks: list, email: str) -> list:
             is_final   = _nfl_is_final(game)
             is_live    = _nfl_is_live(game)
 
-            # NFL: no per-player live stats — show score context only
-            # If finished, defer settlement to background (we can't compute actualValue)
+            # Infer current quarter from partial Q scores
+            def _nfl_current_quarter(g: dict) -> int:
+                for q in range(4, 0, -1):
+                    h_key = f"home_team_q{q}"
+                    v_key = f"visitor_team_q{q}"
+                    if g.get(h_key) is not None or g.get(v_key) is not None:
+                        return q
+                return 0
+
+            period = _nfl_current_quarter(game) if is_live else (4 if is_final else 0)
+            period_label = "Final" if is_final else (f"Q{period}" if period > 0 else "Pre")
+
+            # Fetch player stats for this game
+            p_id = pick.get("playerId")
+            player_name = pick.get("playerName", "")
+            stats_resp = await _bdl_get(
+                "https://api.balldontlie.io/nfl/v1/stats",
+                [("game_ids[]", game_id), ("per_page", 100)],
+            )
+            stat_rows = stats_resp.get("data", []) if isinstance(stats_resp, dict) else []
+
+            current_value = None
+            for row in stat_rows:
+                r_player = row.get("player", {})
+                full_name = f"{r_player.get('first_name','')} {r_player.get('last_name','')}".strip()
+                if (p_id and r_player.get("id") == p_id) or _name_matches(player_name, full_name):
+                    getter = _NFL_STAT.get(pick.get("propType", ""))
+                    if getter:
+                        current_value = getter(row)
+                    break
+
             venue = (pick.get("venue") or "home").lower()
             p_score = home_score if venue == "home" else away_score
             o_score = away_score if venue == "home" else home_score
-            period = game.get("period", 0)
-            period_label = "Final" if is_final else (f"Q{period}" if period > 0 else "Pre")
-            results.append({
-                "pickId": pick["pickId"],
-                "matchStatus": "final" if is_final else ("live" if is_live else "scheduled"),
-                "period": period_label,
-                "matchScore": f"{p_score}-{o_score}",
-                "homeTeam": home_name,
-                "awayTeam": away_name,
-                "finalHomeGoals": home_score,
-                "finalAwayGoals": away_score,
-            })
+
+            if current_value is None:
+                # Game found but no stat row yet — show score context
+                results.append({
+                    "pickId": pick["pickId"],
+                    "matchStatus": "final" if is_final else ("live" if is_live else "scheduled"),
+                    "period": period_label,
+                    "matchScore": f"{p_score}-{o_score}",
+                    "homeTeam": home_name,
+                    "awayTeam": away_name,
+                    "finalHomeGoals": home_score,
+                    "finalAwayGoals": away_score,
+                })
+                continue
+
+            # NFL elapsed: 15 min per quarter, no live clock from BDL
+            elapsed_frac = _calc_elapsed_pct("nfl", period, "")
+            reg = _regulation("nfl")
+            elapsed_mins = round(elapsed_frac * reg, 1)
+            pace = round(current_value / max(elapsed_frac, 0.01), 1) if elapsed_frac > 0 else current_value
+            hit_pct = _calc_hit_pct(current_value, pick.get("line", 0), pick.get("recommendation","over"),
+                                     int(elapsed_mins), reg, is_final, pace)
+
+            if is_final and pick.get("status") != "settled":
+                r = await _settle_bdl_pick(pick, current_value, "nfl",
+                                           home_score, away_score, home_name, away_name, period_label)
+                results.append(r)
+            else:
+                results.append({
+                    "pickId": pick["pickId"],
+                    "matchStatus": "final" if is_final else ("live" if is_live else "scheduled"),
+                    "currentValue": current_value,
+                    "pace": pace,
+                    "hitPct": hit_pct,
+                    "elapsed": elapsed_mins,
+                    "period": period_label,
+                    "matchScore": f"{p_score}-{o_score}",
+                    "homeTeam": home_name,
+                    "awayTeam": away_name,
+                    "finalHomeGoals": home_score,
+                    "finalAwayGoals": away_score,
+                })
         except Exception:
             traceback.print_exc()
             results.append({"pickId": pick.get("pickId",""), "matchStatus": "scheduled"})

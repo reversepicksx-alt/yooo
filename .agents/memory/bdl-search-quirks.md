@@ -44,8 +44,14 @@ BDL NHL has no `/stats` or `/player_game_stats` endpoint (all 404). Game logs re
 ### Game states
 `game_state`: `PRE` | `LIVE` | `CRIT` (critical — close game, late) | `OFF` (official/final)
 
-## NFL — no player stats endpoint
-BDL NFL has NO `/player_stats` or `/box_scores` endpoint at any subscription tier. Live tracking for NFL picks is score-context-only (matchScore/period/homeTeam/awayTeam); player stat settlement must be deferred to a background loop or manual correction.
+## NFL — full player stats via /nfl/v1/stats
+BDL NFL DOES have a `/nfl/v1/stats` endpoint. Supports `game_ids[]`, `player_ids[]`, `seasons[]`, `per_page` (max 100).
+- Player identified via `row["player"]["id"]` / `first_name` + `last_name` (no `full_name` field)
+- Stat fields are FLAT on the row itself (not nested): `passing_yards`, `rushing_yards`, `receiving_yards`, `receptions`, `receiving_targets`, `total_tackles`, `defensive_sacks`, `defensive_interceptions`, `rushing_touchdowns`, `passing_touchdowns`, `receiving_touchdowns`, `total_points` (kickers), `passing_completions`, `passing_attempts`, `passing_interceptions`
+- All null fields (opponent's role) come back as `None` — use `(s.get("x") or 0)` for combos
+- Game object has quarter scores `home_team_q1..q4` — infer current quarter from last non-null one
+- Game status: `"in_progress"` (live) / `"Final"` / `"scheduled"`
+- No live clock in games endpoint; pace extrapolated per-quarter boundary only
 
 ## Live game tracking (_process_bdl_live in routes/picks.py)
 Wired into list_picks and /api/picks/live-update alongside soccer.
