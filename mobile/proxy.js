@@ -71,16 +71,35 @@ if (IS_PRODUCTION) {
   app.get('/rp-icon.png', (req, res) => {
     res.sendFile(path.join(assetsPath, 'rp-icon.png'));
   });
+  app.get('/favicon.ico', (req, res) => {
+    res.sendFile(path.join(assetsPath, 'rp-icon.png'));
+  });
+  app.get('/favicon.png', (req, res) => {
+    res.sendFile(path.join(assetsPath, 'rp-icon.png'));
+  });
 
-  app.use(express.static(distPath));
+  // Serve static assets (JS bundles, images, etc.) but NOT index.html — the
+  // SPA fallback below always serves index.html so that tags get injected.
+  app.use(express.static(distPath, { index: false }));
 
-  // SPA fallback — inject PWA tags + loading screen into index.html at serve-time
+  // SPA fallback — inject favicon, OG, PWA tags + loading screen into index.html
   const fs = require('fs');
-  const PWA_TAGS = `    <meta name="theme-color" content="#050505" />
+  const PWA_TAGS = `    <link rel="icon" type="image/png" href="/rp-icon.png" />
+    <link rel="shortcut icon" href="/rp-icon.png" />
+    <link rel="apple-touch-icon" href="/rp-icon.png" />
+    <meta name="description" content="AI-powered soccer player prop analytics. Bayesian projections, tactical insights, and data-driven predictions." />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://reversepicks.com/" />
+    <meta property="og:title" content="ReversePicks \u2014 Elite Prop Intelligence" />
+    <meta property="og:description" content="AI-powered soccer player prop analytics. Bayesian projections, tactical insights, and data-driven predictions." />
+    <meta property="og:image" content="https://reversepicks.com/rp-icon.png" />
+    <meta property="og:site_name" content="ReversePicks" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:image" content="https://reversepicks.com/rp-icon.png" />
+    <meta name="theme-color" content="#050505" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="ReversePicks" />
-    <link rel="apple-touch-icon" href="/rp-icon.png" />
     <link rel="manifest" href="/manifest.json" />`;
 
   const LOADING_SCREEN = `
@@ -110,6 +129,8 @@ if (IS_PRODUCTION) {
     }
     try {
       let html = fs.readFileSync(indexPath, 'utf8');
+      // Replace existing title with the full branded one
+      html = html.replace(/<title>[^<]*<\/title>/, '<title>ReversePicks \u2014 Elite Prop Intelligence</title>');
       html = html.replace('</head>', `${PWA_TAGS}\n  </head>`);
       // Inject loading screen before the closing </body> tag
       html = html.replace('</body>', `${LOADING_SCREEN}\n</body>`);
