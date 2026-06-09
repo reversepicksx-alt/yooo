@@ -38,7 +38,22 @@ export default function AuthScreen() {
   const noMembershipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showSplash, setShowSplash] = useState(true);
   const splashOpacity = useRef(new Animated.Value(1)).current;
-  const splashScale = useRef(new Animated.Value(1)).current;
+  const splashScale   = useRef(new Animated.Value(1)).current;
+  // Enhanced intro animation values
+  const splBurstScale  = useRef(new Animated.Value(0.3)).current;
+  const splBurstOpac   = useRef(new Animated.Value(1)).current;
+  const splLogoScale   = useRef(new Animated.Value(0.5)).current;
+  const splLogoOpac    = useRef(new Animated.Value(0)).current;
+  const splR1Scale     = useRef(new Animated.Value(1)).current;
+  const splR1Opac      = useRef(new Animated.Value(0)).current;
+  const splR2Scale     = useRef(new Animated.Value(1)).current;
+  const splR2Opac      = useRef(new Animated.Value(0)).current;
+  const splScanY       = useRef(new Animated.Value(0)).current;
+  const splScanOpac    = useRef(new Animated.Value(0)).current;
+  const splTxtOpac     = useRef(new Animated.Value(0)).current;
+  const splTxtY        = useRef(new Animated.Value(20)).current;
+  const splProgress    = useRef(new Animated.Value(0)).current;
+  const splChipsOpac   = useRef(new Animated.Value(0)).current;
   const [showPaymentEmail, setShowPaymentEmail] = useState(false);
   const [paymentEmail, setPaymentEmail] = useState('');
   const [showSupport, setShowSupport] = useState(false);
@@ -110,15 +125,73 @@ export default function AuthScreen() {
     };
   }, []);
 
-  // Splash screen: hold for 3s then fade out
+  // Intro splash animation sequence
   useEffect(() => {
-    const hold = setTimeout(() => {
+    // Phase 1 (0ms): Power burst ring expands + fades
+    Animated.parallel([
+      Animated.timing(splBurstScale, { toValue: 4.5, duration: 550, useNativeDriver: true }),
+      Animated.timing(splBurstOpac,  { toValue: 0,   duration: 550, useNativeDriver: true }),
+    ]).start();
+
+    // Phase 2 (120ms): Logo springs in
+    const t1 = setTimeout(() => {
       Animated.parallel([
-        Animated.timing(splashOpacity, { toValue: 0, duration: 600, useNativeDriver: true }),
-        Animated.timing(splashScale, { toValue: 1.08, duration: 600, useNativeDriver: true }),
+        Animated.spring(splLogoScale, { toValue: 1, friction: 5, tension: 65, useNativeDriver: true }),
+        Animated.timing(splLogoOpac,  { toValue: 1, duration: 380, useNativeDriver: true }),
+      ]).start();
+    }, 120);
+
+    // Phase 3 (380ms): Radar rings pulse outward (recursive loop)
+    const pulseRing = (scl: Animated.Value, opc: Animated.Value) => {
+      scl.setValue(1);
+      opc.setValue(0.65);
+      Animated.parallel([
+        Animated.timing(scl, { toValue: 2.3, duration: 1600, useNativeDriver: true }),
+        Animated.timing(opc, { toValue: 0,   duration: 1600, useNativeDriver: true }),
+      ]).start(({ finished }) => { if (finished) pulseRing(scl, opc); });
+    };
+    const t2 = setTimeout(() => pulseRing(splR1Scale, splR1Opac), 380);
+    const t3 = setTimeout(() => pulseRing(splR2Scale, splR2Opac), 1000);
+
+    // Phase 4 (480ms): Scan line sweeps top → bottom of logo
+    const t4 = setTimeout(() => {
+      splScanY.setValue(0);
+      Animated.sequence([
+        Animated.timing(splScanOpac, { toValue: 1,   duration: 60,  useNativeDriver: true }),
+        Animated.timing(splScanY,    { toValue: 220,  duration: 650, useNativeDriver: true }),
+        Animated.timing(splScanOpac, { toValue: 0,    duration: 120, useNativeDriver: true }),
+      ]).start();
+    }, 480);
+
+    // Phase 5 (680ms): REVERSEPICKS text slides up
+    const t5 = setTimeout(() => {
+      Animated.parallel([
+        Animated.timing(splTxtOpac, { toValue: 1, duration: 450, useNativeDriver: true }),
+        Animated.timing(splTxtY,    { toValue: 0, duration: 450, useNativeDriver: true }),
+      ]).start();
+    }, 680);
+
+    // Phase 6 (880ms): Progress bar fills (non-native because width)
+    const t6 = setTimeout(() => {
+      Animated.timing(splProgress, { toValue: 1, duration: 1600, useNativeDriver: false }).start();
+    }, 880);
+
+    // Phase 7 (1080ms): Data chips fade in
+    const t7 = setTimeout(() => {
+      Animated.timing(splChipsOpac, { toValue: 1, duration: 500, useNativeDriver: true }).start();
+    }, 1080);
+
+    // Phase 8 (3300ms): Exit — fade + slight scale up
+    const tExit = setTimeout(() => {
+      Animated.parallel([
+        Animated.timing(splashOpacity, { toValue: 0, duration: 650, useNativeDriver: true }),
+        Animated.timing(splashScale,   { toValue: 1.05, duration: 650, useNativeDriver: true }),
       ]).start(() => setShowSplash(false));
-    }, 3000);
-    return () => clearTimeout(hold);
+    }, 3300);
+
+    return () => {
+      [t1, t2, t3, t4, t5, t6, t7, tExit].forEach(clearTimeout);
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -350,7 +423,6 @@ export default function AuthScreen() {
             resizeMode="contain"
           />
           <Text style={styles.appName}>REVERSEPICKS</Text>
-          <Text style={styles.tagline}>ELITE PROP INTELLIGENCE</Text>
         </View>
 
         <View style={styles.formArea}>
@@ -570,21 +642,73 @@ export default function AuthScreen() {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* ── Splash screen overlay ── */}
+      {/* ── Intro splash animation ── */}
       {showSplash && (
         <Animated.View
-          style={[
-            styles.splashOverlay,
-            { opacity: splashOpacity, transform: [{ scale: splashScale }], pointerEvents: 'none' },
-          ]}
+          style={[styles.splashOverlay, {
+            opacity: splashOpacity,
+            transform: [{ scale: splashScale }],
+            pointerEvents: 'none',
+          }]}
         >
-          <Image
-            source={require('../assets/rp-splash.png')}
-            style={styles.splashLogo}
-            resizeMode="contain"
-          />
-          <Text style={styles.splashName}>REVERSEPICKS</Text>
-          <Text style={styles.splashTagline}>ELITE PROP INTELLIGENCE</Text>
+          {/* Power burst ring — expands outward and fades on entry */}
+          <Animated.View style={[styles.splashBurstRing, {
+            opacity: splBurstOpac,
+            transform: [{ scale: splBurstScale }],
+          }]} />
+
+          {/* Radar ring 1 — continuous pulse */}
+          <Animated.View style={[styles.splashRadarRing, {
+            opacity: splR1Opac,
+            transform: [{ scale: splR1Scale }],
+          }]} />
+
+          {/* Radar ring 2 — offset pulse */}
+          <Animated.View style={[styles.splashRadarRing, styles.splashRadarRing2, {
+            opacity: splR2Opac,
+            transform: [{ scale: splR2Scale }],
+          }]} />
+
+          {/* Logo with scan line sweeping across it */}
+          <Animated.View style={[styles.splashLogoWrap, {
+            opacity: splLogoOpac,
+            transform: [{ scale: splLogoScale }],
+          }]}>
+            <Image
+              source={require('../assets/rp-splash.png')}
+              style={styles.splashLogo}
+              resizeMode="contain"
+            />
+            <Animated.View style={[styles.splashScanLine, {
+              opacity: splScanOpac,
+              transform: [{ translateY: splScanY }],
+            }]} />
+          </Animated.View>
+
+          {/* REVERSEPICKS title — slides up */}
+          <Animated.View style={{
+            alignItems: 'center',
+            opacity: splTxtOpac,
+            transform: [{ translateY: splTxtY }],
+          }}>
+            <Text style={styles.splashName}>REVERSEPICKS</Text>
+          </Animated.View>
+
+          {/* Neon progress bar */}
+          <View style={styles.splashProgressTrack}>
+            <Animated.View style={[styles.splashProgressFill, {
+              width: splProgress.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }),
+            }]} />
+          </View>
+
+          {/* Data chips */}
+          <Animated.View style={[styles.splashChipsRow, { opacity: splChipsOpac }]}>
+            {(['AI', 'BAYESIAN', 'LIVE'] as const).map((label, i) => (
+              <View key={label} style={[styles.splashChip, i > 0 && { marginLeft: 10 }]}>
+                <Text style={styles.splashChipText}>{label}</Text>
+              </View>
+            ))}
+          </Animated.View>
         </Animated.View>
       )}
     </View>
@@ -628,23 +752,98 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     zIndex: 9999,
   },
+  splashBurstRing: {
+    position: 'absolute',
+    width: 230,
+    height: 230,
+    borderRadius: 115,
+    borderWidth: 2.5,
+    borderColor: '#39FF14',
+  },
+  splashRadarRing: {
+    position: 'absolute',
+    width: 250,
+    height: 250,
+    borderRadius: 125,
+    borderWidth: 1.5,
+    borderColor: '#39FF14',
+  },
+  splashRadarRing2: {
+    borderWidth: 1,
+    borderColor: 'rgba(57,255,20,0.6)',
+  },
+  splashLogoWrap: {
+    width: 220,
+    height: 220,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
   splashLogo: {
-    width: 260,
-    height: 260,
-    marginBottom: 32,
+    width: 220,
+    height: 220,
+  },
+  splashScanLine: {
+    position: 'absolute',
+    top: 0,
+    left: -20,
+    right: -20,
+    height: 2,
+    backgroundColor: '#39FF14',
+    ...(Platform.OS === 'web'
+      ? { boxShadow: '0 0 14px 5px rgba(57,255,20,0.8)' }
+      : {
+          shadowColor: '#39FF14',
+          shadowOffset: { width: 0, height: 0 },
+          shadowOpacity: 1,
+          shadowRadius: 10,
+        }),
   },
   splashName: {
     color: '#FFFFFF',
     fontSize: 26,
     fontWeight: '800',
-    letterSpacing: 5,
-    marginBottom: 6,
+    letterSpacing: 6,
+    marginTop: 18,
   },
-  splashTagline: {
-    color: '#39FF14',
-    fontSize: 12,
-    fontWeight: '600',
-    letterSpacing: 4,
+  splashProgressTrack: {
+    width: 150,
+    height: 2,
+    backgroundColor: '#1c1c1c',
+    borderRadius: 1,
+    overflow: 'hidden',
+    marginTop: 12,
+  },
+  splashProgressFill: {
+    height: 2,
+    backgroundColor: '#39FF14',
+    borderRadius: 1,
+    ...(Platform.OS === 'web'
+      ? { boxShadow: '0 0 8px rgba(57,255,20,0.7)' }
+      : {
+          shadowColor: '#39FF14',
+          shadowOffset: { width: 0, height: 0 },
+          shadowOpacity: 0.8,
+          shadowRadius: 6,
+        }),
+  },
+  splashChipsRow: {
+    flexDirection: 'row',
+    marginTop: 18,
+  },
+  splashChip: {
+    borderWidth: 1,
+    borderColor: 'rgba(57,255,20,0.3)',
+    borderRadius: 4,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    backgroundColor: 'rgba(57,255,20,0.05)',
+  },
+  splashChipText: {
+    color: 'rgba(57,255,20,0.65)',
+    fontSize: 8,
+    fontWeight: '700',
+    letterSpacing: 2.5,
   },
   root: {
     flex: 1,
