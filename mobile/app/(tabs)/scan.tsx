@@ -292,6 +292,8 @@ export default function ScanScreen() {
   const [atpShowSurfacePicker, setAtpShowSurfacePicker] = useState(false);
   const [atpRound, setAtpRound] = useState<string>('R32');
   const [atpShowRoundPicker, setAtpShowRoundPicker] = useState(false);
+  const [atpPlayerResults, setAtpPlayerResults] = useState<any[]>([]);
+  const [atpOppResults, setAtpOppResults] = useState<any[]>([]);
 
   // NCAAF
   const [ncaafPlayerQuery, setNcaafPlayerQuery] = useState('');
