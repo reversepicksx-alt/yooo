@@ -1898,9 +1898,18 @@ export const ATP_PROP_TYPES = [
   { value: 'first_set_winner',   label: 'First Set Winner' },
 ];
 
-export async function searchAtpPlayers(query: string): Promise<any[]> {
+export interface AtpPlayer {
+  id: number;
+  firstName?: string;
+  lastName?: string;
+  fullName: string;
+  country?: string | null;
+  ranking?: number | null;
+}
+
+export async function searchAtpPlayers(query: string): Promise<AtpPlayer[]> {
   if (!query || query.length < 2) return [];
-  const data = await apiCall<any[]>(`/api/atp/players/search?q=${encodeURIComponent(query)}`);
+  const data = await apiCall<AtpPlayer[]>(`/api/atp/players/search?q=${encodeURIComponent(query)}`);
   return Array.isArray(data) ? data : [];
 }
 

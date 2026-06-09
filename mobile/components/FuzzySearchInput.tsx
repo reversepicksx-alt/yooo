@@ -7,14 +7,14 @@ import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/colors';
 import {
   searchTeams, searchPlayersQuick, searchLeagues,
-  searchMlbPlayers, searchCs2Players, searchCs2Teams, searchWtaPlayers,
+  searchMlbPlayers, searchCs2Players, searchCs2Teams, searchWtaPlayers, searchAtpPlayers,
   TeamSearchResult, PlayerSearchResult, LeagueSearchResult, LEAGUES,
-  MlbPlayer, Cs2Player, Cs2Team, WtaPlayer,
+  MlbPlayer, Cs2Player, Cs2Team, WtaPlayer, AtpPlayer,
 } from '@/lib/api';
 
 export type SearchType =
   | 'teams' | 'players' | 'leagues'
-  | 'mlb_players' | 'cs2_players' | 'cs2_teams' | 'wta_players';
+  | 'mlb_players' | 'cs2_players' | 'cs2_teams' | 'wta_players' | 'atp_players';
 
 export interface FuzzyTeamResult {
   teamId: number;
@@ -66,6 +66,7 @@ interface FuzzySearchInputProps {
   onSelectCs2Player?: (p: Cs2Player) => void;
   onSelectCs2Team?: (t: Cs2Team) => void;
   onSelectWtaPlayer?: (p: WtaPlayer) => void;
+  onSelectAtpPlayer?: (p: AtpPlayer) => void;
   onSelectStaticItem?: (raw: any, primary: string) => void;
 }
 
@@ -168,6 +169,8 @@ export default function FuzzySearchInput({
         r = await searchCs2Teams(q);
       } else if (searchType === 'wta_players') {
         r = await searchWtaPlayers(q);
+      } else if (searchType === 'atp_players') {
+        r = await searchAtpPlayers(q);
       }
       setResults(r);
       setShowDropdown(r.length > 0);
@@ -224,6 +227,10 @@ export default function FuzzySearchInput({
   const handleSelectWtaPlayer = (p: WtaPlayer) => {
     onChangeText(p.fullName); dismiss(); setResults([]);
     onSelectWtaPlayer?.(p);
+  };
+  const handleSelectAtpPlayer = (p: AtpPlayer) => {
+    onChangeText(p.fullName); dismiss(); setResults([]);
+    onSelectAtpPlayer?.(p);
   };
   const handleSelectStatic = (item: StaticItem) => {
     onChangeText(item.primary); dismiss(); setResults([]);
@@ -322,6 +329,19 @@ export default function FuzzySearchInput({
       const sub  = [item.country, rank].filter(Boolean).join(' · ');
       return (
         <TouchableOpacity key={index} style={styles.dropdownItem} onPress={() => handleSelectWtaPlayer(item)} activeOpacity={0.7}>
+          <Ionicons name="tennisball-outline" size={13} color={Colors.primary} style={styles.dropdownIcon} />
+          <View style={styles.dropdownTextWrap}>
+            <Text style={styles.dropdownMain} numberOfLines={1}>{item.fullName}</Text>
+            {sub ? <Text style={styles.dropdownSub} numberOfLines={1}>{sub}</Text> : null}
+          </View>
+        </TouchableOpacity>
+      );
+    }
+    if (searchType === 'atp_players') {
+      const rank = item.ranking ? `#${item.ranking}` : '';
+      const sub  = [item.country, rank].filter(Boolean).join(' · ');
+      return (
+        <TouchableOpacity key={index} style={styles.dropdownItem} onPress={() => handleSelectAtpPlayer(item)} activeOpacity={0.7}>
           <Ionicons name="tennisball-outline" size={13} color={Colors.primary} style={styles.dropdownIcon} />
           <View style={styles.dropdownTextWrap}>
             <Text style={styles.dropdownMain} numberOfLines={1}>{item.fullName}</Text>

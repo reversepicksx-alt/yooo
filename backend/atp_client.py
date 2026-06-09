@@ -129,81 +129,127 @@ async def get_player(player_id: int) -> Optional[dict]:
         return None
 
 
+def _parse_match_date(m: dict) -> Optional[str]:
+    for k in ("scheduled_time", "start_time", "date", "match_date"):
+        v = m.get(k)
+        if v:
+            try:
+                if "T" in str(v):
+                    return str(v).split("T")[0]
+                return str(v)[:10]
+            except Exception:
+                continue
+    tour = m.get("tournament") or {}
+    for k in ("start_date", "date"):
+        v = tour.get(k)
+        if v:
+            return str(v)[:10]
+    return None
+
+
+def _parse_set_scores(match: dict) -> list:
+    raw = match.get("set_scores") or match.get("sets") or []
+    out = []
+    for s in raw:
+        out.append({
+            "setNumber": s.get("set_number") or s.get("number") or 0,
+            "p1Games":   s.get("player1_games") or s.get("p1_games") or 0,
+            "p2Games":   s.get("player2_games") or s.get("p2_games") or 0,
+        })
+    return out
+
+
+def _build_match_log(match: dict, subject_id: int) -> Optional[dict]:
+    p1 = match.get("player1") or {}
+    p2 = match.get("player2") or {}
+    p1_id, p2_id = p1.get("id"), p2.get("id")
+    if subject_id not in (p1_id, p2_id):
+        return None
+
+    is_p1 = subject_id == p1_id
+    opp   = p2 if is_p1 else p1
+    sets  = _parse_set_scores(match)
+    if not sets:
+        return None
+
+    subj_games = sum((s["p1Games"] if is_p1 else s["p2Games"]) for s in sets)
+    opp_games  = sum((s["p2Games"] if is_p1 else s["p1Games"]) for s in sets)
+    total      = subj_games + opp_games
+
+    winner  = match.get("winner") or {}
+    won     = winner.get("id") == subject_id if winner.get("id") else None
+
+    sets_won = sum(
+        1 for s in sets
+        if (s["p1Games"] if is_p1 else s["p2Games"]) > (s["p2Games"] if is_p1 else s["p1Games"])
+    )
+    set1 = sets[0] if sets else {}
+    set1_subj = set1.get("p1Games" if is_p1 else "p2Games", 0)
+    set1_opp  = set1.get("p2Games" if is_p1 else "p1Games", 0)
+    set1_total = set1_subj + set1_opp
+
+    tour = match.get("tournament") or {}
+    return {
+        "date":              _parse_match_date(match),
+        "surface":           tour.get("surface") or "Hard",
+        "round":             match.get("round") or "",
+        "tournament":        tour.get("name") or "",
+        "category":          tour.get("category") or "",
+        "opponent":          f"{opp.get('first_name','')} {opp.get('last_name','')}".strip() or opp.get("full_name") or "?",
+        "opponentId":        opp.get("id"),
+        "opponentRank":      opp.get("ranking") or opp.get("current_rank"),
+        "wonMatch":          won,
+        "totalGames":        total,
+        "playerGamesWon":    subj_games,
+        "opponentGamesWon":  opp_games,
+        "setsPlayed":        len(sets),
+        "setsWon":           sets_won,
+        "set1Total":         set1_total,
+        "set1PlayerGames":   set1_subj,
+        "set1WinnerSubject": (set1_subj > set1_opp) if (set1_subj or set1_opp) else None,
+        "status":            match.get("match_status") or "",
+        "isLive":            match.get("is_live", False),
+    }
+
+
 async def get_player_match_logs(player_id: int, limit: int = 30) -> list:
-    """Fetch recent match results for a player (newest-first)."""
-    cache_key = f"matches:{player_id}:{limit}"
+    """Fetch recent finished match results for a player (newest-first)."""
+    cache_key = f"atp_matches2:{player_id}:{limit}"
     cached = await _cache_get(cache_key)
     if _cache_fresh(cached, CACHE_TTL["player_matches"]):
         return cached["data"]
 
-    all_matches = []
-    cursor = None
-    for _ in range(3):
-        params = {"player_id": player_id, "per_page": 25}
-        if cursor:
-            params["cursor"] = cursor
-        try:
-            data = await _get("/matches", params)
-        except Exception as e:
-            log.warning(f"[ATP MATCHES] {e}")
-            break
-        all_matches.extend(data.get("data", []))
-        meta = data.get("meta", {})
-        cursor = meta.get("next_cursor")
-        if not cursor or len(all_matches) >= limit:
-            break
+    from datetime import datetime
+    now_y   = datetime.now(timezone.utc).year
+    seasons = [now_y, now_y - 1]
+
+    params = {
+        "player_ids[]": player_id,
+        "per_page":     100,
+        "seasons[]":    seasons,
+    }
+    raw = []
+    try:
+        data = await _get("/matches", params)
+        raw = data.get("data", [])
+    except Exception as e:
+        log.warning(f"[ATP MATCHES] {e}")
+
+    raw.sort(key=lambda m: _parse_match_date(m) or "0", reverse=True)
 
     logs = []
-    for m in all_matches:
-        p1   = m.get("player1") or {}
-        p2   = m.get("player2") or {}
-        score = m.get("score") or {}
-        sets = score.get("sets") or []
+    for m in raw:
+        if m.get("is_live"):
+            continue
+        status = (m.get("match_status") or "").lower()
+        if status not in ("", "finished", "completed", "ended"):
+            continue
+        entry = _build_match_log(m, player_id)
+        if entry:
+            logs.append(entry)
+        if len(logs) >= limit:
+            break
 
-        subject_is_p1 = (p1.get("id") == player_id)
-        subject = p1 if subject_is_p1 else p2
-        opponent = p2 if subject_is_p1 else p1
-        won_match = m.get("winner_id") == player_id
-
-        total_games = 0
-        player_games = 0
-        opp_games    = 0
-        sets_played  = len(sets)
-        sets_won     = 0
-        set1_total   = 0
-        set1_player  = 0
-
-        for i, s in enumerate(sets):
-            sg = (s.get("player1_games") or 0) if subject_is_p1 else (s.get("player2_games") or 0)
-            og = (s.get("player2_games") or 0) if subject_is_p1 else (s.get("player1_games") or 0)
-            total_games  += sg + og
-            player_games += sg
-            opp_games    += og
-            if sg > og:
-                sets_won += 1
-            if i == 0:
-                set1_total  = sg + og
-                set1_player = sg
-
-        logs.append({
-            "date":            (m.get("date") or "")[:10],
-            "surface":         m.get("surface") or "Hard",
-            "round":           m.get("round") or "",
-            "tournament":      m.get("tournament") or "",
-            "opponent":        opponent.get("full_name") or opponent.get("name") or "?",
-            "opponentRank":    opponent.get("ranking"),
-            "wonMatch":        won_match,
-            "totalGames":      total_games,
-            "playerGamesWon":  player_games,
-            "opponentGamesWon": opp_games,
-            "setsPlayed":      sets_played,
-            "setsWon":         sets_won,
-            "set1Total":       set1_total,
-            "set1PlayerGames": set1_player,
-            "set1WinnerSubject": set1_player > ((set1_total - set1_player) if set1_total else 0),
-        })
-
-    logs.sort(key=lambda x: x.get("date", ""), reverse=True)
     await _cache_set(cache_key, logs)
     return logs
 

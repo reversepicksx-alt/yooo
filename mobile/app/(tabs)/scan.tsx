@@ -292,10 +292,6 @@ export default function ScanScreen() {
   const [atpShowSurfacePicker, setAtpShowSurfacePicker] = useState(false);
   const [atpRound, setAtpRound] = useState<string>('R32');
   const [atpShowRoundPicker, setAtpShowRoundPicker] = useState(false);
-  const [atpPlayerResults, setAtpPlayerResults] = useState<any[]>([]);
-  const [atpSearching, setAtpSearching] = useState(false);
-  const [atpOppResults, setAtpOppResults] = useState<any[]>([]);
-  const [atpOppSearching, setAtpOppSearching] = useState(false);
 
   // NCAAF
   const [ncaafPlayerQuery, setNcaafPlayerQuery] = useState('');
@@ -2218,40 +2214,33 @@ export default function ScanScreen() {
         {sport === 'atp' && phase === 'idle' && mode === 'manual' && (
           <View style={styles.manualForm}>
             <Text style={styles.fieldLabel}>Player</Text>
-            <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. Novak Djokovic, Carlos Alcaraz" placeholderTextColor={Colors.textTertiary} value={atpPlayerQuery}
-              onChangeText={(t) => { setAtpPlayerQuery(t); setAtpResolvedPlayer(null); if (t.length >= 2) searchBdlPlayers(t, searchAtpPlayers, setAtpPlayerResults, setAtpSearching); else setAtpPlayerResults([]); }} autoCapitalize="words" />
-            {atpSearching && <ActivityIndicator size="small" color={Colors.primary} style={{ marginTop: 4 }} />}
-            {atpPlayerResults.length > 0 && !atpResolvedPlayer && (
-              <View style={styles.autocompleteList}>
-                {atpPlayerResults.slice(0, 5).map((p) => (
-                  <TouchableOpacity key={p.id} style={styles.autocompleteItem} onPress={() => { setAtpResolvedPlayer(p); setAtpPlayerQuery(p.fullName || ''); setAtpPlayerResults([]); Haptics.selectionAsync(); }}>
-                    <Text style={styles.autocompleteText}>{p.fullName || ''}</Text>
-                    {p.ranking ? <Text style={styles.autocompleteSubText}>Rank #{p.ranking} · {p.country || ''}</Text> : null}
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )}
-            {atpResolvedPlayer && (
-              <View style={styles.resolvedBadge}>
-                <Ionicons name="checkmark-circle" size={14} color={Colors.primary} />
-                <Text style={styles.resolvedBadgeText}>Rank #{atpResolvedPlayer.ranking || '?'} · {atpResolvedPlayer.country || ''}</Text>
-                <TouchableOpacity onPress={() => { setAtpResolvedPlayer(null); setAtpPlayerQuery(''); }}><Ionicons name="close-circle" size={14} color={Colors.textSecondary} /></TouchableOpacity>
-              </View>
-            )}
+            <FuzzySearchInput
+              searchType="atp_players"
+              value={atpPlayerQuery}
+              onChangeText={(t) => { setAtpPlayerQuery(t); if (!t) setAtpResolvedPlayer(null); }}
+              placeholder="e.g. Novak Djokovic, Carlos Alcaraz"
+              confirmed={!!atpResolvedPlayer}
+              autoCapitalize="words"
+              onSelectAtpPlayer={(p) => {
+                setAtpResolvedPlayer(p);
+                setAtpPlayerQuery(p.fullName);
+                Haptics.selectionAsync();
+              }}
+            />
             <Text style={styles.fieldLabel}>Opponent <Text style={styles.fieldLabelOpt}>(optional)</Text></Text>
-            <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. Rafael Nadal, Jannik Sinner" placeholderTextColor={Colors.textTertiary} value={atpOpponentQuery}
-              onChangeText={(t) => { setAtpOpponentQuery(t); setAtpResolvedOpponent(null); if (t.length >= 2) searchBdlPlayers(t, searchAtpPlayers, setAtpOppResults, setAtpOppSearching); else setAtpOppResults([]); }} autoCapitalize="words" />
-            {atpOppSearching && <ActivityIndicator size="small" color={Colors.primary} style={{ marginTop: 4 }} />}
-            {atpOppResults.length > 0 && !atpResolvedOpponent && (
-              <View style={styles.autocompleteList}>
-                {atpOppResults.slice(0, 4).map((p) => (
-                  <TouchableOpacity key={p.id} style={styles.autocompleteItem} onPress={() => { setAtpResolvedOpponent(p); setAtpOpponentQuery(p.fullName || ''); setAtpOppResults([]); Haptics.selectionAsync(); }}>
-                    <Text style={styles.autocompleteText}>{p.fullName || ''}</Text>
-                    {p.ranking ? <Text style={styles.autocompleteSubText}>Rank #{p.ranking}</Text> : null}
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )}
+            <FuzzySearchInput
+              searchType="atp_players"
+              value={atpOpponentQuery}
+              onChangeText={(t) => { setAtpOpponentQuery(t); if (!t) setAtpResolvedOpponent(null); }}
+              placeholder="e.g. Rafael Nadal, Jannik Sinner"
+              confirmed={!!atpResolvedOpponent}
+              autoCapitalize="words"
+              onSelectAtpPlayer={(p) => {
+                setAtpResolvedOpponent(p);
+                setAtpOpponentQuery(p.fullName);
+                Haptics.selectionAsync();
+              }}
+            />
             <View style={{ flexDirection: 'row', gap: 10 }}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.fieldLabel}>Surface</Text>
