@@ -54,6 +54,21 @@ async def _search_players_cache(query: str, league_id: int = None, relaxed: bool
     if not docs and effective_league_id:
         docs = await db[COL_PLAYERS].find(name_filt, {"_id": 0}).limit(20).to_list(20)
 
+    # Multi-word fallback: many cached players have abbreviated first names
+    # (e.g. "R. Jiménez" for "Raul Jimenez") so the all-words filter misses them.
+    # When the full-name search returns nothing, retry with just the last word
+    # (usually the surname) which is almost never abbreviated.
+    if not docs and len(parts) > 1:
+        last_part = parts[-1]
+        last_filt: dict = {"nameClean": {"$regex": re.escape(last_part)}}
+        if effective_league_id:
+            last_filt["leagueId"] = effective_league_id
+        docs = await db[COL_PLAYERS].find(last_filt, {"_id": 0}).limit(100).to_list(100)
+        if not docs and effective_league_id:
+            docs = await db[COL_PLAYERS].find(
+                {"nameClean": {"$regex": re.escape(last_part)}}, {"_id": 0}
+            ).limit(100).to_list(100)
+
     # For single-word queries without a league constraint: only use the cache if
     # it contains at least one top-5 European league player — UNLESS relaxed mode
     # is on (quota exhausted) in which case we accept any cached result.
@@ -130,7 +145,13 @@ async def search_players(req: PlayerSearchRequest):
         exact_word  = 0 if all(w in name_words for w in query_parts) else 1
         first_match = 0 if query_parts and first_norm.startswith(query_parts[0]) else 1
         top_league  = 0 if p.get("leagueId") in _TOP5_LEAGUES else 1
-        return (all_match, exact_word, top_league, has_team, first_match, p["name"])
+        # Initial-match: handles abbreviated names like "R. Jiménez" when the user
+        # types "Raul Jimenez". If the stored name's first letter == query first letter,
+        # rank it above other same-surname players whose initial doesn't match.
+        stored_initial = name_norm.split()[0][0] if name_norm.split() else ""
+        query_initial  = query_parts[0][0] if query_parts else ""
+        initial_match  = 0 if (stored_initial and query_initial and stored_initial == query_initial) else 1
+        return (all_match, exact_word, top_league, has_team, initial_match, first_match, p["name"])
 
     def _apply_sort_and_quality(player_list):
         player_list.sort(key=sort_key)
@@ -149,9 +170,18 @@ async def search_players(req: PlayerSearchRequest):
     except Exception:
         pass
 
-    # If quota is gone, relaxed cache already ran above and returned nothing —
-    # no point hitting the (circuit-broken) API; return empty cleanly.
+    # If quota is gone, try last-name-only fallback before giving up.
+    # Handles abbreviated cached names like "R. Jiménez" when user types "Raul Jimenez".
     if quota_gone:
+        if " " in req.query.strip():
+            last_word = req.query.strip().split()[-1]
+            if len(last_word) >= 3:
+                try:
+                    fallback = await _search_players_cache(last_word, req.league_id, relaxed=True)
+                    if fallback:
+                        return {"players": _apply_sort_and_quality(fallback)}
+                except Exception:
+                    pass
         return {"players": []}
 
     all_players = []
@@ -303,22 +333,37 @@ async def search_players(req: PlayerSearchRequest):
 
 @router.get("/leagues/search")
 async def search_leagues(search: str = ""):
-    """Search leagues by name from the MongoDB cache (1200+ leagues)."""
+    """Search leagues by name or country from the MongoDB cache (1200+ leagues)."""
     q = search.strip()
     if len(q) < 2:
         return {"leagues": []}
     try:
         from cache import COL_LEAGUES
+        from utils import strip_accents
         q_lower = q.lower()
+        q_clean = strip_accents(q_lower)  # accent-free version for matching
+
+        # Search both nameLower (may have accents) and country fields.
+        # Also try the accent-stripped query so "curacao" matches "curaçao".
+        patterns = list({re.escape(q_lower), re.escape(q_clean)})
+        name_or = [{"nameLower": {"$regex": p}} for p in patterns]
+        country_or = [{"country": {"$regex": p, "$options": "i"}} for p in patterns]
+
         docs = await db[COL_LEAGUES].find(
-            {"nameLower": {"$regex": re.escape(q_lower)}},
+            {"$or": name_or + country_or},
             {"_id": 0, "leagueId": 1, "name": 1, "country": 1}
-        ).limit(20).to_list(20)
-        results = [
-            {"id": d["leagueId"], "name": d["name"], "country": d.get("country", "")}
-            for d in docs if d.get("leagueId") and d.get("name")
-        ]
-        return {"leagues": results}
+        ).limit(30).to_list(30)
+
+        # Deduplicate (country match + name match could return same doc twice)
+        seen = set()
+        results = []
+        for d in docs:
+            lid = d.get("leagueId")
+            if lid and d.get("name") and lid not in seen:
+                seen.add(lid)
+                results.append({"id": lid, "name": d["name"], "country": d.get("country", "")})
+
+        return {"leagues": results[:20]}
     except Exception as e:
         print(f"[LEAGUE SEARCH] Error: {e}")
         return {"leagues": []}
