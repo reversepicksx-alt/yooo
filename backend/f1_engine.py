@@ -91,7 +91,10 @@ def compute_f1_projection(
     else:
         projection = round(posterior, 2)
 
-    p_over, p_under = _baye_mc(values[:12], line, prop_type in COUNT_PROPS)
+    _mc_vals = values[:12]
+    _mc_std = (sum((x - posterior) ** 2 for x in _mc_vals) / len(_mc_vals)) ** 0.5 if len(_mc_vals) > 1 else max(posterior * 0.3, 1.0)
+    _mc_std = max(_mc_std, 0.01)
+    p_over, p_under, _, _ = _baye_mc(posterior, _mc_std, line, n_sims=5000, is_count_stat=prop_type in COUNT_PROPS)
 
     # For position props: OVER means higher number (worse finish) = typically the "bad" outcome
     # Leave recommendation as-is since bettors think over/under on position number

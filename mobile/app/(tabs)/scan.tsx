@@ -4628,10 +4628,13 @@ export default function ScanScreen() {
                         key={s.id}
                         style={[styles.sportListItem, active && styles.sportListItemActive]}
                         onPress={() => {
-                          const prev = sport;
                           setSport(s.id);
                           reset();
                           setShowSportPicker(false);
+                          // Non-soccer sports have no OCR scan — go straight to manual form
+                          if (s.id !== 'soccer' && s.id !== 'world_cup') {
+                            setMode('manual');
+                          }
                           // World Cup: pre-set league to World Cup (id=1)
                           if (s.id === 'world_cup') {
                             setLeagueId(1);

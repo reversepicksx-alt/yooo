@@ -142,7 +142,7 @@ async def get_player_match_logs(player_id: int, limit: int = 30) -> list:
         if cursor:
             params["cursor"] = cursor
         try:
-            data = await _get("/stats", params)
+            data = await _get("/matches", params)
         except Exception as e:
             log.warning(f"[LOL STATS] player={player_id}: {e}")
             break

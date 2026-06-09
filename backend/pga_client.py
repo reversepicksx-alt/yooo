@@ -132,68 +132,104 @@ async def get_player(player_id: int) -> Optional[dict]:
 
 
 async def get_player_round_logs(player_id: int, season: int = CURRENT_PGA_SEASON, limit: int = 40) -> list:
-    """Fetch recent round/tournament results for a golfer (newest-first)."""
-    cache_key = f"rounds:{player_id}:{season}"
-    cached = await _cache_get(cache_key)
-    if _cache_fresh(cached, CACHE_TTL["round_logs"]):
-        return cached["data"]
+    """Build synthetic round logs from player season stats (BDL /player_season_stats).
+    Falls back to previous season if current has no data.
+    """
+    import random
+    import math
 
-    all_results = []
-    cursor = None
-    for _ in range(5):
-        params = {"player_id": player_id, "season": season, "per_page": 25}
-        if cursor:
-            params["cursor"] = cursor
-        try:
-            data = await _get("/stats", params)
-        except Exception as e:
-            log.warning(f"[PGA STATS] player={player_id}: {e}")
-            break
-        all_results.extend(data.get("data", []))
-        meta = data.get("meta", {})
-        cursor = meta.get("next_cursor")
-        if not cursor or len(all_results) >= limit:
-            break
+    HYPER_PRIOR = {
+        "birdies": 3.8, "bogeys": 3.2, "putts": 28.5,
+        "fairways_hit": 8.0, "gir": 11.0, "round_score": 70.0, "made_cut": 0.7,
+    }
+    ROUND_STD = {
+        "birdies": 1.8, "bogeys": 1.5, "putts": 2.3,
+        "fairways_hit": 2.0, "gir": 2.5, "round_score": 2.5, "made_cut": 0.0,
+    }
 
-    logs = []
-    for r in all_results:
-        tournament = r.get("tournament") or r.get("event") or {}
-        t_name = tournament.get("name") or tournament.get("event_name") or "Tournament"
-        t_date = (tournament.get("date") or r.get("date") or "")[:10]
+    for s in [season, season - 1]:
+        cache_key = f"rounds2:{player_id}:{s}"
+        cached = await _cache_get(cache_key)
+        if _cache_fresh(cached, CACHE_TTL["round_logs"]):
+            if cached.get("data"):
+                return cached["data"]
 
-        strokes     = _safe(r.get("strokes") or r.get("score") or r.get("total_strokes"))
-        round_score = _safe(r.get("round_score") or r.get("round_strokes"))
-        to_par      = _safe(r.get("to_par") or r.get("score_to_par"))
-        position    = _safe(r.get("position") or r.get("finish_position"), 100)
-        birdies     = _safe(r.get("birdies"))
-        bogeys      = _safe(r.get("bogeys"))
-        eagles      = _safe(r.get("eagles"))
-        pars        = _safe(r.get("pars"))
-        putts       = _safe(r.get("putts"))
-        fwy_hit     = _safe(r.get("fairways_hit") or r.get("fairway_percentage"))
-        gir         = _safe(r.get("greens_in_regulation") or r.get("gir") or r.get("gir_percentage"))
-        drv_dist    = _safe(r.get("driving_distance"))
-        made_cut    = 1.0 if not (r.get("missed_cut") or r.get("withdrew") or r.get("disqualified")) else 0.0
+        all_stats = []
+        cursor = None
+        for _ in range(5):
+            params = [("player_ids[]", player_id), ("season", s), ("per_page", 25)]
+            if cursor:
+                params.append(("cursor", cursor))
+            try:
+                data = await _get("/player_season_stats", dict(params))
+            except Exception as e:
+                log.warning(f"[PGA STATS] player={player_id}: {e}")
+                break
+            batch = data.get("data", [])
+            all_stats.extend(batch)
+            cursor = data.get("meta", {}).get("next_cursor")
+            if not cursor:
+                break
 
-        logs.append({
-            "date":         t_date,
-            "tournament":   t_name,
-            "strokes":      round(strokes),
-            "round_score":  round(round_score),
-            "to_par":       round(to_par, 0),
-            "finish_pos":   int(position) if position < 100 else 100,
-            "birdies":      round(birdies),
-            "bogeys":       round(bogeys),
-            "eagles":       round(eagles),
-            "pars":         round(pars),
-            "putts":        round(putts),
-            "fairways_hit": round(fwy_hit, 1),
-            "gir":          round(gir, 1),
-            "driving_distance": round(drv_dist, 1),
-            "made_cut":     made_cut,
-            "_source": "bdl",
-        })
+        if not all_stats:
+            continue
 
-    logs.sort(key=lambda x: x.get("date", ""), reverse=True)
-    await _cache_set(cache_key, logs)
-    return logs
+        stat_map: dict = {}
+        measured_rounds = 0
+        for stat in all_stats:
+            stat_name = (stat.get("stat_name") or "").lower()
+            for sv in (stat.get("stat_value") or []):
+                sn = (sv.get("statName") or "").lower()
+                raw = str(sv.get("statValue") or "")
+                try:
+                    numeric = float(raw.replace(",", "").replace('"', "").replace("'", "").split(" ")[0].lstrip("+"))
+                except Exception:
+                    continue
+                if "avg" in sn:
+                    if "scoring average" in stat_name and "actual" in stat_name:
+                        stat_map["round_score"] = numeric
+                    elif "birdies" in stat_name and "pct" not in stat_name and "percentage" not in stat_name:
+                        stat_map.setdefault("birdies", numeric)
+                    elif "bogey" in stat_name and "avoidance" not in stat_name:
+                        stat_map.setdefault("bogeys", numeric)
+                    elif "putt" in stat_name:
+                        stat_map.setdefault("putts", numeric)
+                    elif "driving accuracy" in stat_name:
+                        stat_map.setdefault("fairways_hit", numeric)
+                    elif "green" in stat_name and "regulation" in stat_name:
+                        stat_map.setdefault("gir", numeric)
+                elif "measured" in sn and "round" in sn and numeric > 0:
+                    measured_rounds = max(measured_rounds, int(numeric))
+
+        if not stat_map:
+            continue
+
+        n_rounds = min(max(measured_rounds or 18, 14), 32)
+        rng = random.Random(player_id * 100 + s)
+        logs = []
+        for i in range(n_rounds):
+            entry: dict = {
+                "date": f"{s}-01-{(i % 28) + 1:02d}",
+                "tournament": f"Season {s}",
+                "eagles": 0, "pars": 0, "strokes": 0,
+                "to_par": 0, "finish_pos": 20, "driving_distance": 295.0,
+                "_source": "bdl_season_avg",
+            }
+            for field in ("birdies", "bogeys", "putts", "fairways_hit", "gir", "round_score", "made_cut"):
+                center = stat_map.get(field) or HYPER_PRIOR[field]
+                std = ROUND_STD[field]
+                if field == "made_cut":
+                    entry[field] = 1.0 if center >= 0.5 else 0.0
+                elif std > 0:
+                    val = max(0.0, center + rng.gauss(0, std))
+                    entry[field] = round(val) if field in ("birdies", "bogeys", "putts", "gir", "fairways_hit") else round(val, 1)
+                else:
+                    entry[field] = round(center, 1)
+            entry["strokes"] = entry.get("round_score", 70)
+            entry["to_par"] = round(entry.get("round_score", 70) - 72, 0)
+            logs.append(entry)
+
+        await _cache_set(cache_key, logs)
+        return logs
+
+    return []
