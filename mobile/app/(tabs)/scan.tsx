@@ -12,7 +12,7 @@ import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import { useQueryClient } from '@tanstack/react-query';
 import { scanProp, predict, mlbPredict, getMlbGameContext, cs2Predict, wtaPredict, nbaPredict, nflPredict, nhlPredict, wnbaPredict, ncaabPredict, ncaawPredict, atpPredict, ncaafPredict, f1Predict, mmaPredict, pgaPredict, dota2Predict, lolPredict, cbasePredict, aiSportPredict, searchNbaPlayers, searchNflPlayers, searchNhlPlayers, searchWnbaPlayers, searchNcaabPlayers, searchNcaawPlayers, searchAtpPlayers, searchWtaPlayers, searchNcaafPlayers, searchF1Drivers, searchMmaFighters, searchPgaPlayers, searchDota2Players, searchLolPlayers, searchCbasePlayers, savePick, searchMlbPlayers, searchCs2Players, searchCs2Teams, PROP_TYPES, MLB_PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, NBA_PROP_TYPES, NFL_PROP_TYPES, NHL_PROP_TYPES, WNBA_PROP_TYPES, NCAAB_PROP_TYPES, NCAAW_PROP_TYPES, ATP_PROP_TYPES, NCAAF_PROP_TYPES, F1_PROP_TYPES, MMA_PROP_TYPES, PGA_PROP_TYPES, DOTA2_PROP_TYPES, LOL_PROP_TYPES, CBASE_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, LEAGUES, PredictionResult, ScanResult, MlbPlayer, Cs2Player, Cs2Team, WtaPlayer } from '@/lib/api';
-import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult, FuzzyLeagueResult } from '@/components/FuzzySearchInput';
+import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult, FuzzyLeagueResult, StaticItem } from '@/components/FuzzySearchInput';
 import LeaguePickerModal from '@/components/LeaguePickerModal';
 import { useAuth } from '@/contexts/AuthContext';
 import LoadingScreen from '@/components/LoadingScreen';
@@ -55,6 +55,30 @@ const MLB_TEAMS_STATIC: MlbTeam[] = [
 
 const SCREEN_W = Dimensions.get('window').width;
 const INPUT_STYLE = Platform.OS === 'web' ? { outlineWidth: 0 } as object : {};
+
+// Static list of FIFA international nations for World Cup opponent fuzzy search
+const WC_NATIONS: StaticItem[] = [
+  'Afghanistan','Albania','Algeria','Andorra','Angola','Antigua and Barbuda','Argentina','Armenia',
+  'Australia','Austria','Azerbaijan','Bahrain','Bangladesh','Belarus','Belgium','Benin',
+  'Bolivia','Bosnia and Herzegovina','Botswana','Brazil','Bulgaria','Burkina Faso','Burundi',
+  'Cameroon','Canada','Cape Verde','Central African Republic','Chile','China','Colombia',
+  'Comoros','Congo','Costa Rica','Croatia','Cuba','Cyprus','Czech Republic','Côte d\'Ivoire',
+  'Denmark','Dominican Republic','DR Congo','Ecuador','Egypt','El Salvador','England',
+  'Equatorial Guinea','Estonia','Ethiopia','Faroe Islands','Finland','France','Gabon',
+  'Georgia','Germany','Ghana','Gibraltar','Greece','Guatemala','Guinea','Guinea-Bissau',
+  'Haiti','Honduras','Hungary','Iceland','India','Indonesia','Iran','Iraq','Ireland',
+  'Israel','Italy','Jamaica','Japan','Jordan','Kazakhstan','Kenya','Kosovo','Kuwait',
+  'Latvia','Lebanon','Liberia','Libya','Liechtenstein','Lithuania','Luxembourg','Malawi',
+  'Malaysia','Mali','Malta','Mauritania','Mexico','Moldova','Montenegro','Morocco',
+  'Mozambique','Namibia','Netherlands','New Zealand','Nicaragua','Niger','Nigeria',
+  'North Korea','North Macedonia','Northern Ireland','Norway','Oman','Palestine','Panama',
+  'Paraguay','Peru','Philippines','Poland','Portugal','Qatar','Republic of Ireland',
+  'Romania','Rwanda','San Marino','Saudi Arabia','Scotland','Senegal','Serbia',
+  'Sierra Leone','Slovakia','Slovenia','Somalia','South Africa','South Korea','Spain',
+  'Sudan','Sweden','Switzerland','Syria','Tanzania','Thailand','Togo','Trinidad and Tobago',
+  'Tunisia','Turkey','Uganda','Ukraine','United Arab Emirates','United States','Uruguay',
+  'Uzbekistan','Venezuela','Vietnam','Wales','Zambia','Zimbabwe',
+].map(name => ({ id: name, primary: name }));
 
 const PROP_LABELS: Record<string, string> = {
   pass_attempts: 'Pass Attempts', shots: 'Shots', shots_on_target: 'Shots on Target',
@@ -1422,13 +1446,17 @@ export default function ScanScreen() {
               <Text style={styles.fieldLabelOpt}>(optional)</Text>
             </Text>
             {sport === 'world_cup' ? (
-              <TextInput
-                style={[styles.textInput, INPUT_STYLE, { marginBottom: 6 }]}
-                placeholder="e.g. Brazil, France, Argentina"
-                placeholderTextColor={Colors.textTertiary}
+              <FuzzySearchInput
                 value={manualOpponentQuery}
-                onChangeText={setManualOpponentQuery}
+                onChangeText={(t) => { setManualOpponentQuery(t); if (!t) setResolvedManualOpponent(null); }}
+                searchType="teams"
+                staticItems={WC_NATIONS}
+                placeholder="e.g. Brazil, France, Argentina"
+                style={{ marginBottom: 2 }}
                 autoCapitalize="words"
+                onSelectStaticItem={(_raw, primary) => {
+                  setManualOpponentQuery(primary);
+                }}
               />
             ) : (
               <>

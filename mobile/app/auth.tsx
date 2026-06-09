@@ -53,7 +53,9 @@ export default function AuthScreen() {
   const splTxtOpac     = useRef(new Animated.Value(0)).current;
   const splTxtY        = useRef(new Animated.Value(20)).current;
   const splProgress    = useRef(new Animated.Value(0)).current;
-  const splChipsOpac   = useRef(new Animated.Value(0)).current;
+  const splChip0Opac   = useRef(new Animated.Value(0)).current;
+  const splChip1Opac   = useRef(new Animated.Value(0)).current;
+  const splChip2Opac   = useRef(new Animated.Value(0)).current;
   const [showPaymentEmail, setShowPaymentEmail] = useState(false);
   const [paymentEmail, setPaymentEmail] = useState('');
   const [showSupport, setShowSupport] = useState(false);
@@ -158,7 +160,7 @@ export default function AuthScreen() {
       splScanY.setValue(0);
       Animated.sequence([
         Animated.timing(splScanOpac, { toValue: 1,   duration: 60,  useNativeDriver: true }),
-        Animated.timing(splScanY,    { toValue: 220,  duration: 650, useNativeDriver: true }),
+        Animated.timing(splScanY,    { toValue: 374,  duration: 650, useNativeDriver: true }),
         Animated.timing(splScanOpac, { toValue: 0,    duration: 120, useNativeDriver: true }),
       ]).start();
     }, 480);
@@ -176,21 +178,21 @@ export default function AuthScreen() {
       Animated.timing(splProgress, { toValue: 1, duration: 1600, useNativeDriver: false }).start();
     }, 880);
 
-    // Phase 7 (1080ms): Data chips fade in
-    const t7 = setTimeout(() => {
-      Animated.timing(splChipsOpac, { toValue: 1, duration: 500, useNativeDriver: true }).start();
-    }, 1080);
+    // Phase 7 (1080ms): Data chips stagger in one by one
+    const t7  = setTimeout(() => Animated.timing(splChip0Opac, { toValue: 1, duration: 380, useNativeDriver: true }).start(), 1080);
+    const t7b = setTimeout(() => Animated.timing(splChip1Opac, { toValue: 1, duration: 380, useNativeDriver: true }).start(), 1340);
+    const t7c = setTimeout(() => Animated.timing(splChip2Opac, { toValue: 1, duration: 380, useNativeDriver: true }).start(), 1600);
 
-    // Phase 8 (3300ms): Exit — fade + slight scale up
+    // Phase 8 (3600ms): Exit — fade + slight scale up
     const tExit = setTimeout(() => {
       Animated.parallel([
         Animated.timing(splashOpacity, { toValue: 0, duration: 650, useNativeDriver: true }),
         Animated.timing(splashScale,   { toValue: 1.05, duration: 650, useNativeDriver: true }),
       ]).start(() => setShowSplash(false));
-    }, 3300);
+    }, 3600);
 
     return () => {
-      [t1, t2, t3, t4, t5, t6, t7, tExit].forEach(clearTimeout);
+      [t1, t2, t3, t4, t5, t6, t7, t7b, t7c, tExit].forEach(clearTimeout);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -415,15 +417,6 @@ export default function AuthScreen() {
   return (
     <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom + 20 }]}>
       <View style={styles.inner}>
-
-        <View style={styles.hero}>
-          <Image
-            source={require('../assets/logo.png')}
-            style={styles.logo}
-            resizeMode="contain"
-          />
-          <Text style={styles.appName}>REVERSEPICKS</Text>
-        </View>
 
         <View style={styles.formArea}>
           {step === 'email' && (
@@ -701,14 +694,21 @@ export default function AuthScreen() {
             }]} />
           </View>
 
-          {/* Data chips */}
-          <Animated.View style={[styles.splashChipsRow, { opacity: splChipsOpac }]}>
-            {(['AI', 'BAYESIAN', 'LIVE'] as const).map((label, i) => (
-              <View key={label} style={[styles.splashChip, i > 0 && { marginLeft: 10 }]}>
+          {/* Data chips — each word animates in separately */}
+          <View style={styles.splashChipsRow}>
+            {(['AI', 'FORMULA', 'LIVE'] as const).map((label, i) => (
+              <Animated.View
+                key={label}
+                style={[
+                  styles.splashChip,
+                  i > 0 && { marginLeft: 10 },
+                  { opacity: i === 0 ? splChip0Opac : i === 1 ? splChip1Opac : splChip2Opac },
+                ]}
+              >
                 <Text style={styles.splashChipText}>{label}</Text>
-              </View>
+              </Animated.View>
             ))}
-          </Animated.View>
+          </View>
         </Animated.View>
       )}
     </View>
@@ -754,17 +754,17 @@ const styles = StyleSheet.create({
   },
   splashBurstRing: {
     position: 'absolute',
-    width: 230,
-    height: 230,
-    borderRadius: 115,
+    width: 390,
+    height: 390,
+    borderRadius: 195,
     borderWidth: 2.5,
     borderColor: '#39FF14',
   },
   splashRadarRing: {
     position: 'absolute',
-    width: 250,
-    height: 250,
-    borderRadius: 125,
+    width: 420,
+    height: 420,
+    borderRadius: 210,
     borderWidth: 1.5,
     borderColor: '#39FF14',
   },
@@ -773,15 +773,15 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(57,255,20,0.6)',
   },
   splashLogoWrap: {
-    width: 220,
-    height: 220,
+    width: 374,
+    height: 374,
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
   },
   splashLogo: {
-    width: 220,
-    height: 220,
+    width: 374,
+    height: 374,
   },
   splashScanLine: {
     position: 'absolute',
