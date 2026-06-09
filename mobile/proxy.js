@@ -83,7 +83,6 @@ if (IS_PRODUCTION) {
   app.use(express.static(distPath, { index: false }));
 
   // SPA fallback — inject favicon, OG, PWA tags + loading screen into index.html
-  const fs = require('fs');
   const PWA_TAGS = `    <link rel="icon" type="image/png" href="/rp-icon.png" />
     <link rel="shortcut icon" href="/rp-icon.png" />
     <link rel="apple-touch-icon" href="/rp-icon.png" />
@@ -124,6 +123,7 @@ if (IS_PRODUCTION) {
   app.use((req, res) => {
     const indexPath = path.join(distPath, 'index.html');
     if (!fs.existsSync(indexPath)) {
+      res.setHeader('Cache-Control', 'no-store');
       res.status(503).send('<html><body style="font-family:sans-serif;padding:2rem;background:#050505;color:#fff"><h2>Starting up...</h2><p>The app is initialising. Please refresh in a few seconds.</p><script>setTimeout(()=>location.reload(),5000)</script></body></html>');
       return;
     }
@@ -134,6 +134,9 @@ if (IS_PRODUCTION) {
       html = html.replace('</head>', `${PWA_TAGS}\n  </head>`);
       // Inject loading screen before the closing </body> tag
       html = html.replace('</body>', `${LOADING_SCREEN}\n</body>`);
+      // index.html must never be cached — JS bundles are content-hashed so they
+      // cache forever, but stale index.html means users miss fresh deployments.
+      res.setHeader('Cache-Control', 'no-cache');
       res.setHeader('Content-Type', 'text/html');
       res.send(html);
     } catch {
