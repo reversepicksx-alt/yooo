@@ -488,3 +488,202 @@ async def get_player_injuries(league_id: int) -> list[dict]:
     path   = LEAGUE_TO_BDL[league_id]
     result = await _get(f"{path}/player_injuries")
     return result.get("data", []) if result else []
+
+
+# ── Live match tracking ────────────────────────────────────────────────────────
+
+_BDL_STATUS_FINISHED: frozenset = frozenset({
+    "STATUS_FINAL", "final", "STATUS_FULL_TIME", "STATUS_AFTER_EXTRA_TIME",
+    "STATUS_AFTER_PENALTIES", "FT", "AET", "PEN",
+})
+_BDL_STATUS_LIVE: frozenset = frozenset({
+    "STATUS_IN_PROGRESS", "in_progress", "STATUS_HALFTIME", "halftime",
+    "STATUS_EXTRA_TIME", "STATUS_PENALTY_SHOOTOUT",
+    "1H", "2H", "HT", "ET", "P", "LIVE", "BT",
+})
+
+# propType → normalized field name produced by _norm()
+BDL_SOCCER_STAT_MAP: dict = {
+    "goals":           "goals_total",
+    "assists":         "goals_assists",
+    "shots":           "shots_total",
+    "shots_on_target": "shots_on",
+    "pass_attempts":   "passes_total",
+    "key_passes":      "passes_key",
+    "shots_assisted":  "passes_key",
+    "saves":           "goals_saves",
+    "tackles":         "tackles_total",
+    "interceptions":   "tackles_interceptions",
+    "blocks":          "tackles_blocks",
+    "clearances":      "tackles_clearances",
+    "dribbles":        "dribbles_attempts",
+    "fouls_drawn":     "fouls_drawn",
+    "fouls_committed": "fouls_committed",
+    "crosses":         "passes_crosses",
+    "duels_won":       "duels_won",
+    "yellow_cards":    "cards_yellow",
+}
+
+
+def _normalize_match(raw: dict, league_id: int) -> Optional[dict]:
+    """Normalize a raw BDL match dict to the common picks-tracking schema."""
+    mid = raw.get("id")
+    if not mid:
+        return None
+
+    status_raw  = str(raw.get("status") or "").strip()
+    is_finished = status_raw in _BDL_STATUS_FINISHED
+    is_live     = status_raw in _BDL_STATUS_LIVE
+
+    # WC uses nested home_team / away_team objects; MLS/EPL/etc use flat IDs
+    if isinstance(raw.get("home_team"), dict):
+        home_id   = raw["home_team"].get("id")
+        away_id   = raw["away_team"].get("id")
+        home_name = raw["home_team"].get("name", "")
+        away_name = raw["away_team"].get("name", "")
+    else:
+        home_id   = raw.get("home_team_id")
+        away_id   = raw.get("away_team_id")
+        name      = raw.get("name", "")
+        if " at " in name:
+            parts     = name.split(" at ", 1)
+            away_name = parts[0].strip()
+            home_name = parts[1].strip()
+        else:
+            home_name = away_name = ""
+
+    home_score = raw.get("home_score") if raw.get("home_score") is not None else 0
+    away_score = raw.get("away_score") if raw.get("away_score") is not None else 0
+    date_str   = (raw.get("date") or raw.get("datetime") or "")[:10]
+
+    return {
+        "id":              mid,
+        "league_id":       league_id,
+        "status":          status_raw,
+        "is_live":         is_live,
+        "is_finished":     is_finished,
+        "home_score":      home_score,
+        "away_score":      away_score,
+        "home_team_id":    home_id,
+        "away_team_id":    away_id,
+        "home_team_name":  home_name,
+        "away_team_name":  away_name,
+        "date":            date_str,
+        "first_half_home": raw.get("first_half_home_score"),
+        "first_half_away": raw.get("first_half_away_score"),
+    }
+
+
+async def get_live_and_recent_matches(league_id: int) -> list:
+    """
+    Return normalized BDL match dicts covering today ± 2 days.
+    Cache TTL: 15 min for non-empty results, 5 min for empty (live polling).
+    MLS: team names resolved via _teams_lookup (match objects only have IDs).
+    WC/EPL/etc: team names inline from nested objects or match name field.
+    """
+    if not is_bdl_league(league_id) or not BDL_KEY:
+        return []
+    path      = LEAGUE_TO_BDL[league_id]
+    cache_key = f"bdl_soc_live_{league_id}"
+    try:
+        doc    = await db.bdl_soccer_cache.find_one({"_k": cache_key})
+        cached = _cache_hit(doc, ttl_full=15 * 60, ttl_empty=5 * 60)
+        if cached is not None:
+            return cached
+    except Exception:
+        pass
+
+    from datetime import timedelta
+    today     = datetime.now(tz=timezone.utc)
+    date_strs = [
+        (today - timedelta(days=2)).strftime("%Y-%m-%d"),
+        (today - timedelta(days=1)).strftime("%Y-%m-%d"),
+        today.strftime("%Y-%m-%d"),
+        (today + timedelta(days=1)).strftime("%Y-%m-%d"),
+    ]
+
+    raw_all: list = []
+    for d in date_strs:
+        result = await _get(f"{path}/matches", {"dates[]": d, "per_page": 20})
+        if result:
+            raw_all.extend(result.get("data", []))
+
+    normalized = [n for raw in raw_all if (n := _normalize_match(raw, league_id)) is not None]
+
+    if league_id == 253 and normalized:
+        try:
+            teams_map = await _teams_lookup(league_id)
+            for m in normalized:
+                if not m["home_team_name"] and m.get("home_team_id"):
+                    m["home_team_name"] = teams_map.get(m["home_team_id"], "")
+                if not m["away_team_name"] and m.get("away_team_id"):
+                    m["away_team_name"] = teams_map.get(m["away_team_id"], "")
+        except Exception:
+            pass
+
+    try:
+        await db.bdl_soccer_cache.update_one(
+            {"_k": cache_key},
+            {"$set": {"_k": cache_key, "d": normalized,
+                      "_ts": datetime.now(timezone.utc)}},
+            upsert=True
+        )
+    except Exception:
+        pass
+    return normalized
+
+
+def find_match_for_pick(matches: list, pick: dict) -> Optional[dict]:
+    """
+    Fuzzy-match a pick to a BDL match using opponent name.
+    Priority: live > finished > scheduled (upcoming).
+    """
+    opp = (pick.get("opponentName") or "").lower().strip()
+    if not opp:
+        return None
+
+    def _opp_matches(m: dict) -> bool:
+        h = (m.get("home_team_name") or "").lower()
+        a = (m.get("away_team_name") or "").lower()
+        return bool(h or a) and (opp in h or h in opp or opp in a or a in opp)
+
+    for m in matches:
+        if m.get("is_live") and _opp_matches(m):
+            return m
+    for m in matches:
+        if m.get("is_finished") and _opp_matches(m):
+            return m
+    for m in matches:
+        if _opp_matches(m):
+            return m
+    return None
+
+
+async def get_player_settled_stat(
+    league_id: int, player_name: str, stat_field: str,
+) -> tuple:
+    """
+    Fetch the player's most recent match stat from BDL (bypasses 6h cache).
+    Returns (stat_value, minutes_played).  Used for settlement in picks.py.
+    """
+    if not is_bdl_league(league_id) or not BDL_KEY:
+        return None, 0
+
+    player = await _find_player(league_id, player_name)
+    if not player:
+        return None, 0
+    bdl_pid = player.get("id")
+    if not bdl_pid:
+        return None, 0
+
+    path   = LEAGUE_TO_BDL[league_id]
+    result = await _get(f"{path}/player_match_stats",
+                        {"player_ids[]": bdl_pid, "seasons[]": _cur_yr, "per_page": 5})
+    rows = result.get("data", []) if result else []
+    if not rows:
+        return None, 0
+
+    norm = _norm(rows[0])
+    val  = norm.get(stat_field)
+    mins = norm.get("minutes") or 0
+    return val, int(mins)

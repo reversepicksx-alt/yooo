@@ -1817,74 +1817,189 @@ async def _process_bdl_live(picks: list, email: str) -> list:
 
 
 async def _process_soccer_live(picks: list, email: str) -> list:
-    """Process soccer picks for live updates."""
-    # Group by team
-    team_picks = {}
-    for pick in picks:
-        tid = pick.get("teamId", 0)
-        if tid not in team_picks:
-            team_picks[tid] = []
-        team_picks[tid].append(pick)
+    """Route soccer live-update picks: BDL for supported leagues, 'scheduled' otherwise."""
+    import soccer_bdl_client as _sbc
+    bdl_picks   = [p for p in picks if _sbc.is_bdl_league(p.get("leagueId", 0))]
+    other_picks = [p for p in picks if not _sbc.is_bdl_league(p.get("leagueId", 0))]
 
     results = []
+    if bdl_picks:
+        bdl_results = await _process_soccer_bdl_live(bdl_picks, email)
+        results.extend(bdl_results)
+    for p in other_picks:
+        results.append({"pickId": p.get("pickId", ""), "matchStatus": "scheduled"})
+    return results
 
-    async def process_team(team_id, picks_for_team):
-        team_results = []
+
+async def _process_soccer_bdl_live(picks: list, email: str) -> list:
+    """Live tracking for BDL-covered soccer leagues (WC, MLS, EPL, etc.)."""
+    import soccer_bdl_client as _sbc
+
+    league_picks: dict = {}
+    for pick in picks:
+        lid = pick.get("leagueId", 0)
+        if lid not in league_picks:
+            league_picks[lid] = []
+        league_picks[lid].append(pick)
+
+    results = []
+    for league_id, picks_for_league in league_picks.items():
         try:
-            # Get team's fixtures: LIVE first, then recent finished, then upcoming
-            # "last" only returns FINISHED fixtures — it skips live games!
-            # So we must also check "live" fixtures for this team directly
-            from datetime import timedelta
-            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+            matches = await _sbc.get_live_and_recent_matches(league_id)
+        except Exception:
+            matches = []
 
-            # Fire both calls in parallel: today's fixtures + last 3 finished
-            import asyncio as _aio
-            live_task = api_football_request("fixtures", {"team": team_id, "date": today})
-            yesterday_task = api_football_request("fixtures", {"team": team_id, "date": yesterday})
-            last_task = api_football_request("fixtures", {"team": team_id, "last": 3})
+        for pick in picks_for_league:
+            try:
+                match = _sbc.find_match_for_pick(matches, pick)
+                if not match:
+                    results.append({"pickId": pick.get("pickId", ""), "matchStatus": "scheduled"})
+                    continue
+                update = await _build_bdl_soccer_update(pick, match, email, league_id)
+                results.append(update)
+            except Exception:
+                traceback.print_exc()
+                results.append({"pickId": pick.get("pickId", ""), "matchStatus": "scheduled"})
+    return results
 
-            live_fixtures, yesterday_fixtures, last_fixtures = await _aio.gather(
-                live_task, yesterday_task, last_task, return_exceptions=True
+
+async def _build_bdl_soccer_update(
+    pick: dict, match: dict, email: str, league_id: int
+) -> dict:
+    """Build a live-update / settlement dict for a soccer pick using BDL match data."""
+    import soccer_bdl_client as _sbc
+
+    is_live     = match.get("is_live", False)
+    is_finished = match.get("is_finished", False)
+
+    home_score     = match.get("home_score", 0) or 0
+    away_score     = match.get("away_score", 0) or 0
+    home_team_name = match.get("home_team_name", "")
+    away_team_name = match.get("away_team_name", "")
+    venue          = (pick.get("venue") or "home").lower()
+    p_score        = home_score if venue == "home" else away_score
+    o_score        = away_score if venue == "home" else home_score
+    match_score    = f"{p_score}-{o_score}"
+
+    if not is_live and not is_finished:
+        return {
+            "pickId": pick.get("pickId", ""),
+            "matchStatus": "scheduled",
+            "bdlMatchId":  match.get("id"),
+            "homeTeam":    home_team_name,
+            "awayTeam":    away_team_name,
+        }
+
+    elapsed        = 0 if is_live else 90
+    current_value  = None
+    minutes_played = 90 if is_finished else 0
+
+    if is_finished:
+        prop_type  = pick.get("propType", "")
+        stat_field = _sbc.BDL_SOCCER_STAT_MAP.get(prop_type)
+        if stat_field:
+            current_value, minutes_played = await _sbc.get_player_settled_stat(
+                league_id, pick.get("playerName", ""), stat_field
             )
 
-            # Merge all fixtures, dedup by fixture ID
-            all_fixtures = []
-            seen_ids = set()
-            for batch in [live_fixtures, yesterday_fixtures, last_fixtures]:
-                if isinstance(batch, Exception) or not batch:
-                    continue
-                for f in batch:
-                    fid = f.get("fixture", {}).get("id")
-                    if fid and fid not in seen_ids:
-                        seen_ids.add(fid)
-                        all_fixtures.append(f)
+    line           = pick.get("line", 0)
+    recommendation = pick.get("recommendation", "over")
+    pace           = (current_value or 0) if is_finished else 0
+    hit_pct        = _calc_hit_pct(
+        current_value or 0, line, recommendation,
+        elapsed, 90, is_finished, pace
+    )
 
-            if not all_fixtures:
-                for pick in picks_for_team:
-                    team_results.append({"pickId": pick["pickId"], "matchStatus": "scheduled"})
-                return team_results
+    update = {
+        "pickId":        pick.get("pickId", ""),
+        "matchStatus":   "final" if is_finished else "live",
+        "bdlMatchId":    match.get("id"),
+        "elapsed":       elapsed,
+        "period":        "FT" if is_finished else "LIVE",
+        "currentValue":  current_value if current_value is not None else 0,
+        "minutesPlayed": minutes_played,
+        "pace":          pace,
+        "hitPct":        hit_pct,
+        "matchScore":    match_score,
+        "homeTeam":      home_team_name,
+        "awayTeam":      away_team_name,
+        "finalHomeGoals": home_score,
+        "finalAwayGoals": away_score,
+        "homePoss": None,
+        "awayPoss": None,
+    }
 
-            for pick in picks_for_team:
-                opponent_name = pick.get("opponentName", "")
-                matched_fixture = _match_soccer_fixture(all_fixtures, opponent_name, pick.get("timestamp", ""))
+    if not is_finished:
+        return update
 
-                if not matched_fixture:
-                    team_results.append({"pickId": pick["pickId"], "matchStatus": "scheduled"})
-                    continue
+    _current_status = pick.get("status", "live")
+    if _current_status == "settled":
+        update["matchStatus"] = "final"
+        return update
 
-                update = await _build_soccer_update(pick, matched_fixture, email)
-                team_results.append(update)
-        except Exception:
-            traceback.print_exc()
-        return team_results
+    _stat_available    = current_value is not None
+    current_value_safe = current_value if current_value is not None else 0
 
-    tasks = [process_team(tid, picks) for tid, picks in team_picks.items()]
-    all_results = await aio.gather(*tasks)
-    for r in all_results:
-        results.extend(r)
+    if not _stat_available and minutes_played >= 30:
+        print(f"[BDL-SETTLE-DEFER] {pick.get('playerName','')} {pick.get('propType','')} — stat unavailable; deferring")
+        update["matchStatus"] = "final"
+        return update
 
-    return results
+    _DNP_THRESHOLD = 30
+    if minutes_played < _DNP_THRESHOLD:
+        result_str        = "dnp"
+        update["voidReason"] = f"Player only played {minutes_played} min (min {_DNP_THRESHOLD} required)"
+    else:
+        result_str = _settle_result(current_value_safe, line, recommendation)
+
+    settled_hit_pct = 100 if result_str == "hit" else (0 if result_str == "miss" else 50)
+    if result_str == "dnp":
+        settled_hit_pct = 0
+
+    update["result"]      = result_str
+    update["actualValue"] = current_value_safe
+    update["hitPct"]      = settled_hit_pct
+
+    _settle_set = {
+        "status":         "settled",
+        "result":         result_str,
+        "actualValue":    current_value_safe,
+        "hitPct":         settled_hit_pct,
+        "matchScore":     match_score,
+        "minutesPlayed":  minutes_played,
+        "finalHomeGoals": home_score,
+        "finalAwayGoals": away_score,
+        "homeTeam":       home_team_name,
+        "awayTeam":       away_team_name,
+        "settledAt":      datetime.now(timezone.utc).isoformat(),
+    }
+    if update.get("voidReason"):
+        _settle_set["voidReason"] = update["voidReason"]
+
+    await db.picks.update_one(
+        {"pickId": pick["pickId"], "email": email},
+        {"$set": _settle_set}
+    )
+
+    try:
+        from routes.notifications import create_notification
+        _emoji = "✅" if result_str == "hit" else ("❌" if result_str == "miss" else "↔️")
+        _prop  = pick.get("propType", "").replace("_", " ").title()
+        _label = "HIT" if result_str == "hit" else ("MISSED" if result_str == "miss" else "PUSH")
+        await create_notification(
+            email=email,
+            ntype="pick_settled",
+            title=f"{_emoji} {pick.get('playerName','?')} {_prop} — {_label}",
+            body=f"Actual: {current_value_safe} · Line: {line} · {recommendation.upper()}",
+            data={"pickId": pick.get("pickId"), "playerName": pick.get("playerName"),
+                  "propType": pick.get("propType"), "result": result_str,
+                  "actualValue": current_value_safe, "line": line,
+                  "recommendation": recommendation, "sport": "soccer"},
+        )
+    except Exception:
+        pass
+
+    return update
 
 
 def _match_soccer_fixture(fixtures: list, opponent_name: str, pick_ts) -> dict:
@@ -2226,7 +2341,48 @@ async def settle_picks(req: SettlePicksRequest):
 
 
 async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, league_id):
-    """Settle a soccer pick."""
+    """Settle a soccer pick — BDL path for BDL leagues, legacy path otherwise."""
+    import soccer_bdl_client as _sbc
+    if _sbc.is_bdl_league(league_id):
+        matches = await _sbc.get_live_and_recent_matches(league_id)
+        match   = _sbc.find_match_for_pick(matches, pick)
+        if not match or not match.get("is_finished"):
+            return None
+        stat_field = _sbc.BDL_SOCCER_STAT_MAP.get(prop_type)
+        if not stat_field:
+            return None
+        actual_value, minutes_played = await _sbc.get_player_settled_stat(
+            league_id, pick.get("playerName", ""), stat_field
+        )
+        if actual_value is None:
+            return None
+        home_goals = match.get("home_score", 0) or 0
+        away_goals = match.get("away_score", 0) or 0
+        venue      = (pick.get("venue") or "home").lower()
+        p_goals    = home_goals if venue == "home" else away_goals
+        o_goals    = away_goals if venue == "home" else home_goals
+        _DNP_THRESHOLD = 30
+        if minutes_played < _DNP_THRESHOLD and minutes_played > 0:
+            return {
+                "pickId": pick.get("id"), "status": "settled", "result": "dnp",
+                "actualValue": actual_value, "minutesPlayed": minutes_played,
+                "voidReason": f"Player only played {minutes_played} min (min {_DNP_THRESHOLD} required)",
+                "matchScore": f"{p_goals}-{o_goals}",
+                "homeTeam": match.get("home_team_name", ""),
+                "awayTeam": match.get("away_team_name", ""),
+                "finalHomeGoals": home_goals, "finalAwayGoals": away_goals,
+            }
+        result_str = _settle_result(actual_value, pick.get("line", 0), pick.get("recommendation", "over"))
+        return {
+            "pickId": pick.get("id"), "status": "settled", "result": result_str,
+            "actualValue": actual_value, "minutesPlayed": minutes_played,
+            "matchScore": f"{p_goals}-{o_goals}",
+            "homeTeam": match.get("home_team_name", ""),
+            "awayTeam": match.get("away_team_name", ""),
+            "finalHomeGoals": home_goals, "finalAwayGoals": away_goals,
+        }
+
+    # ── Legacy API-Football path for non-BDL leagues ──────────────────────────
     if not team_id:
         for s in [CURRENT_SEASON, CURRENT_SEASON + 1]:
             try:

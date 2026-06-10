@@ -350,12 +350,24 @@ async def predict(req: PredictionRequest):
                 return None
 
         # When in AI-only mode (missing IDs), skip API calls that would waste quota
+        async def noop_none(): return None
+        async def noop_list(): return []
+
+        _is_bdl_league = _bdl_soc.is_bdl_league(league_id)
+
         if ai_only_mode:
             print(f"[AI-ONLY] Running in AI-only mode for {req.playerName} — teamId={actual_team_id}, opponentId={req.opponentId}")
 
-            async def noop_none(): return None
-            async def noop_list(): return []
-
+            player_data_task = get_player_data() if req.playerId and req.playerId != 0 else noop_none()
+            team_stats_task = noop_none()
+            opponent_stats_task = noop_none()
+            h2h_task = noop_list()
+            standings_task = noop_none()
+            fixtures_task = noop_list()
+            odds_task = noop_none()
+        elif _is_bdl_league:
+            # BDL leagues: skip all API-Football enrichment — no H2H, odds, or fixture cache
+            print(f"[BDL-GATE] Skipping API-Football Wave 1 tasks for BDL league {league_id}")
             player_data_task = get_player_data() if req.playerId and req.playerId != 0 else noop_none()
             team_stats_task = noop_none()
             opponent_stats_task = noop_none()
@@ -413,7 +425,8 @@ async def predict(req: PredictionRequest):
 
         # Recovery: if ai_only_mode skipped fixture fetching but we now have a real team ID,
         # fetch recent fixtures retroactively so the Reverse Formula has game log data.
-        if actual_team_id and actual_team_id != 0 and not recent_fixtures:
+        # Skipped for BDL leagues — BDL game logs are fetched separately.
+        if actual_team_id and actual_team_id != 0 and not recent_fixtures and not _is_bdl_league:
             try:
                 print(f"[FIXTURE RECOVERY] Fetching fixtures for recovered teamId={actual_team_id}")
                 recent_fixtures = await get_recent_fixtures_fast(actual_team_id, 40)
@@ -742,7 +755,7 @@ async def predict(req: PredictionRequest):
                 except Exception:
                     pass
 
-                if team_fixtures_raw is None:
+                if team_fixtures_raw is None and not _is_bdl_league:
                     team_fixtures_raw = await api_football_request(
                         "fixtures", {"team": actual_team_id, "last": 25, "status": "FT"}
                     )
@@ -914,6 +927,9 @@ async def predict(req: PredictionRequest):
                         return gl
                     except Exception:
                         return None
+
+                if not team_fixtures_raw:
+                    return collected
 
                 sem = aio.Semaphore(10)
                 async def _sem_fetch(fix_raw):
@@ -1111,7 +1127,7 @@ async def predict(req: PredictionRequest):
                     print(f"[LOCAL] Opponent fixtures from DB: {len(opponent_recent_raw)} games")
             except Exception:
                 pass
-            if not opponent_recent_raw:
+            if not opponent_recent_raw and not _is_bdl_league:
                 opponent_recent_raw = await api_football_request("fixtures", {"team": safe_opp_id, "last": 8})
         opponent_fixture_list = []
         if opponent_recent_raw:
@@ -1353,15 +1369,16 @@ async def predict(req: PredictionRequest):
                     else:
                         print(f"[BDL-SOCCER] {req.playerName}/{req.propType}: "
                               f"only {_useful}/3 logs have '{_bdl_gl_key}' data — "
-                              f"falling back to API-Football")
+                              f"using cached game logs (no API-Football fallback)")
             except Exception as _bdl_err:
                 print(f"[BDL-SOCCER] Error for {req.playerName}: {_bdl_err}")
 
         # =============================================
         # PLAYER-DIRECT API FALLBACK: When fixture cache misses, fetch the player's
         # recent fixtures directly from the API by player ID — no team cache needed.
+        # Skipped for BDL leagues — BDL is the sole source, no API-Football fallback.
         # =============================================
-        if not player_game_logs and req.playerId:
+        if not player_game_logs and req.playerId and not _is_bdl_league:
             _gl_field_map2 = {
                 "goals": "goals_total", "assists": "goals_assists",
                 "shots_assisted": "passes_key", "pass_attempts": "passes_total",
