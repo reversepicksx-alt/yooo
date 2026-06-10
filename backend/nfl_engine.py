@@ -191,6 +191,10 @@ def compute_nfl_projection(
     recommendation = "over" if p_over >= p_under else "under"
     confidence = round(max(p_over, p_under))
     confidence_level = "High" if confidence >= 70 else "Medium" if confidence >= 60 else "Low"
+    if max(p_over, p_under) < 60.0:
+        confidence = min(confidence, 54)
+        confidence_level = "Low"
+    low_conviction = max(p_over, p_under) < 60.0
 
     recent_5 = vals[:5]
     streak_flag = ""
@@ -207,6 +211,7 @@ def compute_nfl_projection(
         "recommendation":   recommendation,
         "confidenceScore":  confidence,
         "confidenceLevel":  confidence_level,
+        "lowConviction":    low_conviction,
         "priorMean":        round(prior, 2),
         "momentum":         round(momentum, 2),
         "sampleSize":       n,

@@ -121,6 +121,10 @@ def compute_ncaaw_projection(
         elif all(v < line for v in values[:4]):
             streak_flag = "UNDER_STREAK"
 
+    _max_p = max(p_over, p_under)
+    _conf  = min(round(_max_p), 54) if _max_p < 60.0 else round(_max_p)
+    _level = "Low" if _max_p < 60.0 else ("High" if _max_p >= 70 else "Medium" if _max_p >= 60 else "Low")
+    _low_conviction = _max_p < 60.0
     return {
         "projection":     projection,
         "priorMean":      round(prior_mean, 2),
@@ -128,8 +132,9 @@ def compute_ncaaw_projection(
         "pOver":          p_over,
         "pUnder":         p_under,
         "recommendation": "over" if p_over >= p_under else "under",
-        "confidenceScore": round(max(p_over, p_under)),
-        "confidenceLevel": "High" if max(p_over, p_under) >= 70 else "Medium" if max(p_over, p_under) >= 60 else "Low",
+        "confidenceScore": _conf,
+        "confidenceLevel": _level,
+        "lowConviction":   _low_conviction,
         "sampleSize":     n,
         "streakFlag":     streak_flag,
         "recentValues":   values[:8],

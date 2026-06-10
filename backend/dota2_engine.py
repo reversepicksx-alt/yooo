@@ -99,6 +99,8 @@ def compute_dota2_projection(
     _mc_std = (sum((x - posterior) ** 2 for x in _mc_vals) / len(_mc_vals)) ** 0.5 if len(_mc_vals) > 1 else max(posterior * 0.3, 1.0)
     _mc_std = max(_mc_std, 0.01)
     p_over, p_under, _, _ = _baye_mc(posterior, _mc_std, line, n_sims=5000, is_count_stat=prop_type in COUNT_PROPS)
+    p_over  = round(p_over  * 100, 2)
+    p_under = round(p_under * 100, 2)
 
     streak_flag = "NEUTRAL"
     if len(values) >= 3:
@@ -107,6 +109,10 @@ def compute_dota2_projection(
         elif all(v < line for v in values[:3]):
             streak_flag = "UNDER_STREAK"
 
+    _max_p = max(p_over, p_under)
+    _conf  = min(round(_max_p), 54) if _max_p < 60.0 else round(_max_p)
+    _level = "Low" if _max_p < 60.0 else ("High" if _max_p >= 70 else "Medium" if _max_p >= 60 else "Low")
+    _low_conviction = _max_p < 60.0
     return {
         "projection":     projection,
         "priorMean":      round(prior_mean, 2),
@@ -114,8 +120,9 @@ def compute_dota2_projection(
         "pOver":          p_over,
         "pUnder":         p_under,
         "recommendation": "over" if p_over >= p_under else "under",
-        "confidenceScore": round(max(p_over, p_under)),
-        "confidenceLevel": "High" if max(p_over, p_under) >= 70 else "Medium" if max(p_over, p_under) >= 60 else "Low",
+        "confidenceScore": _conf,
+        "confidenceLevel": _level,
+        "lowConviction":   _low_conviction,
         "sampleSize":     n,
         "streakFlag":     streak_flag,
         "recentValues":   values[:8],

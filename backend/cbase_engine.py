@@ -119,7 +119,12 @@ def compute_cbase_projection(
     else:
         projection = round(posterior, 3)
 
-    p_over, p_under = _baye_mc(values[:12], line, prop_type in COUNT_PROPS)
+    _mc_vals = values[:12]
+    _mc_var  = (sum((x - projection) ** 2 for x in _mc_vals) / len(_mc_vals)) if len(_mc_vals) > 1 else max(projection * 0.30, 0.5)
+    _mc_std  = max(_mc_var ** 0.5, 0.01)
+    _po, _pu, *_ = _baye_mc(projection, _mc_std, line, n_sims=5000, is_count_stat=prop_type in COUNT_PROPS, variance=_mc_var)
+    p_over  = round(_po * 100, 2)
+    p_under = round(_pu * 100, 2)
 
     streak_flag = "NEUTRAL"
     if len(values) >= 4:
@@ -128,6 +133,10 @@ def compute_cbase_projection(
         elif all(v < line for v in values[:4]):
             streak_flag = "UNDER_STREAK"
 
+    _max_p = max(p_over, p_under)
+    _conf  = min(round(_max_p), 54) if _max_p < 60.0 else round(_max_p)
+    _level = "Low" if _max_p < 60.0 else ("High" if _max_p >= 70 else "Medium" if _max_p >= 60 else "Low")
+    _low_conviction = _max_p < 60.0
     return {
         "projection":     projection,
         "priorMean":      round(prior_mean, 2),
@@ -135,8 +144,9 @@ def compute_cbase_projection(
         "pOver":          p_over,
         "pUnder":         p_under,
         "recommendation": "over" if p_over >= p_under else "under",
-        "confidenceScore": round(max(p_over, p_under)),
-        "confidenceLevel": "High" if max(p_over, p_under) >= 70 else "Medium" if max(p_over, p_under) >= 60 else "Low",
+        "confidenceScore": _conf,
+        "confidenceLevel": _level,
+        "lowConviction":   _low_conviction,
         "sampleSize":     n,
         "streakFlag":     streak_flag,
         "recentValues":   values[:8],

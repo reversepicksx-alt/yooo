@@ -1632,6 +1632,23 @@ def compute_bayesian_projection(
     _momentum_mean_raw  = momentum_mean  * _denorm
     _prior_variance_raw = prior_variance * (_denorm ** 2)
 
+    # ── VOLATILE PROP VARIANCE INFLATION ──────────────────────────────────────
+    # High game-state variability props need a wider prior variance so the MC
+    # distribution is not overconfident. Inflation factors derived from empirical
+    # hit rates: shots|OVER 23.7%, goals|OVER rare events, dribbles opponent-dep.
+    _VOLATILE_INFLATION = {
+        "shots":           1.45,
+        "shots_on_target": 1.40,
+        "goals":           1.60,
+        "dribbles":        1.30,
+        "key_passes":      1.25,
+        "crosses":         1.20,
+    }
+    _vol_inf = _VOLATILE_INFLATION.get(prop_type, 1.0)
+    if _vol_inf > 1.0:
+        _prior_variance_raw *= _vol_inf
+        _effective_std_raw   = (_prior_variance_raw ** 0.5)
+
     print(f"[PER90] {prop_type}: posterior={posterior_mean:.1f}/90 → {_posterior_mean_raw:.1f} raw "
           f"(exp_min={_exp_min:.0f}, denorm={_denorm:.3f})")
 

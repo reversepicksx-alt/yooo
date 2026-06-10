@@ -5358,6 +5358,19 @@ Analyze ALL data thoroughly. Return JSON only."""
             else:
                 prediction.setdefault("lowConviction", False)
 
+            # ── SMALL SAMPLE CONFIDENCE DECAY ─────────────────────────────────
+            # With n<10 game logs the Bayesian prior is unreliable — small samples
+            # produce artificially tight distributions. Decay confidence toward a
+            # safe floor: n<6 → cap 57%, n<10 → cap 63%, n<15 → cap 68%.
+            # Runs inside the _bt_src guard so it only fires with real Bayesian data.
+            _bt_n = (_bt_src or {}).get("sampleSize", 20)
+            if _bt_n is not None:
+                _ss_cap = 57 if _bt_n < 6 else (63 if _bt_n < 10 else (68 if _bt_n < 15 else 100))
+                if _ss_cap < 100 and (prediction.get("confidenceScore") or 0) > _ss_cap:
+                    prediction["confidenceScore"] = _ss_cap
+                    prediction["confidenceLevel"] = "High" if _ss_cap >= 70 else "Medium" if _ss_cap >= 55 else "Low"
+                    print(f"[SMALL SAMPLE] {req.playerName}/{req.propType}: n={_bt_n} → cap {_ss_cap}%")
+
         # ── HARD BLOCK: clearances OVER (0% hit rate, runs AFTER Bayesian Truth) ──
         # Bayesian Truth may still output OVER because the prior over-projects
         # clearances for forwards/midfielders who rarely block crosses.
