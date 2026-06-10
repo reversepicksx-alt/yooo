@@ -1060,6 +1060,20 @@ def compute_cs2_projection(
     underdog_mult = _underdog_compression(player_team_rank, opponent_rank, prop_type)
     projection   *= underdog_mult
 
+    # 4m. Match closeness rounds bonus
+    # Close-rank matchups (rank gap ≤10) tend to produce more contested rounds
+    # per map — more rounds = more total kills for both sides. Wide rank gaps
+    # produce lopsided maps with fewer rounds = lower kill ceilings.
+    _CS2_KILL_PROPS = {"kills", "map1_kills", "maps_1_2_kills", "map3_kills", "maps_1_3_kills"}
+    if prop_type in _CS2_KILL_PROPS and player_team_rank and opponent_rank:
+        _rank_gap = abs((player_team_rank or 50) - (opponent_rank or 50))
+        if _rank_gap <= 5:
+            projection += 0.6   # Very close: expect ~1 extra round per side
+        elif _rank_gap <= 15:
+            projection += 0.3   # Competitive: minor boost
+        elif _rank_gap >= 35:
+            projection -= 0.3   # Lopsided: fewer contested rounds
+
     projection = max(projection, 0.0)
 
     # ── Variance estimation ───────────────────────────────────────────────────
@@ -1126,6 +1140,15 @@ def compute_cs2_projection(
     # Hard cap on displayed confidence — CS2 is volatile
     conf_score = min(conf_score, 75.0)
 
+    # ── LOW CONVICTION FILTER ─────────────────────────────────────────────────
+    # When Bayesian max(P(OVER), P(UNDER)) < 60%, the model has weak signal.
+    # Cap confidence at 54% so the card reflects genuine uncertainty.
+    low_conviction = False
+    if max(p_over, p_under) < 60.0:
+        low_conviction = True
+        conf_score     = min(conf_score, 54.0)
+        conf_level     = "Low"
+
     display_proj = round(projection) if is_count else round(projection, 1)
 
     # ── Streak detection ──────────────────────────────────────────────────────
@@ -1187,6 +1210,7 @@ def compute_cs2_projection(
         "recommendation":   recommendation,
         "confidenceScore":  round(conf_score),
         "confidenceLevel":  conf_level,
+        "lowConviction":    low_conviction,
         "priorMean":        round(prior_mean, 2),
         "momentumMean":     round(momentum_mean, 2),
         "sampleSize":       n,

@@ -1344,6 +1344,15 @@ def compute_mlb_projection(
     else:
         conf_level = "Low"
 
+    # ── LOW CONVICTION FILTER ─────────────────────────────────────────────────
+    # When Bayesian max(P(OVER), P(UNDER)) < 60%, the model has weak signal.
+    # Cap confidence at 54% so the card reflects genuine uncertainty.
+    low_conviction = False
+    if max(p_over, p_under) < 60.0:
+        low_conviction  = True
+        confidence_score = min(confidence_score, 54.0)
+        conf_level       = "Low"
+
     # ── SAMPLE QUALITY FLAGS ──────────────────────────────────────────────────
     sample_warning = None
     if n_games < 5:
@@ -1459,6 +1468,7 @@ def compute_mlb_projection(
         "confidenceScore":    round(confidence_score),
         "rawConfidence":      round(raw_confidence),
         "confidenceLevel":    conf_level,
+        "lowConviction":      low_conviction,
         "confidenceInterval": {"low": round(ci_low, 2), "high": round(ci_high, 2)},
         "venue":              venue,
         "priorSamples":       n_games,

@@ -11,3 +11,4 @@
 - [Bayesian variance fix](bayesian-variance-fix.md) — Never pass raw variance as std to _monte_carlo_probability (gets squared again); use _mc() helper. NCAAW/ATP had a list-as-mean crash. All routes now have projection visual flip + [BAYESIAN TRUTH].
 - [BDL search quirks](bdl-search-quirks.md) — BDL search is single-token only; use last-name fallback + token-score sorting; NHL has no stat endpoints (503); search cache key currently search3:.
 - [BDL sports client fixes](bdl-sports-client-fixes.md) — MMA→/fight_stats; PGA→/player_season_stats+synthetic rounds; LoL→/matches; F1/Dota2 data gaps; Bayesian _baye_mc arg pattern; non-soccer blank-screen mode fix.
+- [Calibration accuracy improvements](calibration-accuracy.md) — Direction-aware calibration (propType|DIRECTION buckets), AVOID suppression, conviction filter (<60% Bayesian → cap 54%), market correction 1.5% in _monte_carlo_probability default.

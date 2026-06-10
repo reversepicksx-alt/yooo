@@ -110,6 +110,7 @@ def _monte_carlo_probability(
     n_sims: int = 5000,
     is_count_stat: bool = False,
     variance: float = None,
+    market_correction: float = 0.015,
 ) -> tuple:
     """
     Monte Carlo simulation for P(over) / P(under) and 80% CI.
@@ -117,6 +118,12 @@ def _monte_carlo_probability(
     For count stats (shots, goals, saves etc.) uses the negative binomial
     via a gamma-Poisson mixture — correctly handles discrete, right-skewed
     distributions. For continuous stats uses Gaussian.
+
+    market_correction: fractional line inflation applied before comparison only.
+    Empirical data shows books shade lines ~1.5% high on average (UNDER hits
+    67.7% vs OVER 51.6% across 2,965 settled picks). A 1.5% effective line
+    inflation corrects for this structural bookmaker bias without overriding
+    genuine model signals. CI uses the original line for display accuracy.
 
     Returns: (p_over, p_under, ci_low_80, ci_high_80)
     """
@@ -130,10 +137,13 @@ def _monte_carlo_probability(
     else:
         samples = [random.gauss(mean, std) for _ in range(n_sims)]
 
-    over_count = sum(1 for s in samples if s > line)
+    # Apply market correction: compare against slightly-inflated effective line
+    effective_line = line * (1.0 + market_correction) if (line and line > 0) else line
+    over_count = sum(1 for s in samples if s > effective_line)
     p_over = over_count / n_sims
     p_under = 1.0 - p_over
 
+    # CI uses the original line for display accuracy
     sorted_s = sorted(samples)
     ci_low  = round(sorted_s[int(0.10 * n_sims)], 1)   # 10th percentile
     ci_high = round(sorted_s[int(0.90 * n_sims)], 1)   # 90th percentile

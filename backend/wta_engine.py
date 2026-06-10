@@ -381,6 +381,13 @@ def compute_wta_projection(
     conf    = round(max(p_over, p_under), 0)
     level   = "High" if conf >= 70 else ("Medium" if conf >= 60 else "Low")
 
+    # ── LOW CONVICTION FILTER ─────────────────────────────────────────────────
+    low_conviction = False
+    if max(p_over, p_under) < 60.0:
+        low_conviction = True
+        conf           = min(conf, 54.0)
+        level          = "Low"
+
     # ── Streak detection ──────────────────────────────────────────────────────
     streak_flag = ""
     if n >= 3:
@@ -397,6 +404,7 @@ def compute_wta_projection(
         "recommendation":  rec,
         "confidenceScore": int(conf),
         "confidenceLevel": level,
+        "lowConviction":   low_conviction,
         "priorMean":       round(prior_mean, 2),
         "momentumMean":    round(momentum_mean, 2),
         "sampleSize":      n,

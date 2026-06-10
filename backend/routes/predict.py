@@ -5341,6 +5341,23 @@ Analyze ALL data thoroughly. Return JSON only."""
                 + (f" [FLIPPED from {_bt_old_rec.upper()} {_bt_old_conf}%]" if _bt_old_rec != _bt_dir else f" [confidence {_bt_old_conf}→{_bt_new_conf}]")
             )
 
+            # ── LOW CONVICTION FILTER ─────────────────────────────────────────
+            # When Bayesian max(P(OVER), P(UNDER)) < 60%, the model has weak
+            # signal — the line is close to the projection mean and the
+            # distribution straddles both sides. Cap confidence at 54% and
+            # expose lowConviction=True so the UI can surface a warning.
+            # Fires inside the _bt_src guard so it only runs when Bayesian
+            # data is available.
+            _bt_conv = max(_bt_p_over, _bt_p_under)
+            if _bt_conv < 60.0 and prediction.get("recommendation", "").upper() != "PASS":
+                prediction["lowConviction"] = True
+                if (prediction.get("confidenceScore") or 0) > 54:
+                    prediction["confidenceScore"] = 54
+                    prediction["confidenceLevel"] = "Low"
+                print(f"[LOW CONV] {req.playerName}/{req.propType}: P(max)={_bt_conv:.1f}% < 60% → capped 54% Low")
+            else:
+                prediction.setdefault("lowConviction", False)
+
         # ── HARD BLOCK: clearances OVER (0% hit rate, runs AFTER Bayesian Truth) ──
         # Bayesian Truth may still output OVER because the prior over-projects
         # clearances for forwards/midfielders who rarely block crosses.
