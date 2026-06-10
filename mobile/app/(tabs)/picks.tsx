@@ -1081,6 +1081,67 @@ export default function PicksScreen() {
             );
           })()}
 
+          {/* Moneyline Odds — always shown; "Not available" when no data */}
+          {(() => {
+            const ml = (analysisModal?.data as any)?.moneyline ?? (analysisModal?.pick as any)?.moneyline;
+            const formatOdds = (val: string) => {
+              if (!val || val === 'N/A') return '';
+              const n = parseFloat(val);
+              if (isNaN(n)) return val;
+              if (n > 1 && n < 50) {
+                if (n >= 2) return `+${Math.round((n - 1) * 100)}`;
+                return `${Math.round(-100 / (n - 1))}`;
+              }
+              return n > 0 ? `+${Math.round(n)}` : `${Math.round(n)}`;
+            };
+            if (ml) {
+              const h = formatOdds(ml.home);
+              const d = formatOdds(ml.draw);
+              const a = formatOdds(ml.away);
+              if (h || d || a) {
+                const teamShort = (analysisModal?.pick?.teamName || 'HOME').split(' ').pop()?.slice(0, 5).toUpperCase() || 'HOME';
+                const oppShort  = (analysisModal?.pick?.opponentName || 'AWAY').split(' ').pop()?.slice(0, 5).toUpperCase() || 'AWAY';
+                const isHome = analysisModal?.pick?.venue !== 'away';
+                const t1 = isHome ? teamShort : oppShort;
+                const t2 = isHome ? oppShort  : teamShort;
+                return (
+                  <View style={mStyles.oddsRow}>
+                    <View style={mStyles.oddsHeader}>
+                      <Ionicons name="cash-outline" size={11} color={Colors.textTertiary} />
+                      <Text style={mStyles.oddsLabel}>MONEYLINE</Text>
+                    </View>
+                    <View style={mStyles.oddsPills}>
+                      <View style={mStyles.oddsPill}>
+                        <Text style={mStyles.oddsPillTeam}>{t1}</Text>
+                        <Text style={mStyles.oddsPillVal}>{h}</Text>
+                      </View>
+                      {d ? (
+                        <View style={mStyles.oddsPill}>
+                          <Text style={mStyles.oddsPillTeam}>DRAW</Text>
+                          <Text style={mStyles.oddsPillVal}>{d}</Text>
+                        </View>
+                      ) : null}
+                      <View style={mStyles.oddsPill}>
+                        <Text style={mStyles.oddsPillTeam}>{t2}</Text>
+                        <Text style={mStyles.oddsPillVal}>{a}</Text>
+                      </View>
+                    </View>
+                    <Text style={mStyles.oddsDisclaim}>Indicative · verify with your sportsbook</Text>
+                  </View>
+                );
+              }
+            }
+            return (
+              <View style={mStyles.oddsRow}>
+                <View style={mStyles.oddsHeader}>
+                  <Ionicons name="cash-outline" size={11} color={Colors.textTertiary} />
+                  <Text style={mStyles.oddsLabel}>MONEYLINE</Text>
+                </View>
+                <Text style={mStyles.oddsUnavail}>Not available for this market</Text>
+              </View>
+            );
+          })()}
+
           <View style={mStyles.modalDivider} />
 
           {/* Body */}
@@ -1208,6 +1269,18 @@ const mStyles = StyleSheet.create({
   modalLoading: { alignItems: 'center', paddingVertical: 40, gap: 14 },
   modalLoadingText: { fontSize: 14, color: Colors.textSecondary, textAlign: 'center' },
   aiBlocks: { gap: 16 },
+  oddsRow: { marginHorizontal: 16, marginBottom: 10, gap: 5 },
+  oddsHeader: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  oddsLabel: { fontSize: 9, fontWeight: '800', color: Colors.textTertiary, letterSpacing: 1.2 },
+  oddsPills: { flexDirection: 'row', gap: 6 },
+  oddsPill: {
+    flex: 1, backgroundColor: Colors.cardSecondary, borderRadius: 8,
+    paddingVertical: 7, paddingHorizontal: 8, alignItems: 'center', gap: 2,
+  },
+  oddsPillTeam: { fontSize: 9, fontWeight: '700', color: Colors.textTertiary, letterSpacing: 0.8 },
+  oddsPillVal: { fontSize: 15, fontWeight: '800', color: Colors.text },
+  oddsDisclaim: { fontSize: 9, color: Colors.textTertiary, fontStyle: 'italic', marginTop: 1 },
+  oddsUnavail: { fontSize: 12, color: Colors.textTertiary, fontStyle: 'italic' },
   aiVerdictBlock: {
     backgroundColor: 'rgba(57,255,20,0.06)',
     borderLeftWidth: 3, borderLeftColor: Colors.primary,

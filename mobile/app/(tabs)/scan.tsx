@@ -1205,6 +1205,7 @@ export default function ScanScreen() {
         role: prediction.playerRole || undefined,
         sport: sport,
         gameScript: prediction.gameScript || undefined,
+        moneyline: prediction.moneyline || undefined,
         projHomePoss: sport === 'soccer' && Number.isFinite(projHomePoss) ? projHomePoss : undefined,
         projAwayPoss: Number.isFinite(projAwayPoss) ? projAwayPoss : undefined,
         // Soccer: persist AI analysis on the pick so the analysis modal can show it
@@ -3251,75 +3252,84 @@ export default function ScanScreen() {
                 );
               })()}
 
-              {/* Moneyline & Game Type */}
-              {(prediction.moneyline || prediction.expectedGameType) && (
-                <>
-                  <View style={styles.analysisDivider} />
-                  <View style={styles.matchOddsRow}>
-                    {prediction.moneyline && (() => {
-                      const formatOdds = (val: string) => {
-                        if (!val || val === 'N/A') return '';
-                        const n = parseFloat(val);
-                        if (isNaN(n)) return val;
-                        if (n > 1 && n < 50) {
-                          if (n >= 2) return `+${Math.round((n - 1) * 100)}`;
-                          return `${Math.round(-100 / (n - 1))}`;
-                        }
-                        return n > 0 ? `+${Math.round(n)}` : `${Math.round(n)}`;
-                      };
+              {/* Moneyline & Game Type — always shown; "Not available" when no odds data */}
+              <>
+                <View style={styles.analysisDivider} />
+                <View style={styles.matchOddsRow}>
+                  {(() => {
+                    const formatOdds = (val: string) => {
+                      if (!val || val === 'N/A') return '';
+                      const n = parseFloat(val);
+                      if (isNaN(n)) return val;
+                      if (n > 1 && n < 50) {
+                        if (n >= 2) return `+${Math.round((n - 1) * 100)}`;
+                        return `${Math.round(-100 / (n - 1))}`;
+                      }
+                      return n > 0 ? `+${Math.round(n)}` : `${Math.round(n)}`;
+                    };
+                    if (prediction?.moneyline) {
                       const h = formatOdds(prediction.moneyline.home);
                       const d = formatOdds(prediction.moneyline.draw);
                       const a = formatOdds(prediction.moneyline.away);
-                      if (!h && !d && !a) return null;
-                      const playerTeamShort = (prediction.teamName || 'HOME').split(' ').pop()?.slice(0, 5).toUpperCase() || 'HOME';
-                      const oppTeamShort = (prediction.opponentName || 'AWAY').split(' ').pop()?.slice(0, 5).toUpperCase() || 'AWAY';
-                      const isPlayerHome = venueOverride === 'home';
-                      const team1 = isPlayerHome ? playerTeamShort : oppTeamShort;
-                      const team2 = isPlayerHome ? oppTeamShort : playerTeamShort;
-                      const odds1 = h;
-                      const odds2 = a;
-                      return (
-                        <View style={styles.moneylineWrap}>
-                          <View style={styles.moneylineHeader}>
-                            <Ionicons name="cash-outline" size={12} color={Colors.textSecondary} />
-                            <Text style={styles.moneylineLabel}>MONEYLINE</Text>
+                      if (h || d || a) {
+                        const playerTeamShort = (prediction.teamName || 'HOME').split(' ').pop()?.slice(0, 5).toUpperCase() || 'HOME';
+                        const oppTeamShort = (prediction.opponentName || 'AWAY').split(' ').pop()?.slice(0, 5).toUpperCase() || 'AWAY';
+                        const isPlayerHome = venueOverride === 'home';
+                        const team1 = isPlayerHome ? playerTeamShort : oppTeamShort;
+                        const team2 = isPlayerHome ? oppTeamShort : playerTeamShort;
+                        return (
+                          <View style={styles.moneylineWrap}>
+                            <View style={styles.moneylineHeader}>
+                              <Ionicons name="cash-outline" size={12} color={Colors.textSecondary} />
+                              <Text style={styles.moneylineLabel}>MONEYLINE</Text>
+                            </View>
+                            <View style={styles.moneylinePills}>
+                              <View style={styles.mlPill}>
+                                <Text style={styles.mlPillTeam}>{team1}</Text>
+                                <Text style={styles.mlPillOdds}>{h}</Text>
+                              </View>
+                              {d ? (
+                                <View style={styles.mlPill}>
+                                  <Text style={styles.mlPillTeam}>DRAW</Text>
+                                  <Text style={styles.mlPillOdds}>{d}</Text>
+                                </View>
+                              ) : null}
+                              <View style={styles.mlPill}>
+                                <Text style={styles.mlPillTeam}>{team2}</Text>
+                                <Text style={styles.mlPillOdds}>{a}</Text>
+                              </View>
+                            </View>
+                            <Text style={styles.mlDisclaimer}>Indicative · verify with your sportsbook</Text>
                           </View>
-                          <View style={styles.moneylinePills}>
-                            <View style={styles.mlPill}>
-                              <Text style={styles.mlPillTeam}>{team1}</Text>
-                              <Text style={styles.mlPillOdds}>{odds1}</Text>
-                            </View>
-                            <View style={styles.mlPill}>
-                              <Text style={styles.mlPillTeam}>DRAW</Text>
-                              <Text style={styles.mlPillOdds}>{d}</Text>
-                            </View>
-                            <View style={styles.mlPill}>
-                              <Text style={styles.mlPillTeam}>{team2}</Text>
-                              <Text style={styles.mlPillOdds}>{odds2}</Text>
-                            </View>
-                          </View>
-                          <Text style={styles.mlDisclaimer}>Indicative · verify with your sportsbook</Text>
+                        );
+                      }
+                    }
+                    return (
+                      <View style={styles.moneylineWrap}>
+                        <View style={styles.moneylineHeader}>
+                          <Ionicons name="cash-outline" size={12} color={Colors.textSecondary} />
+                          <Text style={styles.moneylineLabel}>MONEYLINE</Text>
                         </View>
-                      );
-                    })()}
-
-
-                    {prediction.expectedGameType && (
-                      <View style={styles.gameTypeWrap}>
-                        <Text style={styles.gameTypeLabel}>GAME TYPE</Text>
-                        <Text style={styles.gameTypeValue}>{
-                          (['open','cagey','one-sided','high-tempo'].includes(prediction.expectedGameType?.toLowerCase())
-                            ? prediction.expectedGameType.toUpperCase()
-                            : 'OPEN')
-                        }</Text>
-                        {prediction.keyMatchupFactor && (
-                          <Text style={styles.gameTypeSub}>{prediction.keyMatchupFactor}</Text>
-                        )}
+                        <Text style={styles.mlDisclaimer}>Not available for this market</Text>
                       </View>
-                    )}
-                  </View>
-                </>
-              )}
+                    );
+                  })()}
+
+                  {prediction.expectedGameType && (
+                    <View style={styles.gameTypeWrap}>
+                      <Text style={styles.gameTypeLabel}>GAME TYPE</Text>
+                      <Text style={styles.gameTypeValue}>{
+                        (['open','cagey','one-sided','high-tempo'].includes(prediction.expectedGameType?.toLowerCase())
+                          ? prediction.expectedGameType.toUpperCase()
+                          : 'OPEN')
+                      }</Text>
+                      {prediction.keyMatchupFactor && (
+                        <Text style={styles.gameTypeSub}>{prediction.keyMatchupFactor}</Text>
+                      )}
+                    </View>
+                  )}
+                </View>
+              </>
 
               {/* 2nd Leg Aggregate Banner */}
               {prediction.gameSituation && (prediction.gameSituation as any).isSecondLeg && (() => {

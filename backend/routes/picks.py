@@ -355,6 +355,7 @@ async def save_pick(req: SavePickRequest):
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "settledAt": None,
         "gameScript": pick.get("gameScript") or {},
+        "moneyline": pick.get("moneyline") or None,
     }
 
     # Persist the model's projected ball-possession split so we can compare
@@ -1022,7 +1023,7 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
                       "projectedValue", "recommendation", "confidenceScore", "confidenceLevel",
                       "pOver", "pUnder", "priorMean", "momentumMean", "sampleSize",
                       "streakFlag", "propType", "line", "playerName", "opponentName",
-                      "tacticalMetrics", "gameScript"):
+                      "tacticalMetrics", "gameScript", "moneyline"):
             val = pick.get(field)
             if val is not None:
                 inline_analysis[field] = val
