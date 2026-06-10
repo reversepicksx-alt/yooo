@@ -8,6 +8,7 @@ import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 import Colors from '@/constants/colors';
 import * as Notifications from 'expo-notifications';
 import { registerPushToken } from '@/lib/api';
+import LoadingScreen from '@/components/LoadingScreen';
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 30000 } },
@@ -54,25 +55,39 @@ function PushRegistrar() {
   return null;
 }
 
-export default function RootLayout() {
+function AppBoot() {
+  const { isLoading } = useAuth();
+
   useEffect(() => {
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && !isLoading) {
       const hide = (window as any).__hideSplash;
       if (typeof hide === 'function') hide();
     }
-  }, []);
+  }, [isLoading]);
 
+  if (Platform.OS !== 'web' && isLoading) {
+    return <LoadingScreen />;
+  }
+
+  return (
+    <>
+      <StatusBar style="light" />
+      <PushRegistrar />
+      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: Colors.background } }}>
+        <Stack.Screen name="index" />
+        <Stack.Screen name="auth" />
+        <Stack.Screen name="(tabs)" />
+      </Stack>
+    </>
+  );
+}
+
+export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
-          <StatusBar style="light" />
-          <PushRegistrar />
-          <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: Colors.background } }}>
-            <Stack.Screen name="index" />
-            <Stack.Screen name="auth" />
-            <Stack.Screen name="(tabs)" />
-          </Stack>
+          <AppBoot />
         </AuthProvider>
       </QueryClientProvider>
     </GestureHandlerRootView>
