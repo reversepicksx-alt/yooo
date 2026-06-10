@@ -36,7 +36,11 @@ LEAGUE_TO_BDL: dict[int, str] = {
     1:   "/fifa/worldcup/v1",    # FIFA World Cup
 }
 
-_CURRENT_SEASONS = [2025, 2024]  # try 2025-26 first, then 2024-25
+# Seasons to try, newest-first.  MLS uses the calendar year (2026 season = 2026).
+# European leagues also use the year the season STARTS (2025-26 = 2025 in BDL).
+# We compute dynamically so MLS 2026 is always the first candidate.
+_cur_yr = datetime.now(tz=timezone.utc).year
+_CURRENT_SEASONS = [_cur_yr, _cur_yr - 1, _cur_yr - 2]   # e.g. [2026, 2025, 2024]
 
 
 def is_bdl_league(league_id: int) -> bool:

@@ -2154,17 +2154,22 @@ async def predict(req: PredictionRequest):
         if player_game_logs:
             # Add summary stats for the game logs
             target_field_map = {
-                "pass_attempts": "passes_total",
-                "shots": "shots_total",
+                "pass_attempts":   "passes_total",
+                "shots":           "shots_total",
                 "shots_on_target": "shots_on",
-                "tackles": "tackles_total",
-                "key_passes": "passes_key",
-                "shots_assisted": "passes_key",
-                "saves": "goals_saves",
-                "interceptions": "tackles_interceptions",
-                "blocks": "tackles_blocks",
-                "dribbles": "dribbles_attempts",
-                "fouls_drawn": "fouls_drawn",
+                "tackles":         "tackles_total",
+                "key_passes":      "passes_key",
+                "shots_assisted":  "passes_key",
+                "saves":           "goals_saves",
+                "interceptions":   "tackles_interceptions",
+                "clearances":      "tackles_clearances",
+                "blocks":          "tackles_blocks",
+                "dribbles":        "dribbles_attempts",
+                "fouls_drawn":     "fouls_drawn",
+                "fouls_committed": "fouls_committed",
+                "crosses":         "passes_crosses",
+                "duels_won":       "duels_won",
+                "yellow_cards":    "cards_yellow",
             }
             target_field = target_field_map.get(req.propType, "passes_total")
             values = [g.get(target_field) for g in player_game_logs if g.get(target_field) is not None]
@@ -2895,11 +2900,22 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
         real_recent_samples = []
         if player_game_logs:
             gl_target_field_map = {
-                "pass_attempts": "passes_total", "shots": "shots_total", "shots_on_target": "shots_on",
-                "tackles": "tackles_total", "key_passes": "passes_key", "shots_assisted": "passes_key",
-                "saves": "goals_saves",
-                "interceptions": "tackles_interceptions", "blocks": "tackles_blocks",
-                "dribbles": "dribbles_attempts", "fouls_drawn": "fouls_drawn",
+                "pass_attempts":   "passes_total",
+                "shots":           "shots_total",
+                "shots_on_target": "shots_on",
+                "tackles":         "tackles_total",
+                "key_passes":      "passes_key",
+                "shots_assisted":  "passes_key",
+                "saves":           "goals_saves",
+                "interceptions":   "tackles_interceptions",
+                "clearances":      "tackles_clearances",
+                "blocks":          "tackles_blocks",
+                "dribbles":        "dribbles_attempts",
+                "fouls_drawn":     "fouls_drawn",
+                "fouls_committed": "fouls_committed",
+                "crosses":         "passes_crosses",
+                "duels_won":       "duels_won",
+                "yellow_cards":    "cards_yellow",
             }
             gl_target = gl_target_field_map.get(req.propType, "passes_total")
             for g in player_game_logs:

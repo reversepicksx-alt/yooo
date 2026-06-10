@@ -1050,17 +1050,21 @@ export const PLAN_OPTIONS = [
 ] as const;
 
 export const PROP_TYPES = [
-  { value: 'pass_attempts', label: 'Pass Attempts' },
-  { value: 'shots', label: 'Shots' },
+  { value: 'pass_attempts',   label: 'Pass Attempts' },
+  { value: 'shots',           label: 'Shots' },
   { value: 'shots_on_target', label: 'Shots on Target' },
-  { value: 'shots_assisted', label: 'Shot Assists' },
-  { value: 'goals', label: 'Goals' },
-  { value: 'assists', label: 'Assists' },
-  { value: 'key_passes', label: 'Key Passes' },
-  { value: 'tackles', label: 'Tackles' },
-  { value: 'saves', label: 'Saves' },
-  { value: 'dribbles', label: 'Dribbles' },
-  { value: 'crosses', label: 'Crosses' },
+  { value: 'shots_assisted',  label: 'Shot Assists' },
+  { value: 'goals',           label: 'Goals' },
+  { value: 'assists',         label: 'Assists' },
+  { value: 'key_passes',      label: 'Key Passes' },
+  { value: 'fouls_drawn',     label: 'Fouls Drawn' },
+  { value: 'fouls_committed', label: 'Fouls Committed' },
+  { value: 'clearances',      label: 'Clearances' },
+  { value: 'interceptions',   label: 'Interceptions' },
+  { value: 'tackles',         label: 'Tackles' },
+  { value: 'saves',           label: 'Saves' },
+  { value: 'dribbles',        label: 'Dribbles' },
+  { value: 'crosses',         label: 'Crosses' },
 ];
 
 export const MLB_PROP_TYPES = [
