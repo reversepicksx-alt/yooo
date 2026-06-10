@@ -13,3 +13,4 @@
 - [BDL sports client fixes](bdl-sports-client-fixes.md) — MMA→/fight_stats; PGA→/player_season_stats+synthetic rounds; LoL→/matches; F1/Dota2 data gaps; Bayesian _baye_mc arg pattern; non-soccer blank-screen mode fix.
 - [Calibration accuracy improvements](calibration-accuracy.md) — Direction-aware calibration (propType|DIRECTION buckets), AVOID suppression, conviction filter (<60% Bayesian → cap 54%), market correction 1.5% in _monte_carlo_probability default.
 - [Minor sport engine bugs](minor-sport-engine-bugs.md) — PGA/F1/MMA/LoL/Dota2/NCAAF had p_over/p_under as 0-1 fractions (no ×100). cbase_engine had wrong _baye_mc arg order. Both fixed.
+- [Production white screen — Metro in foreground](prod-metro-foreground.md) — Never run Expo Metro in the production workflow. Workflow must be `cd mobile && PRODUCTION=true node proxy.js` only. Metro as foreground process kills the proxy when it crashes; its WebSocket hot-reload connections also flood EIO errors.

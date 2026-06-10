@@ -43,7 +43,8 @@ outputType = "webview"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "cd mobile && (node proxy.js &) && node node_modules/expo/bin/cli start --web --port 5001"
+args = "cd mobile && PRODUCTION=true node proxy.js"
+waitForPort = 5000
 
 [[workflows.workflow]]
 name = "Start Backend"
@@ -60,10 +61,6 @@ waitForPort = 8000
 [[ports]]
 localPort = 5000
 externalPort = 80
-
-[[ports]]
-localPort = 5001
-externalPort = 3001
 
 [[ports]]
 localPort = 5002
