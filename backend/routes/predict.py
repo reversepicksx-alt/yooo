@@ -18,6 +18,7 @@ from models import PredictionRequest
 from utils import api_football_request, get_recent_fixtures_fast, strip_accents, get_soccer_odds, decimal_to_american
 from grok_engine import fetch_web_intel
 from prop_safety_cache import get_prop_safety as _get_prop_safety
+import soccer_bdl_client as _bdl_soc
 # game_script_intelligence removed — was distorting confidence scores for GK pass picks
 
 router = APIRouter(prefix="/api", tags=["predict"])
@@ -1301,6 +1302,60 @@ async def predict(req: PredictionRequest):
         ai_press_intensity = results[6] if len(results) > 6 and not isinstance(results[6], (Exception, type(None))) else None
         if not game_situation:
             game_situation = {"isKnockout": False, "isSecondLeg": False, "aggregate": {}, "multipliers": {}, "injuries": {}, "contextBlock": ""}
+
+        # =============================================
+        # BDL SOCCER STAGE: For BDL-covered leagues (EPL, La Liga, Serie A, Bundesliga,
+        # Ligue 1, UCL, MLS, World Cup) try BDL as the PRIMARY source — no daily quota.
+        # Runs even when the fixture cache already has API-Football logs: if the BDL
+        # quality gate passes (≥3 games with the target stat populated), BDL overrides
+        # the fixture cache and the PLAYER-DIRECT stage below is skipped.  When the
+        # quality gate fails (Tier-2 stat like passes_total not yet available in BDL),
+        # player_game_logs retains fixture-cache data; PLAYER-DIRECT still runs if empty.
+        # =============================================
+        if _bdl_soc.is_bdl_league(league_id) and req.playerName:
+            _bdl_stat_field_map = {
+                "goals": "goals_total", "assists": "goals_assists",
+                "shots_assisted": "passes_key", "pass_attempts": "passes_total",
+                "passes": "passes_total", "shots": "shots_total",
+                "shots_on_target": "shots_on", "tackles": "tackles_total",
+                "key_passes": "passes_key", "saves": "goals_saves",
+                "interceptions": "tackles_interceptions", "blocks": "tackles_blocks",
+                "dribbles": "dribbles_attempts", "fouls_drawn": "fouls_drawn",
+                "fouls_committed": "fouls_committed", "crosses": "passes_crosses",
+                "clearances": "tackles_clearances", "duels_won": "duels_won",
+                "yellow_cards": "cards_yellow",
+            }
+            _bdl_gl_key = _bdl_stat_field_map.get(req.propType, "passes_total")
+            try:
+                _bdl_logs, _bdl_pid = await _bdl_soc.get_game_logs(
+                    league_id, req.playerName, last_n=25
+                )
+                if _bdl_logs:
+                    # Quality gate: only adopt BDL logs when the target stat
+                    # field is actually populated (BDL tier-2 stats like
+                    # passes_total / tackles are often None for new seasons).
+                    # If fewer than 3 logs have data for this prop, fall
+                    # through to the API-Football PLAYER-DIRECT stage instead.
+                    _useful = sum(
+                        1 for _g in _bdl_logs if _g.get(_bdl_gl_key) is not None
+                    )
+                    if _useful >= 3:
+                        # Add per-90 for the target stat where possible
+                        for _g in _bdl_logs:
+                            _mins = _g.get("minutes") or 0
+                            _sval = _g.get(_bdl_gl_key)
+                            if _sval is not None and _mins > 0:
+                                _g["targetStatPer90"] = round((_sval / _mins) * 90, 2)
+                        player_game_logs = _bdl_logs
+                        print(f"[BDL-SOCCER] {req.playerName}/{req.propType}: "
+                              f"{len(_bdl_logs)} logs, {_useful} with {_bdl_gl_key} "
+                              f"(league {league_id})")
+                    else:
+                        print(f"[BDL-SOCCER] {req.playerName}/{req.propType}: "
+                              f"only {_useful}/3 logs have '{_bdl_gl_key}' data — "
+                              f"falling back to API-Football")
+            except Exception as _bdl_err:
+                print(f"[BDL-SOCCER] Error for {req.playerName}: {_bdl_err}")
 
         # =============================================
         # PLAYER-DIRECT API FALLBACK: When fixture cache misses, fetch the player's
