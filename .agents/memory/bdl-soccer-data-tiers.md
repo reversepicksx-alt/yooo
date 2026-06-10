@@ -42,12 +42,24 @@ Cannot join `player_match_stats.match_id` → `matches.id`. Instead:
 4. If the player missed games, opponent/venue metadata drifts by ±1 match — acceptable (metadata only,
    never affects the stat values used by the Bayesian engine).
 
+## WC / international quirks
+
+- WC path: `/fifa/worldcup/v1`. Player objects use `name` field (not `display_name` like EPL).
+- `team_ids` is `None` for WC players — enrichment step (opponent/date labels) is skipped.
+  Stats (goals/shots/fouls) still power the Bayesian engine fine without metadata.
+- `_find_player` checks `p.get("display_name") or p.get("name")` to handle both formats.
+- Empty player_match_stats and player search results now cache for **30 min only** (vs 6h/4h
+  for non-empty). Critical for tournaments starting mid-season: an empty cache from before
+  the first match would have blocked fresh stats indefinitely. `_cache_hit()` helper encodes
+  this: `ttl = ttl_empty (1800s) if not data else ttl_full`.
+
 ## BDL soccer API params
 
 - Array params require `[]` suffix: `player_ids[]`, `seasons[]`, `team_ids[]`, `match_ids[]`.
 - Auth header: `Authorization: {key}` (no "Bearer" prefix).
 - League paths: EPL → `/epl/v2`, others → `/{league}/v1`.
 - Player search returns `team_ids: [primary_id, former_id, ...]` — use index 0 for current team.
+  WC player objects may have `team_ids=None`; always guard with `(player.get("team_ids") or [None])[0]`.
 - Results cached in `db.bdl_soccer_cache` (Atlas, not local mongod).
 
 ## predict.py BDL stage

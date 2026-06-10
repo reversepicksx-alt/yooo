@@ -164,9 +164,10 @@ async def _teams_lookup(league_id: int) -> dict[int, str]:
     path      = LEAGUE_TO_BDL[league_id]
     cache_key = f"bdl_soc_teams_{league_id}"
     try:
-        doc = await db.bdl_soccer_cache.find_one({"_k": cache_key})
-        if doc and doc.get("d"):
-            return {int(k): v for k, v in doc["d"].items()}
+        doc    = await db.bdl_soccer_cache.find_one({"_k": cache_key})
+        cached = _cache_hit(doc, ttl_full=24 * 3600)
+        if cached is not None:
+            return {int(k): v for k, v in cached.items()} if isinstance(cached, dict) else {}
     except Exception:
         pass
 
@@ -210,9 +211,10 @@ async def _matches_for_team(league_id: int, bdl_team_id: int, season: int) -> di
     path      = LEAGUE_TO_BDL[league_id]
     cache_key = f"bdl_soc_tm_{league_id}_{bdl_team_id}_{season}"
     try:
-        doc = await db.bdl_soccer_cache.find_one({"_k": cache_key})
-        if doc and doc.get("d"):
-            return {int(k): v for k, v in doc["d"].items()}
+        doc    = await db.bdl_soccer_cache.find_one({"_k": cache_key})
+        cached = _cache_hit(doc, ttl_full=6 * 3600)
+        if cached is not None:
+            return {int(k): v for k, v in cached.items()} if isinstance(cached, dict) else {}
     except Exception:
         pass
 
@@ -238,16 +240,39 @@ async def _matches_for_team(league_id: int, bdl_team_id: int, season: int) -> di
     return match_map
 
 
+# ── Cache helpers ─────────────────────────────────────────────────────────────
+def _cache_hit(doc: Optional[dict], ttl_full: int, ttl_empty: int = 1800) -> Optional[list]:
+    """
+    Return cached list if still fresh, else None (indicating a re-fetch is needed).
+    ttl_full  = seconds to honour a non-empty cached result.
+    ttl_empty = seconds to honour an empty cached result (default 30 min).
+               Keeps empty results from being stuck forever during tournaments
+               that have no stats yet (e.g. WC 2026 before first match).
+    """
+    if not doc or doc.get("d") is None:
+        return None
+    data = doc["d"]
+    ts   = doc.get("_ts")
+    if ts is None:
+        return None
+    age = (datetime.now(timezone.utc) - ts).total_seconds()
+    ttl = ttl_empty if not data else ttl_full
+    return data if age < ttl else None
+
+
 # ── Player search ─────────────────────────────────────────────────────────────
 async def _search_player(league_id: int, name: str) -> list[dict]:
-    """Search for players by (partial) name in one BDL soccer league. 4-h cache."""
+    """Search for players by (partial) name in one BDL soccer league.
+    Non-empty result: 4 h cache.  Empty result: 30 min cache (so WC squads
+    populate once the first matches are played without waiting hours)."""
     path      = LEAGUE_TO_BDL[league_id]
     slug      = name.lower().strip()
     cache_key = f"bdl_soc_ps_{league_id}_{slug}"
     try:
-        doc = await db.bdl_soccer_cache.find_one({"_k": cache_key})
-        if doc and doc.get("d") is not None:
-            return doc["d"]
+        doc    = await db.bdl_soccer_cache.find_one({"_k": cache_key})
+        cached = _cache_hit(doc, ttl_full=4 * 3600)
+        if cached is not None:
+            return cached
     except Exception:
         pass
 
@@ -280,10 +305,13 @@ async def _find_player(league_id: int, player_name: str) -> Optional[dict]:
         return None
 
     name_lc = player_name.lower()
-    # Prefer exact / substring match on display_name
+    # Match against any available name field (endpoints differ: EPL uses
+    # display_name, WC uses name; short_name is normalised across all).
     for p in players:
-        display = (p.get("display_name") or "").lower()
-        short   = (p.get("short_name")   or "").lower()
+        display = (p.get("display_name") or p.get("name") or "").lower()
+        short   = (p.get("short_name") or "").lower()
+        if not display and not short:
+            continue
         if (name_lc in display or display in name_lc or
                 name_lc in short  or short  in name_lc):
             return p
@@ -294,13 +322,16 @@ async def _find_player(league_id: int, player_name: str) -> Optional[dict]:
 async def _player_match_stats_raw(
     league_id: int, bdl_player_id: int, season: int
 ) -> list[dict]:
-    """Fetch raw BDL player_match_stats rows for one player+season (6-h cache)."""
+    """Fetch raw BDL player_match_stats rows for one player+season.
+    Non-empty result: 6 h cache.  Empty result: 30 min cache (WC tournament
+    starts with 0 stats; re-check frequently so the first match populates fast)."""
     path      = LEAGUE_TO_BDL[league_id]
     cache_key = f"bdl_soc_pms_{league_id}_{bdl_player_id}_{season}"
     try:
-        doc = await db.bdl_soccer_cache.find_one({"_k": cache_key})
-        if doc and doc.get("d") is not None:
-            return doc["d"]
+        doc    = await db.bdl_soccer_cache.find_one({"_k": cache_key})
+        cached = _cache_hit(doc, ttl_full=6 * 3600)
+        if cached is not None:
+            return cached
     except Exception:
         pass
 
