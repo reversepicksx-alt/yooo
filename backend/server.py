@@ -208,7 +208,7 @@ async def seed_grants():
         while True:
             try:
                 summary = await refresh_calibration(db)
-                print(f"[CONF CALIB] refreshed: props={summary['props']} buckets={summary['totalBuckets']} (min n={summary['minBucketN']})")
+                print(f"[CONF CALIB] refreshed: keys={summary['keys']} buckets={summary['totalBuckets']} (min n={summary['minBucketN']})")
             except Exception as _e:
                 print(f"[CONF CALIB] refresh failed: {_e}")
             await _a.sleep(6 * 60 * 60)

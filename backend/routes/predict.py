@@ -4181,7 +4181,7 @@ Analyze ALL data thoroughly. Return JSON only."""
 
         # Set confidence level
         cs = prediction.get("confidenceScore", 50)
-        prediction["confidenceLevel"] = "Very High" if cs >= 75 else "High" if cs >= 65 else "Medium" if cs >= 50 else "Low"
+        prediction["confidenceLevel"] = "Very High" if cs >= 80 else "High" if cs >= 70 else "Medium" if cs >= 55 else "Low"
 
         # Store dominance info — will be applied POST-FUSION to the final number
         prediction["matchDominance"] = {
@@ -5119,7 +5119,7 @@ Analyze ALL data thoroughly. Return JSON only."""
 
         # Recalculate confidence level after guards
         cs = prediction.get("confidenceScore", 50)
-        prediction["confidenceLevel"] = "Very High" if cs >= 75 else "High" if cs >= 65 else "Medium" if cs >= 50 else "Low"
+        prediction["confidenceLevel"] = "Very High" if cs >= 80 else "High" if cs >= 70 else "Medium" if cs >= 55 else "Low"
 
         # HARD GUARD: recommendation MUST match the FINAL projected value vs line
         final_proj_cal = prediction.get("projectedValue", req.line)
@@ -5312,7 +5312,12 @@ Analyze ALL data thoroughly. Return JSON only."""
             _bt_old_rec  = str(prediction.get("recommendation", "")).lower()
             _bt_old_conf = prediction.get("confidenceScore")
             _bt_new_conf = int(round(_bt_max_pct))
-            _bt_new_lvl  = "High" if _bt_max_pct >= 70 else ("Medium" if _bt_max_pct >= 60 else "Low")
+            _bt_new_lvl  = (
+                "Very High" if _bt_max_pct >= 80
+                else "High"   if _bt_max_pct >= 70
+                else "Medium" if _bt_max_pct >= 55
+                else "Low"
+            )
 
             prediction["recommendation"] = _bt_dir
             prediction["confidenceScore"] = _bt_new_conf
@@ -5411,7 +5416,7 @@ Analyze ALL data thoroughly. Return JSON only."""
             _pre_pos_cap = prediction["confidenceScore"]
             prediction["confidenceScore"] = _pos_cap
             prediction["rawConfidence"]   = _pos_cap
-            prediction["confidenceLevel"] = "High" if _pos_cap >= 65 else "Medium"
+            prediction["confidenceLevel"] = "High" if _pos_cap >= 70 else "Medium"
             print(
                 f"[POS CAP] {prediction.get('position')} {req.propType} "
                 f"{prediction.get('recommendation')}: {_pre_pos_cap}% → {_pos_cap}%"
@@ -5518,6 +5523,42 @@ Analyze ALL data thoroughly. Return JSON only."""
             f"[EDGE/SAFETY] {_er_rec} {_er_prop}: margin={_er_margin:.1f} conf={_er_conf} "
             f"hist={_er_hit_rate}% (n={_er_n}) → {_edge_rating} / {_safety_rating}"
         )
+
+        # ── AVOID / RISKY CONFIDENCE SUPPRESSION ─────────────────────────────────
+        # The Bayesian engine computes P(OVER)/P(UNDER) from the prior + momentum,
+        # but has no knowledge of the prop+direction's historical hit rate.
+        # When prop safety has enough evidence that a direction is a loser, we
+        # suppress the Bayesian confidence to match the empirical reality.
+        #
+        # AVOID (≤44% hit rate, n≥5): cap confidence at the empirical rate (floor 50)
+        # RISKY (45–57%, n≥8):        soft −5 pp reduction when confidence > 65
+        #
+        # This runs AFTER edgeRating is computed (which used the pre-suppression
+        # confidence) so the NO EDGE label is already correct for AVOID props.
+        if prediction.get("recommendation", "").upper() not in ("PASS",):
+            _sup_conf = prediction.get("confidenceScore", 50)
+            if _safety_rating == "AVOID" and _er_hit_rate is not None:
+                _avoid_cap = max(50, round(_er_hit_rate))
+                if _sup_conf > _avoid_cap:
+                    prediction["confidenceScore"] = _avoid_cap
+                    prediction["confidenceLevel"] = (
+                        "Medium" if _avoid_cap >= 55 else "Low"
+                    )
+                    print(
+                        f"[AVOID CAP] {_er_prop} {_er_rec}: bayesian={_sup_conf}% "
+                        f"→ capped at empirical {_avoid_cap}% (n={_er_n})"
+                    )
+            elif _safety_rating == "RISKY" and _er_hit_rate is not None and _sup_conf > 65:
+                _risky_adj = max(55, _sup_conf - 5)
+                if _risky_adj != _sup_conf:
+                    prediction["confidenceScore"] = _risky_adj
+                    prediction["confidenceLevel"] = (
+                        "High" if _risky_adj >= 70 else "Medium"
+                    )
+                    print(
+                        f"[RISKY ADJ] {_er_prop} {_er_rec}: {_sup_conf}% → {_risky_adj}% "
+                        f"(RISKY hist={_er_hit_rate:.1f}%)"
+                    )
         # ─────────────────────────────────────────────────────────────────────────────
 
         prediction.setdefault("probabilityCurve", [])
@@ -6103,7 +6144,11 @@ Analyze ALL data thoroughly. Return JSON only."""
             _raw_conf = prediction.get("confidenceScore")
             if _raw_conf is not None:
                 prediction.setdefault("rawConfidence", _raw_conf)
-                _calibrated = _calibrate(req.propType, float(_raw_conf))
+                _calibrated = _calibrate(
+                    req.propType,
+                    float(_raw_conf),
+                    prediction.get("recommendation", "").upper() or None,
+                )
                 if _calibrated is not None:
                     _calibrated_rounded = round(_calibrated)
                     prediction["calibratedConfidence"] = _calibrated_rounded
@@ -6113,8 +6158,8 @@ Analyze ALL data thoroughly. Return JSON only."""
                         prediction["confidenceScore"] = _calibrated_rounded
                         prediction["confidenceLevel"] = (
                             "Very High" if _calibrated_rounded >= 80
-                            else "High"   if _calibrated_rounded >= 65
-                            else "Medium" if _calibrated_rounded >= 50
+                            else "High"   if _calibrated_rounded >= 70
+                            else "Medium" if _calibrated_rounded >= 55
                             else "Low"
                         )
                         print(
