@@ -65,19 +65,19 @@ async def _get(path: str, params: dict = None) -> dict:
     return r.json()
 
 
-def _cache_get_sync(key: str) -> Optional[dict]:
-    """Synchronous cache read — safe to call from async context (sub-5ms)."""
+async def _cache_get(key: str) -> Optional[dict]:
+    """Motor (async) cache read — must be awaited."""
     try:
-        return CACHE_COL.find_one({"_id": key})
+        return await CACHE_COL.find_one({"_id": key})
     except Exception:
         return None
 
 
-def _cache_set_sync(key: str, data, ttl: int = 3600):
-    """Synchronous cache write — safe to call from async context."""
+async def _cache_set(key: str, data, ttl: int = 3600):
+    """Motor (async) cache write — must be awaited."""
     try:
         doc = {"_id": key, "data": data, "ts": int(time.time()), "ttl": ttl}
-        CACHE_COL.replace_one({"_id": key}, doc, upsert=True)
+        await CACHE_COL.replace_one({"_id": key}, doc, upsert=True)
     except Exception:
         pass
 
@@ -92,7 +92,7 @@ def _cache_fresh(doc: Optional[dict], ttl: int) -> bool:
 async def get_wc_team_id(team_name: str) -> Optional[int]:
     """Resolve national team name → API Sports team ID via WC 2026 participant list."""
     cache_key = f"wc_teams:{CURRENT_SEASON}"
-    doc = _cache_get_sync(cache_key)
+    doc = await _cache_get(cache_key)
     if _cache_fresh(doc, 86400):
         teams = doc["data"]
     else:
@@ -103,7 +103,7 @@ async def get_wc_team_id(team_name: str) -> Optional[int]:
                 for t in r.get("response", [])
                 if t.get("team")
             ]
-            _cache_set_sync(cache_key, teams, ttl=86400)
+            await _cache_set(cache_key, teams, ttl=86400)
         except Exception as e:
             log.warning(f"[API-SPORTS] Failed to fetch WC teams: {e}")
             return None
@@ -121,7 +121,7 @@ async def get_wc_team_id(team_name: str) -> Optional[int]:
 async def _get_team_fixtures_for_season(team_id: int, season: int) -> list:
     """All FT fixtures for a team in a given season — NO league filter (all competitions)."""
     cache_key = f"as_all_fx:{team_id}:{season}"
-    doc = _cache_get_sync(cache_key)
+    doc = await _cache_get(cache_key)
     ttl = 86400 if season < CURRENT_SEASON else 1800
     if _cache_fresh(doc, ttl):
         return doc["data"]
@@ -133,7 +133,7 @@ async def _get_team_fixtures_for_season(team_id: int, season: int) -> list:
             "status": "FT",
         })
         fixtures = r.get("response", [])
-        _cache_set_sync(cache_key, fixtures, ttl=ttl)
+        await _cache_set(cache_key, fixtures, ttl=ttl)
         return fixtures
     except Exception as e:
         log.warning(f"[API-SPORTS] Fixtures season={season} team={team_id} failed: {e}")
@@ -171,7 +171,7 @@ async def _get_player_stats_in_fixture(
 ) -> Optional[dict]:
     """Return the named player's stats dict for a specific fixture, or None."""
     cache_key = f"wc_fxp:{fixture_id}:{team_id}"
-    doc = _cache_get_sync(cache_key)
+    doc = await _cache_get(cache_key)
     if _cache_fresh(doc, 86400):
         players_data = doc["data"]
     else:
@@ -180,7 +180,7 @@ async def _get_player_stats_in_fixture(
             players_data = []
             for team_entry in r.get("response", []):
                 players_data.extend(team_entry.get("players", []))
-            _cache_set_sync(cache_key, players_data, ttl=86400)
+            await _cache_set(cache_key, players_data, ttl=86400)
         except Exception as e:
             log.warning(f"[API-SPORTS] Fixture players {fixture_id} failed: {e}")
             return None
