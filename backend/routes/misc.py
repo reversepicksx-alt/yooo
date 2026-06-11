@@ -79,16 +79,34 @@ async def player_contexts(player_id: int):
 
 @router.get("/teams/{team_id}/next-match")
 async def team_next_match(team_id: int):
-    """Fetch a team's next scheduled fixture from API-Football."""
+    """Fetch a team's next scheduled competitive fixture from API-Football.
+
+    Skips club friendlies (leagueId 667) so that off-season clubs don't
+    auto-populate the league picker with an irrelevant pre-season match.
+    Fetches up to 5 upcoming fixtures and returns the first competitive one.
+    """
+    # Leagues to skip — pre-season club friendlies, not useful for props
+    _SKIP_LEAGUES = {667, 666}
+
     try:
-        fixtures = await api_football_request("fixtures", {"team": team_id, "next": 1})
+        fixtures = await api_football_request("fixtures", {"team": team_id, "next": 5})
     except Exception:
         fixtures = None
 
     if not fixtures:
         return {"found": False}
 
-    fx = fixtures[0]
+    # Pick the first fixture that isn't a friendly / non-competitive match
+    fx = None
+    for candidate in fixtures:
+        lid = candidate.get("league", {}).get("id", 0)
+        if lid not in _SKIP_LEAGUES:
+            fx = candidate
+            break
+
+    if fx is None:
+        return {"found": False}
+
     home_team = fx.get("teams", {}).get("home", {})
     away_team = fx.get("teams", {}).get("away", {})
     league = fx.get("league", {})

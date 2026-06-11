@@ -261,7 +261,18 @@ async def sync_all_squads():
 
 async def sync_national_teams():
     """Fetch national teams from international leagues and store with aliases."""
-    international_leagues = [5, 32, 34, 31, 29, 30, 33, 4, 960, 9, 6, 115, 7, 10, 1, 13, 11, 12, 15, 8]
+    # Only include genuinely international/national-team competitions.
+    # Leagues 9 (UCL), 13 (Copa Libertadores) etc. are club competitions and
+    # must NOT be in this list — they would pollute the cache with club teams.
+    international_leagues = [5, 32, 31, 29, 30, 4, 960, 6, 115, 7, 10, 1, 11, 12, 15, 8]
+
+    # Known club team IDs that must never appear in the national cache
+    # (populated by previous bug where UCL/club leagues were queried)
+    _KNOWN_CLUB_IDS = {
+        49, 50, 85, 496, 505, 541,      # Chelsea, Man City, PSG, Juventus, Inter, Real Madrid
+        9568, 119, 1152, 2537, 12585,   # Inter Miami, Internacional, Barcelona SC, Auckland City, Stockholm Int.
+    }
+
     raw_teams = {}
 
     for lg in international_leagues:
@@ -272,12 +283,18 @@ async def sync_national_teams():
                     for t in data:
                         tid = t["team"]["id"]
                         name = t["team"]["name"]
+                        if tid in _KNOWN_CLUB_IDS:
+                            continue
                         if _is_senior_national(name) and tid not in raw_teams:
                             raw_teams[tid] = {"id": tid, "name": name}
                     break
             except Exception:
                 continue
         await aio.sleep(0.3)
+
+    # Purge any known-club IDs that snuck in from previous runs
+    if _KNOWN_CLUB_IDS:
+        await db[COL_NATIONAL].delete_many({"teamId": {"$in": list(_KNOWN_CLUB_IDS)}})
 
     # Build lookup with aliases
     ALIASES = {
