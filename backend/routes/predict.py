@@ -379,7 +379,7 @@ async def predict(req: PredictionRequest):
             player_data_task = get_player_data()
             team_stats_task = get_team_stats_multi_season(actual_team_id, league_id)
             opponent_stats_task = get_team_stats_multi_season(req.opponentId, league_id)
-            h2h_task = safe_fetch("fixtures/headtohead", {"h2h": f"{actual_team_id}-{req.opponentId}", "last": 10}, [])
+            h2h_task = safe_fetch("fixtures/headtohead", {"h2h": f"{actual_team_id}-{req.opponentId}", "season": CURRENT_SEASON}, [])
 
             async def get_standings_multi_season():
                 for s in [CURRENT_SEASON + 1, CURRENT_SEASON, CURRENT_SEASON - 1]:

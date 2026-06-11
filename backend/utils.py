@@ -94,6 +94,10 @@ async def api_football_request(endpoint: str, params: dict = None):
                         await aio.sleep(1.5 * (attempt + 1))
                         continue
                     if resp.status_code != 200:
+                        body_lower = resp.text.lower()
+                        if "suspended" in body_lower or "free plans do not have access" in body_lower:
+                            _trip_quota_breaker(resp.text[:200])
+                            return []
                         raise HTTPException(status_code=resp.status_code, detail=f"API-Sports error: {resp.text}")
                     data = resp.json()
                     if data.get("errors") and len(data["errors"]) > 0:
@@ -108,7 +112,14 @@ async def api_football_request(endpoint: str, params: dict = None):
                             or ("reached" in error_lower and ("limit" in error_lower or "quota" in error_lower))
                             or "requests quota" in error_lower
                         )
-                        if is_daily_quota:
+                        # Account suspended = treat exactly like quota exhaustion so the
+                        # breaker fires and every subsequent call short-circuits silently.
+                        is_suspended = (
+                            "suspended" in error_lower
+                            or ("access" in error_lower and ("suspend" in error_lower or "blocked" in error_lower))
+                            or "free plans do not have access" in error_lower
+                        )
+                        if is_daily_quota or is_suspended:
                             _trip_quota_breaker(error_msg)
                             return []
                         # Per-minute rate limit — wait and retry rather than killing the day
