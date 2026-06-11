@@ -68,6 +68,12 @@ async def predict(req: PredictionRequest):
             except Exception:
                 pass
             # ── Live API fallback (only when not yet cached) ──────────────
+            # Skip for all soccer predictions — BDL is the sole data source.
+            try:
+                if _is_bdl_league:
+                    return None
+            except NameError:
+                pass
             all_data = None
             for s in [CURRENT_SEASON + 1, CURRENT_SEASON, CURRENT_SEASON - 1, CURRENT_SEASON - 2]:
                 try:
@@ -353,7 +359,7 @@ async def predict(req: PredictionRequest):
         async def noop_none(): return None
         async def noop_list(): return []
 
-        _is_bdl_league = _bdl_soc.is_bdl_league(league_id)
+        _is_bdl_league = True  # BDL is the sole soccer data source — never call API-Football
 
         if ai_only_mode:
             print(f"[AI-ONLY] Running in AI-only mode for {req.playerName} — teamId={actual_team_id}, opponentId={req.opponentId}")
@@ -3864,7 +3870,7 @@ Average {req.propType}: {comp_avg} | Per-90 avg: {comp_per90_avg} | Sample: {len
         _fg_team: dict = {}
         _fg_opp:  dict = {}
         _fg_scenario_weights: dict = {}
-        if not ai_only_mode and actual_team_id and req.opponentId:
+        if not ai_only_mode and actual_team_id and req.opponentId and not _is_bdl_league:
             try:
                 from first_goal_engine import get_first_goal_profile, compute_scenario_weights as _fg_sw
                 _fg_season = 2025

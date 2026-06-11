@@ -318,6 +318,80 @@ async def _find_player(league_id: int, player_name: str) -> Optional[dict]:
     return players[0]
 
 
+async def search_bdl_players(query: str) -> list[dict]:
+    """
+    Search for players across ALL BDL-supported soccer leagues in parallel.
+    Returns records in the same format as extract_player() in routes/players.py
+    so results can be returned directly from the /api/players/search endpoint.
+    Called when API-Football quota is exhausted / account suspended.
+    """
+    if not BDL_KEY or not query or len(query.strip()) < 3:
+        return []
+
+    query = query.strip()
+
+    # Search all unique BDL paths concurrently (UCL/Europa share one path)
+    seen_paths: set[str] = set()
+    tasks: list = []
+    task_league_ids: list[int] = []
+    for league_id, path in LEAGUE_TO_BDL.items():
+        if path in seen_paths:
+            continue
+        seen_paths.add(path)
+        tasks.append(_search_player(league_id, query))
+        task_league_ids.append(league_id)
+
+    results_raw = await asyncio.gather(*tasks, return_exceptions=True)
+
+    out: list[dict] = []
+    seen_ids: set[int] = set()
+    for league_id, raw in zip(task_league_ids, results_raw):
+        if isinstance(raw, Exception) or not raw:
+            continue
+        for p in raw:
+            pid = p.get("id")
+            if pid and pid in seen_ids:
+                continue
+            if pid:
+                seen_ids.add(pid)
+
+            display_name = (
+                p.get("display_name") or p.get("name") or p.get("short_name") or ""
+            ).strip()
+
+            firstname = p.get("first_name") or p.get("firstname") or ""
+            lastname  = p.get("last_name")  or p.get("lastname")  or ""
+            if not firstname and not lastname and display_name:
+                parts     = display_name.split()
+                firstname = parts[0] if parts else ""
+                lastname  = " ".join(parts[1:]) if len(parts) > 1 else ""
+
+            # Team: BDL returns team_ids list; name sometimes in player record
+            team_ids  = p.get("team_ids") or []
+            team_id   = team_ids[0] if team_ids else 0
+            team_obj  = p.get("team") or {}
+            team_name = (
+                team_obj.get("name") if isinstance(team_obj, dict) else ""
+            ) or p.get("team_name") or ""
+
+            out.append({
+                "id":         pid or 0,
+                "name":       display_name,
+                "firstname":  firstname,
+                "lastname":   lastname,
+                "age":        p.get("age") or 0,
+                "nationality": p.get("nationality") or p.get("country") or "",
+                "photo":      "",
+                "teamId":     team_id,
+                "teamName":   team_name,
+                "leagueId":   league_id,
+                "position":   p.get("position") or "",
+            })
+
+    log.info(f"[BDL-SOC] search_bdl_players('{query}'): {len(out)} results across {len(seen_paths)} leagues")
+    return out
+
+
 # ── Per-match stats ───────────────────────────────────────────────────────────
 async def _player_match_stats_raw(
     league_id: int, bdl_player_id: int, season: int

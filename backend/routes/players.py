@@ -170,7 +170,7 @@ async def search_players(req: PlayerSearchRequest):
     except Exception:
         pass
 
-    # If quota is gone, try last-name-only fallback before giving up.
+    # If quota is gone, try last-name cache fallback then BDL search before giving up.
     # Handles abbreviated cached names like "R. Jiménez" when user types "Raul Jimenez".
     if quota_gone:
         if " " in req.query.strip():
@@ -182,6 +182,15 @@ async def search_players(req: PlayerSearchRequest):
                         return {"players": _apply_sort_and_quality(fallback)}
                 except Exception:
                     pass
+        # BDL live search — covers EPL, La Liga, Serie A, Bundesliga, Ligue 1,
+        # UCL, MLS, World Cup without any API-Football dependency.
+        try:
+            from soccer_bdl_client import search_bdl_players
+            bdl_hits = await search_bdl_players(req.query)
+            if bdl_hits:
+                return {"players": _apply_sort_and_quality(bdl_hits)}
+        except Exception:
+            pass
         return {"players": []}
 
     all_players = []
