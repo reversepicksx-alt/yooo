@@ -12,7 +12,7 @@ from openai import OpenAI
 
 from config import (
     db, EMERGENT_LLM_KEY, XAI_API_KEY, GEMINI_API_KEY, CURRENT_SEASON,
-    WOMENS_LEAGUE_IDS, STAT_FIELD_MAP, STAT_LAMBDA_MAP,
+    WOMENS_LEAGUE_IDS, STAT_FIELD_MAP, STAT_LAMBDA_MAP, GROK_MODEL,
 )
 from models import PredictionRequest
 from utils import api_football_request, get_recent_fixtures_fast, strip_accents, get_soccer_odds, decimal_to_american
@@ -4165,7 +4165,7 @@ Analyze ALL data thoroughly. Return JSON only."""
         # pv is set from early_bayes here as a temporary anchor; real_bayes overwrites it later.
         pv = early_bayes["posteriorMean"] if early_bayes and early_bayes.get("posteriorMean") else req.line
 
-        async def call_grok(label="grok", model="grok-3"):
+        async def call_grok(label="grok", model=GROK_MODEL):
             """Grok — primary AI synthesis engine."""
             if not XAI_API_KEY:
                 return None

@@ -8,10 +8,10 @@ import httpx
 import asyncio
 import traceback
 from datetime import datetime, timezone, timedelta
-from config import db, XAI_API_KEY, GEMINI_API_KEY
+from config import db, XAI_API_KEY, GEMINI_API_KEY, GROK_MODEL, GROK_REASONING_MODEL
 
-AI_MODEL = "grok-3"
-AI_REASONING_MODEL = "grok-3"
+AI_MODEL = GROK_MODEL
+AI_REASONING_MODEL = GROK_REASONING_MODEL
 GEMINI_SEARCH_MODEL = "gemini-3"
 AI_URL = "https://api.x.ai/v1/chat/completions"
 
