@@ -155,6 +155,9 @@ def _norm(raw: dict) -> dict:
         "_bdl_match_id":       raw.get("match_id"),
         "_bdl_team_id":        raw.get("team_id"),
         "_bdl_player_id":      raw.get("player_id"),
+        # is_home comes directly from player_match_stats and is authoritative —
+        # the schedule home_team field may differ (WC format quirk).
+        "_is_home_raw":        raw.get("is_home"),
     }
 
 
@@ -546,7 +549,10 @@ async def get_game_logs(
                 reverse=True
             )
 
-            # Sequential mapping: stat row i ↔ team match i
+            # Sequential mapping: stat row i ↔ team match i (newest-first both sides).
+            # Venue uses _is_home_raw from the stat row when present — it is authoritative.
+            # The schedule home_team field can disagree with player_match_stats.is_home
+            # in tournament formats (e.g. WC group stage scheduling conventions).
             for i, gl in enumerate(logs):
                 if i >= len(all_team_matches):
                     break
@@ -554,12 +560,24 @@ async def get_game_logs(
                 # WC matches use nested objects; club matches use flat IDs
                 home_id = m.get("home_team_id") or (m.get("home_team") or {}).get("id")
                 away_id = m.get("away_team_id") or (m.get("away_team") or {}).get("id")
-                gl["venue"] = "home" if bdl_team_id == home_id else "away"
-                opp_id      = away_id if bdl_team_id == home_id else home_id
+                # Venue: prefer the authoritative is_home field from the stat row.
+                # The schedule home_team label can disagree with player_match_stats.is_home
+                # in tournament formats (WC group stage scheduling conventions), so we
+                # never rely on the schedule for venue.
+                _is_home_raw = gl.get("_is_home_raw")
+                if _is_home_raw is not None:
+                    gl["venue"] = "home" if _is_home_raw else "away"
+                else:
+                    gl["venue"] = "home" if bdl_team_id == home_id else "away"
+                # Opponent: always determined from schedule position (bdl_team_id vs home_id).
+                # This is independent of venue — when the schedule says "Mexico is home_team"
+                # the opponent is always the away_team, regardless of is_home_raw value.
+                _sched_is_home = (bdl_team_id == home_id)
+                opp_id = away_id if _sched_is_home else home_id
                 # Try teams_map first (id→name); fall back to nested team object name
                 opp_name = (teams_map or {}).get(opp_id, "")
                 if not opp_name and opp_id:
-                    _opp_obj = m.get("away_team") if bdl_team_id == home_id else m.get("home_team")
+                    _opp_obj = m.get("away_team") if _sched_is_home else m.get("home_team")
                     opp_name = (_opp_obj or {}).get("name", "") if isinstance(_opp_obj, dict) else ""
                 gl["opponent"] = opp_name
                 raw_date    = m.get("date") or m.get("datetime") or ""
@@ -606,6 +624,95 @@ async def get_game_logs(
         except Exception as exc:
             log.warning(f"[BDL-SOC] Shot spatial enrichment error for '{player_name}': {exc}")
 
+    # 4c. Formation + starter-status enrichment from match_lineups, and yellow-card
+    #     enrichment from match_events — both share the same internal match_id as
+    #     player_match_stats, so we join directly by _bdl_match_id.
+    #
+    #     Strategy:
+    #       (a) Fetch the team's lineup rows (team_ids[]=bdl_team_id).
+    #           Find the player's row by accent-normalised name comparison.
+    #           → produces {match_id → {formation, is_starter, lineup_player_id}}
+    #       (b) Use the resolved lineup_player_id to fetch match_events filtered
+    #           by that player_ids[] value, then count yellow cards per match_id.
+    #     Both requests run concurrently.
+    if bdl_team_id and logs:
+        import unicodedata as _ud
+        def _anorm(s: str) -> str:
+            return ''.join(
+                c for c in _ud.normalize('NFD', s.lower().strip())
+                if _ud.category(c) != 'Mn'
+            )
+        _pnorm = _anorm(player_name)
+        _lup_path = LEAGUE_TO_BDL[league_id]
+
+        try:
+            # (a) Fetch team lineups
+            _lup_r = await _get(
+                f"{_lup_path}/match_lineups",
+                {"team_ids[]": bdl_team_id, "per_page": 100},
+            )
+            _lup_rows = (_lup_r or {}).get("data", [])
+
+            # Build {match_id → lineup_info} and find the player's internal ID
+            _lup_map: dict[int, dict] = {}
+            _lineup_pid: int | None = None
+            for _lr in _lup_rows:
+                _lup_mid  = _lr.get("match_id")
+                _lup_pl   = _lr.get("player") or {}
+                _lup_pnm  = _anorm(_lup_pl.get("name") or "")
+                if _lup_pnm == _pnorm:
+                    _lup_map[_lup_mid] = {
+                        "formation":  _lr.get("formation"),
+                        "is_starter": _lr.get("is_starter", True),
+                    }
+                    if _lineup_pid is None:
+                        _lineup_pid = _lup_pl.get("id")
+
+            if _lup_map:
+                for gl in logs:
+                    _mid = gl.get("_bdl_match_id")
+                    if _mid and _mid in _lup_map:
+                        gl["formation"]  = _lup_map[_mid]["formation"]
+                        gl["is_starter"] = _lup_map[_mid]["is_starter"]
+                log.info(
+                    f"[BDL-SOC] Formation enrichment: {len(_lup_map)} match(es) "
+                    f"for '{player_name}' (lineup_pid={_lineup_pid})"
+                )
+
+            # (b) Fetch card events using the lineup player_id (if resolved)
+            if _lineup_pid:
+                _ev_r = await _get(
+                    f"{_lup_path}/match_events",
+                    {"player_ids[]": _lineup_pid,
+                     "incident_types[]": "card", "per_page": 100},
+                )
+                _ev_rows = (_ev_r or {}).get("data", [])
+                _card_by_mid: dict[int, int] = {}
+                for _ev in _ev_rows:
+                    _ev_pl = _ev.get("player") or {}
+                    # Confirm it's the player's own card (not a teammate in the same match)
+                    if _ev.get("incident_type") == "card" and \
+                       _ev.get("incident_class") == "yellow" and \
+                       _ev_pl.get("id") == _lineup_pid:
+                        _emid = _ev.get("match_id")
+                        if _emid:
+                            _card_by_mid[_emid] = _card_by_mid.get(_emid, 0) + 1
+
+                if _card_by_mid:
+                    for gl in logs:
+                        _mid = gl.get("_bdl_match_id")
+                        if _mid in _card_by_mid:
+                            gl["cards_yellow"] = _card_by_mid[_mid]
+                    log.info(
+                        f"[BDL-SOC] Card enrichment: {sum(_card_by_mid.values())} "
+                        f"yellow card(s) across {len(_card_by_mid)} match(es) "
+                        f"for '{player_name}'"
+                    )
+        except Exception as _lup_err:
+            log.warning(
+                f"[BDL-SOC] Formation/card enrichment error for '{player_name}': {_lup_err}"
+            )
+
     # 5. Add per-90 for the target stat (generic — caller will recompute if needed)
     #    Remove internal BDL reference fields before returning
     for gl in logs:
@@ -613,6 +720,7 @@ async def get_game_logs(
         gl.pop("_bdl_team_id",    None)
         gl.pop("_bdl_player_id",  None)
         gl.pop("_real_match_id",  None)
+        gl.pop("_is_home_raw",    None)
 
     return logs, bdl_pid
 

@@ -3500,7 +3500,8 @@ JSON: {"confidenceScore":0,"confidenceLevel":"","aiProjection":0,"sharpSummary":
             game_log_brief = []
             for g in player_game_logs:
                 val = g.get(target_field)
-                game_log_brief.append(f"{g.get('date','')[:10]} vs {g.get('opponent','')} ({g.get('venue','')}, {g.get('minutes',0)}min): {val}")
+                _form_str = f", {g['formation']}" if g.get("formation") else ""
+                game_log_brief.append(f"{g.get('date','')[:10]} vs {g.get('opponent','')} ({g.get('venue','')}, {g.get('minutes',0)}min{_form_str}): {val}")
             wave2_supplement["playerGameLogs"] = {
                 "games": game_log_brief,
                 "rawAvg": round(sum(values) / len(values), 2) if values else 0,
@@ -3996,15 +3997,22 @@ Expected possession for {req.opponentName}: {match_dominance['oppExpectedPoss']}
         if _gl_games:
             _fmt_games = []
             for _gs in _gl_games[-8:]:
-                # raw format: "2025-03-15 vs Osasuna (away, 90min): 43"
-                _m = _re_log.match(r"(\d{4}-(\d{2})-(\d{2})) vs (.+?) \((.+?), (\d+)min\): (.+)", _gs)
+                # raw format: "2025-03-15 vs Osasuna (away, 90min[, 4-2-3-1]): 43"
+                _m = _re_log.match(
+                    r"(\d{4}-(\d{2})-(\d{2})) vs (.+?) \((.+?), (\d+)min(?:, ([^)]+))?\): (.+)",
+                    _gs,
+                )
                 if _m:
-                    _date_lbl = f"{int(_m.group(2))}/{int(_m.group(3))}"
-                    _opp_lbl  = _m.group(4).strip()
+                    _date_lbl  = f"{int(_m.group(2))}/{int(_m.group(3))}"
+                    _opp_lbl   = _m.group(4).strip()
                     _venue_lbl = _m.group(5).strip()
-                    _min_lbl  = _m.group(6)
-                    _val_lbl  = _m.group(7).strip()
-                    _fmt_games.append(f"{_val_lbl} vs {_opp_lbl} ({_date_lbl}, {_min_lbl}min, {_venue_lbl})")
+                    _min_lbl   = _m.group(6)
+                    _form_lbl  = (_m.group(7) or "").strip()  # formation, optional
+                    _val_lbl   = _m.group(8).strip()
+                    _form_part = f", {_form_lbl}" if _form_lbl else ""
+                    _fmt_games.append(
+                        f"{_val_lbl} vs {_opp_lbl} ({_date_lbl}, {_min_lbl}min, {_venue_lbl}{_form_part})"
+                    )
                 else:
                     _fmt_games.append(_gs)
             _gl_raw_avg  = _gl_data.get("rawAvg", "?")
