@@ -15,3 +15,4 @@
 - [Minor sport engine bugs](minor-sport-engine-bugs.md) — PGA/F1/MMA/LoL/Dota2/NCAAF had p_over/p_under as 0-1 fractions (no ×100). cbase_engine had wrong _baye_mc arg order. Both fixed.
 - [Production white screen — Metro in foreground](prod-metro-foreground.md) — Never run Expo Metro in the production workflow. Workflow must be `cd mobile && PRODUCTION=true node proxy.js` only. Metro as foreground process kills the proxy when it crashes; its WebSocket hot-reload connections also flood EIO errors.
 - [BDL soccer data tiers and ID quirks](bdl-soccer-data-tiers.md) — Tier-1 stats always present; Tier-2 (passes, tackles, minutes) often None; match_id is round ID not match ID; use player.team_ids[0] + sequential schedule matching for enrichment.
+- [BDL soccer spatial shot data](bdl-soccer-shots-spatial.md) — /epl/v2/match_shots works (per_page max=100); average_positions/heatmaps are 404; player_id=shooter; xgot>0=on-target; covariate 3f uses xg_shot series.

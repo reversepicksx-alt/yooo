@@ -525,6 +525,62 @@ def compute_bayesian_projection(
             if abs(_sq_adj) > 0.01:
                 print(f"[SHOT QUALITY] goals: sq={_sq_factor:.2f}x conv={_con_factor:.2f}x combined={_combined_factor:.2f}x → adj={_sq_adj:+.3f}")
 
+    # ─────────────────────────────────────────────────────────────────────────
+    # 3f. Spatial xG Covariate — player-level shot quality from BDL coordinates
+    # ─────────────────────────────────────────────────────────────────────────
+    # BDL EPL v2 /match_shots delivers per-shot xG + xGoT from spatial coordinates.
+    # soccer_bdl_client enriches game logs with xg_shot / xgot_shot / shots_spatial.
+    #
+    # goals:           avg xG/game vs EPL avg (0.12) — direct finishing quality signal
+    # shots_on_target: avg xGoT/game vs EPL avg (0.08) — on-target placement quality
+    # shots:           xG/shot vs EPL avg (0.09/shot) — shot position quality
+    #
+    # 3e uses shots_total/goals ratios from accumulated stats; 3f uses spatial
+    # coordinates directly — independent signals, so stacking is correct.
+    # All three paths capped at ±15% of prior_mean.
+    _SPATIAL_XG_PROPS   = {"goals", "shots_on_target", "shots"}
+    _XG_PLAYER_AVG      = 0.12    # EPL avg xG/game across outfield players who shoot
+    _XGOT_PLAYER_AVG    = 0.08    # EPL avg xGoT/game
+    _XG_PER_SHOT_AVG    = 0.09    # EPL avg xG per individual shot (Understat/Opta)
+    if prop_type in _SPATIAL_XG_PROPS:
+        _xg_vals   = [g.get("xg_shot")   for g in game_logs if g.get("xg_shot")   is not None]
+        _xgot_vals = [g.get("xgot_shot") for g in game_logs if g.get("xgot_shot") is not None]
+        _spat_cnt  = [g.get("shots_spatial") for g in game_logs
+                      if (g.get("shots_spatial") or 0) > 0]
+
+        if len(_xg_vals) >= 3:
+            _avg_xg = sum(_xg_vals) / len(_xg_vals)
+
+            if prop_type == "goals":
+                _xg_ratio     = _avg_xg / _XG_PLAYER_AVG
+                _spatial_adj  = prior_mean * (_xg_ratio - 1.0) * 0.25
+                _spatial_adj  = max(-prior_mean * 0.15, min(prior_mean * 0.15, _spatial_adj))
+                if abs(_spatial_adj) > 0.005:
+                    covariate_adjustment += _spatial_adj
+                    print(f"[SPATIAL XG] goals: avg_xg={_avg_xg:.3f}/game "
+                          f"ratio={_xg_ratio:.2f}x → adj={_spatial_adj:+.3f}")
+
+            elif prop_type == "shots_on_target" and len(_xgot_vals) >= 3:
+                _avg_xgot    = sum(_xgot_vals) / len(_xgot_vals)
+                _xgot_ratio  = _avg_xgot / _XGOT_PLAYER_AVG
+                _spatial_adj = prior_mean * (_xgot_ratio - 1.0) * 0.20
+                _spatial_adj = max(-prior_mean * 0.15, min(prior_mean * 0.15, _spatial_adj))
+                if abs(_spatial_adj) > 0.01:
+                    covariate_adjustment += _spatial_adj
+                    print(f"[SPATIAL XG] shots_on_target: avg_xgot={_avg_xgot:.3f}/game "
+                          f"ratio={_xgot_ratio:.2f}x → adj={_spatial_adj:+.3f}")
+
+            elif prop_type == "shots" and len(_spat_cnt) >= 3:
+                _avg_shots   = sum(_spat_cnt) / len(_spat_cnt)
+                _xg_per_shot = _avg_xg / _avg_shots if _avg_shots > 0 else 0
+                _xgs_ratio   = _xg_per_shot / _XG_PER_SHOT_AVG
+                _spatial_adj = prior_mean * (_xgs_ratio - 1.0) * 0.15
+                _spatial_adj = max(-prior_mean * 0.12, min(prior_mean * 0.12, _spatial_adj))
+                if abs(_spatial_adj) > 0.01:
+                    covariate_adjustment += _spatial_adj
+                    print(f"[SPATIAL XG] shots: avg_xg/shot={_xg_per_shot:.3f} "
+                          f"ratio={_xgs_ratio:.2f}x → adj={_spatial_adj:+.3f}")
+
     covariate_adjustment = round(covariate_adjustment, 2)
 
     # Covariate precision: base contextual precision, boosted by venue data quality

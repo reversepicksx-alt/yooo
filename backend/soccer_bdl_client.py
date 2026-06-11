@@ -450,20 +450,144 @@ async def get_game_logs(
                 if h_score is not None and a_score is not None:
                     gl["score"] = f"{h_score}-{a_score}"
                 gl["round"] = str(m.get("round_number", "")) if m.get("round_number") else ""
+                # Record the real BDL match ID so shot spatial data can be joined below
+                gl["_real_match_id"] = m.get("id")
 
             enriched = sum(1 for g in logs if g.get("opponent"))
             log.info(f"[BDL-SOC] '{player_name}': {len(logs)} logs, {enriched} enriched")
         except Exception as exc:
             log.warning(f"[BDL-SOC] enrichment error for '{player_name}': {exc}")
 
+    # 4b. Spatial shot enrichment — BDL /match_shots provides per-shot xG, xGoT,
+    #     and coordinates. We group by match_id and attach per-game aggregates to
+    #     each log, then use spatial counts to fill BDL Tier-2 data gaps (shots_total
+    #     and shots_on are often None in player_match_stats for older seasons).
+    if bdl_pid:
+        try:
+            shots_data = await _fetch_player_shots(league_id, bdl_pid)
+            if shots_data:
+                enriched_shots = 0
+                for gl in logs:
+                    mid = gl.get("_real_match_id")
+                    if mid and mid in shots_data:
+                        sd = shots_data[mid]
+                        gl.update(sd)
+                        # Fill Tier-2 gaps with spatial counts
+                        if gl.get("shots_total") is None and sd.get("shots_spatial"):
+                            gl["shots_total"] = sd["shots_spatial"]
+                        if gl.get("shots_on") is None and sd.get("shots_on_target_spatial"):
+                            gl["shots_on"] = sd["shots_on_target_spatial"]
+                        enriched_shots += 1
+                if enriched_shots:
+                    log.info(f"[BDL-SOC] Shot spatial: {enriched_shots}/{len(logs)} logs "
+                             f"enriched with xG/xGoT for '{player_name}'")
+        except Exception as exc:
+            log.warning(f"[BDL-SOC] Shot spatial enrichment error for '{player_name}': {exc}")
+
     # 5. Add per-90 for the target stat (generic — caller will recompute if needed)
     #    Remove internal BDL reference fields before returning
     for gl in logs:
-        gl.pop("_bdl_match_id", None)
-        gl.pop("_bdl_team_id",  None)
-        gl.pop("_bdl_player_id", None)
+        gl.pop("_bdl_match_id",   None)
+        gl.pop("_bdl_team_id",    None)
+        gl.pop("_bdl_player_id",  None)
+        gl.pop("_real_match_id",  None)
 
     return logs, bdl_pid
+
+
+async def _fetch_player_shots(
+    league_id: int,
+    bdl_player_id: int,
+) -> dict[int, dict]:
+    """
+    Fetch all shot-level spatial data for one player from BDL /match_shots.
+
+    Returns {match_id: {xg_shot, xgot_shot, shots_spatial, shots_on_target_spatial, avg_shot_x}}
+
+    shot_type perspective: player_id is always the SHOOTER.
+      "goal"    = scored
+      "miss"    = off target (xgot=0)
+      "save"    = keeper saved their shot (xgot>0 → on target)
+      "blocked" = blocked before keeper
+
+    xgot > 0  ↔  shot required a save or scored  ↔  "on target" proxy.
+    avg_shot_x: mean of player_x coordinate (lower = closer to own goal ≈ defensive;
+                higher = closer to opponent goal ≈ attacking). BDL uses 0-100 scale
+                where ~50 = midfield.
+
+    Cached 6 h per player.
+    """
+    if not is_bdl_league(league_id) or not BDL_KEY:
+        return {}
+
+    cache_key = f"bdl_shots_p_{league_id}_{bdl_player_id}"
+    try:
+        doc    = await db.bdl_soccer_cache.find_one({"_k": cache_key})
+        cached = _cache_hit(doc, ttl_full=6 * 3600)
+        if cached is not None:
+            return {int(k): v for k, v in cached.items()} if isinstance(cached, dict) else {}
+    except Exception:
+        pass
+
+    path  = LEAGUE_TO_BDL[league_id]
+    shots: list[dict] = []
+    cursor = None
+    for _page in range(3):          # max 3 pages (300 shots) — covers 3+ active seasons
+        params: dict = {"player_ids[]": bdl_player_id, "per_page": 100}
+        if cursor:
+            params["cursor"] = cursor
+        result = await _get(f"{path}/match_shots", params)
+        if not result:
+            break
+        shots.extend(result.get("data", []))
+        cursor = result.get("meta", {}).get("next_cursor")
+        if not cursor:
+            break
+
+    # Aggregate per match
+    by_match: dict[int, dict] = {}
+    for s in shots:
+        mid = s.get("match_id")
+        if not mid:
+            continue
+        if mid not in by_match:
+            by_match[mid] = {"xg": 0.0, "xgot": 0.0, "cnt": 0, "sot": 0, "xs": []}
+        xg   = s.get("xg")   or 0.0
+        xgot = s.get("xgot") or 0.0
+        by_match[mid]["xg"]   += xg
+        by_match[mid]["xgot"] += xgot
+        by_match[mid]["cnt"]  += 1
+        if xgot > 0:                          # required keeper action → on target
+            by_match[mid]["sot"] += 1
+        px = s.get("player_x")
+        if px is not None:
+            by_match[mid]["xs"].append(px)
+
+    result_map: dict[int, dict] = {}
+    for mid, d in by_match.items():
+        xs = d["xs"]
+        result_map[mid] = {
+            "xg_shot":                 round(d["xg"],  4),
+            "xgot_shot":               round(d["xgot"], 4),
+            "shots_spatial":           d["cnt"],
+            "shots_on_target_spatial": d["sot"],
+            "avg_shot_x":              round(sum(xs) / len(xs), 1) if xs else None,
+        }
+
+    try:
+        await db.bdl_soccer_cache.update_one(
+            {"_k": cache_key},
+            {"$set": {"_k": cache_key,
+                      "d":  {str(k): v for k, v in result_map.items()},
+                      "_ts": datetime.now(timezone.utc)}},
+            upsert=True
+        )
+    except Exception:
+        pass
+
+    log.info(f"[BDL-SOC] Shot spatial: fetched {len(shots)} shots / "
+             f"{len(result_map)} matches for player_id={bdl_player_id}")
+    return result_map
 
 
 async def get_player_props(league_id: int, bdl_match_id: int) -> list[dict]:
