@@ -451,11 +451,20 @@ async def get_game_logs(
     if not bdl_pid:
         return [], None
 
-    # 2. Fetch raw stats — try current season then previous
+    # 2. Fetch raw stats — try current season then previous.
+    # Deduplicate by match_id: tournament APIs (e.g. World Cup) return identical
+    # rows for every season query (2026/2025/2024 all yield the same 3 WC matches).
     all_raw: list[dict] = []
+    _seen_match_ids: set = set()
     for season in _CURRENT_SEASONS:
         rows = await _player_match_stats_raw(league_id, bdl_pid, season)
-        all_raw.extend(rows)
+        for row in rows:
+            mid = row.get("match_id")
+            if mid and mid in _seen_match_ids:
+                continue
+            if mid:
+                _seen_match_ids.add(mid)
+            all_raw.append(row)
         if len(all_raw) >= last_n:
             break
 
@@ -486,6 +495,22 @@ async def get_game_logs(
     #       stat_row[i] ↔ team_match[i] (minor drift when player misses a game
     #       only affects opponent-name metadata, never the stat values).
     bdl_team_id: Optional[int] = (player.get("team_ids") or [None])[0]
+
+    # World Cup (and similar tournament) players use country_code instead of team_ids.
+    # Resolve team ID by matching country_code against the league's teams list.
+    if bdl_team_id is None and player.get("country_code"):
+        try:
+            _cc   = player["country_code"]
+            _path = LEAGUE_TO_BDL[league_id]
+            _tr   = await _get(f"{_path}/teams", {"per_page": 100})
+            for _t in (_tr or {}).get("data", []):
+                if (_t.get("country_code") or _t.get("abbreviation")) == _cc:
+                    bdl_team_id = _t.get("id")
+                    log.info(f"[BDL-SOC] WC team resolved: country_code={_cc} → bdl_team_id={bdl_team_id}")
+                    break
+        except Exception as _te:
+            log.warning(f"[BDL-SOC] WC team resolve failed: {_te}")
+
     if bdl_team_id:
         try:
             # Fetch teams lookup (for opponent name) + team season schedule concurrently
@@ -500,30 +525,53 @@ async def get_game_logs(
             if isinstance(teams_map, Exception):
                 teams_map = {}
 
-            # Build a flat list of all team matches sorted newest-first
+            # Build a flat list of all team matches sorted newest-first.
+            # WC matches use "datetime" field; club matches use "date".
+            # Deduplicate by match ID — tournament APIs return the same match
+            # for every season query (WC 2026 matches appear under 2026/2025/2024).
             all_team_matches: list[dict] = []
+            _seen_tm_ids: set = set()
             for mm in match_maps_raw:
-                if not isinstance(mm, Exception):
-                    all_team_matches.extend(mm.values())
-            all_team_matches.sort(key=lambda m: m.get("date", ""), reverse=True)
+                if isinstance(mm, Exception):
+                    continue
+                for m in mm.values():
+                    mid = m.get("id")
+                    if mid and mid in _seen_tm_ids:
+                        continue
+                    if mid:
+                        _seen_tm_ids.add(mid)
+                    all_team_matches.append(m)
+            all_team_matches.sort(
+                key=lambda m: (m.get("date") or m.get("datetime") or ""),
+                reverse=True
+            )
 
             # Sequential mapping: stat row i ↔ team match i
             for i, gl in enumerate(logs):
                 if i >= len(all_team_matches):
                     break
-                m       = all_team_matches[i]
-                home_id = m.get("home_team_id")
-                away_id = m.get("away_team_id")
+                m = all_team_matches[i]
+                # WC matches use nested objects; club matches use flat IDs
+                home_id = m.get("home_team_id") or (m.get("home_team") or {}).get("id")
+                away_id = m.get("away_team_id") or (m.get("away_team") or {}).get("id")
                 gl["venue"] = "home" if bdl_team_id == home_id else "away"
                 opp_id      = away_id if bdl_team_id == home_id else home_id
-                gl["opponent"] = (teams_map or {}).get(opp_id, "") if opp_id else ""
-                raw_date    = m.get("date") or ""
+                # Try teams_map first (id→name); fall back to nested team object name
+                opp_name = (teams_map or {}).get(opp_id, "")
+                if not opp_name and opp_id:
+                    _opp_obj = m.get("away_team") if bdl_team_id == home_id else m.get("home_team")
+                    opp_name = (_opp_obj or {}).get("name", "") if isinstance(_opp_obj, dict) else ""
+                gl["opponent"] = opp_name
+                raw_date    = m.get("date") or m.get("datetime") or ""
                 gl["date"]  = raw_date[:10] if raw_date else ""
                 h_score     = m.get("home_score")
                 a_score     = m.get("away_score")
                 if h_score is not None and a_score is not None:
                     gl["score"] = f"{h_score}-{a_score}"
-                gl["round"] = str(m.get("round_number", "")) if m.get("round_number") else ""
+                gl["round"] = (
+                    m.get("round_name") or str(m.get("round_number", ""))
+                    if (m.get("round_name") or m.get("round_number")) else ""
+                )
                 # Record the real BDL match ID so shot spatial data can be joined below
                 gl["_real_match_id"] = m.get("id")
 
