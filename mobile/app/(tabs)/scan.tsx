@@ -167,7 +167,7 @@ export default function ScanScreen() {
   const [scanFillHint, setScanFillHint] = useState<string | null>(null);
 
   // User-controlled venue override
-  const [venueOverride, setVenueOverride] = useState<'home' | 'away'>('home');
+  const [venueOverride, setVenueOverride] = useState<'home' | 'away' | 'neutral'>('home');
   const [gameLogFilter, setGameLogFilter] = useState<'all' | 'home' | 'away'>('all');
 
   // Manual team override — user can tap the team badge to change it
@@ -1483,7 +1483,7 @@ export default function ScanScreen() {
                         const nm = await getTeamNextMatch(ctxs[0].teamId);
                         if (nm?.found) {
                           setAutoMatch(nm);
-                          setVenueOverride(nm.isHome ? 'home' : 'away');
+                          setVenueOverride(nm.leagueId === 1 ? 'neutral' : (nm.isHome ? 'home' : 'away'));
                           if (nm.leagueId) { setLeagueId(nm.leagueId); setLeagueQuery(nm.leagueName || ''); }
                         }
                       } catch {}
@@ -1527,7 +1527,7 @@ export default function ScanScreen() {
                             const nm = await getTeamNextMatch(ctx.teamId);
                             if (nm?.found) {
                               setAutoMatch(nm);
-                              setVenueOverride(nm.isHome ? 'home' : 'away');
+                              setVenueOverride(nm.leagueId === 1 ? 'neutral' : (nm.isHome ? 'home' : 'away'));
                               if (nm.leagueId) { setLeagueId(nm.leagueId); setLeagueQuery(nm.leagueName || ''); }
                             }
                           } catch {}
@@ -1623,6 +1623,13 @@ export default function ScanScreen() {
                   >
                     <Ionicons name="home-outline" size={13} color={venueOverride === 'home' ? Colors.primary : Colors.textSecondary} />
                     <Text style={[styles.venueOptionText, venueOverride === 'home' && styles.venueOptionTextActive]}>HOME</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.venueOption, venueOverride === 'neutral' && styles.venueOptionActive]}
+                    onPress={() => { setVenueOverride('neutral'); Haptics.selectionAsync(); }}
+                  >
+                    <Ionicons name="earth-outline" size={13} color={venueOverride === 'neutral' ? Colors.primary : Colors.textSecondary} />
+                    <Text style={[styles.venueOptionText, venueOverride === 'neutral' && styles.venueOptionTextActive]}>NEUTRAL</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[styles.venueOption, venueOverride === 'away' && styles.venueOptionActive]}
@@ -1731,6 +1738,13 @@ export default function ScanScreen() {
               >
                 <Ionicons name="home-outline" size={13} color={venueOverride === 'home' ? Colors.primary : Colors.textSecondary} />
                 <Text style={[styles.venueOptionText, venueOverride === 'home' && styles.venueOptionTextActive]}>HOME</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.venueOption, venueOverride === 'neutral' && styles.venueOptionActive]}
+                onPress={() => { setVenueOverride('neutral'); Haptics.selectionAsync(); }}
+              >
+                <Ionicons name="earth-outline" size={13} color={venueOverride === 'neutral' ? Colors.primary : Colors.textSecondary} />
+                <Text style={[styles.venueOptionText, venueOverride === 'neutral' && styles.venueOptionTextActive]}>NEUTRAL</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.venueOption, venueOverride === 'away' && styles.venueOptionActive]}
@@ -4276,8 +4290,8 @@ export default function ScanScreen() {
               const venueAllOver = venueOverCount === venueVals.length && venueVals.length >= 2;
               const venueAllUnder = venueUnderCount === venueVals.length && venueVals.length >= 2;
               const venueHitColor = venueAllOver ? Colors.success : venueAllUnder ? Colors.error : Colors.textSecondary;
-              const venueIcon = venueOverride === 'home' ? '🏠' : '✈️';
-              const venueLabel = venueOverride === 'home' ? 'HOME' : 'AWAY';
+              const venueIcon = venueOverride === 'home' ? '🏠' : venueOverride === 'neutral' ? '🌐' : '✈️';
+              const venueLabel = venueOverride === 'home' ? 'HOME' : venueOverride === 'neutral' ? 'NEUTRAL' : 'AWAY';
 
               return (
                 <View style={styles.h2hCard}>

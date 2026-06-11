@@ -1120,13 +1120,16 @@ async def predict(req: PredictionRequest):
         # =============================================
         # If player is HOME → team's HOME games + opponent's AWAY games
         # If player is AWAY → team's AWAY games + opponent's HOME games
-        player_venue = req.venue.lower()  # "home" or "away"
-        opponent_venue = "away" if player_venue == "home" else "home"
+        player_venue = req.venue.lower()  # "home", "away", or "neutral"
+        _is_neutral = player_venue == "neutral"
+        opponent_venue = "away" if player_venue == "home" else ("home" if not _is_neutral else "neutral")
         is_womens = req.leagueId in WOMENS_LEAGUE_IDS
         pronoun_note = "IMPORTANT: This is a WOMEN'S league. Use she/her/her pronouns for all players. Never use he/him/his." if is_womens else ""
 
-        # Filter team's recent fixtures by venue
-        venue_filtered_team_fixtures = [f for f in recent_fixtures if f.get("venue") == player_venue]
+        # Filter team's recent fixtures by venue (skipped for neutral — no venue preference)
+        venue_filtered_team_fixtures = (
+            [] if _is_neutral else [f for f in recent_fixtures if f.get("venue") == player_venue]
+        )
         # Also keep all fixtures for general context
         all_team_fixtures = recent_fixtures
 
@@ -1157,24 +1160,28 @@ async def predict(req: PredictionRequest):
                     "awayGoals": f.get("goals", {}).get("away", 0) or 0,
                 })
 
-        # Filter opponent fixtures by their venue in THIS matchup
-        venue_filtered_opp_fixtures = [f for f in opponent_fixture_list if f.get("venue") == opponent_venue]
+        # Filter opponent fixtures by their venue in THIS matchup (skipped for neutral)
+        venue_filtered_opp_fixtures = (
+            [] if _is_neutral else [f for f in opponent_fixture_list if f.get("venue") == opponent_venue]
+        )
 
         # Wave 2: Use VENUE-FILTERED fixtures for deep stats
-        # Team's last 5 HOME/AWAY games (matching this match's venue)
+        # For neutral venue: use all fixtures (no venue preference)
         team_fixture_stats_task = fetch_fixture_team_stats(
-            venue_filtered_team_fixtures[:5] if len(venue_filtered_team_fixtures) >= 3 else all_team_fixtures[:5],
+            all_team_fixtures[:5] if _is_neutral else (venue_filtered_team_fixtures[:5] if len(venue_filtered_team_fixtures) >= 3 else all_team_fixtures[:5]),
             actual_team_id or 40, 5
         )
-        # Opponent's last 5 AWAY/HOME games (opposite venue — how they perform when visiting/hosting)
         opponent_fixture_stats_task = fetch_fixture_team_stats(
-            venue_filtered_opp_fixtures[:5] if len(venue_filtered_opp_fixtures) >= 3 else opponent_fixture_list[:5],
+            opponent_fixture_list[:5] if _is_neutral else (venue_filtered_opp_fixtures[:5] if len(venue_filtered_opp_fixtures) >= 3 else opponent_fixture_list[:5]),
             req.opponentId, 5
         )
         # Player game logs: VENUE-PRIORITIZED ordering
-        # Search venue-matching fixtures first (away if away prop, home if home prop)
-        # so we maximize relevant venue samples (target: 15-20 venue-matched games)
-        venue_first_fixtures = venue_filtered_team_fixtures + [f for f in all_team_fixtures if f.get("venue") != player_venue]
+        # For neutral: use all fixtures equally (no venue priority — WC/tournament game)
+        # For home/away: search venue-matching fixtures first (target: 15-20 venue-matched games)
+        venue_first_fixtures = (
+            all_team_fixtures if _is_neutral
+            else venue_filtered_team_fixtures + [f for f in all_team_fixtures if f.get("venue") != player_venue]
+        )
         player_game_logs_task = fetch_player_game_logs(venue_first_fixtures, req.playerId, 35)
 
         # Position comparison task — same-position players vs this opponent
@@ -1207,23 +1214,36 @@ async def predict(req: PredictionRequest):
 - Saves: {goals.get('saves','N/A')} | Dribbles: attempts={dribbles.get('attempts','N/A')}, success={dribbles.get('success','N/A')}
 - Fouls drawn: {fouls.get('drawn','N/A')}""")
 
-            # 2. Team stats (venue-specific)
+            # 2. Team stats (venue-specific; for neutral use overall totals)
             if team_stats:
                 fixtures = team_stats.get("fixtures", {})
                 goals_for = team_stats.get("goals", {}).get("for", {}).get("total", {})
                 goals_against = team_stats.get("goals", {}).get("against", {}).get("total", {})
-                parts.append(f"""[TEAM {player_venue.upper()} PROFILE]
-- Record: W{fixtures.get('wins', {}).get(player_venue, 'N/A')} D{fixtures.get('draws', {}).get(player_venue, 'N/A')} L{fixtures.get('loses', {}).get(player_venue, 'N/A')}
-- Goals For ({player_venue}): {goals_for.get(player_venue, 'N/A')} | Against ({player_venue}): {goals_against.get(player_venue, 'N/A')}""")
+                _pv_label = "OVERALL" if _is_neutral else player_venue.upper()
+                _pv_key   = None if _is_neutral else player_venue  # None → fall back gracefully
+                _gf_val   = sum(goals_for.values()) if _is_neutral else goals_for.get(player_venue, "N/A")
+                _ga_val   = sum(goals_against.values()) if _is_neutral else goals_against.get(player_venue, "N/A")
+                _w = sum(fixtures.get("wins", {}).values()) if _is_neutral else fixtures.get("wins", {}).get(player_venue, "N/A")
+                _d = sum(fixtures.get("draws", {}).values()) if _is_neutral else fixtures.get("draws", {}).get(player_venue, "N/A")
+                _l = sum(fixtures.get("loses", {}).values()) if _is_neutral else fixtures.get("loses", {}).get(player_venue, "N/A")
+                parts.append(f"""[TEAM {_pv_label} PROFILE]
+- Record: W{_w} D{_d} L{_l}
+- Goals For: {_gf_val} | Against: {_ga_val}""")
 
-            # 3. Opponent stats (opposite venue)
+            # 3. Opponent stats (opposite venue; for neutral use overall totals)
             if opponent_stats:
                 opp_fix = opponent_stats.get("fixtures", {})
                 opp_gf = opponent_stats.get("goals", {}).get("for", {}).get("total", {})
                 opp_ga = opponent_stats.get("goals", {}).get("against", {}).get("total", {})
-                parts.append(f"""[OPPONENT {opponent_venue.upper()} PROFILE]
-- Record: W{opp_fix.get('wins', {}).get(opponent_venue, 'N/A')} D{opp_fix.get('draws', {}).get(opponent_venue, 'N/A')} L{opp_fix.get('loses', {}).get(opponent_venue, 'N/A')}
-- Goals For ({opponent_venue}): {opp_gf.get(opponent_venue, 'N/A')} | Against ({opponent_venue}): {opp_ga.get(opponent_venue, 'N/A')}""")
+                _ov_label = "OVERALL" if _is_neutral else opponent_venue.upper()
+                _ogf_val  = sum(opp_gf.values()) if _is_neutral else opp_gf.get(opponent_venue, "N/A")
+                _oga_val  = sum(opp_ga.values()) if _is_neutral else opp_ga.get(opponent_venue, "N/A")
+                _ow = sum(opp_fix.get("wins", {}).values()) if _is_neutral else opp_fix.get("wins", {}).get(opponent_venue, "N/A")
+                _od = sum(opp_fix.get("draws", {}).values()) if _is_neutral else opp_fix.get("draws", {}).get(opponent_venue, "N/A")
+                _ol = sum(opp_fix.get("loses", {}).values()) if _is_neutral else opp_fix.get("loses", {}).get(opponent_venue, "N/A")
+                parts.append(f"""[OPPONENT {_ov_label} PROFILE]
+- Record: W{_ow} D{_od} L{_ol}
+- Goals For: {_ogf_val} | Against: {_oga_val}""")
 
             # 4. H2H
             if h2h_data:
@@ -1634,7 +1654,7 @@ async def predict(req: PredictionRequest):
         # =============================================
         # MATCH DOMINANCE: Opponent-aware possession + context multiplier
         # =============================================
-        def compute_match_dominance(team_stats_list, opp_stats_list, odds, is_home, standing_data):
+        def compute_match_dominance(team_stats_list, opp_stats_list, odds, is_home, standing_data, is_neutral=False):
             """Compute expected possession using opponent-aware model + odds adjustment.
             SYMMETRIC: Always computes from HOME team perspective first, then maps back.
             This ensures the SAME match always produces identical possession numbers
@@ -1642,7 +1662,11 @@ async def predict(req: PredictionRequest):
 
             Uses venue-split averages: home team's HOME-game possession avg vs
             away team's AWAY-game possession avg. Overall averages inflate expected
-            possession for away teams (e.g. Braga 54% overall but ~48% away)."""
+            possession for away teams (e.g. Braga 54% overall but ~48% away).
+
+            For is_neutral=True: uses overall averages for both teams and skips the
+            home-venue possession boost (+1.5pp). Used for World Cup / tournament
+            games where neither team has a real home-ground advantage."""
             dom = {"expectedPoss": 50.0, "oppExpectedPoss": 50.0, "multiplier": 1.0, "notes": []}
 
             def avg_poss(sl, venue_filter=None):
@@ -1658,7 +1682,17 @@ async def predict(req: PredictionRequest):
                             pass
                 return round(sum(vals) / len(vals), 1) if vals else None
 
-            if is_home:
+            if is_neutral:
+                # Neutral venue: use overall averages for both teams (no venue split).
+                # team_stats_list = player's team; opp_stats_list = opponent.
+                # Mapped as: player's team → "away" perspective in the cache/formula
+                # so the existing home/away output convention is preserved.
+                home_avg = avg_poss(opp_stats_list)   # opponent overall (as cache "home")
+                away_avg = avg_poss(team_stats_list)   # player team overall (as cache "away")
+                home_rank = standing_data.get("oppRank") if standing_data else None
+                away_rank = standing_data.get("teamRank") if standing_data else None
+                dom["notes"].append("Neutral venue: using overall possession averages (no home boost)")
+            elif is_home:
                 # Player's team is HOME → use their home game avg; opponent uses away game avg
                 home_avg = avg_poss(team_stats_list, "home") or avg_poss(team_stats_list)
                 away_avg = avg_poss(opp_stats_list, "away") or avg_poss(opp_stats_list)
@@ -1752,13 +1786,15 @@ async def predict(req: PredictionRequest):
                 # FIX 3 — Home-field possession advantage trimmed 2.5 → 1.5.
                 # Data shows home teams don't gain 2.5% possession from venue alone;
                 # 1.5% is calibrated from settled pick residuals.
-                home_boost = 1.5
-                higher_avg = max(home_avg, away_avg)
-                if higher_avg > 60:
-                    dampen = min((higher_avg - 60) / 10.0, 0.7)
-                    home_boost *= (1.0 - dampen)
-                    dom["notes"].append(f"Home poss boost dampened: {home_boost:.1f}% (dominant team avg {higher_avg:.0f}%)")
-                home_poss += home_boost
+                # Skipped for neutral venues (WC/tournaments) — no home-ground advantage.
+                if not is_neutral:
+                    home_boost = 1.5
+                    higher_avg = max(home_avg, away_avg)
+                    if higher_avg > 60:
+                        dampen = min((higher_avg - 60) / 10.0, 0.7)
+                        home_boost *= (1.0 - dampen)
+                        dom["notes"].append(f"Home poss boost dampened: {home_boost:.1f}% (dominant team avg {higher_avg:.0f}%)")
+                    home_poss += home_boost
 
                 if home_rank and away_rank:
                     gap = away_rank - home_rank
@@ -1917,7 +1953,7 @@ async def predict(req: PredictionRequest):
         else:
             match_dominance = compute_match_dominance(
                 team_fixture_stats, opponent_fixture_stats, match_odds,
-                _is_home, standing_data
+                _is_home, standing_data, is_neutral=_is_neutral
             )
             # Store in cache with home/away season avgs for perspective remapping
             if _dom_cache_key and match_dominance.get("homePoss") is not None:
@@ -2404,10 +2440,10 @@ async def predict(req: PredictionRequest):
 
             _VENUE_SPLIT_PROPS = {"pass_attempts", "passes", "saves", "goalie_saves"}
             _bayes_logs = player_game_logs
-            if _is_wc:
-                # World Cup: all games played at neutral venues — skip home/away split
-                # Club stats already include both home and away games which averages to neutral
-                print(f"[WC MODE] Neutral venue — skipping venue split, using all {len(player_game_logs)} club logs")
+            if _is_wc or _is_neutral:
+                # Neutral venue (WC or tournament): all games played at neutral ground —
+                # skip home/away split and use full club log pool as the prior.
+                print(f"[NEUTRAL VENUE] Skipping venue split — using all {len(player_game_logs)} club logs")
             elif req.propType in _VENUE_SPLIT_PROPS and player_venue:
                 _venue_logs = [g for g in player_game_logs if g.get("venue") == player_venue]
                 # GK saves are HIGHLY venue-dependent (away GKs face far more shots
