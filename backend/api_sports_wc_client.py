@@ -65,20 +65,19 @@ async def _get(path: str, params: dict = None) -> dict:
     return r.json()
 
 
-async def _cache_get(key: str) -> Optional[dict]:
+def _cache_get_sync(key: str) -> Optional[dict]:
+    """Synchronous cache read — safe to call from async context (sub-5ms)."""
     try:
-        return await asyncio.to_thread(lambda: CACHE_COL.find_one({"_id": key}))
+        return CACHE_COL.find_one({"_id": key})
     except Exception:
         return None
 
 
-async def _cache_set(key: str, data, ttl: int = 3600):
-    import time as _t
+def _cache_set_sync(key: str, data, ttl: int = 3600):
+    """Synchronous cache write — safe to call from async context."""
     try:
-        doc = {"_id": key, "data": data, "ts": int(_t.time()), "ttl": ttl}
-        await asyncio.to_thread(
-            lambda: CACHE_COL.replace_one({"_id": key}, doc, upsert=True)
-        )
+        doc = {"_id": key, "data": data, "ts": int(time.time()), "ttl": ttl}
+        CACHE_COL.replace_one({"_id": key}, doc, upsert=True)
     except Exception:
         pass
 
@@ -93,7 +92,7 @@ def _cache_fresh(doc: Optional[dict], ttl: int) -> bool:
 async def get_wc_team_id(team_name: str) -> Optional[int]:
     """Resolve national team name → API Sports team ID via WC 2026 participant list."""
     cache_key = f"wc_teams:{CURRENT_SEASON}"
-    doc = await _cache_get(cache_key)
+    doc = _cache_get_sync(cache_key)
     if _cache_fresh(doc, 86400):
         teams = doc["data"]
     else:
@@ -104,7 +103,7 @@ async def get_wc_team_id(team_name: str) -> Optional[int]:
                 for t in r.get("response", [])
                 if t.get("team")
             ]
-            await _cache_set(cache_key, teams, ttl=86400)
+            _cache_set_sync(cache_key, teams, ttl=86400)
         except Exception as e:
             log.warning(f"[API-SPORTS] Failed to fetch WC teams: {e}")
             return None
@@ -122,7 +121,7 @@ async def get_wc_team_id(team_name: str) -> Optional[int]:
 async def _get_team_fixtures_for_season(team_id: int, season: int) -> list:
     """All FT fixtures for a team in a given season — NO league filter (all competitions)."""
     cache_key = f"as_all_fx:{team_id}:{season}"
-    doc = await _cache_get(cache_key)
+    doc = _cache_get_sync(cache_key)
     ttl = 86400 if season < CURRENT_SEASON else 1800
     if _cache_fresh(doc, ttl):
         return doc["data"]
@@ -134,7 +133,7 @@ async def _get_team_fixtures_for_season(team_id: int, season: int) -> list:
             "status": "FT",
         })
         fixtures = r.get("response", [])
-        await _cache_set(cache_key, fixtures, ttl=ttl)
+        _cache_set_sync(cache_key, fixtures, ttl=ttl)
         return fixtures
     except Exception as e:
         log.warning(f"[API-SPORTS] Fixtures season={season} team={team_id} failed: {e}")
@@ -172,7 +171,7 @@ async def _get_player_stats_in_fixture(
 ) -> Optional[dict]:
     """Return the named player's stats dict for a specific fixture, or None."""
     cache_key = f"wc_fxp:{fixture_id}:{team_id}"
-    doc = await _cache_get(cache_key)
+    doc = _cache_get_sync(cache_key)
     if _cache_fresh(doc, 86400):
         players_data = doc["data"]
     else:
@@ -181,7 +180,7 @@ async def _get_player_stats_in_fixture(
             players_data = []
             for team_entry in r.get("response", []):
                 players_data.extend(team_entry.get("players", []))
-            await _cache_set(cache_key, players_data, ttl=86400)
+            _cache_set_sync(cache_key, players_data, ttl=86400)
         except Exception as e:
             log.warning(f"[API-SPORTS] Fixture players {fixture_id} failed: {e}")
             return None
@@ -263,7 +262,7 @@ def _extract_log(p_entry: dict, fixture: dict, team_id: int) -> dict:
     }
 
 
-async def get_game_logs(player_name: str, team_name: str) -> list:
+async def get_game_logs(player_name: str, team_name: str) -> list:  # noqa: C901
     """
     Main entry point.  Scans ALL international competitions (WC, Copa America,
     Nations League, Gold Cup, AFCON, Asian Cup, Friendlies…) across the last
@@ -281,24 +280,41 @@ async def get_game_logs(player_name: str, team_name: str) -> list:
 
     log.info(f"[API-SPORTS] {player_name} / {team_name} (id={team_id}) — scanning {SEASONS_TO_SCAN}")
 
-    all_fixtures = await _get_all_team_fixtures(team_id)
+    try:
+        all_fixtures = await _get_all_team_fixtures(team_id)
+    except Exception as _afx_err:
+        import traceback
+        log.error(f"[API-SPORTS] _get_all_team_fixtures failed: {_afx_err}\n{traceback.format_exc()}")
+        return []
     candidates   = all_fixtures[:MAX_CANDIDATE_FIXTURES]
     log.info(f"[API-SPORTS] {len(all_fixtures)} total FT fixtures → scanning {len(candidates)}")
 
-    stat_tasks = [
-        _get_player_stats_in_fixture(
-            fx["fixture"]["id"], team_id, player_name
-        )
+    # Build aligned (fixture, coroutine) pairs — must stay in sync so zip is correct.
+    # The old code filtered in the comprehension but zipped against full candidates,
+    # causing a Future to land in p_entry whenever a fixture was skipped.
+    valid_pairs = [
+        (fx, _get_player_stats_in_fixture(fx["fixture"]["id"], team_id, player_name))
         for fx in candidates
-        if fx.get("fixture", {}).get("id")
+        if (fx.get("fixture") or {}).get("id")
     ]
-    stat_results = await asyncio.gather(*stat_tasks, return_exceptions=True)
+    valid_fixtures = [fx  for fx, _  in valid_pairs]
+    stat_coros    = [coro for _,  coro in valid_pairs]
+
+    try:
+        stat_results = await asyncio.gather(*stat_coros, return_exceptions=True)
+    except Exception as _sg_err:
+        import traceback
+        log.error(f"[API-SPORTS] gather failed: {_sg_err}\n{traceback.format_exc()}")
+        return []
 
     logs: list[dict] = []
     seen_dates: set[str] = set()
 
-    for fx, p_entry in zip(candidates, stat_results):
-        if isinstance(p_entry, Exception) or not p_entry:
+    for fx, p_entry in zip(valid_fixtures, stat_results):
+        if isinstance(p_entry, Exception) or p_entry is None:
+            continue
+        if not isinstance(p_entry, dict):
+            log.warning(f"[API-SPORTS] Unexpected p_entry type {type(p_entry)} — skipping")
             continue
         stats   = (p_entry.get("statistics") or [{}])[0]
         minutes = (stats.get("games") or {}).get("minutes")
