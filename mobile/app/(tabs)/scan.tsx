@@ -1578,36 +1578,9 @@ export default function ScanScreen() {
               </View>
             )}
 
-            {/* ── Opponent / League — hidden when auto-match is set ── */}
+            {/* ── League — only shown when auto-match hasn't already set it ── */}
             {!autoMatch?.found && (
               <>
-                <Text style={styles.fieldLabel}>
-                  Opponent Team{' '}
-                  <Text style={styles.fieldLabelOpt}>(optional)</Text>
-                </Text>
-                <FuzzySearchInput
-                  value={manualOpponentQuery}
-                  onChangeText={(t) => { setManualOpponentQuery(t); if (!t) setResolvedManualOpponent(null); }}
-                  searchType="teams"
-                  placeholder="e.g. Real Madrid"
-                  style={{ marginBottom: 2 }}
-                  confirmed={!!resolvedManualOpponent}
-                  onSelectTeam={(t) => {
-                    setManualOpponentQuery(t.teamName);
-                    setResolvedManualOpponent(t);
-                    Haptics.selectionAsync();
-                    if (resolvedPlayer?.leagueId && t.leagueId && resolvedPlayer.leagueId !== t.leagueId) {
-                      setLeagueId(0);
-                      setLeagueQuery('');
-                    }
-                  }}
-                />
-                {resolvedManualOpponent && (
-                  <Text style={{ color: Colors.primary, fontSize: 11, marginBottom: 4, marginLeft: 2 }}>
-                    ✓ {resolvedManualOpponent.teamName}
-                  </Text>
-                )}
-
                 <Text style={styles.fieldLabel}>League</Text>
                 <FuzzySearchInput
                   value={leagueQuery}

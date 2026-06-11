@@ -1714,6 +1714,17 @@ async def predict(req: PredictionRequest):
 
             if home_avg is not None and away_avg is not None:
 
+                # ── Qualifying/weak-opponent contamination guard ───────────────
+                # National teams in WC/AFCON/CONCACAF qualifying often average
+                # 60-70% possession against weak sides (e.g. SA vs Lesotho).
+                # These stats contaminate the possession monster when the same
+                # team travels to play a much stronger opponent (e.g. Mexico at
+                # Azteca). Cap away possession avg at 58% — no away team in a
+                # quality match realistically sustains above that level.
+                # Also cap home avg at 65% to guard symmetric edge cases.
+                home_avg = min(home_avg, 65.0)
+                away_avg = min(away_avg, 58.0)
+
                 away_concedes = 100.0 - away_avg
 
                 # FIX 3 — Lower monster threshold from 57 → 53.
