@@ -6,8 +6,68 @@ from emergentintegrations.llm.chat import LlmChat, UserMessage
 
 from config import db, EMERGENT_LLM_KEY, CURRENT_SEASON
 from utils import api_football_request
+from cache import COL_PLAYERS, COL_NATIONAL
 
 router = APIRouter(prefix="/api", tags=["misc"])
+
+
+@router.get("/players/{player_id}/contexts")
+async def player_contexts(player_id: int):
+    """Return all team contexts (club + national) for a given player ID."""
+    docs = await db[COL_PLAYERS].find(
+        {"playerId": player_id},
+        {"_id": 0, "playerId": 1, "teamId": 1, "teamName": 1, "leagueId": 1}
+    ).to_list(10)
+
+    national_ids: set = set()
+    async for n in db[COL_NATIONAL].find({}, {"teamId": 1, "_id": 0}):
+        if n.get("teamId"):
+            national_ids.add(n["teamId"])
+
+    seen: set = set()
+    contexts = []
+    for d in docs:
+        tid = d.get("teamId", 0)
+        if not tid or tid in seen:
+            continue
+        seen.add(tid)
+        contexts.append({
+            "teamId": tid,
+            "teamName": d.get("teamName", ""),
+            "leagueId": d.get("leagueId", 0),
+            "isNational": tid in national_ids,
+        })
+    return {"contexts": contexts}
+
+
+@router.get("/teams/{team_id}/next-match")
+async def team_next_match(team_id: int):
+    """Fetch a team's next scheduled fixture from API-Football."""
+    try:
+        fixtures = await api_football_request("fixtures", {"team": team_id, "next": 1})
+    except Exception:
+        fixtures = None
+
+    if not fixtures:
+        return {"found": False}
+
+    fx = fixtures[0]
+    home_team = fx.get("teams", {}).get("home", {})
+    away_team = fx.get("teams", {}).get("away", {})
+    league = fx.get("league", {})
+
+    is_home = home_team.get("id") == team_id
+    opponent = away_team if is_home else home_team
+
+    return {
+        "found": True,
+        "isHome": is_home,
+        "opponent": {"id": opponent.get("id", 0), "name": opponent.get("name", "")},
+        "leagueId": league.get("id", 0),
+        "leagueName": league.get("name", ""),
+        "date": fx.get("fixture", {}).get("date", ""),
+        "fixtureId": fx.get("fixture", {}).get("id", 0),
+    }
 
 
 @router.get("/pick-of-the-day")

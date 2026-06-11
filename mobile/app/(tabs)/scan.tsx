@@ -11,7 +11,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import { useQueryClient } from '@tanstack/react-query';
-import { scanProp, predict, mlbPredict, getMlbGameContext, cs2Predict, wtaPredict, nbaPredict, nflPredict, nhlPredict, wnbaPredict, ncaabPredict, ncaawPredict, atpPredict, ncaafPredict, f1Predict, mmaPredict, pgaPredict, dota2Predict, lolPredict, cbasePredict, aiSportPredict, searchNbaPlayers, searchNflPlayers, searchNhlPlayers, searchWnbaPlayers, searchNcaabPlayers, searchNcaawPlayers, searchAtpPlayers, searchWtaPlayers, searchNcaafPlayers, searchF1Drivers, searchMmaFighters, searchPgaPlayers, searchDota2Players, searchLolPlayers, searchCbasePlayers, savePick, searchMlbPlayers, searchCs2Players, searchCs2Teams, PROP_TYPES, MLB_PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, NBA_PROP_TYPES, NFL_PROP_TYPES, NHL_PROP_TYPES, WNBA_PROP_TYPES, NCAAB_PROP_TYPES, NCAAW_PROP_TYPES, ATP_PROP_TYPES, NCAAF_PROP_TYPES, F1_PROP_TYPES, MMA_PROP_TYPES, PGA_PROP_TYPES, DOTA2_PROP_TYPES, LOL_PROP_TYPES, CBASE_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, LEAGUES, PredictionResult, ScanResult, MlbPlayer, Cs2Player, Cs2Team, WtaPlayer } from '@/lib/api';
+import { scanProp, predict, mlbPredict, getMlbGameContext, cs2Predict, wtaPredict, nbaPredict, nflPredict, nhlPredict, wnbaPredict, ncaabPredict, ncaawPredict, atpPredict, ncaafPredict, f1Predict, mmaPredict, pgaPredict, dota2Predict, lolPredict, cbasePredict, aiSportPredict, searchNbaPlayers, searchNflPlayers, searchNhlPlayers, searchWnbaPlayers, searchNcaabPlayers, searchNcaawPlayers, searchAtpPlayers, searchWtaPlayers, searchNcaafPlayers, searchF1Drivers, searchMmaFighters, searchPgaPlayers, searchDota2Players, searchLolPlayers, searchCbasePlayers, savePick, searchMlbPlayers, searchCs2Players, searchCs2Teams, PROP_TYPES, MLB_PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, NBA_PROP_TYPES, NFL_PROP_TYPES, NHL_PROP_TYPES, WNBA_PROP_TYPES, NCAAB_PROP_TYPES, NCAAW_PROP_TYPES, ATP_PROP_TYPES, NCAAF_PROP_TYPES, F1_PROP_TYPES, MMA_PROP_TYPES, PGA_PROP_TYPES, DOTA2_PROP_TYPES, LOL_PROP_TYPES, CBASE_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, LEAGUES, PredictionResult, ScanResult, MlbPlayer, Cs2Player, Cs2Team, WtaPlayer, getPlayerContexts, getTeamNextMatch, PlayerContext, NextMatchData } from '@/lib/api';
 import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult, FuzzyLeagueResult, StaticItem } from '@/components/FuzzySearchInput';
 import LeaguePickerModal from '@/components/LeaguePickerModal';
 import { useAuth } from '@/contexts/AuthContext';
@@ -142,7 +142,7 @@ const BAND_LABEL: Record<string, string> = {
 type Mode = 'scan' | 'manual';
 type Phase = 'idle' | 'scanning' | 'detected' | 'analyzing' | 'result' | 'saved';
 type Sport = 'soccer' | 'mlb' | 'cs2' | 'wta' | 'nba' | 'nfl' | 'nhl' | 'wnba'
-           | 'ncaab' | 'ncaaw' | 'atp' | 'ncaaf' | 'f1' | 'mma' | 'pga' | 'dota2' | 'lol' | 'cbase' | 'world_cup';
+           | 'ncaab' | 'ncaaw' | 'atp' | 'ncaaf' | 'f1' | 'mma' | 'pga' | 'dota2' | 'lol' | 'cbase';
 
 export default function ScanScreen() {
   const insets = useSafeAreaInsets();
@@ -198,6 +198,13 @@ export default function ScanScreen() {
   const [resolvedPlayer, setResolvedPlayer] = useState<FuzzyPlayerResult | null>(null);
   const [manualOpponentQuery, setManualOpponentQuery] = useState('');
   const [resolvedManualOpponent, setResolvedManualOpponent] = useState<FuzzyTeamResult | null>(null);
+
+  // Team context picker — shown when a player has both club and national team entries
+  const [playerContexts, setPlayerContexts] = useState<PlayerContext[]>([]);
+  const [selectedContext, setSelectedContext] = useState<PlayerContext | null>(null);
+  const [contextsLoading, setContextsLoading] = useState(false);
+  const [nextMatchLoading, setNextMatchLoading] = useState(false);
+  const [autoMatch, setAutoMatch] = useState<NextMatchData | null>(null);
   const [propType, setPropType] = useState(PROP_TYPES[0].value);
   const [line, setLine] = useState('');
   const [leagueId, setLeagueId] = useState(39);
@@ -436,6 +443,9 @@ export default function ScanScreen() {
     setResolvedManualOpponent(null);
     setLine('');
     setVenueOverride('home');
+    setPlayerContexts([]);
+    setSelectedContext(null);
+    setAutoMatch(null);
     setGameLogFilter('all');
     setShowPlayerEdit(false);
     setShowTeamEdit(false);
@@ -705,16 +715,17 @@ export default function ScanScreen() {
     if (!playerQuery.trim()) { setManualError('Enter a player name to analyze.'); return; }
     if (!line.trim() || isNaN(parseFloat(line))) { setManualError('Enter a valid line value (e.g. 2.5).'); return; }
     setManualError(null);
+    const activeContext = selectedContext || (resolvedPlayer ? { teamId: resolvedPlayer.teamId, teamName: resolvedPlayer.teamName, leagueId: resolvedPlayer.leagueId, isNational: false } : null);
     const data: ScanResult = {
       playerName: playerQuery.trim(),
       propType,
       line: parseFloat(line),
-      leagueId: resolvedPlayer?.leagueId || leagueId,
+      leagueId: autoMatch?.leagueId || activeContext?.leagueId || leagueId,
       playerId: resolvedPlayer?.playerId || 0,
-      teamId: resolvedPlayer?.teamId || 0,
-      teamName: resolvedPlayer?.teamName || '',
-      opponentId: resolvedManualOpponent?.teamId || 0,
-      opponentName: resolvedManualOpponent?.teamName || manualOpponentQuery.trim() || '',
+      teamId: activeContext?.teamId || resolvedPlayer?.teamId || 0,
+      teamName: activeContext?.teamName || resolvedPlayer?.teamName || '',
+      opponentId: autoMatch?.opponent?.id || resolvedManualOpponent?.teamId || 0,
+      opponentName: autoMatch?.opponent?.name || resolvedManualOpponent?.teamName || manualOpponentQuery.trim() || '',
     };
     setScanResult(data);
     await runPredict(data, true);
@@ -1336,7 +1347,7 @@ export default function ScanScreen() {
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                     <Ionicons
                       name={
-                        sport === 'soccer' || sport === 'world_cup' ? 'football' :
+                        sport === 'soccer' ? 'football' :
                         sport === 'mlb' || sport === 'cbase' ? 'baseball' :
                         sport === 'cs2' || sport === 'dota2' || sport === 'lol' ? 'game-controller' :
                         sport === 'wta' || sport === 'atp' ? 'tennisball' :
@@ -1351,14 +1362,14 @@ export default function ScanScreen() {
                       color={Colors.primary}
                     />
                     <Text style={styles.sportSelectorText}>
-                      {sport === 'soccer' ? 'Soccer' : sport === 'world_cup' ? 'World Cup' :
+                      {sport === 'soccer' ? 'Soccer' :
                        sport === 'mlb' ? 'MLB' : sport === 'cbase' ? 'College Baseball' :
                        sport === 'cs2' ? 'CS2' : sport === 'dota2' ? 'Dota 2' : sport === 'lol' ? 'LoL' :
                        sport === 'wta' ? 'WTA Tennis' : sport === 'atp' ? 'ATP Tennis' :
                        sport === 'nba' ? 'NBA' : sport === 'ncaab' ? 'NCAAB' : sport === 'ncaaw' ? 'NCAAW' : sport === 'wnba' ? 'WNBA' :
                        sport === 'nfl' ? 'NFL' : sport === 'ncaaf' ? 'NCAAF' :
                        sport === 'nhl' ? 'NHL' : sport === 'f1' ? 'Formula 1' :
-                       sport === 'mma' ? 'MMA' : sport === 'pga' ? 'PGA Tour' : sport.toUpperCase()}
+                       sport === 'mma' ? 'MMA' : sport === 'pga' ? 'PGA Tour' : (sport as string).toUpperCase()}
                     </Text>
                   </View>
                   <Text style={styles.sportSelectorChange}>Change</Text>
@@ -1429,7 +1440,7 @@ export default function ScanScreen() {
         </>
 
         {/* ─── MANUAL FORM — Soccer ─── */}
-        {(sport === 'soccer' || sport === 'world_cup') && phase !== 'result' && phase !== 'saved' && (
+        {sport === 'soccer' && phase !== 'result' && phase !== 'saved' && (
           <View style={styles.manualForm}>
             {scanFillHint && (
               <View style={styles.scanFillHint}>
@@ -1445,15 +1456,42 @@ export default function ScanScreen() {
               placeholder="e.g. Kevin De Bruyne"
               style={{ marginBottom: 2 }}
               confirmed={!!resolvedPlayer}
-              onSelectPlayer={(p) => {
+              onSelectPlayer={async (p) => {
                 setPlayerQuery(p.playerName);
                 setResolvedPlayer(p);
+                setSelectedContext(null);
+                setAutoMatch(null);
+                setPlayerContexts([]);
                 if (p.leagueId) {
                   setLeagueId(p.leagueId);
                   const lg = LEAGUES.find(l => l.id === p.leagueId);
                   setLeagueQuery(lg?.name || '');
                 }
                 Haptics.selectionAsync();
+                // Fetch all team contexts for this player (club + national team)
+                if (p.playerId) {
+                  setContextsLoading(true);
+                  try {
+                    const res = await getPlayerContexts(p.playerId);
+                    const ctxs = res?.contexts || [];
+                    setPlayerContexts(ctxs);
+                    // If only one context, auto-select it and fetch next match
+                    if (ctxs.length === 1) {
+                      setSelectedContext(ctxs[0]);
+                      setNextMatchLoading(true);
+                      try {
+                        const nm = await getTeamNextMatch(ctxs[0].teamId);
+                        if (nm?.found) {
+                          setAutoMatch(nm);
+                          setVenueOverride(nm.isHome ? 'home' : 'away');
+                          if (nm.leagueId) { setLeagueId(nm.leagueId); setLeagueQuery(nm.leagueName || ''); }
+                        }
+                      } catch {}
+                      setNextMatchLoading(false);
+                    }
+                  } catch {}
+                  setContextsLoading(false);
+                }
               }}
             />
             {resolvedPlayer && (
@@ -1462,25 +1500,91 @@ export default function ScanScreen() {
               </Text>
             )}
 
-            <Text style={styles.fieldLabel}>
-              {sport === 'world_cup' ? 'Opponent Country' : 'Opponent Team'}{' '}
-              <Text style={styles.fieldLabelOpt}>(optional)</Text>
-            </Text>
-            {sport === 'world_cup' ? (
-              <FuzzySearchInput
-                value={manualOpponentQuery}
-                onChangeText={(t) => { setManualOpponentQuery(t); if (!t) setResolvedManualOpponent(null); }}
-                searchType="teams"
-                staticItems={WC_NATIONS}
-                placeholder="e.g. Brazil, France, Argentina"
-                style={{ marginBottom: 2 }}
-                autoCapitalize="words"
-                onSelectStaticItem={(_raw, primary) => {
-                  setManualOpponentQuery(primary);
-                }}
-              />
-            ) : (
+            {/* ── Team context picker: shown when player has club + national team ── */}
+            {resolvedPlayer && playerContexts.length > 1 && (
+              <View style={{ marginBottom: 12 }}>
+                <Text style={styles.fieldLabel}>PREDICT AS</Text>
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  {playerContexts.map((ctx) => {
+                    const active = selectedContext?.teamId === ctx.teamId;
+                    return (
+                      <TouchableOpacity
+                        key={ctx.teamId}
+                        style={[{
+                          flex: 1, paddingVertical: 10, paddingHorizontal: 8,
+                          borderRadius: 8, borderWidth: 1,
+                          borderColor: active ? Colors.primary : '#2a2a2a',
+                          backgroundColor: active ? 'rgba(57,255,20,0.08)' : '#111',
+                          alignItems: 'center',
+                        }]}
+                        onPress={async () => {
+                          if (selectedContext?.teamId === ctx.teamId) return;
+                          setSelectedContext(ctx);
+                          setAutoMatch(null);
+                          setNextMatchLoading(true);
+                          Haptics.selectionAsync();
+                          try {
+                            const nm = await getTeamNextMatch(ctx.teamId);
+                            if (nm?.found) {
+                              setAutoMatch(nm);
+                              setVenueOverride(nm.isHome ? 'home' : 'away');
+                              if (nm.leagueId) { setLeagueId(nm.leagueId); setLeagueQuery(nm.leagueName || ''); }
+                            }
+                          } catch {}
+                          setNextMatchLoading(false);
+                        }}
+                        activeOpacity={0.75}
+                      >
+                        <Ionicons
+                          name={ctx.isNational ? 'flag-outline' : 'shirt-outline'}
+                          size={14}
+                          color={active ? Colors.primary : Colors.textSecondary}
+                        />
+                        <Text style={{ color: active ? Colors.primary : Colors.textSecondary, fontSize: 12, fontWeight: active ? '700' : '400', marginTop: 3, textAlign: 'center' }}>
+                          {ctx.teamName}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+            )}
+            {contextsLoading && (
+              <ActivityIndicator size="small" color={Colors.primary} style={{ alignSelf: 'flex-start', marginBottom: 8 }} />
+            )}
+
+            {/* ── Auto-filled next match card ── */}
+            {nextMatchLoading && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12, padding: 10, backgroundColor: '#111', borderRadius: 8, borderWidth: 1, borderColor: '#2a2a2a' }}>
+                <ActivityIndicator size="small" color={Colors.primary} />
+                <Text style={{ color: Colors.textSecondary, fontSize: 12 }}>Fetching next match…</Text>
+              </View>
+            )}
+            {autoMatch?.found && !nextMatchLoading && (
+              <View style={{ marginBottom: 12, padding: 10, backgroundColor: 'rgba(57,255,20,0.06)', borderRadius: 8, borderWidth: 1, borderColor: 'rgba(57,255,20,0.25)' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                  <Ionicons name="flash" size={12} color={Colors.primary} />
+                  <Text style={{ color: Colors.primary, fontSize: 11, fontWeight: '700', letterSpacing: 0.5 }}>NEXT MATCH AUTO-FILLED</Text>
+                </View>
+                <Text style={{ color: Colors.text, fontSize: 13, fontWeight: '600' }}>
+                  vs {autoMatch.opponent?.name}
+                </Text>
+                <Text style={{ color: Colors.textSecondary, fontSize: 11, marginTop: 2 }}>
+                  {autoMatch.leagueName}{autoMatch.date ? ` · ${new Date(autoMatch.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : ''}
+                </Text>
+                <TouchableOpacity onPress={() => { setAutoMatch(null); setSelectedContext(null); }} style={{ marginTop: 6 }}>
+                  <Text style={{ color: Colors.textSecondary, fontSize: 10 }}>✕ clear auto-fill</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* ── Opponent / League — hidden when auto-match is set ── */}
+            {!autoMatch?.found && (
               <>
+                <Text style={styles.fieldLabel}>
+                  Opponent Team{' '}
+                  <Text style={styles.fieldLabelOpt}>(optional)</Text>
+                </Text>
                 <FuzzySearchInput
                   value={manualOpponentQuery}
                   onChangeText={(t) => { setManualOpponentQuery(t); if (!t) setResolvedManualOpponent(null); }}
@@ -1492,8 +1596,6 @@ export default function ScanScreen() {
                     setManualOpponentQuery(t.teamName);
                     setResolvedManualOpponent(t);
                     Haptics.selectionAsync();
-                    // Cross-league detection: if opponent is from a different league than the player's domestic league,
-                    // we must clear the auto-locked league so the user can pick the correct competition (e.g. Champions League).
                     if (resolvedPlayer?.leagueId && t.leagueId && resolvedPlayer.leagueId !== t.leagueId) {
                       setLeagueId(0);
                       setLeagueQuery('');
@@ -1505,23 +1607,23 @@ export default function ScanScreen() {
                     ✓ {resolvedManualOpponent.teamName}
                   </Text>
                 )}
+
+                <Text style={styles.fieldLabel}>League</Text>
+                <FuzzySearchInput
+                  value={leagueQuery}
+                  onChangeText={(t) => setLeagueQuery(t)}
+                  searchType="leagues"
+                  placeholder="Search league…"
+                  style={{ marginBottom: 2 }}
+                  confirmed={!!leagueId}
+                  onSelectLeague={(l: FuzzyLeagueResult) => {
+                    setLeagueId(l.id);
+                    setLeagueQuery(l.name);
+                    Haptics.selectionAsync();
+                  }}
+                />
               </>
             )}
-
-            <Text style={styles.fieldLabel}>League</Text>
-            <FuzzySearchInput
-              value={leagueQuery}
-              onChangeText={(t) => setLeagueQuery(t)}
-              searchType="leagues"
-              placeholder="Search league…"
-              style={{ marginBottom: 2 }}
-              confirmed={!!leagueId}
-              onSelectLeague={(l: FuzzyLeagueResult) => {
-                setLeagueId(l.id);
-                setLeagueQuery(l.name);
-                Haptics.selectionAsync();
-              }}
-            />
 
             <Text style={styles.fieldLabel}>Prop Type</Text>
             <TouchableOpacity style={styles.pickerBtn} onPress={() => setShowPropPicker(true)}>
@@ -1539,10 +1641,9 @@ export default function ScanScreen() {
               keyboardType="decimal-pad"
             />
 
-            {sport !== 'world_cup' && (
-              <>
-                <Text style={styles.fieldLabel}>Venue</Text>
-                <View style={styles.venueToggle}>
+            <>
+              <Text style={styles.fieldLabel}>Venue</Text>
+              <View style={styles.venueToggle}>
                   <TouchableOpacity
                     style={[styles.venueOption, venueOverride === 'home' && styles.venueOptionActive]}
                     onPress={() => { setVenueOverride('home'); Haptics.selectionAsync(); }}
@@ -1558,8 +1659,7 @@ export default function ScanScreen() {
                     <Text style={[styles.venueOptionText, venueOverride === 'away' && styles.venueOptionTextActive]}>AWAY</Text>
                   </TouchableOpacity>
                 </View>
-              </>
-            )}
+            </>
 
             {manualError && (
               <View style={styles.inlineError}>
@@ -4631,7 +4731,6 @@ export default function ScanScreen() {
               {([
                 { section: 'SOCCER', items: [
                   { id: 'soccer' as Sport, label: 'Soccer', icon: 'football' as const },
-                  { id: 'world_cup' as Sport, label: 'World Cup', icon: 'trophy' as const },
                 ]},
                 { section: 'BASKETBALL', items: [
                   { id: 'nba' as Sport, label: 'NBA', icon: 'basketball' as const },
@@ -4678,13 +4777,8 @@ export default function ScanScreen() {
                           reset();
                           setShowSportPicker(false);
                           // Non-soccer sports have no OCR scan — go straight to manual form
-                          if (s.id !== 'soccer' && s.id !== 'world_cup') {
+                          if (s.id !== 'soccer') {
                             setMode('manual');
-                          }
-                          // World Cup: pre-set league to World Cup (id=1)
-                          if (s.id === 'world_cup') {
-                            setLeagueId(1);
-                            setLeagueQuery('World Cup');
                           }
                         }}
                         activeOpacity={0.75}

@@ -879,6 +879,31 @@ export async function searchPlayersQuick(query: string, leagueId?: number): Prom
   });
 }
 
+export interface PlayerContext {
+  teamId: number;
+  teamName: string;
+  leagueId: number;
+  isNational: boolean;
+}
+
+export interface NextMatchData {
+  found: boolean;
+  isHome?: boolean;
+  opponent?: { id: number; name: string };
+  leagueId?: number;
+  leagueName?: string;
+  date?: string;
+  fixtureId?: number;
+}
+
+export async function getPlayerContexts(playerId: number): Promise<{ contexts: PlayerContext[] }> {
+  return apiCall(`/api/players/${playerId}/contexts`);
+}
+
+export async function getTeamNextMatch(teamId: number): Promise<NextMatchData> {
+  return apiCall(`/api/teams/${teamId}/next-match`);
+}
+
 export interface SubscriptionStatus {
   active: boolean;
   plan?: string;
