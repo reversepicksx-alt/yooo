@@ -53,6 +53,27 @@ const MLB_TEAMS_STATIC: MlbTeam[] = [
   { id: 30, displayName: 'New York Yankees',         abbreviation: 'NYY', location: 'New York',      name: 'Yankees',     league: 'American', division: 'East' },
 ];
 
+type WnbaTeam = { id: number; displayName: string; abbreviation: string };
+const WNBA_TEAMS_STATIC: WnbaTeam[] = [
+  { id: 1,  displayName: 'New York Liberty',       abbreviation: 'NY'  },
+  { id: 2,  displayName: 'Connecticut Sun',         abbreviation: 'CON' },
+  { id: 3,  displayName: 'Indiana Fever',           abbreviation: 'IND' },
+  { id: 4,  displayName: 'Atlanta Dream',           abbreviation: 'ATL' },
+  { id: 5,  displayName: 'Washington Mystics',      abbreviation: 'WSH' },
+  { id: 6,  displayName: 'Chicago Sky',             abbreviation: 'CHI' },
+  { id: 7,  displayName: 'Minnesota Lynx',          abbreviation: 'MIN' },
+  { id: 8,  displayName: 'Las Vegas Aces',          abbreviation: 'LV'  },
+  { id: 9,  displayName: 'Seattle Storm',           abbreviation: 'SEA' },
+  { id: 10, displayName: 'Phoenix Mercury',         abbreviation: 'PHX' },
+  { id: 11, displayName: 'Dallas Wings',            abbreviation: 'DAL' },
+  { id: 12, displayName: 'Los Angeles Sparks',      abbreviation: 'LA'  },
+  { id: 13, displayName: 'Golden State Valkyries',  abbreviation: 'GS'  },
+  { id: 14, displayName: 'Sacramento Monarchs',     abbreviation: 'SAC' },
+  { id: 15, displayName: 'Houston Comets',          abbreviation: 'HOU' },
+  { id: 30, displayName: 'Toronto Tempo',           abbreviation: 'TOR' },
+  { id: 31, displayName: 'Portland Fire',           abbreviation: 'POR' },
+];
+
 const SCREEN_W = Dimensions.get('window').width;
 const INPUT_STYLE = Platform.OS === 'web' ? { outlineWidth: 0 } as object : {};
 
@@ -258,6 +279,7 @@ export default function ScanScreen() {
   const [wnbaPlayerQuery, setWnbaPlayerQuery] = useState('');
   const [wnbaResolvedPlayer, setWnbaResolvedPlayer] = useState<any | null>(null);
   const [wnbaOpponentQuery, setWnbaOpponentQuery] = useState('');
+  const [wnbaResolvedOpponent, setWnbaResolvedOpponent] = useState<WnbaTeam | null>(null);
   const [wnbaPropType, setWnbaPropType] = useState('points');
   const [wnbaShowPropPicker, setWnbaShowPropPicker] = useState(false);
   const [wnbaPlayerResults, setWnbaPlayerResults] = useState<any[]>([]);
@@ -2118,7 +2140,19 @@ export default function ScanScreen() {
               </View>
             )}
             <Text style={styles.fieldLabel}>Opponent <Text style={styles.fieldLabelOpt}>(optional)</Text></Text>
-            <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. Sparks, Sky" placeholderTextColor={Colors.textTertiary} value={wnbaOpponentQuery} onChangeText={setWnbaOpponentQuery} autoCapitalize="words" />
+            <FuzzySearchInput
+              searchType="teams"
+              value={wnbaOpponentQuery}
+              onChangeText={(t) => { setWnbaOpponentQuery(t); if (!t) setWnbaResolvedOpponent(null); }}
+              placeholder="e.g. Fever, Aces, Liberty…"
+              confirmed={!!wnbaResolvedOpponent}
+              staticItems={WNBA_TEAMS_STATIC.map(t => ({ id: t.id, primary: t.displayName, secondary: t.abbreviation, raw: t }))}
+              onSelectStaticItem={(raw) => {
+                setWnbaResolvedOpponent(raw);
+                setWnbaOpponentQuery(raw.displayName);
+                Haptics.selectionAsync();
+              }}
+            />
             <Text style={styles.fieldLabel}>Prop Type</Text>
             <TouchableOpacity style={styles.pickerBtn} onPress={() => setWnbaShowPropPicker(true)}>
               <Text style={styles.pickerBtnText}>{WNBA_PROP_TYPES.find(p => p.value === wnbaPropType)?.label || 'Select'}</Text>

@@ -19,6 +19,7 @@ from utils import api_football_request, get_recent_fixtures_fast, strip_accents,
 from grok_engine import fetch_web_intel
 from prop_safety_cache import get_prop_safety as _get_prop_safety
 import soccer_bdl_client as _bdl_soc
+import api_sports_wc_client as _api_sports_wc
 # game_script_intelligence removed — was distorting confidence scores for GK pass picks
 
 router = APIRouter(prefix="/api", tags=["predict"])
@@ -1378,6 +1379,38 @@ async def predict(req: PredictionRequest):
                               f"using cached game logs (no API-Football fallback)")
             except Exception as _bdl_err:
                 print(f"[BDL-SOCCER] Error for {req.playerName}: {_bdl_err}")
+
+        # =============================================
+        # API SPORTS WC SUPPLEMENT: For WC predictions, enrich with qualifiers +
+        # previous WC history from API Sports (separate account, not suspended).
+        # API Sports data is richer (pass accuracy, duels, rating) and covers
+        # CONCACAF qualifiers (league 31) + WC 2022 (league 1, season 2022).
+        # =============================================
+        if _is_wc:
+            try:
+                _as_logs = await _api_sports_wc.get_game_logs(
+                    req.playerName, req.teamName
+                )
+                if _as_logs:
+                    if player_game_logs:
+                        # Merge: API Sports wins on date collision (richer stats).
+                        # Keep BDL-only dates that API Sports doesn't cover.
+                        _as_dates = {g.get("date", "")[:10] for g in _as_logs}
+                        _bdl_only = [g for g in player_game_logs
+                                     if g.get("date", "")[:10] not in _as_dates]
+                        player_game_logs = _as_logs + _bdl_only
+                        player_game_logs.sort(
+                            key=lambda g: g.get("date", ""), reverse=True
+                        )
+                        print(f"[API-SPORTS-WC] {req.playerName}: merged "
+                              f"{len(_as_logs)} AS + {len(_bdl_only)} BDL-only = "
+                              f"{len(player_game_logs)} total")
+                    else:
+                        player_game_logs = _as_logs
+                        print(f"[API-SPORTS-WC] {req.playerName}: "
+                              f"{len(_as_logs)} logs (no BDL data)")
+            except Exception as _as_err:
+                print(f"[API-SPORTS-WC] Error for {req.playerName}: {_as_err}")
 
         # =============================================
         # PLAYER-DIRECT API FALLBACK: When fixture cache misses, fetch the player's

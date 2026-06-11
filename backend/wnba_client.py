@@ -200,9 +200,14 @@ def _transform_wnba_log(row: dict) -> dict:
     """Transform a WNBA stats row to unified schema."""
     game = row.get("game") or {}
     date_str = (game.get("date") or "")[:10]
-    home_team_id = (game.get("home_team") or {}).get("id")
+    home_team    = game.get("home_team") or {}
+    away_team    = game.get("away_team") or {}
+    home_team_id = home_team.get("id")
     player_team_id = (row.get("team") or {}).get("id")
-    venue = "home" if player_team_id == home_team_id else "away"
+    is_home = player_team_id == home_team_id
+    venue = "home" if is_home else "away"
+    opp_team = away_team if is_home else home_team
+    opponent = opp_team.get("abbreviation") or opp_team.get("full_name") or ""
 
     pts  = (row.get("pts") or 0)
     reb  = (row.get("reb") or 0)
@@ -242,6 +247,7 @@ def _transform_wnba_log(row: dict) -> dict:
         "pts_ast":     pts + ast,
         "reb_ast":     reb + ast,
         "fantasy_pts": round(fantasy, 1),
+        "opponent":    opponent,
         "_source": "bdl",
     }
 

@@ -248,12 +248,13 @@ async def wnba_predict(req: WnbaPredictRequest):
     game_log_tiles = []
     for g in game_logs[:10]:
         game_log_tiles.append({
-            "date":  g.get("date", ""),
-            "value": g.get(field),
-            "venue": g.get("venue", ""),
-            "pts":   g.get("pts"),
-            "reb":   g.get("reb"),
-            "ast":   g.get("ast"),
+            "date":     g.get("date", ""),
+            "value":    g.get(field),
+            "venue":    g.get("venue", ""),
+            "opponent": g.get("opponent", ""),
+            "pts":      g.get("pts"),
+            "reb":      g.get("reb"),
+            "ast":      g.get("ast"),
         })
 
     try:

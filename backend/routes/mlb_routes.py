@@ -607,51 +607,54 @@ async def _fetch_mlb_data(player_id: int, season: int, team_id: int = 0):
 
 def _enrich_game_logs(display_logs: list, team_games: list, player_team_name: str) -> list:
     """
-    Positionally match per-game stat entries (newest first) to team schedule
-    games (newest first).  Each stat at position i → team_games[i].
+    Date-based match per-game stat entries to team schedule games.
     Adds: gameDate, opponent (abbreviation), isHome, homeScore, awayScore.
     Falls back gracefully — unmatched entries keep their existing fields.
+
+    Uses date-based lookup (not positional) so players who miss games due to
+    injury/rest don't get the wrong opponent label.
     """
     if not team_games:
         return display_logs
 
-    enriched = []
     team_lower = (player_team_name or "").lower().strip()
 
-    for i, log in enumerate(display_logs):
-        if i >= len(team_games):
-            enriched.append(log)
-            continue
+    # Build date → game lookup (prefer exact match; handle doubleheaders by keeping first)
+    games_by_date: dict = {}
+    for game in team_games:
+        d = (game.get("date") or "")[:10]
+        if d and d not in games_by_date:
+            games_by_date[d] = game
 
-        game = team_games[i]
+    def _enrich_one(log: dict) -> dict:
+        log_date = (log.get("date") or log.get("gameDate") or "")[:10]
+        game = games_by_date.get(log_date)
+        if not game:
+            return log
+
         home_obj  = game.get("home_team", {})
         away_obj  = game.get("away_team", {})
         home_full = (home_obj.get("display_name") or "").lower()
-        away_full = (away_obj.get("display_name") or "").lower()
 
-        # Determine if the player's team is home or away
-        home_match = (
+        home_match = bool(
             team_lower and (
                 team_lower in home_full or
                 home_full in team_lower or
                 (team_lower.split() and team_lower.split()[-1] in home_full)
             )
         )
-        is_home   = bool(home_match)
+        is_home   = home_match
         opp_obj   = away_obj if is_home else home_obj
-
-        raw_date  = game.get("date", "")
-        game_date = raw_date[:10] if raw_date else None  # "YYYY-MM-DD"
         home_runs = (game.get("home_team_data") or {}).get("runs")
         away_runs = (game.get("away_team_data") or {}).get("runs")
 
-        enriched.append({
+        return {
             **log,
-            "gameDate":  game_date,
+            "gameDate":  log_date or None,
             "opponent":  opp_obj.get("abbreviation") or None,
             "isHome":    is_home,
             "homeScore": home_runs,
             "awayScore": away_runs,
-        })
+        }
 
-    return enriched
+    return [_enrich_one(log) for log in display_logs]
