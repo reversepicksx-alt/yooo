@@ -1483,7 +1483,8 @@ export default function ScanScreen() {
                         const nm = await getTeamNextMatch(ctxs[0].teamId);
                         if (nm?.found) {
                           setAutoMatch(nm);
-                          setVenueOverride(nm.leagueId === 1 ? 'neutral' : (nm.isHome ? 'home' : 'away'));
+                          const _isWcHost = ['mexico','united states','usa','canada'].some(h => (ctxs[0].teamName || '').toLowerCase().includes(h));
+                          setVenueOverride(nm.leagueId === 1 && !_isWcHost ? 'neutral' : (nm.isHome ? 'home' : 'away'));
                           if (nm.leagueId) { setLeagueId(nm.leagueId); setLeagueQuery(nm.leagueName || ''); }
                         }
                       } catch {}
@@ -1527,7 +1528,8 @@ export default function ScanScreen() {
                             const nm = await getTeamNextMatch(ctx.teamId);
                             if (nm?.found) {
                               setAutoMatch(nm);
-                              setVenueOverride(nm.leagueId === 1 ? 'neutral' : (nm.isHome ? 'home' : 'away'));
+                              const _isWcHost = ['mexico','united states','usa','canada'].some(h => (ctx.teamName || '').toLowerCase().includes(h));
+                              setVenueOverride(nm.leagueId === 1 && !_isWcHost ? 'neutral' : (nm.isHome ? 'home' : 'away'));
                               if (nm.leagueId) { setLeagueId(nm.leagueId); setLeagueQuery(nm.leagueName || ''); }
                             }
                           } catch {}
