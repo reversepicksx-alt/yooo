@@ -10,10 +10,31 @@ from cache import COL_PLAYERS, COL_NATIONAL
 
 router = APIRouter(prefix="/api", tags=["misc"])
 
+# Collection for caching player context results
+COL_PLAYER_CTX_CACHE = "player_ctx_cache"
+_CONTEXT_CACHE_TTL_H = 12  # hours
+
 
 @router.get("/players/{player_id}/contexts")
 async def player_contexts(player_id: int):
-    """Return all team contexts (club + national) for a given player ID."""
+    """Return all team contexts (club + national) for a given player ID.
+
+    Results are cached for 12 h to survive transient API-Football failures.
+    The national-team entry is the most important: if an earlier call found it,
+    subsequent calls return it instantly even if the live API is slow/down.
+    """
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=_CONTEXT_CACHE_TTL_H)
+
+    # ── Cache read ────────────────────────────────────────────────────────────
+    cached = await db[COL_PLAYER_CTX_CACHE].find_one(
+        {"playerId": player_id, "cachedAt": {"$gte": cutoff}},
+        {"_id": 0, "contexts": 1}
+    )
+    if cached:
+        return {"contexts": cached["contexts"]}
+
+    # ── Live build ────────────────────────────────────────────────────────────
     # Load national team IDs from cache
     national_ids: set = set()
     async for n in db[COL_NATIONAL].find({}, {"teamId": 1, "_id": 0}):
@@ -40,10 +61,10 @@ async def player_contexts(player_id: int):
             "isNational": tid in national_ids,
         })
 
-    # Step 2 — national team discovery via API-Football
-    # National squads are never stored in cache_players, so we must query the
-    # player profile.  Try 2026 first (covers current WC), then 2025.
-    for season in [2026, 2025]:
+    # Step 2 — national team discovery via API-Football player profile.
+    # Try 2026 first (WC year), then 2025 and 2024 as fallbacks — some players
+    # accumulate their most recent national caps in prior seasons.
+    for season in [2026, 2025, 2024]:
         try:
             player_data = await api_football_request("players", {
                 "id": player_id,
@@ -67,12 +88,22 @@ async def player_contexts(player_id: int):
                     contexts.append({
                         "teamId": tid,
                         "teamName": t.get("name", ""),
-                        "leagueId": lg.get("id", 0),
+                        "leagueId": lg.get("id") or 0,
                         "isNational": True,
                     })
         # Once we found a season with national-team data, don't try older seasons
         if found_national:
             break
+
+    # ── Cache write ───────────────────────────────────────────────────────────
+    # Only cache when we have at least the club context (avoids storing empty
+    # results when the player ID is wrong or not yet active).
+    if contexts:
+        await db[COL_PLAYER_CTX_CACHE].update_one(
+            {"playerId": player_id},
+            {"$set": {"playerId": player_id, "contexts": contexts, "cachedAt": now}},
+            upsert=True,
+        )
 
     return {"contexts": contexts}
 
