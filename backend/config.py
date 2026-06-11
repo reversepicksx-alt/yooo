@@ -11,7 +11,7 @@ load_dotenv()
 MONGO_URL = os.environ.get("MONGO_URL")
 DB_NAME = os.environ.get("DB_NAME")
 EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY")
-API_FOOTBALL_KEY = os.environ.get("API_FOOTBALL_KEY")
+API_FOOTBALL_KEY = os.environ.get("API_FOOTBALL_KEY") or os.environ.get("API_SPORTS_KEY")
 API_FOOTBALL_BASE = "https://v3.football.api-sports.io"
 API_FOOTBALL_DOCS = "https://www.api-football.com/documentation-v3"
 API_FOOTBALL_PLAYER_IDS = "https://dashboard.api-football.com/soccer/ids/players"
