@@ -14,11 +14,7 @@ router = APIRouter(prefix="/api", tags=["misc"])
 @router.get("/players/{player_id}/contexts")
 async def player_contexts(player_id: int):
     """Return all team contexts (club + national) for a given player ID."""
-    docs = await db[COL_PLAYERS].find(
-        {"playerId": player_id},
-        {"_id": 0, "playerId": 1, "teamId": 1, "teamName": 1, "leagueId": 1}
-    ).to_list(10)
-
+    # Load national team IDs from cache
     national_ids: set = set()
     async for n in db[COL_NATIONAL].find({}, {"teamId": 1, "_id": 0}):
         if n.get("teamId"):
@@ -26,6 +22,12 @@ async def player_contexts(player_id: int):
 
     seen: set = set()
     contexts = []
+
+    # Step 1 — club contexts from cache_players (fast, no API)
+    docs = await db[COL_PLAYERS].find(
+        {"playerId": player_id},
+        {"_id": 0, "playerId": 1, "teamId": 1, "teamName": 1, "leagueId": 1}
+    ).to_list(10)
     for d in docs:
         tid = d.get("teamId", 0)
         if not tid or tid in seen:
@@ -37,6 +39,41 @@ async def player_contexts(player_id: int):
             "leagueId": d.get("leagueId", 0),
             "isNational": tid in national_ids,
         })
+
+    # Step 2 — national team discovery via API-Football
+    # National squads are never stored in cache_players, so we must query the
+    # player profile.  Try 2026 first (covers current WC), then 2025.
+    for season in [2026, 2025]:
+        try:
+            player_data = await api_football_request("players", {
+                "id": player_id,
+                "season": season,
+            })
+        except Exception:
+            player_data = None
+        if not player_data:
+            continue
+        found_national = False
+        for entry in player_data:
+            for stat in entry.get("statistics", []):
+                t = stat.get("team", {})
+                tid = t.get("id", 0)
+                if not tid or tid in seen:
+                    continue
+                if tid in national_ids:
+                    lg = stat.get("league", {})
+                    seen.add(tid)
+                    found_national = True
+                    contexts.append({
+                        "teamId": tid,
+                        "teamName": t.get("name", ""),
+                        "leagueId": lg.get("id", 0),
+                        "isNational": True,
+                    })
+        # Once we found a season with national-team data, don't try older seasons
+        if found_national:
+            break
+
     return {"contexts": contexts}
 
 
