@@ -80,9 +80,16 @@ def _momentum(vals: list) -> float:
 
 
 def _venue_mult(venue: str, prop_type: str) -> float:
-    """NHL home ice: ~5% goals advantage, but goalie/shots relatively neutral."""
-    if prop_type in ("saves", "goals_against", "save_pct"):
-        return 1.0  # Goalie stats venue-neutral
+    """NHL home ice: ~5% goals advantage.
+    Goalie saves: away goalies face more shots (home team controls offensive zone);
+    home goalies face fewer. Real-world home save% is ~0.5-1pt better.
+    goals_against follows the same logic (more goals allowed when away).
+    save_pct is a rate stat — not volume-dependent, stays neutral."""
+    if prop_type == "save_pct":
+        return 1.0
+    if prop_type in ("saves", "goals_against"):
+        # Away goalie faces ~5% more shots due to home offensive zone advantage
+        return {"home": 0.95, "away": 1.05}.get(venue, 1.0)
     return {"home": 1.04, "away": 0.96}.get(venue, 1.0)
 
 

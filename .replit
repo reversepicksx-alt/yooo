@@ -17,6 +17,7 @@ EXPO_PUBLIC_API_URL = "http://localhost:8000"
 CDM_INVERSION_MODE = "live"
 SCENARIO_PRIORS_MODE = "live"
 ADMIN_SECRET = "rp-admin-settle-2026"
+LUCK_STRIP_ENABLED = "1"
 
 [workflows]
 runButton = "Project"

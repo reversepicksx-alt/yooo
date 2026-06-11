@@ -53,22 +53,33 @@ async def _gemini_call(
     if json_mode:
         payload["generationConfig"]["responseMimeType"] = "application/json"
 
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10)) as client:
-            resp = await client.post(url, json=payload)
-            if resp.status_code == 200:
-                data = resp.json()
-                candidates = data.get("candidates", [])
-                if candidates:
-                    parts = candidates[0].get("content", {}).get("parts", [])
-                    if parts:
-                        return parts[0].get("text", "").strip()
-            else:
-                print(f"[GEMINI] API error {resp.status_code}: {resp.text[:200]}")
-    except httpx.TimeoutException:
-        print(f"[GEMINI] Timeout ({model}, {timeout}s)")
-    except Exception as e:
-        print(f"[GEMINI] Call error: {type(e).__name__}: {e}")
+    for _attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10)) as client:
+                resp = await client.post(url, json=payload)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    candidates = data.get("candidates", [])
+                    if candidates:
+                        parts = candidates[0].get("content", {}).get("parts", [])
+                        if parts:
+                            return parts[0].get("text", "").strip()
+                    return ""
+                elif resp.status_code == 429:
+                    _wait = 2 ** _attempt  # 1s, 2s, 4s
+                    print(f"[GEMINI] Rate-limited (429) — retry {_attempt+1}/3 in {_wait}s")
+                    await asyncio.sleep(_wait)
+                    continue
+                else:
+                    print(f"[GEMINI] API error {resp.status_code}: {resp.text[:200]}")
+                    return ""
+        except httpx.TimeoutException:
+            print(f"[GEMINI] Timeout ({model}, {timeout}s)")
+            return ""
+        except Exception as e:
+            print(f"[GEMINI] Call error: {type(e).__name__}: {e}")
+            return ""
+    print(f"[GEMINI] All 3 retry attempts exhausted (rate limit)")
     return ""
 
 
@@ -92,23 +103,34 @@ async def _gemini_search_call(
             "thinkingConfig": {"thinkingBudget": 0},
         },
     }
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10)) as client:
-            resp = await client.post(url, json=payload)
-            if resp.status_code == 200:
-                data = resp.json()
-                candidates = data.get("candidates", [])
-                if candidates:
-                    parts = candidates[0].get("content", {}).get("parts", [])
-                    text = "".join(p.get("text", "") for p in parts).strip()
-                    if text:
-                        return text
-            else:
-                print(f"[GEMINI SEARCH] API error {resp.status_code}: {resp.text[:200]}")
-    except httpx.TimeoutException:
-        print(f"[GEMINI SEARCH] Timeout ({timeout}s)")
-    except Exception as e:
-        print(f"[GEMINI SEARCH] Error: {type(e).__name__}: {e}")
+    for _attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10)) as client:
+                resp = await client.post(url, json=payload)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    candidates = data.get("candidates", [])
+                    if candidates:
+                        parts = candidates[0].get("content", {}).get("parts", [])
+                        text = "".join(p.get("text", "") for p in parts).strip()
+                        if text:
+                            return text
+                    return ""
+                elif resp.status_code == 429:
+                    _wait = 2 ** _attempt  # 1s, 2s, 4s
+                    print(f"[GEMINI SEARCH] Rate-limited (429) — retry {_attempt+1}/3 in {_wait}s")
+                    await asyncio.sleep(_wait)
+                    continue
+                else:
+                    print(f"[GEMINI SEARCH] API error {resp.status_code}: {resp.text[:200]}")
+                    return ""
+        except httpx.TimeoutException:
+            print(f"[GEMINI SEARCH] Timeout ({timeout}s)")
+            return ""
+        except Exception as e:
+            print(f"[GEMINI SEARCH] Error: {type(e).__name__}: {e}")
+            return ""
+    print(f"[GEMINI SEARCH] All 3 retry attempts exhausted (rate limit)")
     return ""
 
 

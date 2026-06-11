@@ -274,8 +274,11 @@ def compute_bayesian_projection(
     _pos_group = POSITION_GROUP_MAP.get(position.upper().strip(), "midfielder")
     _decay_table = DECAY_BY_POSITION[_pos_group]
 
-    recent_5 = all_vals[:5] if len(all_vals) >= 5 else all_vals[:max(3, len(all_vals))]
-    recent_3 = all_vals[:3] if len(all_vals) >= 3 else all_vals
+    recent_5  = all_vals[:5]  if len(all_vals) >= 5  else all_vals[:max(3, len(all_vals))]
+    recent_3  = all_vals[:3]  if len(all_vals) >= 3  else all_vals
+    # Streak detection uses a wider 10-game window for statistical reliability.
+    # Momentum calculations (decay-weighted mean, trend slope) still use recent_5.
+    recent_10 = all_vals[:10] if len(all_vals) >= 10 else all_vals
 
     # Apply position-aware exponential decay: most recent game gets highest weight
     weights = _decay_table[:len(recent_5)]
@@ -337,15 +340,31 @@ def compute_bayesian_projection(
     else:
         momentum_label = "STABLE"
 
-    # Streak detection vs the line
+    # Streak detection vs the line — 10-game window for reliability.
+    # Requires ALL games in the window to be on the same side (clean sweep).
+    # Falls back to 5-game then 3-game sweeps so short samples still produce signals.
     streak_flag = "NONE"
-    if len(recent_5) >= 3:
-        over_count = sum(1 for v in recent_5 if v > line)
-        under_count = sum(1 for v in recent_5 if v < line)
-        if over_count == len(recent_5):
-            streak_flag = f"OVER_{len(recent_5)}"
-        elif under_count == len(recent_5):
-            streak_flag = f"UNDER_{len(recent_5)}"
+    if len(recent_10) >= 3:
+        over_10  = sum(1 for v in recent_10 if v > line)
+        under_10 = sum(1 for v in recent_10 if v < line)
+        if over_10 == len(recent_10):
+            streak_flag = f"OVER_{len(recent_10)}"
+        elif under_10 == len(recent_10):
+            streak_flag = f"UNDER_{len(recent_10)}"
+        elif len(recent_5) >= 5:
+            over_5  = sum(1 for v in recent_5 if v > line)
+            under_5 = sum(1 for v in recent_5 if v < line)
+            if over_5 == 5:
+                streak_flag = "OVER_5"
+            elif under_5 == 5:
+                streak_flag = "UNDER_5"
+            elif len(recent_3) >= 3:
+                o3 = sum(1 for v in recent_3 if v > line)
+                u3 = sum(1 for v in recent_3 if v < line)
+                if o3 == 3:
+                    streak_flag = "OVER_3"
+                elif u3 == 3:
+                    streak_flag = "UNDER_3"
         elif len(recent_3) >= 3:
             o3 = sum(1 for v in recent_3 if v > line)
             u3 = sum(1 for v in recent_3 if v < line)

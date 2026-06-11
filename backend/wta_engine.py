@@ -127,9 +127,30 @@ def _tournament_mult(tier: Optional[str], prop_type: str) -> float:
     return 1.0
 
 
-def _surface_mult(this_surface: str, recent_logs: list, prop_type: str) -> float:
+def _surface_mult(this_surface: str, recent_logs: list, prop_type: str, field: str = "") -> float:
+    """Surface adjustment.
+    Primary path: player-specific — compute mean on this_surface vs other surfaces
+    using the player's own historical logs (≥3 on each side required).
+    Fallback: global tour-average baseline comparison."""
     if not this_surface or prop_type in BINARY_PROPS:
         return 1.0
+
+    # ── Primary: player-specific surface split ────────────────────────────────
+    if field:
+        surface_vals = [float(m[field]) for m in recent_logs[:24]
+                        if m.get("surface") == this_surface and m.get(field) is not None
+                        and isinstance(m.get(field), (int, float))]
+        other_vals   = [float(m[field]) for m in recent_logs[:24]
+                        if m.get("surface") and m.get("surface") != this_surface
+                        and m.get(field) is not None
+                        and isinstance(m.get(field), (int, float))]
+        if len(surface_vals) >= 3 and len(other_vals) >= 3:
+            surface_mean = sum(surface_vals) / len(surface_vals)
+            other_mean   = sum(other_vals)   / len(other_vals)
+            if other_mean > 0:
+                return max(0.85, min(1.15, surface_mean / other_mean))
+
+    # ── Fallback: global surface baseline ratio ───────────────────────────────
     this_base = SURFACE_BASELINE_GAMES.get(this_surface)
     if not this_base:
         return 1.0
@@ -141,8 +162,7 @@ def _surface_mult(this_surface: str, recent_logs: list, prop_type: str) -> float
     avg_recent = sum(recent_bases) / len(recent_bases)
     if avg_recent <= 0:
         return 1.0
-    mult = this_base / avg_recent
-    return max(0.90, min(1.10, mult))
+    return max(0.90, min(1.10, this_base / avg_recent))
 
 
 def _opp_rank_mult(opp_rank: Optional[int], subject_rank: Optional[int], prop_type: str) -> float:
@@ -339,7 +359,7 @@ def compute_wta_projection(
     projection = blended
 
     # ── LAYER 4: MATCHUP MULTIPLIERS ─────────────────────────────────────────
-    surface_mult  = _surface_mult(surface or "", match_logs, prop_type)
+    surface_mult  = _surface_mult(surface or "", match_logs, prop_type, field)
     round_mult_v  = _round_mult(round_name or "")
     opp_mult      = _opp_rank_mult(opp_rank, subject_rank, prop_type)
     h2h_mult      = _h2h_mult(h2h, subject_is_p1, prop_type)

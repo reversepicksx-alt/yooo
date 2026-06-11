@@ -129,7 +129,16 @@ def _opp_def_mult(opp_def_rating: Optional[float], prop_type: str) -> float:
         return max(0.82, min(1.18, 1.0 + delta * 0.85))
     if prop_type in ("assists",):
         return max(0.88, min(1.12, 1.0 + delta * 0.40))
-    return 1.0  # rebounds/steals/blocks independent of offensive quality
+    if prop_type in ("rebounds",):
+        # Weak defenses (higher def rating) = more pace/possessions = more rebounding opps
+        return max(0.90, min(1.10, 1.0 + delta * 0.30))
+    if prop_type in ("steals",):
+        # Worse defensive teams tend to have sloppier ball control = more TO opportunities
+        return max(0.93, min(1.07, 1.0 + delta * 0.15))
+    if prop_type in ("blocks",):
+        # Poor defensive teams allow more paint penetration = more block opportunities
+        return max(0.93, min(1.07, 1.0 + delta * 0.20))
+    return 1.0
 
 
 def _rest_mult(rest_days: Optional[int], prop_type: str) -> float:
