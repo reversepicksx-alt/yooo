@@ -117,4 +117,35 @@ async def search_teams(
             if len(results) >= 8:
                 break
 
+    # Strategy 3: national teams — ALWAYS run and prepend exact/strong matches.
+    # Covers "South Africa", "Mexico", "France" etc. which are in cache_national
+    # but may be buried behind club teams in the main cache.
+    try:
+        from cache import COL_NATIONAL
+        nat_docs = await db[COL_NATIONAL].find(
+            {"$or": [
+                {"key": {"$regex": re.escape(norm)}},
+                {"name": {"$regex": re.escape(q), "$options": "i"}},
+            ]},
+            {"_id": 0}
+        ).to_list(8)
+        nat_hits = []
+        for d in nat_docs:
+            tid = d.get("teamId", 0)
+            if not tid:
+                continue
+            entry = {"teamId": tid, "teamName": d.get("name", ""), "leagueId": 0}
+            # Exact match → prepend to front so it wins over club results
+            if d.get("key", "") == norm or d.get("name", "").lower() == q.lower():
+                if tid not in seen:
+                    seen.add(tid)
+                    nat_hits.insert(0, entry)
+            elif tid not in seen:
+                seen.add(tid)
+                nat_hits.append(entry)
+        # Insert national hits before club results (exact national match first)
+        results = nat_hits + [r for r in results if r.get("teamId") not in {n["teamId"] for n in nat_hits}]
+    except Exception:
+        pass
+
     return {"results": results[:8]}

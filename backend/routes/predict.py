@@ -19,7 +19,6 @@ from utils import api_football_request, get_recent_fixtures_fast, strip_accents,
 from grok_engine import fetch_web_intel
 from prop_safety_cache import get_prop_safety as _get_prop_safety
 import soccer_bdl_client as _bdl_soc
-import api_sports_wc_client as _api_sports_wc
 # game_script_intelligence removed — was distorting confidence scores for GK pass picks
 
 router = APIRouter(prefix="/api", tags=["predict"])
@@ -117,9 +116,7 @@ async def predict(req: PredictionRequest):
         # leagueId=1 = FIFA World Cup. Stats not available in API-Football for WC
         # (statistics_players=False), so we use club stats as the prior and apply
         # a neutral-venue + high-stakes treatment throughout the pipeline.
-        _is_wc = (league_id == 1)
-        if _is_wc:
-            print(f"[WC MODE] World Cup prediction — player={req.playerName}, venue will be treated as NEUTRAL")
+        _is_wc = False
 
         # ── AUTO-RESOLVE missing IDs from team/player names using local cache ──
         # This runs BEFORE ai_only_mode is decided, so predictions always have
@@ -148,13 +145,23 @@ async def predict(req: PredictionRequest):
                 except Exception as _re:
                     print(f"[ID RESOLVE] team lookup failed: {_re}")
 
-            # 2. Resolve opponent ID from opponent name — always verify
+            # 2. Resolve opponent ID from opponent name — always verify.
+            # Guard: if the frontend already supplied a national-team opponentId
+            # (leagueId=0 from /api/search/teams) don't clobber it with a clubs hit.
             if req.opponentName:
                 try:
-                    _o = await _find_team(req.opponentName)
-                    if _o and _o.get("teamId"):
-                        _resolved_opp_id = _o["teamId"]
-                        print(f"[ID RESOLVE] '{req.opponentName}' → opponentId={_resolved_opp_id}")
+                    from cache import COL_NATIONAL as _COL_NAT
+                    _opp_is_national = req.opponentId and await db[_COL_NAT].count_documents(
+                        {"teamId": req.opponentId}, limit=1
+                    ) > 0
+                    if _opp_is_national:
+                        _resolved_opp_id = req.opponentId
+                        print(f"[ID RESOLVE] '{req.opponentName}' opponentId={_resolved_opp_id} (national team — kept)")
+                    else:
+                        _o = await _find_team(req.opponentName)
+                        if _o and _o.get("teamId"):
+                            _resolved_opp_id = _o["teamId"]
+                            print(f"[ID RESOLVE] '{req.opponentName}' → opponentId={_resolved_opp_id}")
                 except Exception as _re:
                     print(f"[ID RESOLVE] opponent lookup failed: {_re}")
 
@@ -360,7 +367,7 @@ async def predict(req: PredictionRequest):
         async def noop_none(): return None
         async def noop_list(): return []
 
-        _is_bdl_league = True  # BDL is the sole soccer data source — never call API-Football
+        _is_bdl_league = False  # API-Football is the primary soccer data source
 
         if ai_only_mode:
             print(f"[AI-ONLY] Running in AI-only mode for {req.playerName} — teamId={actual_team_id}, opponentId={req.opponentId}")
@@ -1335,7 +1342,7 @@ async def predict(req: PredictionRequest):
         # quality gate fails (Tier-2 stat like passes_total not yet available in BDL),
         # player_game_logs retains fixture-cache data; PLAYER-DIRECT still runs if empty.
         # =============================================
-        if _bdl_soc.is_bdl_league(league_id) and req.playerName:
+        if _is_bdl_league and _bdl_soc.is_bdl_league(league_id) and req.playerName:
             _bdl_stat_field_map = {
                 "goals": "goals_total", "assists": "goals_assists",
                 "shots_assisted": "passes_key", "pass_attempts": "passes_total",
@@ -1380,37 +1387,6 @@ async def predict(req: PredictionRequest):
             except Exception as _bdl_err:
                 print(f"[BDL-SOCCER] Error for {req.playerName}: {_bdl_err}")
 
-        # =============================================
-        # API SPORTS WC SUPPLEMENT: For WC predictions, enrich with qualifiers +
-        # previous WC history from API Sports (separate account, not suspended).
-        # API Sports data is richer (pass accuracy, duels, rating) and covers
-        # CONCACAF qualifiers (league 31) + WC 2022 (league 1, season 2022).
-        # =============================================
-        if _is_wc:
-            try:
-                _as_logs = await _api_sports_wc.get_game_logs(
-                    req.playerName, req.teamName
-                )
-                if _as_logs:
-                    if player_game_logs:
-                        # Merge: API Sports wins on date collision (richer stats).
-                        # Keep BDL-only dates that API Sports doesn't cover.
-                        _as_dates = {g.get("date", "")[:10] for g in _as_logs}
-                        _bdl_only = [g for g in player_game_logs
-                                     if g.get("date", "")[:10] not in _as_dates]
-                        player_game_logs = _as_logs + _bdl_only
-                        player_game_logs.sort(
-                            key=lambda g: g.get("date", ""), reverse=True
-                        )
-                        print(f"[API-SPORTS-WC] {req.playerName}: merged "
-                              f"{len(_as_logs)} AS + {len(_bdl_only)} BDL-only = "
-                              f"{len(player_game_logs)} total")
-                    else:
-                        player_game_logs = _as_logs
-                        print(f"[API-SPORTS-WC] {req.playerName}: "
-                              f"{len(_as_logs)} logs (no BDL data)")
-            except Exception as _as_err:
-                print(f"[API-SPORTS-WC] Error for {req.playerName}: {_as_err}")
 
         # =============================================
         # PLAYER-DIRECT API FALLBACK: When fixture cache misses, fetch the player's

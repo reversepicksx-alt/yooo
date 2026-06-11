@@ -703,6 +703,20 @@ async def find_team(query: str, league_id: int = None) -> dict:
     def _to_result(doc):
         return {"teamId": doc["teamId"], "teamName": doc["name"], "leagueId": doc["leagueId"]}
 
+    # Strategy -1: National teams exact match — ALWAYS checked first.
+    # Prevents "Mexico" → "New Mexico United" and "South Africa" → "Club Africain".
+    # National teams are stored in cache_national with key=lowercase country name.
+    try:
+        from cache import COL_NATIONAL
+        nat = await db[COL_NATIONAL].find_one(
+            {"$or": [{"key": norm}, {"name": {"$regex": f"^{re.escape(query)}$", "$options": "i"}}]},
+            {"_id": 0}
+        )
+        if nat and nat.get("teamId"):
+            return {"teamId": nat["teamId"], "teamName": nat.get("name", query), "leagueId": 0}
+    except Exception:
+        pass
+
     # Strategy 0: Known scan aliases (AI vision model abbreviations)
     if norm in SCAN_ALIASES:
         canonical = _normalize(SCAN_ALIASES[norm])

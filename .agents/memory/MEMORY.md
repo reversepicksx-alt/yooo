@@ -1,8 +1,8 @@
 - [MLB settlement architecture](mlb-settlement-arch.md) — BDL IDs (<100k) now normalised via _transform_bdl_log; composite props via _COMPOSITE_HANDLERS; cache keys mlb_gl2/mlb_gps2.
 - [CS2 kills over-projection](cs2-kills-calibration.md) — Settled data showed 10% OVER hit rate; reduced HYPER_PRIOR, KPR_HYPER (0.63→0.58), EXPECTED_ROUNDS_2MAPS (40→36).
-- [Copa Lib / WC support](copa-lib-wc-support.md) — TEAM_LEAGUE_MAP expanded to all 10 SA domestic leagues; WC mode (league_id=1) skips venue split and fixture filter; player search correct URL is /api/players/search.
+- [Copa Lib support](copa-lib-support.md) — TEAM_LEAGUE_MAP expanded to all 10 SA domestic leagues; player search correct URL is /api/players/search. WC special mode was removed — leagueId=1 now uses the standard pipeline.
 - [Player search quota-exhausted mode](player-search-quota.md) — When API-Football quota is exhausted, player search must skip API calls and serve from cache in `relaxed=True` mode; also: tournament league IDs (WC=1, UCL=9, etc.) must NOT be used as cache filter — players are stored under their club leagues. BDL live search (`search_bdl_players()`) is now the final fallback when cache misses.
-- [BDL-only soccer pipeline](bdl-only-soccer.md) — _is_bdl_league is hardcoded True for ALL soccer predictions. Every API-Football call in predict.py is gated. Never revert to API-Football for soccer even if account is restored.
+- [Soccer pipeline — API-Football active](soccer-pipeline-api-football.md) — _is_bdl_league=False; API-Football (API_SPORTS_KEY) is sole soccer source. BDL block gated by `_is_bdl_league and _bdl_soc.is_bdl_league(league_id)` so it never fires.
 - [Soccer prop hard blocks](soccer-prop-blocks.md) — clearances OVER: hard-blocked post-Bayesian-Truth (0% hit rate 13n); shots OVER: AVOID in prop safety (19% hit rate).
 - [Stale pick auto-void](stale-void.md) — Multi-layer stale-void; global cutoff 4d; orphan-void at 48h; audit endpoint excludes voidReason picks from wrong-push count.
 - [Gemini migration](gemini-migration.md) — Full Grok→Gemini swap; thinkingBudget=0 required on 2.5 Flash or short calls return empty parts.
