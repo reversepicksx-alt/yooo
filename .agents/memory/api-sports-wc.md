@@ -49,6 +49,12 @@ Injected after BDL WC block (line ~1386) for `_is_wc=True` predictions.
 `_api_sports_wc.get_game_logs(req.playerName, req.teamName)` fetches all three sources.
 API Sports wins date collisions (richer stats); BDL-only dates kept as supplement.
 
+## Critical: Motor async client
+`config.db` is a Motor (async MongoDB) client — `CACHE_COL.find_one(key)` returns a **coroutine**, not a dict.
+Must use `await CACHE_COL.find_one(...)` directly. Do NOT wrap in `asyncio.to_thread` (thread has no event loop)
+and do NOT call synchronously (returns unawaited coroutine = `_asyncio.Future`).
+The bug manifests as `'_asyncio.Future' object has no attribute 'get'` in `_cache_fresh`.
+
 ## File location
 `backend/api_sports_wc_client.py` — standalone async client with MongoDB caching.
 Cache collection: `db["api_sports_wc_cache"]`. Cache TTLs: team list 24h, fixtures 30min,
