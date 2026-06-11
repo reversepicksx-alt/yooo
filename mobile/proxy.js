@@ -136,7 +136,10 @@ if (IS_PRODUCTION) {
       html = html.replace('</body>', `${LOADING_SCREEN}\n</body>`);
       // index.html must never be cached — JS bundles are content-hashed so they
       // cache forever, but stale index.html means users miss fresh deployments.
-      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+      res.setHeader('Surrogate-Control', 'no-store');
       res.setHeader('Content-Type', 'text/html');
       res.send(html);
     } catch {
