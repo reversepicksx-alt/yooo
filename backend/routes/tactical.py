@@ -7,7 +7,7 @@ Connected to the full system: player cache, API-Sports data.
 import json
 import uuid
 import asyncio as aio
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, HTTPException
 from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
 from openai import OpenAI
@@ -152,9 +152,12 @@ async def _fetch_national_team_fixtures(team_name: str) -> str:
     if not nat_id:
         return ""
     try:
-        fixtures = await api_football_request("fixtures", {"team": nat_id, "last": 5})
+        _nat_from = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y-%m-%d")
+        _nat_to   = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        fixtures = await api_football_request("fixtures", {"team": nat_id, "from": _nat_from, "to": _nat_to})
         if not fixtures:
             return ""
+        fixtures = sorted(fixtures, key=lambda f: f.get("fixture", {}).get("date", ""), reverse=True)[:5]
         lines = [f"[DATA] {nat_name} — Last 5 international fixtures:"]
         for f in fixtures:
             home = f.get("teams", {}).get("home", {}).get("name", "")
@@ -332,7 +335,9 @@ Message: "{message}" """
             if team_id:
                 context_parts.append(f"[DATA] Team: {canonical} (id={team_id})")
                 try:
-                    fixtures = await api_football_request("fixtures", {"team": team_id, "last": 5})
+                    _tf_from = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y-%m-%d")
+                    _tf_to   = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                    fixtures = await api_football_request("fixtures", {"team": team_id, "from": _tf_from, "to": _tf_to})
                     if fixtures:
                         results = []
                         for f in fixtures:

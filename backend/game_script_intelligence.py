@@ -21,6 +21,7 @@ Three intelligence layers:
 """
 
 import asyncio
+from datetime import datetime, timezone, timedelta
 from utils import api_football_request
 
 
@@ -135,8 +136,10 @@ async def _get_opponent_facilitation(
         return empty
 
     try:
+        _gsi_from = (datetime.now(timezone.utc) - timedelta(days=limit * 21)).strftime("%Y-%m-%d")
+        _gsi_to   = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         raw = await asyncio.wait_for(
-            api_football_request("fixtures", {"team": opponent_id, "last": limit}),
+            api_football_request("fixtures", {"team": opponent_id, "from": _gsi_from, "to": _gsi_to}),
             timeout=12.0
         )
     except Exception:
@@ -299,8 +302,10 @@ async def _get_first_to_score_rates(
     if not opponent_id:
         return None
     try:
+        _fg2_from = (datetime.now(timezone.utc) - timedelta(days=limit * 21)).strftime("%Y-%m-%d")
+        _fg2_to   = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         raw = await asyncio.wait_for(
-            api_football_request("fixtures", {"team": opponent_id, "last": limit}),
+            api_football_request("fixtures", {"team": opponent_id, "from": _fg2_from, "to": _fg2_to}),
             timeout=12.0
         )
     except Exception:

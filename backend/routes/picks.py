@@ -3,7 +3,7 @@ import uuid
 import unicodedata
 import asyncio as aio
 import traceback
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 from fastapi import APIRouter, HTTPException
 
@@ -2405,7 +2405,9 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
     recent = None
     for s in [CURRENT_SEASON + 1, CURRENT_SEASON]:
         try:
-            data = await api_football_request("fixtures", {"team": team_id, "last": 5, "season": s})
+            _p_from = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y-%m-%d")
+            _p_to   = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            data = await api_football_request("fixtures", {"team": team_id, "from": _p_from, "to": _p_to, "season": s})
             if data:
                 for f in data:
                     home = f.get("teams", {}).get("home", {}).get("name", "")

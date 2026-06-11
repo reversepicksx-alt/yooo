@@ -7,7 +7,7 @@ import asyncio as aio
 import html as html_module
 import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from config import db, SUPPORTED_LEAGUES, CURRENT_SEASON
 from utils import api_football_request
 
@@ -920,7 +920,9 @@ async def sync_team_fixture_history_for_all_leagues(count: int = 40) -> int:
     print(f"[CACHE] Fixture history: syncing last {count} fixtures for {len(team_ids)} teams")
     for team_id in team_ids:
         try:
-            data = await api_football_request("fixtures", {"team": team_id, "last": count, "status": "FT"})
+            _c_from = (datetime.now(timezone.utc) - timedelta(days=count * 21)).strftime("%Y-%m-%d")
+            _c_to   = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            data = await api_football_request("fixtures", {"team": team_id, "from": _c_from, "to": _c_to, "status": "FT"})
             if data:
                 await db[COL_TEAM_FIXTURES].update_one(
                     {"teamId": team_id},

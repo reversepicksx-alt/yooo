@@ -1048,9 +1048,11 @@ async def _run_auto_settlement():
                     if pd not in (today, yesterday):
                         date_fix_calls.append(api_football_request("fixtures", {"team": tid, "date": pd, "season": CURRENT_SEASON}))
 
+                _fx_from = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y-%m-%d")
+                _fx_to   = datetime.now(timezone.utc).strftime("%Y-%m-%d")
                 settle_batches = await asyncio.gather(
-                    api_football_request("fixtures", {"team": tid, "last": 5, "season": CURRENT_SEASON}),
-                    api_football_request("fixtures", {"team": tid, "last": 5, "season": next_s}),
+                    api_football_request("fixtures", {"team": tid, "from": _fx_from, "to": _fx_to, "season": CURRENT_SEASON}),
+                    api_football_request("fixtures", {"team": tid, "from": _fx_from, "to": _fx_to, "season": next_s}),
                     *date_fix_calls,
                     return_exceptions=True
                 )
@@ -1117,9 +1119,11 @@ async def _run_auto_settlement():
                     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
                     yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
                     next_s = CURRENT_SEASON + 1
+                    _ofx_from = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y-%m-%d")
+                    _ofx_to   = datetime.now(timezone.utc).strftime("%Y-%m-%d")
                     orphan_batches = await asyncio.gather(
-                        api_football_request("fixtures", {"team": tid, "last": 5, "season": CURRENT_SEASON}),
-                        api_football_request("fixtures", {"team": tid, "last": 5, "season": next_s}),
+                        api_football_request("fixtures", {"team": tid, "from": _ofx_from, "to": _ofx_to, "season": CURRENT_SEASON}),
+                        api_football_request("fixtures", {"team": tid, "from": _ofx_from, "to": _ofx_to, "season": next_s}),
                         return_exceptions=True
                     )
                     all_fixtures = []
@@ -1915,7 +1919,11 @@ async def _run_auto_scout():
                     if cached:
                         continue  # Already scouted
 
-                    recent = await api_football_request("fixtures", {"team": tid, "last": 10})
+                    _sc_from = (datetime.now(timezone.utc) - timedelta(days=180)).strftime("%Y-%m-%d")
+                    _sc_to   = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                    recent = await api_football_request("fixtures", {"team": tid, "from": _sc_from, "to": _sc_to})
+                    if recent:
+                        recent = sorted(recent, key=lambda f: f.get("fixture", {}).get("date", ""), reverse=True)[:10]
                     if recent:
                         await db.fixture_player_cache.update_one(
                             {"_k": cache_key},

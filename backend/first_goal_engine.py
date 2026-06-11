@@ -11,7 +11,7 @@ Caching:
 """
 from __future__ import annotations
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 _PROFILE_TTL  = 6  * 3600   # team profile
@@ -107,9 +107,11 @@ async def get_first_goal_profile(
     fixtures = []
     for s in [season, season - 1]:
         try:
+            _fg_from = (datetime.now(timezone.utc) - timedelta(days=num_fixtures * 21)).strftime("%Y-%m-%d")
+            _fg_to   = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             resp = await api_fn("fixtures", {
                 "team": team_id, "season": s,
-                "last": num_fixtures, "status": "FT",
+                "from": _fg_from, "to": _fg_to, "status": "FT",
             })
             fixtures = (resp or {}).get("response", [])
             if fixtures:

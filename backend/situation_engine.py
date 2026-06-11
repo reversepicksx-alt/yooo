@@ -58,9 +58,8 @@ async def _fetch_h2h_same_competition(
             "h2h": f"{team_id}-{opponent_id}",
             "league": league_id,
             "season": season,
-            "last": 4,
         })
-        return data or []
+        return (data or [])[:4]
     except Exception as e:
         print(f"[SITUATION] H2H fetch error: {e}")
         return []

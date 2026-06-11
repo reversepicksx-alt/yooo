@@ -2,7 +2,7 @@ import json
 import httpx
 import asyncio as aio
 import unicodedata
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from fastapi import HTTPException
 from config import API_FOOTBALL_BASE, api_semaphore, get_dynamic_api_key
 
@@ -165,7 +165,9 @@ async def get_recent_fixtures_fast(team_id: int, count: int = 20):
                 return _parse_fixtures_to_results(doc["fixtures"], team_id, count)
 
         # ── Live API fallback ──────────────────────────────────────────
-        fixtures = await api_football_request("fixtures", {"team": team_id, "last": count, "status": "FT"})
+        _u_from = (datetime.now(timezone.utc) - timedelta(days=count * 21)).strftime("%Y-%m-%d")
+        _u_to   = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        fixtures = await api_football_request("fixtures", {"team": team_id, "from": _u_from, "to": _u_to, "status": "FT"})
         return _parse_fixtures_to_results(fixtures or [], team_id, count)
     except Exception:
         return []
