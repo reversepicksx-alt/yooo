@@ -393,11 +393,44 @@ async def mlb_predict(req: MlbPredictRequest):
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Failed to fetch MLB data: {e}")
 
-    if not game_logs and not season_stats:
+    # ── Large-BDL-ID remap ────────────────────────────────────────────────────
+    # BDL's own database can assign player IDs ≥ 100k (e.g. 4668116 for Andrew
+    # Painter).  These are BDL internal IDs, NOT MLB Stats API IDs — but our
+    # routing sends them to the MLB Stats API, which returns "Object not found".
+    # When data is empty for such a player, search MLB Stats API by name to find
+    # the real statsapi ID (e.g. 691725) and retry data fetching.
+    _STATSAPI_THRESHOLD = mlb_client._STATSAPI_ID_THRESHOLD
+    if (not game_logs and not season_stats and not prev_season_stats
+            and player_id >= _STATSAPI_THRESHOLD and req.playerName):
+        try:
+            statsapi_candidates = await mlb_client._statsapi_search_players(
+                req.playerName, limit=5
+            )
+            for sp in statsapi_candidates:
+                alt_id = sp.get("id", 0)
+                if alt_id and alt_id != player_id:
+                    print(f"[MLB PREDICT] Large-BDL ID remap: {player_id}→{alt_id} "
+                          f"for {req.playerName}")
+                    alt_team_id = (sp.get("team") or {}).get("id", 0) or team_id
+                    alt_logs, alt_ss, alt_ps, alt_tg = await _fetch_mlb_data(
+                        alt_id, req.season, team_id=alt_team_id
+                    )
+                    if alt_logs or alt_ss or alt_ps:
+                        player_id      = alt_id
+                        team_id        = alt_team_id
+                        game_logs      = alt_logs
+                        season_stats   = alt_ss
+                        prev_season_stats = alt_ps
+                        team_games     = alt_tg or team_games
+                        break
+        except Exception as _e:
+            log.warning(f"[MLB PREDICT] ID remap attempt failed: {_e}")
+
+    if not game_logs and not season_stats and not prev_season_stats:
         raise HTTPException(
             status_code=404,
-            detail=f"No stats found for {req.playerName} in the {req.season} season. "
-                   f"They may not have played yet this season."
+            detail=f"No stats found for {req.playerName} in recent MLB seasons. "
+                   f"They may not have played recently or may not be in the database."
         )
 
     # ── Team fallback: derive from season stats when player object had no team ──
@@ -574,33 +607,49 @@ async def mlb_predict(req: MlbPredictRequest):
 
 async def _fetch_mlb_data(player_id: int, season: int, team_id: int = 0):
     """Fetch game logs, season stats, and team schedule concurrently.
-    Always fetches previous season game logs too and appends them so players
-    with fewer than 30 current-season games still show a full 30-game history."""
+    Fetches up to 3 seasons (current, season-1, season-2) and backfills game
+    logs so players with limited recent data (e.g. returning from Tommy John)
+    still get a full 30-game history.  season-2 stats are used as a fallback
+    for prev_season_stats when both current and season-1 are empty."""
     import asyncio
 
     async def _empty_list(): return []
 
     game_logs_task      = mlb_client.get_player_game_logs(player_id, season,     limit=30)
     prev_logs_task      = mlb_client.get_player_game_logs(player_id, season - 1, limit=30)
+    prev2_logs_task     = mlb_client.get_player_game_logs(player_id, season - 2, limit=30)
     season_stats_task   = mlb_client.get_season_stats(player_id, season)
     prev_stats_task     = mlb_client.get_season_stats(player_id, season - 1)
+    prev2_stats_task    = mlb_client.get_season_stats(player_id, season - 2)
     team_games_task     = mlb_client.get_team_games(team_id, season) if team_id else _empty_list()
 
-    game_logs, prev_logs, season_stats, prev_stats, team_games = await asyncio.gather(
-        game_logs_task, prev_logs_task, season_stats_task, prev_stats_task, team_games_task,
-        return_exceptions=True,
-    )
+    game_logs, prev_logs, prev2_logs, season_stats, prev_stats, prev2_stats, team_games = \
+        await asyncio.gather(
+            game_logs_task, prev_logs_task, prev2_logs_task,
+            season_stats_task, prev_stats_task, prev2_stats_task,
+            team_games_task,
+            return_exceptions=True,
+        )
 
     if isinstance(game_logs,    Exception): game_logs    = []
     if isinstance(prev_logs,    Exception): prev_logs    = []
+    if isinstance(prev2_logs,   Exception): prev2_logs   = []
     if isinstance(season_stats, Exception): season_stats = None
     if isinstance(prev_stats,   Exception): prev_stats   = None
+    if isinstance(prev2_stats,  Exception): prev2_stats  = None
     if isinstance(team_games,   Exception): team_games   = []
 
-    # Backfill with previous season so we always have up to 30 games of history
+    # Backfill with previous seasons so we always have up to 30 games of history
     if len(game_logs) < 30 and prev_logs:
         needed = 30 - len(game_logs)
         game_logs = list(game_logs) + list(prev_logs[:needed])
+    if len(game_logs) < 30 and prev2_logs:
+        needed = 30 - len(game_logs)
+        game_logs = list(game_logs) + list(prev2_logs[:needed])
+
+    # If season-1 stats are also missing, fall back to season-2 stats
+    if prev_stats is None and prev2_stats is not None:
+        prev_stats = prev2_stats
 
     return game_logs, season_stats, prev_stats, team_games
 

@@ -19,3 +19,4 @@
 - [BDL soccer spatial shot data](bdl-soccer-shots-spatial.md) — /epl/v2/match_shots works (per_page max=100); average_positions/heatmaps are 404; player_id=shooter; xgot>0=on-target; covariate 3f uses xg_shot series.
 - [API Sports WC client](api-sports-wc.md) — Separate account (API_SPORTS_KEY) for WC predictions; WC=league 1, CONCACAF qual=league 31; Mexico has 0 qualifiers (co-host); WC 2022 season=2022 works; player search by name often returns 0 — use team fixtures + name match within fixture instead.
 - [Player search abbreviated names](player-search-abbrev-names.md) — "J. David" for "Jonathan David": Pass B abbrev regex + no seen_pids guard + leagueId=667 rank=99 in dedup.
+- [BDL large-ID routing bug](bdl-large-id-routing.md) — BDL IDs ≥100k (e.g. Painter=4668116) are misrouted to MLB Stats API; remap via name search in predict + search_players fix.

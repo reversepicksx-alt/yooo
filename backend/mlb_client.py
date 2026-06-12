@@ -416,7 +416,12 @@ async def search_players(query: str, limit: int = 15) -> list:
         all(w in (p.get("full_name") or "").lower() for w in q_words)
         for p in players
     )
-    if not players or (len(q_words) > 1 and not bdl_has_full_match):
+    # Also run statsapi search when BDL returned large IDs (≥ _STATSAPI_ID_THRESHOLD).
+    # BDL assigns IDs > 100k to some players (e.g. Andrew Painter = 4668116), but
+    # those IDs are BDL-internal and invalid for MLB Stats API endpoints.
+    # statsapi will return the correct low-range ID (e.g. 691725) for such players.
+    bdl_has_large_id = any(p.get("id", 0) >= _STATSAPI_ID_THRESHOLD for p in players)
+    if not players or (len(q_words) > 1 and not bdl_has_full_match) or bdl_has_large_id:
         statsapi_players = await _statsapi_search_players(q, limit)
         if statsapi_players:
             # Prepend statsapi results (exact matches) ahead of BDL partials
