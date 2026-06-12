@@ -23,6 +23,15 @@ async def _search_players_cache(query: str, league_id: int = None, relaxed: bool
 
     ``relaxed=True`` skips the top-5-league gate so that quota-exhausted mode
     still returns any name-matched player (e.g. Messi at Inter Miami).
+
+    IMPORTANT — abbreviated first-name merge:
+    API-Football stores many players with abbreviated first names (e.g.
+    "Jonathan David" → "J. David").  The all-words AND filter misses them.
+    We always run the last-word (surname) fallback for 2+ word queries and
+    MERGE the results with the AND hits, deduplicated by playerId.  Without
+    this merge, "David Jonathan" (reversed-name false positive, all words
+    present) would block "J. David" (correct abbreviated entry) from ever
+    being returned.
     """
     from cache import COL_PLAYERS
     from utils import strip_accents
@@ -54,20 +63,78 @@ async def _search_players_cache(query: str, league_id: int = None, relaxed: bool
     if not docs and effective_league_id:
         docs = await db[COL_PLAYERS].find(name_filt, {"_id": 0}).limit(20).to_list(20)
 
-    # Multi-word fallback: many cached players have abbreviated first names
-    # (e.g. "R. Jiménez" for "Raul Jimenez") so the all-words filter misses them.
-    # When the full-name search returns nothing, retry with just the last word
-    # (usually the surname) which is almost never abbreviated.
-    if not docs and len(parts) > 1:
+    # Multi-word fallback — runs ALWAYS for 2+ word queries so that abbreviated
+    # first-name cache entries (e.g. "J. David" for "Jonathan David") are merged
+    # with any all-words AND hits.  Two complementary passes:
+    #
+    # Pass A — surname-only search (broad): catches entries where only the
+    #   surname is in the index.  Capped at 100 to avoid Atlas scan timeouts.
+    #   NOTE: popular surnames like "david" produce 100+ hits so J. David may
+    #   fall past position 100 in natural order.  Pass B covers this case.
+    #
+    # Pass B — abbreviated-initial search (targeted): for query "Jonathan David"
+    #   also searches nameClean matching /^j\..*david/ which hits "J. David"
+    #   directly regardless of how many other "david" entries exist.  This is
+    #   the reliable path for the common  "FirstName LastName" → "F. LastName"
+    #   abbreviation pattern used by API-Football.
+    if len(parts) > 1:
         last_part = parts[-1]
+        first_initial = parts[0][0] if parts[0] else ""
+
+        # Pass A — surname search (broad, up to 100 docs).
+        # We intentionally do NOT deduplicate here — the dedup step below
+        # picks the best-ranked entry per player after all passes complete.
         last_filt: dict = {"nameClean": {"$regex": re.escape(last_part)}}
         if effective_league_id:
             last_filt["leagueId"] = effective_league_id
-        docs = await db[COL_PLAYERS].find(last_filt, {"_id": 0}).limit(100).to_list(100)
-        if not docs and effective_league_id:
-            docs = await db[COL_PLAYERS].find(
+        last_docs = await db[COL_PLAYERS].find(last_filt, {"_id": 0}).limit(100).to_list(100)
+        if not last_docs and effective_league_id:
+            last_docs = await db[COL_PLAYERS].find(
                 {"nameClean": {"$regex": re.escape(last_part)}}, {"_id": 0}
             ).limit(100).to_list(100)
+        docs.extend(last_docs or [])
+
+        # Pass B — targeted abbreviated initial search: /^{initial}\. .* {last}$/
+        # Catches "J. David" even when it sits beyond position 100 in Pass A.
+        # Trailing $ prevents "J. Davidson" from matching a "david" query.
+        # Also brings in the non-friendly leagueId entries (e.g. Canada leagueId=10)
+        # so the dedup step can prefer them over friendlies (leagueId=667).
+        if first_initial:
+            abbrev_pattern = rf"^{re.escape(first_initial)}\..+{re.escape(last_part)}$"
+            abbrev_filt: dict = {"nameClean": {"$regex": abbrev_pattern}}
+            if effective_league_id:
+                abbrev_filt["leagueId"] = effective_league_id
+            abbrev_docs = await db[COL_PLAYERS].find(abbrev_filt, {"_id": 0}).limit(50).to_list(50)
+            if not abbrev_docs and effective_league_id:
+                abbrev_docs = await db[COL_PLAYERS].find(
+                    {"nameClean": {"$regex": abbrev_pattern}}, {"_id": 0}
+                ).limit(50).to_list(50)
+            docs.extend(abbrev_docs or [])
+
+    # Deduplicate by playerId: for each player keep the best-ranked entry.
+    # Priority: top-5 club leagues > other real leagues > 667 friendlies.
+    # leagueId=667 (Friendlies) entries are often "opponent team" artefacts
+    # (e.g. Jonathan David shows as "Juventus" from a Canada-vs-Juventus
+    # friendly because the fixture is filed under Juventus's fixture).
+    # By ranking 667 lowest we keep the entry that reflects the player's
+    # actual team (national team, lower league, etc.) over the opponent.
+    _LEAGUE_RANK = {39: 0, 140: 1, 135: 2, 78: 3, 61: 4}  # EPL→Ligue1
+    def _doc_rank(d: dict) -> int:
+        lg = d.get("leagueId", 0)
+        if lg in _LEAGUE_RANK:
+            return _LEAGUE_RANK[lg]       # top-5 clubs: 0-4
+        if lg == 667 or lg == 0:
+            return 99                      # friendlies / unknown: last
+        return 50                          # any other real league
+
+    deduped: dict[int, dict] = {}
+    for d in docs:
+        pid = d.get("playerId", 0)
+        if not pid:
+            continue
+        if pid not in deduped or _doc_rank(d) < _doc_rank(deduped[pid]):
+            deduped[pid] = d
+    docs = list(deduped.values())
 
     # For single-word queries without a league constraint: only use the cache if
     # it contains at least one top-5 European league player — UNLESS relaxed mode
@@ -140,9 +207,44 @@ async def search_players(req: PlayerSearchRequest):
         first_norm  = _strip((p.get("firstname") or "").lower())
         name_words  = set(name_norm.split())
         all_match   = 0 if all(w in name_norm for w in query_parts) else 1
+
+        # Abbreviated-name rescue: "J. David" must match query "Jonathan David".
+        # API-Football stores many players with abbreviated first names (e.g.
+        # Jonathan David → "J. David").  Without this fix, the literal all_match
+        # check fails for "jonathan" (not in "j. david"), so the player is
+        # dropped by _apply_sort_and_quality even though they are the correct result.
+        abbrev_rescued = False
+        if all_match == 1 and len(query_parts) >= 2:
+            stored_tokens = name_norm.split()
+            first_token   = stored_tokens[0] if stored_tokens else ""
+            # A token counts as an abbreviated initial if it is ≤2 chars and
+            # consists of a letter optionally followed by a period.
+            is_initial = (len(first_token) <= 2 and
+                          first_token.rstrip(".").isalpha())
+            if (is_initial and
+                    first_token.rstrip(".") == query_parts[0][0] and
+                    all(w in name_norm for w in query_parts[1:])):
+                all_match      = 0
+                abbrev_rescued = True
+
         # Exact-word match: every query part appears as a complete word in the name.
         # e.g. "messi" is a word in "l. messi" but NOT in "messias".
-        exact_word  = 0 if all(w in name_words for w in query_parts) else 1
+        # Treat abbreviated-name rescues as exact-word matches so they sort above
+        # reversed-name false positives (e.g. "David Jonathan" for "Jonathan David").
+        exact_word  = 0 if (abbrev_rescued or all(w in name_words for w in query_parts)) else 1
+
+        # Reversed-name penalty: "David Jonathan" must not beat "J. David" when
+        # the query is "Jonathan David".  If the stored name has all query words
+        # but the first stored token matches the LAST query part (reversed order),
+        # apply a penalty so correctly-ordered and abbreviated names rank first.
+        name_tokens = name_norm.split()
+        is_reversed = (
+            len(query_parts) >= 2 and len(name_tokens) >= 2 and
+            name_tokens[0] == query_parts[-1] and
+            all(w in name_tokens for w in query_parts)
+        )
+        reversed_penalty = 1 if is_reversed else 0
+
         first_match = 0 if query_parts and first_norm.startswith(query_parts[0]) else 1
         top_league  = 0 if p.get("leagueId") in _TOP5_LEAGUES else 1
         # Initial-match: handles abbreviated names like "R. Jiménez" when the user
@@ -151,7 +253,8 @@ async def search_players(req: PlayerSearchRequest):
         stored_initial = name_norm.split()[0][0] if name_norm.split() else ""
         query_initial  = query_parts[0][0] if query_parts else ""
         initial_match  = 0 if (stored_initial and query_initial and stored_initial == query_initial) else 1
-        return (all_match, exact_word, top_league, has_team, initial_match, first_match, p["name"])
+        return (all_match, reversed_penalty, exact_word, top_league, has_team,
+                initial_match, first_match, p["name"])
 
     def _apply_sort_and_quality(player_list):
         player_list.sort(key=sort_key)
