@@ -158298,10 +158298,11 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
                           setAutoMatch(nm);
                           const _isWcHost = ['mexico', 'united states', 'usa', 'canada'].some(h => (ctxs[0].teamName || '').toLowerCase().includes(h));
                           setVenueOverride(nm.leagueId === 1 && !_isWcHost ? 'neutral' : nm.isHome ? 'home' : 'away');
-                          if (nm.leagueId) {
-                            setLeagueId(nm.leagueId);
-                            setLeagueQuery(nm.leagueName || '');
-                          }
+                        }
+                        // Always set league if we got one — even history fallback (off-season clubs)
+                        if (nm?.leagueId) {
+                          setLeagueId(nm.leagueId);
+                          setLeagueQuery(nm.leagueName || '');
                         }
                       } catch {}
                       setNextMatchLoading(false);
@@ -158355,10 +158356,11 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
                           setAutoMatch(nm);
                           const _isWcHost = ['mexico', 'united states', 'usa', 'canada'].some(h => (ctx.teamName || '').toLowerCase().includes(h));
                           setVenueOverride(nm.leagueId === 1 && !_isWcHost ? 'neutral' : nm.isHome ? 'home' : 'away');
-                          if (nm.leagueId) {
-                            setLeagueId(nm.leagueId);
-                            setLeagueQuery(nm.leagueName || '');
-                          }
+                        }
+                        // Always set league if we got one — even history fallback (off-season clubs)
+                        if (nm?.leagueId) {
+                          setLeagueId(nm.leagueId);
+                          setLeagueQuery(nm.leagueName || '');
                         }
                       } catch {}
                       setNextMatchLoading(false);

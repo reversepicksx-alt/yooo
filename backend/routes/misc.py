@@ -112,48 +112,69 @@ async def player_contexts(player_id: int):
 async def team_next_match(team_id: int):
     """Fetch a team's next scheduled competitive fixture from API-Football.
 
-    Skips club friendlies (leagueId 667) so that off-season clubs don't
-    auto-populate the league picker with an irrelevant pre-season match.
-    Fetches up to 5 upcoming fixtures and returns the first competitive one.
+    Strategy:
+    1. Try the next 20 upcoming fixtures and return the first non-friendly.
+       Using 20 instead of 5 ensures international tournaments (WC, Nations
+       League) with sparse scheduling are captured.
+    2. If nothing upcoming, fall back to the last 10 completed fixtures and
+       return the most recent non-friendly league — so off-season clubs still
+       auto-populate the league picker with their competition (e.g. Premier
+       League for Sunderland in June).  found=False but leagueId/leagueName
+       are set so the frontend can fill in the league even without a next match.
     """
-    # Leagues to skip — pre-season club friendlies, not useful for props
+    # Leagues to skip — pre-season club friendlies / test events
     _SKIP_LEAGUES = {667, 666}
 
+    # ── 1. Upcoming fixtures ──────────────────────────────────────────────────
     try:
-        fixtures = await api_football_request("fixtures", {"team": team_id, "next": 5})
+        fixtures = await api_football_request("fixtures", {"team": team_id, "next": 20})
     except Exception:
         fixtures = None
 
-    if not fixtures:
-        return {"found": False}
-
-    # Pick the first fixture that isn't a friendly / non-competitive match
     fx = None
-    for candidate in fixtures:
-        lid = candidate.get("league", {}).get("id", 0)
-        if lid not in _SKIP_LEAGUES:
-            fx = candidate
-            break
+    if fixtures:
+        for candidate in fixtures:
+            lid = candidate.get("league", {}).get("id", 0)
+            if lid not in _SKIP_LEAGUES:
+                fx = candidate
+                break
 
-    if fx is None:
-        return {"found": False}
+    if fx:
+        home_team = fx.get("teams", {}).get("home", {})
+        away_team = fx.get("teams", {}).get("away", {})
+        league    = fx.get("league", {})
+        is_home   = home_team.get("id") == team_id
+        opponent  = away_team if is_home else home_team
+        return {
+            "found":      True,
+            "isHome":     is_home,
+            "opponent":   {"id": opponent.get("id", 0), "name": opponent.get("name", "")},
+            "leagueId":   league.get("id", 0),
+            "leagueName": league.get("name", ""),
+            "date":       fx.get("fixture", {}).get("date", ""),
+            "fixtureId":  fx.get("fixture", {}).get("id", 0),
+        }
 
-    home_team = fx.get("teams", {}).get("home", {})
-    away_team = fx.get("teams", {}).get("away", {})
-    league = fx.get("league", {})
+    # ── 2. No upcoming fixture — use last completed matches for league info ────
+    try:
+        last_fixtures = await api_football_request("fixtures", {"team": team_id, "last": 10})
+    except Exception:
+        last_fixtures = None
 
-    is_home = home_team.get("id") == team_id
-    opponent = away_team if is_home else home_team
+    if last_fixtures:
+        # API-Football returns last:N newest-first; take the first non-friendly
+        for candidate in last_fixtures:
+            lid = candidate.get("league", {}).get("id", 0)
+            if lid not in _SKIP_LEAGUES:
+                league = candidate.get("league", {})
+                return {
+                    "found":             False,
+                    "leagueId":          league.get("id", 0),
+                    "leagueName":        league.get("name", ""),
+                    "leagueFromHistory": True,
+                }
 
-    return {
-        "found": True,
-        "isHome": is_home,
-        "opponent": {"id": opponent.get("id", 0), "name": opponent.get("name", "")},
-        "leagueId": league.get("id", 0),
-        "leagueName": league.get("name", ""),
-        "date": fx.get("fixture", {}).get("date", ""),
-        "fixtureId": fx.get("fixture", {}).get("id", 0),
-    }
+    return {"found": False}
 
 
 @router.get("/pick-of-the-day")
