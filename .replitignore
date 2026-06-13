@@ -1,0 +1,19 @@
+# ── Large directories excluded from the deployment repl-layer push ──────────
+# These caused deployment timeouts (pipe closed after 20-30min) because the
+# repl layer upload was timing out trying to push ~830MB of binary files.
+#
+# mobile/node_modules — reinstalled by the build command during deploy
+# attached_assets     — user-uploaded chat images, not needed at runtime
+
+mobile/node_modules
+attached_assets
+
+# Python bytecode caches — not needed, always regenerated on first import
+backend/__pycache__
+**/__pycache__
+**/*.pyc
+**/*.pyo
+
+# Expo / Metro caches — not needed in production
+mobile/.expo
+mobile/.metro-bundler-cache-*
