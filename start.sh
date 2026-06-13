@@ -26,6 +26,22 @@ if [ -z "$(ls -A $DB_PATH 2>/dev/null)" ] && [ -d "$OLD_DB_PATH" ] && [ -n "$(ls
   echo "[START] Migration complete."
 fi
 
+# ── Ensure Node.js dependencies are installed ──────────────────────────────
+# mobile/node_modules is excluded from the repl-layer push via .replitignore
+# (it was causing deployment timeouts at ~372 MB). The build command also runs
+# npm install, but Replit may re-apply the repl layer after the build, removing
+# the freshly installed modules. Installing here guarantees the proxy always
+# has express and http-proxy-middleware available before it starts.
+echo "[START] Checking mobile/node_modules..."
+cd /home/runner/workspace/mobile
+if [ ! -d node_modules ] || [ ! -d node_modules/express ]; then
+  echo "[START] Installing mobile dependencies (--legacy-peer-deps)..."
+  npm install --legacy-peer-deps --silent 2>&1 | tail -5
+  echo "[START] Dependencies installed."
+else
+  echo "[START] node_modules present — skipping install."
+fi
+
 # ── Start production proxy FIRST on port 5000 ──────────────────────────────
 # The proxy serves the pre-built static dist/ immediately — it does NOT need
 # MongoDB or the FastAPI backend to answer GET / with HTTP 200. Starting it
