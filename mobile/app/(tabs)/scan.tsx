@@ -1475,8 +1475,8 @@ export default function ScanScreen() {
                     const res = await getPlayerContexts(p.playerId);
                     const ctxs = res?.contexts || [];
                     setPlayerContexts(ctxs);
-                    // If only one context, auto-select it and fetch next match
                     if (ctxs.length === 1) {
+                      // Single context: auto-select + full next-match fetch
                       setSelectedContext(ctxs[0]);
                       setNextMatchLoading(true);
                       try {
@@ -1486,10 +1486,16 @@ export default function ScanScreen() {
                           const _isWcHost = ['mexico','united states','usa','canada'].some(h => (ctxs[0].teamName || '').toLowerCase().includes(h));
                           setVenueOverride(nm.leagueId === 1 && !_isWcHost ? 'neutral' : (nm.isHome ? 'home' : 'away'));
                         }
-                        // Always set league if we got one — even history fallback (off-season clubs)
                         if (nm?.leagueId) { setLeagueId(nm.leagueId); setLeagueQuery(nm.leagueName || ''); }
                       } catch {}
                       setNextMatchLoading(false);
+                    } else if (ctxs.length > 1) {
+                      // Multiple contexts: pre-fetch first context's league so field isn't blank
+                      // while user decides which context to pick. Don't auto-select or set venue.
+                      try {
+                        const nm = await getTeamNextMatch(ctxs[0].teamId);
+                        if (nm?.leagueId) { setLeagueId(nm.leagueId); setLeagueQuery(nm.leagueName || ''); }
+                      } catch {}
                     }
                   } catch {}
                   setContextsLoading(false);
