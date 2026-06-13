@@ -308,6 +308,12 @@ async def predict(req: PredictionRequest):
                 result = {}
                 if fid:
                     result["fixtureId"] = fid
+                # Tag whether the player's team is the API-Football fixture's home team.
+                # Used later to normalise moneyline home/away keys so they always
+                # correspond to real_matchup.homeTeam / awayTeam regardless of
+                # how API-Football labels the fixture.
+                fixture_home_id = fixture_match.get("teams", {}).get("home", {}).get("id")
+                result["playerIsHome"] = (fixture_home_id == actual_team_id)
                 # Extract competition context (league/cup name + round)
                 match_round = fixture_match.get("league", {}).get("round", "")
                 match_league = fixture_match.get("league", {}).get("name", "")
@@ -2195,7 +2201,10 @@ async def predict(req: PredictionRequest):
             if req.propType in poss_sensitive_for_fav and match_odds and match_odds.get("bookmakerOdds"):
                 home_odds = float(match_odds["bookmakerOdds"].get("homeWin", 3.0))
                 away_odds = float(match_odds["bookmakerOdds"].get("awayWin", 3.0))
-                team_odds = home_odds if player_venue == "home" else away_odds
+                # Use fixture's playerIsHome tag so we pick the right odds regardless
+                # of whether player_venue matches the API-Football fixture designation.
+                _pifh_damp = match_odds.get("playerIsHome", player_venue == "home")
+                team_odds = home_odds if _pifh_damp else away_odds
 
                 if team_odds < 1.60:
                     # Heavy favorite — game management likely in 2nd half
@@ -3613,8 +3622,9 @@ JSON: {"confidenceScore":0,"confidenceLevel":"","aiProjection":0,"sharpSummary":
             _gk_blowout_warning = ""
             try:
                 _bk_odds = (odds or {}).get("bookmakerOdds", {})
-                _team_win_odds = float(_bk_odds.get("homeWin" if player_venue == "home" else "awayWin", 99))
-                _opp_win_odds  = float(_bk_odds.get("awayWin" if player_venue == "home" else "homeWin", 99))
+                _pifh_gk = (odds or {}).get("playerIsHome", player_venue == "home")
+                _team_win_odds = float(_bk_odds.get("homeWin" if _pifh_gk else "awayWin", 99))
+                _opp_win_odds  = float(_bk_odds.get("awayWin" if _pifh_gk else "homeWin", 99))
                 if _team_win_odds <= 1.50:
                     _gk_blowout_warning = (
                         f"\n⚠️ BLOWOUT RISK: {req.teamName} are heavy favourites ({_team_win_odds:.2f}). "
@@ -5793,22 +5803,56 @@ Analyze ALL data thoroughly. Return JSON only."""
                 fb_away_poss = round(min(75, max(30, fb_away_avg - 2.5)))
                 real_matchup["expectedPossession"] = {"home": 100 - fb_away_poss, "away": fb_away_poss}
         # 2. Moneyline + favorite from real odds data
+        # IMPORTANT: API-Football's americanOdds.home/away keys refer to whoever
+        # API-Football designates as "home" in the fixture — which may NOT match
+        # the player_venue sent by the frontend (especially for neutral-venue
+        # competitions like the World Cup where "home" is arbitrary).
+        # We normalise here so moneyline.home ALWAYS = the team in
+        # real_matchup["homeTeam"] and moneyline.away ALWAYS = awayTeam.
         if match_odds:
+            # Determine orientation: does the prediction's "home" side align with
+            # the fixture's "home" side as tagged by get_match_odds()?
+            _player_is_fixture_home = match_odds.get("playerIsHome")
+            if _player_is_fixture_home is None:
+                # Fallback: no tag → assume alignment with player_venue
+                _player_is_fixture_home = (player_venue == "home")
+            # Prediction's "home" = player's team when player_venue=="home",
+            #                      = opponent's team when player_venue!="home".
+            # Fixture's "home"    = player's team when playerIsHome==True,
+            #                      = opponent's team when playerIsHome==False.
+            # These agree when: (player_venue=="home") == _player_is_fixture_home
+            _pred_home_matches_fixture_home = (player_venue == "home") == _player_is_fixture_home
+
             if match_odds.get("americanOdds"):
                 ao = match_odds["americanOdds"]
                 if ao.get("home") and ao.get("away") and ao.get("draw"):
+                    if _pred_home_matches_fixture_home:
+                        home_ml, away_ml = str(ao["home"]), str(ao["away"])
+                    else:
+                        # Prediction home/away orientation is flipped vs fixture —
+                        # swap the odds so labels always match displayed team names.
+                        home_ml, away_ml = str(ao["away"]), str(ao["home"])
                     real_matchup["moneyline"] = {
-                        "home": str(ao["home"]),
+                        "home": home_ml,
                         "draw": str(ao["draw"]),
-                        "away": str(ao["away"]),
+                        "away": away_ml,
                     }
             elif match_odds.get("bookmakerOdds"):
                 bo = match_odds["bookmakerOdds"]
                 h, d, a = bo.get("homeWin", ""), bo.get("draw", ""), bo.get("awayWin", "")
                 if h and d and a and h != "N/A" and d != "N/A" and a != "N/A":
-                    real_matchup["moneyline"] = {"home": h, "draw": d, "away": a}
+                    if _pred_home_matches_fixture_home:
+                        real_matchup["moneyline"] = {"home": h, "draw": d, "away": a}
+                    else:
+                        real_matchup["moneyline"] = {"home": a, "draw": d, "away": h}
+            # Normalize favorite to prediction's perspective (not fixture's)
             if match_odds.get("favorite"):
-                real_matchup["favorite"] = match_odds["favorite"]
+                raw_fav = match_odds["favorite"]  # "home" or "away" in fixture terms
+                if _pred_home_matches_fixture_home:
+                    real_matchup["favorite"] = raw_fav
+                else:
+                    # Flip: fixture "home" maps to prediction "away" and vice versa
+                    real_matchup["favorite"] = "away" if raw_fav == "home" else "home"
         # 3. Game type from real stats — deterministic classification
         # ALWAYS override AI's expectedGameType. AI invents values like
         # "KNOCKOUT (HIGH-PRESSURE, END-TO-END)" for group stage matches.
