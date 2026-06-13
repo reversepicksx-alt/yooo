@@ -124,6 +124,8 @@ const PROP_LABELS: Record<string, string> = {
   soccer_fantasy_gk: 'Goalkeeper Score',
 };
 
+const WC_HOST_NAMES = new Set(['mexico', 'united states', 'usa', 'canada']);
+
 const BAND_ACCENT: Record<string, string> = {
   aligned:  '#39FF14',
   aligned_warn: '#39FF14',
@@ -1485,7 +1487,7 @@ export default function ScanScreen() {
                         const nm = await getTeamNextMatch(ctxs[0].teamId);
                         if (nm?.found) {
                           setAutoMatch(nm);
-                          const _isWcHost = ['mexico','united states','usa','canada'].some(h => (ctxs[0].teamName || '').toLowerCase().includes(h));
+                          const _isWcHost = WC_HOST_NAMES.has((ctxs[0].teamName || '').toLowerCase().trim());
                           setVenueOverride(nm.leagueId === 1 && !_isWcHost ? 'neutral' : (nm.isHome ? 'home' : 'away'));
                         }
                         if (nm?.leagueId) { setLeagueId(nm.leagueId); setLeagueQuery(nm.leagueName || ''); }
@@ -1537,7 +1539,7 @@ export default function ScanScreen() {
                             const nm = await getTeamNextMatch(ctx.teamId);
                             if (nm?.found) {
                               setAutoMatch(nm);
-                              const _isWcHost = ['mexico','united states','usa','canada'].some(h => (ctx.teamName || '').toLowerCase().includes(h));
+                              const _isWcHost = WC_HOST_NAMES.has((ctx.teamName || '').toLowerCase().trim());
                               setVenueOverride(nm.leagueId === 1 && !_isWcHost ? 'neutral' : (nm.isHome ? 'home' : 'away'));
                             }
                             // Always set league if we got one — even history fallback (off-season clubs)
