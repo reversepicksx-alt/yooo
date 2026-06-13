@@ -201,6 +201,7 @@ async def sync_squad(team_id: int, team_name: str = "", league_id: int = 0):
             _name_parts = name.strip().split()
             _first_part = _name_parts[0] if _name_parts else ""
             _first_name_clean = strip_accents(_first_part.lower()) if _first_part else ""
+            _now = datetime.now(timezone.utc)
             doc = {
                 "playerId": p.get("id"),
                 "name": name,
@@ -214,7 +215,8 @@ async def sync_squad(team_id: int, team_name: str = "", league_id: int = 0):
                 "teamId": team_id,
                 "teamName": team_name,
                 "leagueId": league_id,
-                "_dt": datetime.now(timezone.utc),
+                "_dt": _now,
+                "_cachedAt": _now.timestamp(),
             }
             ops.append(doc)
 
@@ -998,6 +1000,113 @@ async def get_cache_status() -> dict:
         "teamFixtureHistory": fixture_history_count,
         "lastSync": meta,
     }
+
+
+# ══════════════════════════════════════════════
+#  INDIVIDUAL PLAYER CACHE REFRESH
+# ══════════════════════════════════════════════
+
+PLAYER_STALE_SECONDS = 60 * 24 * 3600  # 60 days — trigger auto-refresh on search hit
+
+
+async def refresh_player_cache(player_id: int) -> dict:
+    """Re-sync a single player's cache entry from the latest API-Football data.
+
+    Fetches the player's current team/league from the most recent season and
+    updates every ``cache_players`` document for that playerId in-place.
+    Also stamps ``_cachedAt`` so future staleness checks work correctly.
+
+    Returns a result dict with keys: playerId, name, teamName, leagueId,
+    matched (count of updated docs), or an ``error`` key on failure.
+    """
+    from utils import strip_accents
+
+    for season in [CURRENT_SEASON + 1, CURRENT_SEASON, CURRENT_SEASON - 1]:
+        try:
+            data = await api_football_request("players", {"id": player_id, "season": season})
+            if not data:
+                continue
+
+            item = data[0]
+            player_info = item.get("player", {})
+            stats = item.get("statistics", [])
+            if not stats:
+                continue
+
+            latest = stats[-1]
+            team = latest.get("team", {})
+            league = latest.get("league", {})
+
+            team_id = team.get("id")
+            team_name = team.get("name", "")
+            league_id = league.get("id", 0)
+
+            if not team_id:
+                continue
+
+            firstname = player_info.get("firstname") or ""
+            lastname = player_info.get("lastname") or ""
+            fullname = (
+                f"{firstname} {lastname}".strip()
+                if firstname and lastname
+                else player_info.get("name", "")
+            )
+            if not fullname:
+                continue
+
+            fn_clean = strip_accents(firstname.lower())
+            name_lower = fullname.lower()
+            name_clean = strip_accents(name_lower)
+            now = datetime.now(timezone.utc)
+
+            # Derive position from latest stats if available
+            position = (
+                player_info.get("position")
+                or latest.get("games", {}).get("position")
+                or ""
+            )
+
+            update_fields = {
+                "teamId": team_id,
+                "teamName": team_name,
+                "leagueId": league_id,
+                "name": fullname,
+                "nameLower": name_lower,
+                "nameClean": name_clean,
+                "firstNameClean": fn_clean,
+                "age": player_info.get("age"),
+                "position": position,
+                "_dt": now,
+                "_cachedAt": now.timestamp(),
+            }
+
+            result = await db[COL_PLAYERS].update_many(
+                {"playerId": player_id},
+                {"$set": update_fields},
+            )
+
+            if result.matched_count == 0:
+                # Player not yet in cache — insert a minimal entry
+                update_fields["playerId"] = player_id
+                await db[COL_PLAYERS].insert_one(update_fields)
+
+            print(
+                f"[CACHE] Refreshed player {player_id} ({fullname}) → "
+                f"{team_name} (league {league_id}, matched {result.matched_count})"
+            )
+            return {
+                "playerId": player_id,
+                "name": fullname,
+                "teamName": team_name,
+                "leagueId": league_id,
+                "matched": result.matched_count,
+            }
+
+        except Exception as e:
+            print(f"[CACHE] refresh_player_cache error for player {player_id} season {season}: {e}")
+            continue
+
+    return {"playerId": player_id, "error": "No API-Football data found for any recent season"}
 
 
 # ══════════════════════════════════════════════

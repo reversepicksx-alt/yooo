@@ -1,5 +1,6 @@
 import asyncio as aio
 import re
+import time
 import unicodedata
 from fastapi import APIRouter
 
@@ -142,6 +143,33 @@ async def _search_players_cache(query: str, league_id: int = None, relaxed: bool
     if not effective_league_id and len(parts) == 1 and docs and not relaxed:
         if not any(d.get("leagueId") in TOP_LEAGUES for d in docs):
             return []
+
+    # Fire background refresh for any player whose cache entry is >60 days stale.
+    # This keeps transferred players up-to-date without blocking the search response.
+    from cache import PLAYER_STALE_SECONDS
+    _now_ts = time.time()
+    stale_pids: set[int] = set()
+    for d in docs:
+        cached_at = d.get("_cachedAt")
+        if cached_at is None:
+            # Backfill: derive from legacy _dt datetime object if present
+            dt_val = d.get("_dt")
+            if dt_val and hasattr(dt_val, "timestamp"):
+                cached_at = dt_val.timestamp()
+        if cached_at and (_now_ts - cached_at) > PLAYER_STALE_SECONDS:
+            pid = d.get("playerId")
+            if pid:
+                stale_pids.add(pid)
+
+    if stale_pids:
+        async def _bg_refresh_stale(pids: set[int]):
+            from cache import refresh_player_cache
+            for pid in pids:
+                try:
+                    await refresh_player_cache(pid)
+                except Exception:
+                    pass
+        aio.ensure_future(_bg_refresh_stale(stale_pids))
 
     results = []
     for d in docs:

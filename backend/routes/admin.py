@@ -550,3 +550,24 @@ async def invalidate_position_cache(req: _PositionInvalidateRequest):
             "matched": result.matched_count,
             "modified": result.modified_count,
         }
+
+
+class RefreshPlayerRequest(BaseModel):
+    email: str
+    token: str
+    player_id: int
+
+
+@router.post("/refresh-player")
+async def admin_refresh_player(req: RefreshPlayerRequest):
+    """Force re-sync a player's cache_players entry from API-Football (owner only).
+
+    Useful for recently transferred players whose cache entry still shows the old team.
+    Fetches the player's latest season stats and updates teamId/teamName/leagueId in-place.
+    """
+    await verify_owner(req.email, req.token)
+    from cache import refresh_player_cache
+    result = await refresh_player_cache(req.player_id)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return {"success": True, **result}
