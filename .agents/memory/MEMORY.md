@@ -20,3 +20,5 @@
 - [API Sports WC client](api-sports-wc.md) — Separate account (API_SPORTS_KEY) for WC predictions; WC=league 1, CONCACAF qual=league 31; Mexico has 0 qualifiers (co-host); WC 2022 season=2022 works; player search by name often returns 0 — use team fixtures + name match within fixture instead.
 - [Player search abbreviated names](player-search-abbrev-names.md) — "J. David" for "Jonathan David": Pass B abbrev regex + no seen_pids guard + leagueId=667 rank=99 in dedup.
 - [BDL large-ID routing bug](bdl-large-id-routing.md) — BDL IDs ≥100k (e.g. Painter=4668116) are misrouted to MLB Stats API; remap via name search in predict + search_players fix.
+- [Next-match caching and multi-context league](next-match-cache.md) — team_next_match has 1h TTL cache (next_match_cache); multi-context players pre-fetch ctxs[0] on select so league never blank.
+- [Deployment timeout fix](deployment-replitignore.md) — attached_assets (456MB) + mobile/node_modules (372MB) caused repl-layer push to timeout; fixed with .replitignore; build command reinstalls node_modules fresh each deploy.

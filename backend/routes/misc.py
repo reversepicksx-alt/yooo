@@ -14,6 +14,10 @@ router = APIRouter(prefix="/api", tags=["misc"])
 COL_PLAYER_CTX_CACHE = "player_ctx_cache"
 _CONTEXT_CACHE_TTL_H = 12  # hours
 
+# Collection for caching team next-match results
+COL_NEXT_MATCH_CACHE = "next_match_cache"
+_NEXT_MATCH_TTL_H = 1  # 1 hour — short enough to pick up schedule changes
+
 
 @router.get("/players/{player_id}/contexts")
 async def player_contexts(player_id: int):
@@ -112,6 +116,9 @@ async def player_contexts(player_id: int):
 async def team_next_match(team_id: int):
     """Fetch a team's next scheduled competitive fixture from API-Football.
 
+    Results are cached for 1 h so repeated calls (e.g. context pre-fetch +
+    user tap) return instantly without hitting the API quota.
+
     Strategy:
     1. Try the next 20 upcoming fixtures and return the first non-friendly.
        Using 20 instead of 5 ensures international tournaments (WC, Nations
@@ -122,6 +129,19 @@ async def team_next_match(team_id: int):
        League for Sunderland in June).  found=False but leagueId/leagueName
        are set so the frontend can fill in the league even without a next match.
     """
+    # ── Cache check ───────────────────────────────────────────────────────────
+    now = datetime.now(timezone.utc)
+    try:
+        cached = await db[COL_NEXT_MATCH_CACHE].find_one({"teamId": team_id})
+        if cached:
+            age_h = (now - cached["cachedAt"].replace(tzinfo=timezone.utc)
+                     if cached["cachedAt"].tzinfo is None
+                     else now - cached["cachedAt"]).total_seconds() / 3600
+            if age_h < _NEXT_MATCH_TTL_H:
+                return cached["result"]
+    except Exception:
+        pass
+
     # Leagues to skip — pre-season club friendlies / test events
     _SKIP_LEAGUES = {667, 666}
 
@@ -139,13 +159,14 @@ async def team_next_match(team_id: int):
                 fx = candidate
                 break
 
+    result = None
     if fx:
         home_team = fx.get("teams", {}).get("home", {})
         away_team = fx.get("teams", {}).get("away", {})
         league    = fx.get("league", {})
         is_home   = home_team.get("id") == team_id
         opponent  = away_team if is_home else home_team
-        return {
+        result = {
             "found":      True,
             "isHome":     is_home,
             "opponent":   {"id": opponent.get("id", 0), "name": opponent.get("name", "")},
@@ -155,26 +176,42 @@ async def team_next_match(team_id: int):
             "fixtureId":  fx.get("fixture", {}).get("id", 0),
         }
 
-    # ── 2. No upcoming fixture — use last completed matches for league info ────
-    try:
-        last_fixtures = await api_football_request("fixtures", {"team": team_id, "last": 10})
-    except Exception:
-        last_fixtures = None
+    if result is None:
+        # ── 2. No upcoming fixture — use last completed matches for league info ─
+        try:
+            last_fixtures = await api_football_request("fixtures", {"team": team_id, "last": 10})
+        except Exception:
+            last_fixtures = None
 
-    if last_fixtures:
-        # API-Football returns last:N newest-first; take the first non-friendly
-        for candidate in last_fixtures:
-            lid = candidate.get("league", {}).get("id", 0)
-            if lid not in _SKIP_LEAGUES:
-                league = candidate.get("league", {})
-                return {
-                    "found":             False,
-                    "leagueId":          league.get("id", 0),
-                    "leagueName":        league.get("name", ""),
-                    "leagueFromHistory": True,
-                }
+        if last_fixtures:
+            # API-Football returns last:N newest-first; take the first non-friendly
+            for candidate in last_fixtures:
+                lid = candidate.get("league", {}).get("id", 0)
+                if lid not in _SKIP_LEAGUES:
+                    league = candidate.get("league", {})
+                    result = {
+                        "found":             False,
+                        "leagueId":          league.get("id", 0),
+                        "leagueName":        league.get("name", ""),
+                        "leagueFromHistory": True,
+                    }
+                    break
 
-    return {"found": False}
+    if result is None:
+        result = {"found": False}
+
+    # ── Cache the result ──────────────────────────────────────────────────────
+    if result.get("leagueId"):  # only cache useful results
+        try:
+            await db[COL_NEXT_MATCH_CACHE].update_one(
+                {"teamId": team_id},
+                {"$set": {"teamId": team_id, "result": result, "cachedAt": now}},
+                upsert=True,
+            )
+        except Exception:
+            pass
+
+    return result
 
 
 @router.get("/pick-of-the-day")
