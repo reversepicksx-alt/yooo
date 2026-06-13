@@ -1115,6 +1115,41 @@ async def correct_pick(req: CorrectPickRequest):
 # =============================================
 
 # Soccer stat extraction map
+def _settle_outfield_fantasy(s: dict) -> float:
+    """PrizePicks outfield player score from a raw API-Football player stat dict."""
+    return round(
+        (s.get("goals", {}).get("total") or 0) * 6.0
+        + (s.get("goals", {}).get("assists") or 0) * 3.0
+        + (s.get("shots", {}).get("on") or 0) * 1.5
+        + (s.get("passes", {}).get("key") or 0) * 1.0
+        + (s.get("tackles", {}).get("total") or 0) * 0.5
+        + (s.get("tackles", {}).get("interceptions") or 0) * 0.5
+        + (s.get("tackles", {}).get("clearances") or 0) * 0.5
+        + (s.get("fouls", {}).get("drawn") or 0) * 0.5
+        - (s.get("offsides") or 0) * 0.5
+        - (s.get("cards", {}).get("yellow") or 0) * 1.0
+        - (s.get("cards", {}).get("red") or 0) * 3.0
+        - (s.get("penalty", {}).get("missed") or 0) * 2.0,
+        2,
+    )
+
+
+def _settle_gk_fantasy(s: dict) -> float:
+    """PrizePicks goalkeeper score from a raw API-Football player stat dict."""
+    conceded = s.get("goals", {}).get("conceded") or 0
+    minutes = s.get("games", {}).get("minutes") or 0
+    clean_sheet = 1 if (conceded == 0 and minutes >= 60) else 0
+    return round(
+        (s.get("goals", {}).get("saves") or 0) * 1.0
+        - conceded * 1.0
+        + clean_sheet * 4.0
+        + (s.get("penalty", {}).get("saved") or 0) * 5.0
+        - (s.get("cards", {}).get("yellow") or 0) * 1.0
+        - (s.get("cards", {}).get("red") or 0) * 3.0,
+        2,
+    )
+
+
 SOCCER_STAT_MAP = {
     "goals": lambda s: s.get("goals", {}).get("total"),
     "assists": lambda s: s.get("goals", {}).get("assists"),
@@ -1135,6 +1170,9 @@ SOCCER_STAT_MAP = {
     "clearances": lambda s: s.get("tackles", {}).get("clearances"),
     "duels_won": lambda s: s.get("duels", {}).get("won"),
     "yellow_cards": lambda s: s.get("cards", {}).get("yellow"),
+    # PrizePicks soccer fantasy props
+    "soccer_fantasy_outfield": _settle_outfield_fantasy,
+    "soccer_fantasy_gk": _settle_gk_fantasy,
 }
 
 @router.post("/picks/live-update")

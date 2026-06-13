@@ -120,6 +120,8 @@ const PROP_LABELS: Record<string, string> = {
   pitching_outs: 'Pitching Outs',
   maps_1_3_kills: 'Maps 1-3 Kills',
   maps_1_3_headshots: 'Maps 1-3 Headshots',
+  soccer_fantasy_outfield: 'Player Score',
+  soccer_fantasy_gk: 'Goalkeeper Score',
 };
 
 const BAND_ACCENT: Record<string, string> = {

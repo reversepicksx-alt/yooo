@@ -32,6 +32,7 @@ const PROP_LABELS: Record<string, string> = {
   interceptions: 'Interceptions', blocks: 'Blocks', fouls_drawn: 'Fouls Drawn',
   fouls_committed: 'Fouls', clearances: 'Clearances', duels_won: 'Duels Won',
   yellow_cards: 'Yellow Cards', shots_assisted: 'Shot Assists', passes: 'Passes',
+  soccer_fantasy_outfield: 'Player Score', soccer_fantasy_gk: 'GK Score',
 };
 
 const MLB_PROP_SET = new Set([

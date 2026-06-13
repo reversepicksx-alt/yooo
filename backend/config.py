@@ -374,6 +374,8 @@ STAT_FIELD_MAP = {
     "clearances": "tackles_clearances",
     "duels_won": "duels_won",
     "yellow_cards": "cards_yellow",
+    "soccer_fantasy_gk": "fantasy_pts_gk",
+    "soccer_fantasy_outfield": "fantasy_pts_outfield",
 }
 
 STAT_LAMBDA_MAP = {
