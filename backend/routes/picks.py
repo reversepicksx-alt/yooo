@@ -1856,7 +1856,7 @@ async def _process_bdl_live(picks: list, email: str) -> list:
 
 
 async def _process_soccer_live(picks: list, email: str) -> list:
-    """Route soccer live-update picks: BDL for supported leagues, 'scheduled' otherwise."""
+    """Route soccer live-update picks: BDL for supported leagues, API-Football otherwise."""
     import soccer_bdl_client as _sbc
     bdl_picks   = [p for p in picks if _sbc.is_bdl_league(p.get("leagueId", 0))]
     other_picks = [p for p in picks if not _sbc.is_bdl_league(p.get("leagueId", 0))]
@@ -1865,8 +1865,61 @@ async def _process_soccer_live(picks: list, email: str) -> list:
     if bdl_picks:
         bdl_results = await _process_soccer_bdl_live(bdl_picks, email)
         results.extend(bdl_results)
-    for p in other_picks:
-        results.append({"pickId": p.get("pickId", ""), "matchStatus": "scheduled"})
+    if other_picks:
+        api_results = await _process_api_football_live(other_picks, email)
+        results.extend(api_results)
+    return results
+
+
+async def _process_api_football_live(picks: list, email: str) -> list:
+    """Live tracking for API-Football leagues (WC, UCL, top European leagues, etc.).
+
+    Strategy:
+      1. Group picks by teamId to batch fixture fetches (one API call per team).
+      2. For each team fetch live fixtures first; fall back to today's fixtures.
+      3. Use _match_soccer_fixture to find the right game (live match wins always).
+      4. Call _build_soccer_update to get current stats + pace + hitPct.
+    """
+    results = []
+
+    # Collect unique team IDs and pre-fetch fixtures in parallel
+    team_ids = list({p.get("teamId") for p in picks if p.get("teamId")})
+
+    async def _fetch_team_fixtures(tid: int) -> list:
+        try:
+            live = await api_football_request("fixtures", {"team": tid, "live": "all"})
+            if live:
+                return live
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            today_data = await api_football_request("fixtures", {"team": tid, "date": today})
+            return today_data or []
+        except Exception:
+            return []
+
+    fixture_lists = await aio.gather(*[_fetch_team_fixtures(tid) for tid in team_ids])
+    team_fixture_map: dict[int, list] = dict(zip(team_ids, fixture_lists))
+
+    for pick in picks:
+        team_id = pick.get("teamId")
+        pick_id = pick.get("pickId", "")
+        if not team_id:
+            results.append({"pickId": pick_id, "matchStatus": "scheduled"})
+            continue
+
+        fixtures = team_fixture_map.get(team_id, [])
+        fixture = _match_soccer_fixture(fixtures, pick.get("opponentName", ""), pick.get("timestamp"))
+
+        if not fixture:
+            results.append({"pickId": pick_id, "matchStatus": "scheduled"})
+            continue
+
+        try:
+            update = await _build_soccer_update(pick, fixture, email)
+            results.append(update)
+        except Exception:
+            traceback.print_exc()
+            results.append({"pickId": pick_id, "matchStatus": "scheduled"})
+
     return results
 
 
