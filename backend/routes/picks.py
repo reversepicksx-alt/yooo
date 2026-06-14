@@ -1922,45 +1922,72 @@ async def _process_api_football_live(picks: list, email: str) -> list:
         away = (fixture.get("teams", {}).get("away", {}).get("name") or "").lower()
         return tn in home or home in tn or tn in away or away in tn
 
-    results = []
+    # ── Pass 1: resolve fixture for every pick ───────────────────────────
+    pick_fixtures: list[tuple[dict, dict | None]] = []  # (pick, fixture|None)
     for pick in picks:
-        pick_id    = pick.get("pickId", "")
-        team_id    = pick.get("teamId") or 0
-        league_id  = pick.get("leagueId") or 0
-        team_name  = pick.get("teamName") or ""
-        opp_name   = pick.get("opponentName") or ""
-        pick_ts    = pick.get("timestamp")
+        team_id   = pick.get("teamId") or 0
+        league_id = pick.get("leagueId") or 0
+        team_name = pick.get("teamName") or ""
+        opp_name  = pick.get("opponentName") or ""
+        pick_ts   = pick.get("timestamp")
 
         fixture = None
 
-        # T1: teamId lookup
+        # T1: teamId → direct team lookup (most specific)
         if team_id and team_id in team_fix_map:
             fixture = _match_soccer_fixture(team_fix_map[team_id], opp_name, pick_ts)
 
-        # T2: leagueId lookup + team name filter
+        # T2: leagueId → league-wide lookup filtered by team name
         if not fixture and league_id and league_id in league_fix_map:
-            league_fixtures = [
-                f for f in league_fix_map[league_id]
-                if _team_name_in_fixture(f, team_name)
-            ]
-            fixture = _match_soccer_fixture(league_fixtures, opp_name, pick_ts)
-            if not fixture and league_fixtures:
-                fixture = _match_soccer_fixture(league_fixtures, "", pick_ts)
+            lg_fxts = [f for f in league_fix_map[league_id] if _team_name_in_fixture(f, team_name)]
+            fixture = _match_soccer_fixture(lg_fxts, opp_name, pick_ts)
+            if not fixture and lg_fxts:
+                fixture = _match_soccer_fixture(lg_fxts, "", pick_ts)
 
-        # T3: all live fixtures + team name filter
+        # T3: all live fixtures filtered by team name (broadest fallback)
         if not fixture and all_live_fixtures and team_name:
-            all_team_fixtures = [
-                f for f in all_live_fixtures
-                if _team_name_in_fixture(f, team_name)
-            ]
-            fixture = _match_soccer_fixture(all_team_fixtures, opp_name, pick_ts)
+            all_fxts = [f for f in all_live_fixtures if _team_name_in_fixture(f, team_name)]
+            fixture = _match_soccer_fixture(all_fxts, opp_name, pick_ts)
 
+        pick_fixtures.append((pick, fixture))
+
+    # ── Pre-fetch fixtures/players once per unique fixture ID ─────────────
+    # This avoids N separate API calls (one per pick) for the same match
+    # when multiple picks (e.g. C. Arcus + Robertson in Haiti vs Scotland)
+    # share the same fixture. Rate-limiting is the #1 cause of currentValue=0.
+    unique_fixture_ids = list({
+        f.get("fixture", {}).get("id")
+        for _, f in pick_fixtures
+        if f is not None and f.get("fixture", {}).get("id")
+    })
+
+    async def _fetch_players(fid: int) -> list:
+        try:
+            data = await api_football_request("fixtures/players", {"fixture": fid})
+            if data:
+                print(f"[LIVE] fixtures/players fixture={fid} → {len(data)} teams")
+            else:
+                print(f"[LIVE] fixtures/players fixture={fid} → empty (rate-limit?)")
+            return data or []
+        except Exception:
+            return []
+
+    player_data_lists = await aio.gather(*[_fetch_players(fid) for fid in unique_fixture_ids])
+    players_by_fixture: dict[int, list] = dict(zip(unique_fixture_ids, player_data_lists))
+
+    # ── Pass 2: build update for each pick using pre-fetched player data ──
+    results = []
+    for pick, fixture in pick_fixtures:
+        pick_id = pick.get("pickId", "")
         if not fixture:
             results.append({"pickId": pick_id, "matchStatus": "scheduled"})
             continue
 
+        fid = fixture.get("fixture", {}).get("id")
+        prefetched = players_by_fixture.get(fid)  # list or None
+
         try:
-            update = await _build_soccer_update(pick, fixture, email)
+            update = await _build_soccer_update(pick, fixture, email, prefetched_players=prefetched)
             results.append(update)
         except Exception:
             traceback.print_exc()
@@ -2218,8 +2245,14 @@ async def _fetch_fixture_possession(fixture_id: int, home_id: int, away_id: int)
         return (None, None)
 
 
-async def _build_soccer_update(pick: dict, fixture: dict, email: str) -> dict:
-    """Build the live update response for a soccer pick."""
+async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched_players: list | None = None) -> dict:
+    """Build the live update response for a soccer pick.
+
+    Args:
+        prefetched_players: If provided, skip the fixtures/players API call and use
+            this data directly (list of team-player objects from fixtures/players response).
+            Pass this when multiple picks share the same fixture to avoid redundant calls.
+    """
     fixture_id = fixture.get("fixture", {}).get("id")
     status_short = fixture.get("fixture", {}).get("status", {}).get("short", "")
     elapsed = fixture.get("fixture", {}).get("status", {}).get("elapsed") or 0
@@ -2244,11 +2277,17 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str) -> dict:
     if not is_live and not is_finished:
         return {"pickId": pick["pickId"], "matchStatus": "scheduled", "fixtureId": fixture_id}
 
-    # Fetch player stats + fixture possession in parallel
-    player_stats_data, (home_poss, away_poss) = await aio.gather(
-        api_football_request("fixtures/players", {"fixture": fixture_id}),
-        _fetch_fixture_possession(fixture_id, home_team_id, away_team_id),
-    )
+    # Fetch player stats + fixture possession in parallel.
+    # If prefetched_players was supplied by the caller (e.g. from _process_api_football_live
+    # which batches one fixtures/players call per unique fixture), skip the API round-trip.
+    if prefetched_players is not None:
+        player_stats_data = prefetched_players
+        (home_poss, away_poss) = await _fetch_fixture_possession(fixture_id, home_team_id, away_team_id)
+    else:
+        player_stats_data, (home_poss, away_poss) = await aio.gather(
+            api_football_request("fixtures/players", {"fixture": fixture_id}),
+            _fetch_fixture_possession(fixture_id, home_team_id, away_team_id),
+        )
     current_value = None
     minutes_played = 0
 
