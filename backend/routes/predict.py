@@ -2304,22 +2304,24 @@ async def predict(req: PredictionRequest):
         if player_game_logs:
             # Add summary stats for the game logs
             target_field_map = {
-                "pass_attempts":   "passes_total",
-                "shots":           "shots_total",
-                "shots_on_target": "shots_on",
-                "tackles":         "tackles_total",
-                "key_passes":      "passes_key",
-                "shots_assisted":  "passes_key",
-                "saves":           "goals_saves",
-                "interceptions":   "tackles_interceptions",
-                "clearances":      "tackles_clearances",
-                "blocks":          "tackles_blocks",
-                "dribbles":        "dribbles_attempts",
-                "fouls_drawn":     "fouls_drawn",
-                "fouls_committed": "fouls_committed",
-                "crosses":         "passes_crosses",
-                "duels_won":       "duels_won",
-                "yellow_cards":    "cards_yellow",
+                "pass_attempts":          "passes_total",
+                "shots":                  "shots_total",
+                "shots_on_target":        "shots_on",
+                "tackles":                "tackles_total",
+                "key_passes":             "passes_key",
+                "shots_assisted":         "passes_key",
+                "saves":                  "goals_saves",
+                "interceptions":          "tackles_interceptions",
+                "clearances":             "tackles_clearances",
+                "blocks":                 "tackles_blocks",
+                "dribbles":               "dribbles_attempts",
+                "fouls_drawn":            "fouls_drawn",
+                "fouls_committed":        "fouls_committed",
+                "crosses":                "passes_crosses",
+                "duels_won":              "duels_won",
+                "yellow_cards":           "cards_yellow",
+                "soccer_fantasy_outfield": "fantasy_pts_outfield",
+                "soccer_fantasy_gk":       "fantasy_pts_gk",
             }
             target_field = target_field_map.get(req.propType, "passes_total")
             values = [g.get(target_field) for g in player_game_logs if g.get(target_field) is not None]
@@ -3631,6 +3633,8 @@ JSON: {"confidenceScore":0,"confidenceLevel":"","aiProjection":0,"sharpSummary":
                 "goals": "goals_total", "assists": "goals_assists",
                 "duels_won": "duels_won", "yellow_cards": "cards_yellow",
                 "fouls_committed": "fouls_committed",
+                "soccer_fantasy_outfield": "fantasy_pts_outfield",
+                "soccer_fantasy_gk": "fantasy_pts_gk",
             }
             target_field = target_field_map.get(req.propType, "passes_total")
             values = [g.get(target_field) for g in player_game_logs if g.get(target_field) is not None]
@@ -4198,7 +4202,13 @@ This means the model has found SPECIFIC MATCHUP-AMPLIFICATION FACTORS that drive
 Your Analysis section MUST focus on: WHY does THIS specific opponent ({req.opponentName}) amplify this stat above the season average? Look at the game logs for the player's highest outputs — those opponents share traits with today's matchup. The LOW games are NOT the anchor.
 Amplification factors to explore: opponent defensive passivity, possession dominance scenario, positional matchup that inflates volume."""
 
-        prompt = f"""{req.playerName} ({display_position}) — plays for {corrected_team_name} ({player_venue.upper()}) | OPPONENT: {req.opponentName} | {req.propType} line {req.line}
+        _PROP_DISPLAY_LABELS = {
+            "soccer_fantasy_outfield": "PrizePicks Player Score (fantasy pts: Goal+6, Assist+3, SOT+1.5, KeyPass+1, Tackle/Int/Clear/FoulDrawn+0.5, Offside-0.5, Yellow-1, Red-3, MissedPen-2)",
+            "soccer_fantasy_gk":       "PrizePicks Goalkeeper Score (fantasy pts: Save+1, GoalAllowed-1, CleanSheet60min+4, PenSave+5, Yellow-1, Red-3)",
+        }
+        _prop_display = _PROP_DISPLAY_LABELS.get(req.propType, req.propType)
+
+        prompt = f"""{req.playerName} ({display_position}) — plays for {corrected_team_name} ({player_venue.upper()}) | OPPONENT: {req.opponentName} | {_prop_display} line {req.line}
 IMPORTANT: This player's current CLUB is {corrected_team_name}. Do NOT reference any national team or previous club in your analysis — use only "{corrected_team_name}" when referring to this player's team.{_disambig_note}
 Odds: {json.dumps(match_odds.get('bookmakerOdds',{}), default=str) if match_odds else 'N/A'}{match_context}
 {pronoun_note}
