@@ -899,28 +899,41 @@ async def predict(req: PredictionRequest):
 
                         # Check prefetch cache first — avoids extra API call if already cached
                         cache_key = f"fxp_{fid}_{player_id}"
-                        cached_doc = await db.fixture_player_cache.find_one({"_k": cache_key}, {"_id": 0, "d": 1})
+                        cached_doc = await db.fixture_player_cache.find_one({"_k": cache_key}, {"_id": 0, "d": 1, "_ts": 1})
                         if cached_doc and cached_doc.get("d"):
-                            gl = dict(cached_doc["d"])
-                            minutes = gl.get("minutes", 0)
-                            if not minutes or minutes == 0:
-                                return None
-                            # For saves prop: bypass cache if saves value is None
-                            # (pre-fetch cache often misses saves for GKs — always fetch fresh)
-                            saves_cache_miss = req.propType == "saves" and gl.get("goals_saves") is None
-                            if not saves_cache_miss:
-                                gl["date"] = fix_date
-                                gl["opponent"] = fix_opponent
-                                gl["venue"] = fix_venue
-                                gl["score"] = f"{home_goals}-{away_goals}"
-                                gl["league"] = fix_league
-                                gl["round"] = fix_round
-                                raw_val = gl.get(stat_field_map.get(req.propType, ""), None)
-                                if raw_val is not None and minutes > 0:
-                                    gl["targetStatPer90"] = round((raw_val / minutes) * 90, 2)
-                                gl = await _enrich_possession(gl)
-                                return gl
-                            # Fall through to live API fetch for saves
+                            # Freshness guard: API-Football can take 2-4h to finalize player
+                            # stats after FT. If the entry was cached < 4h ago it may reflect
+                            # mid-match or early-post-FT data (e.g. 3 shots at HT vs 6 final).
+                            # Re-fetch live so the cache gets overwritten with final values.
+                            _doc_ts = cached_doc.get("_ts")
+                            _doc_age_h = ((datetime.now(timezone.utc) - (
+                                _doc_ts if _doc_ts and _doc_ts.tzinfo else
+                                (_doc_ts.replace(tzinfo=timezone.utc) if _doc_ts else datetime.now(timezone.utc))
+                            )).total_seconds() / 3600) if _doc_ts else 999
+                            _cache_stale = _doc_age_h < 4.0
+                            if _cache_stale:
+                                pass  # fall through to live API fetch + overwrite
+                            else:
+                                gl = dict(cached_doc["d"])
+                                minutes = gl.get("minutes", 0)
+                                if not minutes or minutes == 0:
+                                    return None
+                                # For saves prop: bypass cache if saves value is None
+                                # (pre-fetch cache often misses saves for GKs — always fetch fresh)
+                                saves_cache_miss = req.propType == "saves" and gl.get("goals_saves") is None
+                                if not saves_cache_miss:
+                                    gl["date"] = fix_date
+                                    gl["opponent"] = fix_opponent
+                                    gl["venue"] = fix_venue
+                                    gl["score"] = f"{home_goals}-{away_goals}"
+                                    gl["league"] = fix_league
+                                    gl["round"] = fix_round
+                                    raw_val = gl.get(stat_field_map.get(req.propType, ""), None)
+                                    if raw_val is not None and minutes > 0:
+                                        gl["targetStatPer90"] = round((raw_val / minutes) * 90, 2)
+                                    gl = await _enrich_possession(gl)
+                                    return gl
+                                # Fall through to live API fetch for saves
 
                         fix_data = await api_football_request("fixtures/players", {"fixture": fid})
                         if not fix_data:
@@ -5534,19 +5547,22 @@ Analyze ALL data thoroughly. Return JSON only."""
             )
 
             # ── LOW CONVICTION FILTER ─────────────────────────────────────────
-            # When Bayesian max(P(OVER), P(UNDER)) < 60%, the model has weak
+            # When Bayesian max(P(OVER), P(UNDER)) < 57%, the model has weak
             # signal — the line is close to the projection mean and the
-            # distribution straddles both sides. Cap confidence at 54% and
+            # distribution straddles both sides. Cap confidence at 58% and
             # expose lowConviction=True so the UI can surface a warning.
             # Fires inside the _bt_src guard so it only runs when Bayesian
             # data is available.
+            # Note: threshold raised from 57% (was 60%) so only genuinely weak
+            # signals are penalised — WC/tournament props with limited history
+            # were hitting this too aggressively at 60%.
             _bt_conv = max(_bt_p_over, _bt_p_under)
-            if _bt_conv < 60.0 and prediction.get("recommendation", "").upper() != "PASS":
+            if _bt_conv < 57.0 and prediction.get("recommendation", "").upper() != "PASS":
                 prediction["lowConviction"] = True
-                if (prediction.get("confidenceScore") or 0) > 54:
-                    prediction["confidenceScore"] = 54
-                    prediction["confidenceLevel"] = "Low"
-                print(f"[LOW CONV] {req.playerName}/{req.propType}: P(max)={_bt_conv:.1f}% < 60% → capped 54% Low")
+                if (prediction.get("confidenceScore") or 0) > 58:
+                    prediction["confidenceScore"] = 58
+                    prediction["confidenceLevel"] = "Medium"
+                print(f"[LOW CONV] {req.playerName}/{req.propType}: P(max)={_bt_conv:.1f}% < 57% → capped 58% Medium")
             else:
                 prediction.setdefault("lowConviction", False)
 

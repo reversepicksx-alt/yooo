@@ -2583,7 +2583,10 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
         try:
             _p_from = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y-%m-%d")
             _p_to   = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            data = await api_football_request("fixtures", {"team": team_id, "from": _p_from, "to": _p_to, "season": s})
+            _fix_params = {"team": team_id, "from": _p_from, "to": _p_to, "season": s}
+            if league_id:
+                _fix_params["league"] = league_id
+            data = await api_football_request("fixtures", _fix_params)
             if data:
                 for f in data:
                     home = f.get("teams", {}).get("home", {}).get("name", "")
