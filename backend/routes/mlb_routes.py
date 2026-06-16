@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional
 
-from config import db, XAI_API_KEY, EMERGENT_LLM_KEY, GEMINI_API_KEY
+from config import db, XAI_API_KEY, EMERGENT_LLM_KEY
 import mlb_client
 import mlb_engine
 
@@ -174,31 +174,19 @@ Return JSON ONLY (no markdown outside the JSON values):
   "tacticalBreakdown": "## Model Verdict\\n**{recommendation} {projection:.1f}** vs {line} line — P(OVER)={p_over}%, P(UNDER)={p_under}%\\n\\n## Pitching Environment\\n<2-3 sentences: ERA tier, handedness matchup, park factor — use the numbers provided above>\\n\\n## Batter / Pitcher Context\\n<2-3 sentences: platoon advantage, lineup spot, BABIP regression signal, K-rate trend, pitch count trajectory — cite specific multipliers>\\n\\n## Recent Form\\n<2 sentences: summarise last 4-5 game log values with specific numbers to support the direction>\\n\\n## Key Risk\\n<1-2 sentences: the single factor most likely to invalidate this pick, and why the model still favours the stated direction>"
 }}"""
 
-    # Gemini AI synthesis
+    # Grok AI synthesis
     try:
-        import httpx, json, re
-        if GEMINI_API_KEY:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
-            payload = {
-                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                "generationConfig": {
-                    "temperature": 0.4, "maxOutputTokens": 1400,
-                    "thinkingConfig": {"thinkingBudget": 0},
-                    "responseMimeType": "application/json",
-                },
-            }
-            async with httpx.AsyncClient(timeout=12) as c:
-                r = await c.post(url, json=payload)
-                if r.status_code == 200:
-                    parts = r.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
-                    raw = "".join(p.get("text", "") for p in parts).strip()
-                    m = re.search(r'\{[\s\S]*\}', raw)
-                    if m:
-                        data = json.loads(m.group(0))
-                        log.info(f"[MLB AI] Gemini OK for {player_name}")
-                        return data
+        import json, re
+        from grok_engine import _grok_call as _mlb_ai
+        raw = await _mlb_ai(prompt, temperature=0.4, max_tokens=1400, timeout=12, json_mode=True)
+        if raw:
+            m = re.search(r'\{[\s\S]*\}', raw)
+            if m:
+                data = json.loads(m.group(0))
+                log.info(f"[MLB AI] Grok OK for {player_name}")
+                return data
     except Exception as e:
-        log.warning(f"[MLB AI] Gemini failed: {e}")
+        log.warning(f"[MLB AI] Grok failed: {e}")
 
     return {}
 

@@ -86,68 +86,43 @@ Respond in EXACTLY this JSON format:
 
 Return ONLY valid JSON, no markdown or explanation."""
 
-    import httpx as _httpx
-    import os as _os
     import json as jmod
 
-    GEMINI_KEY = _os.environ.get("GEMINI_API_KEY", "")
-    EMERGENT_PROXY = "https://integrations.emergentagent.com/llm"
-
-    async def call_gemini_direct(label: str) -> tuple:
-        """Direct Gemini call using JSON mode for reliable parsing."""
+    async def call_grok_analysis(label: str) -> tuple:
+        """Grok call with JSON mode for reliable parsing."""
         try:
-            if not GEMINI_KEY:
+            from grok_engine import _grok_call
+            text = await _grok_call(prompt, temperature=0, max_tokens=500, timeout=20, json_mode=True)
+            if not text:
                 return label, None
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_KEY}"
-            payload = {
-                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                "generationConfig": {
-                    "temperature": 0, "maxOutputTokens": 500,
-                    "responseMimeType": "application/json",
-                    "thinkingConfig": {"thinkingBudget": 0},
-                },
-            }
-            async with _httpx.AsyncClient(timeout=20) as client:
-                resp = await client.post(url, json=payload)
-                if resp.status_code != 200:
-                    return label, None
-                data = resp.json()
-                parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-                text = "".join(p.get("text", "") for p in parts).strip()
-                return label, jmod.loads(text)
+            return label, jmod.loads(text)
         except Exception as e:
             print(f"[MISS ANALYSIS] {label} error: {e}")
             return label, None
 
-    async def call_emergent_model(model_id: str, label: str) -> tuple:
-        """Emergent proxy model call as secondary."""
+    async def call_grok_analysis_retry(label: str) -> tuple:
+        """Second Grok call — non-JSON mode with manual parse as fallback."""
+        import re as _re
         try:
-            from openai import OpenAI
-            ai_client = OpenAI(api_key=EMERGENT_LLM_KEY, base_url=EMERGENT_PROXY + "/v1")
-            loop = asyncio.get_event_loop()
-            def _run():
-                return ai_client.chat.completions.create(
-                    model=model_id,
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0,
-                    max_tokens=500,
-                )
-            resp = await asyncio.wait_for(loop.run_in_executor(None, _run), timeout=20)
-            text = resp.choices[0].message.content.strip()
+            from grok_engine import _grok_call
+            text = await _grok_call(prompt, temperature=0, max_tokens=500, timeout=20)
+            if not text:
+                return label, None
+            text = text.strip()
             if text.startswith("```"):
-                text = text.split("\n", 1)[1] if "\n" in text else text[3:]
-            if text.endswith("```"):
-                text = text[:-3]
-            if text.startswith("json"):
-                text = text[4:]
-            return label, jmod.loads(text.strip())
+                text = _re.sub(r"```(?:json)?\s*", "", text)
+                text = _re.sub(r"```\s*$", "", text).strip()
+            start = text.find("{")
+            if start >= 0:
+                return label, jmod.loads(text[start:])
+            return label, None
         except Exception as e:
             print(f"[MISS ANALYSIS] {label} error: {e}")
             return label, None
 
     tasks = [
-        call_gemini_direct("GE"),
-        call_emergent_model("gemini/gemini-2.5-flash", "GF"),
+        call_grok_analysis("GR1"),
+        call_grok_analysis_retry("GR2"),
     ]
     results = await asyncio.gather(*tasks)
 

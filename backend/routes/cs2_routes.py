@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional
 
-from config import db, XAI_API_KEY, GEMINI_API_KEY
+from config import db, XAI_API_KEY
 import cs2_client
 import cs2_engine
 
@@ -224,27 +224,14 @@ Return JSON ONLY (no markdown outside the JSON values):
 }}"""
 
     try:
-        import httpx as _httpx
-        if GEMINI_API_KEY:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
-            payload = {
-                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                "generationConfig": {
-                    "temperature": 0.35, "maxOutputTokens": 1400,
-                    "thinkingConfig": {"thinkingBudget": 0},
-                    "responseMimeType": "application/json",
-                },
-            }
-            async with _httpx.AsyncClient(timeout=18) as c:
-                r = await c.post(url, json=payload)
-                if r.status_code == 200:
-                    parts = r.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
-                    raw = "".join(p.get("text", "") for p in parts).strip()
-                    m = re.search(r'\{[\s\S]*\}', raw)
-                    if m:
-                        return json.loads(m.group(0))
+        from grok_engine import _grok_call as _cs2_ai
+        raw = await _cs2_ai(prompt, temperature=0.35, max_tokens=1400, timeout=18, json_mode=True)
+        if raw:
+            m = re.search(r'\{[\s\S]*\}', raw)
+            if m:
+                return json.loads(m.group(0))
     except Exception as e:
-        log.warning(f"[CS2 AI] Gemini failed: {e}")
+        log.warning(f"[CS2 AI] Grok failed: {e}")
 
     return {}
 

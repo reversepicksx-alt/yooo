@@ -14,7 +14,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from config import GEMINI_API_KEY
+from config import XAI_API_KEY
 
 log = logging.getLogger("ai_sports_routes")
 router = APIRouter(prefix="/api/ai-sport", tags=["ai_sport"])
@@ -191,15 +191,7 @@ async def _run_ai_prediction(
     sport_context: str,
     valid_props: dict,
 ) -> dict:
-    try:
-        import google.generativeai as genai
-        genai.configure(api_key=GEMINI_API_KEY)
-        model = genai.GenerativeModel(
-            "gemini-2.5-flash",
-            generation_config={"response_mime_type": "application/json"},
-        )
-    except Exception as e:
-        raise RuntimeError(f"Gemini init failed: {e}")
+    from grok_engine import _grok_call as _ai_sport_call
 
     opponent_str = f" vs {req.opponentName}" if req.opponentName else ""
     venue_str    = f" ({req.venue.upper()})" if req.venue else ""
@@ -253,19 +245,16 @@ Rules:
 - If you have limited information about this player, use league averages and be transparent in the summary."""
 
     try:
-        resp = await asyncio.to_thread(
-            model.generate_content,
-            [{"role": "user", "parts": [prompt]}],
-            request_options={"timeout": 40}
-        )
-        raw_text = (resp.text or "").strip()
+        import re as _re
+        raw_text = await _ai_sport_call(prompt, temperature=0.3, max_tokens=1400, timeout=40, json_mode=True)
+        raw_text = (raw_text or "").strip()
         if raw_text.startswith("```"):
-            raw_text = raw_text.split("```")[-2] if "```" in raw_text else raw_text
-            raw_text = raw_text.replace("json\n", "").strip()
+            raw_text = _re.sub(r"```(?:json)?\s*", "", raw_text)
+            raw_text = _re.sub(r"```\s*$", "", raw_text).strip()
 
         ai = json.loads(raw_text)
     except Exception as e:
-        log.warning(f"[AI SPORT] Gemini error for {sport}/{req.playerName}: {e}")
+        log.warning(f"[AI SPORT] Grok error for {sport}/{req.playerName}: {e}")
         # Fallback: coin-flip near 50/50 based on line vs estimated mean
         ai = {
             "projection":       req.line,

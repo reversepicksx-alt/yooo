@@ -7,7 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from config import GEMINI_API_KEY
+from config import XAI_API_KEY
 import mma_client
 import mma_engine
 
@@ -21,9 +21,7 @@ async def _get_ai_analysis(
     recommendation: str, fight_logs: list,
 ) -> dict:
     try:
-        import google.generativeai as genai
-        genai.configure(api_key=GEMINI_API_KEY)
-        model = genai.GenerativeModel("gemini-2.5-flash")
+        from grok_engine import _grok_call
         prop_label = mma_engine.PROP_LABELS.get(prop_type, prop_type.replace("_", " ").title())
         conf = round(max(p_over, p_under))
         ctx_lines = []
@@ -45,8 +43,7 @@ RECENT FIGHT LOG:
 {ctx}
 
 Write a sharp 2-3 sentence analysis focusing on fighting style, opponent tendencies, and historical output. Be direct."""
-        resp = await asyncio.to_thread(model.generate_content, prompt)
-        text = (resp.text or "").strip()
+        text = (await _grok_call(prompt, temperature=0.7, max_tokens=1500, timeout=30) or "").strip()
         return {"sharpSummary": text[:600], "tacticalBreakdown": text,
                 "reasoning": f"Bayesian: {projection} | P(OVER)={p_over}% P(UNDER)={p_under}%"}
     except Exception as e:

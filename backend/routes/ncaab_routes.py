@@ -7,7 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from config import db, GEMINI_API_KEY
+from config import db, XAI_API_KEY
 import ncaab_client
 import ncaab_engine
 
@@ -23,9 +23,7 @@ async def _get_ai_analysis(
     recommendation: str, game_logs: list, prior_mean: float, streak_flag: str,
 ) -> dict:
     try:
-        import google.generativeai as genai
-        genai.configure(api_key=GEMINI_API_KEY)
-        model = genai.GenerativeModel("gemini-2.5-flash")
+        from grok_engine import _grok_call
         prop_label = prop_type.replace("_", " ").title()
         conf = round(max(p_over, p_under))
         ctx_lines = []
@@ -43,8 +41,7 @@ RECENT GAME LOG:
 {game_ctx}
 
 Write a sharp 2-3 sentence analysis. Be direct and confident."""
-        resp = await asyncio.to_thread(model.generate_content, prompt)
-        text = (resp.text or "").strip()
+        text = (await _grok_call(prompt, temperature=0.7, max_tokens=1500, timeout=30) or "").strip()
         return {"sharpSummary": text[:600], "tacticalBreakdown": text,
                 "reasoning": f"Bayesian: {projection} | P(OVER)={p_over}% P(UNDER)={p_under}%"}
     except Exception as e:

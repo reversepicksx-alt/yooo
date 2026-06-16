@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional
 
-from config import db, GEMINI_API_KEY
+from config import db, XAI_API_KEY
 import nfl_client
 import nfl_engine
 
@@ -27,9 +27,7 @@ async def _get_nfl_ai_analysis(
     game_total: Optional[float] = None,
 ) -> dict:
     try:
-        import google.generativeai as genai
-        genai.configure(api_key=GEMINI_API_KEY)
-        model = genai.GenerativeModel("gemini-2.5-flash")
+        from grok_engine import _grok_call
 
         prop_label = prop_type.replace("_", " ").title()
         rec_label  = recommendation.upper()
@@ -63,8 +61,7 @@ RECENT GAME LOG:
 
 Write a sharp 2-3 sentence analysis of the {rec_label}. Focus on matchup, usage, and game script. Be direct."""
 
-        resp = await asyncio.to_thread(model.generate_content, prompt)
-        text = (resp.text or "").strip()
+        text = (await _grok_call(prompt, temperature=0.7, max_tokens=1500, timeout=30) or "").strip()
         return {
             "sharpSummary":      text[:600] if text else "",
             "tacticalBreakdown": text,

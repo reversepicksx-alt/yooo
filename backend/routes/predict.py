@@ -11,7 +11,7 @@ from emergentintegrations.llm.chat import LlmChat, UserMessage
 from openai import OpenAI
 
 from config import (
-    db, EMERGENT_LLM_KEY, XAI_API_KEY, GEMINI_API_KEY, CURRENT_SEASON,
+    db, EMERGENT_LLM_KEY, XAI_API_KEY, CURRENT_SEASON,
     WOMENS_LEAGUE_IDS, STAT_FIELD_MAP, STAT_LAMBDA_MAP, GROK_MODEL,
 )
 from models import PredictionRequest
@@ -3426,16 +3426,16 @@ CRITICAL: The single highest-pass-volume midfielder who sits deepest, dictates t
 
                     pos_prompt = f"What is {req.playerName}'s primary position and tactical role at {corrected_team_name}?{category_hint}{stats_evidence}\nPosition must be one of: {pos_list}\nRole must be one of: Shot-Stopper, Sweeper Keeper, Ball-Playing CB, Stopper, Fullback, Wing-Back, Inverted Fullback, Anchor, Box-to-Box, Deep-Lying Playmaker, Ball Winner, Mezzala, Advanced Playmaker, Wide Playmaker, Traditional Winger, Inverted Winger, Progressive Carrier, Inside Forward, Target Man, Poacher, False 9, Shadow Striker, Complete Forward, Pressing Forward\nReply ONLY: POSITION|ROLE"
 
-                    # GEMINI POSITION RESOLUTION
+                    # GROK POSITION RESOLUTION
                     is_defender = player_position != "Goalkeeper"
 
-                    async def resolve_pos_gemini() -> str:
-                        """Call Gemini Flash to resolve position. Returns raw POSITION|ROLE string."""
-                        from grok_engine import _gemini_call
+                    async def resolve_pos_grok() -> str:
+                        """Call Grok to resolve position. Returns raw POSITION|ROLE string."""
+                        from grok_engine import _grok_call
                         sys_msg = "You are a football/soccer tactical analyst. Reply in EXACTLY this format on one line:\nPOSITION|ROLE\nNothing else."
-                        return await _gemini_call(
+                        return await _grok_call(
                             pos_prompt, system=sys_msg,
-                            temperature=0, max_tokens=20, timeout=10,
+                            temperature=0, max_tokens=20, timeout=15,
                         )
 
                     def parse_pos_response(resp_text, allowed):
@@ -3450,24 +3450,24 @@ CRITICAL: The single highest-pass-volume midfielder who sits deepest, dictates t
 
                     if is_defender:
                         try:
-                            gem_text = await resolve_pos_gemini()
-                            gem_pos, gem_role = parse_pos_response(gem_text, valid_positions)
+                            grok_text = await resolve_pos_grok()
+                            grok_pos, grok_role = parse_pos_response(grok_text, valid_positions)
 
-                            if gem_pos:
-                                pos_code = gem_pos
-                                role_text = gem_role or ""
-                                print(f"[POS RESOLVE] Gemini: {req.playerName} → {pos_code}")
+                            if grok_pos:
+                                pos_code = grok_pos
+                                role_text = grok_role or ""
+                                print(f"[POS RESOLVE] Grok: {req.playerName} → {pos_code}")
                             else:
-                                raise ValueError("Gemini returned invalid position")
+                                raise ValueError("Grok returned invalid position")
                         except Exception as e:
-                            print(f"[POS RESOLVE] Gemini position failed ({e}), retrying...")
-                            gem_text2 = await resolve_pos_gemini()
-                            pos_code, role_text = parse_pos_response(gem_text2, valid_positions)
+                            print(f"[POS RESOLVE] Grok position failed ({e}), retrying...")
+                            grok_text2 = await resolve_pos_grok()
+                            pos_code, role_text = parse_pos_response(grok_text2, valid_positions)
                             if not pos_code:
-                                raise ValueError("Gemini returned invalid position on retry")
+                                raise ValueError("Grok returned invalid position on retry")
                     else:
-                        # Non-defenders: single Gemini call (with stats context)
-                        pos_text = await resolve_pos_gemini()
+                        # Non-defenders: single Grok call (with stats context)
+                        pos_text = await resolve_pos_grok()
                         pos_code, role_text = parse_pos_response(pos_text, valid_positions)
                         if not pos_code:
                             raise ValueError("AI returned invalid position on retry")
@@ -4222,67 +4222,9 @@ Odds: {json.dumps(match_odds.get('bookmakerOdds',{}), default=str) if match_odds
 
 Analyze ALL data thoroughly. Return JSON only."""
 
-        async def call_gemini(label="gemini", model="gemini-2.5-flash"):
-            """Gemini — primary AI synthesis engine ."""
-            if not GEMINI_API_KEY:
-                return None
-            import httpx as _httpx
-            import re as _re
-            import html as _html
-            try:
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
-                payload = {
-                    "systemInstruction": {"parts": [{"text": PREDICTION_SYSTEM}]},
-                    "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                    "generationConfig": {
-                        "temperature": 0.0,
-                        "maxOutputTokens": 4000,
-                        "thinkingConfig": {"thinkingBudget": 2048},
-                        "responseMimeType": "application/json",
-                    },
-                }
-                async with _httpx.AsyncClient(timeout=_httpx.Timeout(50, connect=10)) as _c:
-                    resp = await _c.post(url, json=payload)
-                    if resp.status_code != 200:
-                        print(f"[MULTI-AI] Gemini error {resp.status_code}: {resp.text[:200]}")
-                        return None
-                    parts = resp.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
-                    text = "".join(p.get("text", "") for p in parts).strip()
-
-                text = _re.sub(r"```(?:json)?\s*", "", text)
-                text = _re.sub(r"```\s*$", "", text, flags=_re.MULTILINE)
-                text = _html.unescape(text).strip()
-                start = text.find("{")
-                if start >= 0:
-                    candidate = text[start:]
-                    try:
-                        result = json.loads(candidate)
-                        result["_source"] = label
-                        return result
-                    except json.JSONDecodeError:
-                        pass
-                    for end_pos in range(len(text), start, -1):
-                        if text[end_pos - 1] == "}":
-                            try:
-                                result = json.loads(text[start:end_pos])
-                                result["_source"] = label
-                                return result
-                            except json.JSONDecodeError:
-                                continue
-                    _repaired: dict = {"_source": label, "_repaired": True}
-                    for _key in ("sharpSummary", "tacticalBreakdown", "reasoning", "aiProjection",
-                                 "confidenceScore", "confidenceLevel", "recommendation"):
-                        _m = _re.search(rf'"{_key}"\s*:\s*"((?:[^"\\]|\\.)*)', text[start:])
-                        if _m:
-                            _repaired[_key] = _m.group(1)
-                    if _repaired.get("tacticalBreakdown") or _repaired.get("sharpSummary"):
-                        print(f"[MULTI-AI] {label} — JSON truncated, repaired: {list(_repaired.keys())}")
-                        return _repaired
-                print(f"[MULTI-AI] {label} non-JSON response: {text[:300]!r}")
-                raise ValueError("No valid JSON in Gemini response")
-            except Exception as e:
-                print(f"[MULTI-AI] {label} failed: {e}")
-                return None
+        async def call_gemini(label="grok-fallback", model=GROK_MODEL):
+            """Grok fallback — mirrors call_grok but as a named secondary attempt."""
+            return await call_grok(label=label, model=model)
 
         # =============================================
         # AI SYNTHESIS: Grok primary, Gemini fallback

@@ -1,7 +1,7 @@
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from config import db, LIFETIME_SUB_EMAILS, OWNER_EMAIL, COMPLIMENTARY_MEMBERS, init_dynamic_settings, get_dynamic_setting, GEMINI_API_KEY
+from config import db, LIFETIME_SUB_EMAILS, OWNER_EMAIL, COMPLIMENTARY_MEMBERS, init_dynamic_settings, get_dynamic_setting
 
 # ── Create App ──
 app = FastAPI(title="ReversePicks API")
@@ -423,8 +423,10 @@ async def _auto_backfill_positions():
 
         print(f"[AUTO-BACKFILL] Cache resolved: {updated}/{len(picks)}. Unresolved: {len(unresolved)}")
 
-        # Step 3: Use Gemini to batch-resolve remaining positions
-        if unresolved and GEMINI_API_KEY:
+        # Step 3: Use Grok to batch-resolve remaining positions
+        if unresolved:
+            from grok_engine import _grok_call as _grok_pos
+            import json as _json
             # Deduplicate by player name+sport
             unique_players = {}
             for u in unresolved:
@@ -453,53 +455,35 @@ Return JSON array: [{{"name":"...","position":"XX","role":"..."}}]
 Only the JSON array, no markdown."""
 
                 try:
-                    from config import GEMINI_API_KEY as _gem_key
-                    import json as _json
-                    _gem_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={_gem_key}"
-                    async with httpx.AsyncClient(timeout=25) as client:
-                        resp = await client.post(
-                            _gem_url,
-                            json={
-                                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                                "generationConfig": {
-                                    "temperature": 0,
-                                    "maxOutputTokens": 1000,
-                                    "thinkingConfig": {"thinkingBudget": 0},
-                                    "responseMimeType": "application/json",
-                                },
-                            }
-                        )
-                        if resp.status_code == 200:
-                            parts = resp.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
-                            content = "".join(p.get("text", "") for p in parts).strip()
-                            if content.startswith("```"):
-                                content = content.split("\n", 1)[1] if "\n" in content else content[3:]
-                                content = content.rsplit("```", 1)[0]
-                            resolved = _json.loads(content.strip())
-                            gemini_updated = 0
-                            for r in resolved:
-                                rname = r.get("name", "")
-                                rpos = r.get("position", "")
-                                rrole = r.get("role", "")
-                                if rname and rpos:
-                                    await db.picks.update_many(
-                                        {"playerName": rname, "$or": [{"position": {"$exists": False}}, {"position": ""}, {"position": None}]},
-                                        {"$set": {"position": rpos, "role": rrole or ""}}
-                                    )
-                                    matching = [u for u in batch if u["playerName"] == rname]
-                                    for m in matching:
-                                        if m.get("playerId"):
-                                            await db.player_positions.update_one(
-                                                {"playerId": m["playerId"]},
-                                                {"$set": {"playerId": m["playerId"], "specificPosition": rpos, "role": rrole or ""}},
-                                                upsert=True
-                                            )
-                                    gemini_updated += 1
-                            print(f"[AUTO-BACKFILL] Gemini resolved: {gemini_updated} players (batch {i//30+1})")
-                        else:
-                            print(f"[AUTO-BACKFILL] Gemini API error: {resp.status_code}")
+                    raw = await _grok_pos(prompt, temperature=0, max_tokens=1000, timeout=25, json_mode=True)
+                    if raw:
+                        content = raw.strip()
+                        if content.startswith("```"):
+                            content = content.split("\n", 1)[1] if "\n" in content else content[3:]
+                            content = content.rsplit("```", 1)[0]
+                        resolved = _json.loads(content.strip())
+                        grok_updated = 0
+                        for r in resolved:
+                            rname = r.get("name", "")
+                            rpos = r.get("position", "")
+                            rrole = r.get("role", "")
+                            if rname and rpos:
+                                await db.picks.update_many(
+                                    {"playerName": rname, "$or": [{"position": {"$exists": False}}, {"position": ""}, {"position": None}]},
+                                    {"$set": {"position": rpos, "role": rrole or ""}}
+                                )
+                                matching = [u for u in batch if u["playerName"] == rname]
+                                for m in matching:
+                                    if m.get("playerId"):
+                                        await db.player_positions.update_one(
+                                            {"playerId": m["playerId"]},
+                                            {"$set": {"playerId": m["playerId"], "specificPosition": rpos, "role": rrole or ""}},
+                                            upsert=True
+                                        )
+                                grok_updated += 1
+                        print(f"[AUTO-BACKFILL] Grok resolved: {grok_updated} players (batch {i//30+1})")
                 except Exception as e:
-                    print(f"[AUTO-BACKFILL] Gemini batch error: {e}")
+                    print(f"[AUTO-BACKFILL] Grok batch error: {e}")
 
         print(f"[AUTO-BACKFILL] Done. Total cache-resolved: {updated}, AI batches sent: {(len(unresolved)+29)//30 if unresolved else 0}")
     except Exception as e:

@@ -24,8 +24,8 @@ class LlmChat:
         self.api_key = api_key
         self.session_id = session_id
         self.system_message = system_message
-        self._provider = "gemini"
-        self._model = "gemini-2.0-flash"
+        self._provider = "xai"
+        self._model = "grok-3"
         self._history = []
 
     def with_model(self, provider: str, model: str):
@@ -34,14 +34,14 @@ class LlmChat:
         return self
 
     async def send_message(self, message: UserMessage) -> str:
-        if self._provider == "gemini":
-            return await self._send_gemini(message)
+        if self._provider in ("xai", "grok"):
+            return await self._send_xai(message)
         elif self._provider in ("openai", "gpt"):
             return await self._send_openai(message)
-        elif self._provider in ("xai", "grok"):
-            return await self._send_xai(message)
-        else:
+        elif self._provider == "gemini":
             return await self._send_gemini(message)
+        else:
+            return await self._send_xai(message)
 
     async def _send_gemini(self, message: UserMessage) -> str:
         try:

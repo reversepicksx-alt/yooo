@@ -8,7 +8,7 @@ import httpx
 import asyncio
 import traceback
 from datetime import datetime, timezone, timedelta
-from config import db, XAI_API_KEY, GEMINI_API_KEY, GROK_MODEL, GROK_REASONING_MODEL
+from config import db, XAI_API_KEY, GROK_MODEL, GROK_REASONING_MODEL
 
 AI_MODEL = GROK_MODEL
 AI_REASONING_MODEL = GROK_REASONING_MODEL
@@ -20,123 +20,137 @@ GEMINI_PRO = "gemini-2.5-pro"
 GEMINI_FLASH = "gemini-2.5-flash"
 
 
+_GROK_HEADERS = {"Content-Type": "application/json"}
+
+
+async def _grok_call(
+    prompt: str,
+    system: str = "",
+    temperature: float = 0.0,
+    max_tokens: int = 2000,
+    timeout: int = 40,
+    model: str | None = None,
+    json_mode: bool = False,
+) -> str:
+    """Core Grok (xAI) API call — OpenAI-compatible endpoint."""
+    if not XAI_API_KEY:
+        return ""
+    _model = model or GROK_MODEL
+    messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
+    payload: dict = {
+        "model": _model,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
+    headers = {"Authorization": f"Bearer {XAI_API_KEY}", **_GROK_HEADERS}
+
+    for _attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10)) as client:
+                resp = await client.post(AI_URL, json=payload, headers=headers)
+                if resp.status_code == 200:
+                    return resp.json()["choices"][0]["message"]["content"].strip()
+                elif resp.status_code == 429:
+                    _wait = 2 ** _attempt
+                    print(f"[GROK] Rate-limited (429) — retry {_attempt+1}/3 in {_wait}s")
+                    await asyncio.sleep(_wait)
+                    continue
+                else:
+                    print(f"[GROK] API error {resp.status_code}: {resp.text[:200]}")
+                    return ""
+        except httpx.TimeoutException:
+            print(f"[GROK] Timeout ({_model}, {timeout}s)")
+            return ""
+        except Exception as e:
+            print(f"[GROK] Call error: {type(e).__name__}: {e}")
+            return ""
+    print(f"[GROK] All 3 retry attempts exhausted (rate limit)")
+    return ""
+
+
+async def _grok_search_call(
+    prompt: str,
+    max_tokens: int = 500,
+    timeout: int = 25,
+    model: str | None = None,
+) -> str:
+    """Grok call with live web search grounding (xAI search_parameters)."""
+    if not XAI_API_KEY:
+        return ""
+    _model = model or GROK_MODEL
+    payload: dict = {
+        "model": _model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0,
+        "max_tokens": max_tokens,
+        "search_parameters": {"mode": "auto"},
+    }
+    headers = {"Authorization": f"Bearer {XAI_API_KEY}", **_GROK_HEADERS}
+
+    for _attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10)) as client:
+                resp = await client.post(AI_URL, json=payload, headers=headers)
+                if resp.status_code == 200:
+                    text = resp.json()["choices"][0]["message"]["content"].strip()
+                    if text:
+                        return text
+                    return ""
+                elif resp.status_code == 429:
+                    _wait = 2 ** _attempt
+                    print(f"[GROK SEARCH] Rate-limited (429) — retry {_attempt+1}/3 in {_wait}s")
+                    await asyncio.sleep(_wait)
+                    continue
+                else:
+                    print(f"[GROK SEARCH] API error {resp.status_code}: {resp.text[:200]}")
+                    return ""
+        except httpx.TimeoutException:
+            print(f"[GROK SEARCH] Timeout ({timeout}s)")
+            return ""
+        except Exception as e:
+            print(f"[GROK SEARCH] Error: {type(e).__name__}: {e}")
+            return ""
+    print(f"[GROK SEARCH] All 3 retry attempts exhausted (rate limit)")
+    return ""
+
+
+# Backward-compat aliases — all Gemini calls now route through Grok
 async def _gemini_call(
     prompt: str,
     system: str = "",
     temperature: float = 0.0,
     max_tokens: int = 2000,
     timeout: int = 40,
-    model: str = GEMINI_FLASH,
+    model: str | None = None,
     json_mode: bool = False,
-    thinking_budget: int = 0,
+    thinking_budget: int = 0,  # ignored — kept for call-site compatibility
 ) -> str:
-    """Core Gemini API call. Returns raw text (or JSON string if json_mode=True).
-
-    thinking_budget=0 (default) disables the thinking phase on 2.5 Flash — required
-    for short-answer calls because thinking tokens eat into maxOutputTokens and leave
-    nothing for the actual response. Pass thinking_budget>0 only for deep-reasoning
-    tasks (e.g. synthesis, tactical analysis).
-    """
-    if not GEMINI_API_KEY:
-        return ""
-    url = f"{GEMINI_BASE}/{model}:generateContent?key={GEMINI_API_KEY}"
-    payload: dict = {
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature": temperature,
-            "maxOutputTokens": max_tokens,
-            "thinkingConfig": {"thinkingBudget": thinking_budget},
-        },
-    }
-    if system:
-        payload["systemInstruction"] = {"parts": [{"text": system}]}
-    if json_mode:
-        payload["generationConfig"]["responseMimeType"] = "application/json"
-
-    for _attempt in range(3):
-        try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10)) as client:
-                resp = await client.post(url, json=payload)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    candidates = data.get("candidates", [])
-                    if candidates:
-                        parts = candidates[0].get("content", {}).get("parts", [])
-                        if parts:
-                            return parts[0].get("text", "").strip()
-                    return ""
-                elif resp.status_code == 429:
-                    _wait = 2 ** _attempt  # 1s, 2s, 4s
-                    print(f"[GEMINI] Rate-limited (429) — retry {_attempt+1}/3 in {_wait}s")
-                    await asyncio.sleep(_wait)
-                    continue
-                else:
-                    print(f"[GEMINI] API error {resp.status_code}: {resp.text[:200]}")
-                    return ""
-        except httpx.TimeoutException:
-            print(f"[GEMINI] Timeout ({model}, {timeout}s)")
-            return ""
-        except Exception as e:
-            print(f"[GEMINI] Call error: {type(e).__name__}: {e}")
-            return ""
-    print(f"[GEMINI] All 3 retry attempts exhausted (rate limit)")
-    return ""
+    return await _grok_call(prompt, system=system, temperature=temperature,
+                            max_tokens=max_tokens, timeout=timeout, json_mode=json_mode)
 
 
 async def _gemini_search_call(
     prompt: str,
     max_tokens: int = 500,
     timeout: int = 25,
-    model: str = GEMINI_FLASH,
+    model: str | None = None,
 ) -> str:
-    """Gemini call with Google Search grounding for real-time web data.
-    thinkingBudget=0 so search tokens are not consumed by the thinking phase."""
-    if not GEMINI_API_KEY:
-        return ""
-    url = f"{GEMINI_BASE}/{model}:generateContent?key={GEMINI_API_KEY}"
-    payload: dict = {
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "tools": [{"google_search": {}}],
-        "generationConfig": {
-            "temperature": 0,
-            "maxOutputTokens": max_tokens,
-            "thinkingConfig": {"thinkingBudget": 0},
-        },
-    }
-    for _attempt in range(3):
-        try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10)) as client:
-                resp = await client.post(url, json=payload)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    candidates = data.get("candidates", [])
-                    if candidates:
-                        parts = candidates[0].get("content", {}).get("parts", [])
-                        text = "".join(p.get("text", "") for p in parts).strip()
-                        if text:
-                            return text
-                    return ""
-                elif resp.status_code == 429:
-                    _wait = 2 ** _attempt  # 1s, 2s, 4s
-                    print(f"[GEMINI SEARCH] Rate-limited (429) — retry {_attempt+1}/3 in {_wait}s")
-                    await asyncio.sleep(_wait)
-                    continue
-                else:
-                    print(f"[GEMINI SEARCH] API error {resp.status_code}: {resp.text[:200]}")
-                    return ""
-        except httpx.TimeoutException:
-            print(f"[GEMINI SEARCH] Timeout ({timeout}s)")
-            return ""
-        except Exception as e:
-            print(f"[GEMINI SEARCH] Error: {type(e).__name__}: {e}")
-            return ""
-    print(f"[GEMINI SEARCH] All 3 retry attempts exhausted (rate limit)")
-    return ""
+    return await _grok_search_call(prompt, max_tokens=max_tokens, timeout=timeout)
 
 
 async def _ai_call(prompt: str, system: str = "", temperature: float = 0, max_tokens: int = 2000, timeout: int = 35) -> str:
-    """Unified AI call: Gemini primary."""
-    return await _gemini_call(prompt, system=system, temperature=temperature, max_tokens=max_tokens, timeout=timeout)
+    """Unified AI call — Grok."""
+    return await _grok_call(prompt, system=system, temperature=temperature, max_tokens=max_tokens, timeout=timeout)
+
+
+_web_intel_cache: dict = {}
+_WEB_INTEL_TTL = 600  # 10 minutes — same match context reused across concurrent users
 
 
 async def fetch_web_intel(
@@ -150,12 +164,22 @@ async def fetch_web_intel(
     """
     WEB INTELLIGENCE: Fetches real-time match preview data — injuries, suspensions,
     lineup news, tactical shifts, manager quotes.
-    Primary: Gemini 2.5 Flash with Google Search grounding.
-    Fallback: Gemini web search → tactical knowledge.
+    Primary: Grok with live web search (xAI search_parameters).
+    Fallback: Grok tactical knowledge (no search).
+    Results cached 10 min per matchup to avoid redundant calls under concurrent load.
     """
+    import time, html as _html
     date_str = match_date[:10] if match_date else ""
-    context_str = f"{league} — {match_round}" if (league or match_round) else "upcoming match"
+    cache_key = f"{player_team}|{opponent}|{date_str}"
+    now = time.time()
+    cached = _web_intel_cache.get(cache_key)
+    if cached:
+        ts, result = cached
+        if now - ts < _WEB_INTEL_TTL:
+            print(f"[WEB INTEL] Cache hit: {player_team} vs {opponent}")
+            return result
 
+    context_str = f"{league} — {match_round}" if (league or match_round) else "upcoming match"
     prompt = (
         f"Give me a concise pre-match intelligence briefing (max 200 words) for: "
         f"{player_team} vs {opponent}{f' ({date_str})' if date_str else ''} [{context_str}].\n\n"
@@ -165,16 +189,15 @@ async def fetch_web_intel(
         f"Be factual and specific. Do not make up information. If nothing significant is confirmed, say so briefly."
     )
 
-    # Strategy 1: Gemini with Google Search grounding (live web data)
-    if GEMINI_API_KEY:
-        search_result = await _gemini_search_call(prompt, max_tokens=500, timeout=timeout)
-        if search_result:
-            import html as _html
-            search_result = _html.unescape(search_result)
-            print(f"[WEB INTEL] Gemini search: {search_result[:120]}...")
-            return search_result
+    # Strategy 1: Grok with live web search
+    search_result = await _grok_search_call(prompt, max_tokens=500, timeout=timeout)
+    if search_result:
+        search_result = _html.unescape(search_result)
+        print(f"[WEB INTEL] Grok search: {search_result[:120]}...")
+        _web_intel_cache[cache_key] = (now, search_result)
+        return search_result
 
-    # Strategy 2: Gemini knowledge fallback (no live search)
+    # Strategy 2: Grok knowledge fallback (no live search)
     knowledge_prompt = (
         f"You are a professional soccer analyst. Provide a concise tactical briefing (max 180 words) for "
         f"{player_team} vs {opponent}"
@@ -185,13 +208,14 @@ async def fetch_web_intel(
         f"(4) historical head-to-head tendencies. "
         f"Focus on known tactical identities. Be specific and analytical."
     )
-    result = await _ai_call(knowledge_prompt, timeout=15, max_tokens=350)
+    result = await _grok_call(knowledge_prompt, timeout=15, max_tokens=350)
     if result:
-        import html as _html
         result = _html.unescape(result)
-        print(f"[WEB INTEL] Tactical knowledge fallback: {result[:120]}...")
+        print(f"[WEB INTEL] Grok knowledge fallback: {result[:120]}...")
+        _web_intel_cache[cache_key] = (now, result)
         return result
 
+    _web_intel_cache[cache_key] = (now, "")
     return ""
 
 
@@ -228,7 +252,7 @@ async def fetch_opponent_ppda(opponent: str, league: str = "", timeout: int = 20
       11+    : Low press / deep block
     """
     import re as _re
-    if not GEMINI_API_KEY or not opponent:
+    if not XAI_API_KEY or not opponent:
         return None
 
     # Only fire for understat-covered major leagues
@@ -245,7 +269,7 @@ async def fetch_opponent_ppda(opponent: str, league: str = "", timeout: int = 20
 
     understat_url = f"https://understat.com/league/{understat_code}"
 
-    # Strategy 1: Gemini with Google Search grounding (live scrape of understat.com)
+    # Strategy 1: Grok with live web search (understat.com)
     search_prompt = (
         f"Go to {understat_url} and look at the team statistics table. "
         f"Find {opponent}'s PPDA (Passes Per Defensive Action) for the current 2025/2026 season. "
@@ -264,13 +288,13 @@ async def fetch_opponent_ppda(opponent: str, league: str = "", timeout: int = 20
             if m:
                 val = float(m.group(1))
                 if 3.0 <= val <= 30.0:
-                    print(f"[PPDA] Gemini search: {opponent} ({understat_code}) PPDA={val}")
+                    print(f"[PPDA] Grok search: {opponent} ({understat_code}) PPDA={val}")
                     return val
-            print(f"[PPDA] Gemini search unparseable: '{text[:60]}'")
+            print(f"[PPDA] Grok search unparseable: '{text[:60]}'")
     except Exception as e:
-        print(f"[PPDA] Gemini search exception: {e}")
+        print(f"[PPDA] Grok search exception: {e}")
 
-    # Strategy 2: Gemini knowledge fallback
+    # Strategy 2: Grok knowledge fallback
     knowledge_prompt = (
         f"What is {opponent}'s PPDA (Passes Per Defensive Action) in the current or most recent "
         f"{league} season, based on understat.com data? "
@@ -281,13 +305,13 @@ async def fetch_opponent_ppda(opponent: str, league: str = "", timeout: int = 20
         text = await _gemini_call(knowledge_prompt, max_tokens=15, timeout=15)
         if text:
             if "unknown" in text.lower():
-                print(f"[PPDA] Knowledge fallback: {opponent} unknown")
+                print(f"[PPDA] Grok knowledge fallback: {opponent} unknown")
                 return None
             m = _re.search(r'\b(\d{1,2}(?:\.\d{1,2})?)\b', text)
             if m:
                 val = float(m.group(1))
                 if 3.0 <= val <= 30.0:
-                    print(f"[PPDA] Knowledge fallback: {opponent} PPDA={val}")
+                    print(f"[PPDA] Grok knowledge fallback: {opponent} PPDA={val}")
                     return val
     except Exception as e:
         print(f"[PPDA] Knowledge fallback exception: {e}")
@@ -342,7 +366,7 @@ async def fetch_ai_press_intensity(
     `compute_press_intensity_score` stays as a structural fallback.
     """
     import re as _re
-    if not GEMINI_API_KEY or not opponent:
+    if not XAI_API_KEY or not opponent:
         return None
 
     cache_key = (opponent.lower().strip(), (league or "").lower().strip(), (season or "").strip())
@@ -393,7 +417,7 @@ async def _fetch_ai_press_intensity_inner(
         f"If you cannot make a confident assessment, reply: {{\"score\": null}}"
     )
 
-    # Strategy 1: Gemini with Google Search grounding (live tactical reports + understat)
+    # Strategy 1: Grok with live web search (tactical reports + understat)
     parsed = None
     used_source = None
     try:
@@ -403,9 +427,9 @@ async def _fetch_ai_press_intensity_inner(
             if parsed and isinstance(parsed, dict) and parsed.get("score") is not None:
                 used_source = "ai_web"
     except Exception as e:
-        print(f"[AI PRESS] Gemini search exception: {e}")
+        print(f"[AI PRESS] Grok search exception: {e}")
 
-    # Strategy 2: Gemini knowledge fallback (no web search)
+    # Strategy 2: Grok knowledge fallback (no web search)
     if not parsed or parsed.get("score") is None:
         try:
             txt = await _gemini_call(prompt, temperature=0, max_tokens=200, timeout=15)
@@ -414,7 +438,7 @@ async def _fetch_ai_press_intensity_inner(
                 if parsed and isinstance(parsed, dict) and parsed.get("score") is not None:
                     used_source = "ai_knowledge"
         except Exception as e:
-            print(f"[AI PRESS] Knowledge fallback exception: {e}")
+            print(f"[AI PRESS] Grok knowledge fallback exception: {e}")
 
     if not parsed or parsed.get("score") is None:
         print(f"[AI PRESS] No confident assessment for {opponent} ({league})")
@@ -584,7 +608,7 @@ async def auto_settlement_loop():
     runs burn quota fast. 15 min is plenty since picks resolve after the match.
     """
     await asyncio.sleep(5)   # Short delay then run immediately on startup
-    print("[GEMINI ENGINE] Auto-settlement bot started (15 min interval)")
+    print("[GROK ENGINE] Auto-settlement bot started (15 min interval)")
 
     while True:
         try:
@@ -1579,7 +1603,7 @@ async def _try_settle_wc_via_gemini(pick: dict) -> bool:
         import re as _re
         nums = _re.findall(r"\d+(?:\.\d+)?", raw)
         if not nums:
-            print(f"[WC SETTLE] {player_name}/{prop_type}: Gemini returned no number — '{raw}'")
+            print(f"[WC SETTLE] {player_name}/{prop_type}: Grok returned no number — '{raw}'")
             return False
 
         actual_value = float(nums[0])
@@ -1868,7 +1892,7 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
 async def auto_scout_loop():
     """Background loop: pre-fetch data for upcoming games every 6 hours."""
     await asyncio.sleep(60)  # Wait for caches
-    print("[GEMINI ENGINE] Auto-scout started")
+    print("[GROK ENGINE] Auto-scout started")
 
     while True:
         try:
@@ -1948,7 +1972,7 @@ async def _run_auto_scout():
 async def pattern_mining_loop():
     """Background loop: analyze settled picks for patterns daily."""
     await asyncio.sleep(300)  # Wait 5 min for startup
-    print("[GEMINI ENGINE] Pattern mining started")
+    print("[GROK ENGINE] Pattern mining started")
 
     while True:
         try:
@@ -2132,8 +2156,7 @@ Return ONLY a valid JSON object (not an array):
 
 
 async def gemini_scan_prop(image_base64: str, sport: str = "soccer") -> dict:
-    """Extract prop details from a screenshot using AI vision.
-    Primary: Gemini 2.5 Flash (vision).
+    """Extract prop details from a screenshot using Grok vision (grok-2-vision-1212).
     Returns: {"playerName": "...", "propType": "...", "line": 0, "teamName": "...", "opponentName": "...", "leagueName": "..."}"""
 
     prompt = _SCAN_PROMPTS.get(sport.lower(), _SCAN_PROMPTS["soccer"])
@@ -2143,40 +2166,37 @@ async def gemini_scan_prop(image_base64: str, sport: str = "soccer") -> dict:
             result["playerTeam"] = result.pop("teamName")
         return result
 
-    # Gemini vision (primary and only strategy)
-    if GEMINI_API_KEY:
+    if XAI_API_KEY:
         try:
-            url = f"{GEMINI_BASE}/{GEMINI_FLASH}:generateContent?key={GEMINI_API_KEY}"
             payload = {
-                "contents": [{"role": "user", "parts": [
-                    {"text": prompt},
-                    {"inline_data": {"mime_type": "image/png", "data": image_base64}},
+                "model": "grok-2-vision-1212",
+                "messages": [{"role": "user", "content": [
+                    {"type": "image_url", "image_url": {
+                        "url": f"data:image/png;base64,{image_base64}",
+                        "detail": "high",
+                    }},
+                    {"type": "text", "text": prompt},
                 ]}],
-                "generationConfig": {
-                    "temperature": 0,
-                    "maxOutputTokens": 256,
-                    "thinkingConfig": {"thinkingBudget": 0},
-                    "responseMimeType": "application/json",
-                },
+                "temperature": 0,
+                "max_tokens": 256,
             }
+            headers = {"Authorization": f"Bearer {XAI_API_KEY}", **_GROK_HEADERS}
             async with httpx.AsyncClient(timeout=25) as client:
-                resp = await client.post(url, json=payload)
+                resp = await client.post(AI_URL, json=payload, headers=headers)
                 if resp.status_code == 200:
-                    data = resp.json()
-                    parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-                    content = "".join(p.get("text", "") for p in parts).strip()
+                    content = resp.json()["choices"][0]["message"]["content"].strip()
                     result = _parse_json(content)
                     if result:
                         if isinstance(result, list) and len(result) > 0:
                             result = result[0]
                         if isinstance(result, dict):
                             result = _normalize(result)
-                            print(f"[SCAN:{sport}] Gemini vision: {result.get('playerName','')} {result.get('propType','')} {result.get('line','')}")
+                            print(f"[SCAN:{sport}] Grok vision: {result.get('playerName','')} {result.get('propType','')} {result.get('line','')}")
                             return result
                 else:
-                    print(f"[SCAN:{sport}] Gemini vision error: {resp.status_code} — {resp.text[:300]}")
+                    print(f"[SCAN:{sport}] Grok vision error: {resp.status_code} — {resp.text[:300]}")
         except Exception as e:
-            print(f"[SCAN:{sport}] Gemini vision error: {e}")
+            print(f"[SCAN:{sport}] Grok vision error: {e}")
 
     return {}
 

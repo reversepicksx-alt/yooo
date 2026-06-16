@@ -13,7 +13,7 @@ from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
 from openai import OpenAI
 
 from config import (
-    db, EMERGENT_LLM_KEY, XAI_API_KEY, GEMINI_API_KEY, CURRENT_SEASON,
+    db, EMERGENT_LLM_KEY, XAI_API_KEY, CURRENT_SEASON,
     SUPPORTED_LEAGUES, PROP_TYPE_ALIASES, INTERNATIONAL_LEAGUES,
 )
 from models import ChatStartRequest, TacticalMessageRequest
@@ -474,62 +474,41 @@ async def tactical_message(req: TacticalMessageRequest):
     if data_context:
         full_context += f"\n\n{data_context}"
 
-    # ── PRIMARY: Gemini 2.5 Pro — tactical reasoning ──
-    import httpx as _httpx
+    # ── PRIMARY: Grok tactical reasoning ──
+    from grok_engine import _grok_call as _grok_tactical
     ai_response = ""
-    _gemini_ok = False
-    if GEMINI_API_KEY:
-        try:
-            _gem_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key={GEMINI_API_KEY}"
-            _gem_contents = []
-            if history_text:
-                _gem_contents.append({"role": "user", "parts": [{"text": f"[CONVERSATION CONTEXT]\n{history_text}\n[END CONTEXT]"}]})
-                _gem_contents.append({"role": "model", "parts": [{"text": "Context acknowledged."}]})
-            _gem_contents.append({"role": "user", "parts": [{"text": user_msg + full_context}]})
-            _gem_payload = {
-                "systemInstruction": {"parts": [{"text": TACTICAL_SYSTEM}]},
-                "contents": _gem_contents,
-                "generationConfig": {"temperature": 0.7, "maxOutputTokens": 2000,
-                                     "thinkingConfig": {"thinkingBudget": 1024}},
-            }
-            async with _httpx.AsyncClient(timeout=_httpx.Timeout(45, connect=10)) as _client:
-                _resp = await _client.post(_gem_url, json=_gem_payload)
-                if _resp.status_code == 200:
-                    _data = _resp.json()
-                    _parts = _data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-                    ai_response = "".join(p.get("text", "") for p in _parts).strip()
-                    _gemini_ok = bool(ai_response)
-                else:
-                    print(f"[TACTICAL] Gemini error {_resp.status_code}: {_resp.text[:200]}")
-        except Exception as _e:
-            print(f"[TACTICAL] Gemini primary failed: {_e}")
+    _grok_ok = False
+    _ctx_prefix = f"[CONVERSATION CONTEXT]\n{history_text}\n[END CONTEXT]\n\n" if history_text else ""
+    try:
+        _grok_prompt = _ctx_prefix + user_msg + full_context
+        ai_response = await _grok_tactical(
+            _grok_prompt,
+            system=TACTICAL_SYSTEM,
+            temperature=0.7,
+            max_tokens=2000,
+            timeout=45,
+        )
+        _grok_ok = bool(ai_response)
+        if not _grok_ok:
+            print("[TACTICAL] Grok primary returned empty response")
+    except Exception as _e:
+        print(f"[TACTICAL] Grok primary failed: {_e}")
 
-    # ── FALLBACK: second Gemini attempt with Flash if Pro failed ──
-    if not _gemini_ok and GEMINI_API_KEY:
+    # ── FALLBACK: second Grok attempt if first failed ──
+    if not _grok_ok:
         try:
-            _flash_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
-            _flash_contents = []
-            if history_text:
-                _flash_contents.append({"role": "user", "parts": [{"text": f"[CONVERSATION CONTEXT]\n{history_text}\n[END CONTEXT]"}]})
-                _flash_contents.append({"role": "model", "parts": [{"text": "Context acknowledged."}]})
-            _flash_contents.append({"role": "user", "parts": [{"text": user_msg + full_context}]})
-            _flash_payload = {
-                "systemInstruction": {"parts": [{"text": TACTICAL_SYSTEM}]},
-                "contents": _flash_contents,
-                "generationConfig": {"temperature": 0.7, "maxOutputTokens": 2000,
-                                     "thinkingConfig": {"thinkingBudget": 1024}},
-            }
-            async with _httpx.AsyncClient(timeout=_httpx.Timeout(45, connect=10)) as _client:
-                _resp = await _client.post(_flash_url, json=_flash_payload)
-                if _resp.status_code == 200:
-                    _data = _resp.json()
-                    _parts = _data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-                    ai_response = "".join(p.get("text", "") for p in _parts).strip()
-                    _gemini_ok = bool(ai_response)
-                else:
-                    print(f"[TACTICAL] Gemini Flash fallback error {_resp.status_code}: {_resp.text[:200]}")
+            ai_response = await _grok_tactical(
+                _ctx_prefix + user_msg + full_context,
+                system=TACTICAL_SYSTEM,
+                temperature=0.5,
+                max_tokens=2000,
+                timeout=40,
+            )
+            _grok_ok = bool(ai_response)
+            if not _grok_ok:
+                print("[TACTICAL] Grok fallback also returned empty")
         except Exception as _e:
-            print(f"[TACTICAL] Gemini Flash fallback failed: {_e}")
+            print(f"[TACTICAL] Grok fallback failed: {_e}")
 
     # ── Synthesis layer ──
     try:
@@ -537,7 +516,7 @@ async def tactical_message(req: TacticalMessageRequest):
             api_key=EMERGENT_LLM_KEY,
             session_id=f"tac-synth-{uuid.uuid4().hex[:8]}",
             system_message=SYNTH_SYSTEM,
-        ).with_model("gemini", "gemini-2.5-flash")
+        ).with_model("xai", "grok-3")
 
         synth_prompt = f"""User asked: "{user_msg}"
 
