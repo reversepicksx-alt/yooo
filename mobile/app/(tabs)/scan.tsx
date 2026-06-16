@@ -2269,7 +2269,7 @@ export default function ScanScreen() {
         )}
 
         {/* ─── NCAAB Manual Form ─── */}
-        {sport === 'ncaab' && phase === 'idle' && mode === 'manual' && (
+        {sport === 'ncaab' && (phase === 'idle' || phase === 'analyzing') && mode === 'manual' && (
           <View style={styles.manualForm}>
             <Text style={styles.fieldLabel}>Player</Text>
             <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. Cooper Flagg, Paige Bueckers" placeholderTextColor={Colors.textTertiary} value={ncaabPlayerQuery}
@@ -2309,7 +2309,7 @@ export default function ScanScreen() {
         )}
 
         {/* ─── NCAAW Manual Form ─── */}
-        {sport === 'ncaaw' && phase === 'idle' && mode === 'manual' && (
+        {sport === 'ncaaw' && (phase === 'idle' || phase === 'analyzing') && mode === 'manual' && (
           <View style={styles.manualForm}>
             <Text style={styles.fieldLabel}>Player</Text>
             <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. Caitlin Clark, Angel Reese" placeholderTextColor={Colors.textTertiary} value={ncaawPlayerQuery}
@@ -2349,7 +2349,7 @@ export default function ScanScreen() {
         )}
 
         {/* ─── ATP Manual Form ─── */}
-        {sport === 'atp' && phase === 'idle' && mode === 'manual' && (
+        {sport === 'atp' && (phase === 'idle' || phase === 'analyzing') && mode === 'manual' && (
           <View style={styles.manualForm}>
             <Text style={styles.fieldLabel}>Player</Text>
             <FuzzySearchInput
@@ -2410,7 +2410,7 @@ export default function ScanScreen() {
         )}
 
         {/* ─── NCAAF Form ─── */}
-        {sport === 'ncaaf' && phase === 'idle' && mode === 'manual' && (
+        {sport === 'ncaaf' && (phase === 'idle' || phase === 'analyzing') && mode === 'manual' && (
           <View style={styles.manualForm}>
             <Text style={styles.fieldLabel}>Player</Text>
             <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. Arch Manning" placeholderTextColor={Colors.textTertiary} value={ncaafPlayerQuery}
@@ -2454,7 +2454,7 @@ export default function ScanScreen() {
         )}
 
         {/* ─── F1 Form ─── */}
-        {sport === 'f1' && phase === 'idle' && mode === 'manual' && (
+        {sport === 'f1' && (phase === 'idle' || phase === 'analyzing') && mode === 'manual' && (
           <View style={styles.manualForm}>
             <Text style={styles.fieldLabel}>Driver</Text>
             <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. Max Verstappen" placeholderTextColor={Colors.textTertiary} value={f1DriverQuery}
@@ -2498,7 +2498,7 @@ export default function ScanScreen() {
         )}
 
         {/* ─── MMA Form ─── */}
-        {sport === 'mma' && phase === 'idle' && mode === 'manual' && (
+        {sport === 'mma' && (phase === 'idle' || phase === 'analyzing') && mode === 'manual' && (
           <View style={styles.manualForm}>
             <Text style={styles.fieldLabel}>Fighter</Text>
             <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. Jon Jones" placeholderTextColor={Colors.textTertiary} value={mmaFighterQuery}
@@ -2542,7 +2542,7 @@ export default function ScanScreen() {
         )}
 
         {/* ─── PGA Form ─── */}
-        {sport === 'pga' && phase === 'idle' && mode === 'manual' && (
+        {sport === 'pga' && (phase === 'idle' || phase === 'analyzing') && mode === 'manual' && (
           <View style={styles.manualForm}>
             <Text style={styles.fieldLabel}>Golfer</Text>
             <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. Scottie Scheffler" placeholderTextColor={Colors.textTertiary} value={pgaPlayerQuery}
@@ -2586,7 +2586,7 @@ export default function ScanScreen() {
         )}
 
         {/* ─── Dota 2 Form ─── */}
-        {sport === 'dota2' && phase === 'idle' && mode === 'manual' && (
+        {sport === 'dota2' && (phase === 'idle' || phase === 'analyzing') && mode === 'manual' && (
           <View style={styles.manualForm}>
             <Text style={styles.fieldLabel}>Player</Text>
             <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. Miracle-" placeholderTextColor={Colors.textTertiary} value={dota2PlayerQuery}
@@ -2630,7 +2630,7 @@ export default function ScanScreen() {
         )}
 
         {/* ─── LoL Form ─── */}
-        {sport === 'lol' && phase === 'idle' && mode === 'manual' && (
+        {sport === 'lol' && (phase === 'idle' || phase === 'analyzing') && mode === 'manual' && (
           <View style={styles.manualForm}>
             <Text style={styles.fieldLabel}>Player</Text>
             <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. Faker" placeholderTextColor={Colors.textTertiary} value={lolPlayerQuery}
@@ -2674,7 +2674,7 @@ export default function ScanScreen() {
         )}
 
         {/* ─── College Baseball Form ─── */}
-        {sport === 'cbase' && phase === 'idle' && mode === 'manual' && (
+        {sport === 'cbase' && (phase === 'idle' || phase === 'analyzing') && mode === 'manual' && (
           <View style={styles.manualForm}>
             <Text style={styles.fieldLabel}>Player</Text>
             <TextInput style={[styles.textInput, INPUT_STYLE]} placeholder="e.g. Paul Skenes" placeholderTextColor={Colors.textTertiary} value={cbasePlayerQuery}
@@ -4934,6 +4934,19 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#222',
   },
+  propPickerSheet: {
+    backgroundColor: '#111111', borderRadius: 20, padding: 16,
+    width: 300, maxHeight: 420, borderWidth: 1, borderColor: '#222',
+  },
+  propPickerTitle: {
+    color: Colors.text, fontSize: 15, fontWeight: '700',
+    marginBottom: 12, paddingHorizontal: 4,
+  },
+  propPickerItem: {
+    paddingHorizontal: 12, paddingVertical: 13, borderRadius: 10,
+  },
+  propPickerItemActive: { backgroundColor: 'rgba(57,255,20,0.10)' },
+  propPickerText: { color: Colors.textSecondary, fontSize: 14 },
   sportPickerHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -5243,6 +5256,18 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3, shadowRadius: 6,
   },
   pickerBtnText: { color: Colors.text, fontSize: 15 },
+  pickerModal: {
+    backgroundColor: '#111', borderTopLeftRadius: 16, borderTopRightRadius: 16,
+    paddingVertical: 8, paddingHorizontal: 4, position: 'absolute', bottom: 0, left: 0, right: 0,
+  },
+  pickerOption: {
+    paddingHorizontal: 20, paddingVertical: 14, borderRadius: 8,
+  },
+  pickerOptionActive: {
+    backgroundColor: 'rgba(57,255,20,0.1)',
+  },
+  pickerOptionText: { color: Colors.textSecondary, fontSize: 15 },
+  pickerOptionTextActive: { color: Colors.primary, fontWeight: '700' },
 
   /* Analysis card */
   analysisCard: {

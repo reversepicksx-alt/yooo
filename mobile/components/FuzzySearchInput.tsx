@@ -122,6 +122,7 @@ export default function FuzzySearchInput({
   onSelectCs2Player,
   onSelectCs2Team,
   onSelectWtaPlayer,
+  onSelectAtpPlayer,
   onSelectStaticItem,
 }: FuzzySearchInputProps) {
   const [results, setResults] = useState<any[]>([]);
@@ -153,7 +154,7 @@ export default function FuzzySearchInput({
         r = data.leagues || [];
       } else if (searchType === 'players') {
         const data = await searchPlayersQuick(q, leagueId);
-        r = (data.players || []).map((p: Record<string, unknown>) => ({
+        r = (data.players || []).map((p: any) => ({
           playerId: (p.id as number) || 0,
           playerName: (p.name as string) || '',
           teamId: (p.teamId as number) || 0,

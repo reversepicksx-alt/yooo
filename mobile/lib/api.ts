@@ -194,13 +194,13 @@ export async function scanProp(imageBase64: string, sport = 'soccer'): Promise<S
       propType: ext.propType,
       line: ext.line,
       venue: ext.venue,
-      opponentName: ext.opponentName || opp.teamName || opp.name,
+      opponentName: ext.opponentName || (opp as any).teamName || opp.name,
       playerTeam: ext.playerTeam,
-      teamName: res.teamName || ext.playerTeam,
+      teamName: (res as any).teamName || ext.playerTeam,
       leagueId: ext.leagueId,
-      playerId: res.id || res.playerId,
-      teamId: res.teamId,
-      opponentId: opp.teamId || opp.id,
+      playerId: res.id || (res as any).playerId,
+      teamId: (res as any).teamId,
+      opponentId: (opp as any).teamId || opp.id,
     };
   }
   return { error: 'No prop data detected. Try a clearer image.' };
@@ -208,7 +208,7 @@ export async function scanProp(imageBase64: string, sport = 'soccer'): Promise<S
 
 export interface GameLog {
   date: string;
-  opponent: string;
+  opponent?: string | null;
   venue: string;
   value: number | null;
   minutes: number;
@@ -234,11 +234,11 @@ export interface GameLog {
   rbi?: number | null;
   avg?: number | null;
   // MLB enrichment fields (from team schedule positional match)
-  gameDate?: string | null;      // "YYYY-MM-DD"
-  opponent?: string | null;      // team abbreviation e.g. "BOS"
-  isHome?: boolean | null;       // true = home game, false = away
-  homeScore?: number | null;     // home team runs
-  awayScore?: number | null;     // away team runs
+  gameDate?: string | null;
+  isHome?: boolean | null;
+  homeScore?: number | null;
+  awayScore?: number | null;
+  propType?: string;
 }
 
 export interface H2HMatch {
@@ -300,6 +300,12 @@ export interface PredictionResult {
     p_player_team_scores_first?: number;
     fts_no_goal_pct?: number;
     fts_sample?: number;
+    dominant?: string;
+    color?: string;
+    dominant_probability?: number;
+    expected_total_goals?: number;
+    implied_home?: number;
+    implied_away?: number;
     positional_depth?: {
       vs_dominant_trailing_avg?: number;
       vs_moderate_trailing_avg?: number;
@@ -389,6 +395,7 @@ export interface PredictionResult {
   propHistoricalRate?: number;
   propHistoricalN?: number;
   coinFlip?: boolean;
+  scenarioProbabilities?: { best: number; base: number; worst: number };
   /** Populated when the player was resolved by name and multiple cache entries share the same
    *  abbreviated name (e.g. "J. Valencia" for three different players). The frontend should
    *  show a disambiguation banner so the user can verify the correct player was selected. */
@@ -406,6 +413,7 @@ interface RawPrediction {
   confidenceScore?: number;
   confidenceLevel?: string;
   confidenceInterval?: [number, number];
+  playerCandidates?: Array<{ playerId: number; playerName: string; teamName: string; position: string; leagueId?: number }>;
   reasoning?: string;
   tacticalBreakdown?: string;
   sharpSummary?: string;
@@ -428,6 +436,9 @@ interface RawPrediction {
     momentumMean?: number;
     momentumLabel?: string;
     priorMean?: number;
+    priorWeight?: number;
+    momentumWeight?: number;
+    covariateWeight?: number;
     streakFlag?: string;
     pOver?: number;
     pUnder?: number;
@@ -452,10 +463,14 @@ interface RawPrediction {
     matches?: Array<{
       date?: string;
       score?: string;
+      matchScore?: string;
       venue?: string;
       minutes?: number;
+      minutesPlayed?: number;
       targetStat?: number | null;
       opponent?: string;
+      teamPossession?: number | null;
+      opponentPossession?: number | null;
     }>;
     avgVsOpponent?: number;
     sampleSize?: number;
@@ -479,7 +494,6 @@ interface RawPrediction {
     keyMatchupFactor?: string;
   };
   positionComparison?: Record<string, unknown>;
-  sharpSummary?: string;
   keyEvidence?: string;
   gameFlowDynamics?: string;
   scenarioAnalysis?: string;
@@ -655,7 +669,7 @@ export async function predict(request: Record<string, unknown>): Promise<Predict
     scenarioAnalysis: raw.scenarioAnalysis || undefined,
     scenarioProbabilities: raw.scenarioProbabilities ?? undefined,
     matchContext: raw.matchContext ? { league: raw.matchContext.league, round: raw.matchContext.round, date: raw.matchContext.date } : undefined,
-    gameSituation: raw.gameSituation ?? undefined,
+    gameSituation: (raw.gameSituation as any) ?? undefined,
     gameScript: raw.gameScript ?? undefined,
     lineDeviationBand: raw.lineDeviationBand ?? undefined,
     lineDeviationPct: raw.lineDeviationPct ?? undefined,
@@ -1507,6 +1521,7 @@ export interface CommunityMessage {
   mentions: string[];
   reactions: Record<string, string[]>;
   createdAt: string;
+  pending?: boolean;
 }
 
 export async function fetchCommunityMessages(params?: {

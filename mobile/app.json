@@ -4,12 +4,12 @@
     "slug": "reversepicks",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/rp-icon.png",
     "userInterfaceStyle": "dark",
     "newArchEnabled": false,
     "scheme": "reversepicks",
     "splash": {
-      "image": "./assets/images/icon.png",
+      "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
       "backgroundColor": "#050505"
     },
@@ -17,8 +17,13 @@
       "supportsTablet": false,
       "bundleIdentifier": "com.reversepicks.app",
       "buildNumber": "1",
+      "icon": "./assets/rp-icon.png",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
+        "NSCameraUsageDescription": "ReversePicks needs camera access to scan prop slips.",
+        "NSPhotoLibraryUsageDescription": "ReversePicks needs access to your photos to scan prop slips.",
+        "NSPhotoLibraryAddUsageDescription": "ReversePicks needs access to save images.",
+        "NSUserNotificationsUsageDescription": "ReversePicks sends you pick alerts and result notifications.",
         "CFBundleURLTypes": [
           {
             "CFBundleURLSchemes": [
@@ -30,13 +35,16 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/icon.png",
-        "backgroundColor": "#0A0E1A"
+        "foregroundImage": "./assets/rp-icon.png",
+        "backgroundColor": "#050505"
       },
       "package": "com.reversepicks.app",
       "edgeToEdgeEnabled": true,
       "permissions": [
-        "android.permission.RECORD_AUDIO"
+        "android.permission.RECORD_AUDIO",
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE"
       ]
     },
     "web": {
@@ -50,6 +58,14 @@
         {
           "photosPermission": "ReversePicks needs access to your photos to scan prop slips.",
           "cameraPermission": "ReversePicks needs camera access to scan prop slips."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/rp-icon.png",
+          "color": "#39FF14",
+          "sounds": []
         }
       ]
     ],

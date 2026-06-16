@@ -62,10 +62,10 @@ const SPORT_META: Record<SportKey, { label: string; icon: string }> = {
 };
 
 function isLive(p: Pick) {
-  return p.matchStatus === 'live' || p.status === 'live' || p.status === 'pending' || (!p.status && !['hit','miss','push','won','lost','dnp'].includes(p.result));
+  return p.matchStatus === 'live' || p.status === 'live' || p.status === 'pending' || (!p.status && !['hit','miss','push','won','lost','dnp'].includes(p.result ?? ''));
 }
 function isSettled(p: Pick) {
-  return p.matchStatus === 'final' || p.status === 'settled' || ['hit','miss','push','won','lost','dnp'].includes(p.result);
+  return p.matchStatus === 'final' || p.status === 'settled' || ['hit','miss','push','won','lost','dnp'].includes(p.result ?? '');
 }
 function pickWon(p: Pick) {
   return p.result === 'hit' || p.result === 'won' || p.status === 'won';

@@ -11,6 +11,7 @@ interface Session {
 
 interface AuthContextType {
   session: Session | null;
+  email?: string;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
   loginWithResponse: (resp: AuthResponse) => Promise<void>;
@@ -86,7 +87,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ session, isLoading, login, loginWithResponse, logout }}>
+    <AuthContext.Provider value={{ session, email: session?.email, isLoading, login, loginWithResponse, logout }}>
       {children}
     </AuthContext.Provider>
   );

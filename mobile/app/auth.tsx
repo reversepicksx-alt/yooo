@@ -16,7 +16,7 @@ import {
 
 type Step = 'email' | 'pricing';
 
-const INPUT_STYLE = Platform.OS === 'web' ? { outlineWidth: 0, outlineStyle: 'none' } : {};
+const INPUT_STYLE = Platform.OS === 'web' ? { outlineWidth: 0 } : {};
 
 const PLANS = [
   { key: 'weekly',    label: 'Weekly',   sub: 'Billed weekly',  price: '$15',    unit: '/week',  popular: false },
