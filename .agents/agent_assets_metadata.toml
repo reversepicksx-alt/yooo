@@ -42,6 +42,30 @@ uri = "file://attached_assets/icon_v6_luxury.png"
 type = "image"
 title = "rp icon luxury glow"
 
+[[generated]]
+id = "S48vt18iWrZn41muc4rX6"
+uri = "file://attached_assets/icon_b1_clean.png"
+type = "image"
+title = "rp badge clean green"
+
+[[generated]]
+id = "8p5l8gYK2yNAgXbO40q-L"
+uri = "file://attached_assets/icon_b2_intense_glow.png"
+type = "image"
+title = "rp badge intense glow"
+
+[[generated]]
+id = "aQNTFJ88QM3v183jCIdyf"
+uri = "file://attached_assets/icon_b3_minimal.png"
+type = "image"
+title = "rp badge minimal modern"
+
+[[generated]]
+id = "_AObD-9UH-6t5nxoc6LYg"
+uri = "file://attached_assets/icon_b4_bold.png"
+type = "image"
+title = "rp badge bold chunky"
+
 [[outputs]]
 id = "IdBO4fXLAJGGVIzxE-3A1"
 uri = "file://attached_assets/cheat_sheet_2_1.png"
@@ -191,3 +215,27 @@ id = "BJ6j_uYRmTDnFpX6IfcwU"
 uri = "file://attached_assets/icon_v6_luxury.png"
 type = "image"
 title = "Option C — Luxury glow with strong edge light"
+
+[[outputs]]
+id = "-m8lnJxrYZn-N12W3P5tK"
+uri = "file://attached_assets/icon_b1_clean.png"
+type = "image"
+title = "B1 — Clean crisp, no glow"
+
+[[outputs]]
+id = "J13Ps1q_E-7Q-Fv9KvzyR"
+uri = "file://attached_assets/icon_b2_intense_glow.png"
+type = "image"
+title = "B2 — Intense electric glow"
+
+[[outputs]]
+id = "CGxws6PU54-Ph1QnKnR3m"
+uri = "file://attached_assets/icon_b3_minimal.png"
+type = "image"
+title = "B3 — Minimal modern, thin lines"
+
+[[outputs]]
+id = "BybRmpnrp55UdOtfU1Hud"
+uri = "file://attached_assets/icon_b4_bold.png"
+type = "image"
+title = "B4 — Bold chunky heavy strokes"
