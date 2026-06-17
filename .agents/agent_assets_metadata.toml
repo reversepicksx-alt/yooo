@@ -24,6 +24,24 @@ uri = "file://attached_assets/icon_v3_xlarge.png"
 type = "image"
 title = "rp icon xlarge glow"
 
+[[generated]]
+id = "w3c_XTD5WlewEQz6PD61m"
+uri = "file://attached_assets/icon_v4_stylized.png"
+type = "image"
+title = "rp icon stylized monogram"
+
+[[generated]]
+id = "wuEdljCEK3oKZlkPU6-Mu"
+uri = "file://attached_assets/icon_v5_esports.png"
+type = "image"
+title = "rp icon esports badge"
+
+[[generated]]
+id = "BeErVg80vI-q3uGQY7GIz"
+uri = "file://attached_assets/icon_v6_luxury.png"
+type = "image"
+title = "rp icon luxury glow"
+
 [[outputs]]
 id = "IdBO4fXLAJGGVIzxE-3A1"
 uri = "file://attached_assets/cheat_sheet_2_1.png"
@@ -155,3 +173,21 @@ id = "mxT-VJjJQmLjdg8gb1Gkl"
 uri = "file://mobile/assets/rp-icon.png"
 type = "image"
 title = "New App Icon — Option 3 (1024×1024)"
+
+[[outputs]]
+id = "Dj5r2QDxM9bIuVKpMtWJM"
+uri = "file://attached_assets/icon_v4_stylized.png"
+type = "image"
+title = "Option A — Stylized mirrored R + flag P"
+
+[[outputs]]
+id = "QrONp1jNlbVgv5Icy89DQ"
+uri = "file://attached_assets/icon_v5_esports.png"
+type = "image"
+title = "Option B — Esports badge with RP ligature"
+
+[[outputs]]
+id = "BJ6j_uYRmTDnFpX6IfcwU"
+uri = "file://attached_assets/icon_v6_luxury.png"
+type = "image"
+title = "Option C — Luxury glow with strong edge light"
