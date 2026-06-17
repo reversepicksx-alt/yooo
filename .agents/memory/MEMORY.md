@@ -23,4 +23,5 @@
 - [Next-match caching and multi-context league](next-match-cache.md) — team_next_match has 1h TTL cache (next_match_cache); multi-context players pre-fetch ctxs[0] on select so league never blank.
 - [Deployment timeout fix](deployment-replitignore.md) — attached_assets (456MB) + mobile/node_modules (372MB) caused repl-layer push to timeout; fixed with .replitignore; proxy.js rewritten to use zero npm deps so it starts instantly.
 - [Moneyline normalization — playerIsHome](moneyline-playerishome.md) — americanOdds.home/away keys are always the fixture's home/away, not the player's team. Must normalize using playerIsHome tag.
+- [EAS Build & App Store Submit](eas-build-submit.md) — 3 required fixes: Replit package-firewall URLs in lock file, newArchEnabled=true, reanimated v4+worklets. ascAppId=6781092173.
 - [Full Gemini purge](gemini-purge.md) — All Gemini API calls replaced with Grok (xAI); _gemini_call/_gemini_search_call are now backward-compat aliases to _grok_call/_grok_search_call.
