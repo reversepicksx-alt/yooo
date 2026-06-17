@@ -65,3 +65,9 @@ id = "5gpy03N2t2PLogEwSN8or"
 uri = "file://screenshots/appstore/screenshot4.png"
 type = "image"
 title = "Screenshot 4 — My Picks"
+
+[[outputs]]
+id = "i3_PRMeanb9MC7pjM8FA7"
+uri = "file://screenshots/appstore/screenshot5.png"
+type = "image"
+title = "Screenshot 5 — Predict Screen"
