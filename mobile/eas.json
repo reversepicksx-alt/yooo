@@ -21,7 +21,7 @@
     "production": {
       "autoIncrement": true,
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://reversepicks.replit.app"
+        "EXPO_PUBLIC_API_URL": "https://reversepicks.com"
       },
       "ios": {
         "image": "latest"
