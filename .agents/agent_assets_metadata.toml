@@ -335,3 +335,9 @@ id = "zPmXb2MxblFGySeJrkC06"
 uri = "file://attached_assets/icon_b3r4.png"
 type = "image"
 title = "R4 — Rounded ultra glow"
+
+[[outputs]]
+id = "I-aYkg8I0QohuPilATSZJ"
+uri = "file://attached_assets/icon_v5_glowing.png"
+type = "image"
+title = "icon_v5_esports — with neon glow added"
