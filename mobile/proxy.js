@@ -16,7 +16,7 @@ process.on('uncaughtException',  (err)    => console.error('[Proxy] Uncaught exc
 process.on('unhandledRejection', (reason) => console.error('[Proxy] Unhandled rejection (survived):', reason));
 
 const IS_PRODUCTION = process.env.PRODUCTION === 'true';
-const PORT         = 5000;
+const PORT         = parseInt(process.env.PORT || '5000', 10);
 const BACKEND_PORT = 8000;
 const METRO_PORT   = 5001;
 
