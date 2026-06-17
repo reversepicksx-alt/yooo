@@ -149,3 +149,9 @@ id = "P28ruWVX1IXtKWY40mXzE"
 uri = "file://attached_assets/icon_v3_xlarge.png"
 type = "image"
 title = "Option 3 — XL (80% fill, subtle edge glow)"
+
+[[outputs]]
+id = "mxT-VJjJQmLjdg8gb1Gkl"
+uri = "file://mobile/assets/rp-icon.png"
+type = "image"
+title = "New App Icon — Option 3 (1024×1024)"
