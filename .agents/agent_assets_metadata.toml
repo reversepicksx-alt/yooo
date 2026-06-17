@@ -59,3 +59,9 @@ id = "FUQShX4ldwy3lqskzPCyu"
 uri = "file://screenshots/appstore/screenshot3.png"
 type = "image"
 title = "Screenshot 3 — Alerts List"
+
+[[outputs]]
+id = "5gpy03N2t2PLogEwSN8or"
+uri = "file://screenshots/appstore/screenshot4.png"
+type = "image"
+title = "Screenshot 4 — My Picks"
