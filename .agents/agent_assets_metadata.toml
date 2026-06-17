@@ -90,6 +90,30 @@ uri = "file://attached_assets/icon_b2v4.png"
 type = "image"
 title = "b2 style dual layer glow"
 
+[[generated]]
+id = "_VKyfAgDB81b-kmQp0e68"
+uri = "file://attached_assets/icon_b3r1.png"
+type = "image"
+title = "b2.3 rounded bloom v1"
+
+[[generated]]
+id = "vftfbam9q6ZP0Nn3DSzB5"
+uri = "file://attached_assets/icon_b3r2.png"
+type = "image"
+title = "b2.3 rounded multi-halo v2"
+
+[[generated]]
+id = "Ekb5RVIX9BH4YfhLPWm_V"
+uri = "file://attached_assets/icon_b3r3.png"
+type = "image"
+title = "b2.3 rounded ember glow v3"
+
+[[generated]]
+id = "KUC6m6xw1flPb8PlD6HiQ"
+uri = "file://attached_assets/icon_b3r4.png"
+type = "image"
+title = "b2.3 rounded ultra glow v4"
+
 [[outputs]]
 id = "IdBO4fXLAJGGVIzxE-3A1"
 uri = "file://attached_assets/cheat_sheet_2_1.png"
@@ -287,3 +311,27 @@ id = "3QNmC2WuW7XUUxxhREvSp"
 uri = "file://attached_assets/icon_b2v4.png"
 type = "image"
 title = "B2.4 — Dual-layer glow"
+
+[[outputs]]
+id = "-E_6wQPHgHhRSpOXlvu0y"
+uri = "file://attached_assets/icon_b3r1.png"
+type = "image"
+title = "R1 — Rounded bloom glow"
+
+[[outputs]]
+id = "sW35R0PZBX5Mbekd9N0nN"
+uri = "file://attached_assets/icon_b3r2.png"
+type = "image"
+title = "R2 — Rounded multi-halo"
+
+[[outputs]]
+id = "8Y1x3OmZkVsZx-nbI4H2Q"
+uri = "file://attached_assets/icon_b3r3.png"
+type = "image"
+title = "R3 — Rounded ember glow"
+
+[[outputs]]
+id = "zPmXb2MxblFGySeJrkC06"
+uri = "file://attached_assets/icon_b3r4.png"
+type = "image"
+title = "R4 — Rounded ultra glow"
