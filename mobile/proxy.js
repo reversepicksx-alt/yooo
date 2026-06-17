@@ -17,7 +17,7 @@ process.on('unhandledRejection', (reason) => console.error('[Proxy] Unhandled re
 
 const IS_PRODUCTION = process.env.PRODUCTION === 'true';
 const PORT         = parseInt(process.env.PORT || '5000', 10);
-const BACKEND_PORT = 8000;
+const BACKEND_PORT = parseInt(process.env.BACKEND_PORT || '8000', 10);
 const METRO_PORT   = 5001;
 
 const distPath   = path.join(__dirname, 'dist');
