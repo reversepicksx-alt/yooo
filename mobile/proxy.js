@@ -159,6 +159,69 @@ const server = http.createServer((req, res) => {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(MANIFEST);
     }
+    if (pathname === '/privacy' || pathname === '/privacy.html') {
+      const PRIVACY_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Privacy Policy — ReversePicks</title>
+<style>
+  body{margin:0;padding:0;background:#050505;color:#ccc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7}
+  .wrap{max-width:720px;margin:0 auto;padding:48px 24px}
+  h1{color:#39FF14;font-size:2rem;margin-bottom:4px}
+  h2{color:#39FF14;font-size:1.1rem;margin-top:36px;margin-bottom:8px}
+  a{color:#39FF14}
+  .date{color:#666;font-size:.85rem;margin-bottom:32px}
+  hr{border:none;border-top:1px solid #222;margin:40px 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Privacy Policy</h1>
+  <p class="date">Last updated: June 17, 2026</p>
+
+  <p>ReversePicks ("we", "us", or "our") operates the ReversePicks mobile application (the "App"). This page explains what information we collect, how we use it, and your rights.</p>
+
+  <h2>Information We Collect</h2>
+  <p>We collect only your <strong>email address</strong> when you create an account. This is used solely to authenticate you and manage your subscription.</p>
+
+  <h2>How We Use Your Information</h2>
+  <ul>
+    <li>To create and manage your ReversePicks account</li>
+    <li>To process and verify your subscription status</li>
+    <li>To send essential account and service communications</li>
+  </ul>
+
+  <h2>Data Sharing</h2>
+  <p>We do not sell, trade, or rent your personal information to third parties. We do not use your data for advertising or tracking purposes.</p>
+
+  <h2>Data Storage</h2>
+  <p>Your email address is stored securely in our database. We retain it for as long as your account is active or as needed to provide our services.</p>
+
+  <h2>Third-Party Services</h2>
+  <p>We use Square for payment processing. Square's privacy policy governs any payment data you provide during checkout. We do not store your payment card details.</p>
+
+  <h2>Your Rights</h2>
+  <p>You may request deletion of your account and associated data at any time by contacting us at <a href="mailto:reversepicksx@gmail.com">reversepicksx@gmail.com</a>.</p>
+
+  <h2>Children's Privacy</h2>
+  <p>The App is not directed to children under 13. We do not knowingly collect personal information from children under 13.</p>
+
+  <h2>Changes to This Policy</h2>
+  <p>We may update this Privacy Policy from time to time. We will notify you of material changes by posting the new policy on this page with an updated date.</p>
+
+  <h2>Contact</h2>
+  <p>If you have questions about this Privacy Policy, please contact us at <a href="mailto:reversepicksx@gmail.com">reversepicksx@gmail.com</a>.</p>
+
+  <hr/>
+  <p style="color:#444;font-size:.8rem">ReversePicks &mdash; Elite Prop Intelligence</p>
+</div>
+</body>
+</html>`;
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      return res.end(PRIVACY_HTML);
+    }
     if (pathname === '/rp-icon.png' || pathname === '/favicon.ico' || pathname === '/favicon.png') {
       return serveFile(res, path.join(assetsPath, 'rp-icon.png'));
     }
