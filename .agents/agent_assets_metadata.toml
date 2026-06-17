@@ -71,3 +71,39 @@ id = "i3_PRMeanb9MC7pjM8FA7"
 uri = "file://screenshots/appstore/screenshot5.png"
 type = "image"
 title = "Screenshot 5 — Predict Screen"
+
+[[outputs]]
+id = "U8SiLLFhNtcf5hR_AaNAU"
+uri = "file://screenshots/appstore/ss_splash.png"
+type = "image"
+title = "1 — Splash"
+
+[[outputs]]
+id = "wd17fCaKV4hqfsbGXCKua"
+uri = "file://screenshots/appstore/ss_login.png"
+type = "image"
+title = "2 — Login"
+
+[[outputs]]
+id = "qVLFJCoWWvJxcWV-EFOQc"
+uri = "file://screenshots/appstore/ss_predict.png"
+type = "image"
+title = "3 — Predict"
+
+[[outputs]]
+id = "bcn-rhxpMaeHnhpHvkS_j"
+uri = "file://screenshots/appstore/ss_analysis.png"
+type = "image"
+title = "4 — Analysis"
+
+[[outputs]]
+id = "f9wS1BqW_Yo3_NE-g6bWr"
+uri = "file://screenshots/appstore/ss_chat.png"
+type = "image"
+title = "5 — Chat"
+
+[[outputs]]
+id = "Z1ffwl2-X-x-heJ20E-cr"
+uri = "file://screenshots/appstore/ss_account.png"
+type = "image"
+title = "6 — Account"
