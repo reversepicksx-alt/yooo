@@ -134,5 +134,5 @@ async def send_everyone(
 ):
     """Broadcast a push notification to every registered member except the sender."""
     tokens = await _get_all_tokens(exclude_email=sender_email)
-    print(f"[PUSH] @everyone → {len(tokens)} token(s): {title!r}")
+    print(f"[PUSH] @all → {len(tokens)} token(s): {title!r}")
     await _fire(tokens, title, body, data)

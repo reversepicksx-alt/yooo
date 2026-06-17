@@ -339,7 +339,7 @@ export default function CommunityScreen() {
     if (sending) return;
 
     const mentions: string[] = [];
-    const hasEveryone = /@everyone\b/i.test(text);
+    const hasEveryone = /@all\b/i.test(text);
     if (!hasEveryone) {
       const mentionMatches = text.match(/@\w+/g) || [];
       for (const tag of mentionMatches) {
@@ -351,7 +351,7 @@ export default function CommunityScreen() {
         if (found) mentions.push(found.email);
       }
     }
-    // @everyone: backend detects the text itself and broadcasts to all tokens
+    // @all: backend detects the text itself and broadcasts to all tokens
 
     const optimisticId = `pending-${Date.now()}`;
     const optimistic: CommunityMessage = {

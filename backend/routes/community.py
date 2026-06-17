@@ -120,7 +120,7 @@ async def send_message(req: SendMessageRequest):
         sender_name = display_name
         notif_title = f"Reverse Chat — {sender_name}"
 
-        is_everyone = "@everyone" in text_body.lower()
+        is_everyone = "@all" in text_body.lower()
 
         if is_everyone:
             _aio.create_task(send_everyone(
