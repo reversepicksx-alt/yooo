@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 import stripe as _stripe
 
-from config import db, OWNER_EMAIL, OWNER_EMAILS, LIFETIME_SUB_EMAILS, WHOP_API_KEY
+from config import db, OWNER_EMAIL, OWNER_EMAILS, LIFETIME_SUB_EMAILS, BETA_TEST_EMAILS, WHOP_API_KEY
 from models import (
     VerifyAccessRequest, LoginRequest, SetPasswordRequest,
     ResetPasswordRequest, VerifySessionRequest,
@@ -52,6 +52,8 @@ async def _check_access_local(email_lower: str):
         return "Owner"
     if email_lower in LIFETIME_SUB_EMAILS:
         return "Lifetime"
+    if email_lower in BETA_TEST_EMAILS:
+        return "Beta"
     grant = await db.manual_access_grants.find_one({"email": email_lower}, {"_id": 0})
     if grant:
         access_type = grant.get("access_type", "Manual")

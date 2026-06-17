@@ -90,6 +90,12 @@ async def set_dynamic_api_key(value: str):
     """Update API-Football key in memory + MongoDB."""
     await set_dynamic_setting("API_FOOTBALL_KEY", value)
 
+# ── Beta / TestFlight Testers ──
+# Comma-separated emails in env var BETA_TEST_EMAILS get free access (access_type="Beta")
+# Use this for TestFlight testers only — revoke by removing their email from the env var.
+_beta_raw = os.environ.get("BETA_TEST_EMAILS", "")
+BETA_TEST_EMAILS: set = {e.strip().lower() for e in _beta_raw.split(",") if e.strip()}
+
 # ── Lifetime VIP Emails ──
 LIFETIME_SUB_EMAILS = [
     "faron2allen@gmail.com", "jossel0701@gmail.com", "josselj001@gmail.com",
