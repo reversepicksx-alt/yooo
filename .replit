@@ -18,6 +18,7 @@ CDM_INVERSION_MODE = "live"
 SCENARIO_PRIORS_MODE = "live"
 ADMIN_SECRET = "rp-admin-settle-2026"
 LUCK_STRIP_ENABLED = "1"
+BETA_TEST_EMAILS = "tester1@gmail.com,tester2@icloud.com"
 
 [workflows]
 runButton = "Project"
