@@ -17,3 +17,27 @@ id = "S3qZLjvvLhgm6Aii4xxzP"
 uri = "file://attached_assets/SOCCER_PROP_CHEAT_SHEET.md"
 type = "text"
 title = "ReversePicks Soccer Prop Cheat Sheet"
+
+[[outputs]]
+id = "fj1s9fOV1pBdb1iwqdoGu"
+uri = "file://screenshots/appstore/screen4_login.png"
+type = "image"
+title = "Screen 1 — Login"
+
+[[outputs]]
+id = "14k0K1MKF36gOEJXWiwQI"
+uri = "file://screenshots/appstore/screen1_predict.png"
+type = "image"
+title = "Screen 2 — Predict"
+
+[[outputs]]
+id = "ZQdGMrwidWc7T8Xz8e_gy"
+uri = "file://screenshots/appstore/screen2_picks.png"
+type = "image"
+title = "Screen 3 — My Picks"
+
+[[outputs]]
+id = "fXvSdD9xute-z3Stp4PZW"
+uri = "file://screenshots/appstore/screen3_intel.png"
+type = "image"
+title = "Screen 4 — Tactical Intel"
