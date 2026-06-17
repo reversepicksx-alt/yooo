@@ -6,6 +6,24 @@ uri = "file://mobile/assets/images/icon.png"
 type = "image"
 title = "reversepicks app icon"
 
+[[generated]]
+id = "F2Y140O4MtRfN4CjqSHWu"
+uri = "file://attached_assets/icon_v1_medium.png"
+type = "image"
+title = "rp icon medium size"
+
+[[generated]]
+id = "4wRASOCyvOb8BMT6QvAlq"
+uri = "file://attached_assets/icon_v2_large.png"
+type = "image"
+title = "rp icon large size"
+
+[[generated]]
+id = "x_dSnpFJ8wH0Voax-yIhT"
+uri = "file://attached_assets/icon_v3_xlarge.png"
+type = "image"
+title = "rp icon xlarge glow"
+
 [[outputs]]
 id = "IdBO4fXLAJGGVIzxE-3A1"
 uri = "file://attached_assets/cheat_sheet_2_1.png"
@@ -113,3 +131,21 @@ id = "wEzuwTOL31za6_7tP4ajd"
 uri = "file://screenshots/appstore/ss_sports.png"
 type = "image"
 title = "Sport Selector"
+
+[[outputs]]
+id = "Gcp9oyVeWnWyvNJraRO0q"
+uri = "file://attached_assets/icon_v1_medium.png"
+type = "image"
+title = "Option 1 — Medium (60% fill, clean & balanced)"
+
+[[outputs]]
+id = "ycAJbQYpFaOFQfIKJO8IK"
+uri = "file://attached_assets/icon_v2_large.png"
+type = "image"
+title = "Option 2 — Large (72% fill, bold presence)"
+
+[[outputs]]
+id = "P28ruWVX1IXtKWY40mXzE"
+uri = "file://attached_assets/icon_v3_xlarge.png"
+type = "image"
+title = "Option 3 — XL (80% fill, subtle edge glow)"
