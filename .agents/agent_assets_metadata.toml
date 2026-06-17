@@ -41,3 +41,21 @@ id = "fXvSdD9xute-z3Stp4PZW"
 uri = "file://screenshots/appstore/screen3_intel.png"
 type = "image"
 title = "Screen 4 — Tactical Intel"
+
+[[outputs]]
+id = "7cK5ibT80MVVEUoOxam7U"
+uri = "file://screenshots/appstore/screenshot1.png"
+type = "image"
+title = "Screenshot 1 — Alerts Screen"
+
+[[outputs]]
+id = "hGMwTbwbtWd1iQjmRlFQ9"
+uri = "file://screenshots/appstore/screenshot2.png"
+type = "image"
+title = "Screenshot 2 — My Picks Record"
+
+[[outputs]]
+id = "FUQShX4ldwy3lqskzPCyu"
+uri = "file://screenshots/appstore/screenshot3.png"
+type = "image"
+title = "Screenshot 3 — Alerts List"
