@@ -129,7 +129,7 @@ export async function linkPayment(loginEmail: string, paymentEmail: string): Pro
 }
 
 export async function createCheckout(email: string, planKey: string): Promise<{ checkoutUrl?: string; checkout_url?: string; redirect_url?: string; error?: string }> {
-  const redirectUrl = typeof window !== 'undefined'
+  const redirectUrl = typeof window !== 'undefined' && window.location != null
     ? `${window.location.origin}/auth`
     : 'https://reversepicks.com/auth';
   return apiCall('/api/stripe/create-checkout', {
@@ -969,7 +969,7 @@ export async function changePlan(email: string, newPlanKey: string, accessType?:
 }
 
 export async function resubscribeCheckout(email: string, planKey: string, accessType?: string): Promise<{ checkoutUrl?: string; checkout_url?: string; redirect_url?: string; error?: string }> {
-  const redirectUrl = typeof window !== 'undefined'
+  const redirectUrl = typeof window !== 'undefined' && window.location != null
     ? `${window.location.origin}/auth`
     : 'https://reversepicks.com/auth';
   const isStripe = accessType?.toLowerCase().includes('stripe');
