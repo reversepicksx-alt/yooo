@@ -66,6 +66,30 @@ uri = "file://attached_assets/icon_b4_bold.png"
 type = "image"
 title = "rp badge bold chunky"
 
+[[generated]]
+id = "h1swI7SVwR6kT2eO9cuX3"
+uri = "file://attached_assets/icon_b2v1.png"
+type = "image"
+title = "b2 style multi halo glow"
+
+[[generated]]
+id = "FUlqMOZe4wMNPEXBGInJ-"
+uri = "file://attached_assets/icon_b2v2.png"
+type = "image"
+title = "b2 style neon tubing"
+
+[[generated]]
+id = "kgcWG0vLcmN3AcDzcr7_s"
+uri = "file://attached_assets/icon_b2v3.png"
+type = "image"
+title = "b2 style bloom energy"
+
+[[generated]]
+id = "UUbuoFerRoAMpYqLn4_Ct"
+uri = "file://attached_assets/icon_b2v4.png"
+type = "image"
+title = "b2 style dual layer glow"
+
 [[outputs]]
 id = "IdBO4fXLAJGGVIzxE-3A1"
 uri = "file://attached_assets/cheat_sheet_2_1.png"
@@ -239,3 +263,27 @@ id = "BybRmpnrp55UdOtfU1Hud"
 uri = "file://attached_assets/icon_b4_bold.png"
 type = "image"
 title = "B4 — Bold chunky heavy strokes"
+
+[[outputs]]
+id = "saRqDHpS-jQDHGHA6HjEa"
+uri = "file://attached_assets/icon_b2v1.png"
+type = "image"
+title = "B2.1 — Multi-halo glow"
+
+[[outputs]]
+id = "l_jMCEQsGOPNJeej3EwZu"
+uri = "file://attached_assets/icon_b2v2.png"
+type = "image"
+title = "B2.2 — Neon tubing outline"
+
+[[outputs]]
+id = "iEzDejWPFjxTXsnCesLt1"
+uri = "file://attached_assets/icon_b2v3.png"
+type = "image"
+title = "B2.3 — Bloom energy pulse"
+
+[[outputs]]
+id = "3QNmC2WuW7XUUxxhREvSp"
+uri = "file://attached_assets/icon_b2v4.png"
+type = "image"
+title = "B2.4 — Dual-layer glow"
