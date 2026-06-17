@@ -6,7 +6,7 @@
     "orientation": "portrait",
     "icon": "./assets/rp-icon.png",
     "userInterfaceStyle": "dark",
-    "newArchEnabled": false,
+    "newArchEnabled": true,
     "scheme": "reversepicks",
     "splash": {
       "image": "./assets/splash-icon.png",
@@ -67,7 +67,8 @@
           "color": "#39FF14",
           "sounds": []
         }
-      ]
+      ],
+      "expo-font"
     ],
     "extra": {
       "router": {},
