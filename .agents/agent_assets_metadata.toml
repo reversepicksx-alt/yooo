@@ -107,3 +107,9 @@ id = "Z1ffwl2-X-x-heJ20E-cr"
 uri = "file://screenshots/appstore/ss_account.png"
 type = "image"
 title = "6 — Account"
+
+[[outputs]]
+id = "wEzuwTOL31za6_7tP4ajd"
+uri = "file://screenshots/appstore/ss_sports.png"
+type = "image"
+title = "Sport Selector"
