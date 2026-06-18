@@ -341,3 +341,9 @@ id = "I-aYkg8I0QohuPilATSZJ"
 uri = "file://attached_assets/icon_v5_glowing.png"
 type = "image"
 title = "icon_v5_esports — with neon glow added"
+
+[[outputs]]
+id = "EsjtJBvkH862DUwp6mxx5"
+uri = "file://mobile/assets/rp-splash.png"
+type = "image"
+title = "Splash Screen Logo — updated with glow"
