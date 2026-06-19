@@ -25,7 +25,7 @@ class LlmChat:
         self.session_id = session_id
         self.system_message = system_message
         self._provider = "xai"
-        self._model = "grok-3"
+        self._model = "grok-3-mini"
         self._history = []
 
     def with_model(self, provider: str, model: str):

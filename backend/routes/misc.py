@@ -4,7 +4,7 @@ from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 
-from config import db, EMERGENT_LLM_KEY, CURRENT_SEASON
+from config import db, EMERGENT_LLM_KEY, CURRENT_SEASON, GROK_MODEL
 from utils import api_football_request
 from cache import COL_PLAYERS, COL_NATIONAL
 
@@ -273,7 +273,7 @@ async def pick_of_the_day():
         session_id=f"potd-{uuid.uuid4().hex[:8]}",
         system_message="You are an elite soccer prop analyst. Return ONLY valid JSON."
     )
-    chat.with_model("xai", "grok-3")
+    chat.with_model("xai", GROK_MODEL)
 
     prompt = f"""Today's fixtures:
 {json.dumps(fixture_summaries, default=str)}

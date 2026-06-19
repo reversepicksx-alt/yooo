@@ -14,7 +14,7 @@ from openai import OpenAI
 
 from config import (
     db, EMERGENT_LLM_KEY, XAI_API_KEY, CURRENT_SEASON,
-    SUPPORTED_LEAGUES, PROP_TYPE_ALIASES, INTERNATIONAL_LEAGUES,
+    SUPPORTED_LEAGUES, PROP_TYPE_ALIASES, INTERNATIONAL_LEAGUES, GROK_MODEL,
 )
 from models import ChatStartRequest, TacticalMessageRequest
 from utils import api_football_request, strip_accents
@@ -516,7 +516,7 @@ async def tactical_message(req: TacticalMessageRequest):
             api_key=EMERGENT_LLM_KEY,
             session_id=f"tac-synth-{uuid.uuid4().hex[:8]}",
             system_message=SYNTH_SYSTEM,
-        ).with_model("xai", "grok-3")
+        ).with_model("xai", GROK_MODEL)
 
         synth_prompt = f"""User asked: "{user_msg}"
 

@@ -3,7 +3,7 @@ import uuid
 from fastapi import APIRouter, HTTPException
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 
-from config import EMERGENT_LLM_KEY, CURRENT_SEASON, chat_sessions
+from config import EMERGENT_LLM_KEY, CURRENT_SEASON, chat_sessions, GROK_MODEL
 from models import ChatStartRequest, ChatMessageRequest, NaturalQueryRequest
 from utils import api_football_request
 
@@ -51,7 +51,7 @@ async def chat_start(req: ChatStartRequest):
         session_id=sid,
         system_message=TACTICAL_SEARCH_SYSTEM
     )
-    chat.with_model("xai", "grok-3")
+    chat.with_model("xai", GROK_MODEL)
     chat_sessions[sid] = chat
     return {
         "session_id": sid,
@@ -68,7 +68,7 @@ async def chat_message(req: ChatMessageRequest):
             session_id=req.session_id,
             system_message=TACTICAL_SEARCH_SYSTEM
         )
-        chat.with_model("xai", "grok-3")
+        chat.with_model("xai", GROK_MODEL)
         chat_sessions[req.session_id] = chat
 
     # =============================================
@@ -83,7 +83,7 @@ async def chat_message(req: ChatMessageRequest):
             session_id=f"extract-{uuid.uuid4().hex[:8]}",
             system_message="Extract soccer entities from the user message. Return ONLY valid JSON."
         )
-        extractor.with_model("xai", "grok-3")
+        extractor.with_model("xai", GROK_MODEL)
         extract_prompt = f"""From this message, extract any soccer player names, team names, or league references.
 Return JSON: {{"playerName": "name or null", "teamName": "name or null", "leagueName": "name or null", "needsData": true/false}}
 Set needsData=true if the user is asking about a specific player's stats, matchup, or performance.
@@ -199,7 +199,7 @@ async def parse_natural_query(req: NaturalQueryRequest):
         session_id=f"parse-{uuid.uuid4().hex[:8]}",
         system_message="You are an expert at parsing soccer prop betting queries. Return ONLY valid JSON."
     )
-    chat.with_model("xai", "grok-3")
+    chat.with_model("xai", GROK_MODEL)
     prompt = f"""Parse this soccer prop query into a structured object: "{req.query}"
 Extract: playerName, opponentName, venue (home/away), propType, line (number).
 Valid propType values: pass_attempts, shots, shots_on_target, tackles, key_passes, saves, interceptions, blocks, dribbles, fouls_drawn.
