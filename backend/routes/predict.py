@@ -2829,6 +2829,52 @@ async def predict(req: PredictionRequest):
             _eb_samples = early_bayes.get("priorSamples", 0) if early_bayes else 0
             print(f"[BAYESIAN] {req.playerName}/{req.propType}: samples={_eb_samples}, logs={len(_bayes_logs)} (venue={player_venue})")
 
+            # ── POSITIONAL ROLE BASELINE ──────────────────────────────────────
+            # Reality-check: does the projection make sense for this position
+            # in this possession context? A CDM who played for a high-possession
+            # club (80-pass history) but is now at a low-possession club should
+            # NOT be projected at 80 passes. The baseline knows what CDMs at
+            # low-possession teams actually produce (median ~50) and squeezes
+            # the projection back toward the realistic ceiling when sample count
+            # is low enough that the player's personal history is still "tainted"
+            # by a very different team context.
+            # No squeeze at 8+ game logs — by then the player's own data is law.
+            try:
+                from positional_baseline import get_positional_baseline, apply_positional_squeeze
+                _pos_for_baseline = (
+                    _bayes_position
+                    or locals().get("player_role", "")
+                    or locals().get("display_position", "")
+                    or ""
+                )
+                _poss_for_baseline = match_dominance.get("expectedPoss", 50.0) if match_dominance else 50.0
+                _pos_baseline = get_positional_baseline(
+                    position=_pos_for_baseline,
+                    expected_poss=_poss_for_baseline,
+                    prop_type=req.propType,
+                )
+                if early_bayes and _pos_baseline:
+                    _raw_pm = early_bayes.get("posteriorMean", req.line)
+                    _adj_pm, _pos_note = apply_positional_squeeze(
+                        posterior_mean=_raw_pm,
+                        baseline=_pos_baseline,
+                        n_samples=len(_bayes_logs),
+                    )
+                    if _pos_note:
+                        print(_pos_note)
+                        early_bayes["posteriorMean"] = _adj_pm
+                        # Recalculate recommendation direction from adjusted projection
+                        early_bayes["recommendation"] = "over" if _adj_pm > req.line else "under"
+                        _pos_baseline["squeezedFrom"] = _raw_pm
+                        _pos_baseline["squeezedTo"]   = _adj_pm
+                        _pos_baseline["note"] = _pos_note
+                    else:
+                        _pos_baseline["note"] = "within realistic range — no adjustment"
+                    early_bayes["positionalBaseline"] = _pos_baseline
+            except Exception as _pb_err:
+                print(f"[POS BASELINE] error (non-fatal): {_pb_err}")
+            # ─────────────────────────────────────────────────────────────────
+
             # ── LOW-SAMPLE MID/CAM UNDER GUARD ───────────────────────────────
             # Evidence: CM/DLP UNDER picks have 0% win rate (4 picks, avg_err=+27.5).
             # CM/Mezzala UNDER: 33% win rate. CDM/Ball Winner UNDER: 54% (borderline).
@@ -3088,6 +3134,24 @@ Possession Pressure Index: {_pi_label} | Opponent avg {_pi_poss}% ball possessio
 High opponent possession = the subject player's team has less time on the ball → subject player makes fewer pass attempts.
 Mathematical possession penalty already applied: ×{_pi_mult} reduction to pass projection.
 CRITICAL: This opponent dominates ball possession. Do NOT project pass totals near season average — the subject player's team will have significantly reduced time with the ball."""
+
+                # Inject positional baseline context into the AI prompt
+                _pb = (early_bayes or {}).get("positionalBaseline")
+                if _pb and _pb.get("note") and "within realistic range" not in _pb.get("note", ""):
+                    _pb_group = _pb.get("posGroup", "")
+                    _pb_tier  = _pb.get("possessionTier", "")
+                    _pb_p25   = _pb.get("p25")
+                    _pb_p50   = _pb.get("p50")
+                    _pb_p75   = _pb.get("p75")
+                    _pb_from  = _pb.get("squeezedFrom")
+                    _pb_to    = _pb.get("squeezedTo")
+                    if _pb_from and _pb_to:
+                        bayesian_prompt_anchor += f"""
+[POSITIONAL ROLE BASELINE — CONTEXT CORRECTION APPLIED]
+Position group: {_pb_group} | Team possession tier: {_pb_tier} (expected {_poss_for_baseline:.0f}%)
+Realistic range for {_pb_group} in {_pb_tier}-possession team: p25={_pb_p25} / p50={_pb_p50} / p75={_pb_p75} per 90 min.
+The raw projection ({_pb_from:.1f}) was outside this range and has been corrected to {_pb_to:.1f}.
+IMPORTANT: In your analysis, explain WHY this player's current team context limits their output relative to their historical numbers. Do NOT cite the player's stats from a previous higher-possession club as evidence the OVER is likely."""
 
                 # Inject game tempo context into the AI prompt
                 if game_tempo.get("expectedTempo") != "normal" and req.propType in {"pass_attempts", "passes", "key_passes", "crosses", "dribbles"}:
