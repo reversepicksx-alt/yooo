@@ -4,6 +4,7 @@ Primary AI: Grok-3 (prediction synthesis).
 Secondary: Gemini 2.5 Pro/Flash (explanations, web search, tactical chat, OCR).
 """
 import json
+import hashlib
 import httpx
 import asyncio
 import traceback
@@ -36,6 +37,20 @@ async def _grok_call(
     if not XAI_API_KEY:
         return ""
     _model = model or GROK_MODEL
+
+    # ── Daily response cache — same prompt on same day returns instantly ──────
+    _today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    _hash_src = (system[:500] + prompt[:1800] + _model + _today).encode()
+    _ck = "gk|" + hashlib.md5(_hash_src).hexdigest()
+    try:
+        _hit = await db.grok_response_cache.find_one({"_k": _ck}, {"_id": 0, "v": 1})
+        if _hit and _hit.get("v"):
+            print(f"[GROK CACHE HIT] {_model} key={_ck[:20]}")
+            return _hit["v"]
+    except Exception:
+        pass
+    # ─────────────────────────────────────────────────────────────────────────
+
     messages = []
     if system:
         messages.append({"role": "system", "content": system})
@@ -55,7 +70,17 @@ async def _grok_call(
             async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10)) as client:
                 resp = await client.post(AI_URL, json=payload, headers=headers)
                 if resp.status_code == 200:
-                    return resp.json()["choices"][0]["message"]["content"].strip()
+                    _result = resp.json()["choices"][0]["message"]["content"].strip()
+                    if _result:
+                        try:
+                            await db.grok_response_cache.replace_one(
+                                {"_k": _ck},
+                                {"_k": _ck, "v": _result, "ts": datetime.now(timezone.utc)},
+                                upsert=True,
+                            )
+                        except Exception:
+                            pass
+                    return _result
                 elif resp.status_code == 429:
                     _wait = 2 ** _attempt
                     print(f"[GROK] Rate-limited (429) — retry {_attempt+1}/3 in {_wait}s")

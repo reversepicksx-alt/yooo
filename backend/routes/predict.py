@@ -4307,16 +4307,47 @@ Analyze ALL data thoroughly. Return JSON only."""
                 print(f"[MULTI-AI] {label} failed: {e}")
                 return None
 
+        # ── Soccer daily prediction cache ─────────────────────────────────────
+        # Same player + prop + line + opponent on the same day returns the
+        # cached AI synthesis (tacticalBreakdown / sharpSummary / reasoning).
+        # Bayesian Truth still runs fresh on every request — only the
+        # expensive Grok narrative call is skipped on a cache hit.
+        _soc_ck = f"soc|{req.playerId or req.playerName}|{req.propType}|{req.line}|{req.opponentName or ''}|{today_str}"
+        _pred_cached = None
+        try:
+            _pred_hit = await db.grok_response_cache.find_one({"_k": _soc_ck}, {"_id": 0, "v": 1})
+            if _pred_hit and isinstance(_pred_hit.get("v"), dict) and _pred_hit["v"].get("tacticalBreakdown"):
+                _pred_cached = _pred_hit["v"]
+                print(f"[PRED CACHE HIT] soccer {_soc_ck[:70]}")
+        except Exception:
+            pass
+        # ─────────────────────────────────────────────────────────────────────
+
         # AI synthesis: Grok primary, Gemini fallback
-        ai_result = await call_grok()
-        if ai_result:
-            print("[AI] Grok synthesis succeeded")
+        if _pred_cached:
+            ai_result = _pred_cached
+        else:
+            ai_result = await call_grok()
+            if ai_result:
+                print("[AI] Grok synthesis succeeded")
 
         # BAYESIAN FALLBACK: If Grok AI failed (no text), try Gemini, then build minimal result from math
         if not ai_result or not isinstance(ai_result, dict) or not ai_result.get("tacticalBreakdown"):
             ai_result = await call_gemini()
             if ai_result:
                 print("[AI] Gemini fallback synthesis succeeded")
+
+        # Store successful AI result in prediction cache for today
+        if ai_result and isinstance(ai_result, dict) and ai_result.get("tacticalBreakdown") and not _pred_cached:
+            try:
+                await db.grok_response_cache.replace_one(
+                    {"_k": _soc_ck},
+                    {"_k": _soc_ck, "v": ai_result, "ts": datetime.now(timezone.utc)},
+                    upsert=True,
+                )
+                print(f"[PRED CACHE SET] soccer {_soc_ck[:70]}")
+            except Exception:
+                pass
 
         if not ai_result or not isinstance(ai_result, dict) or not ai_result.get("tacticalBreakdown"):
             if early_bayes and early_bayes.get("posteriorMean"):
