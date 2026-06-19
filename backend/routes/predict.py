@@ -1827,6 +1827,54 @@ async def predict(req: PredictionRequest):
                     capped_adj = max(-0.25, min(0.25, raw_adj))
                     dom["multiplier"] = round(1.0 + capped_adj, 3)
 
+            elif (home_avg is None or away_avg is None):
+                # No possession stats AND no standings rankings.
+                # Common for WC/Euro/Copa tournament group stage where API-Football
+                # doesn't return possession averages for the tournament league.
+                # Last-resort: derive expected possession from match odds probability.
+                # A 70% win-prob favourite is realistically ~55% possession territory.
+                if odds and odds.get("bookmakerOdds"):
+                    try:
+                        _ho = float(odds["bookmakerOdds"].get("homeWin", 3.0))
+                        _ao = float(odds["bookmakerOdds"].get("awayWin", 3.0))
+                        _hp = 1.0 / max(_ho, 1.01)
+                        _ap = 1.0 / max(_ao, 1.01)
+                        _tot = _hp + _ap
+                        if _tot > 0:
+                            _norm_h = _hp / _tot   # fixture home team win-prob
+                            # 50% win-prob → 50% poss; 75% win-prob → ~56% poss
+                            _fx_home_poss = round(min(62.0, max(38.0, 50.0 + (_norm_h - 0.5) * 25.0)), 1)
+                            _fx_away_poss = round(100.0 - _fx_home_poss, 1)
+                            dom["homePoss"] = _fx_home_poss
+                            dom["awayPoss"] = _fx_away_poss
+                            if is_home:
+                                dom["expectedPoss"]    = _fx_home_poss
+                                dom["oppExpectedPoss"] = _fx_away_poss
+                            else:
+                                dom["expectedPoss"]    = _fx_away_poss
+                                dom["oppExpectedPoss"] = _fx_home_poss
+                            dom["teamSeasonAvg"] = 50.0
+                            dom["oppSeasonAvg"]  = 50.0
+                            dom["notes"].append(
+                                f"Odds-only possession (no stats/standings): "
+                                f"{_fx_home_poss:.0f}%/{_fx_away_poss:.0f}% "
+                                f"from odds {_ho:.2f}/{_ao:.2f}"
+                            )
+                            _otp = dom["expectedPoss"]
+                            _otr = _otp / 50.0
+                            _PASS_P = {"pass_attempts", "key_passes", "crosses", "passes"}
+                            _DEF_P  = {"tackles", "interceptions", "blocks", "clearances"}
+                            _SHT_P  = {"shots", "shots_on_target"}
+                            if req.propType in _PASS_P:
+                                dom["multiplier"] = round(1.0 + max(-0.35, min(0.35, _otr - 1.0)), 3)
+                            elif req.propType in _DEF_P:
+                                _inv = (100.0 - _otp) / 50.0
+                                dom["multiplier"] = round(1.0 + max(-0.25, min(0.25, _inv - 1.0)), 3)
+                            elif req.propType in _SHT_P:
+                                dom["multiplier"] = round(1.0 + max(-0.20, min(0.20, (_otr - 1.0) * 0.6)), 3)
+                    except Exception as _oe:
+                        dom["notes"].append(f"Odds-only possession fallback failed: {_oe}")
+
             if home_avg is not None and away_avg is not None:
 
                 # ── Qualifying/weak-opponent contamination guard ───────────────
