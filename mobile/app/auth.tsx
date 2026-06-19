@@ -160,7 +160,7 @@ export default function AuthScreen() {
       splScanY.setValue(0);
       Animated.sequence([
         Animated.timing(splScanOpac, { toValue: 1,   duration: 60,  useNativeDriver: true }),
-        Animated.timing(splScanY,    { toValue: 374,  duration: 650, useNativeDriver: true }),
+        Animated.timing(splScanY,    { toValue: 220,  duration: 650, useNativeDriver: true }),
         Animated.timing(splScanOpac, { toValue: 0,    duration: 120, useNativeDriver: true }),
       ]).start();
     }, 480);
@@ -668,7 +668,7 @@ export default function AuthScreen() {
             transform: [{ scale: splLogoScale }],
           }]}>
             <Image
-              source={require('../assets/rp-splash.png')}
+              source={require('../assets/rp-icon.png')}
               style={styles.splashLogo}
               resizeMode="contain"
             />
@@ -773,15 +773,17 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(57,255,20,0.6)',
   },
   splashLogoWrap: {
-    width: 374,
-    height: 374,
+    width: 220,
+    height: 220,
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
+    borderRadius: 110,
+    backgroundColor: '#000000',
   },
   splashLogo: {
-    width: 374,
-    height: 374,
+    width: 220,
+    height: 220,
   },
   splashScanLine: {
     position: 'absolute',
