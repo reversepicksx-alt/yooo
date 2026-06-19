@@ -575,38 +575,55 @@ def apply_positional_squeeze(
     n_samples: int,
 ) -> tuple[float, str]:
     """
-    Squeeze the Bayesian posteriorMean toward the realistic range boundary
-    when it falls beyond the box-plot outlier threshold (1.5 × IQR outside p25/p75).
+    Pull the Bayesian posteriorMean toward the positional baseline.
 
-    Squeeze weight by sample count:
-      n >= 8  → 0.00  (player's own data is authoritative)
-      n == 6  → 0.14
-      n == 4  → 0.28
-      n == 2  → 0.41
-      n == 1  → 0.48
-      n == 0  → 0.55
+    Two modes:
+      n == 0  → No game logs at all. The _empty_metrics prior sets pm=line (50/50).
+                Center 70% toward the baseline p50 so the positional archetype
+                drives the prediction. This is the dominant fix for off-season /
+                uncached players where the Bayesian engine has no data.
+      n 1..7  → Some data but still thin. Outlier squeeze fires when pm falls
+                outside the 1.5×IQR fence. Squeeze weight tapers to 0 at n=8.
+      n >= 8  → Player's own data is authoritative — no adjustment.
     """
     if not baseline or posterior_mean is None:
         return posterior_mean, ""
 
     p25 = baseline["p25"]
+    p50 = baseline["p50"]
     p75 = baseline["p75"]
     iqr = p75 - p25
     if iqr <= 0:
         return posterior_mean, ""
 
-    upper_outlier = p75 + 1.5 * iqr
-    lower_outlier = max(0.0, p25 - 1.5 * iqr)
+    role_str  = f"{baseline.get('posGroup','')}/{baseline.get('roleVariant','')}"
+    tier_str  = f"{baseline.get('possessionTier','')} poss"
+    mult_str  = f"×{baseline.get('teamPassMult',1.0):.2f} team-pass-rate"
+    press_str = (f" | {baseline.get('pressLabel','')} press"
+                 if baseline.get("pressLabel") not in (None, "unknown") else "")
 
+    # ── n=0: zero game logs — center toward baseline p50 (70% weight) ────────
+    if n_samples == 0:
+        p50_gap_pct = abs(posterior_mean - p50) / max(p50, 0.01)
+        if p50_gap_pct > 0.05:
+            centered = round(posterior_mean * 0.30 + p50 * 0.70, 2)
+            arrow = "↑" if centered > posterior_mean else "↓"
+            note = (
+                f"[POS BASELINE] No-data centering ({role_str}, {tier_str}"
+                f"{press_str}, n=0): "
+                f"{posterior_mean:.1f}→{centered:.1f}{arrow} (70% p50={p50})"
+            )
+            return centered, note
+        return posterior_mean, ""
+
+    # ── n >= 8: own data is authoritative ────────────────────────────────────
     if n_samples >= 8:
         return posterior_mean, ""
 
+    # ── n 1..7: outlier squeeze — only fires outside the 1.5×IQR fence ──────
+    upper_outlier = p75 + 1.5 * iqr
+    lower_outlier = max(0.0, p25 - 1.5 * iqr)
     squeeze_weight = round(0.55 * (1.0 - n_samples / 8.0), 3)
-    role_str = f"{baseline.get('posGroup','')}/{baseline.get('roleVariant','')}"
-    tier_str = f"{baseline.get('possessionTier','')} poss"
-    mult_str = f"×{baseline.get('teamPassMult',1.0):.2f} team-pass-rate"
-    press_str = (f" | {baseline.get('pressLabel','')} press" 
-                 if baseline.get('pressLabel') not in (None, "unknown") else "")
 
     if posterior_mean > upper_outlier:
         target   = p75

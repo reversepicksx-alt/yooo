@@ -16,7 +16,7 @@ from config import (
 )
 from models import PredictionRequest
 from utils import api_football_request, get_recent_fixtures_fast, strip_accents, get_soccer_odds, decimal_to_american
-from grok_engine import fetch_web_intel
+from grok_engine import fetch_web_intel, fetch_ai_press_intensity
 from prop_safety_cache import get_prop_safety as _get_prop_safety
 import soccer_bdl_client as _bdl_soc
 # game_script_intelligence removed — was distorting confidence scores for GK pass picks
@@ -1411,7 +1411,11 @@ async def predict(req: PredictionRequest):
             league=(match_odds or {}).get("matchLeague", ""),
             timeout=18,
         )
-        ai_press_task = _noop_none()
+        ai_press_task = fetch_ai_press_intensity(
+            opponent=req.opponentName or "",
+            league=(match_odds or {}).get("matchLeague", ""),
+            timeout=15,
+        )
 
         all_wave2 = aio.gather(
             team_fixture_stats_task, opponent_fixture_stats_task, player_game_logs_task,
@@ -2891,6 +2895,24 @@ async def predict(req: PredictionRequest):
                         _pos_baseline["squeezedFrom"] = _raw_pm
                         _pos_baseline["squeezedTo"]   = _adj_pm
                         _pos_baseline["note"] = _pos_note
+                        # ── Recompute P(over)/P(under) from the adjusted mean ──────────
+                        # When squeeze fires from n=0 centering, pOver/pUnder are still
+                        # 50/50 from _empty_metrics.  Recompute from a normal distribution
+                        # centered at _adj_pm with σ = IQR/1.35 (empirical normal approx).
+                        try:
+                            import math as _math
+                            _bl_iqr = (_pos_baseline.get("p75", req.line) -
+                                       _pos_baseline.get("p25", req.line))
+                            _bl_std = _bl_iqr / 1.35 if _bl_iqr > 0 else max(req.line * 0.25, 1.0)
+                            _z      = (_adj_pm - req.line) / max(_bl_std, 0.01)
+                            _po_raw = 50.0 + 50.0 * _math.erf(_z / _math.sqrt(2))
+                            _po     = round(max(1.0, min(99.0, _po_raw)), 1)
+                            early_bayes["pOver"]  = _po
+                            early_bayes["pUnder"] = round(100.0 - _po, 1)
+                            print(f"[POS BASELINE] pOver recalc: adj_pm={_adj_pm:.2f} "
+                                  f"line={req.line} std={_bl_std:.2f} → P(over)={_po:.1f}%")
+                        except Exception as _po_err:
+                            print(f"[POS BASELINE] pOver recalc failed (non-fatal): {_po_err}")
                     else:
                         _pos_baseline["note"] = "within realistic range — no adjustment"
                     early_bayes["positionalBaseline"] = _pos_baseline
