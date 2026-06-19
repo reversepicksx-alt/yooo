@@ -1763,6 +1763,18 @@ async def predict(req: PredictionRequest):
                             pass
                 return round(sum(vals) / len(vals), 1) if vals else None
 
+            def avg_passes(sl):
+                """Average total passes per game from fixture stats."""
+                vals = []
+                for s in (sl or []):
+                    v = s.get("totalPasses")
+                    if v is not None:
+                        try:
+                            vals.append(int(v))
+                        except (ValueError, TypeError):
+                            pass
+                return round(sum(vals) / len(vals), 1) if vals else None
+
             if is_neutral:
                 # Neutral venue: use overall averages for both teams (no venue split).
                 # team_stats_list = player's team; opp_stats_list = opponent.
@@ -2012,6 +2024,11 @@ async def predict(req: PredictionRequest):
                     dom["multiplier"] = round(1.0 + capped_adj, 3)
                     if abs(capped_adj) > 0.03:
                         dom["notes"].append(f"Shot volume adj from possession ratio → {capped_adj*100:+.0f}%")
+
+            # Team pass-rate for positional baseline (Layer 2)
+            _tap = avg_passes(team_stats_list)
+            if _tap is not None:
+                dom["teamAvgPasses"] = _tap
 
             return dom
 
@@ -2466,12 +2483,14 @@ async def predict(req: PredictionRequest):
             # but legacy entries may only have playerName — try both so the
             # Bayesian engine never falls back to "midfielder" by accident.
             _bayes_position = ""
+            _bayes_role     = ""
             try:
                 _pos_doc = await db.player_positions.find_one(
                     {"$or": [{"playerId": req.playerId}, {"playerName": req.playerName}]}
                 )
                 if _pos_doc:
                     _bayes_position = _pos_doc.get("specificPosition", "")
+                    _bayes_role     = _pos_doc.get("role", "")
             except Exception:
                 pass
 
@@ -2843,15 +2862,19 @@ async def predict(req: PredictionRequest):
                 from positional_baseline import get_positional_baseline, apply_positional_squeeze
                 _pos_for_baseline = (
                     _bayes_position
-                    or locals().get("player_role", "")
                     or locals().get("display_position", "")
                     or ""
                 )
                 _poss_for_baseline = match_dominance.get("expectedPoss", 50.0) if match_dominance else 50.0
+                _team_avg_passes   = match_dominance.get("teamAvgPasses") if match_dominance else None
+                _press_label       = (ai_press_intensity or {}).get("label") if ai_press_intensity else None
                 _pos_baseline = get_positional_baseline(
                     position=_pos_for_baseline,
                     expected_poss=_poss_for_baseline,
                     prop_type=req.propType,
+                    role=_bayes_role,
+                    team_avg_passes=_team_avg_passes,
+                    press_intensity_label=_press_label,
                 )
                 if early_bayes and _pos_baseline:
                     _raw_pm = early_bayes.get("posteriorMean", req.line)
