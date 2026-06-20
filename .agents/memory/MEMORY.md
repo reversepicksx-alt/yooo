@@ -5,7 +5,6 @@
 - [Soccer pipeline — API-Football active](soccer-pipeline-api-football.md) — _is_bdl_league=False; API-Football (API_SPORTS_KEY) is sole soccer source. BDL block gated by `_is_bdl_league and _bdl_soc.is_bdl_league(league_id)` so it never fires.
 - [Soccer prop hard blocks](soccer-prop-blocks.md) — clearances OVER: hard-blocked post-Bayesian-Truth (0% hit rate 13n); shots OVER: AVOID in prop safety (19% hit rate).
 - [Stale pick auto-void](stale-void.md) — Multi-layer stale-void; global cutoff 4d; orphan-void at 48h; audit endpoint excludes voidReason picks from wrong-push count.
-- [Gemini migration](gemini-migration.md) — Full Grok→Gemini swap; thinkingBudget=0 required on 2.5 Flash or short calls return empty parts.
 - [Position cache staleness](position-cache-staleness.md) — position resolved by Gemini but cached 30d in Atlas db.player_positions by playerId; prompt fixes invisible until cache cleared. Backend uses Atlas, not local mongod.
 - [Proxy timeout for predictions](proxy-timeout.md) — proxyTimeout=30s caused 500s on long predictions (AI synthesis). Bumped to 120s in mobile/proxy.js to match frontend's 90s/150s AbortController limits.
 - [CS2 NoneType comparison crashes](cs2-none-crashes.md) — `dict.get(key, 0) > 0` crashes when value is `None` (key exists but set to null). Always use `(dict.get(key) or 0) > 0` for numeric comparisons in CS2 engine/client and any dict with BDL/API-fetched data.
@@ -25,3 +24,5 @@
 - [Moneyline normalization — playerIsHome](moneyline-playerishome.md) — americanOdds.home/away keys are always the fixture's home/away, not the player's team. Must normalize using playerIsHome tag.
 - [EAS Build & App Store Submit](eas-build-submit.md) — 3 required fixes: Replit package-firewall URLs in lock file, newArchEnabled=true, reanimated v4+worklets. ascAppId=6781092173.
 - [Full Gemini purge](gemini-purge.md) — All Gemini API calls replaced with Grok (xAI); _gemini_call/_gemini_search_call are now backward-compat aliases to _grok_call/_grok_search_call.
+- [Positional baseline squeeze — priorSamples bug](pos-baseline-priorsamples.md) — apply_positional_squeeze must use early_bayes.get("priorSamples") not len(_bayes_logs); raw log count can be 10 while priorSamples=0 (all filtered by 30-min threshold).
+- [xAI search API deprecated](xai-search-deprecated.md) — xAI live search returns 410 as of 2026-06. Press intensity fetch_ai_press_intensity now uses knowledge-only _grok_call. Prompt reframed as "tactical identity" (year-stable) with hard-coded anchors for 14 clubs; null escape removed.

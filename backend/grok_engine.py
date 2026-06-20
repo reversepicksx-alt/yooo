@@ -420,50 +420,49 @@ async def _fetch_ai_press_intensity_inner(
 ) -> dict | None:
     """Inner fetch routine — caller holds the per-key lock."""
     import re as _re
-    league_str = league or "their league"
+    league_str = league or "football"
+    # Reframed as tactical identity (year-stable) — removes the season-specific
+    # escape hatch that caused the model to return {"score": null} for all teams.
     prompt = (
-        f"You are a tactical football analyst. Rate {opponent}'s SEASON-AVERAGE pressing intensity "
-        f"in {league_str} for the {season} season on a STRICT 0.0 to 1.0 scale.\n\n"
-        f"Anchors (calibrate against these):\n"
-        f"  0.00–0.25 LOW     — deep block, drops off (Burnley Dyche, Getafe, Diego Simeone late-era)\n"
-        f"  0.25–0.50 MODERATE— mid-block, situational pressing (mid-table sides)\n"
-        f"  0.50–0.75 HIGH    — aggressive press, hunts in opponent half (Liverpool Klopp, Brighton, Bilbao)\n"
-        f"  0.75–1.00 ELITE   — relentless high press (Bielsa Leeds, peak Rayo Vallecano, Bayer Leverkusen Xabi)\n\n"
-        f"PPDA RULES — READ CAREFULLY:\n"
-        f"  • Report the team's SEASON-AVERAGE PPDA only (not single-game, not rolling 5-game, not opponent-specific projection).\n"
-        f"  • La Liga league average PPDA ≈ 10–12. EPL ≈ 10–12. Bundesliga ≈ 9–11.\n"
-        f"  • Elite pressers historically sit 7.5–9.0 over a full season. Examples: Klopp Liverpool '18/19 (7.9), "
-        f"Bielsa Leeds '20/21 (7.4), Rayo Vallecano (typically 8–10).\n"
-        f"  • PPDA below 7.5 over a full season is HISTORIC territory and requires explicit evidence — "
-        f"do NOT guess sub-7.5 values. If unsure between 7.5 and 9, pick the higher end.\n"
-        f"  • Score-to-PPDA mapping: 0.85+ ≈ PPDA 7.5–8.5; 0.70 ≈ PPDA 8.5–9.5; 0.50 ≈ PPDA 10–11; 0.25 ≈ PPDA 12+.\n\n"
+        f"You are a tactical football analyst. Based on {opponent}'s well-known tactical identity "
+        f"and pressing style in {league_str}, rate their pressing intensity on a STRICT 0.0–1.0 scale.\n\n"
+        f"Scale anchors:\n"
+        f"  0.00–0.25 LOW     — deep block, passive, drops off (Getafe, Simeone Atletico, Burnley)\n"
+        f"  0.25–0.50 MODERATE— mid-block, situational pressing (most mid-table sides)\n"
+        f"  0.50–0.75 HIGH    — aggressive, hunts in opponent half (Liverpool, Brighton, Athletic Bilbao)\n"
+        f"  0.75–1.00 ELITE   — relentless high press (Bielsa Leeds, Bayer Leverkusen, peak Rayo)\n\n"
+        f"Known reference points: Liverpool≈0.72, Manchester City≈0.55, Arsenal≈0.60, "
+        f"Chelsea≈0.50, Tottenham≈0.45, Real Madrid≈0.40, Barcelona≈0.50, "
+        f"Atletico Madrid≈0.30, Dortmund≈0.60, Bayern Munich≈0.55, "
+        f"PSG≈0.45, Marseille≈0.60, Inter Milan≈0.45, Napoli≈0.55.\n\n"
+        f"You MUST give a numeric score — do NOT return null. Use the reference points above "
+        f"to calibrate. If {opponent} is not listed, pick the score of the most tactically similar team.\n\n"
         f"Reply ONLY with strict JSON, no markdown:\n"
-        f'{{"score": <0.0-1.0 float>, "ppda": <season-avg float or null>, "reasoning": "<one short sentence with concrete evidence>"}}\n'
-        f"If you cannot make a confident assessment, reply: {{\"score\": null}}"
+        f'{{"score": <0.0-1.0 float>, "ppda": <float or null>, "reasoning": "<one sentence>"}}'
     )
 
-    # Strategy 1: Grok with live web search (tactical reports + understat)
+    # Strategy 1: knowledge call (search deprecated by xAI as of 2026-06)
     parsed = None
     used_source = None
     try:
-        txt = await _gemini_search_call(prompt, max_tokens=200, timeout=timeout)
+        txt = await _grok_call(prompt, temperature=0, max_tokens=200, timeout=timeout)
         if txt:
             parsed = _parse_json(txt)
             if parsed and isinstance(parsed, dict) and parsed.get("score") is not None:
-                used_source = "ai_web"
+                used_source = "ai_knowledge"
     except Exception as e:
-        print(f"[AI PRESS] Grok search exception: {e}")
+        print(f"[AI PRESS] knowledge call exception: {e}")
 
-    # Strategy 2: Grok knowledge fallback (no web search)
+    # Strategy 2: retry with slightly higher temperature if score came back null
     if not parsed or parsed.get("score") is None:
         try:
-            txt = await _gemini_call(prompt, temperature=0, max_tokens=200, timeout=15)
+            txt = await _grok_call(prompt, temperature=0.3, max_tokens=200, timeout=15)
             if txt:
                 parsed = _parse_json(txt)
                 if parsed and isinstance(parsed, dict) and parsed.get("score") is not None:
-                    used_source = "ai_knowledge"
+                    used_source = "ai_knowledge_retry"
         except Exception as e:
-            print(f"[AI PRESS] Grok knowledge fallback exception: {e}")
+            print(f"[AI PRESS] retry exception: {e}")
 
     if not parsed or parsed.get("score") is None:
         print(f"[AI PRESS] No confident assessment for {opponent} ({league})")

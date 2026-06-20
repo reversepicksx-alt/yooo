@@ -2885,7 +2885,7 @@ async def predict(req: PredictionRequest):
                     _adj_pm, _pos_note = apply_positional_squeeze(
                         posterior_mean=_raw_pm,
                         baseline=_pos_baseline,
-                        n_samples=len(_bayes_logs),
+                        n_samples=early_bayes.get("priorSamples", len(_bayes_logs)),
                     )
                     if _pos_note:
                         print(_pos_note)
