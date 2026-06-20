@@ -552,6 +552,42 @@ async def invalidate_position_cache(req: _PositionInvalidateRequest):
         }
 
 
+class _PositionClearRequest(BaseModel):
+    email: str
+    token: str
+    playerName: str = ""
+    playerId: int | None = None
+
+
+@router.post("/positions/clear-player")
+async def clear_player_position(req: _PositionClearRequest):
+    """Delete position cache for a specific player by name and/or playerId.
+
+    Use this to fix a known-wrong position (e.g. Vitinha cached as CB).
+    On next predict the engine will re-resolve with the full stats-aware prompt.
+    Owner-only.
+    """
+    await verify_owner(req.email, req.token)
+    if not req.playerName and not req.playerId:
+        raise HTTPException(status_code=400, detail="Provide playerName or playerId")
+
+    deleted = 0
+    if req.playerId:
+        r = await db.player_positions.delete_many({"playerId": req.playerId})
+        deleted += r.deleted_count
+    if req.playerName:
+        r = await db.player_positions.delete_many({"playerName": req.playerName})
+        deleted += r.deleted_count
+
+    return {
+        "success": True,
+        "deleted": deleted,
+        "playerName": req.playerName,
+        "playerId": req.playerId,
+        "note": "Position will be re-resolved with stats-aware AI on next predict call.",
+    }
+
+
 class RefreshPlayerRequest(BaseModel):
     email: str
     token: str

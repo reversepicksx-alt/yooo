@@ -2484,14 +2484,20 @@ async def predict(req: PredictionRequest):
             # (attackers decay faster, GKs decay slower; defenders get press boost).
             #
             # The cache is written by the [POS RESOLVE] block keyed on playerId,
-            # but legacy entries may only have playerName — try both so the
-            # Bayesian engine never falls back to "midfielder" by accident.
+            # Prefer playerId-keyed entries (written by the stats-aware resolver
+            # with a versioned prompt). Fall back to playerName only when there
+            # is no playerId entry — avoids stale batch-resolver entries that are
+            # stored by name only and may have wrong positions (e.g. Vitinha=CB).
             _bayes_position = ""
             _bayes_role     = ""
             try:
                 _pos_doc = await db.player_positions.find_one(
-                    {"$or": [{"playerId": req.playerId}, {"playerName": req.playerName}]}
-                )
+                    {"playerId": req.playerId}
+                ) if req.playerId else None
+                if not _pos_doc:
+                    _pos_doc = await db.player_positions.find_one(
+                        {"playerName": req.playerName, "playerId": {"$exists": True}}
+                    )
                 if _pos_doc:
                     _bayes_position = _pos_doc.get("specificPosition", "")
                     _bayes_role     = _pos_doc.get("role", "")
@@ -3677,6 +3683,65 @@ CRITICAL: The single highest-pass-volume midfielder who sits deepest, dictates t
         # Use specific position if available, otherwise fall back to generic
         display_position = specific_position or player_position
         display_role = player_role
+
+        # ── POSITION-CORRECTED BASELINE RE-SQUEEZE ────────────────────────────
+        # The positional baseline ran at line ~2866 using _bayes_position from
+        # the early cache lookup (which may have been empty or wrong on first run).
+        # Now that specific_position is resolved via the stats-aware AI resolver,
+        # re-run the baseline + squeeze if the position changed — so the CURRENT
+        # prediction benefits from the correct position, not just the next one.
+        try:
+            if (
+                specific_position
+                and early_bayes
+                and specific_position != _bayes_position
+                and req.propType not in {"saves", "goalie_saves"}
+            ):
+                from positional_baseline import get_positional_baseline, apply_positional_squeeze
+                _poss_rb = match_dominance.get("expectedPoss", 50.0) if match_dominance else 50.0
+                _tavg_rb = match_dominance.get("teamAvgPasses") if match_dominance else None
+                _plab_rb = (ai_press_intensity or {}).get("label") if ai_press_intensity else None
+                _pos_baseline_new = get_positional_baseline(
+                    position=specific_position,
+                    expected_poss=_poss_rb,
+                    prop_type=req.propType,
+                    role=player_role,
+                    team_avg_passes=_tavg_rb,
+                    press_intensity_label=_plab_rb,
+                )
+                if _pos_baseline_new:
+                    # Re-squeeze from original pre-squeeze posteriorMean.
+                    # _pos_baseline["squeezedFrom"] holds the pre-squeeze value when
+                    # the first (wrong-position) squeeze fired; fall back to current pm.
+                    _origin_pm = _pos_baseline.get("squeezedFrom") if _pos_baseline else None
+                    _resqueeze_pm = _origin_pm if _origin_pm is not None else early_bayes.get("posteriorMean", req.line)
+                    _adj_pm2, _pos_note2 = apply_positional_squeeze(
+                        posterior_mean=_resqueeze_pm,
+                        baseline=_pos_baseline_new,
+                        n_samples=early_bayes.get("priorSamples", 0),
+                    )
+                    # ALWAYS apply the result — even when no squeeze fires we must
+                    # restore posteriorMean to the pre-wrong-squeeze value.
+                    import math as _math2
+                    early_bayes["posteriorMean"] = _adj_pm2
+                    early_bayes["recommendation"] = "over" if _adj_pm2 > req.line else "under"
+                    _pos_baseline_new["squeezedFrom"] = _resqueeze_pm
+                    _pos_baseline_new["squeezedTo"]   = _adj_pm2
+                    if _pos_note2:
+                        _pos_baseline_new["note"] = f"[RERESOLVED] {_pos_note2}"
+                    else:
+                        _pos_baseline_new["note"] = f"[RERESOLVED {specific_position}] within realistic range — no squeeze"
+                    _bl_iqr2 = _pos_baseline_new.get("p75", req.line) - _pos_baseline_new.get("p25", req.line)
+                    _bl_std2 = _bl_iqr2 / 1.35 if _bl_iqr2 > 0 else max(req.line * 0.25, 1.0)
+                    _z2 = (_adj_pm2 - req.line) / max(_bl_std2, 0.01)
+                    _po2 = round(max(1.0, min(99.0, 50.0 + 50.0 * _math2.erf(_z2 / _math2.sqrt(2)))), 1)
+                    early_bayes["pOver"]  = _po2
+                    early_bayes["pUnder"] = round(100.0 - _po2, 1)
+                    early_bayes["positionalBaseline"] = _pos_baseline_new
+                    print(f"[POS RE-RESOLVE] {req.playerName}: {_bayes_position or 'none'}→{specific_position} "
+                          f"role={player_role} pm={_resqueeze_pm:.2f}→{_adj_pm2:.2f} P(over)={_po2}%")
+        except Exception as _rrb_err:
+            print(f"[POS RE-RESOLVE] non-fatal: {_rrb_err}")
 
         # ── DEFENDER POSSESSION MULTIPLIER OVERRIDE ──────────────────────────
         # The match-dominance possession multiplier uses poss_ratio = expected/season_avg.

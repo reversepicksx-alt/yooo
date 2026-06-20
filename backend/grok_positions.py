@@ -2,6 +2,8 @@
 import json
 from config import db, XAI_API_KEY
 
+GROK_POS_PROMPT_VERSION = 4
+
 
 async def resolve_position_ai(player_name: str, sport: str = "soccer") -> dict:
     """Resolve a single player's position using cache first, then Grok fallback.
@@ -50,7 +52,10 @@ async def resolve_positions_ai_batch(players: list) -> dict:
 
 
 async def _grok_resolve_batch(players: list) -> dict:
-    """Call Grok to resolve positions for a list of players."""
+    """Call Grok to resolve positions for a list of players.
+    Uses the same rich vocabulary as the main predict.py resolver so that
+    role strings flow directly into positional_baseline._role_variant().
+    """
     if not players or not XAI_API_KEY:
         return {}
 
@@ -59,20 +64,41 @@ async def _grok_resolve_batch(players: list) -> dict:
     for idx, pl in enumerate(players):
         player_lines.append(f"{idx+1}. {pl['playerName']} ({pl.get('sport', 'soccer')})")
 
-    prompt = f"""For each player below, return ONLY their primary position abbreviation and a short tactical role.
+    prompt = f"""You are a football/soccer tactical analyst. For each player below, return their primary specific position code and their exact tactical role label.
 
-Soccer positions: GK, CB, LB, RB, LWB, RWB, CDM, CM, CAM, LM, RM, LW, RW, CF, ST
-Basketball positions: PG, SG, SF, PF, C
+Soccer position codes: GK, CB, LB, RB, LWB, RWB, CDM, CM, CAM, LM, RM, LW, RW, CF, ST
+
+Role labels — pick EXACTLY one from this list:
+  GK:  Shot-Stopper | Sweeper Keeper
+  CB:  Ball-Playing CB | Stopper
+  LB/RB: Fullback | Wing-Back | Inverted Fullback
+  LWB/RWB: Wing-Back | Fullback
+  CDM: Deep-Lying Playmaker | Anchor | Ball Winner
+  CM:  Box-to-Box | Mezzala | Advanced Playmaker | Deep-Lying Playmaker
+  CAM: Advanced Playmaker | Wide Playmaker | Shadow Striker
+  LM/RM: Wide Playmaker | Traditional Winger
+  LW/RW: Traditional Winger | Inverted Winger | Inside Forward | Progressive Carrier
+  CF:  Complete Forward | False 9 | Target Man | Pressing Forward
+  ST:  Poacher | Target Man | Complete Forward | Pressing Forward
+
+Key role guidance:
+  • CDM / Deep-Lying Playmaker (regista): highest pass volume on team, sits deepest, orchestrates build-up, LOW shots/dribbles. Examples: Vitinha (PSG), Rodri (Man City), Casemiro.
+  • CDM / Anchor or Ball Winner: high tackles/interceptions, lower pass volume than DLP.
+  • CM / Box-to-Box: balanced tackles + forward runs + key passes + moderate shots. Only when player visibly gets forward.
+  • CAM / Advanced Playmaker: high key passes, plays ahead of midfield, low tackles.
+  • LW/RW / Inverted Winger: cuts inside, high shots, low crosses. Examples: Salah, Gnabry, Sané.
+  • LW/RW / Traditional Winger or Progressive Carrier: runs channels, high crosses, low shots.
 
 Players:
 {chr(10).join(player_lines)}
 
-Return JSON array: [{{"name":"exact player name","position":"XX","role":"short tactical role"}}]
+Return a JSON array — one object per player. Use EXACTLY the position codes and role labels from the lists above:
+[{{"name":"exact player name","position":"XX","role":"exact role label"}}]
 Only the JSON array, no markdown, no explanation."""
 
     try:
         from grok_engine import _grok_call
-        raw = await _grok_call(prompt, temperature=0, max_tokens=500, timeout=15, json_mode=True)
+        raw = await _grok_call(prompt, temperature=0, max_tokens=800, timeout=20, json_mode=True)
         if not raw:
             return {}
         content = raw.strip()
@@ -88,7 +114,14 @@ Only the JSON array, no markdown, no explanation."""
                 results[rname] = {"position": rpos, "role": rrole}
                 matching = [p for p in players if p["playerName"] == rname]
                 pid = matching[0].get("playerId") if matching else None
-                cache_doc = {"playerName": rname, "specificPosition": rpos, "role": rrole}
+                from datetime import datetime, timezone
+                cache_doc = {
+                    "playerName": rname,
+                    "specificPosition": rpos,
+                    "role": rrole,
+                    "promptVersion": GROK_POS_PROMPT_VERSION,
+                    "updatedAt": datetime.now(timezone.utc).isoformat(),
+                }
                 if pid:
                     cache_doc["playerId"] = pid
                 await db.player_positions.update_one(
