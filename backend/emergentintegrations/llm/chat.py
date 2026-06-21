@@ -1,6 +1,7 @@
 """
 Compatibility shim for emergentintegrations.llm.chat
-Implements LlmChat, UserMessage, ImageContent using openai and google-genai SDKs.
+All providers route through Replit Gemini AI Integration (google-genai SDK).
+xAI/Grok removed — _send_xai delegates to _send_gemini.
 """
 import os
 import asyncio
@@ -24,8 +25,8 @@ class LlmChat:
         self.api_key = api_key
         self.session_id = session_id
         self.system_message = system_message
-        self._provider = "xai"
-        self._model = "grok-3-mini"
+        self._provider = "gemini"
+        self._model = "gemini-2.5-flash"
         self._history = []
 
     def with_model(self, provider: str, model: str):
@@ -34,117 +35,61 @@ class LlmChat:
         return self
 
     async def send_message(self, message: UserMessage) -> str:
-        if self._provider in ("xai", "grok"):
-            return await self._send_xai(message)
-        elif self._provider in ("openai", "gpt"):
-            return await self._send_openai(message)
-        elif self._provider == "gemini":
-            return await self._send_gemini(message)
-        else:
-            return await self._send_xai(message)
+        return await self._send_gemini(message)
 
     async def _send_gemini(self, message: UserMessage) -> str:
         try:
-            import google.generativeai as genai
-            genai.configure(api_key=self.api_key)
-            model = genai.GenerativeModel(
-                model_name=self._model,
-                system_instruction=self.system_message if self.system_message else None
+            from google import genai as _genai
+            from google.genai import types as _gtypes
+            _key = os.environ.get("AI_INTEGRATIONS_GEMINI_API_KEY", self.api_key)
+            _base = os.environ.get("AI_INTEGRATIONS_GEMINI_BASE_URL", "").rstrip("/")
+            _client = _genai.Client(
+                api_key=_key,
+                http_options={"api_version": "", "base_url": _base} if _base else {},
             )
-            parts = []
+
+            # Build multi-turn contents from history
+            contents = []
+            for h in self._history:
+                role = h.get("role", "user")
+                parts_raw = h.get("parts", [h.get("content", "")])
+                text = parts_raw[0] if parts_raw else ""
+                contents.append({"role": role, "parts": [{"text": str(text)}]})
+
+            # Current message (text + optional images)
+            current_parts = []
             for img in message.file_contents:
                 import base64
-                parts.append({
-                    "inline_data": {
-                        "mime_type": img.media_type,
-                        "data": img.image_base64
-                    }
+                img_bytes = base64.b64decode(img.image_base64) if isinstance(img.image_base64, str) else img.image_base64
+                current_parts.append({
+                    "inline_data": {"mime_type": img.media_type, "data": img_bytes}
                 })
-            parts.append(message.text)
+            current_parts.append({"text": message.text})
+            contents.append({"role": "user", "parts": current_parts})
 
-            history_for_gemini = []
-            for h in self._history:
-                history_for_gemini.append(h)
+            cfg = _gtypes.GenerateContentConfig(
+                max_output_tokens=8192,
+                thinking_config=_gtypes.ThinkingConfig(thinking_budget=0),
+            )
+            if self.system_message:
+                cfg.system_instruction = self.system_message
 
-            chat = model.start_chat(history=history_for_gemini)
-            loop = asyncio.get_event_loop()
-            if len(parts) == 1:
-                resp = await loop.run_in_executor(None, lambda: chat.send_message(parts[0]))
-            else:
-                resp = await loop.run_in_executor(None, lambda: chat.send_message(parts))
-
-            result = resp.text
+            resp = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: _client.models.generate_content(
+                    model=self._model, contents=contents, config=cfg,
+                ),
+            )
+            result = (resp.text or "").strip()
             self._history.append({"role": "user", "parts": [message.text]})
             self._history.append({"role": "model", "parts": [result]})
             return result
         except Exception as e:
             return f"[LLM Error: {e}]"
 
-    async def _send_openai(self, message: UserMessage) -> str:
-        try:
-            from openai import AsyncOpenAI
-            client = AsyncOpenAI(api_key=self.api_key)
-            messages = []
-            if self.system_message:
-                messages.append({"role": "system", "content": self.system_message})
-            for h in self._history:
-                messages.append(h)
-
-            content = []
-            content.append({"type": "text", "text": message.text})
-            for img in message.file_contents:
-                content.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:{img.media_type};base64,{img.image_base64}"}
-                })
-
-            if len(content) == 1:
-                messages.append({"role": "user", "content": message.text})
-            else:
-                messages.append({"role": "user", "content": content})
-
-            resp = await client.chat.completions.create(
-                model=self._model,
-                messages=messages
-            )
-            result = resp.choices[0].message.content
-            self._history.append({"role": "user", "content": message.text})
-            self._history.append({"role": "assistant", "content": result})
-            return result
-        except Exception as e:
-            return f"[LLM Error: {e}]"
-
+    # xAI removed — route through Gemini
     async def _send_xai(self, message: UserMessage) -> str:
-        try:
-            from openai import AsyncOpenAI
-            xai_key = os.environ.get("XAI_API_KEY", self.api_key)
-            client = AsyncOpenAI(api_key=xai_key, base_url="https://api.x.ai/v1")
-            messages = []
-            if self.system_message:
-                messages.append({"role": "system", "content": self.system_message})
-            for h in self._history:
-                messages.append(h)
+        return await self._send_gemini(message)
 
-            content = []
-            content.append({"type": "text", "text": message.text})
-            for img in message.file_contents:
-                content.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:{img.media_type};base64,{img.image_base64}"}
-                })
-
-            if len(content) == 1:
-                messages.append({"role": "user", "content": message.text})
-            else:
-                messages.append({"role": "user", "content": content})
-
-            resp = await client.chat.completions.create(
-                model=self._model,
-                messages=messages
-            )
-            result = resp.choices[0].message.content
-            self._history.append({"role": "user", "content": message.text})
-            self._history.append({"role": "assistant", "content": result})
-            return result
-        except Exception as e:
-            return f"[LLM Error: {e}]"
+    async def _send_openai(self, message: UserMessage) -> str:
+        return await self._send_gemini(message)

@@ -20,11 +20,10 @@ API_FOOTBALL_LEAGUE_IDS = "https://dashboard.api-football.com/soccer/ids"
 OWNER_EMAIL = (os.environ.get("OWNER_EMAIL") or "reversepicksx@gmail.com").lower().strip()
 # All emails that should receive owner-level access (including personal accounts)
 OWNER_EMAILS = {OWNER_EMAIL, "willmenjivar123@gmail.com"}
-# XAI_API_KEY kept for backward-compat guards in route files.
-# Falls back to truthy sentinel when Replit Gemini integration is active
-# so all "if XAI_API_KEY:" guards remain true after xAI key is removed.
+# XAI_API_KEY — xAI/Grok removed. Sentinel keeps all "if XAI_API_KEY:" guards
+# truthy so minor-sport route files don't need edits. Real key is gone.
 _gemini_avail = bool(os.environ.get("AI_INTEGRATIONS_GEMINI_API_KEY"))
-XAI_API_KEY = os.environ.get("XAI_API_KEY") or (_gemini_avail and "gemini-via-replit") or None
+XAI_API_KEY = "gemini-via-replit" if _gemini_avail else None
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GROK_MODEL = "gemini-2.5-flash"
 GROK_REASONING_MODEL = "gemini-2.5-flash"

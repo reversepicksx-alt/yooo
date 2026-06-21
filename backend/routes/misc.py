@@ -296,7 +296,7 @@ async def pick_of_the_day():
         session_id=f"potd-{uuid.uuid4().hex[:8]}",
         system_message="You are an elite soccer prop analyst. Return ONLY valid JSON."
     )
-    chat.with_model("xai", GROK_MODEL)
+    chat.with_model("gemini", "gemini-2.5-flash")
 
     prompt = f"""Today's fixtures:
 {json.dumps(fixture_summaries, default=str)}

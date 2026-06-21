@@ -236,7 +236,7 @@ async def fetch_opponent_ppda(opponent: str, league: str = "", timeout: int = 20
       11+    : Low press / deep block
     """
     import re as _re
-    if not XAI_API_KEY or not opponent:
+    if not _REPLIT_GEMINI_KEY or not opponent:
         return None
 
     # Only fire for understat-covered major leagues
@@ -350,7 +350,7 @@ async def fetch_ai_press_intensity(
     `compute_press_intensity_score` stays as a structural fallback.
     """
     import re as _re
-    if not XAI_API_KEY or not opponent:
+    if not _REPLIT_GEMINI_KEY or not opponent:
         return None
 
     cache_key = (opponent.lower().strip(), (league or "").lower().strip(), (season or "").strip())
@@ -2250,37 +2250,38 @@ async def gemini_scan_prop(image_base64: str, sport: str = "soccer") -> dict:
             result["playerTeam"] = result.pop("teamName")
         return result
 
-    if XAI_API_KEY:
+    if _REPLIT_GEMINI_KEY:
         try:
-            payload = {
-                "model": "grok-2-vision-1212",
-                "messages": [{"role": "user", "content": [
-                    {"type": "image_url", "image_url": {
-                        "url": f"data:image/png;base64,{image_base64}",
-                        "detail": "high",
-                    }},
-                    {"type": "text", "text": prompt},
-                ]}],
-                "temperature": 0,
-                "max_tokens": 256,
-            }
-            headers = {"Authorization": f"Bearer {XAI_API_KEY}", **_GROK_HEADERS}
-            async with httpx.AsyncClient(timeout=25) as client:
-                resp = await client.post(AI_URL, json=payload, headers=headers)
-                if resp.status_code == 200:
-                    content = resp.json()["choices"][0]["message"]["content"].strip()
-                    result = _parse_json(content)
-                    if result:
-                        if isinstance(result, list) and len(result) > 0:
-                            result = result[0]
-                        if isinstance(result, dict):
-                            result = _normalize(result)
-                            print(f"[SCAN:{sport}] Grok vision: {result.get('playerName','')} {result.get('propType','')} {result.get('line','')}")
-                            return result
-                else:
-                    print(f"[SCAN:{sport}] Grok vision error: {resp.status_code} — {resp.text[:300]}")
+            import base64 as _b64
+            from google.genai import types as _gtypes
+            _client = _gemini_client()
+            _img_bytes = _b64.b64decode(image_base64)
+            _contents = [
+                {"inline_data": {"mime_type": "image/png", "data": _img_bytes}},
+                prompt,
+            ]
+            _cfg = _gtypes.GenerateContentConfig(
+                temperature=0,
+                max_output_tokens=512,
+                thinking_config=_gtypes.ThinkingConfig(thinking_budget=0),
+            )
+            _resp = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: _client.models.generate_content(
+                    model=GEMINI_FLASH, contents=_contents, config=_cfg,
+                ),
+            )
+            content = (_resp.text or "").strip()
+            result = _parse_json(content)
+            if result:
+                if isinstance(result, list) and len(result) > 0:
+                    result = result[0]
+                if isinstance(result, dict):
+                    result = _normalize(result)
+                    print(f"[SCAN:{sport}] Gemini vision: {result.get('playerName','')} {result.get('propType','')} {result.get('line','')}")
+                    return result
         except Exception as e:
-            print(f"[SCAN:{sport}] Grok vision error: {e}")
+            print(f"[SCAN:{sport}] Gemini vision error: {e}")
 
     return {}
 

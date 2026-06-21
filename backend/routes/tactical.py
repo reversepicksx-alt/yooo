@@ -516,7 +516,7 @@ async def tactical_message(req: TacticalMessageRequest):
             api_key=EMERGENT_LLM_KEY,
             session_id=f"tac-synth-{uuid.uuid4().hex[:8]}",
             system_message=SYNTH_SYSTEM,
-        ).with_model("xai", GROK_MODEL)
+        ).with_model("gemini", "gemini-2.5-flash")
 
         synth_prompt = f"""User asked: "{user_msg}"
 
