@@ -4494,6 +4494,14 @@ Analyze ALL data thoroughly. Return JSON only."""
                     candidate = text[start:]
                     try:
                         result = json.loads(candidate)
+                        # Gemini occasionally returns string fields as nested dicts
+                        _STR_FIELDS = ("tacticalBreakdown","sharpSummary","reasoning",
+                                       "scenarioAnalysis","keyEvidence","sensitivityTests",
+                                       "subRisk","gameFlowDynamics","uncertaintyNote",
+                                       "confidenceLevel","recommendation")
+                        for _sf in _STR_FIELDS:
+                            if _sf in result and not isinstance(result[_sf], str):
+                                result[_sf] = json.dumps(result[_sf]) if result[_sf] else ""
                         result["_source"] = label
                         return result
                     except json.JSONDecodeError:
@@ -6475,7 +6483,11 @@ Analyze ALL data thoroughly. Return JSON only."""
         )
 
         _ai_td = prediction.get("tacticalBreakdown", "")
+        if not isinstance(_ai_td, str):
+            _ai_td = json.dumps(_ai_td) if _ai_td else ""
         _ai_ss = prediction.get("sharpSummary", "")
+        if not isinstance(_ai_ss, str):
+            _ai_ss = json.dumps(_ai_ss) if _ai_ss else ""
 
         if _ai_td and len(_ai_td.strip()) > 100:
             # ── AI produced a real narrative — keep it, append math footer ──
