@@ -9,19 +9,28 @@ import httpx
 import asyncio
 import traceback
 from datetime import datetime, timezone, timedelta
-from config import db, XAI_API_KEY, GROK_MODEL, GROK_REASONING_MODEL
+from config import db
 
-AI_MODEL = GROK_MODEL
-AI_REASONING_MODEL = GROK_REASONING_MODEL
-GEMINI_SEARCH_MODEL = "gemini-3"
-AI_URL = "https://api.x.ai/v1/chat/completions"
-
-GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
-GEMINI_PRO = "gemini-2.5-pro"
+AI_MODEL = "gemini-2.5-flash"
 GEMINI_FLASH = "gemini-2.5-flash"
+GEMINI_PRO = "gemini-2.5-pro"
+
+# ── Replit AI Integration env vars (no external API key needed) ───────────────
+import os as _os
+_REPLIT_GEMINI_KEY = _os.environ.get("AI_INTEGRATIONS_GEMINI_API_KEY", "")
+_REPLIT_GEMINI_URL = _os.environ.get("AI_INTEGRATIONS_GEMINI_BASE_URL", "").rstrip("/")
 
 
-_GROK_HEADERS = {"Content-Type": "application/json"}
+def _gemini_client():
+    """Build a google-genai client wired to the Replit AI Integration."""
+    from google import genai as _genai
+    return _genai.Client(
+        api_key=_REPLIT_GEMINI_KEY,
+        http_options={
+            "api_version": "",          # empty = strip v1beta prefix (required for Replit proxy)
+            "base_url": _REPLIT_GEMINI_URL or "https://generativelanguage.googleapis.com",
+        },
+    )
 
 
 async def _grok_call(
@@ -33,10 +42,10 @@ async def _grok_call(
     model: str | None = None,
     json_mode: bool = False,
 ) -> str:
-    """Core Grok (xAI) API call — OpenAI-compatible endpoint."""
-    if not XAI_API_KEY:
+    """Core AI call — Replit Gemini AI Integration (billed to Replit credits)."""
+    if not _REPLIT_GEMINI_KEY:
         return ""
-    _model = model or GROK_MODEL
+    _model = GEMINI_FLASH
 
     # ── Daily response cache — same prompt on same day returns instantly ──────
     _today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -45,58 +54,45 @@ async def _grok_call(
     try:
         _hit = await db.grok_response_cache.find_one({"_k": _ck}, {"_id": 0, "v": 1})
         if _hit and _hit.get("v"):
-            print(f"[GROK CACHE HIT] {_model} key={_ck[:20]}")
+            print(f"[AI CACHE HIT] {_model} key={_ck[:20]}")
             return _hit["v"]
     except Exception:
         pass
-    # ─────────────────────────────────────────────────────────────────────────
 
-    messages = []
-    if system:
-        messages.append({"role": "system", "content": system})
-    messages.append({"role": "user", "content": prompt})
-    payload: dict = {
-        "model": _model,
-        "messages": messages,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-    }
-    if json_mode:
-        payload["response_format"] = {"type": "json_object"}
-    headers = {"Authorization": f"Bearer {XAI_API_KEY}", **_GROK_HEADERS}
+    try:
+        from google import genai as _genai
+        from google.genai import types as _gtypes
+        _client = _gemini_client()
+        _cfg = _gtypes.GenerateContentConfig(
+            temperature=temperature,
+            max_output_tokens=max_tokens,
+            thinking_config=_gtypes.ThinkingConfig(thinking_budget=0),
+        )
+        if json_mode:
+            _cfg.response_mime_type = "application/json"
+        if system:
+            _cfg.system_instruction = system
 
-    for _attempt in range(3):
-        try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10)) as client:
-                resp = await client.post(AI_URL, json=payload, headers=headers)
-                if resp.status_code == 200:
-                    _result = resp.json()["choices"][0]["message"]["content"].strip()
-                    if _result:
-                        try:
-                            await db.grok_response_cache.replace_one(
-                                {"_k": _ck},
-                                {"_k": _ck, "v": _result, "ts": datetime.now(timezone.utc)},
-                                upsert=True,
-                            )
-                        except Exception:
-                            pass
-                    return _result
-                elif resp.status_code == 429:
-                    _wait = 2 ** _attempt
-                    print(f"[GROK] Rate-limited (429) — retry {_attempt+1}/3 in {_wait}s")
-                    await asyncio.sleep(_wait)
-                    continue
-                else:
-                    print(f"[GROK] API error {resp.status_code}: {resp.text[:200]}")
-                    return ""
-        except httpx.TimeoutException:
-            print(f"[GROK] Timeout ({_model}, {timeout}s)")
-            return ""
-        except Exception as e:
-            print(f"[GROK] Call error: {type(e).__name__}: {e}")
-            return ""
-    print(f"[GROK] All 3 retry attempts exhausted (rate limit)")
-    return ""
+        _resp = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: _client.models.generate_content(
+                model=_model, contents=prompt, config=_cfg,
+            ),
+        )
+        _result = (_resp.text or "").strip()
+        if _result:
+            try:
+                await db.grok_response_cache.replace_one(
+                    {"_k": _ck},
+                    {"_k": _ck, "v": _result, "ts": datetime.now(timezone.utc)},
+                    upsert=True,
+                )
+            except Exception:
+                pass
+        return _result
+    except Exception as e:
+        print(f"[AI] Call error: {type(e).__name__}: {e}")
+        return ""
 
 
 async def _grok_search_call(
@@ -105,47 +101,11 @@ async def _grok_search_call(
     timeout: int = 25,
     model: str | None = None,
 ) -> str:
-    """Grok call with live web search grounding (xAI search_parameters)."""
-    if not XAI_API_KEY:
-        return ""
-    _model = model or GROK_MODEL
-    payload: dict = {
-        "model": _model,
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0,
-        "max_tokens": max_tokens,
-        "search_parameters": {"mode": "auto"},
-    }
-    headers = {"Authorization": f"Bearer {XAI_API_KEY}", **_GROK_HEADERS}
-
-    for _attempt in range(3):
-        try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10)) as client:
-                resp = await client.post(AI_URL, json=payload, headers=headers)
-                if resp.status_code == 200:
-                    text = resp.json()["choices"][0]["message"]["content"].strip()
-                    if text:
-                        return text
-                    return ""
-                elif resp.status_code == 429:
-                    _wait = 2 ** _attempt
-                    print(f"[GROK SEARCH] Rate-limited (429) — retry {_attempt+1}/3 in {_wait}s")
-                    await asyncio.sleep(_wait)
-                    continue
-                else:
-                    print(f"[GROK SEARCH] API error {resp.status_code}: {resp.text[:200]}")
-                    return ""
-        except httpx.TimeoutException:
-            print(f"[GROK SEARCH] Timeout ({timeout}s)")
-            return ""
-        except Exception as e:
-            print(f"[GROK SEARCH] Error: {type(e).__name__}: {e}")
-            return ""
-    print(f"[GROK SEARCH] All 3 retry attempts exhausted (rate limit)")
-    return ""
+    """AI call with knowledge-based response (search deprecated — routes to Gemini)."""
+    return await _grok_call(prompt, max_tokens=max_tokens, timeout=timeout)
 
 
-# Backward-compat aliases — all Gemini calls now route through Grok
+# Aliases — all route through _grok_call → Replit Gemini
 async def _gemini_call(
     prompt: str,
     system: str = "",
@@ -154,7 +114,7 @@ async def _gemini_call(
     timeout: int = 40,
     model: str | None = None,
     json_mode: bool = False,
-    thinking_budget: int = 0,  # ignored — kept for call-site compatibility
+    thinking_budget: int = 0,
 ) -> str:
     return await _grok_call(prompt, system=system, temperature=temperature,
                             max_tokens=max_tokens, timeout=timeout, json_mode=json_mode)
@@ -166,11 +126,10 @@ async def _gemini_search_call(
     timeout: int = 25,
     model: str | None = None,
 ) -> str:
-    return await _grok_search_call(prompt, max_tokens=max_tokens, timeout=timeout)
+    return await _grok_call(prompt, max_tokens=max_tokens, timeout=timeout)
 
 
 async def _ai_call(prompt: str, system: str = "", temperature: float = 0, max_tokens: int = 2000, timeout: int = 35) -> str:
-    """Unified AI call — Grok."""
     return await _grok_call(prompt, system=system, temperature=temperature, max_tokens=max_tokens, timeout=timeout)
 
 

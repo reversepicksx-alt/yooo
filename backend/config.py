@@ -20,10 +20,14 @@ API_FOOTBALL_LEAGUE_IDS = "https://dashboard.api-football.com/soccer/ids"
 OWNER_EMAIL = (os.environ.get("OWNER_EMAIL") or "reversepicksx@gmail.com").lower().strip()
 # All emails that should receive owner-level access (including personal accounts)
 OWNER_EMAILS = {OWNER_EMAIL, "willmenjivar123@gmail.com"}
-XAI_API_KEY = os.environ.get("XAI_API_KEY")
+# XAI_API_KEY kept for backward-compat guards in route files.
+# Falls back to truthy sentinel when Replit Gemini integration is active
+# so all "if XAI_API_KEY:" guards remain true after xAI key is removed.
+_gemini_avail = bool(os.environ.get("AI_INTEGRATIONS_GEMINI_API_KEY"))
+XAI_API_KEY = os.environ.get("XAI_API_KEY") or (_gemini_avail and "gemini-via-replit") or None
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-GROK_MODEL = os.environ.get("GROK_MODEL", "grok-3-mini")
-GROK_REASONING_MODEL = os.environ.get("GROK_REASONING_MODEL", "grok-3-mini")
+GROK_MODEL = "gemini-2.5-flash"
+GROK_REASONING_MODEL = "gemini-2.5-flash"
 SQUARE_ACCESS_TOKEN = os.environ.get("SQUARE_ACCESS_TOKEN")
 SQUARE_APPLICATION_ID = os.environ.get("SQUARE_APPLICATION_ID")
 SQUARE_LOCATION_ID = os.environ.get("SQUARE_LOCATION_ID")

@@ -4470,30 +4470,22 @@ Analyze ALL data thoroughly. Return JSON only."""
         # pv is set from early_bayes here as a temporary anchor; real_bayes overwrites it later.
         pv = early_bayes["posteriorMean"] if early_bayes and early_bayes.get("posteriorMean") else req.line
 
-        async def call_grok(label="grok", model=GROK_MODEL):
-            """Grok — primary AI synthesis engine."""
-            if not XAI_API_KEY:
-                return None
+        async def call_grok(label="ai", model=None):
+            """Primary AI synthesis — Replit Gemini AI Integration."""
+            from grok_engine import _grok_call as _engine_call
             import re as _re
             import html as _html
             try:
-                url = "https://api.x.ai/v1/chat/completions"
-                payload = {
-                    "model": model,
-                    "messages": [
-                        {"role": "system", "content": PREDICTION_SYSTEM},
-                        {"role": "user", "content": prompt},
-                    ],
-                    "temperature": 0.0,
-                    "max_tokens": 4000,
-                }
-                import httpx as _httpx
-                async with _httpx.AsyncClient(timeout=_httpx.Timeout(45, connect=10)) as _c:
-                    resp = await _c.post(url, json=payload, headers={"Authorization": f"Bearer {XAI_API_KEY}", "Content-Type": "application/json"})
-                    if resp.status_code != 200:
-                        print(f"[MULTI-AI] Grok error {resp.status_code}: {resp.text[:200]}")
-                        return None
-                    text = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+                text = await _engine_call(
+                    prompt,
+                    system=PREDICTION_SYSTEM,
+                    temperature=0.0,
+                    max_tokens=4000,
+                    timeout=45,
+                    json_mode=False,
+                )
+                if not text:
+                    return None
                 text = _re.sub(r"```(?:json)?\s*", "", text)
                 text = _re.sub(r"```\s*$", "", text, flags=_re.MULTILINE)
                 text = _html.unescape(text).strip()

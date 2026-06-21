@@ -1,7 +1,7 @@
-modules = ["python-3.12", "nodejs-20", "web", "postgresql-16"]
+modules = ["nodejs-20", "web", "postgresql-16", "python-3.11"]
 [agent]
 expertMode = true
-integrations = ["stripe:1.0.0"]
+integrations = ["stripe:1.0.0", "python_gemini_ai_integrations:1.0.0"]
 
 [nix]
 channel = "stable-25_05"
@@ -57,7 +57,7 @@ outputType = "console"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "mkdir -p /home/runner/.reversepicks_db && (mongod --dbpath /home/runner/.reversepicks_db --logpath /home/runner/.reversepicks_mongo.log --fork --quiet 2>/dev/null || true) && sleep 5 && cd backend && python -m uvicorn server:app --host 0.0.0.0 --port 8000"
+args = "mkdir -p /home/runner/.reversepicks_db && (mongod --dbpath /home/runner/.reversepicks_db --logpath /home/runner/.reversepicks_mongo.log --fork --quiet 2>/dev/null || true) && sleep 5 && cd backend && /home/runner/workspace/.pythonlibs/bin/python3.12 -m uvicorn server:app --host 0.0.0.0 --port 8000"
 waitForPort = 8000
 
 [[ports]]
