@@ -1575,23 +1575,33 @@ async def _run_auto_settlement():
 
 async def _try_settle_wc_via_gemini(pick: dict) -> bool:
     """
-    Settle a World Cup (or any tournament with no API player stats) pick via Gemini web search.
-    Called when API-Football returns no per-player stats for the fixture (e.g. WC 2026).
-    Returns True when the pick is settled, False if Gemini couldn't find the stats.
+    Settle a World Cup pick.
+
+    Strategy:
+      1. Fetch all finished WC 2026 fixtures directly (league=1, season=2026).
+         The primary settlement path fails because WC picks store the player's
+         CLUB teamId, so `fixtures?team={club_id}&season=2026` returns club
+         matches, not WC fixtures. We bypass that by querying the WC league
+         directly and matching by opponent name + pick date.
+      2. Call fixtures/players for the matched WC fixture to get real stats.
+      3. Fall back to a knowledge-only Grok call (no live search — xAI live
+         search was deprecated and returns HTTP 410).
     """
+    from utils import api_football_request, strip_accents
+    import re as _re
+
     player_name = pick.get("playerName", "")
     prop_type   = pick.get("propType", "")
     line        = pick.get("line", 0)
     pick_id     = pick.get("pickId", "")
-    email       = pick.get("email", "")
     team_name   = pick.get("teamName", "")
     opp_name    = pick.get("opponentName", "")
+    player_id   = pick.get("playerId", 0)
     rec         = pick.get("recommendation", "over")
 
     if not player_name or not prop_type or not pick_id:
         return False
 
-    # Map internal prop_type to natural-language search term
     _PROP_LABELS = {
         "pass_attempts": "passes attempted",
         "passes": "passes completed",
@@ -1612,22 +1622,116 @@ async def _try_settle_wc_via_gemini(pick: dict) -> bool:
     prop_label = _PROP_LABELS.get(prop_type, prop_type.replace("_", " "))
     match_desc = f"{team_name} vs {opp_name}" if opp_name else f"{team_name} match"
 
-    query = (
-        f"What were {player_name}'s exact {prop_label} stats in the {match_desc} "
-        f"World Cup 2026 match? Give me only the number, as a single integer or decimal."
-    )
+    # ── Stage 1: API-Football WC 2026 fixtures ────────────────────────────────
+    try:
+        from config import STAT_LAMBDA_MAP
+        stat_fn = STAT_LAMBDA_MAP.get(prop_type)
 
+        # Parse pick creation time for date-window matching
+        pick_created_at = None
+        for ts_field in ("timestamp", "createdAt"):
+            raw_ts = pick.get(ts_field)
+            if raw_ts:
+                try:
+                    pick_created_at = datetime.fromisoformat(str(raw_ts).replace("Z", "+00:00"))
+                    break
+                except Exception:
+                    pass
+
+        # Fetch all finished WC 2026 fixtures (league_id=1 in API-Football = World Cup)
+        wc_fixtures = await api_football_request("fixtures", {
+            "league": 1, "season": 2026, "status": "FT"
+        }) or []
+
+        # Match fixture by opponent name + created-after guard
+        opp_lower = strip_accents((opp_name or "").lower().strip())
+        matched_fid = None
+        for fx in wc_fixtures:
+            fix_date = fx.get("fixture", {}).get("date", "")
+            if pick_created_at and fix_date:
+                try:
+                    fix_dt = datetime.fromisoformat(fix_date.replace("Z", "+00:00"))
+                    if fix_dt < (pick_created_at - timedelta(hours=3)):
+                        continue
+                except Exception:
+                    pass
+            if not opp_lower:
+                continue
+            home_n = strip_accents(fx.get("teams", {}).get("home", {}).get("name", "").lower())
+            away_n = strip_accents(fx.get("teams", {}).get("away", {}).get("name", "").lower())
+            if any([
+                opp_lower in home_n, opp_lower in away_n,
+                home_n in opp_lower, away_n in opp_lower,
+            ]):
+                matched_fid = fx.get("fixture", {}).get("id")
+                break
+
+        if matched_fid and stat_fn:
+            players_data = await api_football_request("fixtures/players", {"fixture": matched_fid}) or []
+            player_name_key = player_name.lower().strip()
+            actual_value = None
+            minutes_played = None
+            for team_data in players_data:
+                for p in team_data.get("players", []):
+                    pid = p.get("player", {}).get("id")
+                    api_nm = strip_accents((p.get("player", {}).get("name") or "").lower())
+                    name_hit = player_name_key in api_nm or api_nm in player_name_key
+                    if pid == player_id or (not player_id and name_hit):
+                        stats = p.get("statistics", [{}])[0]
+                        minutes_played = stats.get("games", {}).get("minutes") or 0
+                        actual_value = stat_fn(stats)
+                        break
+                if actual_value is not None:
+                    break
+
+            if actual_value is not None:
+                if minutes_played is not None and minutes_played < 30:
+                    void_set = {
+                        "status": "settled", "result": "push",
+                        "actualValue": actual_value, "minutesPlayed": minutes_played,
+                        "settledAt": datetime.now(timezone.utc).isoformat(),
+                        "settledBy": "wc_api", "wcSettled": True,
+                        "voidReason": f"Player only played {minutes_played} min (min 30 required)",
+                    }
+                    await db.picks.update_one({"pickId": pick_id}, {"$set": void_set})
+                    print(f"[WC SETTLE] {player_name}/{prop_type} → VOID/PUSH ({minutes_played} min)")
+                    return True
+                result = "win" if (
+                    (rec == "over" and actual_value > line) or
+                    (rec == "under" and actual_value < line)
+                ) else "loss"
+                await db.picks.update_one(
+                    {"pickId": pick_id},
+                    {"$set": {
+                        "status": "settled", "result": result,
+                        "actualValue": actual_value,
+                        "settledAt": datetime.now(timezone.utc).isoformat(),
+                        "settledBy": "wc_api", "wcSettled": True,
+                    }}
+                )
+                print(f"[WC SETTLE API] {player_name}/{prop_type} fid={matched_fid} actual={actual_value} → {result.upper()}")
+                return True
+            else:
+                print(f"[WC SETTLE] {player_name}/{prop_type}: fixture {matched_fid} found but no player stats in API-Football")
+        else:
+            if not matched_fid:
+                print(f"[WC SETTLE] {player_name}/{prop_type}: no finished WC fixture matched opponent='{opp_name}'")
+    except Exception as _api_err:
+        print(f"[WC SETTLE] API-Football stage error: {_api_err}")
+
+    # ── Stage 2: knowledge-only Grok (no live search — xAI search deprecated) ─
     try:
         full_prompt = (
-            "You are a sports stats lookup assistant. Answer ONLY with a single number (the stat value) and nothing else.\n\n"
-            + query
+            "You are a sports stats lookup assistant. "
+            "Answer ONLY with a single number (the stat value) and nothing else. "
+            "Do not include any explanation, units, or words.\n\n"
+            f"What were {player_name}'s exact {prop_label} stats in the World Cup 2026 "
+            f"{match_desc} match? Reply with only the integer or decimal number."
         )
-        raw = (await _gemini_search_call(full_prompt, max_tokens=50, timeout=20) or "").strip()
-        # Parse number from response
-        import re as _re
+        raw = (await _grok_call(full_prompt, max_tokens=20, timeout=20) or "").strip()
         nums = _re.findall(r"\d+(?:\.\d+)?", raw)
         if not nums:
-            print(f"[WC SETTLE] {player_name}/{prop_type}: Grok returned no number — '{raw}'")
+            print(f"[WC SETTLE] {player_name}/{prop_type}: AI returned no number — '{raw[:80]}'")
             return False
 
         actual_value = float(nums[0])
@@ -1635,19 +1739,16 @@ async def _try_settle_wc_via_gemini(pick: dict) -> bool:
             (rec == "over" and actual_value > line) or
             (rec == "under" and actual_value < line)
         ) else "loss"
-
-        now_iso = datetime.now(timezone.utc).isoformat()
         await db.picks.update_one(
             {"pickId": pick_id},
             {"$set": {
-                "status": "settled",
-                "result": result,
+                "status": "settled", "result": result,
                 "actualValue": actual_value,
-                "settledAt": now_iso,
-                "wcSettled": True,
+                "settledAt": datetime.now(timezone.utc).isoformat(),
+                "settledBy": "wc_ai", "wcSettled": True,
             }}
         )
-        print(f"[WC SETTLE] {player_name}/{prop_type} line={line} actual={actual_value} → {result.upper()} (pick={pick_id})")
+        print(f"[WC SETTLE AI] {player_name}/{prop_type} line={line} actual={actual_value} → {result.upper()}")
         return True
 
     except Exception as e:
