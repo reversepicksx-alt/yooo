@@ -1539,6 +1539,8 @@ export default function ScanScreen() {
                           if (selectedContext?.teamId === ctx.teamId) return;
                           setSelectedContext(ctx);
                           setAutoMatch(null);
+                          setManualOpponentQuery('');
+                          setResolvedManualOpponent(null);
                           setNextMatchLoading(true);
                           Haptics.selectionAsync();
                           try {
@@ -1605,7 +1607,7 @@ export default function ScanScreen() {
               </View>
             )}
 
-            {/* ── League — only shown when auto-match hasn't already set it ── */}
+            {/* ── League + Opponent — only shown when auto-match hasn't set them ── */}
             {!autoMatch?.found && (
               <>
                 <Text style={styles.fieldLabel}>League</Text>
@@ -1621,6 +1623,30 @@ export default function ScanScreen() {
                     setLeagueQuery(l.name);
                     Haptics.selectionAsync();
                   }}
+                />
+
+                <Text style={styles.fieldLabel}>Opponent</Text>
+                <FuzzySearchInput
+                  searchType="teams"
+                  value={manualOpponentQuery}
+                  onChangeText={(t) => {
+                    setManualOpponentQuery(t);
+                    if (!t) setResolvedManualOpponent(null);
+                  }}
+                  placeholder={leagueId === 1 ? 'e.g. France, Argentina, Spain…' : 'e.g. Arsenal, Real Madrid…'}
+                  confirmed={!!resolvedManualOpponent || manualOpponentQuery.trim().length > 1}
+                  staticItems={leagueId === 1 ? WC_NATIONS : undefined}
+                  onSelectTeam={(t: FuzzyTeamResult) => {
+                    setResolvedManualOpponent(t);
+                    setManualOpponentQuery(t.teamName);
+                    Haptics.selectionAsync();
+                  }}
+                  onSelectStaticItem={(_raw: any, primary: string) => {
+                    setManualOpponentQuery(primary);
+                    setResolvedManualOpponent(null);
+                    Haptics.selectionAsync();
+                  }}
+                  style={{ marginBottom: 2 }}
                 />
               </>
             )}
