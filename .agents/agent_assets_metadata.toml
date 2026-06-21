@@ -347,3 +347,9 @@ id = "EsjtJBvkH862DUwp6mxx5"
 uri = "file://mobile/assets/rp-splash.png"
 type = "image"
 title = "Splash Screen Logo — updated with glow"
+
+[[outputs]]
+id = "Q2a9vDtxU9ft_YiZQobxK"
+uri = "file://mobile/assets/icon.png"
+type = "image"
+title = "Current App Icon (build 82)"
