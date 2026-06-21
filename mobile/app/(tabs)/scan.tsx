@@ -1498,7 +1498,13 @@ export default function ScanScreen() {
                       // while user decides which context to pick. Don't auto-select or set venue.
                       try {
                         const nm = await getTeamNextMatch(ctxs[0].teamId);
-                        if (nm?.leagueId) { setLeagueId(nm.leagueId); setLeagueQuery(nm.leagueName || ''); }
+                        if (nm?.leagueId) {
+                          setLeagueId(nm.leagueId); setLeagueQuery(nm.leagueName || '');
+                        } else if (ctxs[0].isNational) {
+                          const fallbackId = ctxs[0].leagueId || 1;
+                          setLeagueId(fallbackId);
+                          setLeagueQuery(fallbackId === 1 ? 'FIFA World Cup' : '');
+                        }
                       } catch {}
                     }
                   } catch {}
@@ -1542,8 +1548,15 @@ export default function ScanScreen() {
                               const _isWcHost = WC_HOST_NAMES.has((ctx.teamName || '').toLowerCase().trim());
                               setVenueOverride(nm.leagueId === 1 && !_isWcHost ? 'neutral' : (nm.isHome ? 'home' : 'away'));
                             }
-                            // Always set league if we got one — even history fallback (off-season clubs)
-                            if (nm?.leagueId) { setLeagueId(nm.leagueId); setLeagueQuery(nm.leagueName || ''); }
+                            // Set league from next-match result, or fall back to context's own leagueId
+                            // for national teams (prevents club league bleeding through)
+                            if (nm?.leagueId) {
+                              setLeagueId(nm.leagueId); setLeagueQuery(nm.leagueName || '');
+                            } else if (ctx.isNational) {
+                              const fallbackId = ctx.leagueId || 1;
+                              setLeagueId(fallbackId);
+                              setLeagueQuery(fallbackId === 1 ? 'FIFA World Cup' : '');
+                            }
                           } catch {}
                           setNextMatchLoading(false);
                         }}

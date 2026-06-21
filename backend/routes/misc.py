@@ -1,3 +1,4 @@
+import asyncio
 import json
 import uuid
 from datetime import datetime, timezone, timedelta
@@ -146,18 +147,40 @@ async def team_next_match(team_id: int):
     _SKIP_LEAGUES = {667, 666}
 
     # ── 1. Upcoming fixtures ──────────────────────────────────────────────────
+    # Fetch general next-20 AND WC 2026 specifically in parallel.
+    # The WC call is necessary because national teams' WC fixtures sometimes
+    # don't appear in the generic next:20 window (e.g. between matchdays or
+    # when the scheduler hasn't published the knockout round fixtures yet).
     try:
-        fixtures = await api_football_request("fixtures", {"team": team_id, "next": 20})
+        fixtures, wc_fixtures = await asyncio.gather(
+            api_football_request("fixtures", {"team": team_id, "next": 20}),
+            api_football_request("fixtures", {"team": team_id, "league": 1, "season": 2026, "next": 5}),
+            return_exceptions=True,
+        )
+        if isinstance(fixtures, Exception):
+            fixtures = None
+        if isinstance(wc_fixtures, Exception):
+            wc_fixtures = None
     except Exception:
         fixtures = None
+        wc_fixtures = None
+
+    # Merge: general results first, then WC-specific (avoids duplicates via seen set)
+    _all_upcoming = []
+    _seen_fids: set = set()
+    for _batch in [fixtures, wc_fixtures]:
+        for _f in (_batch or []):
+            _fid = _f.get("fixture", {}).get("id")
+            if _fid and _fid not in _seen_fids:
+                _seen_fids.add(_fid)
+                _all_upcoming.append(_f)
 
     fx = None
-    if fixtures:
-        for candidate in fixtures:
-            lid = candidate.get("league", {}).get("id", 0)
-            if lid not in _SKIP_LEAGUES:
-                fx = candidate
-                break
+    for candidate in _all_upcoming:
+        lid = candidate.get("league", {}).get("id", 0)
+        if lid not in _SKIP_LEAGUES:
+            fx = candidate
+            break
 
     result = None
     if fx:
