@@ -3494,16 +3494,67 @@ export default function ScanScreen() {
                         </View>
                       )}
 
-                      {/* ── Opp Profile note ── */}
-                      {oppAvg != null && (
-                        <View style={styles.mfOppRow}>
-                          <Ionicons name="people-outline" size={10} color={Colors.textTertiary} />
-                          <Text style={styles.mfOppLabel} numberOfLines={1}>
-                            {pos ? `${pos}s` : 'Players'} vs {prediction.opponentName || 'opp'}: {oppAvg.toFixed(1)} avg allowed
-                            {oppWt != null ? ` (${oppWt}% influence)` : ''}
-                          </Text>
-                        </View>
-                      )}
+                      {/* ── Opponent Defense Profile ── */}
+                      {(() => {
+                        const op = (prediction as any).opponentProfile as {
+                          allowedAvg: number; playerBaseline: number; diffPct: number;
+                          tier: string; sampleSize: number; description: string;
+                        } | undefined;
+                        if (!op) {
+                          // Fallback: plain allowed-avg note (old style)
+                          if (oppAvg == null) return null;
+                          return (
+                            <View style={styles.mfOppRow}>
+                              <Ionicons name="people-outline" size={10} color={Colors.textTertiary} />
+                              <Text style={styles.mfOppLabel} numberOfLines={1}>
+                                {pos ? `${pos}s` : 'Players'} vs {prediction.opponentName || 'opp'}: {oppAvg.toFixed(1)} avg allowed
+                                {oppWt != null ? ` (${oppWt}% influence)` : ''}
+                              </Text>
+                            </View>
+                          );
+                        }
+                        const isSuppressor = op.diffPct < -5;
+                        const isLeak       = op.diffPct > 5;
+                        const tierColor    = isSuppressor ? '#FF6B35' : isLeak ? Colors.primary : Colors.textSecondary;
+                        const tierIcon     = isSuppressor ? 'shield-checkmark-outline' : isLeak ? 'trending-up-outline' : 'remove-outline';
+                        const tierLabel    = op.tier.toUpperCase();
+                        const absPct       = Math.abs(op.diffPct);
+                        const direction    = op.diffPct < 0 ? 'fewer' : 'more';
+                        const propLabel    = op.propType.replace(/_/g, ' ');
+                        const oppShort     = (prediction.opponentName || 'Opp').split(' ').slice(-1)[0];
+                        return (
+                          <View style={[styles.mfOppCard, { borderColor: tierColor + '33', backgroundColor: tierColor + '0A' }]}>
+                            <View style={styles.mfOppCardHeader}>
+                              <Ionicons name={tierIcon as any} size={11} color={tierColor} />
+                              <Text style={[styles.mfOppCardTitle, { color: tierColor }]}>OPP DEFENSE</Text>
+                              <View style={[styles.mfOppTierPill, { backgroundColor: tierColor + '22', borderColor: tierColor + '55' }]}>
+                                <Text style={[styles.mfOppTierText, { color: tierColor }]}>{tierLabel}</Text>
+                              </View>
+                            </View>
+                            <View style={styles.mfOppCardBody}>
+                              <View style={styles.mfOppStat}>
+                                <Text style={styles.mfOppStatVal}>{op.allowedAvg.toFixed(1)}</Text>
+                                <Text style={styles.mfOppStatSub}>allowed avg</Text>
+                              </View>
+                              <View style={styles.mfOppDivLine} />
+                              <View style={styles.mfOppStat}>
+                                <Text style={[styles.mfOppStatVal, { color: tierColor }]}>
+                                  {op.diffPct > 0 ? '+' : ''}{op.diffPct.toFixed(0)}%
+                                </Text>
+                                <Text style={styles.mfOppStatSub}>vs baseline</Text>
+                              </View>
+                              <View style={styles.mfOppDivLine} />
+                              <View style={styles.mfOppStat}>
+                                <Text style={styles.mfOppStatVal}>{op.sampleSize}</Text>
+                                <Text style={styles.mfOppStatSub}>games</Text>
+                              </View>
+                            </View>
+                            <Text style={styles.mfOppCardDesc} numberOfLines={2}>
+                              {oppShort} allows {absPct.toFixed(0)}% {direction} {propLabel} than this player's {op.playerBaseline.toFixed(1)} avg
+                            </Text>
+                          </View>
+                        );
+                      })()}
 
                     </View>
                   </View>
@@ -5976,6 +6027,44 @@ const styles = StyleSheet.create({
   },
   mfOppLabel: {
     fontSize: 10, color: Colors.textSecondary, fontWeight: '600', flex: 1,
+  },
+
+  /* Opponent Defense Profile card */
+  mfOppCard: {
+    borderRadius: 8, borderWidth: 1,
+    paddingHorizontal: 10, paddingVertical: 7,
+    gap: 5,
+  },
+  mfOppCardHeader: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+  },
+  mfOppCardTitle: {
+    fontSize: 9, fontWeight: '800', letterSpacing: 0.8, flex: 1,
+  },
+  mfOppTierPill: {
+    borderRadius: 4, borderWidth: 1,
+    paddingHorizontal: 5, paddingVertical: 1,
+  },
+  mfOppTierText: {
+    fontSize: 8, fontWeight: '800', letterSpacing: 0.5,
+  },
+  mfOppCardBody: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+  },
+  mfOppStat: {
+    flex: 1, alignItems: 'center',
+  },
+  mfOppStatVal: {
+    fontSize: 13, fontWeight: '700', color: Colors.text,
+  },
+  mfOppStatSub: {
+    fontSize: 8, color: Colors.textTertiary, fontWeight: '600', letterSpacing: 0.3, marginTop: 1,
+  },
+  mfOppDivLine: {
+    width: 1, height: 24, backgroundColor: 'rgba(255,255,255,0.08)',
+  },
+  mfOppCardDesc: {
+    fontSize: 9, color: Colors.textSecondary, lineHeight: 13,
   },
 
   /* Legacy mf styles kept for any remaining references */

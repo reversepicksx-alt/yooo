@@ -1853,12 +1853,42 @@ async def predict(req: PredictionRequest):
                 # doesn't return possession averages for the tournament league.
                 # Last-resort: derive expected possession from match odds probability.
                 # A 70% win-prob favourite is realistically ~55% possession territory.
-                if odds and odds.get("bookmakerOdds"):
+                _has_bk = odds and odds.get("bookmakerOdds")
+                _has_ao = odds and odds.get("americanOdds")
+                if _has_bk or _has_ao:
                     try:
-                        _ho = float(odds["bookmakerOdds"].get("homeWin", 3.0))
-                        _ao = float(odds["bookmakerOdds"].get("awayWin", 3.0))
-                        _hp = 1.0 / max(_ho, 1.01)
-                        _ap = 1.0 / max(_ao, 1.01)
+                        if _has_bk:
+                            _ho = float(odds["bookmakerOdds"].get("homeWin", 3.0))
+                            _ao_v = float(odds["bookmakerOdds"].get("awayWin", 3.0))
+                            _hp = 1.0 / max(_ho, 1.01)
+                            _ap = 1.0 / max(_ao_v, 1.01)
+                        else:
+                            # americanOdds: convert to implied win probability
+                            def _ml_to_prob_inner(ml):
+                                try:
+                                    ml = float(ml)
+                                    return (-ml) / (-ml + 100.0) if ml < 0 else 100.0 / (ml + 100.0)
+                                except Exception:
+                                    return 0.33
+                            _aod = odds["americanOdds"]
+                            _pih = odds.get("playerIsHome")
+                            if _pih is None:
+                                _pih = is_home and not is_neutral
+                            _fx_h_p = _ml_to_prob_inner(_aod.get("home", 0))
+                            _fx_a_p = _ml_to_prob_inner(_aod.get("away", 0))
+                            # Map fixture home/away probs to formula home/away probs.
+                            # Formula "home" = opponent (neutral) or actual home (non-neutral).
+                            # For neutral: formula home = opponent
+                            #   opponent = fixture-home if not playerIsHome, else fixture-away
+                            # For non-neutral: formula home = player's team side
+                            #   no flip when is_home==_pih, else flip
+                            if is_neutral:
+                                _hp = _fx_a_p if _pih else _fx_h_p
+                                _ap = _fx_h_p if _pih else _fx_a_p
+                            else:
+                                _no_flip = (is_home == _pih)
+                                _hp = _fx_h_p if _no_flip else _fx_a_p
+                                _ap = _fx_a_p if _no_flip else _fx_h_p
                         _tot = _hp + _ap
                         if _tot > 0:
                             _norm_h = _hp / _tot   # fixture home team win-prob
@@ -4522,7 +4552,21 @@ Analyze ALL data thoroughly. Return JSON only."""
                                        "confidenceLevel","recommendation")
                         for _sf in _STR_FIELDS:
                             if _sf in result and not isinstance(result[_sf], str):
-                                result[_sf] = json.dumps(result[_sf]) if result[_sf] else ""
+                                _sf_val = result[_sf]
+                                if _sf_val and isinstance(_sf_val, dict):
+                                    if _sf == "tacticalBreakdown":
+                                        # Format sections as readable markdown
+                                        _parts = []
+                                        for _k, _v in _sf_val.items():
+                                            if isinstance(_v, str) and _v.strip():
+                                                _parts.append(f"**{_k}**\n{_v.strip()}")
+                                        result[_sf] = "\n\n".join(_parts) if _parts else ""
+                                    else:
+                                        # For sharpSummary/reasoning/etc, join string values
+                                        _sv = [str(v) for v in _sf_val.values() if v and str(v).strip()]
+                                        result[_sf] = " ".join(_sv) if _sv else ""
+                                else:
+                                    result[_sf] = str(_sf_val) if _sf_val else ""
                         result["_source"] = label
                         return result
                     except json.JSONDecodeError:
@@ -5820,6 +5864,60 @@ Analyze ALL data thoroughly. Return JSON only."""
                 + (f" [FLIPPED from {_bt_old_rec.upper()} {_bt_old_conf}%]" if _bt_old_rec != _bt_dir else f" [confidence {_bt_old_conf}→{_bt_new_conf}]")
             )
 
+            # ── SHARP SUMMARY DIRECTION GUARD ─────────────────────────────────
+            # The prediction cache stores AI narrative. When BAYESIAN TRUTH pins
+            # a different direction than what the AI wrote (common when the AI
+            # explains OVER but Bayesian says UNDER), the sharpSummary displayed
+            # to users flatly contradicts the recommendation badge.
+            # Detect the conflict and replace sharpSummary with a math-based one.
+            # Also purge the prediction cache so the next request regenerates
+            # fresh AI text with the correct direction anchor.
+            _ss_text = prediction.get("sharpSummary", "") or ""
+            if _ss_text:
+                _ss_lo = _ss_text.lower()
+                _over_markers = ("exceed", " over ", "above the line", "more than",
+                                 "surpass", "push past", "eclips", "over 46", "over 47",
+                                 "over 48", "over 49", "over 50", "strong over",
+                                 "projects to exceed", "will exceed")
+                _under_markers = ("under", "below", "fewer than", "less than",
+                                  "suppress", "fall short", "won't reach", "won't hit")
+                _ss_has_over  = any(m in _ss_lo for m in _over_markers)
+                _ss_has_under = any(m in _ss_lo for m in _under_markers)
+                _ss_conflicts = (
+                    (_bt_dir == "under" and _ss_has_over and not _ss_has_under) or
+                    (_bt_dir == "over"  and _ss_has_under and not _ss_has_over)
+                )
+                if _ss_conflicts:
+                    _dir_word = "UNDER" if _bt_dir == "under" else "OVER"
+                    _alt_dir  = "OVER"  if _bt_dir == "under" else "UNDER"
+                    _bt_proj  = prediction.get("projectedValue", req.line)
+                    _p_dir    = _bt_p_under if _bt_dir == "under" else _bt_p_over
+                    _proj_disp = f"{_bt_proj:.1f}" if isinstance(_bt_proj, (int, float)) else str(_bt_proj)
+                    prediction["sharpSummary"] = (
+                        f"The Reverse Formula projects {req.playerName} to finish at "
+                        f"{_proj_disp} — {_dir_word} {req.line}. The 3-layer statistical "
+                        f"model gives {_p_dir:.0f}% probability the {_dir_word} lands; "
+                        f"structural matchup and possession factors suppress the stat "
+                        f"below the line despite the {_alt_dir.lower()} narrative in "
+                        f"market commentary."
+                        if _bt_dir == "under" else
+                        f"The Reverse Formula projects {req.playerName} to finish at "
+                        f"{_proj_disp} — {_dir_word} {req.line}. The 3-layer statistical "
+                        f"model gives {_p_dir:.0f}% probability the {_dir_word} lands; "
+                        f"volume and possession factors push the stat above the line "
+                        f"despite the cautious market pricing."
+                    )
+                    try:
+                        if _soc_ck:
+                            await db.grok_response_cache.delete_one({"_k": _soc_ck})
+                    except Exception:
+                        pass
+                    print(
+                        f"[DIRECTION GUARD] {req.playerName}/{req.propType}: "
+                        f"sharpSummary said {_alt_dir} but final rec={_bt_dir.upper()} — "
+                        f"replaced summary, cleared AI cache"
+                    )
+
             # ── LOW CONVICTION FILTER ─────────────────────────────────────────
             # When Bayesian max(P(OVER), P(UNDER)) < 57%, the model has weak
             # signal — the line is close to the projection mean and the
@@ -6239,6 +6337,48 @@ Analyze ALL data thoroughly. Return JSON only."""
         real_matchup["keyMatchupFactor"] = _kmf
 
         prediction["matchupOverview"] = real_matchup
+
+        # ── OPPONENT DEFENSIVE PROFILE ────────────────────────────────────────
+        # How does the opponent's recent defending compare to what this player
+        # typically produces?  Uses the opponentAllowedAvg already computed by
+        # the Bayesian engine (weighted average of what this position/prop gets
+        # vs this opponent in recent matches) vs. the player's prior mean.
+        # Only attach when we have ≥3 opponent samples so the signal is reliable.
+        if real_bayes and req.propType not in {"goals", "assists"}:
+            _op_allowed  = real_bayes.get("opponentAllowedAvg")
+            _op_n        = int(real_bayes.get("opponentAllowedSamples") or 0)
+            _op_baseline = real_bayes.get("priorMean")
+            if _op_allowed is not None and _op_baseline and _op_baseline > 0 and _op_n >= 3:
+                _op_diff_pct = round((_op_allowed - _op_baseline) / _op_baseline * 100, 1)
+                _op_tier = (
+                    "elite suppressor" if _op_diff_pct <= -30 else
+                    "strong suppressor" if _op_diff_pct <= -15 else
+                    "slight suppressor" if _op_diff_pct <= -5  else
+                    "elite leak"        if _op_diff_pct >= 30  else
+                    "notable leak"      if _op_diff_pct >= 15  else
+                    "slight lean"       if _op_diff_pct >= 5   else
+                    "neutral"
+                )
+                _op_is_neg = _op_diff_pct < 0
+                prediction["opponentProfile"] = {
+                    "allowedAvg":    round(_op_allowed, 1),
+                    "playerBaseline": round(_op_baseline, 1),
+                    "diffPct":       _op_diff_pct,
+                    "tier":          _op_tier,
+                    "sampleSize":    _op_n,
+                    "propType":      req.propType,
+                    "description": (
+                        f"{req.opponentName} allows {abs(_op_diff_pct):.0f}% "
+                        f"{'fewer' if _op_is_neg else 'more'} "
+                        f"{req.propType.replace('_', ' ')} than baseline "
+                        f"to this position ({_op_n} games)"
+                    ),
+                }
+                print(
+                    f"[OPP PROFILE] {req.playerName}/{req.propType}: "
+                    f"allowed={_op_allowed:.1f} baseline={_op_baseline:.1f} "
+                    f"diff={_op_diff_pct:+.1f}% → {_op_tier} (n={_op_n})"
+                )
 
         # Add match context (competition name, round) for frontend display
         if match_odds:
