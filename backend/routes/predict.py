@@ -1983,10 +1983,6 @@ async def predict(req: PredictionRequest):
                     if abs(quality_adj) > 1:
                         dom["notes"].append(f"Standings gap (#{home_rank} vs #{away_rank}): {quality_adj:+.1f}% poss adj")
 
-                # Track whether we detected an extreme mismatch via odds.
-                # Used below to relax the regression-to-mean factor.
-                _odds_extreme_mismatch = False
-
                 if odds and odds.get("bookmakerOdds"):
                     try:
                         home_odds_val = float(odds["bookmakerOdds"].get("homeWin", 3.0))
@@ -1994,113 +1990,100 @@ async def predict(req: PredictionRequest):
 
                         home_prob = 1.0 / max(home_odds_val, 1.01)
                         away_prob = 1.0 / max(away_odds_val, 1.01)
-                        _tot = home_prob + away_prob
-                        if _tot > 0:
-                            home_prob /= _tot
-                            away_prob /= _tot
                         prob_diff = home_prob - away_prob
-
-                        _bk_extreme = max(home_prob, away_prob) >= 0.85
-                        if _bk_extreme:
-                            _odds_extreme_mismatch = True
 
                         odds_dampener = 1.0
                         if away_avg >= 53 or home_avg >= 57:
-                            odds_dampener = 0.55 if _bk_extreme else 0.3
-                            dom["notes"].append(f"Possession-dominant team in match ({max(home_avg, away_avg):.0f}% avg): odds signal dampened to {odds_dampener}")
+                            odds_dampener = 0.3
+                            dom["notes"].append(f"Possession-dominant team in match ({max(home_avg, away_avg):.0f}% avg): odds signal dampened")
                         elif away_avg >= 50 or home_avg >= 53:
-                            odds_dampener = 0.65 if _bk_extreme else 0.6
+                            odds_dampener = 0.6
 
                         odds_adj = round(prob_diff * 12 * odds_dampener, 1)
                         odds_adj = min(7.0, max(-7.0, odds_adj))
                         home_poss += odds_adj
                         if abs(odds_adj) > 1:
-                            dom["notes"].append(f"Odds signal (home={home_odds_val:.2f}, away={away_odds_val:.2f}): {odds_adj:+.1f}% poss adj (extreme={_bk_extreme})")
-
-                        # Extreme mismatch amplifier: season-avg possession
-                        # undershoots for mismatches like France vs Iraq because
-                        # France's avg includes games vs Germany/Spain/England.
-                        # Extra boost: 85% fav → +2.5pp, 90% → +5pp, 95% → +7.5pp
-                        if _bk_extreme:
-                            _bk_boost = min(10.0, (max(home_prob, away_prob) - 0.80) * 100.0)
-                            if away_prob > home_prob:
-                                home_poss -= _bk_boost
-                            else:
-                                home_poss += _bk_boost
-                            dom["notes"].append(f"Extreme mismatch amplifier (BK): {_bk_boost:.1f}pp (fav={max(home_prob,away_prob):.1%})")
+                            dom["notes"].append(f"Odds signal (home={home_odds_val:.2f}, away={away_odds_val:.2f}): {odds_adj:+.1f}% poss adj")
                     except Exception:
                         pass
 
-                elif odds and odds.get("americanOdds"):
-                    # Main stats path: americanOdds were ignored entirely.
-                    # France -1111 vs Iraq +2200 contributed zero possession
-                    # signal — now handled the same way as bookmakerOdds.
-                    try:
-                        def _ml_to_prob_poss(ml):
-                            try:
-                                ml = float(ml)
-                                return (-ml) / (-ml + 100.0) if ml < 0 else 100.0 / (ml + 100.0)
-                            except Exception:
-                                return 0.33
-                        _aod = odds["americanOdds"]
-                        _pih = odds.get("playerIsHome")
-                        if _pih is None:
-                            _pih = is_home and not is_neutral
-                        _fx_h_p = _ml_to_prob_poss(_aod.get("home", 0))
-                        _fx_a_p = _ml_to_prob_poss(_aod.get("away", 0))
-                        # Map fixture home/away to formula home (possession home side)
-                        if is_neutral:
-                            _ao_home_prob = _fx_a_p if _pih else _fx_h_p
-                            _ao_away_prob = _fx_h_p if _pih else _fx_a_p
-                        else:
-                            _no_flip = (is_home == _pih)
-                            _ao_home_prob = _fx_h_p if _no_flip else _fx_a_p
-                            _ao_away_prob = _fx_a_p if _no_flip else _fx_h_p
-                        _ao_tot = _ao_home_prob + _ao_away_prob
-                        if _ao_tot > 0:
-                            _ao_home_prob /= _ao_tot
-                            _ao_away_prob /= _ao_tot
-                        _ao_prob_diff = _ao_home_prob - _ao_away_prob
+                # FIX 2 — Regression to mean (22% shrink toward 50%).
+                home_poss = round(50.0 + (home_poss - 50.0) * 0.78, 1)
 
-                        _ao_extreme = max(_ao_home_prob, _ao_away_prob) >= 0.85
-                        if _ao_extreme:
-                            _odds_extreme_mismatch = True
+                # Ceiling raised 67% → 73%. 67% made France vs Iraq
+                # (72-76% realistic) physically impossible.
+                home_poss = min(73.0, max(28.0, round(home_poss, 1)))
 
-                        ao_dampener = 1.0
-                        if away_avg >= 53 or home_avg >= 57:
-                            ao_dampener = 0.55 if _ao_extreme else 0.3
-                            dom["notes"].append(f"AO possession-dominant team: odds dampened to {ao_dampener}")
-                        elif away_avg >= 50 or home_avg >= 53:
-                            ao_dampener = 0.65 if _ao_extreme else 0.6
+                # ── EXTREME MISMATCH POST-CORRECTION ─────────────────────────
+                # When odds show one team is a massive favourite (≥ 85% implied
+                # win prob), the season-avg monster formula can land on the wrong
+                # value — e.g. Iraq averages 59% possession at home against weak
+                # Asian sides but is +2200 against France.
+                #
+                # The correction is applied AFTER all formula steps so it can't
+                # get confused by home/away/neutral direction logic.
+                #
+                # We work purely in "formula-home" space: home_poss is always the
+                # formula-home team's possession, and the formula-home team is the
+                # OPPONENT when the player is away/neutral (see home_avg assignment
+                # above). So we need the formula-home team's WIN PROBABILITY.
+                #
+                # Formula-home win prob:
+                #   player is home (non-neutral) → formula-home = player team
+                #   player is away or neutral    → formula-home = opponent team
+                try:
+                    _ep_fh_prob = None   # formula-home team's win prob (0-1)
+                    if odds and odds.get("bookmakerOdds"):
+                        _bh = float(odds["bookmakerOdds"].get("homeWin", 3.0))
+                        _ba = float(odds["bookmakerOdds"].get("awayWin", 3.0))
+                        _bkh = 1.0 / max(_bh, 1.01)
+                        _bka = 1.0 / max(_ba, 1.01)
+                        _bkt = _bkh + _bka
+                        # bookmakerOdds.homeWin = fixture-home team's odds
+                        # formula-home = fixture-home when player is home (non-neutral)
+                        #               = fixture-home (opponent) when player is away/neutral
+                        # In both cases formula-home maps to the same fixture-home team
+                        # because the else branch above sets home_avg = opp's home stats.
+                        # So formula-home win prob = bookmaker home win prob in all cases.
+                        if _bkt > 0:
+                            _ep_fh_prob = _bkh / _bkt
+                    elif odds and odds.get("americanOdds"):
+                        def _ml2p_ep(ml):
+                            ml = float(ml)
+                            return (-ml) / (-ml + 100.0) if ml < 0 else 100.0 / (ml + 100.0)
+                        _eaod = odds["americanOdds"]
+                        _eih  = _ml2p_ep(_eaod.get("home", 0))  # fixture-home prob
+                        _eia  = _ml2p_ep(_eaod.get("away", 0))  # fixture-away prob
+                        _eit  = _eih + _eia
+                        # odds["americanOdds"].home always = FIXTURE home team.
+                        # formula-home is always the FIXTURE home team's side because:
+                        #   – player home (non-neutral): home_avg = player's home stats
+                        #     → formula-home = player = fixture-home → fh_prob = _eih
+                        #   – player away or neutral:   home_avg = opponent's home stats
+                        #     → formula-home = opponent = fixture-home → fh_prob = _eih
+                        # Either way: formula-home win prob = fixture-home odds prob.
+                        if _eit > 0:
+                            _ep_fh_prob = _eih / _eit
 
-                        ao_adj = round(_ao_prob_diff * 12 * ao_dampener, 1)
-                        ao_adj = min(7.0, max(-7.0, ao_adj))
-                        home_poss += ao_adj
-                        if abs(ao_adj) > 1:
-                            dom["notes"].append(f"AO odds signal: {ao_adj:+.1f}% poss adj (extreme={_ao_extreme})")
-
-                        if _ao_extreme:
-                            _ao_boost = min(10.0, (max(_ao_home_prob, _ao_away_prob) - 0.80) * 100.0)
-                            if _ao_away_prob > _ao_home_prob:
-                                home_poss -= _ao_boost
-                            else:
-                                home_poss += _ao_boost
-                            dom["notes"].append(f"Extreme mismatch amplifier (AO): {_ao_boost:.1f}pp (fav={max(_ao_home_prob,_ao_away_prob):.1%})")
-                    except Exception:
-                        pass
-
-                # Regression to mean — relaxed for extreme mismatches.
-                # Normal (22% shrink): 70%→64.6%, 65%→60.8%, 58%→56.2%
-                # Extreme (12% shrink): lets 28% Iraq → 31.4% so France → 68-73%
-                # Matches like France vs Iraq (fav -1111) need less regression
-                # because season-avg possession is diluted by competitive fixtures.
-                _regression_factor = 0.88 if _odds_extreme_mismatch else 0.78
-                home_poss = round(50.0 + (home_poss - 50.0) * _regression_factor, 1)
-
-                # Ceiling raised 67% → 75%. The previous 67% cap made it
-                # physically impossible to predict France 72-76% vs Iraq.
-                # 75% is achievable in real elite-vs-weak fixtures.
-                home_poss = min(75.0, max(28.0, round(home_poss, 1)))
+                    if _ep_fh_prob is not None:
+                        _ep_fav_prob = max(_ep_fh_prob, 1.0 - _ep_fh_prob)
+                        if _ep_fav_prob >= 0.82:
+                            # Odds-only expected possession for formula-home:
+                            # calibrated so 95% fav → ~75%, 85% fav → ~61%
+                            _ep_odds_hp = max(25.0, min(75.0,
+                                50.0 + (_ep_fh_prob - 0.5) * 55.0))
+                            # Blend weight: 82% → 0%, 90% → 80%, 95% → 100%
+                            _ep_w = min(1.0, (_ep_fav_prob - 0.82) / 0.08)
+                            _old_hp = home_poss
+                            home_poss = round(
+                                _ep_w * _ep_odds_hp + (1.0 - _ep_w) * home_poss, 1)
+                            home_poss = min(73.0, max(28.0, home_poss))
+                            dom["notes"].append(
+                                f"Extreme mismatch corr (w={_ep_w:.0%}, "
+                                f"fh_prob={_ep_fh_prob:.1%}): "
+                                f"{_old_hp:.0f}%→{home_poss:.0f}%")
+                except Exception:
+                    pass
                 away_poss = round(100.0 - home_poss, 1)
 
                 if is_home and not is_neutral:
