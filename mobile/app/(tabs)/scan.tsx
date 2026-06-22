@@ -172,7 +172,8 @@ export default function ScanScreen() {
 
   // User-controlled venue override
   const [venueOverride, setVenueOverride] = useState<'home' | 'away' | 'neutral'>('home');
-  const [gameLogFilter, setGameLogFilter] = useState<'all' | 'home' | 'away'>('all');
+  const [gameLogFilter, setGameLogFilter] = useState<'all' | 'home' | 'away' | 'opp'>('all');
+  const [adjustedLine, setAdjustedLine] = useState<number | null>(null);
 
   // Manual team override — user can tap the team badge to change it
   const [showTeamEdit, setShowTeamEdit] = useState(false);
@@ -454,6 +455,7 @@ export default function ScanScreen() {
     setAutoMatch(null);
     setPpLines([]);
     setGameLogFilter('all');
+    setAdjustedLine(null);
     setShowPlayerEdit(false);
     setShowTeamEdit(false);
     setShowOppEdit(false);
@@ -3782,10 +3784,15 @@ export default function ScanScreen() {
               const realLogs = prediction.gameLogs.filter(g => !g.synthetic);
               const allSynthetic = realLogs.length === 0;
               const displayLogs = allSynthetic ? [] : realLogs;
-              const overCount = displayLogs.filter(g => g.value != null && prediction.line != null && g.value >= prediction.line).length;
-              const filteredLogs = displayLogs.filter(g =>
-                gameLogFilter === 'all' ? true : g.venue === gameLogFilter
-              );
+              const effectiveLine = adjustedLine ?? prediction.line;
+              const overCount = displayLogs.filter(g => g.value != null && effectiveLine != null && g.value >= effectiveLine).length;
+              const filteredLogs = displayLogs.filter(g => {
+                if (gameLogFilter === 'opp') {
+                  const norm = (s: string) => (s || '').toLowerCase().replace(/[\s.\-]/g, '').slice(0, 6);
+                  return norm(g.opponent || '') === norm(prediction.opponent || '');
+                }
+                return gameLogFilter === 'all' ? true : g.venue === gameLogFilter;
+              });
               const COLS = 6;
               const tileW = (SCREEN_W - 40 - 16 - (COLS - 1) * 4) / COLS;
               const oppPoss = prediction.possessionOppAvg;
@@ -3808,7 +3815,7 @@ export default function ScanScreen() {
                           <Text style={styles.glOppPossVal}>{oppPoss}%</Text>
                         </View>
                       )}
-                      {!allSynthetic && prediction.hitRates != null && (
+                      {!allSynthetic && (
                         <View style={styles.hitRateBadge}>
                           <Text style={styles.hitRateBadgeText}>
                             {overCount}/{displayLogs.length} HIT
@@ -3817,6 +3824,37 @@ export default function ScanScreen() {
                       )}
                     </View>
                   </View>
+                  {/* ── Adjustable Line ── */}
+                  {!allSynthetic && effectiveLine != null && (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12, paddingVertical: 7, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)', marginBottom: 2 }}>
+                      <TouchableOpacity
+                        onPress={() => { setAdjustedLine(+Math.max(0, effectiveLine - 0.5).toFixed(1)); Haptics.selectionAsync(); }}
+                        style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: 'rgba(255,255,255,0.07)', alignItems: 'center', justifyContent: 'center' }}
+                      >
+                        <Text style={{ color: Colors.primary, fontSize: 18, fontWeight: '700', lineHeight: 20 }}>−</Text>
+                      </TouchableOpacity>
+                      <View style={{ alignItems: 'center', minWidth: 40 }}>
+                        <Text style={{ color: Colors.text, fontSize: 16, fontWeight: '800', letterSpacing: 0.5 }}>
+                          {Number.isInteger(effectiveLine) ? effectiveLine.toFixed(1) : effectiveLine}
+                        </Text>
+                        <Text style={{ color: Colors.textTertiary, fontSize: 8, letterSpacing: 0.8, marginTop: 1 }}>LINE</Text>
+                      </View>
+                      <TouchableOpacity
+                        onPress={() => { setAdjustedLine(+(effectiveLine + 0.5).toFixed(1)); Haptics.selectionAsync(); }}
+                        style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: 'rgba(255,255,255,0.07)', alignItems: 'center', justifyContent: 'center' }}
+                      >
+                        <Text style={{ color: Colors.primary, fontSize: 18, fontWeight: '700', lineHeight: 20 }}>+</Text>
+                      </TouchableOpacity>
+                      {adjustedLine !== null && adjustedLine !== prediction.line && (
+                        <TouchableOpacity
+                          onPress={() => { setAdjustedLine(null); Haptics.selectionAsync(); }}
+                          style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.06)' }}
+                        >
+                          <Text style={{ color: Colors.textSecondary, fontSize: 9, fontWeight: '600', letterSpacing: 0.5 }}>RESET</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  )}
                   {allSynthetic && (
                     <View style={styles.syntheticNotice}>
                       <Ionicons name="information-circle-outline" size={14} color={Colors.textSecondary} />
@@ -3838,6 +3876,26 @@ export default function ScanScreen() {
                           </Text>
                         </TouchableOpacity>
                       ))}
+                      {(() => {
+                        const norm = (s: string) => (s || '').toLowerCase().replace(/[\s.\-]/g, '').slice(0, 6);
+                        const oppGames = prediction.opponent
+                          ? displayLogs.filter(g => norm(g.opponent || '') === norm(prediction.opponent || ''))
+                          : [];
+                        if (oppGames.length === 0) return null;
+                        const oppLabel = (prediction.opponent || '')
+                          .replace(/^(al-?|fc |cf |rc |sc |cd |ud |sd |rcd |as |ss |ac |us |sp |ca |cp |ue |ce |cm |se |sk )/i, '')
+                          .slice(0, 4).toUpperCase();
+                        return (
+                          <TouchableOpacity
+                            style={[styles.glTab, gameLogFilter === 'opp' && styles.glTabActive]}
+                            onPress={() => { setGameLogFilter('opp'); Haptics.selectionAsync(); }}
+                          >
+                            <Text style={[styles.glTabText, gameLogFilter === 'opp' && styles.glTabTextActive]}>
+                              {oppLabel || 'OPP'}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })()}
                     </View>
                   )}
                   {!allSynthetic && (
@@ -3848,7 +3906,7 @@ export default function ScanScreen() {
                         return (
                           <>
                             {filteredLogs.map((g, i) => {
-                              const isOver = g.value != null && prediction.line != null && g.value >= prediction.line;
+                              const isOver = g.value != null && effectiveLine != null && g.value >= effectiveLine;
                               const isMLB = g.sport === 'mlb' || prediction.sport === 'mlb';
                               if (isMLB) {
                                 const propT = g.propType || prediction.propType || '';
