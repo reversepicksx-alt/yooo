@@ -1,4 +1,5 @@
 - [Replit Gemini proxy](replit-gemini-proxy.md) — Must set `api_version: ''` in http_options; proxy rejects /v1beta/ paths. Python packages in .pythonlibs/python3.12 — use full path.
+- [PrizePicks PerimeterX bypass](prizepicks-perimeterx-bypass.md) — curl --http2 iOS Safari UA via asyncio subprocess; Python HTTP clients return 403 (TLS fingerprint); soccer league IDs listed.
 - [MLB settlement architecture](mlb-settlement-arch.md) — BDL IDs (<100k) now normalised via _transform_bdl_log; composite props via _COMPOSITE_HANDLERS; cache keys mlb_gl2/mlb_gps2.
 - [CS2 kills over-projection](cs2-kills-calibration.md) — Settled data showed 10% OVER hit rate; reduced HYPER_PRIOR, KPR_HYPER (0.63→0.58), EXPECTED_ROUNDS_2MAPS (40→36).
 - [Copa Lib support](copa-lib-support.md) — TEAM_LEAGUE_MAP expanded to all 10 SA domestic leagues; player search correct URL is /api/players/search. WC special mode was removed — leagueId=1 now uses the standard pipeline.

@@ -161,6 +161,8 @@ async def seed_grants():
     asyncio.create_task(auto_scout_loop())
     asyncio.create_task(pattern_mining_loop())
     asyncio.create_task(mlb_live_loop())
+    from prizepicks_client import prizepicks_refresh_loop
+    asyncio.create_task(prizepicks_refresh_loop(db))
 
     # Startup AI probe — verifies Replit Gemini integration is reachable
     async def _check_ai_api():

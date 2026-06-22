@@ -4033,6 +4033,67 @@ export default function ScanScreen() {
               })()
             )}
 
+            {/* ─── PRIZEPICKS MARKET REFERENCE ─── */}
+            {prediction.sport === 'soccer' && (() => {
+              const pp = (prediction as any).prizePicksContext as {
+                marketLine: number; marketTier: string; lineMovement: number;
+                tierSignal: string; tierColor: string; ppPlayer: string;
+                ppTeam: string; ppOpponent: string; flashLine?: number;
+              } | undefined;
+              if (!pp || pp.marketLine == null) return null;
+              const tier      = (pp.marketTier || 'standard').toLowerCase();
+              const tierColor = pp.tierColor || (tier === 'demon' ? '#FF6B35' : tier === 'goblin' ? '#39FF14' : '#60A5FA');
+              const tierLabel = tier.toUpperCase();
+              const diff      = pp.lineMovement ?? 0;
+              const absDiff   = Math.abs(diff);
+              const diffLabel = diff === 0
+                ? 'Matches market'
+                : diff > 0
+                  ? `▼ ${absDiff.toFixed(1)} below market (line moved down)`
+                  : `▲ ${absDiff.toFixed(1)} above market (line moved up)`;
+              const diffColor = diff === 0 ? Colors.textSecondary
+                : absDiff >= 2 ? '#FF6B35' : '#60A5FA';
+              return (
+                <View style={{ marginTop: 8,
+                  backgroundColor: '#0D0D0D', borderRadius: 10, padding: 12,
+                  borderWidth: 1, borderColor: tierColor + '33' }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                    <Ionicons name="analytics-outline" size={11} color={tierColor} />
+                    <Text style={{ fontSize: 10, color: Colors.textSecondary, fontWeight: '700', letterSpacing: 1 }}>
+                      MARKET LINE
+                    </Text>
+                    <View style={{ marginLeft: 'auto', flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                      <Text style={{ fontSize: 14, color: Colors.text, fontWeight: '800' }}>
+                        {pp.marketLine}
+                      </Text>
+                      {pp.flashLine != null && pp.flashLine !== pp.marketLine && (
+                        <Text style={{ fontSize: 10, color: '#F59E0B', fontWeight: '700' }}>⚡{pp.flashLine}</Text>
+                      )}
+                      <View style={{
+                        backgroundColor: tierColor + '22', borderRadius: 4,
+                        paddingHorizontal: 6, paddingVertical: 2,
+                        borderWidth: 1, borderColor: tierColor + '55' }}>
+                        <Text style={{ fontSize: 9, color: tierColor, fontWeight: '800', letterSpacing: 0.5 }}>
+                          {tierLabel}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+                  <Text style={{ fontSize: 11, color: diffColor, fontWeight: '600' }}>{diffLabel}</Text>
+                  {!!pp.tierSignal && tier !== 'standard' && (
+                    <Text style={{ fontSize: 10, color: Colors.textSecondary, marginTop: 4 }}>
+                      {pp.tierSignal}
+                    </Text>
+                  )}
+                  {!!pp.ppOpponent && (
+                    <Text style={{ fontSize: 10, color: Colors.textTertiary, marginTop: 2 }}>
+                      {pp.ppTeam}{pp.ppOpponent ? ` vs ${pp.ppOpponent}` : ''}
+                    </Text>
+                  )}
+                </View>
+              );
+            })()}
+
             {/* ─── GAME LOG GRID ─── */}
             {prediction.gameLogs && prediction.gameLogs.length > 0 && (() => {
               const realLogs = prediction.gameLogs.filter(g => !g.synthetic);
