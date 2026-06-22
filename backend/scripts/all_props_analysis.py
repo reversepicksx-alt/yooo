@@ -1,467 +1,321 @@
 """
-Deep analysis of ALL settled props — hit rates by direction, possession, venue,
-scenario, confidence, league, and edge rating.
-591 GK + all other prop types in Atlas.
+Deep analysis of ALL settled props — SPORT-SEPARATED.
+Soccer, CS2, Baseball, Tennis each analysed independently.
+No position/prop data bleeds across sports.
 """
-import asyncio, sys, os, statistics
-from collections import defaultdict
+import asyncio, sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import mongo_client
 
 DB_NAME = "reversepicks"
-SETTLED = {"status": "settled", "result": {"$in": ["hit", "miss"]}}
+SETTLED  = {"status": "settled", "result": {"$in": ["hit", "miss"]}}
 
-# ── League ID → name lookup (pre-baked for speed) ──────────────────────────
-LEAGUE_NAMES = {
-    39: "EPL", 140: "La Liga", 307: "Saudi Pro", 1: "World Cup",
-    253: "MLS", 135: "Serie A IT", 78: "Bundesliga", 61: "Ligue 1",
-    2: "UCL", 254: "NWSL Women", 128: "Argentina Liga", 71: "Brazil SA",
-    40: "Championship", 262: "Liga MX", 188: "A-League", 13: "CONMEBOL Lib",
-    3: "UEFA EL", 667: "Friendlies", 61: "Ligue 1",
+# ── Sport → canonical prop types ─────────────────────────────────────────────
+SPORT_PROPS = {
+    "⚽ SOCCER": [
+        "pass_attempts", "shots", "shots_on_target", "shots_assisted",
+        "tackles", "clearances", "dribbles", "crosses", "key_passes",
+        "goals", "assists", "fouls_committed",
+        "saves",                         # soccer GK saves
+        "soccer_fantasy_outfield", "soccer_fantasy_gk",
+    ],
+    "🎮 CS2": [
+        "maps_1_2_kills", "map1_kills", "maps_1_3_kills",
+        "maps_1_2_headshots", "map1_headshots",
+        "maps_1_2_rating", "maps_1_2_assists",
+    ],
+    "⚾ BASEBALL": [
+        "pitcher_strikeouts", "hitter_fantasy_points",
+        "pitcher_fantasy_score", "pitches_thrown",
+        "hits", "runs", "earned_runs", "home_runs",
+        "hits_allowed", "walks_allowed", "walks",
+        "total_bases", "hits_runs_rbis",
+        "innings_pitched", "strikeouts", "plate_appearances",
+    ],
+    "🎾 TENNIS": [
+        "total_games", "player_games_won", "set_1_player_games",
+        "player_sets_won",
+    ],
+    "🏒 HOCKEY": [
+        "hockey_saves", "shots_on_goal", "points",
+        "goals_allowed", "assists_hockey",
+    ],
 }
+
+# Soccer positions only (for soccer prop × position breakdowns)
+SOCCER_POSITIONS = {"GK","GKP","Goalkeeper","CB","LB","RB","LWB","RWB",
+                    "CDM","CM","CAM","LM","RM","LW","RW","SS","ST","CF","FW"}
+
+# CS2 positions only
+CS2_POSITIONS = {"IGL","Rifler","AWPer","Lurker","Support","Entry","Fragger",
+                 "Sniper","Hybrid","CM"}
+
+POSS_BANDS = [
+    ("<35%",   "A_<35",  0,  35),
+    ("35-42%", "B_35-42",35, 42),
+    ("42-48%", "C_42-48",42, 48),
+    ("48-55%", "D_48-55",48, 55),
+    ("55-62%", "E_55-62",55, 62),
+    (">62%",   "F_>62",  62, 100),
+]
+
+CONF_BANDS_AGG = {"$switch": {"branches": [
+    {"case": {"$lt": ["$confidenceScore", 55]}, "then": "1_<55"},
+    {"case": {"$lt": ["$confidenceScore", 60]}, "then": "2_55-59"},
+    {"case": {"$lt": ["$confidenceScore", 65]}, "then": "3_60-64"},
+    {"case": {"$lt": ["$confidenceScore", 70]}, "then": "4_65-69"},
+    {"case": {"$lt": ["$confidenceScore", 75]}, "then": "5_70-74"},
+    {"case": {"$lt": ["$confidenceScore", 80]}, "then": "6_75-79"},
+], "default": "7_80+"}}
+
+def sep(title="", w=72):
+    if title:
+        print(f"\n{'═'*w}\n  {title}\n{'═'*w}")
+    else:
+        print("─" * w)
+
+def flag(hit, n, thresh_good=0.72, thresh_bad=0.45):
+    if n < 5: return "  (small n)"
+    if hit > thresh_good: return "  ⭐"
+    if hit < thresh_bad:  return "  ❌"
+    return ""
+
+async def census(db, props, label):
+    """Global census for a sport's props."""
+    sep(f"{label} — PROP CENSUS (all settled picks)")
+    async for doc in db.picks.aggregate([
+        {"$match": {**SETTLED, "propType": {"$in": props}}},
+        {"$group": {
+            "_id": {"prop": "$propType", "rec": "$recommendation"},
+            "n":   {"$sum": 1},
+            "hits": {"$sum": {"$cond": [{"$eq": ["$result","hit"]},1,0]}},
+            "avg_line":   {"$avg": "$line"},
+            "avg_actual": {"$avg": "$actualValue"},
+        }},
+        {"$sort": {"_id.prop":1,"_id.rec":1}},
+    ]):
+        n=doc["n"]; h=doc["hits"]
+        p=doc["_id"]["prop"]; r=doc["_id"]["rec"]
+        al=doc["avg_line"] or 0; aa=doc["avg_actual"] or 0
+        bias=aa-al
+        f=flag(h/n,n)
+        print(f"  {p:32s} {r:6s}  n={n:4d}  hit={h/n*100:5.1f}%  "
+              f"line={al:7.1f}  actual={aa:7.1f}  bias={bias:+6.1f}{f}")
+
+async def by_venue(db, props, label):
+    """Hit rate by venue for each prop."""
+    sep(f"{label} — BY VENUE")
+    async for doc in db.picks.aggregate([
+        {"$match": {**SETTLED, "propType": {"$in": props},
+                    "venue": {"$in": ["home","away","neutral"]}}},
+        {"$group": {
+            "_id": {"prop":"$propType","venue":"$venue","rec":"$recommendation"},
+            "n":   {"$sum":1},
+            "hits":{"$sum":{"$cond":[{"$eq":["$result","hit"]},1,0]}},
+        }},
+        {"$sort": {"_id.prop":1,"_id.venue":1,"_id.rec":1}},
+    ]):
+        n=doc["n"]; h=doc["hits"]
+        if n<5: continue
+        p=doc["_id"]["prop"]; v=doc["_id"]["venue"]; r=doc["_id"]["rec"]
+        f=flag(h/n,n)
+        print(f"  {p:32s} {v:8s} {r:6s}  n={n:3d}  hit={h/n*100:5.1f}%{f}")
+
+async def by_scenario(db, props, label):
+    """Hit rate by scenario bucket."""
+    sep(f"{label} — BY SCENARIO BUCKET")
+    async for doc in db.picks.aggregate([
+        {"$match": {**SETTLED, "propType": {"$in": props},
+                    "scenarioBucket": {"$exists":True,"$nin":[None,""]}}},
+        {"$group": {
+            "_id": {"prop":"$propType","bucket":"$scenarioBucket","rec":"$recommendation"},
+            "n":   {"$sum":1},
+            "hits":{"$sum":{"$cond":[{"$eq":["$result","hit"]},1,0]}},
+        }},
+        {"$sort": {"_id.prop":1,"_id.bucket":1,"_id.rec":1}},
+    ]):
+        n=doc["n"]; h=doc["hits"]
+        if n<5: continue
+        p=doc["_id"]["prop"]; b=doc["_id"]["bucket"]; r=doc["_id"]["rec"]
+        f=flag(h/n,n)
+        print(f"  {p:32s} {b:20s} {r:6s}  n={n:3d}  hit={h/n*100:5.1f}%{f}")
+
+async def by_possession(db, props, label):
+    """Hit rate by team possession band (soccer only)."""
+    sep(f"{label} — BY TEAM POSSESSION BAND")
+    async for doc in db.picks.aggregate([
+        {"$match": {**SETTLED, "propType": {"$in": props},
+                    "homePoss": {"$exists":True,"$ne":None},
+                    "awayPoss": {"$exists":True,"$ne":None}}},
+        {"$addFields": {"team_poss": {"$cond": [
+            {"$eq":["$venue","home"]},
+            {"$toDouble":"$homePoss"},
+            {"$toDouble":"$awayPoss"}
+        ]}}},
+        {"$addFields": {"pb": {"$switch": {"branches": [
+            {"case":{"$lt":["$team_poss",35]}, "then":"A_<35"},
+            {"case":{"$lt":["$team_poss",42]}, "then":"B_35-42"},
+            {"case":{"$lt":["$team_poss",48]}, "then":"C_42-48"},
+            {"case":{"$lt":["$team_poss",55]}, "then":"D_48-55"},
+            {"case":{"$lt":["$team_poss",62]}, "then":"E_55-62"},
+        ], "default":"F_>62"}}}},
+        {"$group": {
+            "_id": {"prop":"$propType","pb":"$pb","rec":"$recommendation"},
+            "n":   {"$sum":1},
+            "hits":{"$sum":{"$cond":[{"$eq":["$result","hit"]},1,0]}},
+        }},
+        {"$sort": {"_id.prop":1,"_id.pb":1,"_id.rec":1}},
+    ]):
+        n=doc["n"]; h=doc["hits"]
+        if n<5: continue
+        p=doc["_id"]["prop"]; pb=doc["_id"]["pb"]; r=doc["_id"]["rec"]
+        band = next((b[0] for b in POSS_BANDS if b[1]==pb), pb)
+        f=flag(h/n,n)
+        print(f"  {p:32s} poss={band:7s} {r:6s}  n={n:3d}  hit={h/n*100:5.1f}%{f}")
+
+async def by_position(db, props, label, allowed_positions=None):
+    """Hit rate by position (filtered to sport-appropriate positions)."""
+    sep(f"{label} — BY POSITION (n≥10)")
+    match = {**SETTLED, "propType": {"$in": props},
+             "position": {"$exists":True,"$nin":[None,""]}}
+    if allowed_positions:
+        match["position"] = {"$in": list(allowed_positions)}
+    async for doc in db.picks.aggregate([
+        {"$match": match},
+        {"$group": {
+            "_id": {"prop":"$propType","pos":"$position","rec":"$recommendation"},
+            "n":   {"$sum":1},
+            "hits":{"$sum":{"$cond":[{"$eq":["$result","hit"]},1,0]}},
+            "avg_line":   {"$avg":"$line"},
+            "avg_actual": {"$avg":"$actualValue"},
+        }},
+        {"$sort": {"_id.prop":1,"_id.pos":1,"_id.rec":1}},
+    ]):
+        n=doc["n"]; h=doc["hits"]
+        if n<10: continue
+        p=doc["_id"]["prop"]; pos=doc["_id"]["pos"]; r=doc["_id"]["rec"]
+        al=doc["avg_line"] or 0; aa=doc["avg_actual"] or 0
+        f=flag(h/n,n)
+        print(f"  {p:32s} pos={pos:8s} {r:6s}  n={n:3d}  hit={h/n*100:5.1f}%  "
+              f"line={al:6.1f}  actual={aa:6.1f}  bias={aa-al:+5.1f}{f}")
+
+async def by_confidence(db, props, label, direction="over"):
+    """Hit rate by confidence band for a given direction."""
+    sep(f"{label} — CONFIDENCE CALIBRATION ({direction.upper()}, n≥10)")
+    async for doc in db.picks.aggregate([
+        {"$match": {**SETTLED, "propType": {"$in": props},
+                    "recommendation": direction, "confidenceScore": {"$gt":0}}},
+        {"$addFields": {"cb": CONF_BANDS_AGG}},
+        {"$group": {
+            "_id": {"prop":"$propType","cb":"$cb"},
+            "n":   {"$sum":1},
+            "hits":{"$sum":{"$cond":[{"$eq":["$result","hit"]},1,0]}},
+        }},
+        {"$sort": {"_id.prop":1,"_id.cb":1}},
+    ]):
+        n=doc["n"]; h=doc["hits"]
+        if n<10: continue
+        p=doc["_id"]["prop"]; cb=doc["_id"]["cb"]
+        f=flag(h/n,n)
+        print(f"  {p:32s} conf={cb:8s}  n={n:3d}  {direction.upper()} hit={h/n*100:5.1f}%{f}")
+
+async def ranked_summary(db):
+    """Cross-sport ranked summary — but clearly labelled by sport."""
+    sep("GLOBAL RANKING — BEST/WORST BETS ACROSS ALL SPORTS (n≥20)")
+    all_rows = []
+    # tag each prop with its sport
+    prop_to_sport = {}
+    for sport, props in SPORT_PROPS.items():
+        for p in props:
+            prop_to_sport[p] = sport
+
+    async for doc in db.picks.aggregate([
+        {"$match": SETTLED},
+        {"$group": {
+            "_id": {"prop":"$propType","rec":"$recommendation"},
+            "n":   {"$sum":1},
+            "hits":{"$sum":{"$cond":[{"$eq":["$result","hit"]},1,0]}},
+            "avg_line":   {"$avg":"$line"},
+            "avg_actual": {"$avg":"$actualValue"},
+        }},
+    ]):
+        if doc["n"] < 20: continue
+        n=doc["n"]; h=doc["hits"]
+        p=doc["_id"]["prop"]; r=doc["_id"]["rec"]
+        al=doc["avg_line"] or 0; aa=doc["avg_actual"] or 0
+        sport = prop_to_sport.get(p, "❓ OTHER")
+        all_rows.append({"sport":sport,"prop":p,"rec":r,"n":n,"hr":h/n*100,
+                          "bias":aa-al,"avg_line":al,"avg_actual":aa})
+
+    all_rows.sort(key=lambda x: -x["hr"])
+    print(f"\n  {'SPORT':14s} {'PROP':32s} {'DIR':6s}  {'n':>4}  {'HIT':>6}  {'BIAS':>6}")
+    print(f"  {'TOP BETS':─<72s}")
+    for row in all_rows:
+        if row["hr"] < 70: break
+        f="⭐" if row["hr"]>74 else ""
+        print(f"  {row['sport']:14s} {row['prop']:32s} {row['rec']:6s}  "
+              f"n={row['n']:4d}  hit={row['hr']:5.1f}%  bias={row['bias']:+5.1f}  {f}")
+
+    print(f"\n  {'WORST BETS':─<72s}")
+    for row in reversed(all_rows):
+        if row["hr"] > 45: break
+        f="❌" if row["hr"]<35 else ""
+        print(f"  {row['sport']:14s} {row['prop']:32s} {row['rec']:6s}  "
+              f"n={row['n']:4d}  hit={row['hr']:5.1f}%  bias={row['bias']:+5.1f}  {f}")
 
 async def main():
     db = mongo_client[DB_NAME]
 
-    # ── 1. Global prop census ─────────────────────────────────────────────────
-    print("=" * 70)
-    print("GLOBAL PROP CENSUS — SETTLED PICKS")
-    print("=" * 70)
-    async for doc in db.picks.aggregate([
-        {"$match": SETTLED},
-        {"$group": {
-            "_id": {"prop": "$propType", "rec": "$recommendation"},
-            "n": {"$sum": 1},
-            "hits": {"$sum": {"$cond": [{"$eq": ["$result", "hit"]}, 1, 0]}},
-            "avg_line": {"$avg": "$line"},
-            "avg_actual": {"$avg": "$actualValue"},
-        }},
-        {"$sort": {"_id.prop": 1, "_id.rec": 1}},
-    ]):
-        n = doc["n"]; h = doc["hits"]
-        p = doc["_id"]["prop"]; r = doc["_id"]["rec"]
-        al = doc["avg_line"] or 0; aa = doc["avg_actual"] or 0
-        bias = aa - al
-        print(f"  {p:30s} {r:6s}  n={n:4d}  hit={h/n*100:5.1f}%  "
-              f"avg_line={al:6.1f}  avg_actual={aa:6.1f}  bias={bias:+5.1f}")
-    print()
+    # ══════════════════════════════════════════════════════════════════════════
+    # 1. SOCCER
+    # ══════════════════════════════════════════════════════════════════════════
+    soc_props = SPORT_PROPS["⚽ SOCCER"]
+    sep("⚽ SOCCER — COMPLETE ANALYSIS")
 
-    # ── 2. Soccer prop analysis by possession ────────────────────────────────
-    SOCCER_PROPS = ["pass_attempts", "shots", "dribbles", "tackles", "clearances",
-                    "key_passes", "crosses", "shots_on_target", "shots_assisted",
-                    "fouls_committed", "soccer_fantasy_outfield", "soccer_fantasy_gk"]
+    await census(db, soc_props, "⚽ SOCCER")
+    await by_venue(db, soc_props, "⚽ SOCCER")
+    await by_possession(db, soc_props, "⚽ SOCCER")
+    await by_scenario(db, soc_props, "⚽ SOCCER")
+    await by_position(db, soc_props, "⚽ SOCCER", allowed_positions=SOCCER_POSITIONS)
+    await by_confidence(db, soc_props, "⚽ SOCCER", "over")
+    await by_confidence(db, soc_props, "⚽ SOCCER", "under")
 
-    print("=" * 70)
-    print("SOCCER PROPS — HIT RATE BY TEAM POSSESSION (actual match)")
-    print("=" * 70)
-    bands = [
-        ("<35%",   0,  35),
-        ("35-42%", 35, 42),
-        ("42-48%", 42, 48),
-        ("48-55%", 48, 55),
-        ("55-62%", 55, 62),
-        (">62%",   62, 100),
-    ]
-    for prop in SOCCER_PROPS:
-        results = []
-        async for doc in db.picks.aggregate([
-            {"$match": {**SETTLED, "propType": prop,
-                        "homePoss": {"$exists": True}, "awayPoss": {"$exists": True}}},
-            {"$addFields": {
-                "team_poss": {"$cond": [
-                    {"$eq": ["$venue", "home"]},
-                    {"$toDouble": "$homePoss"},
-                    {"$toDouble": "$awayPoss"}
-                ]},
-                "is_hit": {"$cond": [{"$eq": ["$result", "hit"]}, 1, 0]},
-            }},
-            {"$addFields": {
-                "poss_band": {"$switch": {"branches": [
-                    {"case": {"$lt": ["$team_poss", 35]},  "then": "A_<35"},
-                    {"case": {"$lt": ["$team_poss", 42]},  "then": "B_35-42"},
-                    {"case": {"$lt": ["$team_poss", 48]},  "then": "C_42-48"},
-                    {"case": {"$lt": ["$team_poss", 55]},  "then": "D_48-55"},
-                    {"case": {"$lt": ["$team_poss", 62]},  "then": "E_55-62"},
-                ], "default": "F_>62"}},
-            }},
-            {"$group": {
-                "_id": {"band": "$poss_band", "rec": "$recommendation"},
-                "n": {"$sum": 1},
-                "hits": {"$sum": "$is_hit"},
-            }},
-            {"$sort": {"_id.band": 1, "_id.rec": 1}},
-        ]):
-            results.append(doc)
-        if not results:
-            continue
-        total_n = sum(d["n"] for d in results)
-        if total_n < 10:
-            continue
-        print(f"\n  ── {prop.upper()} (total with poss data: {total_n}) ──")
-        for band_label, lo, hi in bands:
-            band_key = {"<35%": "A_<35", "35-42%": "B_35-42", "42-48%": "C_42-48",
-                        "48-55%": "D_48-55", "55-62%": "E_55-62", ">62%": "F_>62"}[band_label]
-            over_d  = next((d for d in results if d["_id"]["band"] == band_key and d["_id"]["rec"] == "over"), None)
-            under_d = next((d for d in results if d["_id"]["band"] == band_key and d["_id"]["rec"] == "under"), None)
-            if not over_d and not under_d:
-                continue
-            over_s  = f"OVER={over_d['hits']/over_d['n']*100:4.0f}% ({over_d['n']}n)" if over_d else f"{'':20s}"
-            under_s = f"UNDER={under_d['hits']/under_d['n']*100:4.0f}% ({under_d['n']}n)" if under_d else ""
-            print(f"    poss {band_label:8s}  {over_s:22s}  {under_s}")
-    print()
+    # ══════════════════════════════════════════════════════════════════════════
+    # 2. CS2
+    # ══════════════════════════════════════════════════════════════════════════
+    cs2_props = SPORT_PROPS["🎮 CS2"]
+    sep("🎮 CS2 — COMPLETE ANALYSIS")
 
-    # ── 3. Soccer props by VENUE ──────────────────────────────────────────────
-    print("=" * 70)
-    print("SOCCER PROPS — HIT RATE BY VENUE × RECOMMENDATION")
-    print("=" * 70)
-    async for doc in db.picks.aggregate([
-        {"$match": {**SETTLED, "propType": {"$in": SOCCER_PROPS},
-                    "venue": {"$in": ["home", "away", "neutral"]}}},
-        {"$group": {
-            "_id": {"prop": "$propType", "venue": "$venue", "rec": "$recommendation"},
-            "n": {"$sum": 1},
-            "hits": {"$sum": {"$cond": [{"$eq": ["$result", "hit"]}, 1, 0]}},
-        }},
-        {"$sort": {"_id.prop": 1, "_id.venue": 1, "_id.rec": 1}},
-    ]):
-        n = doc["n"]; h = doc["hits"]
-        p = doc["_id"]["prop"]; v = doc["_id"]["venue"]; r = doc["_id"]["rec"]
-        if n < 5: continue
-        flag = "⭐" if h/n > 0.72 else ("❌" if h/n < 0.45 else "")
-        print(f"  {p:30s} {v:8s} {r:6s}  n={n:3d}  hit={h/n*100:5.1f}% {flag}")
-    print()
+    await census(db, cs2_props, "🎮 CS2")
+    await by_position(db, cs2_props, "🎮 CS2", allowed_positions=CS2_POSITIONS)
+    await by_confidence(db, cs2_props, "🎮 CS2", "over")
+    await by_confidence(db, cs2_props, "🎮 CS2", "under")
 
-    # ── 4. Soccer props by SCENARIO BUCKET ────────────────────────────────────
-    print("=" * 70)
-    print("SOCCER PROPS — HIT RATE BY SCENARIO BUCKET")
-    print("=" * 70)
-    async for doc in db.picks.aggregate([
-        {"$match": {**SETTLED, "propType": {"$in": SOCCER_PROPS},
-                    "scenarioBucket": {"$exists": True, "$ne": None}}},
-        {"$group": {
-            "_id": {"prop": "$propType", "bucket": "$scenarioBucket", "rec": "$recommendation"},
-            "n": {"$sum": 1},
-            "hits": {"$sum": {"$cond": [{"$eq": ["$result", "hit"]}, 1, 0]}},
-        }},
-        {"$sort": {"_id.prop": 1, "_id.bucket": 1, "_id.rec": 1}},
-    ]):
-        n = doc["n"]; h = doc["hits"]
-        p = doc["_id"]["prop"]; b = doc["_id"]["bucket"]; r = doc["_id"]["rec"]
-        if n < 5: continue
-        flag = "⭐" if h/n > 0.72 else ("❌" if h/n < 0.45 else "")
-        print(f"  {p:30s} {b:20s} {r:6s}  n={n:3d}  hit={h/n*100:5.1f}% {flag}")
-    print()
+    # ══════════════════════════════════════════════════════════════════════════
+    # 3. BASEBALL
+    # ══════════════════════════════════════════════════════════════════════════
+    bb_props = SPORT_PROPS["⚾ BASEBALL"]
+    # baseball-specific positions only
+    bb_positions = {"SP","RP","CP","P","C","1B","2B","3B","SS","LF","CF","RF","OF","DH","PH","PR"}
+    sep("⚾ BASEBALL — COMPLETE ANALYSIS")
 
-    # ── 5. ALL SPORTS — best/worst hitting prop × direction ──────────────────
-    print("=" * 70)
-    print("ALL SPORTS — OVER/UNDER HIT RATES RANKED (n≥20)")
-    print("=" * 70)
-    all_combos = []
-    async for doc in db.picks.aggregate([
-        {"$match": SETTLED},
-        {"$group": {
-            "_id": {"prop": "$propType", "rec": "$recommendation"},
-            "n": {"$sum": 1},
-            "hits": {"$sum": {"$cond": [{"$eq": ["$result", "hit"]}, 1, 0]}},
-            "avg_line": {"$avg": "$line"},
-            "avg_actual": {"$avg": "$actualValue"},
-        }},
-    ]):
-        if doc["n"] >= 20:
-            hr = doc["hits"] / doc["n"] * 100
-            all_combos.append({
-                "prop": doc["_id"]["prop"], "rec": doc["_id"]["rec"],
-                "n": doc["n"], "hr": hr,
-                "avg_line": doc["avg_line"] or 0, "avg_actual": doc["avg_actual"] or 0,
-            })
-    all_combos.sort(key=lambda x: -x["hr"])
-    print("  TOP 20 HIGHEST HIT RATE (n≥20):")
-    for c in all_combos[:20]:
-        bias = c["avg_actual"] - c["avg_line"]
-        flag = "⭐" if c["hr"] > 72 else ""
-        print(f"  {flag} {c['prop']:30s} {c['rec']:6s}  n={c['n']:4d}  hit={c['hr']:5.1f}%  bias={bias:+5.1f}")
-    print()
-    print("  BOTTOM 20 LOWEST HIT RATE (n≥20):")
-    for c in all_combos[-20:]:
-        bias = c["avg_actual"] - c["avg_line"]
-        flag = "❌" if c["hr"] < 45 else ""
-        print(f"  {flag} {c['prop']:30s} {c['rec']:6s}  n={c['n']:4d}  hit={c['hr']:5.1f}%  bias={bias:+5.1f}")
-    print()
+    await census(db, bb_props, "⚾ BASEBALL")
+    await by_position(db, bb_props, "⚾ BASEBALL", allowed_positions=bb_positions)
+    await by_confidence(db, bb_props, "⚾ BASEBALL", "over")
+    await by_confidence(db, bb_props, "⚾ BASEBALL", "under")
 
-    # ── 6. Confidence calibration for all props ───────────────────────────────
-    print("=" * 70)
-    print("CONFIDENCE CALIBRATION — OVER HIT RATE BY CONFIDENCE BAND (n≥15)")
-    print("=" * 70)
-    async for doc in db.picks.aggregate([
-        {"$match": {**SETTLED, "recommendation": "over", "confidenceScore": {"$gt": 0}}},
-        {"$addFields": {"cb": {"$switch": {"branches": [
-            {"case": {"$lt": ["$confidenceScore", 55]}, "then": "1_<55"},
-            {"case": {"$lt": ["$confidenceScore", 60]}, "then": "2_55-59"},
-            {"case": {"$lt": ["$confidenceScore", 65]}, "then": "3_60-64"},
-            {"case": {"$lt": ["$confidenceScore", 70]}, "then": "4_65-69"},
-            {"case": {"$lt": ["$confidenceScore", 75]}, "then": "5_70-74"},
-            {"case": {"$lt": ["$confidenceScore", 80]}, "then": "6_75-79"},
-        ], "default": "7_80+"}}}},
-        {"$group": {
-            "_id": {"prop": "$propType", "cb": "$cb"},
-            "n": {"$sum": 1},
-            "hits": {"$sum": {"$cond": [{"$eq": ["$result", "hit"]}, 1, 0]}},
-        }},
-        {"$sort": {"_id.prop": 1, "_id.cb": 1}},
-    ]):
-        n = doc["n"]; h = doc["hits"]
-        if n < 15: continue
-        p = doc["_id"]["prop"]; cb = doc["_id"]["cb"]
-        flag = "⭐" if h/n > 0.72 else ("❌" if h/n < 0.48 else "")
-        print(f"  {p:30s} conf={cb:8s}  n={n:3d}  OVER hit={h/n*100:5.1f}% {flag}")
-    print()
+    # ══════════════════════════════════════════════════════════════════════════
+    # 4. TENNIS
+    # ══════════════════════════════════════════════════════════════════════════
+    tennis_props = SPORT_PROPS["🎾 TENNIS"]
+    sep("🎾 TENNIS — COMPLETE ANALYSIS")
+    await census(db, tennis_props, "🎾 TENNIS")
 
-    print("=" * 70)
-    print("CONFIDENCE CALIBRATION — UNDER HIT RATE BY CONFIDENCE BAND (n≥15)")
-    print("=" * 70)
-    async for doc in db.picks.aggregate([
-        {"$match": {**SETTLED, "recommendation": "under", "confidenceScore": {"$gt": 0}}},
-        {"$addFields": {"cb": {"$switch": {"branches": [
-            {"case": {"$lt": ["$confidenceScore", 55]}, "then": "1_<55"},
-            {"case": {"$lt": ["$confidenceScore", 60]}, "then": "2_55-59"},
-            {"case": {"$lt": ["$confidenceScore", 65]}, "then": "3_60-64"},
-            {"case": {"$lt": ["$confidenceScore", 70]}, "then": "4_65-69"},
-            {"case": {"$lt": ["$confidenceScore", 75]}, "then": "5_70-74"},
-            {"case": {"$lt": ["$confidenceScore", 80]}, "then": "6_75-79"},
-        ], "default": "7_80+"}}}},
-        {"$group": {
-            "_id": {"prop": "$propType", "cb": "$cb"},
-            "n": {"$sum": 1},
-            "hits": {"$sum": {"$cond": [{"$eq": ["$result", "hit"]}, 1, 0]}},
-        }},
-        {"$sort": {"_id.prop": 1, "_id.cb": 1}},
-    ]):
-        n = doc["n"]; h = doc["hits"]
-        if n < 15: continue
-        p = doc["_id"]["prop"]; cb = doc["_id"]["cb"]
-        flag = "⭐" if h/n > 0.72 else ("❌" if h/n < 0.48 else "")
-        print(f"  {p:30s} conf={cb:8s}  n={n:3d}  UNDER hit={h/n*100:5.1f}% {flag}")
-    print()
+    # ══════════════════════════════════════════════════════════════════════════
+    # 5. CROSS-SPORT GLOBAL RANKING (sport-labelled)
+    # ══════════════════════════════════════════════════════════════════════════
+    await ranked_summary(db)
 
-    # ── 7. Safety / edge rating for all props ─────────────────────────────────
-    print("=" * 70)
-    print("SAFETY + EDGE RATING — HIT RATES BY PROP (n≥10)")
-    print("=" * 70)
-    async for doc in db.picks.aggregate([
-        {"$match": {**SETTLED, "safetyRating": {"$exists": True, "$ne": None}}},
-        {"$group": {
-            "_id": {"prop": "$propType", "safety": "$safetyRating", "rec": "$recommendation"},
-            "n": {"$sum": 1},
-            "hits": {"$sum": {"$cond": [{"$eq": ["$result", "hit"]}, 1, 0]}},
-        }},
-        {"$sort": {"_id.prop": 1, "_id.safety": 1, "_id.rec": 1}},
-    ]):
-        n = doc["n"]; h = doc["hits"]
-        if n < 10: continue
-        p = doc["_id"]["prop"]; s = doc["_id"]["safety"]; r = doc["_id"]["rec"]
-        flag = "⭐" if h/n > 0.72 else ("❌" if h/n < 0.48 else "")
-        print(f"  {p:30s} {s:12s} {r:6s}  n={n:3d}  hit={h/n*100:5.1f}% {flag}")
-    print()
-
-    # ── 8. Position × prop deep analysis ─────────────────────────────────────
-    print("=" * 70)
-    print("POSITION × PROP COMBINATION — OVER HIT RATES (n≥15)")
-    print("=" * 70)
-    pos_combos = []
-    async for doc in db.picks.aggregate([
-        {"$match": {**SETTLED, "recommendation": "over",
-                    "position": {"$exists": True, "$ne": None}}},
-        {"$group": {
-            "_id": {"prop": "$propType", "pos": "$position"},
-            "n": {"$sum": 1},
-            "hits": {"$sum": {"$cond": [{"$eq": ["$result", "hit"]}, 1, 0]}},
-        }},
-    ]):
-        if doc["n"] >= 15:
-            hr = doc["hits"] / doc["n"] * 100
-            pos_combos.append({
-                "prop": doc["_id"]["prop"], "pos": doc["_id"]["pos"],
-                "n": doc["n"], "hr": hr,
-            })
-    pos_combos.sort(key=lambda x: -x["hr"])
-    print("  TOP 25 OVER combos (pos × prop, n≥15):")
-    for c in pos_combos[:25]:
-        flag = "⭐" if c["hr"] > 72 else ""
-        print(f"  {flag} {c['prop']:30s} pos={c['pos']:6s}  n={c['n']:3d}  OVER={c['hr']:5.1f}%")
-    print()
-    print("  BOTTOM 15 OVER combos (pos × prop, n≥15) — fading signals:")
-    for c in pos_combos[-15:]:
-        flag = "❌" if c["hr"] < 45 else ""
-        print(f"  {flag} {c['prop']:30s} pos={c['pos']:6s}  n={c['n']:3d}  OVER={c['hr']:5.1f}%")
-    print()
-
-    print("=" * 70)
-    print("POSITION × PROP COMBINATION — UNDER HIT RATES (n≥15)")
-    print("=" * 70)
-    pos_under = []
-    async for doc in db.picks.aggregate([
-        {"$match": {**SETTLED, "recommendation": "under",
-                    "position": {"$exists": True, "$ne": None}}},
-        {"$group": {
-            "_id": {"prop": "$propType", "pos": "$position"},
-            "n": {"$sum": 1},
-            "hits": {"$sum": {"$cond": [{"$eq": ["$result", "hit"]}, 1, 0]}},
-        }},
-    ]):
-        if doc["n"] >= 15:
-            hr = doc["hits"] / doc["n"] * 100
-            pos_under.append({
-                "prop": doc["_id"]["prop"], "pos": doc["_id"]["pos"],
-                "n": doc["n"], "hr": hr,
-            })
-    pos_under.sort(key=lambda x: -x["hr"])
-    print("  TOP 25 UNDER combos:")
-    for c in pos_under[:25]:
-        flag = "⭐" if c["hr"] > 72 else ""
-        print(f"  {flag} {c['prop']:30s} pos={c['pos']:6s}  n={c['n']:3d}  UNDER={c['hr']:5.1f}%")
-    print()
-
-    # ── 9. CS2 kills analysis ─────────────────────────────────────────────────
-    print("=" * 70)
-    print("CS2 KILLS — DEEP DIVE (maps_1_2_kills / map1_kills)")
-    print("=" * 70)
-    for prop in ["maps_1_2_kills", "map1_kills", "maps_1_3_kills", "maps_1_2_headshots"]:
-        docs = []
-        async for doc in db.picks.aggregate([
-            {"$match": {**SETTLED, "propType": prop}},
-            {"$group": {
-                "_id": {"rec": "$recommendation", "pos": {"$ifNull": ["$position", "?"]}},
-                "n": {"$sum": 1},
-                "hits": {"$sum": {"$cond": [{"$eq": ["$result", "hit"]}, 1, 0]}},
-                "avg_line": {"$avg": "$line"},
-                "avg_actual": {"$avg": "$actualValue"},
-            }},
-            {"$sort": {"_id.rec": 1, "_id.pos": 1}},
-        ]):
-            docs.append(doc)
-        if not docs: continue
-        total = sum(d["n"] for d in docs)
-        print(f"\n  {prop.upper()} (total: {total})")
-        for doc in docs:
-            n = doc["n"]; h = doc["hits"]
-            r = doc["_id"]["rec"]; p = doc["_id"]["pos"]
-            al = doc["avg_line"] or 0; aa = doc["avg_actual"] or 0
-            flag = "⭐" if h/n > 0.72 else ("❌" if h/n < 0.45 else "")
-            print(f"    {r:6s} pos={p:8s}  n={n:3d}  hit={h/n*100:5.1f}%  "
-                  f"avg_line={al:5.1f}  avg_actual={aa:5.1f}  bias={aa-al:+5.1f} {flag}")
-    print()
-
-    # ── 10. MLB/Baseball props ────────────────────────────────────────────────
-    MLB_PROPS = ["pitcher_strikeouts", "hitter_fantasy_points", "hits",
-                 "runs", "hits_runs_rbis", "total_bases", "earned_runs",
-                 "hits_allowed", "walks_allowed", "pitches_thrown",
-                 "pitcher_fantasy_score", "home_runs", "walks", "plate_appearances",
-                 "innings_pitched", "strikeouts"]
-    print("=" * 70)
-    print("BASEBALL PROPS — FULL BREAKDOWN (n≥5)")
-    print("=" * 70)
-    async for doc in db.picks.aggregate([
-        {"$match": {**SETTLED, "propType": {"$in": MLB_PROPS}}},
-        {"$group": {
-            "_id": {"prop": "$propType", "rec": "$recommendation",
-                    "pos": {"$ifNull": ["$position", "?"]}},
-            "n": {"$sum": 1},
-            "hits": {"$sum": {"$cond": [{"$eq": ["$result", "hit"]}, 1, 0]}},
-            "avg_line": {"$avg": "$line"},
-            "avg_actual": {"$avg": "$actualValue"},
-        }},
-        {"$sort": {"_id.prop": 1, "_id.rec": 1}},
-    ]):
-        n = doc["n"]; h = doc["hits"]
-        if n < 5: continue
-        p = doc["_id"]["prop"]; r = doc["_id"]["rec"]; pos = doc["_id"]["pos"]
-        al = doc["avg_line"] or 0; aa = doc["avg_actual"] or 0
-        flag = "⭐" if h/n > 0.72 else ("❌" if h/n < 0.45 else "")
-        print(f"  {p:30s} {r:6s} pos={pos:5s}  n={n:3d}  hit={h/n*100:5.1f}%  "
-              f"avg_line={al:6.2f}  avg_actual={aa:6.2f}  bias={aa-al:+5.2f} {flag}")
-    print()
-
-    # ── 11. Tennis / WTA / ATP ────────────────────────────────────────────────
-    TENNIS_PROPS = ["total_games", "player_games_won", "set_1_player_games"]
-    print("=" * 70)
-    print("TENNIS PROPS (total_games / player_games_won) — BREAKDOWN")
-    print("=" * 70)
-    async for doc in db.picks.aggregate([
-        {"$match": {**SETTLED, "propType": {"$in": TENNIS_PROPS}}},
-        {"$group": {
-            "_id": {"prop": "$propType", "rec": "$recommendation"},
-            "n": {"$sum": 1},
-            "hits": {"$sum": {"$cond": [{"$eq": ["$result", "hit"]}, 1, 0]}},
-            "avg_line": {"$avg": "$line"},
-            "avg_actual": {"$avg": "$actualValue"},
-        }},
-        {"$sort": {"_id.prop": 1, "_id.rec": 1}},
-    ]):
-        n = doc["n"]; h = doc["hits"]
-        if n < 3: continue
-        p = doc["_id"]["prop"]; r = doc["_id"]["rec"]
-        al = doc["avg_line"] or 0; aa = doc["avg_actual"] or 0
-        flag = "⭐" if h/n > 0.72 else ("❌" if h/n < 0.45 else "")
-        print(f"  {p:30s} {r:6s}  n={n:3d}  hit={h/n*100:5.1f}%  bias={aa-al:+5.1f} {flag}")
-    print()
-
-    # ── 12. Saves (hockey/soccer GK) ─────────────────────────────────────────
-    print("=" * 70)
-    print("SAVES — BREAKDOWN BY POSITION × REC (n≥5)")
-    print("=" * 70)
-    async for doc in db.picks.aggregate([
-        {"$match": {**SETTLED, "propType": "saves"}},
-        {"$group": {
-            "_id": {"rec": "$recommendation", "pos": {"$ifNull": ["$position", "?"]},
-                    "venue": {"$ifNull": ["$venue", "?"]}},
-            "n": {"$sum": 1},
-            "hits": {"$sum": {"$cond": [{"$eq": ["$result", "hit"]}, 1, 0]}},
-            "avg_line": {"$avg": "$line"},
-            "avg_actual": {"$avg": "$actualValue"},
-        }},
-        {"$sort": {"_id.rec": 1, "_id.pos": 1}},
-    ]):
-        n = doc["n"]; h = doc["hits"]
-        if n < 5: continue
-        r = doc["_id"]["rec"]; p = doc["_id"]["pos"]; v = doc["_id"]["venue"]
-        al = doc["avg_line"] or 0; aa = doc["avg_actual"] or 0
-        flag = "⭐" if h/n > 0.72 else ("❌" if h/n < 0.45 else "")
-        print(f"  saves {r:6s} pos={p:6s} venue={v:8s}  n={n:3d}  hit={h/n*100:5.1f}%  "
-              f"avg_line={al:.1f}  avg_actual={aa:.1f}  bias={aa-al:+.1f} {flag}")
-    print()
-
-    # ── 13. Cross-sport OVERALL summary with line bias ────────────────────────
-    print("=" * 70)
-    print("LINE BIAS ANALYSIS — WHERE ARE LINES SET WRONG? (avg actual vs line, n≥20)")
-    print("=" * 70)
-    print("  (positive bias = actual avg HIGHER than line = OVER value. "
-          "negative = UNDER value)")
-    print()
-    biases = []
-    async for doc in db.picks.aggregate([
-        {"$match": {**SETTLED, "actualValue": {"$exists": True},
-                    "line": {"$exists": True}}},
-        {"$group": {
-            "_id": {"prop": "$propType", "rec": "$recommendation"},
-            "n": {"$sum": 1},
-            "avg_line": {"$avg": "$line"},
-            "avg_actual": {"$avg": "$actualValue"},
-        }},
-    ]):
-        if doc["n"] >= 20 and doc["avg_actual"] and doc["avg_line"]:
-            bias = doc["avg_actual"] - doc["avg_line"]
-            biases.append({
-                "prop": doc["_id"]["prop"], "rec": doc["_id"]["rec"],
-                "n": doc["n"], "bias": bias,
-                "avg_line": doc["avg_line"], "avg_actual": doc["avg_actual"],
-            })
-    biases.sort(key=lambda x: -abs(x["bias"]))
-    print("  Biggest mispricings (both over and under — actual far from line):")
-    for b in biases[:25]:
-        arrow = "↑ OVER VALUE" if b["bias"] > 0 else "↓ UNDER VALUE"
-        print(f"  {b['prop']:30s} {b['rec']:6s}  n={b['n']:4d}  "
-              f"avg_line={b['avg_line']:7.1f}  avg_actual={b['avg_actual']:7.1f}  "
-              f"bias={b['bias']:+6.1f}  {arrow}")
-    print()
+    print("\n✅ All-sport analysis complete — sports cleanly separated.\n")
 
 asyncio.run(main())
