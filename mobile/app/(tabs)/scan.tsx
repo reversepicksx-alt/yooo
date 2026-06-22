@@ -174,6 +174,7 @@ export default function ScanScreen() {
   const [venueOverride, setVenueOverride] = useState<'home' | 'away' | 'neutral'>('home');
   const [gameLogFilter, setGameLogFilter] = useState<'all' | 'home' | 'away' | 'opp'>('all');
   const [adjustedLine, setAdjustedLine] = useState<number | null>(null);
+  const [sharpExpanded, setSharpExpanded] = useState(false);
 
   // Manual team override — user can tap the team badge to change it
   const [showTeamEdit, setShowTeamEdit] = useState(false);
@@ -456,6 +457,7 @@ export default function ScanScreen() {
     setPpLines([]);
     setGameLogFilter('all');
     setAdjustedLine(null);
+    setSharpExpanded(false);
     setShowPlayerEdit(false);
     setShowTeamEdit(false);
     setShowOppEdit(false);
@@ -4168,7 +4170,6 @@ export default function ScanScreen() {
                   {prediction.momentumLabel && (
                     <View style={[styles.rfBadge, styles.rfBadgeMomentum]}>
                       <Text style={styles.rfBadgeMomentumText}>
-                        {prediction.momentumLabel === 'HOT' ? '🔥' : prediction.momentumLabel === 'COLD' ? '🧊' : '〜'}{' '}
                         {prediction.momentumLabel}
                         {prediction.momentumEffect != null && prediction.momentumEffect !== 0
                           ? ` ${prediction.momentumEffect > 0 ? '+' : ''}${prediction.momentumEffect.toFixed(2)}`
@@ -4178,7 +4179,7 @@ export default function ScanScreen() {
                   )}
                   {prediction.recommendation && prediction.recommendation !== 'PASS' && (
                     <View style={[styles.rfBadge, {
-                      backgroundColor: prediction.recommendation === 'OVER' ? 'rgba(57,255,20,0.15)' : 'rgba(255,59,48,0.15)',
+                      backgroundColor: prediction.recommendation === 'OVER' ? 'rgba(57,255,20,0.12)' : 'rgba(255,59,48,0.12)',
                       borderColor: prediction.recommendation === 'OVER' ? Colors.success : Colors.error,
                     }]}>
                       <Text style={[styles.rfBadgeText, {
@@ -4186,11 +4187,6 @@ export default function ScanScreen() {
                       }]}>
                         {prediction.recommendation} {prediction.line}
                       </Text>
-                    </View>
-                  )}
-                  {prediction.volatility && (
-                    <View style={[styles.rfBadge, styles.rfBadgeVol]}>
-                      <Text style={styles.rfBadgeVolText}>{prediction.volatility} VOL</Text>
                     </View>
                   )}
                 </View>
@@ -4358,6 +4354,7 @@ export default function ScanScreen() {
               const summary = prediction.sharpSummary || '';
               const body = prediction.reasoning || prediction.tacticalBreakdown || '';
               if (!summary && !body) return null;
+              const hasMore = body.length > 120;
               return (
                 <View style={[styles.scoutCard, { borderColor: borderColor + '44' }]}>
                   <View style={styles.scoutHeader}>
@@ -4370,14 +4367,21 @@ export default function ScanScreen() {
                     </View>
                   </View>
                   {summary ? (
-                    <Text style={[styles.scoutSectionBody, { color: Colors.text, fontWeight: '600', marginBottom: 8 }]}>
+                    <Text style={[styles.scoutSectionBody, { color: Colors.text, fontWeight: '600' }]} numberOfLines={sharpExpanded ? undefined : 2}>
                       {summary}
                     </Text>
                   ) : null}
                   {body ? (
-                    <Text style={[styles.scoutSectionBody, { color: Colors.textSecondary }]}>
-                      {body}
-                    </Text>
+                    <TouchableOpacity onPress={() => setSharpExpanded(e => !e)} activeOpacity={0.8}>
+                      <Text style={[styles.scoutSectionBody, { color: Colors.textSecondary }]} numberOfLines={sharpExpanded ? undefined : 3}>
+                        {body}
+                      </Text>
+                      {hasMore && (
+                        <Text style={{ fontSize: 9, color: Colors.textTertiary, marginTop: 3, letterSpacing: 0.5, fontWeight: '700' }}>
+                          {sharpExpanded ? '▲ LESS' : '▼ MORE'}
+                        </Text>
+                      )}
+                    </TouchableOpacity>
                   ) : null}
                 </View>
               );
@@ -4393,6 +4397,7 @@ export default function ScanScreen() {
                 const summary = prediction.sharpSummary || '';
                 const body = prediction.reasoning || prediction.tacticalBreakdown || '';
                 const alerts = (prediction.tacticalAlerts || []) as string[];
+                const hasMore = body.length > 120;
                 return (
                   <View style={[styles.scoutCard, { borderColor: borderColor + '44' }]}>
                     <View style={styles.scoutHeader}>
@@ -4405,28 +4410,35 @@ export default function ScanScreen() {
                       </View>
                     </View>
                     {summary ? (
-                      <Text style={[styles.scoutSectionBody, { color: Colors.text, fontWeight: '600', marginBottom: 8 }]}>
+                      <Text style={[styles.scoutSectionBody, { color: Colors.text, fontWeight: '600' }]} numberOfLines={sharpExpanded ? undefined : 2}>
                         {summary}
                       </Text>
                     ) : null}
                     {body ? (
-                      <Text style={[styles.scoutSectionBody, { color: Colors.textSecondary }]}>
-                        {body}
-                      </Text>
+                      <TouchableOpacity onPress={() => setSharpExpanded(e => !e)} activeOpacity={0.8}>
+                        <Text style={[styles.scoutSectionBody, { color: Colors.textSecondary }]} numberOfLines={sharpExpanded ? undefined : 3}>
+                          {body}
+                        </Text>
+                        {hasMore && (
+                          <Text style={{ fontSize: 9, color: Colors.textTertiary, marginTop: 3, letterSpacing: 0.5, fontWeight: '700' }}>
+                            {sharpExpanded ? '▲ LESS' : '▼ MORE'}
+                          </Text>
+                        )}
+                      </TouchableOpacity>
                     ) : null}
                     {alerts.length > 0 && (
-                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 5, marginTop: 4 }}>
                         {alerts.slice(0, 3).map((alert, i) => {
                           const isRisk = alert.toLowerCase().includes('risk') || alert.toLowerCase().includes('invalid') || alert.toLowerCase().includes('flip');
                           const isBoost = alert.toLowerCase().includes('boost') || alert.toLowerCase().includes('infl') || alert.toLowerCase().includes('rise');
                           const alertColor = isRisk ? '#FF6B35' : isBoost ? Colors.primary : '#60A5FA';
                           return (
                             <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 4,
-                              backgroundColor: alertColor + '11', borderRadius: 6, paddingHorizontal: 7, paddingVertical: 3,
+                              backgroundColor: alertColor + '11', borderRadius: 5, paddingHorizontal: 6, paddingVertical: 2,
                               borderWidth: 1, borderColor: alertColor + '33',
                             }}>
-                              <Ionicons name={isRisk ? 'warning' : isBoost ? 'trending-up' : 'information-circle'} size={10} color={alertColor} />
-                              <Text style={{ fontSize: 10, color: alertColor, fontWeight: '700' }}>{alert}</Text>
+                              <Ionicons name={isRisk ? 'warning' : isBoost ? 'trending-up' : 'information-circle'} size={9} color={alertColor} />
+                              <Text style={{ fontSize: 9, color: alertColor, fontWeight: '700' }}>{alert}</Text>
                             </View>
                           );
                         })}
@@ -6043,19 +6055,19 @@ const styles = StyleSheet.create({
   /* Scout Report card */
   scoutCard: {
     backgroundColor: '#0E0E0E',
-    borderRadius: 14,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: '#1E1E1E',
-    padding: 16,
-    gap: 14,
-    marginBottom: 10,
+    padding: 11,
+    gap: 7,
+    marginBottom: 6,
   },
   scoutHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   scoutTitle: { fontSize: 10, fontWeight: '800', color: Colors.primary, letterSpacing: 1.8, flex: 1 },
   scoutBlend: { fontSize: 9, color: Colors.textTertiary, letterSpacing: 0.5 },
-  scoutSection: { gap: 5 },
+  scoutSection: { gap: 4 },
   scoutSectionTitle: { fontSize: 10, fontWeight: '800', letterSpacing: 1.5 },
-  scoutSectionBody: { fontSize: 13, color: Colors.textSecondary, lineHeight: 20 },
+  scoutSectionBody: { fontSize: 11, color: Colors.textSecondary, lineHeight: 16 },
   scenarioProbRow: {
     flexDirection: 'row',
     gap: 8,
@@ -6114,22 +6126,22 @@ const styles = StyleSheet.create({
 
   /* ─── REVERSE FORMULA CARD ─── */
   rfCard: {
-    backgroundColor: Colors.card, borderRadius: Colors.radiusLg,
-    padding: 16, borderWidth: 1, borderColor: Colors.borderSubtle, marginTop: 12, gap: 10,
+    backgroundColor: Colors.card, borderRadius: 10,
+    padding: 11, borderWidth: 1, borderColor: Colors.borderSubtle, marginTop: 8, gap: 6,
   },
   rfHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   rfTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  rfTitle: { fontSize: 12, fontWeight: '800', color: Colors.primary, letterSpacing: 1.5 },
-  rfGamesAnalyzed: { fontSize: 10, color: Colors.textTertiary, fontWeight: '600', letterSpacing: 0.5 },
-  rfRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  rfRowLabel: { fontSize: 11, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.5, width: 78 },
+  rfTitle: { fontSize: 11, fontWeight: '800', color: Colors.primary, letterSpacing: 1.5 },
+  rfGamesAnalyzed: { fontSize: 9, color: Colors.textTertiary, fontWeight: '600', letterSpacing: 0.5 },
+  rfRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  rfRowLabel: { fontSize: 9, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.5, width: 66 },
   rfBarTrack: {
-    flex: 1, height: 6, backgroundColor: Colors.cardSecondary,
-    borderRadius: 3, overflow: 'hidden',
+    flex: 1, height: 3, backgroundColor: Colors.cardSecondary,
+    borderRadius: 2, overflow: 'hidden',
   },
-  rfBarFill: { height: '100%', borderRadius: 3 },
-  rfPct: { fontSize: 11, fontWeight: '700', width: 34, textAlign: 'right' },
-  rfVal: { fontSize: 13, fontWeight: '800', width: 52, textAlign: 'right' },
+  rfBarFill: { height: '100%', borderRadius: 2 },
+  rfPct: { fontSize: 10, fontWeight: '700', width: 28, textAlign: 'right' },
+  rfVal: { fontSize: 11, fontWeight: '800', width: 42, textAlign: 'right' },
   edgeSafetyWrapper: {
     paddingTop: 10, paddingBottom: 4, gap: 8,
   },
@@ -6153,24 +6165,24 @@ const styles = StyleSheet.create({
     fontSize: 12, lineHeight: 17, fontWeight: '500',
   },
 
-  rfBadgeRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 2 },
+  rfBadgeRow: { flexDirection: 'row', gap: 5, flexWrap: 'wrap', marginTop: 1 },
   rfBadge: {
-    paddingHorizontal: 10, paddingVertical: 5,
-    borderRadius: 8, borderWidth: 1,
+    paddingHorizontal: 7, paddingVertical: 3,
+    borderRadius: 5, borderWidth: 1,
   },
-  rfBadgeMomentum: { backgroundColor: 'rgba(255,140,66,0.15)', borderColor: '#FF8C42' },
-  rfBadgeMomentumText: { fontSize: 12, fontWeight: '700', color: '#FF8C42' },
-  rfBadgeText: { fontSize: 12, fontWeight: '800' },
+  rfBadgeMomentum: { backgroundColor: 'rgba(255,140,66,0.12)', borderColor: '#FF8C42' },
+  rfBadgeMomentumText: { fontSize: 10, fontWeight: '700', color: '#FF8C42' },
+  rfBadgeText: { fontSize: 10, fontWeight: '800' },
   rfBadgeVol: { backgroundColor: Colors.cardSecondary, borderColor: Colors.border },
-  rfBadgeVolText: { fontSize: 11, fontWeight: '600', color: Colors.textSecondary },
+  rfBadgeVolText: { fontSize: 9, fontWeight: '600', color: Colors.textSecondary },
   rfProjectionRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    backgroundColor: Colors.cardSecondary, borderRadius: 10, padding: 12, marginTop: 4,
+    backgroundColor: Colors.cardSecondary, borderRadius: 8, padding: 9, marginTop: 2,
   },
-  rfProjectionLabel: { fontSize: 13, color: Colors.textSecondary, fontWeight: '600' },
+  rfProjectionLabel: { fontSize: 11, color: Colors.textSecondary, fontWeight: '600' },
   rfProjectionRight: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
-  rfProjectionVal: { fontSize: 20, fontWeight: '800', color: '#4DA6FF' },
-  rfProjectionProb: { fontSize: 12, color: '#4DA6FF', fontWeight: '600' },
+  rfProjectionVal: { fontSize: 16, fontWeight: '800', color: '#4DA6FF' },
+  rfProjectionProb: { fontSize: 10, color: '#4DA6FF', fontWeight: '600' },
 
   /* ─── GAME LOG GRID ─── */
   gameLogsCard: {
