@@ -686,6 +686,7 @@ export async function predict(request: Record<string, unknown>): Promise<Predict
     propHistoricalN: (raw as any).propHistoricalN ?? undefined,
     coinFlip: raw.coinFlip ?? undefined,
     playerCandidates: raw.playerCandidates ?? undefined,
+    prizePicksContext: (raw as any).prizePicksContext ?? undefined,
   };
 }
 
