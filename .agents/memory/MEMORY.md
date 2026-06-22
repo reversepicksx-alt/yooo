@@ -29,3 +29,4 @@
 - [Positional baseline squeeze — priorSamples bug](pos-baseline-priorsamples.md) — apply_positional_squeeze must use early_bayes.get("priorSamples") not len(_bayes_logs); raw log count can be 10 while priorSamples=0 (all filtered by 30-min threshold).
 - [xAI search API deprecated](xai-search-deprecated.md) — xAI live search returns 410 as of 2026-06. Press intensity fetch_ai_press_intensity now uses knowledge-only _grok_call. Prompt reframed as "tactical identity" (year-stable) with hard-coded anchors for 14 clubs; null escape removed.
 - [Position accuracy system](position-accuracy-system.md) — 5-defect fix: version bump forces re-resolve; early lookup prefers playerId; re-squeeze fires when position changes; grok_positions.py prompt upgraded to full role vocab; admin clear endpoint added.
+- [Props cheat sheet findings](props-cheat-sheet.md) — shots UNDER #1 (80.9%), clearances OVER 0%, GK poss inverted vs outfield, UNDER at 65-74% conf = trap.
