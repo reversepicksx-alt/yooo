@@ -5847,6 +5847,18 @@ Analyze ALL data thoroughly. Return JSON only."""
             prediction["rawConfidence"] = _bt_new_conf
             prediction["confidenceLevel"] = _bt_new_lvl
 
+            # Clear stale coinFlip flags from upstream guards (e.g. Guard 3a).
+            # Guard 3a fires before BAYESIAN TRUTH and can set coinFlip=True on
+            # any high-conf OVER. If Bayesian genuinely confirms ≥70% probability,
+            # the pick is not a coin flip — clear the flag so the UI doesn't
+            # show a contradictory warning.
+            if _bt_max_pct >= 70.0 and prediction.get("coinFlip"):
+                prediction["coinFlip"] = False
+                print(
+                    f"[BAYESIAN TRUTH] Cleared coinFlip — P={_bt_max_pct:.0f}% "
+                    f"confirms genuine {_bt_dir.upper()} signal, not a coin flip"
+                )
+
             # If direction flipped, the projected value must be on the right
             # side of the line for visual consistency. Use the closer half-
             # integer offset like CONSISTENCY GUARD did.
@@ -5879,8 +5891,11 @@ Analyze ALL data thoroughly. Return JSON only."""
                                  "surpass", "push past", "eclips", "over 46", "over 47",
                                  "over 48", "over 49", "over 50", "strong over",
                                  "projects to exceed", "will exceed")
-                _under_markers = ("under", "below", "fewer than", "less than",
-                                  "suppress", "fall short", "won't reach", "won't hit")
+                _under_markers = (" under ", "going under", "is under ", "stays under",
+                                  "come under ", "fall under ", "land under",
+                                  "below", "fewer than", "less than",
+                                  "suppress", "fall short", "won't reach", "won't hit",
+                                  "short of the", "not reach", "miss the line")
                 _ss_has_over  = any(m in _ss_lo for m in _over_markers)
                 _ss_has_under = any(m in _ss_lo for m in _under_markers)
                 _ss_conflicts = (
@@ -5972,11 +5987,14 @@ Analyze ALL data thoroughly. Return JSON only."""
         # ── MARKET DISTANCE GUARD ────────────────────────────────────────────
         # When our projection is ≥35% away from the market line, the prior is
         # likely contaminated (stale seasons, old-club era, position mismatch).
-        # The Bayesian distribution places almost all mass on one side when the
-        # gap is this large — producing 90-99% confidence that is not earned.
-        # Cap at 55% (Medium) and surface a visible warning.
-        # Fires AFTER BAYESIAN TRUTH so the cap applies to the final Bayesian
-        # confidence, not an intermediate AI estimate.
+        # Normally caps confidence at 55% and surfaces a caution alert.
+        #
+        # BAYESIAN TRUTH exception: if the Bayesian Monte-Carlo gives P ≥ 80%
+        # in the winning direction, the posterior distribution already accounts
+        # for data quality — its mass is solidly on one side for structural
+        # reasons (e.g., a 65% possession team vs a 35% expected opponent).
+        # In that case, cap confidence only to 72% (not 55%) and still show
+        # the caution alert, but don't override a strong Bayesian signal.
         _mg_proj = prediction.get("projectedValue", req.line)
         _market_distance_fired = False
         if req.line > 0 and _mg_proj is not None:
@@ -5984,19 +6002,34 @@ Analyze ALL data thoroughly. Return JSON only."""
             if _mg_gap_pct >= 35:
                 _market_distance_fired = True
                 _mg_pre = prediction.get("confidenceScore", 50)
-                if _mg_pre > 55:
-                    prediction["confidenceScore"] = 55
-                    prediction["confidenceLevel"] = "Medium"
+                # Check how strong the Bayesian posterior is
+                _mg_bt_p = max(
+                    (real_bayes or {}).get("pOver", 0),
+                    (real_bayes or {}).get("pUnder", 0)
+                )
+                _mg_bt_strong = _mg_bt_p >= 80.0   # posterior is genuinely confident
+                _mg_cap = 72 if _mg_bt_strong else 55
+                if _mg_pre > _mg_cap:
+                    prediction["confidenceScore"] = _mg_cap
+                    prediction["confidenceLevel"] = (
+                        "High" if _mg_cap >= 70 else "Medium"
+                    )
                     prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [
                         f"MARKET DISTANCE: Model projects {_mg_proj} but line is {req.line} "
                         f"({_mg_gap_pct:.0f}% gap) — prior may be from wrong club era or "
                         f"stale season. Treat with caution."
                     ]
+                    _bt_note = f" (Bayesian P={_mg_bt_p:.0f}% — soft cap {_mg_cap}%)" if _mg_bt_strong else ""
                     print(f"[MARKET DIST] {req.playerName}: proj={_mg_proj} line={req.line} "
-                          f"gap={_mg_gap_pct:.0f}% → confidence capped {_mg_pre}→55%")
-                # When the gap is extreme (≥60%), the direction is so obvious the pick cannot
-                # be a coin-flip. Clear any coinFlip flag set by upstream guards so the edge
-                # rating uses the real projection margin instead of forcing NO EDGE.
+                          f"gap={_mg_gap_pct:.0f}% → confidence capped {_mg_pre}→{_mg_cap}%{_bt_note}")
+                else:
+                    prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [
+                        f"MARKET DISTANCE: Model projects {_mg_proj} but line is {req.line} "
+                        f"({_mg_gap_pct:.0f}% gap) — verify this is the right era/club data."
+                    ]
+                    print(f"[MARKET DIST] {req.playerName}: gap={_mg_gap_pct:.0f}% — alert only "
+                          f"(conf={_mg_pre}% already ≤ cap={_mg_cap}%)")
+                # When the gap is extreme (≥60%), direction is structural not a coin-flip.
                 if _mg_gap_pct >= 60 and prediction.get("coinFlip"):
                     prediction["coinFlip"] = False
                     print(f"[MARKET DIST] gap={_mg_gap_pct:.0f}% ≥ 60% — coinFlip cleared; "
