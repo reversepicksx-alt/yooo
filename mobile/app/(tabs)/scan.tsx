@@ -1627,7 +1627,7 @@ export default function ScanScreen() {
               const tierColor = (tier: string) =>
                 tier === 'demon' ? '#EF4444' : tier === 'goblin' ? '#F97316' : '#60A5FA';
               const tierLabel = (tier: string) =>
-                tier === 'demon' ? '🔥 DEMON' : tier === 'goblin' ? '👺 GOBLIN' : 'STANDARD';
+                tier === 'demon' ? 'DEMON' : tier === 'goblin' ? 'GOBLIN' : 'STANDARD';
               const opponent = ppLines[0]?.opponent || '';
               const league   = ppLines[0]?.league || '';
               const gameStart = ppLines[0]?.gameStart
@@ -1637,8 +1637,8 @@ export default function ScanScreen() {
                 <View style={{ marginBottom: 12, padding: 10, backgroundColor: 'rgba(96,165,250,0.06)', borderRadius: 8, borderWidth: 1, borderColor: 'rgba(96,165,250,0.25)' }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      <Text style={{ fontSize: 13 }}>🟣</Text>
-                      <Text style={{ color: '#60A5FA', fontSize: 11, fontWeight: '700', letterSpacing: 0.5 }}>PRIZEPICKS LINES</Text>
+                      <Ionicons name="analytics-outline" size={11} color="#60A5FA" />
+                      <Text style={{ color: '#60A5FA', fontSize: 11, fontWeight: '700', letterSpacing: 0.5 }}>LINES</Text>
                     </View>
                     {(opponent || gameStart) ? (
                       <Text style={{ color: Colors.textSecondary, fontSize: 10 }}>
@@ -3777,6 +3777,272 @@ export default function ScanScreen() {
               })()}
             </View>
 
+            {/* ─── GAME LOG GRID ─── */}
+            {prediction.gameLogs && prediction.gameLogs.length > 0 && (() => {
+              const realLogs = prediction.gameLogs.filter(g => !g.synthetic);
+              const allSynthetic = realLogs.length === 0;
+              const displayLogs = allSynthetic ? [] : realLogs;
+              const overCount = displayLogs.filter(g => g.value != null && prediction.line != null && g.value >= prediction.line).length;
+              const filteredLogs = displayLogs.filter(g =>
+                gameLogFilter === 'all' ? true : g.venue === gameLogFilter
+              );
+              const COLS = 6;
+              const tileW = (SCREEN_W - 40 - 16 - (COLS - 1) * 4) / COLS;
+              const oppPoss = prediction.possessionOppAvg;
+              return (
+                <View style={styles.gameLogsCard}>
+                  {/* Header row */}
+                  <View style={styles.gameLogsHeader}>
+                    <View style={styles.glHeaderLeft}>
+                      <Ionicons name="pulse" size={10} color={Colors.textTertiary} />
+                      <Text style={styles.gameLogsTitle}>
+                        {allSynthetic
+                          ? 'RECENT FORM'
+                          : `RECENT FORM (${displayLogs.length} GAMES)`}
+                      </Text>
+                    </View>
+                    <View style={styles.glHeaderRight}>
+                      {!allSynthetic && oppPoss != null && (
+                        <View style={styles.glOppPossBadge}>
+                          <Text style={styles.glOppPossLabel}>OPP POSS</Text>
+                          <Text style={styles.glOppPossVal}>{oppPoss}%</Text>
+                        </View>
+                      )}
+                      {!allSynthetic && prediction.hitRates != null && (
+                        <View style={styles.hitRateBadge}>
+                          <Text style={styles.hitRateBadgeText}>
+                            {overCount}/{displayLogs.length} HIT
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                  </View>
+                  {allSynthetic && (
+                    <View style={styles.syntheticNotice}>
+                      <Ionicons name="information-circle-outline" size={14} color={Colors.textSecondary} />
+                      <Text style={styles.syntheticNoticeText}>
+                        Per-game data unavailable for this player. Analysis is based on season averages only.
+                      </Text>
+                    </View>
+                  )}
+                  {!allSynthetic && displayLogs.some(g => g.venue === 'home' || g.venue === 'away') && (
+                    <View style={styles.glTabRow}>
+                      {(['all', 'home', 'away'] as const).map(f => (
+                        <TouchableOpacity
+                          key={f}
+                          style={[styles.glTab, gameLogFilter === f && styles.glTabActive]}
+                          onPress={() => { setGameLogFilter(f); Haptics.selectionAsync(); }}
+                        >
+                          <Text style={[styles.glTabText, gameLogFilter === f && styles.glTabTextActive]}>
+                            {f.toUpperCase()}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
+                  {!allSynthetic && (
+                    <View style={styles.glGrid}>
+                      {(() => {
+                        const remainder = filteredLogs.length % COLS;
+                        const padCount = remainder === 0 ? 0 : COLS - remainder;
+                        return (
+                          <>
+                            {filteredLogs.map((g, i) => {
+                              const isOver = g.value != null && prediction.line != null && g.value >= prediction.line;
+                              const isMLB = g.sport === 'mlb' || prediction.sport === 'mlb';
+                              if (isMLB) {
+                                const propT = g.propType || prediction.propType || '';
+                                const isPitcher = ['pitcher_strikeouts','innings_pitched','hits_allowed','earned_runs','walks_allowed','pitches_thrown','batters_faced'].includes(propT);
+                                let minsText = '—';
+                                if (g.homeScore != null && g.awayScore != null) {
+                                  minsText = `${g.homeScore}-${g.awayScore}`;
+                                } else if (isPitcher) {
+                                  minsText = g.ip != null ? `${g.ip}IP` : '—';
+                                } else {
+                                  const h = g.hits ?? null;
+                                  const ab = g.atBats ?? null;
+                                  minsText = (h != null && ab != null) ? `${h}/${ab}` : (ab != null ? `${ab}AB` : '—');
+                                }
+                                let venueBadge = '?';
+                                if (g.isHome === true)       venueBadge = 'H';
+                                else if (g.isHome === false) venueBadge = 'A';
+                                else if (g.gameNumber != null) venueBadge = `G${g.gameNumber}`;
+                                const oppLabel = g.opponent
+                                  ? g.opponent
+                                  : (isPitcher && g.pitchCount != null ? `${g.pitchCount}P` : '');
+                                let dateTxt = '';
+                                if (g.gameDate) {
+                                  const d = new Date(g.gameDate);
+                                  if (!isNaN(d.getTime())) {
+                                    const gameYear = d.getFullYear();
+                                    const currentSeason = (prediction as any).season ?? new Date().getFullYear();
+                                    const yearSuffix = gameYear < currentSeason ? ` '${String(gameYear).slice(-2)}` : '';
+                                    dateTxt = `${d.getMonth() + 1}/${d.getDate()}${yearSuffix}`;
+                                  }
+                                }
+                                return (
+                                  <View key={i} style={[styles.glTile, { width: tileW }, isOver ? styles.glTileOver : styles.glTileUnder]}>
+                                    {isOver && <View style={styles.glDot} />}
+                                    <Text style={[styles.glTileVal, { color: isOver ? Colors.success : Colors.error }]}>
+                                      {g.value != null ? String(g.value) : '—'}
+                                    </Text>
+                                    <Text style={styles.glTileMins}>{minsText}</Text>
+                                    <View style={styles.glOppRow}>
+                                      <View style={styles.glVenueBadge}>
+                                        <Text style={styles.glVenueText}>{venueBadge}</Text>
+                                      </View>
+                                      {oppLabel ? <Text style={styles.glTileOpp} numberOfLines={1}>{oppLabel}</Text> : null}
+                                    </View>
+                                    {dateTxt ? <Text style={styles.glTileRank}>{dateTxt}</Text> : null}
+                                  </View>
+                                );
+                              }
+                              const oppRaw = g.opponent || '?';
+                              const oppShort = oppRaw.replace(/^(al-?|fc |cf |rc |sc |cd |ud |sd |rcd |as |ss |ac |us |ac |sp |ca |cp |ue |ue |ce |cm |se |sk )/i, '').slice(0, 3).toUpperCase();
+                              const scoreStr = g.score || '';
+                              const rankStr = g.oppRank != null ? `#${g.oppRank}` : '';
+                              const propT = prediction.propType || '';
+                              const defSecondary: { val: number | null; label: string } | null =
+                                propT === 'blocks' ? { val: g.blocks ?? null, label: 'BLK' }
+                                : propT === 'interceptions' ? { val: g.interceptions ?? null, label: 'INT' }
+                                : propT === 'tackles' ? { val: g.tackles ?? null, label: 'TKL' }
+                                : propT === 'clearances' ? { val: g.clearances ?? null, label: 'CLR' }
+                                : null;
+                              return (
+                                <View key={i} style={[styles.glTile, { width: tileW }, isOver ? styles.glTileOver : styles.glTileUnder]}>
+                                  {isOver && <View style={styles.glDot} />}
+                                  <Text style={[styles.glTileVal, { color: isOver ? Colors.success : Colors.error }]}>
+                                    {g.value != null ? String(g.value) : '—'}
+                                  </Text>
+                                  {scoreStr ? (
+                                    <Text style={styles.glTileScore}>{scoreStr}</Text>
+                                  ) : (
+                                    <Text style={styles.glTileMins}>{g.minutes > 0 ? `${g.minutes}'` : '—'}</Text>
+                                  )}
+                                  <View style={styles.glOppRow}>
+                                    <View style={styles.glVenueBadge}>
+                                      <Text style={styles.glVenueText}>
+                                        {g.venue === 'home' ? 'H' : g.venue === 'away' ? 'A' : '—'}
+                                      </Text>
+                                    </View>
+                                    <Text style={styles.glTileOpp} numberOfLines={1}>{oppShort}</Text>
+                                  </View>
+                                  {rankStr ? <Text style={styles.glTileRank}>{rankStr}</Text> : null}
+                                  {g.opponentPossession != null && (
+                                    <Text style={styles.glTilePoss}>OPP {g.opponentPossession}%</Text>
+                                  )}
+                                  {defSecondary && defSecondary.val != null && (
+                                    <Text style={styles.glTileSecStat}>{defSecondary.label} {defSecondary.val}</Text>
+                                  )}
+                                </View>
+                              );
+                            })}
+                            {Array.from({ length: padCount }).map((_, pi) => (
+                              <View key={`pad-${pi}`} style={[styles.glTile, { width: tileW, opacity: 0 }]} pointerEvents="none" />
+                            ))}
+                          </>
+                        );
+                      })()}
+                    </View>
+                  )}
+                  {!allSynthetic && (prediction.homeAvg != null || prediction.awayAvg != null) && (
+                    <View style={styles.avgRow}>
+                      {prediction.homeAvg != null && (
+                        <Text style={styles.avgText}>HOME AVG  {prediction.homeAvg.toFixed(1)}</Text>
+                      )}
+                      {prediction.awayAvg != null && (
+                        <Text style={styles.avgText}>AWAY AVG  {prediction.awayAvg.toFixed(1)}</Text>
+                      )}
+                    </View>
+                  )}
+                  {!allSynthetic && (() => {
+                    const logsWithDef = displayLogs.filter(
+                      g => g.blocks != null || g.interceptions != null || g.tackles != null || g.clearances != null
+                    );
+                    if (logsWithDef.length === 0) return null;
+                    const avg = (key: keyof typeof logsWithDef[0]) => {
+                      const vals = logsWithDef.map(g => g[key] as number | null).filter(v => v != null) as number[];
+                      return vals.length > 0 ? (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1) : null;
+                    };
+                    const avgBlocks = avg('blocks');
+                    const avgInt = avg('interceptions');
+                    const avgTkl = avg('tackles');
+                    const avgClr = avg('clearances');
+                    const items = [
+                      avgTkl && { label: 'TKL', val: avgTkl },
+                      avgBlocks && { label: 'BLK', val: avgBlocks },
+                      avgInt && { label: 'INT', val: avgInt },
+                      avgClr && { label: 'CLR', val: avgClr },
+                    ].filter(Boolean) as { label: string; val: string }[];
+                    if (items.length === 0) return null;
+                    return (
+                      <View style={styles.defStatsRow}>
+                        <Text style={styles.defStatsLabel}>DEF AVG</Text>
+                        {items.map((item, idx) => (
+                          <View key={idx} style={styles.defStatChip}>
+                            <Text style={styles.defStatChipLabel}>{item.label}</Text>
+                            <Text style={styles.defStatChipVal}>{item.val}</Text>
+                          </View>
+                        ))}
+                      </View>
+                    );
+                  })()}
+                </View>
+              );
+            })()}
+
+            {/* ─── MARKET LINE ─── */}
+            {prediction.sport === 'soccer' && (() => {
+              const pp = (prediction as any).prizePicksContext as {
+                marketLine: number; marketTier: string; lineMovement: number;
+                tierSignal: string; tierColor: string; ppPlayer: string;
+                ppTeam: string; ppOpponent: string; flashLine?: number;
+              } | undefined;
+              if (!pp || pp.marketLine == null) return null;
+              const tier      = (pp.marketTier || 'standard').toLowerCase();
+              const tierColor = pp.tierColor || (tier === 'demon' ? '#FF6B35' : tier === 'goblin' ? '#39FF14' : '#60A5FA');
+              const tierLabel = tier.toUpperCase();
+              const diff      = pp.lineMovement ?? 0;
+              const absDiff   = Math.abs(diff);
+              const diffLabel = diff === 0
+                ? 'Matches market'
+                : diff > 0
+                  ? `▼ ${absDiff.toFixed(1)} below market (line moved down)`
+                  : `▲ ${absDiff.toFixed(1)} above market (line moved up)`;
+              const diffColor = diff === 0 ? Colors.textSecondary
+                : absDiff >= 2 ? '#FF6B35' : '#60A5FA';
+              return (
+                <View style={{ marginTop: 8,
+                  backgroundColor: '#0D0D0D', borderRadius: 10, padding: 12,
+                  borderWidth: 1, borderColor: tierColor + '33' }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                    <Ionicons name="analytics-outline" size={11} color={tierColor} />
+                    <Text style={{ fontSize: 10, color: Colors.textSecondary, fontWeight: '700', letterSpacing: 1 }}>
+                      MARKET LINE
+                    </Text>
+                    <View style={{ marginLeft: 'auto', flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                      <Text style={{ fontSize: 14, color: Colors.text, fontWeight: '800' }}>{pp.marketLine}</Text>
+                      {pp.flashLine != null && pp.flashLine !== pp.marketLine && (
+                        <Text style={{ fontSize: 10, color: '#F59E0B', fontWeight: '700' }}>⚡{pp.flashLine}</Text>
+                      )}
+                      <View style={{ backgroundColor: tierColor + '22', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, borderWidth: 1, borderColor: tierColor + '55' }}>
+                        <Text style={{ fontSize: 9, color: tierColor, fontWeight: '800', letterSpacing: 0.5 }}>{tierLabel}</Text>
+                      </View>
+                    </View>
+                  </View>
+                  <Text style={{ fontSize: 11, color: diffColor, fontWeight: '600' }}>{diffLabel}</Text>
+                  {!!pp.tierSignal && tier !== 'standard' && (
+                    <Text style={{ fontSize: 10, color: Colors.textSecondary, marginTop: 4 }}>{pp.tierSignal}</Text>
+                  )}
+                  {!!pp.ppOpponent && (
+                    <Text style={{ fontSize: 10, color: Colors.textTertiary, marginTop: 2 }}>
+                      {pp.ppTeam}{pp.ppOpponent ? ` vs ${pp.ppOpponent}` : ''}
+                    </Text>
+                  )}
+                </View>
+              );
+            })()}
+
             {/* ─── REVERSE FORMULA CARD ─── */}
             {prediction.priorSamples != null && prediction.priorSamples >= 3 && (
               <View style={styles.rfCard}>
@@ -4113,8 +4379,8 @@ export default function ScanScreen() {
               })()
             )}
 
-            {/* ─── PRIZEPICKS MARKET REFERENCE ─── */}
-            {prediction.sport === 'soccer' && (() => {
+            {/* ─── MARKET LINE (RENDERED ABOVE) ─── */}
+            {false && prediction.sport === 'soccer' && (() => {
               const pp = (prediction as any).prizePicksContext as {
                 marketLine: number; marketTier: string; lineMovement: number;
                 tierSignal: string; tierColor: string; ppPlayer: string;
@@ -4174,8 +4440,8 @@ export default function ScanScreen() {
               );
             })()}
 
-            {/* ─── GAME LOG GRID ─── */}
-            {prediction.gameLogs && prediction.gameLogs.length > 0 && (() => {
+            {/* ─── GAME LOG GRID (RENDERED ABOVE) ─── */}
+            {false && prediction.gameLogs && prediction.gameLogs.length > 0 && (() => {
               const realLogs = prediction.gameLogs.filter(g => !g.synthetic);
               const allSynthetic = realLogs.length === 0;
               const displayLogs = allSynthetic ? [] : realLogs;
