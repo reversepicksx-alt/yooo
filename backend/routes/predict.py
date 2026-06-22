@@ -1813,7 +1813,7 @@ async def predict(req: PredictionRequest):
             if (home_avg is None or away_avg is None) and home_rank and away_rank:
                 gap = away_rank - home_rank  # positive = home team stronger
                 raw_poss = 50.0 + 2.5 + min(8.0, max(-8.0, gap * 0.8))
-                home_poss_fallback = min(65.0, max(35.0, round(raw_poss, 1)))
+                home_poss_fallback = min(72.0, max(28.0, round(raw_poss, 1)))
                 away_poss_fallback = round(100.0 - home_poss_fallback, 1)
                 # Use 50% as season avg so the squeeze can activate on big gaps
                 fallback_home_avg = 50.0
@@ -1893,7 +1893,9 @@ async def predict(req: PredictionRequest):
                         if _tot > 0:
                             _norm_h = _hp / _tot   # fixture home team win-prob
                             # 50% win-prob → 50% poss; 75% win-prob → ~56% poss
-                            _fx_home_poss = round(min(62.0, max(38.0, 50.0 + (_norm_h - 0.5) * 25.0)), 1)
+                            # Slope raised 25→50 so France 91.7% fav → ~73% poss
+                            # (old slope: 90% fav → only 60%, missing elite mismatches)
+                            _fx_home_poss = round(min(76.0, max(28.0, 50.0 + (_norm_h - 0.5) * 50.0)), 1)
                             _fx_away_poss = round(100.0 - _fx_home_poss, 1)
                             dom["homePoss"] = _fx_home_poss
                             dom["awayPoss"] = _fx_away_poss
@@ -1932,11 +1934,10 @@ async def predict(req: PredictionRequest):
                 # 60-70% possession against weak sides (e.g. SA vs Lesotho).
                 # These stats contaminate the possession monster when the same
                 # team travels to play a much stronger opponent (e.g. Mexico at
-                # Azteca). Cap away possession avg at 58% — no away team in a
-                # quality match realistically sustains above that level.
-                # Also cap home avg at 65% to guard symmetric edge cases.
-                home_avg = min(home_avg, 65.0)
-                away_avg = min(away_avg, 58.0)
+                # Azteca). Caps raised (68/72) so elite away teams like France
+                # (~63-65% away avg) aren't artificially cut to 58%.
+                home_avg = min(home_avg, 72.0)
+                away_avg = min(away_avg, 68.0)
 
                 away_concedes = 100.0 - away_avg
 
@@ -1982,6 +1983,10 @@ async def predict(req: PredictionRequest):
                     if abs(quality_adj) > 1:
                         dom["notes"].append(f"Standings gap (#{home_rank} vs #{away_rank}): {quality_adj:+.1f}% poss adj")
 
+                # Track whether we detected an extreme mismatch via odds.
+                # Used below to relax the regression-to-mean factor.
+                _odds_extreme_mismatch = False
+
                 if odds and odds.get("bookmakerOdds"):
                     try:
                         home_odds_val = float(odds["bookmakerOdds"].get("homeWin", 3.0))
@@ -1989,37 +1994,113 @@ async def predict(req: PredictionRequest):
 
                         home_prob = 1.0 / max(home_odds_val, 1.01)
                         away_prob = 1.0 / max(away_odds_val, 1.01)
+                        _tot = home_prob + away_prob
+                        if _tot > 0:
+                            home_prob /= _tot
+                            away_prob /= _tot
                         prob_diff = home_prob - away_prob
+
+                        _bk_extreme = max(home_prob, away_prob) >= 0.85
+                        if _bk_extreme:
+                            _odds_extreme_mismatch = True
 
                         odds_dampener = 1.0
                         if away_avg >= 53 or home_avg >= 57:
-                            odds_dampener = 0.3
-                            dom["notes"].append(f"Possession-dominant team in match ({max(home_avg, away_avg):.0f}% avg): odds signal dampened")
+                            odds_dampener = 0.55 if _bk_extreme else 0.3
+                            dom["notes"].append(f"Possession-dominant team in match ({max(home_avg, away_avg):.0f}% avg): odds signal dampened to {odds_dampener}")
                         elif away_avg >= 50 or home_avg >= 53:
-                            odds_dampener = 0.6
+                            odds_dampener = 0.65 if _bk_extreme else 0.6
 
                         odds_adj = round(prob_diff * 12 * odds_dampener, 1)
                         odds_adj = min(7.0, max(-7.0, odds_adj))
                         home_poss += odds_adj
                         if abs(odds_adj) > 1:
-                            dom["notes"].append(f"Odds signal (home={home_odds_val:.2f}, away={away_odds_val:.2f}): {odds_adj:+.1f}% poss adj")
+                            dom["notes"].append(f"Odds signal (home={home_odds_val:.2f}, away={away_odds_val:.2f}): {odds_adj:+.1f}% poss adj (extreme={_bk_extreme})")
+
+                        # Extreme mismatch amplifier: season-avg possession
+                        # undershoots for mismatches like France vs Iraq because
+                        # France's avg includes games vs Germany/Spain/England.
+                        # Extra boost: 85% fav → +2.5pp, 90% → +5pp, 95% → +7.5pp
+                        if _bk_extreme:
+                            _bk_boost = min(10.0, (max(home_prob, away_prob) - 0.80) * 100.0)
+                            if away_prob > home_prob:
+                                home_poss -= _bk_boost
+                            else:
+                                home_poss += _bk_boost
+                            dom["notes"].append(f"Extreme mismatch amplifier (BK): {_bk_boost:.1f}pp (fav={max(home_prob,away_prob):.1%})")
                     except Exception:
                         pass
 
-                # FIX 2 — Regression to mean (22% shrink toward 50%).
-                # 1291-pick audit: actual possession is -4.7pp below projected on
-                # average (mean abs error 9.6pp). Stronger regression closes this:
-                # 15% was insufficient (original fix). 22% brings extremes in further:
-                #   70% → 64.6%,  65% → 60.8%,  58% → 56.2%,  42% → 43.8%
-                # This also reduces the GK dominant possession penalty by making
-                # extreme possession ratios (>1.20) far less common.
-                home_poss = round(50.0 + (home_poss - 50.0) * 0.78, 1)
+                elif odds and odds.get("americanOdds"):
+                    # Main stats path: americanOdds were ignored entirely.
+                    # France -1111 vs Iraq +2200 contributed zero possession
+                    # signal — now handled the same way as bookmakerOdds.
+                    try:
+                        def _ml_to_prob_poss(ml):
+                            try:
+                                ml = float(ml)
+                                return (-ml) / (-ml + 100.0) if ml < 0 else 100.0 / (ml + 100.0)
+                            except Exception:
+                                return 0.33
+                        _aod = odds["americanOdds"]
+                        _pih = odds.get("playerIsHome")
+                        if _pih is None:
+                            _pih = is_home and not is_neutral
+                        _fx_h_p = _ml_to_prob_poss(_aod.get("home", 0))
+                        _fx_a_p = _ml_to_prob_poss(_aod.get("away", 0))
+                        # Map fixture home/away to formula home (possession home side)
+                        if is_neutral:
+                            _ao_home_prob = _fx_a_p if _pih else _fx_h_p
+                            _ao_away_prob = _fx_h_p if _pih else _fx_a_p
+                        else:
+                            _no_flip = (is_home == _pih)
+                            _ao_home_prob = _fx_h_p if _no_flip else _fx_a_p
+                            _ao_away_prob = _fx_a_p if _no_flip else _fx_h_p
+                        _ao_tot = _ao_home_prob + _ao_away_prob
+                        if _ao_tot > 0:
+                            _ao_home_prob /= _ao_tot
+                            _ao_away_prob /= _ao_tot
+                        _ao_prob_diff = _ao_home_prob - _ao_away_prob
 
-                # FIX 1 — Lower ceiling from 75% → 67%.
-                # No professional soccer team sustains 75% possession in a
-                # real fixture; the 531-pick sample never produced an actual
-                # reading above 71%. 67% is the realistic upper bound.
-                home_poss = min(67.0, max(30.0, round(home_poss, 1)))
+                        _ao_extreme = max(_ao_home_prob, _ao_away_prob) >= 0.85
+                        if _ao_extreme:
+                            _odds_extreme_mismatch = True
+
+                        ao_dampener = 1.0
+                        if away_avg >= 53 or home_avg >= 57:
+                            ao_dampener = 0.55 if _ao_extreme else 0.3
+                            dom["notes"].append(f"AO possession-dominant team: odds dampened to {ao_dampener}")
+                        elif away_avg >= 50 or home_avg >= 53:
+                            ao_dampener = 0.65 if _ao_extreme else 0.6
+
+                        ao_adj = round(_ao_prob_diff * 12 * ao_dampener, 1)
+                        ao_adj = min(7.0, max(-7.0, ao_adj))
+                        home_poss += ao_adj
+                        if abs(ao_adj) > 1:
+                            dom["notes"].append(f"AO odds signal: {ao_adj:+.1f}% poss adj (extreme={_ao_extreme})")
+
+                        if _ao_extreme:
+                            _ao_boost = min(10.0, (max(_ao_home_prob, _ao_away_prob) - 0.80) * 100.0)
+                            if _ao_away_prob > _ao_home_prob:
+                                home_poss -= _ao_boost
+                            else:
+                                home_poss += _ao_boost
+                            dom["notes"].append(f"Extreme mismatch amplifier (AO): {_ao_boost:.1f}pp (fav={max(_ao_home_prob,_ao_away_prob):.1%})")
+                    except Exception:
+                        pass
+
+                # Regression to mean — relaxed for extreme mismatches.
+                # Normal (22% shrink): 70%→64.6%, 65%→60.8%, 58%→56.2%
+                # Extreme (12% shrink): lets 28% Iraq → 31.4% so France → 68-73%
+                # Matches like France vs Iraq (fav -1111) need less regression
+                # because season-avg possession is diluted by competitive fixtures.
+                _regression_factor = 0.88 if _odds_extreme_mismatch else 0.78
+                home_poss = round(50.0 + (home_poss - 50.0) * _regression_factor, 1)
+
+                # Ceiling raised 67% → 75%. The previous 67% cap made it
+                # physically impossible to predict France 72-76% vs Iraq.
+                # 75% is achievable in real elite-vs-weak fixtures.
+                home_poss = min(75.0, max(28.0, round(home_poss, 1)))
                 away_poss = round(100.0 - home_poss, 1)
 
                 if is_home and not is_neutral:
