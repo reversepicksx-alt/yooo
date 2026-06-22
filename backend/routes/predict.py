@@ -1202,7 +1202,9 @@ async def predict(req: PredictionRequest):
         # If player is HOME → team's HOME games + opponent's AWAY games
         # If player is AWAY → team's AWAY games + opponent's HOME games
         player_venue = req.venue.lower()  # "home", "away", or "neutral"
-        _is_neutral = player_venue == "neutral"
+        # WC (league_id=1) matches are always at neutral venues — force neutral regardless
+        # of user-entered venue to prevent possession inversion from WC-qualifier stats.
+        _is_neutral = player_venue == "neutral" or req.leagueId == 1
         opponent_venue = "away" if player_venue == "home" else ("home" if not _is_neutral else "neutral")
         is_womens = req.leagueId in WOMENS_LEAGUE_IDS
         pronoun_note = "IMPORTANT: This is a WOMEN'S league. Use she/her/her pronouns for all players. Never use he/him/his." if is_womens else ""
@@ -1816,7 +1818,9 @@ async def predict(req: PredictionRequest):
                 # Use 50% as season avg so the squeeze can activate on big gaps
                 fallback_home_avg = 50.0
                 fallback_away_avg = 50.0
-                if is_home:
+                # Neutral: formula maps player_team→"away", opponent→"home".
+                # Use away_poss_fallback for player regardless of user-entered venue.
+                if is_home and not is_neutral:
                     dom["expectedPoss"] = home_poss_fallback
                     dom["oppExpectedPoss"] = away_poss_fallback
                     dom["teamSeasonAvg"] = fallback_home_avg
@@ -1863,7 +1867,7 @@ async def predict(req: PredictionRequest):
                             _fx_away_poss = round(100.0 - _fx_home_poss, 1)
                             dom["homePoss"] = _fx_home_poss
                             dom["awayPoss"] = _fx_away_poss
-                            if is_home:
+                            if is_home and not is_neutral:
                                 dom["expectedPoss"]    = _fx_home_poss
                                 dom["oppExpectedPoss"] = _fx_away_poss
                             else:
@@ -1988,7 +1992,7 @@ async def predict(req: PredictionRequest):
                 home_poss = min(67.0, max(30.0, round(home_poss, 1)))
                 away_poss = round(100.0 - home_poss, 1)
 
-                if is_home:
+                if is_home and not is_neutral:
                     dom["expectedPoss"] = home_poss
                     dom["oppExpectedPoss"] = away_poss
                     dom["teamSeasonAvg"] = home_avg
@@ -2064,7 +2068,7 @@ async def predict(req: PredictionRequest):
         if _cached_dom is not None:
             # Remap expectedPoss/oppExpectedPoss for this player's perspective
             match_dominance = dict(_cached_dom)
-            if _is_home:
+            if _is_home and not _is_neutral:
                 match_dominance["expectedPoss"] = _cached_dom["homePoss"]
                 match_dominance["oppExpectedPoss"] = _cached_dom["awayPoss"]
                 match_dominance["teamSeasonAvg"] = _cached_dom.get("homeSeasonAvg", _cached_dom.get("teamSeasonAvg"))
@@ -2108,7 +2112,7 @@ async def predict(req: PredictionRequest):
             # Store in cache with home/away season avgs for perspective remapping
             if _dom_cache_key and match_dominance.get("homePoss") is not None:
                 _cache_entry = dict(match_dominance)
-                if _is_home:
+                if _is_home and not _is_neutral:
                     _cache_entry["homeSeasonAvg"] = match_dominance.get("teamSeasonAvg")
                     _cache_entry["awaySeasonAvg"] = match_dominance.get("oppSeasonAvg")
                 else:
