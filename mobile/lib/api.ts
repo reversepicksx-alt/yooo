@@ -919,6 +919,23 @@ export async function getTeamNextMatch(teamId: number): Promise<NextMatchData> {
   return apiCall(`/api/teams/${teamId}/next-match`);
 }
 
+export interface PPLine {
+  statLabel: string;
+  statInternal: string;
+  line: number | null;
+  flashLine: number | null;
+  tier: 'standard' | 'demon' | 'goblin';
+  team: string;
+  opponent: string;
+  league: string;
+  gameStart: string;
+  ppPlayerName: string;
+}
+
+export async function getPrizePicksLines(playerName: string): Promise<{ playerName: string; lines: PPLine[]; count: number }> {
+  return apiCall(`/api/prizepicks/player?name=${encodeURIComponent(playerName)}`);
+}
+
 export interface SubscriptionStatus {
   active: boolean;
   plan?: string;

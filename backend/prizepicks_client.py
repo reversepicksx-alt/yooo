@@ -239,6 +239,61 @@ async def refresh_prizepicks_board(db) -> int:
 # Lookup
 # ─────────────────────────────────────────────────────────────────────────────
 
+async def lookup_all_player_props(db, player_name: str) -> list[dict]:
+    """
+    Return ALL PrizePicks lines for a player across all prop types.
+    Fuzzy-matches on player name (threshold 0.55). Used by the player-select
+    line tracker that fires before a prediction is run.
+    """
+    if not player_name:
+        return []
+    coll = db.prizepicks_board
+    # Fetch all props (single-player only — exclude combo props)
+    candidates = await coll.find(
+        {"combo": {"$ne": True}},
+        {"_id": 0},
+    ).to_list(2000)
+    if not candidates:
+        return []
+
+    query_norm  = _normalize(player_name)
+    query_parts = query_norm.split()
+    query_last  = query_parts[-1] if query_parts else query_norm
+
+    # Score every candidate against this player name
+    scored: list[tuple[float, dict]] = []
+    for c in candidates:
+        c_norm  = c.get("player_name_norm", "")
+        score = SequenceMatcher(None, query_norm, c_norm).ratio()
+        c_parts = c_norm.split()
+        c_last  = c_parts[-1] if c_parts else c_norm
+        if query_last and c_last and query_last == c_last:
+            score = min(1.0, score + 0.15)
+        if len(query_norm) >= 4 and query_norm in c_norm:
+            score = min(1.0, score + 0.1)
+        if score >= 0.55:
+            scored.append((score, c))
+
+    if not scored:
+        return []
+
+    # Find the best-matching player name
+    best_score = max(s for s, _ in scored)
+    # Accept all props within 0.1 of the best score (same player, different props)
+    threshold = max(0.55, best_score - 0.1)
+    matched = [c for s, c in scored if s >= threshold]
+
+    # Deduplicate by stat_internal + odds_type (keep highest line per stat)
+    seen: dict[str, dict] = {}
+    for c in matched:
+        key = c.get("stat_internal", "") + "|" + c.get("odds_type", "standard")
+        if key not in seen or (c.get("line") or 0) > (seen[key].get("line") or 0):
+            seen[key] = c
+
+    result = sorted(seen.values(), key=lambda x: x.get("stat_internal", ""))
+    return result
+
+
 async def lookup_player_prop(db, player_name: str, prop_type: str) -> dict | None:
     """
     Fuzzy-match player_name + prop_type against the cached PrizePicks board.

@@ -1322,6 +1322,32 @@ async def owner_top_props_table():
     }
 
 
+@app.get("/api/prizepicks/player")
+async def prizepicks_player_lines(name: str):
+    """
+    Return all PrizePicks lines currently on the board for a given player name.
+    Used by the mobile player-select line tracker (fires immediately on player tap,
+    before the user runs a full prediction).
+    """
+    from prizepicks_client import lookup_all_player_props
+    props = await lookup_all_player_props(db, name)
+    lines = []
+    for p in props:
+        lines.append({
+            "statLabel":  p.get("stat_type", p.get("stat_internal", "")),
+            "statInternal": p.get("stat_internal", ""),
+            "line":       p.get("line"),
+            "flashLine":  p.get("flash_line"),
+            "tier":       (p.get("odds_type") or "standard").lower(),
+            "team":       p.get("player_team", ""),
+            "opponent":   p.get("opponent", ""),
+            "league":     p.get("league", ""),
+            "gameStart":  p.get("game_start", ""),
+            "ppPlayerName": p.get("player_name", name),
+        })
+    return {"playerName": name, "lines": lines, "count": len(lines)}
+
+
 @app.post("/api/admin/force-settle")
 async def force_settle():
     """Immediately run the auto-settlement bot — use to unblock stuck picks."""
