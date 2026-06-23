@@ -1909,8 +1909,7 @@ async def predict(req: PredictionRequest):
                             dom["oppSeasonAvg"]  = 50.0
                             dom["notes"].append(
                                 f"Odds-only possession (no stats/standings): "
-                                f"{_fx_home_poss:.0f}%/{_fx_away_poss:.0f}% "
-                                f"from odds {_ho:.2f}/{_ao:.2f}"
+                                f"{_fx_home_poss:.0f}%/{_fx_away_poss:.0f}%"
                             )
                             _otp = dom["expectedPoss"]
                             _otr = _otp / 50.0
@@ -2033,37 +2032,49 @@ async def predict(req: PredictionRequest):
                 #   player is away or neutral    → formula-home = opponent team
                 try:
                     _ep_fh_prob = None   # formula-home team's win prob (0-1)
+                    # Determine which odds key maps to the FORMULA-HOME team.
+                    #
+                    # formula-home team is defined by the code above:
+                    #   if is_home and not is_neutral → formula-home = player team
+                    #   else (away OR neutral)        → formula-home = opponent team
+                    #
+                    # odds.home / bookmakerOdds.homeWin always = FIXTURE-HOME team.
+                    #
+                    # Non-neutral games:
+                    #   player home  → formula-home = player = fixture-home  → use home odds
+                    #   player away  → formula-home = opp   = fixture-home   → use home odds
+                    #   Either way: use home odds. ✓
+                    #
+                    # Neutral games (is_neutral=True) → ELSE branch, formula-home = opponent:
+                    #   playerIsHome=True  → player = fixture-home, opp = fixture-AWAY
+                    #                       → formula-home = opp = fixture-away → use AWAY odds
+                    #   playerIsHome=False → player = fixture-away, opp = fixture-home
+                    #                       → formula-home = opp = fixture-home → use HOME odds
+                    #
+                    # So: use AWAY odds only when (is_neutral AND playerIsHome).
+                    _ep_pih = odds.get("playerIsHome")
+                    if _ep_pih is None:
+                        _ep_pih = bool(is_home and not is_neutral)
+                    _ep_use_away = is_neutral and _ep_pih
+
                     if odds and odds.get("bookmakerOdds"):
                         _bh = float(odds["bookmakerOdds"].get("homeWin", 3.0))
                         _ba = float(odds["bookmakerOdds"].get("awayWin", 3.0))
                         _bkh = 1.0 / max(_bh, 1.01)
                         _bka = 1.0 / max(_ba, 1.01)
                         _bkt = _bkh + _bka
-                        # bookmakerOdds.homeWin = fixture-home team's odds
-                        # formula-home = fixture-home when player is home (non-neutral)
-                        #               = fixture-home (opponent) when player is away/neutral
-                        # In both cases formula-home maps to the same fixture-home team
-                        # because the else branch above sets home_avg = opp's home stats.
-                        # So formula-home win prob = bookmaker home win prob in all cases.
                         if _bkt > 0:
-                            _ep_fh_prob = _bkh / _bkt
+                            _ep_fh_prob = (_bka if _ep_use_away else _bkh) / _bkt
                     elif odds and odds.get("americanOdds"):
                         def _ml2p_ep(ml):
                             ml = float(ml)
                             return (-ml) / (-ml + 100.0) if ml < 0 else 100.0 / (ml + 100.0)
                         _eaod = odds["americanOdds"]
-                        _eih  = _ml2p_ep(_eaod.get("home", 0))  # fixture-home prob
-                        _eia  = _ml2p_ep(_eaod.get("away", 0))  # fixture-away prob
+                        _eih  = _ml2p_ep(_eaod.get("home", 0))  # fixture-home team prob
+                        _eia  = _ml2p_ep(_eaod.get("away", 0))  # fixture-away team prob
                         _eit  = _eih + _eia
-                        # odds["americanOdds"].home always = FIXTURE home team.
-                        # formula-home is always the FIXTURE home team's side because:
-                        #   – player home (non-neutral): home_avg = player's home stats
-                        #     → formula-home = player = fixture-home → fh_prob = _eih
-                        #   – player away or neutral:   home_avg = opponent's home stats
-                        #     → formula-home = opponent = fixture-home → fh_prob = _eih
-                        # Either way: formula-home win prob = fixture-home odds prob.
                         if _eit > 0:
-                            _ep_fh_prob = _eih / _eit
+                            _ep_fh_prob = (_eia if _ep_use_away else _eih) / _eit
 
                     if _ep_fh_prob is not None:
                         _ep_fav_prob = max(_ep_fh_prob, 1.0 - _ep_fh_prob)
@@ -2199,8 +2210,19 @@ async def predict(req: PredictionRequest):
 
             print(f"[MATCH DOMINANCE CACHE HIT] {req.playerName}: home={_cached_dom['homePoss']}% away={_cached_dom['awayPoss']}% mult_recalc={match_dominance['multiplier']} for {req.propType}")
         else:
+            # Build effective odds: API-fetched match_odds is preferred, but for
+            # WC/tournament games the odds API often returns nothing. Fall back to
+            # req.odds (user-supplied from the mobile app) so the possession
+            # extreme-mismatch correction fires correctly for e.g. Portugal -1111
+            # vs Uzbekistan +2200 WC group-stage predictions.
+            _eff_odds = match_odds or {}
+            if req.odds and not _eff_odds.get("bookmakerOdds") and not _eff_odds.get("americanOdds"):
+                _req_o = req.odds if isinstance(req.odds, dict) else (req.odds.dict() if hasattr(req.odds, "dict") else {})
+                if _req_o.get("bookmakerOdds") or _req_o.get("americanOdds"):
+                    _eff_odds = dict(_eff_odds)
+                    _eff_odds.update(_req_o)
             match_dominance = compute_match_dominance(
-                team_fixture_stats, opponent_fixture_stats, match_odds,
+                team_fixture_stats, opponent_fixture_stats, _eff_odds,
                 _is_home, standing_data, is_neutral=_is_neutral
             )
             # Store in cache with home/away season avgs for perspective remapping

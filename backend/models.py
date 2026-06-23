@@ -46,6 +46,7 @@ class PredictionRequest(BaseModel):
     positionOverride: str = ""
     roleOverride: str = ""
     sport: str = "soccer"
+    odds: Optional[dict] = None
 
 
 class ComboRequest(BaseModel):
