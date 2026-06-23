@@ -1781,17 +1781,7 @@ async def predict(req: PredictionRequest):
                             pass
                 return round(sum(vals) / len(vals), 1) if vals else None
 
-            if is_neutral:
-                # Neutral venue: use overall averages for both teams (no venue split).
-                # team_stats_list = player's team; opp_stats_list = opponent.
-                # Mapped as: player's team → "away" perspective in the cache/formula
-                # so the existing home/away output convention is preserved.
-                home_avg = avg_poss(opp_stats_list)   # opponent overall (as cache "home")
-                away_avg = avg_poss(team_stats_list)   # player team overall (as cache "away")
-                home_rank = standing_data.get("oppRank") if standing_data else None
-                away_rank = standing_data.get("teamRank") if standing_data else None
-                dom["notes"].append("Neutral venue: using overall possession averages (no home boost)")
-            elif is_home:
+            if is_home:
                 # Player's team is HOME → use their home game avg; opponent uses away game avg
                 home_avg = avg_poss(team_stats_list, "home") or avg_poss(team_stats_list)
                 away_avg = avg_poss(opp_stats_list, "away") or avg_poss(opp_stats_list)
@@ -1820,7 +1810,7 @@ async def predict(req: PredictionRequest):
                 fallback_away_avg = 50.0
                 # Neutral: formula maps player_team→"away", opponent→"home".
                 # Use away_poss_fallback for player regardless of user-entered venue.
-                if is_home and not is_neutral:
+                if is_home:
                     dom["expectedPoss"] = home_poss_fallback
                     dom["oppExpectedPoss"] = away_poss_fallback
                     dom["teamSeasonAvg"] = fallback_home_avg
@@ -1873,22 +1863,12 @@ async def predict(req: PredictionRequest):
                             _aod = odds["americanOdds"]
                             _pih = odds.get("playerIsHome")
                             if _pih is None:
-                                _pih = is_home and not is_neutral
+                                _pih = is_home
                             _fx_h_p = _ml_to_prob_inner(_aod.get("home", 0))
                             _fx_a_p = _ml_to_prob_inner(_aod.get("away", 0))
-                            # Map fixture home/away probs to formula home/away probs.
-                            # Formula "home" = opponent (neutral) or actual home (non-neutral).
-                            # For neutral: formula home = opponent
-                            #   opponent = fixture-home if not playerIsHome, else fixture-away
-                            # For non-neutral: formula home = player's team side
-                            #   no flip when is_home==_pih, else flip
-                            if is_neutral:
-                                _hp = _fx_a_p if _pih else _fx_h_p
-                                _ap = _fx_h_p if _pih else _fx_a_p
-                            else:
-                                _no_flip = (is_home == _pih)
-                                _hp = _fx_h_p if _no_flip else _fx_a_p
-                                _ap = _fx_a_p if _no_flip else _fx_h_p
+                            _no_flip = (is_home == _pih)
+                            _hp = _fx_h_p if _no_flip else _fx_a_p
+                            _ap = _fx_a_p if _no_flip else _fx_h_p
                         _tot = _hp + _ap
                         if _tot > 0:
                             _norm_h = _hp / _tot   # fixture home team win-prob
@@ -1899,7 +1879,7 @@ async def predict(req: PredictionRequest):
                             _fx_away_poss = round(100.0 - _fx_home_poss, 1)
                             dom["homePoss"] = _fx_home_poss
                             dom["awayPoss"] = _fx_away_poss
-                            if is_home and not is_neutral:
+                            if is_home:
                                 dom["expectedPoss"]    = _fx_home_poss
                                 dom["oppExpectedPoss"] = _fx_away_poss
                             else:
@@ -1965,15 +1945,13 @@ async def predict(req: PredictionRequest):
                 # FIX 3 — Home-field possession advantage trimmed 2.5 → 1.5.
                 # Data shows home teams don't gain 2.5% possession from venue alone;
                 # 1.5% is calibrated from settled pick residuals.
-                # Skipped for neutral venues (WC/tournaments) — no home-ground advantage.
-                if not is_neutral:
-                    home_boost = 1.5
-                    higher_avg = max(home_avg, away_avg)
-                    if higher_avg > 60:
-                        dampen = min((higher_avg - 60) / 10.0, 0.7)
-                        home_boost *= (1.0 - dampen)
-                        dom["notes"].append(f"Home poss boost dampened: {home_boost:.1f}% (dominant team avg {higher_avg:.0f}%)")
-                    home_poss += home_boost
+                home_boost = 1.5
+                higher_avg = max(home_avg, away_avg)
+                if higher_avg > 60:
+                    dampen = min((higher_avg - 60) / 10.0, 0.7)
+                    home_boost *= (1.0 - dampen)
+                    dom["notes"].append(f"Home poss boost dampened: {home_boost:.1f}% (dominant team avg {higher_avg:.0f}%)")
+                home_poss += home_boost
 
                 if home_rank and away_rank:
                     gap = away_rank - home_rank
@@ -2054,8 +2032,8 @@ async def predict(req: PredictionRequest):
                     # So: use AWAY odds only when (is_neutral AND playerIsHome).
                     _ep_pih = odds.get("playerIsHome")
                     if _ep_pih is None:
-                        _ep_pih = bool(is_home and not is_neutral)
-                    _ep_use_away = is_neutral and _ep_pih
+                        _ep_pih = bool(is_home)
+                    _ep_use_away = False
 
                     if odds and odds.get("bookmakerOdds"):
                         _bh = float(odds["bookmakerOdds"].get("homeWin", 3.0))
@@ -2097,7 +2075,7 @@ async def predict(req: PredictionRequest):
                     pass
                 away_poss = round(100.0 - home_poss, 1)
 
-                if is_home and not is_neutral:
+                if is_home:
                     dom["expectedPoss"] = home_poss
                     dom["oppExpectedPoss"] = away_poss
                     dom["teamSeasonAvg"] = home_avg
@@ -2159,6 +2137,13 @@ async def predict(req: PredictionRequest):
 
         # Determine canonical (home_team_id, away_team_id) for cache key
         _is_home = player_venue == "home"
+        # For neutral venue, the user's "home/away" entry is meaningless — use
+        # playerIsHome from the fixture odds to know which team API-Football
+        # calls the home team. This prevents possession inversion in WC/tournament games.
+        if _is_neutral and match_odds:
+            _pih_flag = match_odds.get("playerIsHome")
+            if _pih_flag is not None:
+                _is_home = bool(_pih_flag)
         _home_id = actual_team_id if _is_home else req.opponentId
         _away_id = req.opponentId if _is_home else actual_team_id
         _dom_cache_key = (_home_id, _away_id) if (_home_id and _away_id) else None
@@ -2173,7 +2158,7 @@ async def predict(req: PredictionRequest):
         if _cached_dom is not None:
             # Remap expectedPoss/oppExpectedPoss for this player's perspective
             match_dominance = dict(_cached_dom)
-            if _is_home and not _is_neutral:
+            if _is_home:
                 match_dominance["expectedPoss"] = _cached_dom["homePoss"]
                 match_dominance["oppExpectedPoss"] = _cached_dom["awayPoss"]
                 match_dominance["teamSeasonAvg"] = _cached_dom.get("homeSeasonAvg", _cached_dom.get("teamSeasonAvg"))
@@ -2228,7 +2213,7 @@ async def predict(req: PredictionRequest):
             # Store in cache with home/away season avgs for perspective remapping
             if _dom_cache_key and match_dominance.get("homePoss") is not None:
                 _cache_entry = dict(match_dominance)
-                if _is_home and not _is_neutral:
+                if _is_home:
                     _cache_entry["homeSeasonAvg"] = match_dominance.get("teamSeasonAvg")
                     _cache_entry["awaySeasonAvg"] = match_dominance.get("oppSeasonAvg")
                 else:
