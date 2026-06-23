@@ -1202,9 +1202,11 @@ async def predict(req: PredictionRequest):
         # If player is HOME → team's HOME games + opponent's AWAY games
         # If player is AWAY → team's AWAY games + opponent's HOME games
         player_venue = req.venue.lower()  # "home", "away", or "neutral"
-        # WC (league_id=1) matches are always at neutral venues — force neutral regardless
-        # of user-entered venue to prevent possession inversion from WC-qualifier stats.
-        _is_neutral = player_venue == "neutral" or req.leagueId == 1
+        # API-Football always designates one team as home (1) and one as away (2) for
+        # every fixture — including World Cup matches. We trust that designation and the
+        # playerIsHome flag from get_match_odds(). Neutral is only set when the user
+        # explicitly passes venue="neutral" (rare edge case).
+        _is_neutral = player_venue == "neutral"
         opponent_venue = "away" if player_venue == "home" else ("home" if not _is_neutral else "neutral")
         is_womens = req.leagueId in WOMENS_LEAGUE_IDS
         pronoun_note = "IMPORTANT: This is a WOMEN'S league. Use she/her/her pronouns for all players. Never use he/him/his." if is_womens else ""
