@@ -19,6 +19,7 @@ import Reanimated, {
   Extrapolation,
 } from 'react-native-reanimated';
 import Colors from '@/constants/colors';
+import NotificationBell from '@/components/NotificationBell';
 import { listPicks, deletePick, fetchPickAnalysis, Pick } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -838,6 +839,7 @@ export default function PicksScreen() {
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>My Picks</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
         <View style={styles.tabToggle}>
           {(['live', 'history'] as Tab[]).map(t => (
             <TouchableOpacity
@@ -853,6 +855,8 @@ export default function PicksScreen() {
               </Text>
             </TouchableOpacity>
           ))}
+        </View>
+        <NotificationBell />
         </View>
       </View>
 

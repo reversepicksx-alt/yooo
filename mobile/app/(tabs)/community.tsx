@@ -7,6 +7,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
+import NotificationBell from '@/components/NotificationBell';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/colors';
@@ -525,9 +526,12 @@ export default function CommunityScreen() {
         <View style={styles.headerLeft}>
           <Text style={styles.headerTitle}>Reverse Chat</Text>
         </View>
-        <View style={styles.onlineBadge}>
-          <View style={styles.onlineDot} />
-          <Text style={styles.onlineText}>{onlineCount} online</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <View style={styles.onlineBadge}>
+            <View style={styles.onlineDot} />
+            <Text style={styles.onlineText}>{onlineCount} online</Text>
+          </View>
+          <NotificationBell />
         </View>
       </View>
       <View style={styles.headerDivider} />

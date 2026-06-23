@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
+import NotificationBell from '@/components/NotificationBell';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
@@ -285,8 +286,9 @@ export default function AccountScreen() {
 
   return (
     <View style={[styles.root, { paddingTop: topPad }]}>
-      <View style={styles.header}>
+      <View style={[styles.header, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingRight: 16 }]}>
         <Text style={styles.headerTitle}>Account</Text>
+        <NotificationBell />
       </View>
       <ScrollView contentContainerStyle={[styles.body, { paddingBottom: bottomPad + 20 }]}>
         <View style={styles.profileCard}>

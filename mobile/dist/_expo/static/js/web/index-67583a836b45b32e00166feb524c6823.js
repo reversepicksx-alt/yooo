@@ -255,7 +255,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   // This file should only import and register the root. No components or exports
   // should be added here.
   (0, _expoRouterBuildRenderRootComponent.renderRootComponent)(_expoRouterBuildQualifiedEntry.App);
-},2,[3,6,1431]);
+},2,[3,6,1432]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -335,7 +335,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       })
     });
   }
-},6,[7,9,32,660,1425,1430]);
+},6,[7,9,32,660,1426,1431]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -489,7 +489,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     throw new Error('Unimplemented Metro module context functionality');
   };
   module.exports = metroContext;
-},10,[11,762,768,819,820,825,826,827,1275,1282,1283,1422,1424]);
+},10,[11,762,769,820,821,826,827,828,1276,1283,1284,1423,1425]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -511,17 +511,14 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   var _expoVectorIcons = require(_dependencyMap[1]);
   var _reactNativeWebDistExportsView = require(_dependencyMap[2]);
   var View = _interopDefault(_reactNativeWebDistExportsView);
-  var _reactNativeWebDistExportsText = require(_dependencyMap[3]);
-  var Text = _interopDefault(_reactNativeWebDistExportsText);
-  var _reactNativeWebDistExportsStyleSheet = require(_dependencyMap[4]);
+  var _reactNativeWebDistExportsStyleSheet = require(_dependencyMap[3]);
   var StyleSheet = _interopDefault(_reactNativeWebDistExportsStyleSheet);
-  require(_dependencyMap[5]);
-  var _constantsColors = require(_dependencyMap[6]);
+  require(_dependencyMap[4]);
+  var _constantsColors = require(_dependencyMap[5]);
   var Colors = _interopDefault(_constantsColors);
-  var _contextsAuthContext = require(_dependencyMap[7]);
-  var _react = require(_dependencyMap[8]);
-  var _libApi = require(_dependencyMap[9]);
-  var _reactJsxRuntime = require(_dependencyMap[10]);
+  var _contextsAuthContext = require(_dependencyMap[6]);
+  var _react = require(_dependencyMap[7]);
+  var _reactJsxRuntime = require(_dependencyMap[8]);
   function TabIcon({
     name,
     focused
@@ -535,52 +532,16 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       })
     });
   }
-  function BadgeTabIcon({
-    name,
-    focused,
-    badge
-  }) {
-    return /*#__PURE__*/(0, _reactJsxRuntime.jsxs)(View.default, {
-      style: [styles.iconWrap, focused && styles.iconWrapActive],
-      children: [/*#__PURE__*/(0, _reactJsxRuntime.jsx)(_expoVectorIcons.Ionicons, {
-        name: name,
-        size: 22,
-        color: focused ? Colors.default.primary : Colors.default.textTertiary
-      }), badge > 0 && /*#__PURE__*/(0, _reactJsxRuntime.jsx)(View.default, {
-        style: styles.badge,
-        children: /*#__PURE__*/(0, _reactJsxRuntime.jsx)(Text.default, {
-          style: styles.badgeText,
-          children: badge > 99 ? '99+' : String(badge)
-        })
-      })]
-    });
-  }
   function TabLayout() {
     const {
       session,
       isLoading
     } = (0, _contextsAuthContext.useAuth)();
-    const isOwner = session?.accessType?.toLowerCase() === 'owner';
-    const [unreadCount, setUnreadCount] = (0, _react.useState)(0);
     (0, _react.useEffect)(() => {
       if (!isLoading && !session) {
         _expoRouter.router.replace('/auth');
       }
     }, [session, isLoading]);
-
-    // Poll for unread notification count every 30 s
-    (0, _react.useEffect)(() => {
-      if (!session?.email) return;
-      const fetchCount = async () => {
-        try {
-          const data = await (0, _libApi.getNotificationsUnreadCount)(session.email);
-          setUnreadCount(data?.count ?? 0);
-        } catch {}
-      };
-      fetchCount();
-      const interval = setInterval(fetchCount, 30_000);
-      return () => clearInterval(interval);
-    }, [session?.email]);
     if (isLoading) return null;
     if (!session) return null;
     return /*#__PURE__*/(0, _reactJsxRuntime.jsxs)(_expoRouter.Tabs, {
@@ -638,18 +599,6 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
           })
         }
       }), /*#__PURE__*/(0, _reactJsxRuntime.jsx)(_expoRouter.Tabs.Screen, {
-        name: "notifications",
-        options: {
-          title: 'Alerts',
-          tabBarIcon: ({
-            focused
-          }) => /*#__PURE__*/(0, _reactJsxRuntime.jsx)(BadgeTabIcon, {
-            name: "notifications",
-            focused: focused,
-            badge: unreadCount
-          })
-        }
-      }), /*#__PURE__*/(0, _reactJsxRuntime.jsx)(_expoRouter.Tabs.Screen, {
         name: "account",
         options: {
           title: 'Account',
@@ -659,6 +608,11 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
             name: "person-circle",
             focused: focused
           })
+        }
+      }), /*#__PURE__*/(0, _reactJsxRuntime.jsx)(_expoRouter.Tabs.Screen, {
+        name: "notifications",
+        options: {
+          href: null
         }
       }), /*#__PURE__*/(0, _reactJsxRuntime.jsx)(_expoRouter.Tabs.Screen, {
         name: "analytics",
@@ -693,27 +647,9 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     },
     iconWrapActive: {
       backgroundColor: Colors.default.primaryGlow
-    },
-    badge: {
-      position: 'absolute',
-      top: -3,
-      right: -1,
-      backgroundColor: Colors.default.primary,
-      borderRadius: 8,
-      minWidth: 16,
-      height: 16,
-      alignItems: 'center',
-      justifyContent: 'center',
-      paddingHorizontal: 3
-    },
-    badgeText: {
-      color: '#000000',
-      fontSize: 9,
-      fontWeight: '800',
-      lineHeight: 16
     }
   });
-},11,[12,669,274,135,148,126,756,757,32,761,7]);
+},11,[12,669,274,148,126,756,757,32,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -100752,14 +100688,16 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   var _reactNativeSafeAreaContext = require(_dependencyMap[12]);
   var _expoHaptics = require(_dependencyMap[13]);
   var Haptics = _interopNamespace(_expoHaptics);
-  var _expoVectorIcons = require(_dependencyMap[14]);
-  var _constantsColors = require(_dependencyMap[15]);
+  var _componentsNotificationBell = require(_dependencyMap[14]);
+  var NotificationBell = _interopDefault(_componentsNotificationBell);
+  var _expoVectorIcons = require(_dependencyMap[15]);
+  var _constantsColors = require(_dependencyMap[16]);
   var Colors = _interopDefault(_constantsColors);
-  var _contextsAuthContext = require(_dependencyMap[16]);
-  var _libApi = require(_dependencyMap[17]);
-  var _componentsIOSubscriptionLink = require(_dependencyMap[18]);
+  var _contextsAuthContext = require(_dependencyMap[17]);
+  var _libApi = require(_dependencyMap[18]);
+  var _componentsIOSubscriptionLink = require(_dependencyMap[19]);
   var IOSubscriptionLink = _interopDefault(_componentsIOSubscriptionLink);
-  var _reactJsxRuntime = require(_dependencyMap[19]);
+  var _reactJsxRuntime = require(_dependencyMap[20]);
   function getErrorMessage(err) {
     if (err instanceof Error) return err.message;
     if (typeof err === 'string') return err;
@@ -101012,12 +100950,17 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       style: [styles.root, {
         paddingTop: topPad
       }],
-      children: [/*#__PURE__*/(0, _reactJsxRuntime.jsx)(View.default, {
-        style: styles.header,
-        children: /*#__PURE__*/(0, _reactJsxRuntime.jsx)(Text.default, {
+      children: [/*#__PURE__*/(0, _reactJsxRuntime.jsxs)(View.default, {
+        style: [styles.header, {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          paddingRight: 16
+        }],
+        children: [/*#__PURE__*/(0, _reactJsxRuntime.jsx)(Text.default, {
           style: styles.headerTitle,
           children: "Account"
-        })
+        }), /*#__PURE__*/(0, _reactJsxRuntime.jsx)(NotificationBell.default, {})]
       }), /*#__PURE__*/(0, _reactJsxRuntime.jsxs)(ScrollView.default, {
         contentContainerStyle: [styles.body, {
           paddingBottom: 54
@@ -101174,7 +101117,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
         }), /*#__PURE__*/(0, _reactJsxRuntime.jsxs)(View.default, {
           style: styles.footer,
           children: [/*#__PURE__*/(0, _reactJsxRuntime.jsx)(Image.default, {
-            source: require(_dependencyMap[20]),
+            source: require(_dependencyMap[21]),
             style: styles.footerLogo,
             resizeMode: "contain"
           }), /*#__PURE__*/(0, _reactJsxRuntime.jsx)(Text.default, {
@@ -101443,7 +101386,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       color: Colors.default.textSecondary
     }
   });
-},762,[32,274,135,148,282,477,459,126,327,481,475,468,378,763,669,756,757,761,766,7,767]);
+},762,[32,274,135,148,282,477,459,126,327,481,475,468,378,763,766,669,756,757,761,767,7,768]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -101760,6 +101703,106 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   Object.defineProperty(exports, "default", {
     enumerable: true,
     get: function () {
+      return NotificationBell;
+    }
+  });
+  var _react = require(_dependencyMap[0]);
+  var _reactNativeWebDistExportsTouchableOpacity = require(_dependencyMap[1]);
+  var TouchableOpacity = _interopDefault(_reactNativeWebDistExportsTouchableOpacity);
+  var _reactNativeWebDistExportsView = require(_dependencyMap[2]);
+  var View = _interopDefault(_reactNativeWebDistExportsView);
+  var _reactNativeWebDistExportsText = require(_dependencyMap[3]);
+  var Text = _interopDefault(_reactNativeWebDistExportsText);
+  var _reactNativeWebDistExportsStyleSheet = require(_dependencyMap[4]);
+  var StyleSheet = _interopDefault(_reactNativeWebDistExportsStyleSheet);
+  var _expoVectorIcons = require(_dependencyMap[5]);
+  var _expoRouter = require(_dependencyMap[6]);
+  var _constantsColors = require(_dependencyMap[7]);
+  var Colors = _interopDefault(_constantsColors);
+  var _libApi = require(_dependencyMap[8]);
+  var _contextsAuthContext = require(_dependencyMap[9]);
+  var _reactJsxRuntime = require(_dependencyMap[10]);
+  function NotificationBell() {
+    const {
+      session
+    } = (0, _contextsAuthContext.useAuth)();
+    const [count, setCount] = (0, _react.useState)(0);
+    const refresh = (0, _react.useCallback)(async () => {
+      if (!session?.email) return;
+      try {
+        const data = await (0, _libApi.getNotificationsUnreadCount)(session.email);
+        setCount(data?.count ?? 0);
+      } catch {}
+    }, [session?.email]);
+    (0, _react.useEffect)(() => {
+      refresh();
+      const id = setInterval(refresh, 30_000);
+      return () => clearInterval(id);
+    }, [refresh]);
+    return /*#__PURE__*/(0, _reactJsxRuntime.jsxs)(TouchableOpacity.default, {
+      style: styles.wrap,
+      onPress: () => _expoRouter.router.push('/(tabs)/notifications'),
+      activeOpacity: 0.7,
+      hitSlop: {
+        top: 8,
+        bottom: 8,
+        left: 8,
+        right: 8
+      },
+      children: [/*#__PURE__*/(0, _reactJsxRuntime.jsx)(_expoVectorIcons.Ionicons, {
+        name: count > 0 ? 'notifications' : 'notifications-outline',
+        size: 22,
+        color: count > 0 ? Colors.default.primary : Colors.default.textSecondary
+      }), count > 0 && /*#__PURE__*/(0, _reactJsxRuntime.jsx)(View.default, {
+        style: styles.badge,
+        children: /*#__PURE__*/(0, _reactJsxRuntime.jsx)(Text.default, {
+          style: styles.badgeText,
+          children: count > 99 ? '99+' : String(count)
+        })
+      })]
+    });
+  }
+  const styles = StyleSheet.default.create({
+    wrap: {
+      width: 36,
+      height: 36,
+      alignItems: 'center',
+      justifyContent: 'center'
+    },
+    badge: {
+      position: 'absolute',
+      top: 1,
+      right: 1,
+      backgroundColor: Colors.default.primary,
+      borderRadius: 7,
+      minWidth: 14,
+      height: 14,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 2
+    },
+    badgeText: {
+      color: '#000000',
+      fontSize: 9,
+      fontWeight: '800',
+      lineHeight: 14
+    }
+  });
+},766,[32,477,274,135,148,669,12,756,761,757,7]);
+__d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
+  "use strict";
+
+  Object.defineProperty(exports, '__esModule', {
+    value: true
+  });
+  function _interopDefault(e) {
+    return e && e.__esModule ? e : {
+      default: e
+    };
+  }
+  Object.defineProperty(exports, "default", {
+    enumerable: true,
+    get: function () {
       return IOSubscriptionLink;
     }
   });
@@ -101865,14 +101908,14 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       color: Colors.default.background
     }
   });
-},766,[32,274,135,148,477,468,669,756,7]);
+},767,[32,274,135,148,477,468,669,756,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   module.exports = {
     uri: "/assets/assets/logo.4825e738200ebeb2fe4be850fdb4e651.png",
     width: 832,
     height: 1248
   };
-},767,[]);
+},768,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -102625,7 +102668,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       textAlign: 'center'
     }
   });
-},768,[32,274,135,148,282,475,281,378,669,769,756,761,7]);
+},769,[32,274,135,148,282,475,281,378,669,770,756,761,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -102810,7 +102853,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   var _mutationOptionsJs = require(_dependencyMap[17]);
   var _useInfiniteQueryJs = require(_dependencyMap[18]);
   var _IsRestoringProviderJs = require(_dependencyMap[19]);
-},769,[770,797,798,804,806,807,808,809,810,811,812,799,813,801,814,815,816,817,818,800]);
+},770,[771,798,799,805,807,808,809,810,811,812,813,800,814,802,815,816,817,818,819,801]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -103038,7 +103081,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     }
   });
-},770,[771,773,776,778,789,791,783,786,792,793,794,779,785,775,774,795,790,784,796]);
+},771,[772,774,777,779,790,792,784,787,793,794,795,780,786,776,775,796,791,785,797]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -103120,7 +103163,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
   };
   var focusManager = new FocusManager();
-},771,[772]);
+},772,[773]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -103153,7 +103196,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     onSubscribe() {}
     onUnsubscribe() {}
   };
-},772,[]);
+},773,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -103186,7 +103229,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       }
     };
   })();
-},773,[774]);
+},774,[775]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -103583,7 +103626,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     });
     return object;
   }
-},774,[775]);
+},775,[776]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -103661,7 +103704,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   function systemSetTimeoutZero(callback) {
     setTimeout(callback, 0);
   }
-},775,[]);
+},776,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -103826,7 +103869,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       }
     });
   }
-},776,[19,777,774]);
+},777,[19,778,775]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -103891,7 +103934,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return undefined;
   }
-},777,[774]);
+},778,[775]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -103975,7 +104018,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       return result;
     }
   };
-},778,[779,788]);
+},779,[780,789]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -104502,27 +104545,27 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return false;
   }
-},779,[780,781,782,771,773,783,784,772,777,774,775]);
+},780,[781,782,783,772,774,784,785,773,778,775,776]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   function _objectDestructuringEmpty(t) {
     if (null == t) throw new TypeError("Cannot destructure " + t);
   }
   module.exports = _objectDestructuringEmpty, module.exports.__esModule = true, module.exports["default"] = module.exports;
-},780,[]);
+},781,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   function _classPrivateFieldBase(e, t) {
     if (!{}.hasOwnProperty.call(e, t)) throw new TypeError("attempted to use private field on non-instance");
     return e;
   }
   module.exports = _classPrivateFieldBase, module.exports.__esModule = true, module.exports["default"] = module.exports;
-},781,[]);
+},782,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   var id = 0;
   function _classPrivateFieldKey(e) {
     return "__private_" + id++ + "_" + e;
   }
   module.exports = _classPrivateFieldKey, module.exports.__esModule = true, module.exports["default"] = module.exports;
-},782,[]);
+},783,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -104628,7 +104671,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     };
   }
   var notifyManager = createNotifyManager();
-},783,[775]);
+},784,[776]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -105103,7 +105146,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       fetchStatus: "idle"
     };
   }
-},784,[781,782,774,783,785,787]);
+},785,[782,783,775,784,786,788]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -105262,7 +105305,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       }
     };
   }
-},785,[771,786,777,773,774]);
+},786,[772,787,778,774,775]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -105334,7 +105377,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
   };
   var onlineManager = new OnlineManager();
-},786,[772]);
+},787,[773]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -105375,7 +105418,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       }
     }
   };
-},787,[775,773,774]);
+},788,[776,774,775]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -105508,7 +105551,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     if (!data || !options.getPreviousPageParam) return false;
     return getPreviousPageParam(options, data) != null;
   }
-},788,[774]);
+},789,[775]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -105645,7 +105688,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   function scopeFor(mutation) {
     return mutation.options.scope?.id;
   }
-},789,[783,790,774,772]);
+},790,[784,791,775,773]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -105922,7 +105965,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       submittedAt: 0
     };
   }
-},790,[781,782,783,787,785]);
+},791,[782,783,784,788,786]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -106075,7 +106118,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     });
   }
-},791,[781,782,790,783,772,774]);
+},792,[782,783,791,784,773,775]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -106323,7 +106366,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       }
     }
   }
-},792,[781,782,783,779,772,774]);
+},793,[782,783,784,780,773,775]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -106433,7 +106476,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     }
   };
-},793,[774,784,783,772]);
+},794,[775,785,784,773]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -106726,7 +106769,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       this.#mutationCache.clear();
     }
   };
-},794,[774,793,789,771,786,783,788]);
+},795,[775,794,790,772,787,784,789]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -106786,7 +106829,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       return context.client.getQueryData(context.queryKey) ?? initialValue;
     };
   }
-},795,[774]);
+},796,[775]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -106815,8 +106858,8 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   var dataTagSymbol = /* @__PURE__ */Symbol("dataTagSymbol");
   var dataTagErrorSymbol = /* @__PURE__ */Symbol("dataTagErrorSymbol");
   var unsetMarker = /* @__PURE__ */Symbol("unsetMarker");
-},796,[]);
-__d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {},797,[]);
+},797,[]);
+__d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {},798,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use client";
 
@@ -106916,7 +106959,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return getCombinedResult(trackResult());
   }
-},798,[19,32,770,799,800,801,802,803]);
+},799,[19,32,771,800,801,802,803,804]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use client";
 
@@ -106988,7 +107031,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       children
     });
   };
-},799,[32,7]);
+},800,[32,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use client";
 
@@ -107030,7 +107073,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   var IsRestoringContext = /*#__PURE__*/React.createContext(false);
   var useIsRestoring = () => React.useContext(IsRestoringContext);
   var IsRestoringProvider = IsRestoringContext.Provider;
-},800,[32]);
+},801,[32]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use client";
 
@@ -107095,7 +107138,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       children: typeof children === "function" ? children(value) : children
     });
   };
-},801,[32,7]);
+},802,[32,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use client";
 
@@ -107163,7 +107206,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   }) => {
     return result.isError && !errorResetBoundary.isReset() && !result.isFetching && query && (suspense && result.data === undefined || (0, _tanstackQueryCore.shouldThrowError)(throwOnError, [result.error, query]));
   };
-},802,[32,770]);
+},803,[32,771]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -107218,7 +107261,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   var fetchOptimistic = (defaultedOptions, observer, errorResetBoundary) => observer.fetchOptimistic(defaultedOptions).catch(() => {
     errorResetBoundary.clearReset();
   });
-},803,[]);
+},804,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use client";
 
@@ -107239,7 +107282,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   function useQuery(options, queryClient) {
     return (0, _useBaseQueryJs.useBaseQuery)(options, _tanstackQueryCore.QueryObserver, queryClient);
   }
-},804,[770,805]);
+},805,[771,806]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use client";
 
@@ -107327,7 +107370,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return !defaultedOptions.notifyOnChangeProps ? observer.trackResult(result) : result;
   }
-},805,[32,770,799,801,802,800,803]);
+},806,[32,771,800,802,803,801,804]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use client";
 
@@ -107354,7 +107397,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       placeholderData: undefined
     }), _tanstackQueryCore.QueryObserver, queryClient);
   }
-},806,[770,805,803]);
+},807,[771,806,804]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use client";
 
@@ -107380,7 +107423,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       throwOnError: _suspenseJs.defaultThrowOnError
     }), _tanstackQueryCore.InfiniteQueryObserver, queryClient);
   }
-},807,[770,805,803]);
+},808,[771,806,804]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use client";
 
@@ -107411,7 +107454,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       })
     }), queryClient);
   }
-},808,[770,798,803]);
+},809,[771,799,804]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -107433,7 +107476,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       client.prefetchQuery(options);
     }
   }
-},809,[799]);
+},810,[800]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -107455,7 +107498,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       client.prefetchInfiniteQuery(options);
     }
   }
-},810,[799]);
+},811,[800]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -107472,7 +107515,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   function queryOptions(options) {
     return options;
   }
-},811,[]);
+},812,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -107489,7 +107532,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   function infiniteQueryOptions(options) {
     return options;
   }
-},812,[]);
+},813,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use client";
 
@@ -107575,7 +107618,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }, [client, hydrationQueue]);
     return children;
   };
-},813,[32,770,799]);
+},814,[32,771,800]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use client";
 
@@ -107615,7 +107658,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     const queryCache = client.getQueryCache();
     return React.useSyncExternalStore(React.useCallback(onStoreChange => queryCache.subscribe(_tanstackQueryCore.notifyManager.batchCalls(onStoreChange)), [queryCache]), () => client.isFetching(filters), () => client.isFetching(filters));
   }
-},814,[32,770,799]);
+},815,[32,771,800]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use client";
 
@@ -107685,7 +107728,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       }
     }), [mutationCache]), () => result.current, () => result.current);
   }
-},815,[32,770,799]);
+},816,[32,771,800]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use client";
 
@@ -107738,7 +107781,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       mutateAsync: result.mutate
     });
   }
-},816,[32,770,799]);
+},817,[32,771,800]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -107755,7 +107798,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   function mutationOptions(options) {
     return options;
   }
-},817,[]);
+},818,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use client";
 
@@ -107776,7 +107819,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   function useInfiniteQuery(options, queryClient) {
     return (0, _useBaseQueryJs.useBaseQuery)(options, _tanstackQueryCore.InfiniteQueryObserver, queryClient);
   }
-},818,[770,805]);
+},819,[771,806]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -108140,7 +108183,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       borderColor: Colors.default.border
     }
   });
-},819,[32,274,135,148,272,391,477,475,480,126,378,763,669,756,761,757,7]);
+},820,[32,274,135,148,272,391,477,475,480,126,378,763,669,756,761,757,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -108207,14 +108250,16 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   var _reactNavigationNative = require(_dependencyMap[17]);
   var _expoImagePicker = require(_dependencyMap[18]);
   var ImagePicker = _interopNamespace(_expoImagePicker);
-  var _expoHaptics = require(_dependencyMap[19]);
+  var _componentsNotificationBell = require(_dependencyMap[19]);
+  var NotificationBell = _interopDefault(_componentsNotificationBell);
+  var _expoHaptics = require(_dependencyMap[20]);
   var Haptics = _interopNamespace(_expoHaptics);
-  var _expoVectorIcons = require(_dependencyMap[20]);
-  var _constantsColors = require(_dependencyMap[21]);
+  var _expoVectorIcons = require(_dependencyMap[21]);
+  var _constantsColors = require(_dependencyMap[22]);
   var Colors = _interopDefault(_constantsColors);
-  var _contextsAuthContext = require(_dependencyMap[22]);
-  var _libApi = require(_dependencyMap[23]);
-  var _reactJsxRuntime = require(_dependencyMap[24]);
+  var _contextsAuthContext = require(_dependencyMap[23]);
+  var _libApi = require(_dependencyMap[24]);
+  var _reactJsxRuntime = require(_dependencyMap[25]);
   const {
     width: SW
   } = Dimensions.default.get('window');
@@ -108692,13 +108737,20 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
             children: "Reverse Chat"
           })
         }), /*#__PURE__*/(0, _reactJsxRuntime.jsxs)(View.default, {
-          style: styles.onlineBadge,
-          children: [/*#__PURE__*/(0, _reactJsxRuntime.jsx)(View.default, {
-            style: styles.onlineDot
-          }), /*#__PURE__*/(0, _reactJsxRuntime.jsxs)(Text.default, {
-            style: styles.onlineText,
-            children: [onlineCount, " online"]
-          })]
+          style: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 8
+          },
+          children: [/*#__PURE__*/(0, _reactJsxRuntime.jsxs)(View.default, {
+            style: styles.onlineBadge,
+            children: [/*#__PURE__*/(0, _reactJsxRuntime.jsx)(View.default, {
+              style: styles.onlineDot
+            }), /*#__PURE__*/(0, _reactJsxRuntime.jsxs)(Text.default, {
+              style: styles.onlineText,
+              children: [onlineCount, " online"]
+            })]
+          }), /*#__PURE__*/(0, _reactJsxRuntime.jsx)(NotificationBell.default, {})]
         })]
       }), /*#__PURE__*/(0, _reactJsxRuntime.jsx)(View.default, {
         style: styles.headerDivider
@@ -109338,7 +109390,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       justifyContent: 'center'
     }
   });
-},820,[32,274,135,272,391,477,327,480,126,148,475,481,366,459,490,283,378,17,821,763,669,756,757,761,7]);
+},821,[32,274,135,272,391,477,327,480,126,148,475,481,366,459,490,283,378,17,822,766,763,669,756,757,761,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -109547,7 +109599,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return await ExponentImagePicker.default.launchImageLibraryAsync(mappedOptions);
   }
-},821,[533,822,824,823]);
+},822,[533,823,825,824]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -109814,7 +109866,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return result;
   }
-},822,[533,823,824]);
+},823,[533,824,825]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -110048,7 +110100,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
      */
     CameraType["front"] = "front";
   })(CameraType || (CameraType = {}));
-},823,[]);
+},824,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -110085,7 +110137,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       mediaTypes: parseMediaTypes(options.mediaTypes ?? [])
     });
   }
-},824,[823]);
+},825,[824]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -110452,7 +110504,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       lineHeight: 20
     }
   });
-},825,[32,274,135,148,282,475,281,126,378,669,769,756,761,757,7]);
+},826,[32,274,135,148,282,475,281,126,378,669,770,756,761,757,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -110842,7 +110894,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       flexShrink: 0
     }
   });
-},826,[32,274,135,148,272,477,475,281,126,378,669,756,757,761,7]);
+},827,[32,274,135,148,272,477,475,281,126,378,669,756,757,761,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -110911,9 +110963,11 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   var Reanimated = _interopDefault(_reactNativeReanimated);
   var _constantsColors = require(_dependencyMap[20]);
   var Colors = _interopDefault(_constantsColors);
-  var _libApi = require(_dependencyMap[21]);
-  var _contextsAuthContext = require(_dependencyMap[22]);
-  var _reactJsxRuntime = require(_dependencyMap[23]);
+  var _componentsNotificationBell = require(_dependencyMap[21]);
+  var NotificationBell = _interopDefault(_componentsNotificationBell);
+  var _libApi = require(_dependencyMap[22]);
+  var _contextsAuthContext = require(_dependencyMap[23]);
+  var _reactJsxRuntime = require(_dependencyMap[24]);
   const PROP_LABELS = {
     pass_attempts: 'Pass Attempts',
     shots: 'Shots',
@@ -111851,21 +111905,28 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
         children: [/*#__PURE__*/(0, _reactJsxRuntime.jsx)(Text.default, {
           style: styles.headerTitle,
           children: "My Picks"
-        }), /*#__PURE__*/(0, _reactJsxRuntime.jsx)(View.default, {
-          style: styles.tabToggle,
-          children: ['live', 'history'].map(t => /*#__PURE__*/(0, _reactJsxRuntime.jsxs)(TouchableOpacity.default, {
-            style: [styles.toggle, activeTab === t && styles.toggleActive],
-            onPress: () => {
-              setActiveTab(t);
-              Haptics.selectionAsync();
-            },
-            children: [t === 'live' && live.length > 0 && activeTab !== 'live' && /*#__PURE__*/(0, _reactJsxRuntime.jsx)(View.default, {
-              style: styles.tabDot
-            }), /*#__PURE__*/(0, _reactJsxRuntime.jsx)(Text.default, {
-              style: [styles.toggleText, activeTab === t && styles.toggleTextActive],
-              children: t === 'live' ? `Live${live.length > 0 ? ` (${live.length})` : ''}` : `History${history.length > 0 ? ` (${history.length})` : ''}`
-            })]
-          }, t))
+        }), /*#__PURE__*/(0, _reactJsxRuntime.jsxs)(View.default, {
+          style: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 6
+          },
+          children: [/*#__PURE__*/(0, _reactJsxRuntime.jsx)(View.default, {
+            style: styles.tabToggle,
+            children: ['live', 'history'].map(t => /*#__PURE__*/(0, _reactJsxRuntime.jsxs)(TouchableOpacity.default, {
+              style: [styles.toggle, activeTab === t && styles.toggleActive],
+              onPress: () => {
+                setActiveTab(t);
+                Haptics.selectionAsync();
+              },
+              children: [t === 'live' && live.length > 0 && activeTab !== 'live' && /*#__PURE__*/(0, _reactJsxRuntime.jsx)(View.default, {
+                style: styles.tabDot
+              }), /*#__PURE__*/(0, _reactJsxRuntime.jsx)(Text.default, {
+                style: [styles.toggleText, activeTab === t && styles.toggleTextActive],
+                children: t === 'live' ? `Live${live.length > 0 ? ` (${live.length})` : ''}` : `History${history.length > 0 ? ` (${history.length})` : ''}`
+              })]
+            }, t))
+          }), /*#__PURE__*/(0, _reactJsxRuntime.jsx)(NotificationBell.default, {})]
         })]
       }), picks.length > 0 && /*#__PURE__*/(0, _reactJsxRuntime.jsx)(RecordBar, {
         picks: picks
@@ -113147,7 +113208,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       letterSpacing: 0.3
     }
   });
-},827,[32,274,135,148,272,477,475,459,126,281,481,282,366,378,17,763,669,769,828,831,756,761,757,7]);
+},828,[32,274,135,148,272,477,475,459,126,281,481,282,366,378,17,763,669,770,829,832,756,766,761,757,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -113174,7 +113235,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   var _ReanimatedSwipeableProps = require(_dependencyMap[0]);
   var _ReanimatedSwipeable = require(_dependencyMap[1]);
   var _ReanimatedSwipeable2 = _interopDefault(_ReanimatedSwipeable);
-},828,[829,830]);
+},829,[830,831]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -113192,7 +113253,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     SwipeDirection["RIGHT"] = "right";
     return SwipeDirection;
   }({});
-},829,[]);
+},830,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -114096,7 +114157,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       overflow: 'hidden'
     })
   });
-},830,[19,32,274,121,148,831,828,1146,1230,1271,7]);
+},831,[19,32,274,121,148,832,829,1147,1231,1272,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -115233,10 +115294,10 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   // eslint-disable-next-line import/first
 
   var _default = Animated;
-},831,[832,833,886,917,923,876,870,890,948,1097,1098,1096,949,1099,945,885,1076,1105,1109,953,1110,1111,952,916,1130,1137,1138,1139,1145]);
+},832,[833,834,887,918,924,877,871,891,949,1098,1099,1097,950,1100,946,886,1077,1106,1110,954,1111,1112,953,917,1131,1138,1139,1140,1146]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
-},832,[]);
+},833,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -115274,7 +115335,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       _worklet_14275892947003_init_data
     }))();
   }
-},833,[834,870,883,885]);
+},834,[835,871,884,886]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -115464,13 +115525,13 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     // Bundle mode.
     (0, _workletRuntimeEntryJs.bundleModeInit)();
   }
-},834,[835,836,860,861,862,851,840,863,850,852,869,849,854,855]);
+},835,[836,837,861,862,863,852,841,864,851,853,870,850,855,856]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
   /* eslint-disable reanimated/use-global-this */
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-},835,[]);
+},836,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -115704,7 +115765,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       setupSetInterval: _runLoopCommonSetIntervalPolyfillJs.setupSetInterval
     }))();
   }
-},836,[837,841,842,843,845,846,847,848,858,840,859,849,854,839,855]);
+},837,[838,842,843,844,846,847,848,849,859,841,860,850,855,840,856]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -115750,7 +115811,7 @@ See https://docs.swmansion.com/react-native-reanimated/docs/guides/troubleshooti
     const factory = metroRequire(workletHash).default;
     return factory(closureVariables);
   }
-},837,[838,839]);
+},838,[839,840]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -115775,7 +115836,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       console.error(formatMessage(message));
     }
   };
-},838,[]);
+},839,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -115848,7 +115909,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   const WorkletsError = WorkletsErrorConstructor;
 
   // signed type
-},839,[840]);
+},840,[841]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -115905,7 +115966,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     // just to be safe.
     globalThis.__RUNTIME_KIND = RuntimeKind.ReactNative;
   }
-},840,[]);
+},841,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -115977,7 +116038,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     _worklet_10619173831570_init_data,
     callGuardDEV
   });
-},841,[]);
+},842,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -116053,7 +116114,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   function registerReportFatalRemoteError() {
     globalThis.__reportFatalRemoteError = reportFatalRemoteError;
   }
-},842,[839]);
+},843,[840]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -116096,7 +116157,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     IS_WINDOWS = _PlatformCheckerJs.IS_WINDOWS;
     SHOULD_BE_USE_WEB = _PlatformCheckerJs.SHOULD_BE_USE_WEB;
   }
-},843,[840,844]);
+},844,[841,845]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -116132,7 +116193,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   const IS_WEB = true;
   const IS_WINDOWS = false;
   const SHOULD_BE_USE_WEB = IS_JEST || IS_WEB || IS_WINDOWS;
-},844,[126]);
+},845,[126]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -116168,7 +116229,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   }({
     _worklet_9047825557105_init_data
   });
-},845,[]);
+},846,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -116215,7 +116276,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   }({
     _worklet_2731038767774_init_data
   });
-},846,[]);
+},847,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -116230,7 +116291,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   function mockedRequestAnimationFrame(callback) {
     return setTimeout(() => callback(performance.now()), 0);
   }
-},847,[]);
+},848,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -116307,7 +116368,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     _worklet_10443837112382_init_data,
     callMicrotasks: _threadsJs.callMicrotasks
   });
-},848,[849]);
+},849,[850]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -116807,7 +116868,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       callMicrotasks
     });
   }
-},849,[843,840,850,852,854,839,855]);
+},850,[844,841,851,853,855,840,856]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -117536,7 +117597,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
    */
   /** @deprecated This function is no longer supported. */
   const makeShareable = _PlatformCheckerIndexJs.SHOULD_BE_USE_WEB ? makeShareableJS : makeShareableNative;
-},850,{"0":842,"1":851,"2":838,"3":843,"4":852,"5":853,"6":854,"7":839,"8":855,"9":834,"paths":{}});
+},851,{"0":843,"1":852,"2":839,"3":844,"4":853,"5":854,"6":855,"7":840,"8":856,"9":835,"paths":{}});
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -117547,7 +117608,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   function isSynchronizable(value) {
     return typeof value === 'object' && value !== null && '__synchronizableRef' in value && value.__synchronizableRef === true;
   }
-},851,[]);
+},852,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -117600,7 +117661,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     },
     get: cache.get.bind(cache)
   };
-},852,[843]);
+},853,[844]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -117619,7 +117680,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
   });
   const jsVersion = '0.5.1';
-},853,[]);
+},854,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -117677,7 +117738,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   }({
     _worklet_10225262356426_init_data
   });
-},854,[]);
+},855,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -117691,7 +117752,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
   });
   var _workletsModuleInstance = require(_dependencyMap[0]);
-},855,[856]);
+},856,[857]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -117706,7 +117767,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   });
   var _JSWorkletsJs = require(_dependencyMap[0]);
   const WorkletsModule = (0, _JSWorkletsJs.createJSWorkletsModule)();
-},856,[857]);
+},857,[858]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -117822,7 +117883,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       // noop
     }
   }
-},857,[843,847,839]);
+},858,[844,848,840]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -117875,7 +117936,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   }({
     _worklet_13189021700798_init_data
   });
-},858,[]);
+},859,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -117922,7 +117983,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     globalThis.__synchronizableUnpacker = synchronizableUnpacker;
   }
-},859,[850]);
+},860,[851]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -117962,7 +118023,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
   }
   bundleModeInit();
-},860,[836,843,840,839]);
+},861,[837,844,841,840]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -118013,7 +118074,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
 
   /** @deprecated Use {@link serializableMappingCache} instead. */
   const shareableMappingCache = _serializableMappingCacheJs.serializableMappingCache;
-},861,[850,852]);
+},862,[851,853]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -118073,7 +118134,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     staticFeatureFlags[name] = featureFlagValue;
     return featureFlagValue;
   }
-},862,[838,855]);
+},863,[839,856]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -118291,7 +118352,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     _worklet_2465730125034_init_data
   });
   /** Configuration object for creating a worklet runtime. */
-},863,[841,836,843,864,840,850,854,839,855]);
+},864,[842,837,844,865,841,851,855,840,856]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -118350,7 +118411,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     setupSetImmediate: _commonSetImmediatePolyfillJs.setupSetImmediate,
     setupSetInterval: _commonSetIntervalPolyfillJs.setupSetInterval
   });
-},864,[845,846,865,867,868,866]);
+},865,[846,847,866,868,869,867]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -118386,7 +118447,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     _worklet_67582599291_init_data,
     pushMicrotask: _taskQueueJs.pushMicrotask
   });
-},865,[866]);
+},866,[867]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -118478,7 +118539,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   }({
     _worklet_8536898005142_init_data
   });
-},866,[]);
+},867,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -118547,7 +118608,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   }({
     _worklet_2955100220807_init_data
   });
-},867,[]);
+},868,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -118600,7 +118661,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     _worklet_14844637433767_init_data,
     pushTask: _taskQueueJs.pushTask
   });
-},868,[866]);
+},869,[867]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -118614,7 +118675,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     const synchronizableRef = _WorkletsModuleIndexJs.WorkletsModule.createSynchronizable((0, _serializableJs.createSerializable)(initialValue));
     return globalThis.__synchronizableUnpacker(synchronizableRef);
   }
-},869,[850,855]);
+},870,[851,856]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -118676,7 +118737,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     }
   });
-},870,[871,872,873,874,878]);
+},871,[872,873,874,875,879]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -118742,7 +118803,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   const IS_WINDOWS = false;
   const IS_WINDOW_AVAILABLE = isWindowAvailable();
   const SHOULD_BE_USE_WEB = IS_JEST || IS_WEB || IS_WINDOWS;
-},871,[126]);
+},872,[126]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   /* eslint-disable reanimated/use-reanimated-error */
   'use strict';
@@ -118814,7 +118875,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   const ReanimatedError = ReanimatedErrorConstructor;
 
   // signed type
-},872,[834]);
+},873,[835]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   /* eslint-disable reanimated/use-logger */
   'use strict';
@@ -119038,7 +119099,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       ReanimatedLogLevel
     })
   };
-},873,[]);
+},874,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -119078,7 +119139,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     }
   });
-},874,[875,877,882]);
+},875,[876,878,883]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -119164,7 +119225,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     ColorProperties: _Colors.ColorProperties,
     processColor
   });
-},875,[876,871]);
+},876,[877,872]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -120161,7 +120222,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   }({
     _worklet_7576732386380_init_data
   });
-},876,[]);
+},877,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -120337,7 +120398,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     parseBoxShadowString: _utils.parseBoxShadowString,
     maybeAddSuffix: _utils.maybeAddSuffix
   });
-},877,[19,871,872,878,875]);
+},878,[19,872,873,879,876]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -120377,7 +120438,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     }
   });
-},878,[879,880,881]);
+},879,[880,881,882]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -120406,7 +120467,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   }({
     _worklet_9455887514833_init_data
   });
-},879,[]);
+},880,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -120473,7 +120534,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     isLength: _utilsGuards.isLength,
     LENGTH_MAPPINGS
   });
-},880,[879]);
+},881,[880]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -120488,7 +120549,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   function maybeAddSuffix(value, suffix) {
     return hasSuffix(value) ? value : `${String(value)}${suffix}`;
   }
-},881,[]);
+},882,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -120725,7 +120786,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     HORIZONTAL_CONVERSIONS,
     VERTICAL_CONVERSIONS
   });
-},882,[872]);
+},883,[873]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -120743,7 +120804,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     }
   });
-},883,[884]);
+},884,[885]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -120754,7 +120815,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   function initSvgCssSupport() {
     // TODO: Add web support for SVG components
   }
-},884,[]);
+},885,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -120819,7 +120880,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     staticFeatureFlags[name] = featureFlagValue;
     return featureFlagValue;
   }
-},885,[870,886]);
+},886,[871,887]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -120835,7 +120896,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   });
   var _jsReanimated = require(_dependencyMap[0]);
   const ReanimatedModule = (0, _jsReanimated.createJSReanimatedModule)();
-},886,[887]);
+},887,[888]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -120933,7 +120994,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       }
     }
   };
-},887,[870,888,889]);
+},888,[871,889,890]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -120980,7 +121041,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-require-imports
     require(_dependencyMap[1], "react-native-web/dist/exports/StyleSheet/preprocess").createTextShadowValue;
   } catch (_e) {}
-},888,[150,195]);
+},889,[150,195]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -121231,7 +121292,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     Platform["UNKNOWN"] = "unknown";
     return Platform;
   }({});
-},889,[834,870,890,891]);
+},890,[835,871,891,892]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -121373,7 +121434,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
 
   // Ideally we want AnimatedStyle to not be generic, but there are
   // so many dependencies on it being generic that it's not feasible at the moment.
-},890,[]);
+},891,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -121397,7 +121458,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       throw new _commonErrors.ReanimatedError(result.message);
     }
   }
-},891,[892,872,916]);
+},892,[893,873,917]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -121454,7 +121515,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     };
   }
   module.exports = validateVersion;
-},892,[893,911,913,914,915]);
+},893,[894,912,914,915,916]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -121468,7 +121529,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     return range.test(version);
   };
   module.exports = satisfies;
-},893,[894]);
+},894,[895]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -121940,7 +122001,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return true;
   };
-},894,[895,896,897,900,904,898,899]);
+},895,[896,897,898,901,905,899,900]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -121977,7 +122038,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
   }
   module.exports = LRUCache;
-},895,[]);
+},896,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -121996,7 +122057,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     return options;
   };
   module.exports = parseOptions;
-},896,[]);
+},897,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -122120,7 +122181,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   const debug = require(_dependencyMap[3]);
   const SemVer = require(_dependencyMap[4]);
   const Range = require(_dependencyMap[5]);
-},897,[896,898,901,900,904,894]);
+},898,[897,899,902,901,905,895]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -122286,7 +122347,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   // >=0.0.0 is like a star
   createToken('GTE0', '^\\s*>=\\s*0\\.0\\.0\\s*$');
   createToken('GTE0PRE', '^\\s*>=\\s*0\\.0\\.0-0\\s*$');
-},898,[899,900]);
+},899,[900,901]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -122313,13 +122374,13 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     FLAG_INCLUDE_PRERELEASE: 0b001,
     FLAG_LOOSE: 0b010
   };
-},899,[]);
+},900,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
   const debug = typeof process === 'object' && process.env && process.env.NODE_DEBUG && /\bsemver\b/i.test(process.env.NODE_DEBUG) ? (...args) => console.error('SEMVER', ...args) : () => {};
   module.exports = debug;
-},900,[]);
+},901,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -122366,21 +122427,21 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
   };
   module.exports = cmp;
-},901,[902,906,907,908,909,910]);
+},902,[903,907,908,909,910,911]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
   const compare = require(_dependencyMap[0]);
   const eq = (a, b, loose) => compare(a, b, loose) === 0;
   module.exports = eq;
-},902,[903]);
+},903,[904]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
   const SemVer = require(_dependencyMap[0]);
   const compare = (a, b, loose) => new SemVer(a, loose).compare(new SemVer(b, loose));
   module.exports = compare;
-},903,[904]);
+},904,[905]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -122691,7 +122752,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
   }
   module.exports = SemVer;
-},904,[900,899,898,896,905]);
+},905,[901,900,899,897,906]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -122713,42 +122774,42 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     compareIdentifiers,
     rcompareIdentifiers
   };
-},905,[]);
+},906,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
   const compare = require(_dependencyMap[0]);
   const neq = (a, b, loose) => compare(a, b, loose) !== 0;
   module.exports = neq;
-},906,[903]);
+},907,[904]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
   const compare = require(_dependencyMap[0]);
   const gt = (a, b, loose) => compare(a, b, loose) > 0;
   module.exports = gt;
-},907,[903]);
+},908,[904]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
   const compare = require(_dependencyMap[0]);
   const gte = (a, b, loose) => compare(a, b, loose) >= 0;
   module.exports = gte;
-},908,[903]);
+},909,[904]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
   const compare = require(_dependencyMap[0]);
   const lt = (a, b, loose) => compare(a, b, loose) < 0;
   module.exports = lt;
-},909,[903]);
+},910,[904]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
   const compare = require(_dependencyMap[0]);
   const lte = (a, b, loose) => compare(a, b, loose) <= 0;
   module.exports = lte;
-},910,[903]);
+},911,[904]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -122758,7 +122819,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     return parsed && parsed.prerelease.length ? parsed.prerelease : null;
   };
   module.exports = prerelease;
-},911,[912]);
+},912,[913]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -122777,11 +122838,11 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
   };
   module.exports = parse;
-},912,[904]);
+},913,[905]);
 __d(function(global, require, _importDefaultUnused, _importAllUnused, module, exports, _dependencyMapUnused) {
   module.exports = { "min": "0.5.0", "max": "0.8" }
 ;
-},913,[]);
+},914,[]);
 __d(function(global, require, _importDefaultUnused, _importAllUnused, module, exports, _dependencyMapUnused) {
   module.exports = {
   "nightly": {
@@ -122846,7 +122907,7 @@ __d(function(global, require, _importDefaultUnused, _importAllUnused, module, ex
   }
 }
 ;
-},914,[]);
+},915,[]);
 __d(function(global, require, _importDefaultUnused, _importAllUnused, module, exports, _dependencyMapUnused) {
   module.exports = {
   "name": "react-native-worklets",
@@ -122998,7 +123059,7 @@ __d(function(global, require, _importDefaultUnused, _importAllUnused, module, ex
   }
 }
 ;
-},915,[]);
+},916,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -123017,7 +123078,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
   });
   const jsVersion = '4.1.7';
-},916,[]);
+},917,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -123079,7 +123140,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   var _componentView = require(_dependencyMap[4]);
   var _ConfigHelper = require(_dependencyMap[5]);
   var _createAnimatedComponent = require(_dependencyMap[6]);
-},917,[918,1074,1075,1095,1073,1096,919]);
+},918,[919,1075,1076,1096,1074,1097,920]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -123169,7 +123230,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   const ReanimatedFlatList = FlatListRender;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-},918,[19,32,272,919,948,1073,7]);
+},919,[19,32,272,920,949,1074,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -123183,7 +123244,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
   });
   var _createAnimatedComponent = require(_dependencyMap[0]);
-},919,[920]);
+},920,[921]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -123242,7 +123303,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     animatedComponent.displayName = Component.displayName || Component.name || 'Component';
     return animatedComponent;
   }
-},920,[32,921,7]);
+},921,[32,922,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -123529,7 +123590,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       return styleElement;
     });
   }
-},921,[922,947,870,890,948,955,1034,1056,1063,1064,1067,1070,1072,1069]);
+},922,[923,948,871,891,949,956,1035,1057,1064,1065,1068,1071,1073,1070]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -123687,7 +123748,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       createLayoutAnimationManager
     }))();
   }
-},922,[834,923,870,890,927]);
+},923,[835,924,871,891,928]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -123817,7 +123878,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   var _styleAnimation = require(_dependencyMap[6]);
   var _timing = require(_dependencyMap[7]);
   var _util = require(_dependencyMap[8]);
-},923,[924,931,936,937,938,939,943,944,925]);
+},924,[925,932,937,938,939,940,944,945,926]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -123948,7 +124009,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     logger: _common.logger,
     getReduceMotionForAnimation: _util.getReduceMotionForAnimation
   });
-},924,[870,925]);
+},925,[871,926]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   /* eslint-disable @typescript-eslint/no-shadow */
   'use strict';
@@ -124635,7 +124696,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
    * @see https://docs.swmansion.com/react-native-reanimated/docs/core/cancelAnimation
    */
   const cancelAnimation = _common.SHOULD_BE_USE_WEB ? cancelAnimationWeb : cancelAnimationNative;
-},925,[834,876,870,890,926,930]);
+},926,[835,877,871,891,927,931]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -124665,7 +124726,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       ReducedMotionManager.uiValue.value = value;
     }
   };
-},926,[870,927]);
+},927,[871,928]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -125205,7 +125266,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   function mutableToJSON(value) {
     return JSON.stringify(value);
   }
-},927,[834,870,885,928,929]);
+},928,[835,871,886,929,930]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -125240,7 +125301,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     // data from the previous component render
     return currentOwner && !currentOwner?.alternate;
   }
-},928,[32]);
+},929,[32]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -125328,7 +125389,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   }({
     _worklet_14210672339564_init_data
   });
-},929,[]);
+},930,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -125900,7 +125961,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     _worklet_1937983127392_init_data,
     decomposeMatrix
   });
-},930,[870]);
+},931,[871]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -125914,7 +125975,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
   });
   var _decay = require(_dependencyMap[0]);
-},931,[932]);
+},932,[933]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -126088,7 +126149,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     validateConfig,
     getReduceMotionForAnimation: _util.getReduceMotionForAnimation
   });
-},932,[870,925,933,935,934]);
+},933,[871,926,934,936,935]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -126146,7 +126207,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     SLOPE_FACTOR: _utils.SLOPE_FACTOR,
     VELOCITY_EPS: _utils.VELOCITY_EPS
   });
-},933,[934]);
+},934,[935]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -126211,7 +126272,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   }({
     _worklet_17410890019123_init_data
   });
-},934,[870]);
+},935,[871]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -126276,7 +126337,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     DERIVATIVE_EPS,
     VELOCITY_EPS: _utils.VELOCITY_EPS
   });
-},935,[934]);
+},936,[935]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -126415,7 +126476,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     _worklet_5021668065982_init_data,
     getReduceMotionForAnimation: _util.getReduceMotionForAnimation
   });
-},936,[925]);
+},937,[926]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -126568,7 +126629,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     _worklet_11159281706129_init_data,
     getReduceMotionForAnimation: _util.getReduceMotionForAnimation
   });
-},937,[925]);
+},938,[926]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -126767,7 +126828,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     getReduceMotionForAnimation: _util.getReduceMotionForAnimation,
     _worklet_9589498068685_init_data
   });
-},938,[870,925]);
+},939,[871,926]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -126807,7 +126868,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     }
   });
-},939,[940,941,942]);
+},940,[941,942,943]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -127092,7 +127153,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     getEnergy: _springUtils.getEnergy,
     getReduceMotionForAnimation: _util.getReduceMotionForAnimation
   });
-},940,[925,941,942]);
+},941,[926,942,943]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -127212,7 +127273,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
    *   {@link ReduceMotion}.
    * @see https://docs.swmansion.com/react-native-reanimated/docs/animations/withSpring/#config-
    */
-},941,[]);
+},942,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -127710,7 +127771,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     _worklet_4898375016678_init_data,
     getEnergy
   });
-},942,[870]);
+},943,[871]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -127999,7 +128060,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     isValidLayoutAnimationProp: _util.isValidLayoutAnimationProp,
     withTiming: _timing.withTiming
   });
-},943,[876,870,944,925]);
+},944,[877,871,945,926]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -128163,7 +128224,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     Easing: _Easing.Easing,
     getReduceMotionForAnimation: _util.getReduceMotionForAnimation
   });
-},944,[945,925]);
+},945,[946,926]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -128824,7 +128885,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     });
   }
   const Easing = EasingObject;
-},945,[946]);
+},946,[947]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -129204,7 +129265,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     binarySubdivide,
     _worklet_10344582928838_init_data
   });
-},946,[870]);
+},947,[871]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -129240,7 +129301,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       return layoutAnimationOrBuilder;
     }
   }
-},947,[870]);
+},948,[871]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -129326,7 +129387,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     }
   }
-},948,[32,949,954,7]);
+},949,[32,950,955,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -129513,7 +129574,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   function setShouldAnimateExitingForTag(viewTag, shouldAnimate) {
     _ReanimatedModule.ReanimatedModule.setShouldAnimateExitingForTag(viewTag, shouldAnimate);
   }
-},949,[630,834,870,886,950,952,927]);
+},950,[630,835,871,887,951,953,928]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -129571,7 +129632,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       }
     }
   }
-},950,[951]);
+},951,[952]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -129638,7 +129699,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       this.sensorId = null;
     }
   }
-},951,[890,927,886]);
+},952,[891,928,887]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -129897,7 +129958,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       mapperID
     }))();
   }
-},952,[834,870,953]);
+},953,[835,871,954]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -129927,7 +129988,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   }({
     _worklet_6111424988838_init_data
   });
-},953,[]);
+},954,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -129938,7 +129999,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   function findNodeHandle(componentOrHandle) {
     return componentOrHandle;
   }
-},954,[]);
+},955,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -130120,7 +130181,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       }));
     }
   }
-},955,[32,126,148,870,956,957,958,959,1008,1033,7]);
+},956,[32,126,148,871,957,958,959,960,1009,1034,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -130134,7 +130195,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       viewTag: element?.__nativeTag
     };
   }
-},956,[]);
+},957,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -130146,7 +130207,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   function getShadowNodeWrapperFromRef() {
     throw new _common.ReanimatedError('Trying to call `getShadowNodeWrapperFromRef` on web.');
   }
-},957,[870]);
+},958,[871]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -130156,7 +130217,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   });
   exports.findHostInstance = findHostInstance;
   function findHostInstance(_component) {}
-},958,[]);
+},959,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -130229,7 +130290,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     }
   });
-},959,[960,1004,971,962,994,995]);
+},960,[961,1005,972,963,995,996]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -130257,7 +130318,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   var _CSSKeyframesRegistry2 = _interopDefault(_CSSKeyframesRegistry);
   var _CSSKeyframesRuleImpl = require(_dependencyMap[1]);
   var _CSSKeyframesRuleImpl2 = _interopDefault(_CSSKeyframesRuleImpl);
-},960,[961,963]);
+},961,[962,964]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -130346,7 +130407,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   }
   const cssKeyframesRegistry = new CSSKeyframesRegistry();
   var _default = cssKeyframesRegistry;
-},961,[962]);
+},962,[963]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -130407,7 +130468,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   function unregisterCSSTransition(viewTag) {
     _ReanimatedModule.ReanimatedModule.unregisterCSSTransition(viewTag);
   }
-},962,[886]);
+},963,[887]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -130435,7 +130496,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       return this.normalizedKeyframesCache_[viewName];
     }
   }
-},963,[964,971,994]);
+},964,[965,972,995]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -130455,7 +130516,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   });
   var _CSSKeyframesRuleBase = require(_dependencyMap[0]);
   var _CSSKeyframesRuleBase2 = _interopDefault(_CSSKeyframesRuleBase);
-},964,[965]);
+},965,[966]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -130496,7 +130557,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       return `${_constants.ANIMATION_NAME_PREFIX}${CSSKeyframesRuleBase.currentAnimationID++}`;
     }
   }
-},965,[966]);
+},966,[967]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -130547,7 +130608,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     }
   });
-},966,[967,968,969,970]);
+},967,[968,969,970,971]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -130574,7 +130635,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     heavy: '800',
     black: '900'
   };
-},967,[]);
+},968,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -130588,7 +130649,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
   });
   const ANIMATION_NAME_PREFIX = 'REA-CSS-';
-},968,[]);
+},969,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -130616,7 +130677,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   const PERCENTAGE_REGEX = /^-?(\d*\.)?\d+%$/;
   const MILLISECONDS_REGEX = /^-?(\d*\.)?\d+ms$/;
   const SECONDS_REGEX = /^-?(\d*\.)?\d+s$/;
-},969,[]);
+},970,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -130658,7 +130719,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   const VALID_STEPS_MODIFIERS = ['jump-start', 'start', 'jump-end', 'end', 'jump-none', 'jump-both'];
   const VALID_PREDEFINED_TIMING_FUNCTIONS = ['linear', 'ease', 'ease-in', 'ease-out', 'ease-in-out', 'step-start', 'step-end'];
   const VALID_PARAMETRIZED_TIMING_FUNCTIONS = ['cubic-bezier', 'steps', 'linear'];
-},970,[]);
+},971,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -130698,7 +130759,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     }
   });
-},971,[972,980,985]);
+},972,[973,981,986]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -130732,7 +130793,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   var _keyframes = require(_dependencyMap[0]);
   var _properties = require(_dependencyMap[1]);
   var _settings = require(_dependencyMap[2]);
-},972,[973,982,983]);
+},973,[974,983,984]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -130854,7 +130915,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       keyframeTimingFunctions: timingFunctions
     };
   }
-},973,[19,870,966,974,980]);
+},974,[19,871,967,975,981]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -130916,7 +130977,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     }
   });
-},974,[975,976,977,978,979]);
+},975,[976,977,978,979,980]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -130939,7 +131000,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   function camelizeKebabCase(property) {
     return property.replace(/-./g, x => x[1].toUpperCase());
   }
-},975,[]);
+},976,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -131002,7 +131063,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return true;
   }
-},976,[]);
+},977,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -131150,7 +131211,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   const isCSSKeyframesRule = value => typeof value === 'object' && 'cssRules' in value && 'cssText' in value;
   const isConfigPropertyAlias = value => !!value && typeof value === 'object' && 'as' in value && typeof value.as === 'string';
   const hasProp = (obj, key) => key in obj;
-},977,[966]);
+},978,[967]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -131233,7 +131294,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return null;
   }
-},978,[870,966,977]);
+},979,[871,967,978]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -131281,7 +131342,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     const finalTransitionConfig = hasTransitionConfig ? transitionProperties : null;
     return [finalAnimationConfig, finalTransitionConfig, filteredStyle];
   }
-},979,[870,953,977]);
+},980,[871,954,978]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -131307,7 +131368,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
   });
   var _settings = require(_dependencyMap[0]);
-},980,[981]);
+},981,[982]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -131361,7 +131422,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return timingFunction.normalize();
   }
-},981,[870,966,974]);
+},982,[871,967,975]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -131394,7 +131455,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       };
     });
   }
-},982,[974]);
+},983,[975]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -131498,7 +131559,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return updatedSettings;
   }
-},983,[870,974,980,984]);
+},984,[871,975,981,985]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -131526,7 +131587,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   const VALID_ANIMATION_DIRECTIONS = new Set(['normal', 'reverse', 'alternate', 'alternate-reverse']);
   const VALID_FILL_MODES = new Set(['none', 'forwards', 'backwards', 'both']);
   const VALID_PLAY_STATES = new Set(['running', 'paused']);
-},984,[]);
+},985,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -131546,7 +131607,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
   });
   var _config = require(_dependencyMap[0]);
-},985,[986]);
+},986,[987]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -131681,7 +131742,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return configUpdates;
   }
-},986,[19,870,974,980,987,989]);
+},987,[19,871,975,981,988,990]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -131706,7 +131767,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return behavior === 'allow-discrete';
   }
-},987,[870,988]);
+},988,[871,989]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -131720,7 +131781,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
   });
   const VALID_TRANSITION_BEHAVIORS = ['normal', 'allow-discrete'];
-},988,[]);
+},989,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -131807,7 +131868,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     throw new _common.ReanimatedError(`Invalid timing function: ${value}`);
   }
-},989,[870,990,974]);
+},990,[871,991,975]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -131847,7 +131908,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   function linear(...points) {
     return new _linear.LinearEasing(points);
   }
-},990,[991,992,993]);
+},991,[992,993,994]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -131897,7 +131958,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       };
     }
   }
-},991,[870]);
+},992,[871]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -132041,7 +132102,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       return result;
     }
   }
-},992,[870,966]);
+},993,[871,967]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -132154,7 +132215,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       };
     }
   }
-},993,[870]);
+},994,[871]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -132197,7 +132258,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   function registerComponentStyleBuilder(componentName, config) {
     STYLE_BUILDERS[componentName] = (0, _style.createStyleBuilder)(config);
   }
-},994,[870,995]);
+},995,[871,996]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -132239,7 +132300,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     }
   });
-},995,[996,1003,997]);
+},996,[997,1004,998]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -132504,7 +132565,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     // web only
     isolation: true
   };
-},996,[870,997]);
+},997,[871,998]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -132564,7 +132625,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   var _insets = require(_dependencyMap[2]);
   var _others = require(_dependencyMap[3]);
   var _transform = require(_dependencyMap[4]);
-},997,[998,999,1000,1001,1002]);
+},998,[999,1000,1001,1002,1003]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -132599,7 +132660,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return normalizedColor;
   };
-},998,[870]);
+},999,[871]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -132626,7 +132687,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     throw new _common.ReanimatedError(ERROR_MESSAGES.invalidFontWeight(value));
   };
-},999,[870,966]);
+},1000,[871,967]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -132665,7 +132726,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     left: value,
     right: value
   });
-},1000,[]);
+},1001,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -132713,7 +132774,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     rowGap: value,
     columnGap: value
   });
-},1001,[870]);
+},1002,[871]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -132867,7 +132928,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       return parsed;
     });
   };
-},1002,[870,974]);
+},1003,[871,975]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -132940,7 +133001,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   function createStyleBuilder(config, options) {
     return new StyleBuilderImpl(config, options);
   }
-},1003,[974]);
+},1004,[975]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -132960,7 +133021,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   });
   var _CSSManager = require(_dependencyMap[0]);
   var _CSSManager2 = _interopDefault(_CSSManager);
-},1004,[1005]);
+},1005,[1006]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -133029,7 +133090,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       this.cssTransitionsManager.unmountCleanup();
     }
   }
-},1005,[870,974,962,994,1006,1007]);
+},1006,[871,975,963,995,1007,1008]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -133199,7 +133260,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       return null;
     }
   }
-},1006,[960,971,962]);
+},1007,[961,972,963]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -133256,7 +133317,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       }
     }
   }
-},1007,[971,962]);
+},1008,[972,963]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -133276,7 +133337,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
   });
   var _web = require(_dependencyMap[0]);
-},1008,[1009]);
+},1009,[1010]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -133349,7 +133410,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     }
   });
-},1009,[1010,1024,1025,1027,1031,1016]);
+},1010,[1011,1025,1026,1028,1032,1017]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -133392,7 +133453,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return animationTimingFunction ? `animation-timing-function: ${(0, _utils.parseTimingFunction)(animationTimingFunction)}; ${style}` : style;
   }
-},1010,[19,870,1011,1012,1016]);
+},1011,[19,871,1012,1013,1017]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -133648,7 +133709,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     },
     isolation: true
   };
-},1011,[870,1012]);
+},1012,[871,1013]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -133688,7 +133749,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     }
   });
-},1012,[1013,1014,1017]);
+},1013,[1014,1015,1018]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -133818,7 +133879,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   function createRuleBuilder(config, buildHandler) {
     return new RuleBuilderImpl(config, buildHandler);
   }
-},1013,[870,974]);
+},1014,[871,975]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -133836,7 +133897,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     }
   });
-},1014,[1015]);
+},1015,[1016]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -133899,7 +133960,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   }) => ({
     textShadow: `${textShadowOffset} ${textShadowRadius} ${textShadowColor}`
   }));
-},1015,[870,1016,1013,1017]);
+},1016,[871,1017,1014,1018]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -133967,7 +134028,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     const newAlpha = a / 255 * opacity;
     return `rgba(${r}, ${g}, ${b}, ${newAlpha})`;
   }
-},1016,[870,990,974]);
+},1017,[871,991,975]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -134040,7 +134101,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     }
   });
-},1017,[1018,1019,1020,1021,1022,1023]);
+},1018,[1019,1020,1021,1022,1023,1024]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -134068,7 +134129,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return value;
   };
-},1018,[876,974]);
+},1019,[877,975]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -134106,7 +134167,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       }
     }).join(' ')).join(', ');
   };
-},1019,[870]);
+},1020,[871]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -134135,7 +134196,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
   };
   const processFontVariant = value => value.join(', ');
-},1020,[966]);
+},1021,[967]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -134175,7 +134236,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       marginBottom: result
     };
   };
-},1021,[1016]);
+},1022,[1017]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -134215,7 +134276,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       paddingBottom: result
     };
   };
-},1022,[1016]);
+},1023,[1017]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -134268,7 +134329,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return value.map(v => typeof v === 'number' ? `${v}px` : v).join(' ');
   };
-},1023,[1013]);
+},1024,[1014]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -134348,7 +134409,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       cssNameToIndex.set(cssNameList[i], nextCSSIndex - 1);
     }
   }
-},1024,[870]);
+},1025,[871]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -134368,7 +134429,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   });
   var _CSSKeyframesRuleImpl = require(_dependencyMap[0]);
   var _CSSKeyframesRuleImpl2 = _interopDefault(_CSSKeyframesRuleImpl);
-},1025,[1026]);
+},1026,[1027]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -134392,7 +134453,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       return this.processedKeyframes_;
     }
   }
-},1026,[964,1010]);
+},1027,[965,1011]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -134412,7 +134473,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   });
   var _CSSManager = require(_dependencyMap[0]);
   var _CSSManager2 = _interopDefault(_CSSManager);
-},1027,[1028]);
+},1028,[1029]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -134451,7 +134512,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       this.transitionsManager.unmountCleanup();
     }
   }
-},1028,[974,1029,1030]);
+},1029,[975,1030,1031]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -134630,7 +134691,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     }
   }
-},1029,[19,870,974,1010,1024,1025,1016]);
+},1030,[19,871,975,1011,1025,1026,1017]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -134686,7 +134747,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       this.element.style.transitionBehavior = normalizedProps.transitionBehavior.map(_utils.kebabizeCamelCase).join(',');
     }
   }
-},1030,[974,1031,1016]);
+},1031,[975,1032,1017]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -134704,7 +134765,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     }
   });
-},1031,[1032]);
+},1032,[1033]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -134738,7 +134799,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return result;
   }
-},1032,[974]);
+},1033,[975]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -134767,7 +134828,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   function filterNonCSSStyleProps(props) {
     return filterNonCSSStylePropsRecursive(props);
   }
-},1033,[977]);
+},1034,[978]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -134807,7 +134868,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   var _animationsManager = require(_dependencyMap[0]);
   var _componentUtils = require(_dependencyMap[1]);
   var _domUtils = require(_dependencyMap[2]);
-},1034,[1035,1041,1056]);
+},1035,[1036,1042,1057]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -134934,7 +134995,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     };
     startWebLayoutAnimation(props, element, _commonTypes.LayoutAnimationType.LAYOUT, transitionData);
   }
-},1035,[870,890,945,1036,1040,1041,1042,1055,1056]);
+},1036,[871,891,946,1037,1041,1042,1043,1056,1057]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -134962,7 +135023,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   var _BaseAnimationBuilder = require(_dependencyMap[0]);
   var _ComplexAnimationBuilder = require(_dependencyMap[1]);
   var _Keyframe = require(_dependencyMap[2]);
-},1036,[1037,1038,1039]);
+},1037,[1038,1039,1040]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -135132,7 +135193,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       return instance.build();
     }
   }
-},1037,[923,925,870,890]);
+},1038,[924,926,871,891]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -135397,7 +135458,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       return [animation, config];
     }
   }
-},1038,[923,925,1037]);
+},1039,[924,926,1038]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -135720,7 +135781,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     _worklet_14487564672038_init_data
   });
   const Keyframe = InnerKeyframe;
-},1039,[923,925,870,890,945]);
+},1040,[924,926,871,891,946]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -135778,7 +135839,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       fixElementPosition(element, element.parentElement, snapshot);
     }
   }
-},1040,[887]);
+},1041,[888]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -136084,7 +136145,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     (0, _componentStyle.setElementPosition)(dummy, snapshot);
     setElementAnimation(dummy, animationConfig, false, parent);
   }
-},1041,[870,890,945,887,926,1036,1040,1042,1055,1056,1045,1057]);
+},1042,[871,891,946,888,927,1037,1041,1043,1056,1057,1046,1058]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -136130,7 +136191,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   }({});
   const AnimationsData = Object.assign({}, _animationFadeWeb.FadeInData, _animationFadeWeb.FadeOutData, _animationBounceWeb.BounceInData, _animationBounceWeb.BounceOutData, _animationFlipWeb.FlipInData, _animationFlipWeb.FlipOutData, _animationStretchWeb.StretchInData, _animationStretchWeb.StretchOutData, _animationZoomWeb.ZoomInData, _animationZoomWeb.ZoomOutData, _animationSlideWeb.SlideInData, _animationSlideWeb.SlideOutData, _animationLightspeedWeb.LightSpeedInData, _animationLightspeedWeb.LightSpeedOutData, _animationPinwheelWeb.PinwheelData, _animationRotateWeb.RotateInData, _animationRotateWeb.RotateOutData, _animationRollWeb.RollInData, _animationRollWeb.RollOutData);
   const Animations = Object.assign({}, _animationFadeWeb.FadeIn, _animationFadeWeb.FadeOut, _animationBounceWeb.BounceIn, _animationBounceWeb.BounceOut, _animationFlipWeb.FlipIn, _animationFlipWeb.FlipOut, _animationStretchWeb.StretchIn, _animationStretchWeb.StretchOut, _animationZoomWeb.ZoomIn, _animationZoomWeb.ZoomOut, _animationSlideWeb.SlideIn, _animationSlideWeb.SlideOut, _animationLightspeedWeb.LightSpeedIn, _animationLightspeedWeb.LightSpeedOut, _animationPinwheelWeb.Pinwheel, _animationRotateWeb.RotateIn, _animationRotateWeb.RotateOut, _animationRollWeb.RollIn, _animationRollWeb.RollOut);
-},1042,[1043,1046,1047,1048,1049,1050,1051,1052,1053,1054]);
+},1043,[1044,1047,1048,1049,1050,1051,1052,1053,1054,1055]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -136521,7 +136582,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       duration: BounceOutData.BounceOutDown.duration
     }
   };
-},1043,[1044]);
+},1044,[1045]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -136572,7 +136633,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
 
     return keyframe;
   }
-},1044,[1045]);
+},1045,[1046]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -136618,7 +136679,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return `cubic-bezier(${closure.x1}, ${closure.y1}, ${closure.x2}, ${closure.y2})`;
   }
-},1045,[]);
+},1046,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -136867,7 +136928,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       duration: FadeOutData.FadeOutDown.duration
     }
   };
-},1046,[1044]);
+},1047,[1045]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -137188,7 +137249,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       duration: FlipOutData.FlipOutEasyY.duration
     }
   };
-},1047,[1044]);
+},1048,[1045]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -137341,7 +137402,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       duration: LightSpeedOutData.LightSpeedOutLeft.duration
     }
   };
-},1048,[1044]);
+},1049,[1045]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -137414,7 +137475,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       duration: PinwheelData.PinwheelOut.duration
     }
   };
-},1049,[1044]);
+},1050,[1045]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -137543,7 +137604,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       duration: RollOutData.RollOutRight.duration
     }
   };
-},1050,[1044]);
+},1051,[1045]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -137792,7 +137853,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       duration: RotateOutData.RotateOutUpRight.duration
     }
   };
-},1051,[1044]);
+},1052,[1045]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -137993,7 +138054,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       duration: SlideOutData.SlideOutDown.duration
     }
   };
-},1052,[1044]);
+},1053,[1045]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -138114,7 +138175,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       duration: StretchOutData.StretchOutY.duration
     }
   };
-},1053,[1044]);
+},1054,[1045]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -138503,7 +138564,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       duration: ZoomOutData.ZoomOutEasyDown.duration
     }
   };
-},1054,[1044]);
+},1055,[1045]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -138689,7 +138750,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       dummyTransitionKeyframeName
     };
   }
-},1055,[19,1044,1042,1056,1057,1058,1059,1060,1061,1062]);
+},1056,[19,1045,1043,1057,1058,1059,1060,1061,1062,1063]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -138858,7 +138919,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     // There are 4 more fields, but checking these should suffice
     return r1.x === r2.x && r1.y === r2.y && r1.width === r2.width && r1.height === r2.height;
   }
-},1056,[870,1040,1042]);
+},1057,[871,1041,1043]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -138974,7 +139035,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       secondKeyframeObj: keyframeYObj
     };
   }
-},1057,[890,1045]);
+},1058,[891,1046]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -139053,7 +139114,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     hideComponentBetweenAnimations(keyframeData.style);
     return keyframeData;
   }
-},1058,[1042]);
+},1059,[1043]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -139108,7 +139169,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     };
     return fadingTransition;
   }
-},1059,[]);
+},1060,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -139156,7 +139217,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     };
     return jumpingTransition;
   }
-},1060,[945]);
+},1061,[946]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -139186,7 +139247,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     };
     return linearTransition;
   }
-},1061,[]);
+},1062,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -139232,7 +139293,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     };
     return sequencedTransition;
   }
-},1062,[]);
+},1063,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -139302,7 +139363,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       config: config ? (0, _reactNativeWorklets.createSerializable)(config) : undefined
     }, isUnmounting);
   }
-},1063,[834,870,949]);
+},1064,[835,871,950]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -139483,7 +139544,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       }
     }
   }
-},1064,[953,952,1065,1068,1069]);
+},1065,[954,953,1066,1069,1070]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -139509,7 +139570,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   });
   var _updateProps = require(_dependencyMap[0]);
   var _updateProps2 = _interopDefault(_updateProps);
-},1065,[1066]);
+},1066,[1067]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   /* eslint-disable @typescript-eslint/no-explicit-any */
   'use strict';
@@ -139738,7 +139799,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
    * This used to be `SharedValue<Descriptors[]>` but objects holding just a
    * single `value` prop are fine too.
    */
-},1066,[834,870,1067,887]);
+},1067,[835,871,1068,888]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -139835,7 +139896,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   }
   const jsPropsUpdater = new JSPropsUpdater();
   var _default = jsPropsUpdater;
-},1067,[834,870]);
+},1068,[835,871]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -139914,7 +139975,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     };
     return data;
   }
-},1068,[949]);
+},1069,[950]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -139981,7 +140042,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       cssStyle: null
     });
   }
-},1069,[]);
+},1070,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -140095,7 +140156,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       }
     }
   }
-},1070,[954,1071,1069]);
+},1071,[955,1072,1070]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -140190,7 +140251,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
   }
   const WorkletEventHandler = _common.SHOULD_BE_USE_WEB ? WorkletEventHandlerWeb : WorkletEventHandlerNative;
-},1071,[870,949]);
+},1072,[871,950]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -140267,7 +140328,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       return props;
     }
   }
-},1072,[923,953,1071,1064,1069]);
+},1073,[924,954,1072,1065,1070]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -140292,7 +140353,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   // but not things like NativeMethods, etc. we need to add them manually by extending the type.
 
   const AnimatedView = (0, _createAnimatedComponent.createAnimatedComponent)(View.default);
-},1073,[274,919]);
+},1074,[274,920]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -140317,7 +140378,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   // but not things like NativeMethods, etc. we need to add them manually by extending the type.
 
   const AnimatedImage = (0, _createAnimatedComponent.createAnimatedComponent)(Image.default);
-},1074,[327,919]);
+},1075,[327,920]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -140366,7 +140427,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       ref: animatedRef
     }, restProps));
   }
-},1075,[19,32,282,919,1076,7]);
+},1076,[19,32,282,920,1077,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -140478,7 +140539,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   var _useReducedMotion = require(_dependencyMap[12]);
   var _useScrollOffset = require(_dependencyMap[13]);
   var _useSharedValue = require(_dependencyMap[14]);
-},1076,[1077,1078,1082,1083,1084,1087,1079,1088,1089,1085,1090,1086,1093,1094,1080]);
+},1077,[1078,1079,1083,1084,1085,1088,1080,1089,1090,1086,1091,1087,1094,1095,1081]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -140568,7 +140629,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }, []);
     return ref.current;
   }
-},1077,[32,890,949]);
+},1078,[32,891,950]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -140605,7 +140666,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
    * @see https://docs.swmansion.com/react-native-reanimated/docs/core/useAnimatedProps
    */
   const useAnimatedProps = _common.SHOULD_BE_USE_WEB ? useAnimatedPropsJS : useAnimatedPropsNative;
-},1078,[870,1079]);
+},1079,[871,1080]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -141181,7 +141242,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   function animatedStyleHandleToJSON() {
     return '{}';
   }
-},1079,[32,834,923,870,949,1065,1068,1080,1081]);
+},1080,[32,835,924,871,950,1066,1069,1081,1082]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -141212,7 +141273,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }, [mutable]);
     return mutable;
   }
-},1080,[32,923,949]);
+},1081,[32,924,950]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -141366,7 +141427,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   }({
     _worklet_9964311401004_init_data
   });
-},1081,[834,870]);
+},1082,[835,871]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -141443,7 +141504,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, dependencies);
   }
-},1082,[32,870,949,1080]);
+},1083,[32,871,950,1081]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -141557,7 +141618,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
    * @see https://docs.swmansion.com/react-native-reanimated/docs/core/useAnimatedRef
    */
   const useAnimatedRef = _commonConstants.SHOULD_BE_USE_WEB ? useAnimatedRefWeb : useAnimatedRefNative;
-},1083,[32,834,871,957,927,954]);
+},1084,[32,835,872,958,928,955]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -141649,7 +141710,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     // for more information about this cast.
     );
   }
-},1084,[1085,1086]);
+},1085,[1086,1087]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -141696,7 +141757,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return initRef.current;
   }
-},1085,[32,1071]);
+},1086,[32,1072]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -141753,7 +141814,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       useWeb
     };
   }
-},1086,[32,834,870,1081]);
+},1087,[32,835,871,1082]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -141977,7 +142038,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }, [sensorType, config]);
     return ref.current;
   }
-},1087,[32,834,890,949]);
+},1088,[32,835,891,950]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -142053,7 +142114,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       workletsMap
     }), Array.from(composedEventNames), doDependenciesDiffer);
   }
-},1088,[1071,1085,1086]);
+},1089,[1072,1086,1087]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -142130,7 +142191,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }, dependencies);
     return sharedValue;
   }
-},1089,[32,923,870,949]);
+},1090,[32,924,871,950]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -142186,7 +142247,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }, [callback, autostart]);
     return ref.current;
   }
-},1090,[32,1091]);
+},1091,[32,1092]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -142285,7 +142346,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       }))();
     }
   }
-},1091,[834,1092]);
+},1092,[835,1093]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -142395,7 +142456,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   }({
     _worklet_7909726630701_init_data
   }));
-},1092,[834]);
+},1093,[835]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -142419,7 +142480,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   function useReducedMotion() {
     return IS_REDUCED_MOTION_ENABLED_IN_SYSTEM;
   }
-},1093,[926]);
+},1094,[927]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -142547,7 +142608,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   function getWebScrollableElement(scrollComponent) {
     return scrollComponent?.getScrollableNode?.() ?? scrollComponent;
   }
-},1094,[32,870,1085,1080]);
+},1095,[32,871,1086,1081]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -142572,7 +142633,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   // but not things like NativeMethods, etc. we need to add them manually by extending the type.
 
   const AnimatedText = (0, _createAnimatedComponent.createAnimatedComponent)(Text.default);
-},1095,[135,919]);
+},1096,[135,920]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -142613,7 +142674,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       (0, _reactNativeWorklets.executeOnUIRuntimeSync)(_common.updateLoggerConfig)(currentConfig, config);
     }
   }
-},1096,[834,870]);
+},1097,[835,871]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -142903,7 +142964,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       flexWrap: 'wrap'
     }
   });
-},1097,[32,148,391,274,919,1076,7]);
+},1098,[32,148,391,274,920,1077,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -142952,7 +143013,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }, [mode]);
     return null;
   }
-},1098,[32,870,890,926]);
+},1099,[32,871,891,927]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -142996,7 +143057,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     }
   });
-},1099,[1100,990,1102]);
+},1100,[1101,991,1103]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -143016,7 +143077,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   });
   var _createAnimatedComponent = require(_dependencyMap[0]);
   var _createAnimatedComponent2 = _interopDefault(_createAnimatedComponent);
-},1100,[1101]);
+},1101,[1102]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -143065,7 +143126,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     animatedComponent.displayName = Component.displayName || Component.name || 'Component';
     return animatedComponent;
   }
-},1101,[32,955,7]);
+},1102,[32,956,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -143090,7 +143151,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     create: _stylesheet.create,
     keyframes: keyframes.default
   };
-},1102,[1103,1104]);
+},1103,[1104,1105]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -143109,7 +143170,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   keyframeDefinitions) {
     return new _platform.CSSKeyframesRuleImpl(keyframeDefinitions);
   }
-},1103,[1008]);
+},1104,[1009]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -143142,7 +143203,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return styles;
   };
-},1104,[1008,974]);
+},1105,[1009,975]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -143697,7 +143758,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       options
     });
   }
-},1105,[876,870,949,1106,1080,1109]);
+},1106,[877,871,950,1107,1081,1110]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -143724,7 +143785,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   var _default = {
     oklab: oklab.default
   };
-},1106,[1107]);
+},1107,[1108]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -143876,7 +143937,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       toRgb: convertOklabToRgb
     }
   };
-},1107,[1108]);
+},1108,[1109]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -144003,7 +144064,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       toRgb: convertLrgbToRgb
     }
   };
-},1108,[]);
+},1109,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -144283,7 +144344,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   }({
     _worklet_11527780822323_init_data
   });
-},1109,[870]);
+},1110,[871]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -144313,7 +144374,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   function getAnimatedStyle() {
     // NOOP
   }
-},1110,[]);
+},1111,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -144354,7 +144415,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     }
   });
-},1111,[922,1036,1112,1123]);
+},1112,[923,1037,1113,1124]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -144471,7 +144532,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     }
   });
-},1112,[1113,1114,1115,1116,1117,1118,1119,1120,1121,1122]);
+},1113,[1114,1115,1116,1117,1118,1119,1120,1121,1122,1123]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -145409,7 +145470,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     };
   }
-},1113,[923,1036]);
+},1114,[924,1037]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -146183,7 +146244,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     };
   }
-},1114,[1036]);
+},1115,[1037]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -147182,7 +147243,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     };
   }
-},1115,[1036]);
+},1116,[1037]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -147558,7 +147619,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     };
   }
-},1116,[923,1036]);
+},1117,[924,1037]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -147729,7 +147790,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     };
   }
-},1117,[1036]);
+},1118,[1037]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -148056,7 +148117,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     };
   }
-},1118,[1036]);
+},1119,[1037]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -148751,7 +148812,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     };
   }
-},1119,[1036]);
+},1120,[1037]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -149334,7 +149395,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     };
   }
-},1120,[1036]);
+},1121,[1037]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -149645,7 +149706,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     };
   }
-},1121,[1036]);
+},1122,[1037]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -150932,7 +150993,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     };
   }
-},1122,[1036]);
+},1123,[1037]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -151005,7 +151066,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     }
   });
-},1123,[1124,1125,1126,1127,1128,1129]);
+},1124,[1125,1126,1127,1128,1129,1130]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -151146,7 +151207,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     };
   }
-},1124,[923,925,945,1036]);
+},1125,[924,926,946,1037]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -151355,7 +151416,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     };
   }
-},1125,[923,870,1036,1114]);
+},1126,[924,871,1037,1115]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -151458,7 +151519,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     };
   }
-},1126,[923,1036]);
+},1127,[924,1037]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -151561,7 +151622,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     };
   }
-},1127,[923,945,1036]);
+},1128,[924,946,1037]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -151651,7 +151712,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
 
   /** @deprecated Please use {@link LinearTransition} instead. */
   const Layout = LinearTransition;
-},1128,[1036]);
+},1129,[1037]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -151753,7 +151814,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     };
   }
-},1129,[923,1036]);
+},1130,[924,1037]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -151802,7 +151863,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   var _scrollTo = require(_dependencyMap[3]);
   var _setGestureState = require(_dependencyMap[4]);
   var _setNativeProps = require(_dependencyMap[5]);
-},1130,[1131,1132,1133,1134,1135,1136]);
+},1131,[1132,1133,1134,1135,1136,1137]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -151814,7 +151875,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   function dispatchCommand() {
     _common.logger.warn('dispatchCommand() is not supported on web.');
   }
-},1131,[870]);
+},1132,[871]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -151868,7 +151929,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     _worklet_5752716742403_init_data,
     measure: _measure.measure
   });
-},1132,[1133]);
+},1133,[1134]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -151893,7 +151954,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       pageY: viewportOffset.top
     };
   }
-},1133,[870]);
+},1134,[871]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -151919,7 +151980,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       animated
     });
   }
-},1134,[870]);
+},1135,[871]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -151931,7 +151992,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   function setGestureState() {
     _common.logger.warn('setGestureState() is not available on web.');
   }
-},1135,[870]);
+},1136,[871]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -151944,7 +152005,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     const component = animatedRef();
     (0, _ReanimatedModuleJsReanimated._updatePropsJS)(updates, component);
   }
-},1136,[887]);
+},1137,[888]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -151955,7 +152016,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   function getUseOfValueInStyleWarning() {
     return "It looks like you might be using shared value's .value inside reanimated inline style. If you want a component to update when shared value changes you should use the shared value directly instead of its current state represented by `.value`. See documentation here: https://docs.swmansion.com/react-native-reanimated/docs/fundamentals/glossary/#animations-in-inline-styling";
   }
-},1137,[]);
+},1138,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -151970,7 +152031,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     _common.logger.warn('`createAnimatedPropAdapter` is no longer necessary in Reanimated 4 and will be removed in next version. Please remove this call from your code and pass the adapter function directly.');
     return adapter;
   }
-},1138,[870]);
+},1139,[871]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -151997,7 +152058,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   });
   var _animationManager = require(_dependencyMap[0]);
   var _presets = require(_dependencyMap[1]);
-},1139,[1140,1144]);
+},1140,[1141,1145]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -152096,7 +152157,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     getLockAxis,
     getSwipeSimulator: _swipeSimulator.getSwipeSimulator
   });
-},1140,[1141,1142]);
+},1141,[1142,1143]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -152228,7 +152289,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     applyStyleForTopScreen,
     applyStyleForBelowTopScreen
   });
-},1141,[1065]);
+},1142,[1066]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -152517,7 +152578,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     applyStyle: _styleUpdater.applyStyle,
     maybeScheduleNextFrame
   });
-},1142,[1143,1141]);
+},1143,[1144,1142]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -152566,7 +152627,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     updateTransition: noopFactory(),
     finishTransition: noopFactory()
   };
-},1143,[870]);
+},1144,[871]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -152909,7 +152970,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     TwoDimensional,
     SwipeRightFade
   };
-},1144,[]);
+},1145,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -153005,7 +153066,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
    *   `react-native-worklets` instead of `react-native-reanimated`.
    */
   const isWorkletFunction = _reactNativeWorklets.isWorkletFunction;
-},1145,[834]);
+},1146,[835]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -153285,7 +153346,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   var _componentsDrawerLayout2 = _interopDefault(_componentsDrawerLayout);
   var _EnableNewWebImplementation = require(_dependencyMap[26]);
   (0, _init.initialize)();
-},1146,[1147,1177,1149,1163,1207,1211,1169,1213,1221,1223,1224,1225,1226,1227,1228,1230,1246,1229,1257,1259,1265,1266,1236,1267,1268,1274,1156]);
+},1147,[1148,1178,1150,1164,1208,1212,1170,1214,1222,1224,1225,1226,1227,1228,1229,1231,1247,1230,1258,1260,1266,1267,1237,1268,1269,1275,1157]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -153316,7 +153377,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       fabricInitialized = true;
     }
   }
-},1147,[1148,1155,1152]);
+},1148,[1149,1156,1153]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -153429,7 +153490,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       gestureHandlerStateChangeEventSubscription = null;
     }
   }
-},1148,[504,1149,1150,1151,1153]);
+},1149,[504,1150,1151,1152,1154]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -153453,7 +153514,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   };
 
   // eslint-disable-next-line @typescript-eslint/no-redeclare -- backward compatibility; it can be used as a type and as a value
-},1149,[]);
+},1150,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -153475,7 +153536,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   };
 
   // eslint-disable-next-line @typescript-eslint/no-redeclare -- backward compatibility; it can be used as a type and as a value
-},1150,[]);
+},1151,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -153531,7 +153592,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return null;
   }
-},1151,[1152]);
+},1152,[1153]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -153637,7 +153698,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     return true;
   }
   const INT32_MAX = 2147483647;
-},1152,[32]);
+},1153,[32]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -153675,7 +153736,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       };
     }
   };
-},1153,[1154]);
+},1154,[1155]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -153717,7 +153778,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       return Object.assign({}, this.gestures);
     }
   }
-},1154,[]);
+},1155,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -153840,7 +153901,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     // eslint-disable-next-line @typescript-eslint/no-empty-function
     flushOperations() {}
   };
-},1155,[32,1156,1157,1168,1154,1188,1201]);
+},1156,[32,1157,1158,1169,1155,1189,1202]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -153881,7 +153942,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     getWasCalled = true;
     return useNewWebImplementation;
   }
-},1156,[126,1152]);
+},1157,[126,1153]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -153959,7 +154020,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     RotationGestureHandler: HammerRotationGestureHandler.default,
     FlingGestureHandler: HammerFlingGestureHandler.default
   };
-},1157,[1158,1170,1171,1172,1174,1176,1180,1181,1182,1183,1192,1194,1195,1196,1198,1199]);
+},1158,[1159,1171,1172,1173,1175,1177,1181,1182,1183,1184,1193,1195,1196,1197,1199,1200]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -154370,7 +154431,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       this.startY = this.lastY;
     }
   }
-},1158,[19,1149,1159,1160,1161]);
+},1159,[19,1150,1160,1161,1162]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -154391,7 +154452,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   });
   const DEFAULT_TOUCH_SLOP = 15;
   const MINIMAL_RECOGNIZABLE_MAGNITUDE = 0.1;
-},1159,[]);
+},1160,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -154441,7 +154502,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     WheelDevice[WheelDevice["TOUCHPAD"] = 2] = "TOUCHPAD";
     return WheelDevice;
   }({});
-},1160,[]);
+},1161,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -155144,7 +155205,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return;
   }
-},1161,[19,1149,1160,1162,1168,1164,1169,1163]);
+},1162,[19,1150,1161,1163,1169,1165,1170,1164]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -155421,7 +155482,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       return GestureHandlerOrchestrator._instance;
     }
   }
-},1162,[1163,1149,1164]);
+},1163,[1164,1150,1165]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -155442,7 +155503,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     PointerType[PointerType["OTHER"] = 4] = "OTHER";
     return PointerType;
   }({});
-},1163,[]);
+},1164,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -155644,7 +155705,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       return this._trackedPointers;
     }
   }
-},1164,[1165]);
+},1165,[1166]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -155740,7 +155801,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       this.samples.clear();
     }
   }
-},1165,[1166,1167]);
+},1166,[1167,1168]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -155785,7 +155846,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       return this._size;
     }
   }
-},1166,[]);
+},1167,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -155948,7 +156009,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       return result;
     }
   }
-},1167,[]);
+},1168,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -156049,7 +156110,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       return this._instance;
     }
   }
-},1168,[]);
+},1169,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -156096,7 +156157,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
 
   // Events payloads are types instead of interfaces due to TS limitation.
   // See https://github.com/microsoft/TypeScript/issues/15300 for more info.
-},1169,[]);
+},1170,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -156324,7 +156385,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       this.currentMaxNumberOfPointers = 0;
     }
   }
-},1170,[19,1149,1160,1161]);
+},1171,[19,1150,1161,1162]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -156482,7 +156543,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       }
     }
   }
-},1171,[19,1149,1161]);
+},1172,[19,1150,1162]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -156615,7 +156676,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       this.scale = 1;
     }
   }
-},1172,[1149,1159,1161,1173]);
+},1173,[1150,1160,1162,1174]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -156731,7 +156792,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       return this.currentTime - this.prevTime;
     }
   }
-},1173,[1159,1160]);
+},1174,[1160,1161]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -156871,7 +156932,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       this.rotationGestureDetector.reset();
     }
   }
-},1174,[1149,1161,1175]);
+},1175,[1150,1162,1176]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -157000,7 +157061,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       return this.currentTime + this.previousTime;
     }
   }
-},1175,[1160]);
+},1176,[1161]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -157157,7 +157218,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       this.direction = DEFAULT_DIRECTION;
     }
   }
-},1176,[19,1149,1177,1161,1178,1179]);
+},1177,[19,1150,1178,1162,1179,1180]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -157200,7 +157261,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   // eslint-disable-next-line @typescript-eslint/no-redeclare -- backward compatibility; it can be used as a type and as a value
 
   // eslint-disable-next-line @typescript-eslint/no-redeclare
-},1177,[]);
+},1178,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -157242,7 +157303,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
   }
   const DirectionToVectorMappings = new Map([[_Directions.Directions.LEFT, new Vector(-1, 0)], [_Directions.Directions.RIGHT, new Vector(1, 0)], [_Directions.Directions.UP, new Vector(0, -1)], [_Directions.Directions.DOWN, new Vector(0, 1)], [_Directions.DiagonalDirections.UP_RIGHT, new Vector(1, -1)], [_Directions.DiagonalDirections.DOWN_RIGHT, new Vector(1, 1)], [_Directions.DiagonalDirections.UP_LEFT, new Vector(-1, -1)], [_Directions.DiagonalDirections.DOWN_LEFT, new Vector(-1, 1)]]);
-},1178,[1177,1159]);
+},1179,[1178,1160]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -157498,7 +157559,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return Object.getPrototypeOf(node?.type)?.name === 'WebShape' || RNSVGElements.has(node?.type?.displayName);
   }
-},1179,[1163]);
+},1180,[1164]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -157649,7 +157710,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       return this.buttonRole;
     }
   }
-},1180,[19,126,1149,1159,1161]);
+},1181,[19,126,1150,1160,1162]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -157697,7 +157758,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       this.tracker.removeFromTracker(event.pointerId);
     }
   }
-},1181,[1161]);
+},1182,[1162]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -157752,7 +157813,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       this.reset();
     }
   }
-},1182,[1149,1162,1161]);
+},1183,[1150,1163,1162]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -157836,7 +157897,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
   }
   var _default = NativeViewGestureHandler;
-},1183,[1184,1188,1191,1190]);
+},1184,[1185,1189,1192,1191]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -157938,7 +157999,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
   }
   var _default = DiscreteGestureHandler;
-},1184,[1185,1190]);
+},1185,[1186,1191]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -158446,7 +158507,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     return value == null ? [] : Array.isArray(value) ? value : [value];
   }
   var _default = GestureHandler;
-},1185,[19,1186,448,1149,1187,1188,1189]);
+},1186,[19,1187,448,1150,1188,1189,1190]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -161409,7 +161470,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
 
   var defaults$1 = Hammer.defaults;
   var _default = Hammer;
-},1186,[]);
+},1187,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -161525,7 +161586,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     [Hammer.default.DIRECTION_RIGHT]: 'RIGHT',
     [Hammer.default.DIRECTION_LEFT]: 'LEFT'
   };
-},1187,[1186,1149]);
+},1188,[1187,1150]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -161570,7 +161631,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   function getNodes() {
     return Object.assign({}, gestures);
   }
-},1188,[]);
+},1189,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -161586,7 +161647,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
   });
   const ghQueueMicrotask = typeof setImmediate === 'function' ? setImmediate.bind(null) : typeof requestAnimationFrame === 'function' ? requestAnimationFrame.bind(null) : queueMicrotask.bind(null);
-},1189,[]);
+},1190,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -161642,7 +161703,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return setTimeout(() => method(), interval);
   }
-},1190,[]);
+},1191,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -161806,7 +161867,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
   }
   var _default = PressGestureHandler;
-},1191,[19,1186,1149,1187,1184,1190]);
+},1192,[19,1187,1150,1188,1185,1191]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -161984,7 +162045,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
   }
   var _default = PanGestureHandler;
-},1192,[1186,1187,1193,1190,1149]);
+},1193,[1187,1188,1194,1191,1150]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -162038,7 +162099,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
   }
   var _default = DraggingGestureHandler;
-},1193,[1185,330]);
+},1194,[1186,330]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -162215,7 +162276,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
   }
   var _default = TapGestureHandler;
-},1194,[19,1186,1184,1190]);
+},1195,[19,1187,1185,1191]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -162282,7 +162343,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
   }
   var _default = LongPressGestureHandler;
-},1195,[1186,1149,1191,1190]);
+},1196,[1187,1150,1192,1191]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -162325,7 +162386,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
   }
   var _default = PinchGestureHandler;
-},1196,[1186,1197]);
+},1197,[1187,1198]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -162384,7 +162445,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
   }
   var _default = IndiscreteGestureHandler;
-},1197,[19,1185]);
+},1198,[19,1186]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -162428,7 +162489,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
   }
   var _default = RotationGestureHandler;
-},1198,[1186,1187,1197]);
+},1199,[1187,1188,1198]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -162579,7 +162640,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
   }
   var _default = FlingGestureHandler;
-},1199,[19,1186,1187,1200,1193,1190]);
+},1200,[19,1187,1188,1201,1194,1191]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -162597,7 +162658,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       super(`Invalid property \`${name}: ${value}\` expected \`${expectedType}\``);
     }
   }
-},1200,[]);
+},1201,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -162775,7 +162836,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       this._view = value;
     }
   }
-},1201,[1202,1203,1149,1179,1169,1205,1206]);
+},1202,[1203,1204,1150,1180,1170,1206,1207]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -162826,7 +162887,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return element;
   }
-},1202,[272,1179]);
+},1203,[272,1180]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -163025,7 +163086,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       this.trackedPointers.clear();
     }
   }
-},1203,[1204,1169,1160,1179,1163]);
+},1204,[1205,1170,1161,1180,1164]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -163123,7 +163184,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       this.pointersInBounds = [];
     }
   }
-},1204,[]);
+},1205,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -163241,7 +163302,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       };
     }
   }
-},1205,[1160,1204,1163]);
+},1206,[1161,1205,1164]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -163306,7 +163367,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       super.resetManager();
     }
   }
-},1206,[1204,1160,1163]);
+},1207,[1205,1161,1164]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -163355,7 +163416,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       flex: 1
     }
   });
-},1207,[32,148,1208,1211,7]);
+},1208,[32,148,1209,1212,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -163448,14 +163509,14 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     return targetComponent;
   }
   module.exports = hoistNonReactStatics;
-},1208,[1209]);
+},1209,[1210]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
   {
     module.exports = require(_dependencyMap[0]);
   }
-},1209,[1210]);
+},1210,[1211]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   /** @license React v16.13.1
    * react-is.production.min.js
@@ -163574,7 +163635,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     return "string" === typeof a || "function" === typeof a || a === e || a === m || a === g || a === f || a === p || a === q || "object" === typeof a && null !== a && (a.$$typeof === t || a.$$typeof === r || a.$$typeof === h || a.$$typeof === k || a.$$typeof === n || a.$$typeof === w || a.$$typeof === x || a.$$typeof === y || a.$$typeof === v);
   };
   exports.typeOf = z;
-},1210,[]);
+},1211,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -163620,7 +163681,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       flex: 1
     }
   });
-},1211,[19,32,274,148,1212,7]);
+},1212,[19,32,274,148,1213,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -163641,7 +163702,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   var _react = require(_dependencyMap[0]);
   var React = _interopDefault(_react);
   var _default = /*#__PURE__*/React.default.createContext(false);
-},1212,[32]);
+},1213,[32]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -163697,7 +163758,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       shouldCancelWhenOutside: true
     }
   });
-},1213,[1214,1169]);
+},1214,[1215,1170]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -164055,7 +164116,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return Handler;
   }
-},1214,[32,126,210,504,1215,1155,1149,1151,1216,1217,1202,1152,1218,1219,1212,1189,1220,7]);
+},1215,[32,126,210,504,1216,1156,1150,1152,1217,1218,1203,1153,1219,1220,1213,1190,1221,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -164071,7 +164132,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
   });
   const customDirectEventTypes = {};
-},1215,[]);
+},1216,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -164083,7 +164144,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   function getNextHandlerTag() {
     return handlerTag++;
   }
-},1216,[]);
+},1217,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -164158,7 +164219,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     }
   }
-},1217,[126,448,1151,1152,1155,1189]);
+},1218,[126,448,1152,1153,1156,1190]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -164179,7 +164240,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   };
 
   // eslint-disable-next-line @typescript-eslint/no-redeclare -- backward compatibility; it can be used as a type and as a value
-},1218,[]);
+},1219,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -164191,7 +164252,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   function PressabilityDebugView() {
     return null;
   }
-},1219,[]);
+},1220,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -164233,7 +164294,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       this.unmountListeners.forEach(listener => listener(gesture));
     }
   }
-},1220,[]);
+},1221,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -164304,7 +164365,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     config: {}
   }) : ForceTouchFallback;
   ForceTouchGestureHandler.forceTouchAvailable = PlatformConstants.default?.forceTouchAvailable || false;
-},1221,[32,1152,1222,1214,1169]);
+},1222,[32,1153,1223,1215,1170]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -164322,7 +164383,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       return false;
     }
   };
-},1222,[]);
+},1223,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -164378,7 +164439,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       shouldCancelWhenOutside: true
     }
   });
-},1223,[1214,1169]);
+},1224,[1215,1170]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -164493,7 +164554,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   function managePanProps(props) {
     return transformPanGestureHandlerProps(props);
   }
-},1224,[1214,1169]);
+},1225,[1215,1170]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -164539,7 +164600,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     allowedProps: _gestureHandlerCommon.baseGestureHandlerProps,
     config: {}
   });
-},1225,[1214,1169]);
+},1226,[1215,1170]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -164585,7 +164646,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     allowedProps: _gestureHandlerCommon.baseGestureHandlerProps,
     config: {}
   });
-},1226,[1214,1169]);
+},1227,[1215,1170]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -164639,7 +164700,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     allowedProps: [..._gestureHandlerCommon.baseGestureHandlerProps, ...flingGestureHandlerProps],
     config: {}
   });
-},1227,[1214,1169]);
+},1228,[1215,1170]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -164735,7 +164796,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     Component?.render?.name || typeof Component === 'string' && Component || 'ComponentWrapper';
     return ComponentWrapper;
   }
-},1228,[32,1229,7]);
+},1229,[32,1230,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -164796,7 +164857,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     allowedProps: nativeViewProps,
     config: {}
   });
-},1229,[1214,1169]);
+},1230,[1215,1170]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -164927,7 +164988,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     }
   };
-},1230,[32,126,1202,1152,1212,1231,1234,1238,1239,1235,1240,1241,1243,1245,7]);
+},1231,[32,126,1203,1153,1213,1232,1235,1239,1240,1236,1241,1242,1244,1246,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -165189,7 +165250,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     preparedGesture.animatedEventHandler = event;
     preparedGesture.animatedHandlers = sharedHandlersCallbacks;
   }
-},1231,[1232,1233,1153,1149,1150,1152]);
+},1232,[1233,1234,1154,1150,1151,1153]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -165547,7 +165608,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       return this;
     }
   }
-},1232,[1216,1152]);
+},1233,[1217,1153]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -165597,7 +165658,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       tagMessage: _utils.tagMessage
     });
   }
-},1233,[1152,831]);
+},1234,[1153,832]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -165668,7 +165729,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       preparedGesture.animatedHandlers.value = gesturesToAttach.filter(isAnimatedGesture).map(g => g.handlers);
     }
   }
-},1234,[1151,1155,1217,1218,126,1189,1235,1220]);
+},1235,[1152,1156,1218,1219,126,1190,1236,1221]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -165775,7 +165836,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       } : undefined
     });
   }
-},1235,[126,1152,1232,1227,1221,1223,1224,1213,1236,1229,1169,1156,1237,32,1233,1148]);
+},1236,[126,1153,1233,1228,1222,1224,1225,1214,1237,1230,1170,1157,1238,32,1234,1149]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -165857,7 +165918,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       return super.onChange(callback);
     }
   }
-},1236,[1232]);
+},1237,[1233]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -165873,7 +165934,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   const RNRenderer = {
     findHostInstance_DEPRECATED: _ref => null
   };
-},1237,[]);
+},1238,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -165896,7 +165957,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return false;
   }
-},1238,[]);
+},1239,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -165922,7 +165983,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     (0, _utils.scheduleFlushOperations)();
   }
-},1239,[1151,1155,1217,1220]);
+},1240,[1152,1156,1218,1221]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -165980,7 +166041,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   // On web we never take a path with Reanimated,
   // therefore we can simply export Wrap
   const AnimatedWrap = Wrap;
-},1240,[32,1152,1179,7]);
+},1241,[32,1153,1180,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -166033,7 +166094,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }, [forceRender, gestureConfig, gesturesToAttach, preparedGesture, state, webEventHandlersRef]);
     return updateAttachedGestures;
   }
-},1241,[32,1234,1242,1238,1239,1235,1202]);
+},1242,[32,1235,1243,1239,1240,1236,1203]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -166105,7 +166166,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       (0, _utils.scheduleFlushOperations)();
     });
   }
-},1242,[1151,1155,1217,1189,1235]);
+},1243,[1152,1156,1218,1190,1236]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -166146,7 +166207,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }, [state, updateAttachedGestures]);
     return refHandler;
   }
-},1243,[1152,1244,32,1202]);
+},1244,[1153,1245,32,1203]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -166161,7 +166222,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   function getShadowNodeFromRef(_ref) {
     return null;
   }
-},1244,[]);
+},1245,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -166203,7 +166264,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     }, [updateDetector, state]);
   }
-},1245,[1217,1220,32]);
+},1246,[1218,1221,32]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -166341,7 +166402,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       return new _gestureComposition.ExclusiveGesture(...gestures);
     }
   };
-},1246,[1247,1248,1249,1250,1251,1252,1253,1254,1255,1256,1236]);
+},1247,[1248,1249,1250,1251,1252,1253,1254,1255,1256,1257,1237]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -166383,7 +166444,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       return this;
     }
   }
-},1247,[1232]);
+},1248,[1233]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -166474,7 +166535,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   /**
    * @deprecated ForceTouch gesture is deprecated and will be removed in the future.
    */
-},1248,[1232]);
+},1249,[1233]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -166577,7 +166638,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       }
     }
   }
-},1249,[1232]);
+},1250,[1233]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -166628,7 +166689,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       return this;
     }
   }
-},1250,[1232]);
+},1251,[1233]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -166838,7 +166899,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       return super.onChange(callback);
     }
   }
-},1251,[1232]);
+},1252,[1233]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -166889,7 +166950,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       return super.onChange(callback);
     }
   }
-},1252,[1232]);
+},1253,[1233]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -166940,7 +167001,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       return super.onChange(callback);
     }
   }
-},1253,[1232]);
+},1254,[1233]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -167032,7 +167093,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       return this;
     }
   }
-},1254,[1232]);
+},1255,[1233]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -167071,7 +167132,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       return this;
     }
   }
-},1255,[1232]);
+},1256,[1233]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -167112,7 +167173,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       return super.onChange(callback);
     }
   }
-},1256,[1232]);
+},1257,[1233]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -167371,7 +167432,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   const BorderlessButton = /*#__PURE__*/React.forwardRef((props, ref) => /*#__PURE__*/(0, _reactJsxRuntime.jsx)(InnerBorderlessButton, Object.assign({
     innerRef: ref
   }, props)));
-},1257,[19,32,268,126,155,148,1228,1258,1149,1152,7]);
+},1258,[19,32,268,126,155,148,1229,1259,1150,1153,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -167413,7 +167474,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     ref: ref,
     accessibilityRole: "button"
   }, props)));
-},1258,[32,274,7]);
+},1259,[32,274,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -167457,7 +167518,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   var _TouchableOpacity2 = _interopDefault(_TouchableOpacity);
   var _TouchableHighlight = require(_dependencyMap[3]);
   var _TouchableHighlight2 = _interopDefault(_TouchableHighlight);
-},1259,[1260,1261,1263,1264]);
+},1260,[1261,1262,1264,1265]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -167482,7 +167543,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
    */
   const TouchableNativeFeedback = RNTouchableNativeFeedback.default;
   var _default = TouchableNativeFeedback;
-},1260,[498]);
+},1261,[498]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -167545,7 +167606,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }, rest));
   });
   var _default = TouchableWithoutFeedback;
-},1261,[19,32,1262,7]);
+},1262,[19,32,1263,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -167805,7 +167866,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       }));
     }
   }
-},1262,[32,268,126,1149,1257,7]);
+},1263,[32,268,126,1150,1258,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -167887,7 +167948,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       }));
     }
   }
-},1263,[19,268,256,148,274,1262,32,7]);
+},1264,[19,268,256,148,274,1263,32,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -168009,7 +168070,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       }));
     }
   }
-},1264,[19,32,1262,148,274,7]);
+},1265,[19,32,1263,148,274,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -168110,7 +168171,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   }, props, {
     renderScrollComponent: scrollProps => /*#__PURE__*/(0, _reactJsxRuntime.jsx)(ScrollView, Object.assign({}, scrollProps))
   })));
-},1265,[32,272,491,391,282,274,1228,7]);
+},1266,[32,272,491,391,282,274,1229,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -168180,7 +168241,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }, rest));
   });
   // eslint-disable-next-line @typescript-eslint/no-redeclare
-},1266,[19,32,126,135,1246,1230,7]);
+},1267,[19,32,126,135,1247,1231,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -168561,7 +168622,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       flexDirection: I18nManager.default.isRTL ? 'row' : 'row-reverse'
     })
   });
-},1267,[32,268,148,274,121,1224,1213,1149,7]);
+},1268,[32,268,148,274,121,1225,1214,1150,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -168581,7 +168642,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   });
   var _Pressable = require(_dependencyMap[0]);
   var _Pressable2 = _interopDefault(_Pressable);
-},1268,[1269]);
+},1269,[1270]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -169086,7 +169147,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     });
   };
   var _default = Pressable;
-},1269,[19,32,1246,1230,126,155,1258,1270,1219,1152,1271,1272,1273,7]);
+},1270,[19,32,1247,1231,126,155,1259,1271,1220,1153,1272,1273,1274,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -169203,7 +169264,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       }
     };
   };
-},1270,[]);
+},1271,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -169221,7 +169282,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       gesture[relationPropName](relationProp);
     }
   }
-},1271,[]);
+},1272,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -169261,7 +169322,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       return getWebStatesConfig(handlePressIn, handlePressOut);
     }
   }
-},1272,[126]);
+},1273,[126]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -169310,7 +169371,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       }
     }
   }
-},1273,[]);
+},1274,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -169886,7 +169947,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       zIndex: 1000
     })
   });
-},1274,[32,567,268,148,274,411,490,121,1224,1213,1149,7]);
+},1275,[32,567,268,148,274,411,490,121,1225,1214,1150,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -169957,16 +170018,18 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   var _expoRouter = require(_dependencyMap[19]);
   var _constantsColors = require(_dependencyMap[20]);
   var Colors = _interopDefault(_constantsColors);
-  var _tanstackReactQuery = require(_dependencyMap[21]);
-  var _libApi = require(_dependencyMap[22]);
-  var _componentsFuzzySearchInput = require(_dependencyMap[23]);
+  var _componentsNotificationBell = require(_dependencyMap[21]);
+  var NotificationBell = _interopDefault(_componentsNotificationBell);
+  var _tanstackReactQuery = require(_dependencyMap[22]);
+  var _libApi = require(_dependencyMap[23]);
+  var _componentsFuzzySearchInput = require(_dependencyMap[24]);
   var FuzzySearchInput = _interopDefault(_componentsFuzzySearchInput);
-  var _componentsLeaguePickerModal = require(_dependencyMap[24]);
+  var _componentsLeaguePickerModal = require(_dependencyMap[25]);
   var LeaguePickerModal = _interopDefault(_componentsLeaguePickerModal);
-  var _contextsAuthContext = require(_dependencyMap[25]);
-  var _componentsLoadingScreen = require(_dependencyMap[26]);
+  var _contextsAuthContext = require(_dependencyMap[26]);
+  var _componentsLoadingScreen = require(_dependencyMap[27]);
   var LoadingScreen = _interopDefault(_componentsLoadingScreen);
-  var _reactJsxRuntime = require(_dependencyMap[27]);
+  var _reactJsxRuntime = require(_dependencyMap[28]);
   // All 30 MLB teams hardcoded — search never depends on a successful API call
   const MLB_TEAMS_STATIC = [{
     id: 1,
@@ -170600,7 +170663,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       setSavingImage(true);
       try {
         {
-          const html2canvas = (await require(_dependencyMap[29])(_dependencyMap[28], _dependencyMap.paths)).default;
+          const html2canvas = (await require(_dependencyMap[30])(_dependencyMap[29], _dependencyMap.paths)).default;
           const node = analysisRef.current;
           if (!node) {
             setSavingImage(false);
@@ -171780,7 +171843,15 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
         style: [styles.root, {
           paddingTop: topPad
         }],
-        children: [/*#__PURE__*/(0, _reactJsxRuntime.jsxs)(ScrollView.default, {
+        children: [/*#__PURE__*/(0, _reactJsxRuntime.jsx)(View.default, {
+          style: {
+            flexDirection: 'row',
+            justifyContent: 'flex-end',
+            paddingHorizontal: 14,
+            paddingVertical: 2
+          },
+          children: /*#__PURE__*/(0, _reactJsxRuntime.jsx)(NotificationBell.default, {})
+        }), /*#__PURE__*/(0, _reactJsxRuntime.jsxs)(ScrollView.default, {
           contentContainerStyle: styles.body,
           keyboardShouldPersistTaps: "handled",
           showsVerticalScrollIndicator: false,
@@ -171789,7 +171860,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
               children: [/*#__PURE__*/(0, _reactJsxRuntime.jsx)(View.default, {
                 style: styles.heroImageWrap,
                 children: /*#__PURE__*/(0, _reactJsxRuntime.jsx)(Image.default, {
-                  source: require(_dependencyMap[30]),
+                  source: require(_dependencyMap[31]),
                   style: styles.heroImage,
                   resizeMode: "cover"
                 })
@@ -181266,7 +181337,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       color: '#444'
     }
   });
-},1275,{"0":32,"1":274,"2":135,"3":148,"4":282,"5":477,"6":391,"7":475,"8":459,"9":126,"10":481,"11":327,"12":283,"13":480,"14":268,"15":378,"16":821,"17":763,"18":669,"19":12,"20":756,"21":769,"22":761,"23":1276,"24":1277,"25":757,"26":1278,"27":7,"28":1432,"29":1279,"30":1281,"paths":{"1432":"/_expo/static/js/web/html2canvas-3f002e81caf7c84ab03533b31555f86e.js"}});
+},1276,{"0":32,"1":274,"2":135,"3":148,"4":282,"5":477,"6":391,"7":475,"8":459,"9":126,"10":481,"11":327,"12":283,"13":480,"14":268,"15":378,"16":822,"17":763,"18":669,"19":12,"20":756,"21":766,"22":770,"23":761,"24":1277,"25":1278,"26":757,"27":1279,"28":7,"29":1433,"30":1280,"31":1282,"paths":{"1433":"/_expo/static/js/web/html2canvas-1602d990f7650f3d58fdf762cde66daf.js"}});
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -181907,7 +181978,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       fontStyle: 'italic'
     }
   });
-},1276,[32,274,135,391,477,148,475,126,282,669,756,761,7]);
+},1277,[32,274,135,391,477,148,475,126,282,669,756,761,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -182111,7 +182182,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       fontWeight: '700'
     }
   });
-},1277,[32,481,274,135,477,282,148,126,480,669,756,761,1276,7]);
+},1278,[32,481,274,135,477,282,148,126,480,669,756,761,1277,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -182328,11 +182399,11 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       textTransform: 'uppercase'
     }
   });
-},1278,[32,274,135,268,148,126,756,7]);
+},1279,[32,274,135,268,148,126,756,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   // WARN: Internal re-export, don't rely on this to be a public API
   module.exports = require(_dependencyMap[0]);
-},1279,[1280]);
+},1280,[1281]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   /**
    * Copyright © 2025 650 Industries.
@@ -182435,14 +182506,14 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   // TODO(@kitten): Missing metro type definitions
 
   module.exports = asyncRequire;
-},1280,[]);
+},1281,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   module.exports = {
     uri: "/assets/assets/sports-hero.552ea499895e073797f47bfc5c273322.png",
     width: 1536,
     height: 1024
   };
-},1281,[]);
+},1282,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -183288,7 +183359,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       fontWeight: '700'
     }
   });
-},1282,[32,274,135,148,282,477,475,281,481,378,669,769,756,761,7]);
+},1283,[32,274,135,148,282,477,475,281,481,378,669,770,756,761,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -183431,7 +183502,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       })
     });
   }
-},1283,[32,126,12,769,1146,1284,757,756,1287,761,1278,7]);
+},1284,[32,126,12,770,1147,1285,757,756,1288,761,1279,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -183494,7 +183565,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   });
   var _NativeStatusBarWrapper = require(_dependencyMap[0]);
   var _types = require(_dependencyMap[1]);
-},1284,[1285,1286]);
+},1285,[1286,1287]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -183624,10 +183695,10 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return resolvedStyle === 'light' ? 'light-content' : 'dark-content';
   }
-},1285,[19,32,460,490,505,7]);
+},1286,[19,32,460,490,505,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
-},1286,[]);
+},1287,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -183969,7 +184040,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     const message = "`expo-notifications` functionality is not fully supported in Expo Go:\nWe recommend you instead use a development build to avoid limitations. Learn more: https://expo.fyi/dev-client.";
     console.warn(message);
   }
-},1287,[513,1288,1289,1291,1379,1382,1383,1384,1385,1386,1387,1388,1389,1390,1391,1392,1395,1396,1398,1401,1402,1403,1405,1406,1407,1408,1295,1411,1413,1300,1409,1414,1416,1418,1419,1420,1399,1421]);
+},1288,[513,1289,1290,1292,1380,1383,1384,1385,1386,1387,1388,1389,1390,1391,1392,1393,1396,1397,1399,1402,1403,1404,1406,1407,1408,1409,1296,1412,1414,1301,1410,1415,1417,1419,1420,1421,1400,1422]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -184077,7 +184148,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return outputArray;
   }
-},1288,[575,533,504]);
+},1289,[575,533,504]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -184105,7 +184176,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return PushTokenManager.default.unregisterForNotificationsAsync();
   }
-},1289,[533,1290]);
+},1290,[533,1291]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -184135,7 +184206,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     emit: () => {},
     listenerCount: () => 0
   };
-},1290,[533]);
+},1291,[533]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -184324,7 +184395,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
         return devicePushToken.type;
     }
   }
-},1291,[1292,575,533,1295,1299,1288]);
+},1292,[1293,575,533,1296,1300,1289]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -184553,7 +184624,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     const lastUpdateTime = await ExpoApplication.default.getLastUpdateTimeAsync();
     return new Date(lastUpdateTime);
   }
-},1292,[533,1293,1294]);
+},1293,[533,1294,1295]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -184579,7 +184650,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     ApplicationReleaseType[ApplicationReleaseType["AD_HOC"] = 4] = "AD_HOC";
     ApplicationReleaseType[ApplicationReleaseType["APP_STORE"] = 5] = "APP_STORE";
   })(ApplicationReleaseType || (ApplicationReleaseType = {}));
-},1293,[]);
+},1294,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -184612,7 +184683,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       return null;
     }
   };
-},1294,[]);
+},1295,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -184730,7 +184801,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   } else {
     console.warn(`[expo-notifications] Error encountered while fetching auto-registration state, new tokens will not be automatically registered on server.`, new _expoModulesCore.UnavailabilityError('ServerRegistrationModule', 'getRegistrationInfoAsync'));
   }
-},1295,[1296,533,1299,1300,1288,1302]);
+},1296,[1297,533,1300,1301,1289,1303]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -184765,7 +184836,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       g.AbortSignal = ac.AbortSignal;
     }
   }
-},1296,[1297]);
+},1297,[1298]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -184913,7 +184984,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     });
   }
   var _default = AbortController;
-},1297,[1298]);
+},1298,[1299]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -185720,7 +185791,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     Object.setPrototypeOf(EventTarget.prototype, window.EventTarget.prototype);
   }
   var _default = EventTarget;
-},1298,[]);
+},1299,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -185779,7 +185850,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     addListener: () => {},
     removeListeners: () => {}
   };
-},1299,[533]);
+},1300,[533]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -185833,7 +185904,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       type: "web"
     }));
   }
-},1300,[533,1290,1301]);
+},1301,[533,1291,1302]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -185850,7 +185921,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   require(_dependencyMap[1]);
   let didWarn = false;
   const warnOfExpoGoPushUsage = () => {};
-},1301,[513,533]);
+},1302,[513,533]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -186040,7 +186111,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   async function shouldUseDevelopmentNotificationService() {
     return false;
   }
-},1302,[1303,1292,533,1299]);
+},1303,[1304,1293,533,1300]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -186070,7 +186141,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     return Math.min(Math.max(nextBackoff * jitterFactor, minBackoff), maxBackoff);
   }
   exports.computeNextBackoffInterval = computeNextBackoffInterval;
-},1303,[1304]);
+},1304,[1305]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   // Currently in sync with Node.js lib/assert.js
   // https://github.com/nodejs/node/commit/2a51ae424a513ec9a6aa3466baa0cc1d55dd4f3b
@@ -186698,7 +186769,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     notDeepEqual: assert.notDeepStrictEqual
   });
   assert.strict.strict = assert.strict;
-},1304,[1305,1362,1306,1363,1368,1370,1371]);
+},1305,[1306,1363,1307,1364,1369,1371,1372]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   // Currently in sync with Node.js lib/internal/errors.js
   // https://github.com/nodejs/node/commit/3b044962c48fe313905877a96b5d0894a5404f6f
@@ -186971,7 +187042,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     return "".concat(msg, " must be specified");
   }, TypeError);
   module.exports.codes = codes;
-},1305,[1304,1306]);
+},1306,[1305,1307]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   // Copyright Joyent, Inc. and other Node contributors.
   //
@@ -187585,7 +187656,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     return callbackified;
   }
   exports.callbackify = callbackify;
-},1306,[1307,1360,1361]);
+},1307,[1308,1361,1362]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   // Currently in sync with Node.js lib/internal/util/types.js
   // https://github.com/nodejs/node/commit/112cc7c27551254aa2b17098fb774867f05ed0d9
@@ -187818,7 +187889,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       }
     });
   });
-},1307,[1308,1345,1349,1359]);
+},1308,[1309,1346,1350,1360]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -187850,7 +187921,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
 
   /** @type {import('.')} */
   module.exports = supportsStandardArguments ? isStandardArguments : isLegacyArguments;
-},1308,[1309,1311]);
+},1309,[1310,1312]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -187860,7 +187931,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   module.exports = function hasToStringTagShams() {
     return hasSymbols() && !!Symbol.toStringTag;
   };
-},1309,[1310]);
+},1310,[1311]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -187923,7 +187994,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return true;
   };
-},1310,[]);
+},1311,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -187943,7 +188014,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return intrinsic;
   };
-},1311,[1312,1337]);
+},1312,[1313,1338]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -188286,91 +188357,91 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return value;
   };
-},1312,[1313,1314,1315,1316,1317,1318,1319,1320,1321,1322,1323,1324,1325,1326,1327,1329,1331,1332,1333,1335,1334,1342,1340,1338,1344]);
+},1313,[1314,1315,1316,1317,1318,1319,1320,1321,1322,1323,1324,1325,1326,1327,1328,1330,1332,1333,1334,1336,1335,1343,1341,1339,1345]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
   /** @type {import('.')} */
   module.exports = Object;
-},1313,[]);
+},1314,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
   /** @type {import('.')} */
   module.exports = Error;
-},1314,[]);
+},1315,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
   /** @type {import('./eval')} */
   module.exports = EvalError;
-},1315,[]);
+},1316,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
   /** @type {import('./range')} */
   module.exports = RangeError;
-},1316,[]);
+},1317,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
   /** @type {import('./ref')} */
   module.exports = ReferenceError;
-},1317,[]);
+},1318,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
   /** @type {import('./syntax')} */
   module.exports = SyntaxError;
-},1318,[]);
+},1319,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
   /** @type {import('./type')} */
   module.exports = TypeError;
-},1319,[]);
+},1320,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
   /** @type {import('./uri')} */
   module.exports = URIError;
-},1320,[]);
+},1321,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
   /** @type {import('./abs')} */
   module.exports = Math.abs;
-},1321,[]);
+},1322,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
   /** @type {import('./floor')} */
   module.exports = Math.floor;
-},1322,[]);
+},1323,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
   /** @type {import('./max')} */
   module.exports = Math.max;
-},1323,[]);
+},1324,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
   /** @type {import('./min')} */
   module.exports = Math.min;
-},1324,[]);
+},1325,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
   /** @type {import('./pow')} */
   module.exports = Math.pow;
-},1325,[]);
+},1326,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
   /** @type {import('./round')} */
   module.exports = Math.round;
-},1326,[]);
+},1327,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -188383,7 +188454,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return number < 0 ? -1 : 1;
   };
-},1327,[1328]);
+},1328,[1329]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -188391,7 +188462,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   module.exports = Number.isNaN || function isNaN(a) {
     return a !== a;
   };
-},1328,[]);
+},1329,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -188406,13 +188477,13 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
   }
   module.exports = $gOPD;
-},1329,[1330]);
+},1330,[1331]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
   /** @type {import('./gOPD')} */
   module.exports = Object.getOwnPropertyDescriptor;
-},1330,[]);
+},1331,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -188429,7 +188500,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
   }
   module.exports = $defineProperty;
-},1331,[]);
+},1332,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -188452,7 +188523,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return hasSymbolSham();
   };
-},1332,[1310]);
+},1333,[1311]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -188474,13 +188545,13 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     // @ts-expect-error TS can't narrow inside a closure, for some reason
     return getDunderProto(O);
   } : null;
-},1333,[1334,1335,1336]);
+},1334,[1335,1336,1337]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
   /** @type {import('./Reflect.getPrototypeOf')} */
   module.exports = typeof Reflect !== 'undefined' && Reflect.getPrototypeOf || null;
-},1334,[]);
+},1335,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -188488,7 +188559,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
 
   /** @type {import('./Object.getPrototypeOf')} */
   module.exports = $Object.getPrototypeOf || null;
-},1335,[1313]);
+},1336,[1314]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -188514,7 +188585,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     // eslint-disable-next-line eqeqeq
     return $getPrototypeOf(value == null ? value : $Object(value));
   } : false;
-},1336,[1337,1329]);
+},1337,[1338,1330]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -188530,13 +188601,13 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return $actualApply(bind, $call, args);
   };
-},1337,[1338,1319,1340,1341]);
+},1338,[1339,1320,1341,1342]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
   var implementation = require(_dependencyMap[0]);
   module.exports = Function.prototype.bind || implementation;
-},1338,[1339]);
+},1339,[1340]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -188603,13 +188674,13 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return bound;
   };
-},1339,[]);
+},1340,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
   /** @type {import('./functionCall')} */
   module.exports = Function.prototype.call;
-},1340,[]);
+},1341,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -188620,19 +188691,19 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
 
   /** @type {import('./actualApply')} */
   module.exports = $reflectApply || bind.call($call, $apply);
-},1341,[1338,1342,1340,1343]);
+},1342,[1339,1343,1341,1344]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
   /** @type {import('./functionApply')} */
   module.exports = Function.prototype.apply;
-},1342,[]);
+},1343,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
   /** @type {import('./reflectApply')} */
   module.exports = typeof Reflect !== 'undefined' && Reflect && Reflect.apply;
-},1343,[]);
+},1344,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -188642,7 +188713,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
 
   /** @type {import('.')} */
   module.exports = bind.call(call, $hasOwn);
-},1344,[1338]);
+},1345,[1339]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -188673,7 +188744,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     var GeneratorFunction = getGeneratorFunction();
     return GeneratorFunction && getProto(fn) === GeneratorFunction.prototype;
   };
-},1345,[1311,1346,1309,1333,1348]);
+},1346,[1312,1347,1310,1334,1349]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -188691,7 +188762,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       return $exec(regex, s) !== null;
     };
   };
-},1346,[1311,1347,1319]);
+},1347,[1312,1348,1320]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -188756,7 +188827,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     };
   }
   module.exports = fn;
-},1347,[1311,1309,1344,1329]);
+},1348,[1312,1310,1345,1330]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -188765,7 +188836,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
 
   /** @type {import('.')} */
   module.exports = () => cached;
-},1348,[]);
+},1349,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -188881,7 +188952,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     } // unknown engine
     return tryTypedArrays(value);
   };
-},1349,[1350,1352,1354,1311,1329,1333,1309]);
+},1350,[1351,1353,1355,1312,1330,1334,1310]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -188949,7 +189020,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       forEachObject(list, iterator, receiver);
     }
   };
-},1350,[1351]);
+},1351,[1352]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -189070,7 +189141,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return tryFunctionObject(value);
   };
-},1351,[]);
+},1352,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -189088,13 +189159,13 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return out;
   };
-},1352,[1353]);
+},1353,[1354]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
   /** @type {import('.')} */
   module.exports = ['Float16Array', 'Float32Array', 'Float64Array', 'Int8Array', 'Int16Array', 'Int32Array', 'Uint8Array', 'Uint8ClampedArray', 'Uint16Array', 'Uint32Array', 'BigInt64Array', 'BigUint64Array'];
-},1353,[]);
+},1354,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -189114,7 +189185,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   } else {
     module.exports.apply = applyBind;
   }
-},1354,[1355,1331,1337,1358]);
+},1355,[1356,1332,1338,1359]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -189154,7 +189225,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return fn;
   };
-},1355,[1312,1356,1357,1329,1319]);
+},1356,[1313,1357,1358,1330,1320]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -189204,7 +189275,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       throw new $SyntaxError('This environment does not support defining a property as non-configurable, non-writable, or non-enumerable.');
     }
   };
-},1356,[1331,1318,1319,1329]);
+},1357,[1332,1319,1320,1330]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -189227,7 +189298,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
   };
   module.exports = hasPropertyDescriptors;
-},1357,[1331]);
+},1358,[1332]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -189239,7 +189310,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   module.exports = function applyBind() {
     return actualApply(bind, $apply, arguments);
   };
-},1358,[1338,1342,1341]);
+},1359,[1339,1343,1342]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -189249,12 +189320,12 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   module.exports = function isTypedArray(value) {
     return !!whichTypedArray(value);
   };
-},1359,[1349]);
+},1360,[1350]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   module.exports = function isBuffer(arg) {
     return arg && typeof arg === 'object' && typeof arg.copy === 'function' && typeof arg.fill === 'function' && typeof arg.readUInt8 === 'function';
   };
-},1360,[]);
+},1361,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   if (typeof Object.create === 'function') {
     // implementation from standard node.js 'util' module
@@ -189283,7 +189354,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       }
     };
   }
-},1361,[]);
+},1362,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   // Currently in sync with Node.js lib/internal/assert/assertion_error.js
   // https://github.com/nodejs/node/commit/0817840f775032169ddd70c85ac059f18ffcc81c
@@ -189903,7 +189974,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     return AssertionError;
   }(/*#__PURE__*/_wrapNativeSuper(Error), inspect.custom);
   module.exports = AssertionError;
-},1362,[1306,1305]);
+},1363,[1307,1306]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -189959,7 +190030,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return Object.assign;
   };
-},1363,[1364]);
+},1364,[1365]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -190009,7 +190080,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return to; // step 4
   };
-},1364,[1365,1310,1311,1313]);
+},1365,[1366,1311,1312,1314]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -190042,7 +190113,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     return Object.keys || keysShim;
   };
   module.exports = keysShim;
-},1365,[1366,1367]);
+},1366,[1367,1368]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -190055,7 +190126,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return isArgs;
   };
-},1366,[]);
+},1367,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -190169,7 +190240,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     };
   }
   module.exports = keysShim;
-},1367,[1366]);
+},1368,[1367]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -190177,7 +190248,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   module.exports = function getPolyfill() {
     return typeof Object.is === 'function' ? Object.is : implementation;
   };
-},1368,[1369]);
+},1369,[1370]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -190196,7 +190267,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return false;
   };
-},1369,[]);
+},1370,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -190210,7 +190281,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return intrinsic;
   };
-},1370,[1312,1354]);
+},1371,[1313,1355]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   // Currently in sync with Node.js lib/internal/util/comparisons.js
   // https://github.com/nodejs/node/commit/112cc7c27551254aa2b17098fb774867f05ed0d9
@@ -190838,7 +190909,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     isDeepEqual: isDeepEqual,
     isDeepStrictEqual: isDeepStrictEqual
   };
-},1371,[1372,1375,1306]);
+},1372,[1373,1376,1307]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -190854,7 +190925,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     shim: shim
   });
   module.exports = polyfill;
-},1372,[1373,1354,1369,1368,1374]);
+},1373,[1374,1355,1370,1369,1375]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -190895,7 +190966,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   };
   defineProperties.supportsDescriptors = !!supportsDescriptors;
   module.exports = defineProperties;
-},1373,[1365,1356,1357]);
+},1374,[1366,1357,1358]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -190912,7 +190983,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     });
     return polyfill;
   };
-},1374,[1368,1373]);
+},1375,[1369,1374]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -190931,7 +191002,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     shim: shim
   });
   module.exports = polyfill;
-},1375,[1354,1373,1376,1377,1378]);
+},1376,[1355,1374,1377,1378,1379]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -190939,7 +191010,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   module.exports = function isNaN(value) {
     return value !== value;
   };
-},1376,[]);
+},1377,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -190950,7 +191021,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return implementation;
   };
-},1377,[1376]);
+},1378,[1377]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   'use strict';
 
@@ -190970,7 +191041,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     });
     return polyfill;
   };
-},1378,[1373,1377]);
+},1379,[1374,1378]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -191004,7 +191075,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return (await NotificationPresenter.default.getPresentedNotificationsAsync()).map(notification => (0, _utilsMapNotificationResponse.mapNotification)(notification));
   }
-},1379,[533,1380,1381]);
+},1380,[533,1381,1382]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -191021,7 +191092,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     addListener: () => {},
     removeListeners: () => {}
   };
-},1380,[]);
+},1381,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -191124,7 +191195,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return content;
   };
-},1381,[]);
+},1382,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -191157,7 +191228,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return await NotificationPresenter.default.dismissNotificationAsync(notificationIdentifier);
   }
-},1382,[533,1380]);
+},1383,[533,1381]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -191189,7 +191260,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return await NotificationPresenter.default.dismissAllNotificationsAsync();
   }
-},1383,[533,1380]);
+},1384,[533,1381]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -191213,7 +191284,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     console.debug('Notification channels feature is only supported on Android.');
     return [];
   }
-},1384,[]);
+},1385,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -191238,7 +191309,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     console.debug('Notification channels feature is only supported on Android.');
     return null;
   }
-},1385,[]);
+},1386,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -191276,7 +191347,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     console.debug('Notification channels feature is only supported on Android.');
     return null;
   }
-},1386,[]);
+},1387,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -191299,7 +191370,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   async function deleteNotificationChannelAsync(channelId) {
     console.debug('Notification channels feature is only supported on Android.');
   }
-},1387,[]);
+},1388,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -191323,7 +191394,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     console.debug('Notification channels feature is only supported on Android.');
     return [];
   }
-},1388,[]);
+},1389,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -191349,7 +191420,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     console.debug('Notification channels feature is only supported on Android.');
     return null;
   }
-},1389,[]);
+},1390,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -191375,7 +191446,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     console.debug('Notification channels feature is only supported on Android.');
     return null;
   }
-},1390,[]);
+},1391,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -191398,7 +191469,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   async function deleteNotificationChannelGroupAsync(groupId) {
     console.debug('Notification channels feature is only supported on Android.');
   }
-},1391,[]);
+},1392,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -191431,7 +191502,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return await BadgeModule.default.getBadgeCountAsync();
   }
-},1392,[533,1393]);
+},1393,[533,1394]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -191468,7 +191539,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
   };
   var _default = badgeModule;
-},1393,[1394]);
+},1394,[1395]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -191919,7 +191990,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     clear$1();
     clear$2();
   }
-},1394,[]);
+},1395,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -191957,7 +192028,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     const platformOptions = options?.["web"];
     return await BadgeModule.default.setBadgeCountAsync(badgeCount, platformOptions);
   }
-},1395,[533,1393]);
+},1396,[533,1394]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -191990,7 +192061,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return (await NotificationScheduler.default.getAllScheduledNotificationsAsync()).map(request => (0, _utilsMapNotificationResponse.mapNotificationRequest)(request));
   }
-},1396,[533,1397,1381]);
+},1397,[533,1398,1382]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -192007,7 +192078,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     addListener: () => {},
     removeListeners: () => {}
   };
-},1397,[]);
+},1398,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -192331,7 +192402,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   function daysInMonth(month = 0, year) {
     return new Date(year ?? 2000, month + 1, 0).getDate();
   }
-},1398,[19,533,1397,1399,1400]);
+},1399,[19,533,1398,1400,1401]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -192383,7 +192454,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     AndroidNotificationPriority["HIGH"] = "high";
     AndroidNotificationPriority["MAX"] = "max";
   })(AndroidNotificationPriority || (AndroidNotificationPriority = {}));
-},1399,[533]);
+},1400,[533]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -192394,7 +192465,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   function hasValidTriggerObject(trigger) {
     return trigger === null || typeof trigger === 'object' && ('type' in trigger || 'channelId' in trigger);
   }
-},1400,[]);
+},1401,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -192441,7 +192512,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return await NotificationScheduler.default.cancelScheduledNotificationAsync(identifier);
   }
-},1401,[533,1397]);
+},1402,[533,1398]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -192473,7 +192544,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return await NotificationScheduler.default.cancelAllScheduledNotificationsAsync();
   }
-},1402,[533,1397]);
+},1403,[533,1398]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -192508,7 +192579,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return await NotificationCategoriesModule.default.getNotificationCategoriesAsync();
   }
-},1403,[533,1404]);
+},1404,[533,1405]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -192536,7 +192607,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     removeListeners() {}
   };
   var _default = notificationCategoriesModule;
-},1404,[533]);
+},1405,[533]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -192575,7 +192646,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return await NotificationCategoriesModule.default.setNotificationCategoryAsync(identifier, actions, options);
   }
-},1405,[533,1404]);
+},1406,[533,1405]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -192611,7 +192682,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return await NotificationCategoriesModule.default.deleteNotificationCategoryAsync(identifier);
   }
-},1406,[533,1404]);
+},1407,[533,1405]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -192662,7 +192733,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return await NotificationScheduler.default.getNextTriggerDateAsync((0, _scheduleNotificationAsync.parseTrigger)(trigger));
   }
-},1407,[533,1397,1398]);
+},1408,[533,1398,1399]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -192752,7 +192823,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return prevResponse.notification.request.identifier !== newResponse.notification.request.identifier ? newResponse : prevResponse;
   };
-},1408,[32,1409]);
+},1409,[32,1410]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -192928,7 +192999,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   function addNotificationResponseClearedListener(listener) {
     return emitter.addListener(didClearNotificationResponseEventName, listener);
   }
-},1409,[533,1410,1381]);
+},1410,[533,1411,1382]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -192952,7 +193023,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     },
     removeListeners: () => {}
   };
-},1410,[533]);
+},1411,[533]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -193017,7 +193088,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return await BackgroundNotificationTasksModule.default.registerTaskAsync(taskName);
   }
-},1411,[533,1412]);
+},1412,[533,1413]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -193038,7 +193109,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       return null;
     }
   };
-},1412,[]);
+},1413,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -193070,7 +193141,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return await BackgroundNotificationTasksModule.default.unregisterTaskAsync(taskName);
   }
-},1413,[533,1412]);
+},1414,[533,1413]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -193175,7 +193246,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       }) => handler.handleError?.(id, new NotificationTimeoutError(id, (0, _utilsMapNotificationResponse.mapNotification)(notification))));
     }
   }
-},1414,[533,1415,1381]);
+},1415,[533,1416,1382]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -193199,7 +193270,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     },
     removeListeners: () => {}
   };
-},1415,[533]);
+},1416,[533]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -193278,7 +193349,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     // TODO(@kitten): This never checks whether the configuration object is undefined
     return await NotificationPermissionsModule.default.requestPermissionsAsync(requestedPlatformPermissions);
   }
-},1416,[533,1417]);
+},1417,[533,1418]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -193366,10 +193437,10 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       });
     }
   };
-},1417,[533]);
+},1418,[533]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
-},1418,[]);
+},1419,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -193451,7 +193522,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     AndroidAudioUsage[AndroidAudioUsage["ASSISTANCE_SONIFICATION"] = 13] = "ASSISTANCE_SONIFICATION";
     AndroidAudioUsage[AndroidAudioUsage["GAME"] = 14] = "GAME";
   })(AndroidAudioUsage || (AndroidAudioUsage = {}));
-},1419,[]);
+},1420,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -193496,10 +193567,10 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     IosAuthorizationStatus[IosAuthorizationStatus["PROVISIONAL"] = 3] = "PROVISIONAL";
     IosAuthorizationStatus[IosAuthorizationStatus["EPHEMERAL"] = 4] = "EPHEMERAL";
   })(IosAuthorizationStatus || (IosAuthorizationStatus = {}));
-},1420,[]);
+},1421,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
-},1421,[]);
+},1422,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -194996,14 +195067,14 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       flex: 1
     }
   });
-},1422,{"0":32,"1":274,"2":135,"3":391,"4":477,"5":148,"6":126,"7":475,"8":327,"9":468,"10":481,"11":282,"12":480,"13":268,"14":12,"15":378,"16":763,"17":669,"18":757,"19":756,"20":761,"21":7,"22":761,"23":1279,"24":767,"25":1423,"paths":{}});
+},1423,{"0":32,"1":274,"2":135,"3":391,"4":477,"5":148,"6":126,"7":475,"8":327,"9":468,"10":481,"11":282,"12":480,"13":268,"14":12,"15":378,"16":763,"17":669,"18":757,"19":756,"20":761,"21":7,"22":761,"23":1280,"24":768,"25":1424,"paths":{}});
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   module.exports = {
     uri: "/assets/assets/rp-icon.eaa77ae681abc36496639cb19087ab1f.png",
     width: 1024,
     height: 1024
   };
-},1423,[]);
+},1424,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -195023,7 +195094,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       href: "/(tabs)/scan"
     });
   }
-},1424,[12,7]);
+},1425,[12,7]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -195050,7 +195121,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     value: true
   });
   __exportStar(require(_dependencyMap[0]), exports);
-},1425,[1426]);
+},1426,[1427]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -195087,7 +195158,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
   };
   exports.Head = Head;
   exports.Head.Provider = lib_1.HelmetProvider;
-},1426,[7,17,32,1427]);
+},1427,[7,17,32,1428]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -195891,7 +195962,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       })));
     }
   };
-},1427,[19,32,1428,567,1429]);
+},1428,[19,32,1429,567,1430]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   /* global Map:readonly, Set:readonly, ArrayBuffer:readonly */
 
@@ -196020,7 +196091,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       throw error;
     }
   };
-},1428,[]);
+},1429,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   //
 
@@ -196057,7 +196128,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     }
     return true;
   };
-},1429,[]);
+},1430,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -196088,7 +196159,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
    *
    * @see https://reactnative.dev/docs/fast-refresh
    */
-},1430,[]);
+},1431,[]);
 __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, exports, _dependencyMap) {
   "use strict";
 
@@ -196204,7 +196275,7 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
       // TODO: Render a production-only error screen.
     }
   }
-},1431,[7,513,32,447,512]);
+},1432,[7,513,32,447,512]);
 __r(515);
 __r(3);
 __r(0);

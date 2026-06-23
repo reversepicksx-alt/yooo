@@ -7724,4 +7724,4 @@ __d(function (global, require, _$$_IMPORT_DEFAULT, _$$_IMPORT_ALL, module, expor
     };
     return html2canvas;
   });
-},1432,[]);
+},1433,[]);

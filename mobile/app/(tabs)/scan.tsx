@@ -10,6 +10,7 @@ import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import Colors from '@/constants/colors';
+import NotificationBell from '@/components/NotificationBell';
 import { useQueryClient } from '@tanstack/react-query';
 import { scanProp, predict, mlbPredict, getMlbGameContext, cs2Predict, wtaPredict, nbaPredict, nflPredict, nhlPredict, wnbaPredict, ncaabPredict, ncaawPredict, atpPredict, ncaafPredict, f1Predict, mmaPredict, pgaPredict, dota2Predict, lolPredict, cbasePredict, aiSportPredict, searchNbaPlayers, searchNflPlayers, searchNhlPlayers, searchWnbaPlayers, searchNcaabPlayers, searchNcaawPlayers, searchAtpPlayers, searchWtaPlayers, searchNcaafPlayers, searchF1Drivers, searchMmaFighters, searchPgaPlayers, searchDota2Players, searchLolPlayers, searchCbasePlayers, savePick, searchMlbPlayers, searchCs2Players, searchCs2Teams, PROP_TYPES, MLB_PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, NBA_PROP_TYPES, NFL_PROP_TYPES, NHL_PROP_TYPES, WNBA_PROP_TYPES, NCAAB_PROP_TYPES, NCAAW_PROP_TYPES, ATP_PROP_TYPES, NCAAF_PROP_TYPES, F1_PROP_TYPES, MMA_PROP_TYPES, PGA_PROP_TYPES, DOTA2_PROP_TYPES, LOL_PROP_TYPES, CBASE_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, LEAGUES, PredictionResult, ScanResult, MlbPlayer, Cs2Player, Cs2Team, WtaPlayer, getPlayerContexts, getTeamNextMatch, getPrizePicksLines, PlayerContext, NextMatchData, PPLine } from '@/lib/api';
 import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult, FuzzyLeagueResult, StaticItem } from '@/components/FuzzySearchInput';
@@ -1332,6 +1333,9 @@ export default function ScanScreen() {
       keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
     >
     <View style={[styles.root, { paddingTop: topPad }]}>
+      <View style={{ flexDirection: 'row', justifyContent: 'flex-end', paddingHorizontal: 14, paddingVertical: 2 }}>
+        <NotificationBell />
+      </View>
       <ScrollView
         contentContainerStyle={styles.body}
         keyboardShouldPersistTaps="handled"
