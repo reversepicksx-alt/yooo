@@ -1781,7 +1781,22 @@ async def predict(req: PredictionRequest):
                             pass
                 return round(sum(vals) / len(vals), 1) if vals else None
 
-            if is_home:
+            if is_neutral:
+                # Neutral venue: no home/away split — use overall averages for both teams.
+                # Home/away splits inflate numbers from qualifier mismatches (e.g. a team
+                # that averaged 67% possession at home against weak qualifiers). Using
+                # overall averages is more honest for a neutral-venue tournament match.
+                if is_home:
+                    home_avg = avg_poss(team_stats_list)
+                    away_avg = avg_poss(opp_stats_list)
+                    home_rank = standing_data.get("teamRank") if standing_data else None
+                    away_rank = standing_data.get("oppRank") if standing_data else None
+                else:
+                    home_avg = avg_poss(opp_stats_list)
+                    away_avg = avg_poss(team_stats_list)
+                    home_rank = standing_data.get("oppRank") if standing_data else None
+                    away_rank = standing_data.get("teamRank") if standing_data else None
+            elif is_home:
                 # Player's team is HOME → use their home game avg; opponent uses away game avg
                 home_avg = avg_poss(team_stats_list, "home") or avg_poss(team_stats_list)
                 away_avg = avg_poss(opp_stats_list, "away") or avg_poss(opp_stats_list)
@@ -1945,12 +1960,16 @@ async def predict(req: PredictionRequest):
                 # FIX 3 — Home-field possession advantage trimmed 2.5 → 1.5.
                 # Data shows home teams don't gain 2.5% possession from venue alone;
                 # 1.5% is calibrated from settled pick residuals.
-                home_boost = 1.5
-                higher_avg = max(home_avg, away_avg)
-                if higher_avg > 60:
-                    dampen = min((higher_avg - 60) / 10.0, 0.7)
-                    home_boost *= (1.0 - dampen)
-                    dom["notes"].append(f"Home poss boost dampened: {home_boost:.1f}% (dominant team avg {higher_avg:.0f}%)")
+                # Neutral venues (World Cup, etc.) get NO home-field boost.
+                if is_neutral:
+                    home_boost = 0.0
+                else:
+                    home_boost = 1.5
+                    higher_avg = max(home_avg, away_avg)
+                    if higher_avg > 60:
+                        dampen = min((higher_avg - 60) / 10.0, 0.7)
+                        home_boost *= (1.0 - dampen)
+                        dom["notes"].append(f"Home poss boost dampened: {home_boost:.1f}% (dominant team avg {higher_avg:.0f}%)")
                 home_poss += home_boost
 
                 if home_rank and away_rank:
@@ -2140,10 +2159,17 @@ async def predict(req: PredictionRequest):
         # For neutral venue, the user's "home/away" entry is meaningless — use
         # playerIsHome from the fixture odds to know which team API-Football
         # calls the home team. This prevents possession inversion in WC/tournament games.
-        if _is_neutral and match_odds:
-            _pih_flag = match_odds.get("playerIsHome")
+        if _is_neutral:
+            _pih_flag = match_odds.get("playerIsHome") if match_odds else None
             if _pih_flag is not None:
                 _is_home = bool(_pih_flag)
+            else:
+                # No odds data available — use team ID as a deterministic tiebreaker
+                # so BOTH player scans always produce the same fixture-perspective
+                # homePoss/awayPoss values. Without this, both teams are assigned
+                # is_home=False (formula-away), the formula is symmetric, and teams
+                # with similar qualifier stats produce identical possession numbers.
+                _is_home = (actual_team_id or 0) < (req.opponentId or 0)
         _home_id = actual_team_id if _is_home else req.opponentId
         _away_id = req.opponentId if _is_home else actual_team_id
         _dom_cache_key = (_home_id, _away_id) if (_home_id and _away_id) else None
@@ -6303,9 +6329,14 @@ Analyze ALL data thoroughly. Return JSON only."""
             if player_venue == "home":
                 fb_home_avg = team_poss
                 fb_away_avg = opp_poss
-            else:
+            elif player_venue == "away":
                 fb_home_avg = opp_poss
                 fb_away_avg = team_poss
+            else:
+                # Neutral venue: use _is_home (tiebreaker already applied above)
+                # so the home/away orientation is consistent between both team scans.
+                fb_home_avg = team_poss if _is_home else opp_poss
+                fb_away_avg = opp_poss if _is_home else team_poss
             if fb_home_avg is not None and fb_away_avg is not None:
                 fb_away_concedes = 100 - fb_away_avg
                 fb_home_poss = round((fb_home_avg + fb_away_concedes) / 2.0 + 2.5)
