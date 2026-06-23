@@ -1126,3 +1126,358 @@ export const PROP_TYPES = [
   { value: 'soccer_fantasy_gk',      label: 'Goalkeeper Score' },
 ];
 
+export const CS2_PROP_TYPES = [
+  // Maps 1-2 (full match, most common on PrizePicks)
+  { value: 'maps_1_2_kills',      label: 'Maps 1-2 Kills' },
+  { value: 'maps_1_2_deaths',     label: 'Maps 1-2 Deaths' },
+  { value: 'maps_1_2_assists',    label: 'Maps 1-2 Assists' },
+  { value: 'maps_1_2_adr',        label: 'Maps 1-2 ADR' },
+  { value: 'maps_1_2_headshots',  label: 'Maps 1-2 Headshots' },
+  // Map 1 only
+  { value: 'map1_kills',          label: 'Map 1 Kills' },
+  // Maps 1-3 (all 3 maps combined — when series plays out to map 3)
+  { value: 'maps_1_3_kills',      label: 'Maps 1-3 Kills' },
+  { value: 'maps_1_3_headshots',  label: 'Maps 1-3 Headshots' },
+  // Map 3 props (when series goes to a deciding map)
+  { value: 'map3_kills',          label: 'Map 3 Kills' },
+  { value: 'map3_headshots',      label: 'Map 3 Headshots' },
+  { value: 'map3_deaths',         label: 'Map 3 Deaths' },
+  { value: 'map3_assists',        label: 'Map 3 Assists' },
+  { value: 'map3_adr',            label: 'Map 3 ADR' },
+  // Per-map props
+  { value: 'kills',               label: 'Kills (per map)' },
+  { value: 'deaths',              label: 'Deaths (per map)' },
+  { value: 'assists',             label: 'Assists (per map)' },
+  { value: 'adr',                 label: 'ADR (per map)' },
+  { value: 'headshots',           label: 'Headshots (per map)' },
+  { value: 'headshot_pct',        label: 'Headshot %' },
+  { value: 'first_kills',         label: 'First Kills' },
+  { value: 'clutches_won',        label: 'Clutches Won' },
+  { value: 'rating',              label: 'Rating' },
+];
+
+export interface Cs2Player {
+  id: number;
+  nickname: string;
+  fullName: string;
+  team: { id: number; name: string; short_name?: string | null } | null;
+  isActive: boolean | null;
+  age?: number | null;
+}
+
+export async function searchCs2Players(query: string): Promise<Cs2Player[]> {
+  if (!query || query.length < 2) return [];
+  return apiCall<Cs2Player[]>(`/api/cs2/players/search?q=${encodeURIComponent(query)}`);
+}
+
+export interface Cs2Team {
+  id: number;
+  name: string;
+  shortName?: string | null;
+}
+
+export async function searchCs2Teams(query: string): Promise<Cs2Team[]> {
+  if (!query || query.length < 2) return [];
+  return apiCall<Cs2Team[]>(`/api/cs2/teams/search?q=${encodeURIComponent(query)}`);
+}
+
+// ─── WTA Tennis ─────────────────────────────────────────────────────────────
+
+export const WTA_PROP_TYPES = [
+  { value: 'total_games',        label: 'Total Games (Match)' },
+  { value: 'player_games_won',   label: 'Player Games Won' },
+  { value: 'opponent_games_won', label: 'Opponent Games Won' },
+  { value: 'total_sets',         label: 'Total Sets' },
+  { value: 'player_sets_won',    label: 'Player Sets Won' },
+  { value: 'set_1_total_games',  label: 'Set 1 Total Games' },
+  { value: 'set_1_player_games', label: 'Set 1 Player Games' },
+  { value: 'match_winner',       label: 'Match Winner' },
+  { value: 'first_set_winner',   label: 'First Set Winner' },
+];
+
+export const WTA_SURFACES = ['Hard', 'Clay', 'Grass'];
+export const WTA_ROUNDS   = ['F', 'SF', 'QF', 'R16', 'R32', 'R64', 'R128', 'Qualifying'];
+
+export interface WtaPlayer {
+  id:           number;
+  firstName:    string;
+  lastName:     string;
+  fullName:     string;
+  country?:     string | null;
+  currentRank?: number | null;
+  isActive?:    boolean;
+}
+
+export async function searchWtaPlayers(query: string): Promise<WtaPlayer[]> {
+  if (!query || query.length < 2) return [];
+  return apiCall<WtaPlayer[]>(`/api/wta/players/search?q=${encodeURIComponent(query)}`);
+}
+
+export async function wtaPredict(request: Record<string, unknown>): Promise<PredictionResult> {
+  const raw = await apiCall<any>('/api/wta/predict', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+  if (raw.error) return { error: raw.error } as PredictionResult;
+  const bm  = raw.bayesianMetrics || {};
+  const rec = (raw.recommendation || '').toUpperCase() as 'OVER' | 'UNDER' | 'PASS';
+
+  const gameLogs = (raw.matchLogs || raw.gameLogs || []).map((g: any) => ({
+    date:     g.date ?? '',
+    opponent: g.opponent ?? '',
+    venue:    g.wonMatch === true ? 'home' : g.wonMatch === false ? 'away' : '',
+    value:    g.totalGames ?? g.playerGamesWon ?? null,
+    minutes:  0,
+    sport:    'wta',
+    surface:  g.surface ?? '',
+    round:    g.round ?? '',
+    tournament: g.tournament ?? '',
+    setScores: g.setScores ?? [],
+    playerGamesWon:   g.playerGamesWon,
+    opponentGamesWon: g.opponentGamesWon,
+    totalGames:       g.totalGames,
+    setsPlayed:       g.setsPlayed,
+    wonMatch:         g.wonMatch,
+  }));
+
+  return {
+    sport:               'wta',
+    playerName:          raw.playerName,
+    playerId:            raw.playerId,
+    teamName:            raw.opponentName ? '' : '',
+    opponentName:        raw.opponentName,
+    opponentId:          raw.opponentId,
+    propType:            raw.propType,
+    propLabel:           raw.propLabel,
+    line:                raw.line,
+    projection:          raw.projection,
+    bayesianProjection:  raw.projection,
+    confidence:          raw.confidenceScore != null ? raw.confidenceScore / 100 : null,
+    confidenceScore:     raw.confidenceScore,
+    confidenceLevel:     raw.confidenceLevel,
+    recommendation:      rec,
+    pOver:               raw.pOver,
+    pUnder:              raw.pUnder,
+    sharpSummary:        raw.sharpSummary,
+    reasoning:           raw.reasoning,
+    surface:             raw.surface,
+    round:               raw.round,
+    tournament:          raw.tournament,
+    subjectRank:         raw.subjectRank,
+    opponentRank:        raw.opponentRank,
+    h2h:                 raw.h2h,
+    gameLogs,
+    bayesianMetrics: {
+      priorMean:       bm.priorMean,
+      momentumMean:    bm.momentumMean,
+      sampleSize:      bm.sampleSize,
+      tacticalMetrics: bm.tacticalMetrics,
+    },
+  } as unknown as PredictionResult;
+}
+
+export async function cs2Predict(request: Record<string, unknown>): Promise<PredictionResult> {
+  const raw = await apiCall<any>('/api/cs2/predict', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+  if (raw.error) return { error: raw.error } as PredictionResult;
+  const bm  = raw.bayesianMetrics || {};
+  const rec = (raw.recommendation || '').toUpperCase() as 'OVER' | 'UNDER' | 'PASS';
+
+  const gameLogs = (raw.gameLogs || []).map((g: any) => ({
+    date:           g.date ?? '',
+    opponent:       g.opponent ?? '',
+    venue:          g.wonMap === true ? 'home' : g.wonMap === false ? 'away' : '',
+    value:          g[raw.propType] ?? null,
+    minutes:        0,
+    sport:          'cs2',
+    mapName:        g.mapName ?? '',
+    mapNumber:      g.mapNumber ?? null,
+    kills:          g.kills ?? null,
+    deaths:         g.deaths ?? null,
+    assists:        g.assists ?? null,
+    adr:            g.adr ?? null,
+    kast:           g.kast ?? null,
+    rating:         g.rating ?? null,
+    headshotPct:        g.headshotPct ?? null,
+    headshotCount:      g.headshotCount ?? null,
+    firstKills:         g.firstKills ?? null,
+    clutchesWon:        g.clutchesWon ?? null,
+    wonMap:             g.wonMap ?? null,
+    tournament:         g.tournament ?? '',
+    tier:               g.tier ?? '',
+    maps_1_2_headshots: g.maps_1_2_headshots ?? null,
+    map3_kills:         g.map3_kills ?? null,
+    map3_headshots:     g.map3_headshots ?? null,
+    map3_deaths:        g.map3_deaths ?? null,
+    map3_assists:       g.map3_assists ?? null,
+    map3_adr:           g.map3_adr ?? null,
+    map3_played:        g.map3_played ?? false,
+  })).filter((g: any) => g.value != null);
+
+  return {
+    playerName:         raw.playerName || '',
+    teamName:           raw.teamName || '',
+    opponentName:       raw.opponentName || '',
+    propType:           raw.propType || '',
+    line:               raw.line ?? 0,
+    projection:         raw.projection,
+    confidence:         raw.confidenceScore,
+    rawConfidence:      raw.confidenceScore,
+    recommendation:     rec,
+    confidenceLevel:    raw.confidenceLevel,
+    pOver:              raw.pOver ?? bm.pOver,
+    pUnder:             raw.pUnder ?? bm.pUnder,
+    priorSamples:       raw.sampleSize,
+    priorMean:          raw.priorMean ?? bm.priorMean,
+    momentumMean:       raw.momentumMean ?? bm.momentumMean,
+    streakFlag:         raw.streakFlag ?? '',
+    sharpSummary:       raw.sharpSummary || undefined,
+    reasoning:          raw.reasoning || undefined,
+    tacticalBreakdown:  raw.reasoning || undefined,
+    playerId:           raw.playerId,
+    teamId:             raw.teamId,
+    sampleSize:         raw.sampleSize,
+    gameLogs,
+    bayesianMetrics:    bm,
+    sport:              'cs2',
+  } as unknown as PredictionResult;
+}
+
+export const LEAGUES = [
+  { id: 39, name: 'Premier League' },
+  { id: 140, name: 'La Liga' },
+  { id: 135, name: 'Serie A' },
+  { id: 78, name: 'Bundesliga' },
+  { id: 61, name: 'Ligue 1' },
+  { id: 2, name: 'Champions League' },
+  { id: 3, name: 'Europa League' },
+  { id: 253, name: 'MLS' },
+];
+
+export async function contactSupport(name: string, email: string, message: string): Promise<{ success: boolean; error?: string }> {
+  return apiCall('/api/support/contact', {
+    method: 'POST',
+    body: JSON.stringify({ name, email, message }),
+  });
+}
+
+// ─── Community Chat ────────────────────────────────────────────────────────────
+
+export interface CommunityMessage {
+  id: string;
+  email: string;
+  displayName: string;
+  text: string;
+  imageData?: string | null;
+  mentions: string[];
+  reactions: Record<string, string[]>;
+  createdAt: string;
+  pending?: boolean;
+}
+
+export async function fetchCommunityMessages(params?: {
+  since?: string;
+  before?: string;
+  limit?: number;
+}): Promise<CommunityMessage[]> {
+  const qs = new URLSearchParams();
+  if (params?.since) qs.set('since', params.since);
+  if (params?.before) qs.set('before', params.before);
+  if (params?.limit) qs.set('limit', String(params.limit));
+  const q = qs.toString();
+  return apiCall(`/api/community/messages${q ? `?${q}` : ''}`);
+}
+
+export async function sendCommunityMessage(payload: {
+  email: string;
+  text: string;
+  imageData?: string | null;
+  mentions?: string[];
+}): Promise<CommunityMessage> {
+  return apiCall('/api/community/messages', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function reactToCommunityMessage(
+  messageId: string,
+  email: string,
+  emoji: string,
+): Promise<{ reactions: Record<string, string[]> }> {
+  return apiCall(`/api/community/messages/${messageId}/react`, {
+    method: 'POST',
+    body: JSON.stringify({ email, emoji }),
+  });
+}
+
+export async function deleteCommunityMessage(messageId: string, email: string): Promise<void> {
+  return apiCall(
+    `/api/community/messages/${messageId}?email=${encodeURIComponent(email)}`,
+    { method: 'DELETE' },
+  );
+}
+
+export async function fetchCommunityParticipants(): Promise<
+  Array<{ email: string; displayName: string }>
+> {
+  return apiCall('/api/community/participants');
+}
+
+// ─── In-App Notifications ──────────────────────────────────────────────────────
+
+export interface AppNotification {
+  notificationId: string;
+  email: string;
+  type: 'pick_settled' | 'mention' | string;
+  title: string;
+  body: string;
+  data: Record<string, unknown>;
+  read: boolean;
+  createdAt: string;
+}
+
+export async function getNotifications(email: string, limit = 40): Promise<AppNotification[]> {
+  return apiCall<AppNotification[]>(
+    `/api/notifications?email=${encodeURIComponent(email)}&limit=${limit}`,
+  );
+}
+
+export async function getNotificationsUnreadCount(email: string): Promise<{ count: number }> {
+  return apiCall<{ count: number }>(
+    `/api/notifications/unread-count?email=${encodeURIComponent(email)}`,
+  );
+}
+
+export async function markNotificationsRead(email: string, notificationIds?: string[]): Promise<void> {
+  await apiCall('/api/notifications/mark-read', {
+    method: 'POST',
+    body: JSON.stringify({ email, notificationIds: notificationIds ?? null }),
+  });
+}
+
+// ─── Push Notifications ────────────────────────────────────────────────────────
+
+export async function registerPushToken(payload: {
+  email: string;
+  token: string;
+  platform: string;
+}): Promise<void> {
+  await apiCall('/api/push/register', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function unregisterPushToken(payload: {
+  email: string;
+  token?: string;
+}): Promise<void> {
+  await apiCall('/api/push/unregister', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
