@@ -4,18 +4,56 @@
  * without requiring `npm install` first.
  *
  * Production:  serves dist/ static files + proxies /api/* to FastAPI :8000
+ *              Also spawns the FastAPI backend as a child process so its
+ *              stdout/stderr appear in deployment logs and it auto-restarts.
  * Development: proxies everything to Expo Metro :5001 (or serves dist/ if built)
  */
-const http  = require('http');
-const path  = require('path');
-const fs    = require('fs');
-const url   = require('url');
+const http   = require('http');
+const path   = require('path');
+const fs     = require('fs');
+const url    = require('url');
+const { spawn } = require('child_process');
 
 // ── Global safety net ──────────────────────────────────────────────────────
 process.on('uncaughtException',  (err)    => console.error('[Proxy] Uncaught exception (survived):', err.message));
 process.on('unhandledRejection', (reason) => console.error('[Proxy] Unhandled rejection (survived):', reason));
 
+// ── Backend (FastAPI/uvicorn) child process — production only ──────────────
 const IS_PRODUCTION = process.env.PRODUCTION === 'true';
+
+if (IS_PRODUCTION) {
+  const PYTHON    = '/home/runner/workspace/.pythonlibs/bin/python3.12';
+  const BACK_DIR  = '/home/runner/workspace/backend';
+  let backendProc = null;
+  let restartCount = 0;
+
+  function startBackend() {
+    console.log(`[Backend] Starting uvicorn (attempt ${restartCount + 1})...`);
+    backendProc = spawn(PYTHON, ['-m', 'uvicorn', 'server:app', '--host', '0.0.0.0', '--port', '8000'], {
+      cwd: BACK_DIR,
+      env: { ...process.env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    backendProc.stdout.on('data', (d) => process.stdout.write('[Backend] ' + d));
+    backendProc.stderr.on('data', (d) => process.stderr.write('[Backend] ' + d));
+
+    backendProc.on('exit', (code, signal) => {
+      console.error(`[Backend] Process exited: code=${code} signal=${signal}`);
+      restartCount++;
+      const delay = Math.min(5000 * restartCount, 30000);
+      console.log(`[Backend] Restarting in ${delay / 1000}s...`);
+      setTimeout(startBackend, delay);
+    });
+
+    backendProc.on('error', (err) => {
+      console.error('[Backend] Failed to spawn:', err.message);
+    });
+  }
+
+  startBackend();
+}
+
 const PORT         = 5000;
 const BACKEND_PORT = parseInt(process.env.BACKEND_PORT || '8000', 10);
 const METRO_PORT   = 5001;

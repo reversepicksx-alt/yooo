@@ -82,8 +82,8 @@ externalPort = 3000
 
 [deployment]
 deploymentTarget = "autoscale"
-run = ["bash", "-c", "mkdir -p /home/runner/.reversepicks_db && (mongod --dbpath /home/runner/.reversepicks_db --logpath /home/runner/.reversepicks_mongo.log --fork --quiet 2>/dev/null || true) & (sleep 6 && cd /home/runner/workspace/backend && /home/runner/workspace/.pythonlibs/bin/python3.12 -m uvicorn server:app --host 0.0.0.0 --port 8000) & cd /home/runner/workspace/mobile && PRODUCTION=true node proxy.js"]
-build = ["bash", "-c", "echo \"Build timestamp: 1782197732191\" && cd mobile && ([ -d node_modules ] || npm install --legacy-peer-deps --silent 2>&1 | tail -3) && npx expo export -p web --output-dir dist 2>&1 | tail -8 && echo '[BUILD] dist ready.'"]
+run = ["bash", "-c", "cd /home/runner/workspace/mobile && PRODUCTION=true node proxy.js"]
+build = ["bash", "-c", "echo \"Build timestamp: 1782221466574\" && cd mobile && ([ -d node_modules ] || npm install --legacy-peer-deps --silent 2>&1 | tail -3) && npx expo export -p web --output-dir dist 2>&1 | tail -8 && echo '[BUILD] dist ready.'"]
 
 [postMerge]
 path = "scripts/post-merge.sh"
