@@ -22,32 +22,59 @@ process.on('unhandledRejection', (reason) => console.error('[Proxy] Unhandled re
 const IS_PRODUCTION = process.env.PRODUCTION === 'true';
 
 if (IS_PRODUCTION) {
-  const UVICORN   = '/home/runner/workspace/backend/.venv/bin/uvicorn';
   const BACK_DIR  = '/home/runner/workspace/backend';
   let backendProc = null;
   let restartCount = 0;
 
-  function startBackend() {
-    console.log(`[Backend] Starting uvicorn (attempt ${restartCount + 1})...`);
-    backendProc = spawn(UVICORN, ['server:app', '--host', '0.0.0.0', '--port', '8000'], {
-      cwd: BACK_DIR,
-      env: { ...process.env },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+  // Log env info so we can see it in deployment logs (stderr only captured)
+  process.stderr.write(`[Backend] IS_PRODUCTION=true, PRODUCTION env="${process.env.PRODUCTION}"\n`);
 
-    backendProc.stdout.on('data', (d) => process.stdout.write('[Backend] ' + d));
+  // Find uvicorn: prefer venv (created during build), fall back to pythonlibs
+  function findUvicorn() {
+    const candidates = [
+      '/home/runner/workspace/backend/.venv/bin/uvicorn',
+      '/home/runner/workspace/.pythonlibs/bin/uvicorn',
+    ];
+    for (const p of candidates) {
+      try { fs.accessSync(p, fs.constants.X_OK); process.stderr.write(`[Backend] Using uvicorn: ${p}\n`); return p; }
+      catch { process.stderr.write(`[Backend] Not found: ${p}\n`); }
+    }
+    // Last resort: use python3 -m uvicorn via shell
+    process.stderr.write('[Backend] Falling back to: python3 -m uvicorn\n');
+    return null;
+  }
+
+  function startBackend() {
+    process.stderr.write(`[Backend] Starting uvicorn (attempt ${restartCount + 1})...\n`);
+    const uvicornPath = findUvicorn();
+    const env = { ...process.env,
+      PYTHONPATH: '/home/runner/workspace/.pythonlibs/lib/python3.12/site-packages' +
+                  (process.env.PYTHONPATH ? ':' + process.env.PYTHONPATH : '') };
+
+    if (uvicornPath) {
+      backendProc = spawn(uvicornPath, ['server:app', '--host', '0.0.0.0', '--port', '8000'], {
+        cwd: BACK_DIR, env, stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } else {
+      // Shell fallback — lets bash find python3 from PATH
+      backendProc = spawn('bash', ['-c',
+        'python3 -m uvicorn server:app --host 0.0.0.0 --port 8000'
+      ], { cwd: BACK_DIR, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    }
+
+    backendProc.stdout.on('data', (d) => process.stderr.write('[Backend] ' + d));
     backendProc.stderr.on('data', (d) => process.stderr.write('[Backend] ' + d));
 
     backendProc.on('exit', (code, signal) => {
-      console.error(`[Backend] Process exited: code=${code} signal=${signal}`);
+      process.stderr.write(`[Backend] Process exited: code=${code} signal=${signal}\n`);
       restartCount++;
       const delay = Math.min(5000 * restartCount, 30000);
-      console.log(`[Backend] Restarting in ${delay / 1000}s...`);
+      process.stderr.write(`[Backend] Restarting in ${delay / 1000}s...\n`);
       setTimeout(startBackend, delay);
     });
 
     backendProc.on('error', (err) => {
-      console.error('[Backend] Failed to spawn:', err.message);
+      process.stderr.write(`[Backend] Failed to spawn: ${err.message}\n`);
     });
   }
 
