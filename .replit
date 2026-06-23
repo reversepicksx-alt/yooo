@@ -83,7 +83,7 @@ externalPort = 3000
 [deployment]
 deploymentTarget = "autoscale"
 run = ["bash", "-c", "cd /home/runner/workspace/mobile && PRODUCTION=true node proxy.js"]
-build = ["bash", "-c", "echo \"Build timestamp: 1782221466574\" && cd mobile && ([ -d node_modules ] || npm install --legacy-peer-deps --silent 2>&1 | tail -3) && npx expo export -p web --output-dir dist 2>&1 | tail -8 && echo '[BUILD] dist ready.'"]
+build = ["bash", "-c", "echo '[BUILD] Creating Python venv...' && python3 -m venv /home/runner/workspace/backend/.venv && echo '[BUILD] Installing Python packages...' && /home/runner/workspace/backend/.venv/bin/pip install -r /home/runner/workspace/backend/requirements.txt --quiet 2>&1 | tail -5 && echo '[BUILD] Python venv ready.' && echo 'Build timestamp: 1782222604386' && cd mobile && ([ -d node_modules ] || npm install --legacy-peer-deps --silent 2>&1 | tail -3) && npx expo export -p web --output-dir dist 2>&1 | tail -8 && echo '[BUILD] dist ready.'"]
 
 [postMerge]
 path = "scripts/post-merge.sh"

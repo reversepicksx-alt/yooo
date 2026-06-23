@@ -22,14 +22,14 @@ process.on('unhandledRejection', (reason) => console.error('[Proxy] Unhandled re
 const IS_PRODUCTION = process.env.PRODUCTION === 'true';
 
 if (IS_PRODUCTION) {
-  const PYTHON    = '/home/runner/workspace/.pythonlibs/bin/python3.12';
+  const UVICORN   = '/home/runner/workspace/backend/.venv/bin/uvicorn';
   const BACK_DIR  = '/home/runner/workspace/backend';
   let backendProc = null;
   let restartCount = 0;
 
   function startBackend() {
     console.log(`[Backend] Starting uvicorn (attempt ${restartCount + 1})...`);
-    backendProc = spawn(PYTHON, ['-m', 'uvicorn', 'server:app', '--host', '0.0.0.0', '--port', '8000'], {
+    backendProc = spawn(UVICORN, ['server:app', '--host', '0.0.0.0', '--port', '8000'], {
       cwd: BACK_DIR,
       env: { ...process.env },
       stdio: ['ignore', 'pipe', 'pipe'],
