@@ -1,4 +1,4 @@
-modules = ["nodejs-20", "web", "python-3.11", "postgresql-16"]
+modules = ["nodejs-20", "web", "postgresql-16", "python-3.12"]
 [agent]
 expertMode = true
 integrations = ["stripe:1.0.0", "python_gemini_ai_integrations:1.0.0"]
@@ -82,8 +82,8 @@ externalPort = 3000
 
 [deployment]
 deploymentTarget = "autoscale"
-run = ["bash", "-c", "cd /home/runner/workspace/mobile && PRODUCTION=true node proxy.js"]
-build = ["bash", "-c", "echo '[BUILD] Creating Python venv...' && python3 -m venv /home/runner/workspace/backend/.venv && echo '[BUILD] Installing Python packages...' && /home/runner/workspace/backend/.venv/bin/pip install -r /home/runner/workspace/backend/requirements.txt --quiet 2>&1 | tail -5 && echo '[BUILD] Python venv ready.' && echo 'Build timestamp: 1782223878405' && cd mobile && ([ -d node_modules ] || npm install --legacy-peer-deps --silent 2>&1 | tail -3) && npx expo export -p web --output-dir dist 2>&1 | tail -8 && echo '[BUILD] dist ready.'"]
+run = ["bash", "-c", "(sleep 5 && cd /home/runner/workspace/backend && /home/runner/workspace/.pythonlibs/bin/python3.12 -m uvicorn server:app --host 0.0.0.0 --port 8000) & cd /home/runner/workspace/mobile && PRODUCTION=true node proxy.js"]
+build = ["bash", "-c", "echo 'Build: 1782224586403' && cd mobile && ([ -d node_modules ] || npm install --legacy-peer-deps --silent) && npx expo export -p web --output-dir dist && echo '[BUILD] dist ready.'"]
 
 [postMerge]
 path = "scripts/post-merge.sh"
