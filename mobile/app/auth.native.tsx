@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  Platform, ActivityIndicator, Image, Animated,
+  Platform, ActivityIndicator, Animated, Image,
 } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -242,11 +242,6 @@ export default function AuthScreen() {
           <Animated.View style={{ transform: [{ scale: splR2Scale }], opacity: splR2Opac, ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' }}>
             <View style={[styles.splRing, { width: 160, height: 160, borderRadius: 80 }]} />
           </Animated.View>
-          <Animated.Image
-            source={require('../assets/logo.png')}
-            style={[styles.splLogo, { transform: [{ scale: splLogoScale }], opacity: splLogoOpac }]}
-            resizeMode="contain"
-          />
           <Animated.View style={[styles.splScan, { transform: [{ translateY: splScanY }], opacity: splScanOpac }]} />
         </View>
         <Animated.Text style={[styles.splTitle, { opacity: splTxtOpac, transform: [{ translateY: splTxtY }] }]}>
@@ -343,7 +338,7 @@ export default function AuthScreen() {
       <View style={styles.inner}>
         <View style={styles.card}>
           <TouchableOpacity onPress={handleLogoTap} activeOpacity={0.9} style={styles.logoWrap}>
-            <Image source={require('../assets/logo.png')} style={styles.logo} resizeMode="contain" />
+            <View style={styles.logoPlaceholder} />
           </TouchableOpacity>
 
           <Text style={styles.welcomeTitle}>Welcome back</Text>
@@ -469,8 +464,10 @@ const styles = StyleSheet.create({
     padding: 24,
     gap: 14,
   },
-  logoWrap: { alignItems: 'center', paddingVertical: 4 },
-  logo:     { width: 64, height: 64 },
+  logoWrap:        { alignItems: 'center', paddingVertical: 4 },
+  logoPlaceholder: { width: 1, height: 1 },
+  splLogoWrap:     { width: 80, height: 80, borderRadius: 40, overflow: 'hidden', zIndex: 2 },
+  splLogo:         { width: 80, height: 80 },
   welcomeTitle: {
     color: Colors.text,
     fontSize: 22,
