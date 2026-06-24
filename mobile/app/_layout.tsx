@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Platform } from 'react-native';
+import { Alert, Platform } from 'react-native';
 import { Stack } from 'expo-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -9,6 +9,14 @@ import Colors from '@/constants/colors';
 import * as Notifications from 'expo-notifications';
 import { registerPushToken } from '@/lib/api';
 import LoadingScreen from '@/components/LoadingScreen';
+import { initializeRevenueCat, setRevenueCatUserId, SubscriptionProvider } from '@/lib/revenuecat';
+
+// Initialize RevenueCat once at module load (before any component renders)
+try {
+  initializeRevenueCat();
+} catch (err: any) {
+  console.warn('[RevenueCat] init error:', err?.message ?? err);
+}
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 30000 } },
@@ -55,6 +63,19 @@ function PushRegistrar() {
   return null;
 }
 
+// Logs user into RevenueCat whenever they authenticate
+function RevenueCatSync() {
+  const { session } = useAuth();
+
+  useEffect(() => {
+    if (session?.email && Platform.OS !== 'web') {
+      setRevenueCatUserId(session.email);
+    }
+  }, [session?.email]);
+
+  return null;
+}
+
 function AppBoot() {
   const { isLoading } = useAuth();
 
@@ -73,6 +94,7 @@ function AppBoot() {
     <>
       <StatusBar style="light" />
       <PushRegistrar />
+      <RevenueCatSync />
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: Colors.background } }}>
         <Stack.Screen name="index" />
         <Stack.Screen name="auth" />
@@ -87,7 +109,9 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
-          <AppBoot />
+          <SubscriptionProvider>
+            <AppBoot />
+          </SubscriptionProvider>
         </AuthProvider>
       </QueryClientProvider>
     </GestureHandlerRootView>

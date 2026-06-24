@@ -3,6 +3,11 @@
   "private": true,
   "version": "2.0.0",
   "dependencies": {
+    "@replit/connectors-sdk": "^0.4.1",
     "@replit/revenuecat-sdk": "^4.2.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3"
   }
 }

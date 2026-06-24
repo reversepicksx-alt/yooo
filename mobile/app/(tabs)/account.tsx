@@ -13,7 +13,8 @@ import {
   getSubscriptionStatus, cancelSubscription, changePlan,
   resubscribeCheckout, PLAN_OPTIONS, type SubscriptionStatus,
 } from '@/lib/api';
-import IOSubscriptionLink from '@/components/IOSubscriptionLink';
+import { useSubscription } from '@/lib/revenuecat';
+import type { PurchasesPackage } from 'react-native-purchases';
 
 function getErrorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
@@ -64,6 +65,204 @@ function formatDate(iso?: string): string {
     return '—';
   }
 }
+
+function formatExpiryDate(ms?: number): string {
+  if (!ms) return '—';
+  try {
+    const d = new Date(ms);
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  } catch {
+    return '—';
+  }
+}
+
+// ── Apple IAP Paywall (iOS native only) ────────────────────────────────────
+
+function IAPPaywall() {
+  const { packages, isLoading, purchase, restore, isPurchasing, isRestoring } = useSubscription();
+  const [buyingId, setBuyingId] = useState<string | null>(null);
+  const [confirmPkg, setConfirmPkg] = useState<PurchasesPackage | null>(null);
+
+  const handlePurchase = async (pkg: PurchasesPackage) => {
+    setBuyingId(pkg.identifier);
+    try {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      await purchase(pkg);
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Alert.alert('Subscribed!', 'Welcome to ReversePicks Pro. Your subscription is now active.');
+    } catch (e: any) {
+      if (e?.userCancelled) return;
+      Alert.alert('Purchase Failed', getErrorMessage(e));
+    } finally {
+      setBuyingId(null);
+      setConfirmPkg(null);
+    }
+  };
+
+  const handleRestore = async () => {
+    try {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      await restore();
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Alert.alert('Restored', 'Your purchases have been restored.');
+    } catch (e: any) {
+      Alert.alert('Restore Failed', getErrorMessage(e));
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <View style={styles.paywallLoading}>
+        <ActivityIndicator size="small" color={Colors.primary} />
+        <Text style={styles.paywallLoadingText}>Loading plans…</Text>
+      </View>
+    );
+  }
+
+  return (
+    <>
+      {/* Confirm purchase modal */}
+      <Modal visible={!!confirmPkg} transparent animationType="fade" onRequestClose={() => setConfirmPkg(null)}>
+        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setConfirmPkg(null)}>
+          <View style={styles.modalSheet}>
+            <View style={styles.modalHandle} />
+            <Text style={styles.modalTitle}>Confirm Purchase</Text>
+            <Text style={styles.modalSubtitle}>
+              {confirmPkg?.product?.title} — {confirmPkg?.product?.priceString}
+            </Text>
+            <TouchableOpacity
+              style={[styles.buyBtn, { opacity: isPurchasing ? 0.6 : 1 }]}
+              onPress={() => confirmPkg && handlePurchase(confirmPkg)}
+              disabled={isPurchasing}
+              activeOpacity={0.8}
+            >
+              {isPurchasing ? (
+                <ActivityIndicator size="small" color={Colors.background} />
+              ) : (
+                <Text style={styles.buyBtnText}>Subscribe via Apple</Text>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.modalCancel} onPress={() => setConfirmPkg(null)}>
+              <Text style={styles.modalCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      <View style={styles.paywallHeader}>
+        <Ionicons name="flash" size={28} color={Colors.primary} />
+        <Text style={styles.paywallTitle}>ReversePicks Pro</Text>
+        <Text style={styles.paywallSub}>AI-powered soccer player props analytics</Text>
+      </View>
+
+      <View style={styles.menuGroup}>
+        {packages.length === 0 ? (
+          <View style={styles.paywallEmpty}>
+            <Text style={styles.paywallEmptyText}>No plans available. Try again later.</Text>
+          </View>
+        ) : (
+          packages.map((pkg) => {
+            const isBuying = buyingId === pkg.identifier;
+            const priceStr = pkg.product?.priceString ?? '—';
+            const title = pkg.product?.title ?? pkg.packageType ?? pkg.identifier;
+            const desc = pkg.product?.description ?? '';
+            return (
+              <TouchableOpacity
+                key={pkg.identifier}
+                style={styles.planOption}
+                onPress={() => setConfirmPkg(pkg)}
+                activeOpacity={0.7}
+                disabled={!!buyingId || isRestoring}
+              >
+                <View style={styles.planInfo}>
+                  <Text style={styles.planName}>{title}</Text>
+                  {desc ? <Text style={styles.planDesc}>{desc}</Text> : null}
+                </View>
+                <View style={styles.planRight}>
+                  <Text style={styles.planPrice}>{priceStr}</Text>
+                  {isBuying ? (
+                    <ActivityIndicator size="small" color={Colors.primary} style={{ marginTop: 4 }} />
+                  ) : (
+                    <Ionicons name="chevron-forward" size={16} color={Colors.textTertiary} />
+                  )}
+                </View>
+              </TouchableOpacity>
+            );
+          })
+        )}
+      </View>
+
+      <TouchableOpacity
+        style={styles.restoreBtn}
+        onPress={handleRestore}
+        disabled={isRestoring || !!buyingId}
+        activeOpacity={0.7}
+      >
+        {isRestoring ? (
+          <ActivityIndicator size="small" color={Colors.textSecondary} />
+        ) : (
+          <Text style={styles.restoreBtnText}>Restore Purchases</Text>
+        )}
+      </TouchableOpacity>
+    </>
+  );
+}
+
+// ── Active IAP Subscription info ────────────────────────────────────────────
+
+function IAPSubscriptionInfo() {
+  const { customerInfo, restore, isRestoring } = useSubscription();
+  const entitlement = customerInfo?.entitlements.active?.['pro'];
+
+  const handleManage = () => {
+    Linking.openURL('https://apps.apple.com/account/subscriptions');
+  };
+
+  const handleRestore = async () => {
+    try {
+      await restore();
+      Alert.alert('Restored', 'Your subscription status has been refreshed.');
+    } catch (e: any) {
+      Alert.alert('Error', getErrorMessage(e));
+    }
+  };
+
+  return (
+    <View style={styles.menuGroup}>
+      <MenuRow
+        icon="checkmark-circle-outline"
+        label="Status"
+        value="Active"
+        valueColor={Colors.primary}
+      />
+      {entitlement?.expirationDate && (
+        <MenuRow
+          icon="calendar-outline"
+          label="Renews"
+          value={formatExpiryDate(
+            typeof entitlement.expirationDate === 'string'
+              ? new Date(entitlement.expirationDate).getTime()
+              : entitlement.expirationDate
+          )}
+        />
+      )}
+      <MenuRow
+        icon="settings-outline"
+        label="Manage Subscription"
+        value="Manage in Apple Settings"
+        onPress={handleManage}
+      />
+      <MenuRow
+        icon="refresh-outline"
+        label="Restore Purchases"
+        onPress={handleRestore}
+        loading={isRestoring}
+      />
+    </View>
+  );
+}
+
+// ── Plan picker (web / Stripe) ───────────────────────────────────────────────
 
 function PlanPickerModal({
   visible, currentPlanKey, loading, onSelect, onClose, isResubscribe,
@@ -119,6 +318,8 @@ function PlanPickerModal({
   );
 }
 
+// ── Main screen ──────────────────────────────────────────────────────────────
+
 export default function AccountScreen() {
   const insets = useSafeAreaInsets();
   const { session, logout } = useAuth();
@@ -130,15 +331,23 @@ export default function AccountScreen() {
   const [actionLoading, setActionLoading] = useState(false);
   const [planPickerVisible, setPlanPickerVisible] = useState(false);
 
+  // RevenueCat state (iOS native only)
+  const { isSubscribed: hasIAP, isLoading: iapLoading } = useSubscription();
+
   const isSquareSub = session?.accessType?.toLowerCase().includes('square');
   const isStripeSub = session?.accessType?.toLowerCase().includes('stripe');
   const isLifetime = session?.accessType?.toLowerCase().includes('lifetime');
   const isWhop = session?.accessType?.toLowerCase().includes('whop');
   const isOwner = session?.accessType?.toLowerCase() === 'owner';
-  const showSubManagement = (isSquareSub || isStripeSub) && !isLifetime && !isOwner;
+
+  // On iOS native: subscription section is always IAP-driven
+  const isIOSNative = Platform.OS === 'ios';
+
+  // On web/android: keep existing Stripe flow for Square/Stripe subscribers
+  const showStripeManagement = !isIOSNative && (isSquareSub || isStripeSub) && !isLifetime && !isOwner;
 
   const fetchSubStatus = useCallback(async () => {
-    if (!session?.email || !showSubManagement) return;
+    if (!session?.email || !showStripeManagement) return;
     setSubLoading(true);
     try {
       const status = await getSubscriptionStatus(session.email, session.accessType);
@@ -148,7 +357,7 @@ export default function AccountScreen() {
     } finally {
       setSubLoading(false);
     }
-  }, [session?.email, showSubManagement]);
+  }, [session?.email, showStripeManagement]);
 
   useEffect(() => {
     fetchSubStatus();
@@ -213,16 +422,11 @@ export default function AccountScreen() {
     }
   };
 
-  const handleResubscribe = () => {
-    setPlanPickerVisible(true);
-  };
-
   const handleResubscribePlan = async (planKey: string) => {
     if (!session?.email) return;
     setActionLoading(true);
     try {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      // Square billing is permanently disabled — always route to Stripe for resubscription
       const forceStripeType = isSquareSub ? 'stripe' : (session.accessType || 'stripe');
       const result = await resubscribeCheckout(session.email, planKey, forceStripeType);
       const url = result.checkoutUrl || result.checkout_url || result.redirect_url;
@@ -310,24 +514,32 @@ export default function AccountScreen() {
           <MenuRow icon="shield-outline" label="Access Level" value={accessLabel} />
         </View>
 
-        {/* iOS App Store compliance: payment / subscription UI must redirect to
-            the website (Stripe). Apple IAP is not used. The web app keeps the
-            native subscription management unchanged. */}
-        {showSubManagement && Platform.OS === 'ios' && (
+        {/* ── iOS native: Apple IAP subscription section ── */}
+        {isIOSNative && !isLifetime && !isOwner && !isWhop && (
           <>
             <Text style={styles.sectionLabel}>Subscription</Text>
-            <IOSubscriptionLink />
+            {iapLoading ? (
+              <View style={[styles.menuGroup, styles.subLoadingWrap]}>
+                <ActivityIndicator size="small" color={Colors.primary} />
+                <Text style={styles.subLoadingText}>Loading…</Text>
+              </View>
+            ) : hasIAP ? (
+              <IAPSubscriptionInfo />
+            ) : (
+              <IAPPaywall />
+            )}
           </>
         )}
 
-        {showSubManagement && Platform.OS !== 'ios' && (
+        {/* ── Web / Android: existing Stripe management ── */}
+        {showStripeManagement && (
           <>
             <Text style={styles.sectionLabel}>Subscription</Text>
             {isSquareSub && (
               <View style={styles.squareNotice}>
                 <Ionicons name="information-circle-outline" size={16} color="#f59e0b" />
                 <Text style={styles.squareNoticeText}>
-                  Square billing has ended. Use "New Subscription" below to continue with Stripe — no charges will occur on your old payment method.
+                  Square billing has ended. Use "New Subscription" below to continue with Stripe.
                 </Text>
               </View>
             )}
@@ -338,62 +550,28 @@ export default function AccountScreen() {
               </View>
             ) : subStatus ? (
               <View style={styles.menuGroup}>
-                <MenuRow
-                  icon="card-outline"
-                  label="Plan"
-                  value={subStatus.plan || '—'}
-                />
-                <MenuRow
-                  icon="pricetag-outline"
-                  label="Price"
-                  value={subStatus.planLabel || '—'}
-                />
-                <MenuRow
-                  icon="pulse-outline"
-                  label="Status"
-                  value={statusLabel}
-                  valueColor={statusColor}
-                />
+                <MenuRow icon="card-outline" label="Plan" value={subStatus.plan || '—'} />
+                <MenuRow icon="pricetag-outline" label="Price" value={subStatus.planLabel || '—'} />
+                <MenuRow icon="pulse-outline" label="Status" value={statusLabel} valueColor={statusColor} />
                 {subStatus.expiresAt && !isCanceled && (
-                  <MenuRow
-                    icon="calendar-outline"
-                    label="Next Billing"
-                    value={formatDate(subStatus.expiresAt)}
-                  />
+                  <MenuRow icon="calendar-outline" label="Next Billing" value={formatDate(subStatus.expiresAt)} />
                 )}
                 {subStatus.cardLast4 && (
-                  <MenuRow
-                    icon="wallet-outline"
-                    label="Payment"
-                    value={`${subStatus.cardBrand || 'Card'} •••• ${subStatus.cardLast4}`}
-                  />
+                  <MenuRow icon="wallet-outline" label="Payment" value={`${subStatus.cardBrand || 'Card'} •••• ${subStatus.cardLast4}`} />
                 )}
-                {/* Change Plan — hidden for Square subs (Square billing is permanently disabled) */}
                 {!isCanceled && !isSquareSub && (
-                  <MenuRow
-                    icon="swap-horizontal-outline"
-                    label="Change Plan"
-                    onPress={() => setPlanPickerVisible(true)}
-                    loading={actionLoading}
-                  />
+                  <MenuRow icon="swap-horizontal-outline" label="Change Plan" onPress={() => setPlanPickerVisible(true)} loading={actionLoading} />
                 )}
-                {/* Resubscribe / Cancel — Square subs route to Stripe; hide cancel since already expired */}
                 {isCanceled || isSquareSub ? (
                   <MenuRow
                     icon="refresh-outline"
                     label={isSquareSub ? 'New Subscription (Stripe)' : 'Resubscribe'}
                     value={isSquareSub ? 'Switch to secure Stripe billing' : 'Choose a new plan'}
-                    onPress={handleResubscribe}
+                    onPress={() => setPlanPickerVisible(true)}
                     loading={actionLoading}
                   />
                 ) : (
-                  <MenuRow
-                    icon="close-circle-outline"
-                    label="Cancel Subscription"
-                    onPress={handleCancel}
-                    danger
-                    loading={actionLoading}
-                  />
+                  <MenuRow icon="close-circle-outline" label="Cancel Subscription" onPress={handleCancel} danger loading={actionLoading} />
                 )}
               </View>
             ) : (
@@ -429,7 +607,7 @@ export default function AccountScreen() {
         loading={actionLoading}
         onSelect={isCanceled ? handleResubscribePlan : handleChangePlan}
         onClose={() => setPlanPickerVisible(false)}
-        isResubscribe={isCanceled}
+        isResubscribe={isCanceled || isSquareSub}
       />
     </View>
   );
@@ -441,15 +619,9 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 28, fontWeight: '800', color: Colors.text },
   body: { paddingHorizontal: 20 },
   profileCard: {
-    backgroundColor: Colors.card,
-    borderRadius: Colors.radiusLg,
-    padding: 20,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 16,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    marginBottom: 28,
+    backgroundColor: Colors.card, borderRadius: Colors.radiusLg,
+    padding: 20, flexDirection: 'row', alignItems: 'center',
+    gap: 16, borderWidth: 1, borderColor: Colors.border, marginBottom: 28,
   },
   avatar: {
     width: 56, height: 56, borderRadius: 28,
@@ -462,9 +634,8 @@ const styles = StyleSheet.create({
   profileEmail: { fontSize: 15, fontWeight: '600', color: Colors.text, marginBottom: 6 },
   accessBadge: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
-    backgroundColor: Colors.primaryDim,
-    paddingHorizontal: 10, paddingVertical: 4,
-    borderRadius: 20, alignSelf: 'flex-start',
+    backgroundColor: Colors.primaryDim, paddingHorizontal: 10,
+    paddingVertical: 4, borderRadius: 20, alignSelf: 'flex-start',
   },
   accessText: { fontSize: 11, color: Colors.primary, fontWeight: '700' },
   sectionLabel: {
@@ -473,8 +644,7 @@ const styles = StyleSheet.create({
   },
   menuGroup: {
     backgroundColor: Colors.card, borderRadius: Colors.radiusLg,
-    borderWidth: 1, borderColor: Colors.border,
-    marginBottom: 24, overflow: 'hidden',
+    borderWidth: 1, borderColor: Colors.border, marginBottom: 24, overflow: 'hidden',
   },
   menuRow: {
     flexDirection: 'row', alignItems: 'center',
@@ -491,6 +661,45 @@ const styles = StyleSheet.create({
   menuLabel: { fontSize: 15, color: Colors.text, fontWeight: '500' },
   menuLabelDanger: { color: Colors.error },
   menuValue: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
+
+  // Paywall
+  paywallHeader: { alignItems: 'center', gap: 8, marginBottom: 20 },
+  paywallTitle: { fontSize: 22, fontWeight: '800', color: Colors.text },
+  paywallSub: { fontSize: 13, color: Colors.textSecondary, textAlign: 'center' },
+  paywallLoading: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: Colors.card, borderRadius: Colors.radiusLg,
+    borderWidth: 1, borderColor: Colors.border,
+    padding: 24, marginBottom: 24, justifyContent: 'center',
+  },
+  paywallLoadingText: { fontSize: 13, color: Colors.textTertiary },
+  paywallEmpty: { padding: 24, alignItems: 'center' },
+  paywallEmptyText: { fontSize: 13, color: Colors.textTertiary },
+
+  planOption: {
+    flexDirection: 'row', alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1, borderBottomColor: Colors.border,
+  },
+  planOptionCurrent: { backgroundColor: Colors.primaryDim },
+  planInfo: { flex: 1 },
+  planDesc: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
+  planName: { fontSize: 16, fontWeight: '700', color: Colors.text },
+  planNameCurrent: { color: Colors.primary },
+  planRight: { alignItems: 'flex-end', gap: 2 },
+  planPrice: { fontSize: 14, fontWeight: '700', color: Colors.primary },
+
+  buyBtn: {
+    backgroundColor: Colors.primary, borderRadius: 14,
+    padding: 14, alignItems: 'center', marginTop: 8,
+  },
+  buyBtnText: { fontSize: 15, fontWeight: '700', color: Colors.background },
+
+  restoreBtn: {
+    alignItems: 'center', paddingVertical: 12, marginBottom: 8,
+  },
+  restoreBtnText: { fontSize: 13, color: Colors.textSecondary },
+
   footer: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     gap: 8, paddingTop: 8,
@@ -513,8 +722,7 @@ const styles = StyleSheet.create({
   squareNoticeText: { flex: 1, fontSize: 12, color: '#f59e0b', lineHeight: 18 },
 
   modalOverlay: {
-    flex: 1, backgroundColor: Colors.overlay,
-    justifyContent: 'flex-end',
+    flex: 1, backgroundColor: Colors.overlay, justifyContent: 'flex-end',
   },
   modalSheet: {
     backgroundColor: Colors.card, borderTopLeftRadius: 24,
@@ -533,19 +741,6 @@ const styles = StyleSheet.create({
     fontSize: 13, color: Colors.textSecondary,
     textAlign: 'center', marginBottom: 20,
   },
-  planOption: {
-    flexDirection: 'row', alignItems: 'center',
-    padding: 16, borderRadius: 14,
-    backgroundColor: '#1a1a1a', marginBottom: 8,
-    borderWidth: 1, borderColor: Colors.borderSubtle,
-  },
-  planOptionCurrent: {
-    borderColor: Colors.primary, backgroundColor: Colors.primaryDim,
-  },
-  planInfo: { flex: 1 },
-  planName: { fontSize: 16, fontWeight: '700', color: Colors.text },
-  planNameCurrent: { color: Colors.primary },
-  planPrice: { fontSize: 13, color: Colors.textSecondary, marginTop: 2 },
   currentBadge: {
     backgroundColor: Colors.primaryDim, paddingHorizontal: 10,
     paddingVertical: 4, borderRadius: 20,
