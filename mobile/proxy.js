@@ -107,65 +107,35 @@ const PWA_TAGS = `    <link rel="icon" type="image/png" href="/rp-icon.png" />
 
 const LOADING_SCREEN = `
 <div id="rp-loading-screen">
-  <div class="rp-eye-img-wrap">
-    <img class="rp-eye-img" src="/assets/assets/splash-eye.e1a40406076285816282a002a7174d05.jpeg" alt="" />
+  <div class="rp-logo-wrap">
+    <img class="rp-logo-img" src="/assets/assets/logo.5a940b54f2aa2f16efb69c6a99bbec24.png" alt="ReversePicks" />
   </div>
-  <div class="rp-lid rp-lid-top"></div>
-  <div class="rp-lid rp-lid-bot"></div>
-  <div class="rp-bolt rp-b1"></div>
-  <div class="rp-bolt rp-b2"></div>
-  <div class="rp-bolt rp-b3"></div>
-  <div class="rp-bolt rp-b4"></div>
-  <div class="rp-wisp rp-w1"></div>
-  <div class="rp-wisp rp-w2"></div>
-  <div class="rp-wisp rp-w3"></div>
   <div class="rp-hud">
     <div class="rp-brand">
-      <span class="rp-ch" style="animation-delay:.85s">R</span><span class="rp-ch" style="animation-delay:.90s">E</span><span class="rp-ch" style="animation-delay:.95s">V</span><span class="rp-ch" style="animation-delay:1.00s">E</span><span class="rp-ch" style="animation-delay:1.05s">R</span><span class="rp-ch" style="animation-delay:1.10s">S</span><span class="rp-ch" style="animation-delay:1.15s">E</span><span class="rp-ch" style="animation-delay:1.20s">P</span><span class="rp-ch" style="animation-delay:1.25s">I</span><span class="rp-ch" style="animation-delay:1.30s">C</span><span class="rp-ch" style="animation-delay:1.35s">K</span><span class="rp-ch" style="animation-delay:1.40s">S</span>
+      <span class="rp-ch" style="animation-delay:.65s">R</span><span class="rp-ch" style="animation-delay:.70s">E</span><span class="rp-ch" style="animation-delay:.75s">V</span><span class="rp-ch" style="animation-delay:.80s">E</span><span class="rp-ch" style="animation-delay:.85s">R</span><span class="rp-ch" style="animation-delay:.90s">S</span><span class="rp-ch" style="animation-delay:.95s">E</span><span class="rp-ch" style="animation-delay:1.00s">P</span><span class="rp-ch" style="animation-delay:1.05s">I</span><span class="rp-ch" style="animation-delay:1.10s">C</span><span class="rp-ch" style="animation-delay:1.15s">K</span><span class="rp-ch" style="animation-delay:1.20s">S</span>
     </div>
     <div class="rp-tag">THE EYE SEES WHAT OTHERS MISS</div>
     <div class="rp-prog-track"><div class="rp-prog-fill"></div></div>
   </div>
 </div>
 <style>
-#rp-loading-screen{position:fixed;top:0;left:0;right:0;bottom:0;background:#050505;z-index:99999;overflow:hidden;transition:opacity .5s ease-out}
-/* Eye image — blended into black via radial mask */
-.rp-eye-img-wrap{position:absolute;left:50%;top:42%;transform:translate(-50%,-52%);width:min(88vw, calc(68vh * 1.562));height:min(calc(88vw / 1.562), 68vh)}
-.rp-eye-img{width:100%;height:100%;object-fit:contain;display:block;-webkit-mask-image:radial-gradient(ellipse 80% 70% at 50% 48%,#000 45%,transparent 100%);mask-image:radial-gradient(ellipse 80% 70% at 50% 48%,#000 45%,transparent 100%)}
-/* Eyelids */
-.rp-lid{position:absolute;left:0;right:0;background:#050505;z-index:10}
-.rp-lid-top{top:0;height:55%;animation:lidOpen-top .82s cubic-bezier(.4,0,.2,1) .05s forwards}
-.rp-lid-bot{bottom:0;height:60%;animation:lidOpen-bot .82s cubic-bezier(.4,0,.2,1) .05s forwards}
-@keyframes lidOpen-top{0%{transform:translateY(0)}100%{transform:translateY(-100%)}}
-@keyframes lidOpen-bot{0%{transform:translateY(0)}100%{transform:translateY(100%)}}
-/* Lightning bolts */
-.rp-bolt{position:absolute;background:#39FF14;box-shadow:0 0 8px 3px rgba(57,255,20,.7);opacity:0;z-index:20}
-.rp-b1{width:80px;height:2.5px;top:calc(42% - min(88vw / 1.562, 68vh) * .52 - 14px);left:calc(50% - min(88vw,68vh * 1.562) * .28);transform:rotate(-24deg);animation:bolt 1.4s .95s infinite}
-.rp-b2{width:60px;height:2px;top:calc(42% - min(88vw / 1.562, 68vh) * .52 - 8px);left:calc(50% + min(88vw,68vh * 1.562) * .06);transform:rotate(20deg);animation:bolt 1.6s 1.55s infinite}
-.rp-b3{width:50px;height:2px;top:calc(42% - 18px);left:calc(50% - min(88vw,68vh * 1.562) * .44);transform:rotate(-10deg);animation:bolt 1.5s 1.15s infinite}
-.rp-b4{width:65px;height:2px;top:calc(42% - 12px);left:calc(50% + min(88vw,68vh * 1.562) * .26);transform:rotate(14deg);animation:bolt 1.8s 1.75s infinite}
-@keyframes bolt{0%,100%{opacity:0}2%{opacity:1}5%{opacity:.6}8%{opacity:1}12%{opacity:0}}
-/* Cloud wisps */
-.rp-wisp{position:absolute;left:6%;width:88%;height:18px;border-radius:9px;background:rgba(57,255,20,.07);opacity:0;z-index:15}
-.rp-w1{top:calc(42% + min(88vw / 1.562, 68vh) * .04);animation:wisp 3.8s 1.0s infinite}
-.rp-w2{top:calc(42% + min(88vw / 1.562, 68vh) * .14);animation:wisp 3.8s 1.6s infinite reverse}
-.rp-w3{top:calc(42% + min(88vw / 1.562, 68vh) * .23);animation:wisp 3.8s 2.3s infinite}
-@keyframes wisp{0%{opacity:0;transform:translateX(-12%)}12%{opacity:.22}88%{opacity:.22}100%{opacity:0;transform:translateX(12%)}}
-/* HUD */
-.rp-hud{position:absolute;bottom:6%;left:0;right:0;display:flex;flex-direction:column;align-items:center;gap:10px;opacity:0;animation:hudIn .6s .9s forwards}
+#rp-loading-screen{position:fixed;top:0;left:0;right:0;bottom:0;background:#050505;z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;transition:opacity .5s ease-out}
+.rp-logo-wrap{display:flex;align-items:center;justify-content:center;margin-bottom:min(6vh,40px);animation:logoIn .7s cubic-bezier(.22,1,.36,1) .05s both}
+@keyframes logoIn{from{opacity:0;transform:scale(.75)}to{opacity:1;transform:scale(1)}}
+.rp-logo-img{width:min(52vw,220px);height:min(52vw,220px);object-fit:contain;display:block}
+.rp-hud{display:flex;flex-direction:column;align-items:center;gap:10px;opacity:0;animation:hudIn .5s .6s forwards}
 @keyframes hudIn{to{opacity:1}}
-.rp-brand{display:flex;gap:3px}
-.rp-ch{font-family:system-ui,-apple-system,sans-serif;font-size:clamp(14px,4vw,22px);font-weight:900;color:#fff;letter-spacing:3px;opacity:0;transform:scale(.4);animation:chPop .28s forwards;text-shadow:0 0 18px rgba(57,255,20,.7)}
+.rp-brand{display:flex;gap:2px}
+.rp-ch{font-family:system-ui,-apple-system,sans-serif;font-size:clamp(14px,4.5vw,22px);font-weight:900;color:#fff;letter-spacing:3px;opacity:0;transform:scale(.3);animation:chPop .22s forwards;text-shadow:0 0 18px rgba(57,255,20,.7)}
 @keyframes chPop{to{opacity:1;transform:scale(1)}}
-.rp-tag{font-family:system-ui,-apple-system,sans-serif;font-size:clamp(7px,2vw,9px);font-weight:600;color:#39FF14;letter-spacing:2.5px;text-transform:uppercase;opacity:.85}
-.rp-prog-track{width:48vw;max-width:240px;height:2px;border-radius:1px;background:rgba(57,255,20,.2);overflow:hidden}
-.rp-prog-fill{height:2px;background:#39FF14;box-shadow:0 0 8px 2px #39FF14;animation:prog 3s .9s ease-out forwards}
+.rp-tag{font-family:system-ui,-apple-system,sans-serif;font-size:clamp(7px,2vw,9px);font-weight:600;color:#39FF14;letter-spacing:2.5px;text-transform:uppercase;opacity:0;animation:tagIn .5s 1.4s forwards}
+@keyframes tagIn{to{opacity:.85}}
+.rp-prog-track{width:min(48vw,240px);height:2px;border-radius:1px;background:rgba(57,255,20,.2);overflow:hidden;margin-top:2px}
+.rp-prog-fill{height:2px;background:#39FF14;box-shadow:0 0 8px 2px #39FF14;animation:prog 3s .6s ease-out forwards}
 @keyframes prog{0%{width:0}60%{width:70%}80%{width:85%}100%{width:92%}}
 </style>
 <script>
 (function(){
-  /* React will call window.__rpHideLoader() when it mounts its own screen.
-     Fallback: auto-hide after 10s in case React fails to signal. */
   var e=document.getElementById('rp-loading-screen');
   function hide(){if(!e)return;e.style.opacity='0';setTimeout(function(){if(e&&e.parentNode)e.parentNode.removeChild(e);e=null;},500);}
   window.__rpHideLoader=hide;
