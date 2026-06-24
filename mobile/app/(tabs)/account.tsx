@@ -171,6 +171,9 @@ function IAPPaywall() {
             <TouchableOpacity style={styles.modalCancel} onPress={() => setConfirmPkg(null)}>
               <Text style={styles.modalCancelText}>Cancel</Text>
             </TouchableOpacity>
+            <Text style={styles.paywallDisclosure}>
+              Subscription auto-renews at the same price unless cancelled at least 24 hours before the end of the current period. Manage or cancel anytime in Apple Settings.
+            </Text>
           </View>
         </TouchableOpacity>
       </Modal>
@@ -230,6 +233,14 @@ function IAPPaywall() {
           <Text style={styles.restoreBtnText}>Restore Purchases</Text>
         )}
       </TouchableOpacity>
+
+      <Text style={styles.paywallDisclosure}>
+        Subscriptions automatically renew unless cancelled at least 24 hours before the end of the current period. Payment is charged to your Apple ID account at confirmation of purchase. Manage or cancel at any time in{' '}
+        <Text style={{ color: Colors.primary }} onPress={() => Linking.openURL('https://apps.apple.com/account/subscriptions')}>
+          Apple Settings
+        </Text>
+        .
+      </Text>
     </>
   );
 }
@@ -692,6 +703,7 @@ const styles = StyleSheet.create({
   paywallHeader: { alignItems: 'center', gap: 8, marginBottom: 20 },
   paywallTitle: { fontSize: 22, fontWeight: '800', color: Colors.text },
   paywallSub: { fontSize: 13, color: Colors.textSecondary, textAlign: 'center' },
+  paywallDisclosure: { fontSize: 11, color: Colors.textTertiary, textAlign: 'center', lineHeight: 16, marginHorizontal: 24, marginTop: 16, marginBottom: 8 },
   paywallLoading: {
     flexDirection: 'row', alignItems: 'center', gap: 10,
     backgroundColor: Colors.card, borderRadius: Colors.radiusLg,
