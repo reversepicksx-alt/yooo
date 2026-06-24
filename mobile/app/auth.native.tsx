@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   Platform, ActivityIndicator, Animated, Image, Dimensions,
+  KeyboardAvoidingView, ScrollView,
 } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -271,8 +272,16 @@ export default function AuthScreen() {
   // ── OTP Code Entry ────────────────────────────────────────────────────────
   if (step === 'code') {
     return (
-      <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom + 20 }]}>
-        <View style={styles.inner}>
+      <KeyboardAvoidingView
+        style={styles.root}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
+        <ScrollView
+          contentContainerStyle={{ flexGrow: 1 }}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+        <View style={[styles.inner, { paddingTop: insets.top + 8, paddingBottom: insets.bottom + 20 }]}>
           <TouchableOpacity onPress={() => { setStep('email'); setCode(''); setError(''); setInfo(''); }} style={styles.backRow}>
             <Ionicons name="arrow-back" size={18} color={Colors.textSecondary} />
             <Text style={styles.backRowText}>Back</Text>
@@ -337,14 +346,23 @@ export default function AuthScreen() {
             </TouchableOpacity>
           </View>
         </View>
-      </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
     );
   }
 
   // ── Email Entry ───────────────────────────────────────────────────────────
   return (
-    <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom + 20 }]}>
-      <View style={styles.inner}>
+    <KeyboardAvoidingView
+      style={styles.root}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    >
+      <ScrollView
+        contentContainerStyle={{ flexGrow: 1 }}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+      <View style={[styles.inner, { paddingTop: insets.top + 8, paddingBottom: insets.bottom + 20 }]}>
         <View style={styles.card}>
           <View style={styles.logoWrap}>
             <Image source={require('../assets/logo.png')} style={styles.logoImg} resizeMode="contain" />
@@ -389,7 +407,6 @@ export default function AuthScreen() {
             }
           </TouchableOpacity>
 
-          {/* Admin Access — tap logo 7x OR tap the admin button below */}
           {!showOwner && (
             <TouchableOpacity onPress={() => setShowOwner(true)} style={styles.adminLink} activeOpacity={0.6}>
               <Ionicons name="shield-outline" size={13} color={Colors.textTertiary} />
@@ -432,7 +449,8 @@ export default function AuthScreen() {
           )}
         </View>
       </View>
-    </View>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
