@@ -14,6 +14,30 @@ router = APIRouter(prefix="/api", tags=["players"])
 # (e.g. Messi is cached under his club league, not under World Cup league 1)
 _TOURNAMENT_LEAGUES = {1, 9, 10, 11, 13, 15, 16, 17, 18}
 
+# International / national-team league IDs — when a player's best cache entry
+# falls under one of these, we know teamName is a national team (e.g. "Canada"),
+# not their actual club.  We enrich those players with a live API call.
+_INTL_LEAGUES = {
+    1,   # FIFA World Cup
+    9,   # UEFA Nations League
+    10,  # FIFA Friendlies / International Friendlies
+    11,  # UEFA Euro
+    15,  # Copa America
+    16,  # African Cup of Nations
+    17,  # Asian Cup
+    18,  # CONCACAF Gold Cup
+    29,  # UEFA U21 Championship
+    30,  # FIFA U20 World Cup
+    31,  # CONCACAF Nations League
+    32,  # UEFA Euro Qualifiers
+    33,  # Africa Cup of Nations Qualifiers
+    34,  # World Cup Qualifiers - Europe
+    35,  # World Cup Qualifiers - Asia
+    26,  # World Cup Qualifiers - CONCACAF
+    27,  # World Cup Qualifiers - South America
+    28,  # World Cup Qualifiers - Africa
+}
+
 
 async def _search_players_cache(query: str, league_id: int = None, relaxed: bool = False) -> list:
     """Fast MongoDB cache lookup for player search. Returns list of player dicts.
@@ -291,13 +315,98 @@ async def search_players(req: PlayerSearchRequest):
             player_list = [p for p in player_list if sort_key(p)[0] == 0]
         return player_list[:15]
 
+    async def _resolve_club_for_intl_player(p: dict) -> dict:
+        """If a cache hit shows a national team, fetch the player's actual club
+        from API-Football and override teamName/teamId/leagueId in the result.
+        Also writes a club-league entry to cache so future searches hit directly.
+        """
+        pid = p.get("id")
+        if not pid:
+            return p
+        try:
+            from cache import COL_PLAYERS
+            import unicodedata as _ud
+            def _clean(s):
+                return ''.join(
+                    c for c in _ud.normalize('NFD', (s or '').lower())
+                    if _ud.category(c) != 'Mn'
+                )
+            for s in [CURRENT_SEASON + 1, CURRENT_SEASON, CURRENT_SEASON - 1]:
+                data = await api_football_request("players", {"id": pid, "season": s})
+                if not data:
+                    continue
+                item = data[0]
+                stats = item.get("statistics") or []
+                # Walk stats newest-first; pick the first real club entry
+                club_stat = None
+                for st in reversed(stats):
+                    lid = (st.get("league") or {}).get("id", 0)
+                    tname = (st.get("team") or {}).get("name", "")
+                    if lid and lid not in _INTL_LEAGUES and lid != 667 and tname:
+                        club_stat = st
+                        break
+                if club_stat:
+                    new_team_id   = (club_stat.get("team") or {}).get("id", 0)
+                    new_team_name = (club_stat.get("team") or {}).get("name", "")
+                    new_league_id = (club_stat.get("league") or {}).get("id", 0)
+                    p = dict(p)
+                    p["teamId"]   = new_team_id
+                    p["teamName"] = new_team_name
+                    p["leagueId"] = new_league_id
+                    # Write club entry to cache so next search hits directly
+                    name_clean = _clean(p.get("name", ""))
+                    existing = await db[COL_PLAYERS].find_one(
+                        {"playerId": pid, "leagueId": new_league_id}, {"_id": 0}
+                    )
+                    if not existing:
+                        await db[COL_PLAYERS].insert_one({
+                            "playerId": pid,
+                            "name": p.get("name", ""),
+                            "nameClean": name_clean,
+                            "teamId": new_team_id,
+                            "teamName": new_team_name,
+                            "leagueId": new_league_id,
+                            "position": p.get("position", ""),
+                            "_cachedAt": time.time(),
+                        })
+                    else:
+                        await db[COL_PLAYERS].update_one(
+                            {"playerId": pid, "leagueId": new_league_id},
+                            {"$set": {
+                                "teamName": new_team_name,
+                                "teamId": new_team_id,
+                                "_cachedAt": time.time(),
+                            }}
+                        )
+                    return p
+                break  # season had data but no club stat found — don't try older seasons
+        except Exception as e:
+            print(f"[INTL ENRICH] pid={p.get('id')} err={e}")
+        return p
+
     # Strategy 0: MongoDB cache-first (fast, no quota usage)
     # When quota is exhausted use relaxed mode — accept any name-matched player
     # (e.g. Messi cached under Inter Miami, not World Cup league_id=1).
     try:
         cache_results = await _search_players_cache(req.query, req.league_id, relaxed=quota_gone)
         if cache_results:
-            return {"players": _apply_sort_and_quality(cache_results)}
+            sorted_results = _apply_sort_and_quality(cache_results)
+            # Enrich any player whose best cache entry is under a national-team /
+            # international league — fetch their real club from API-Football.
+            # Only do this when quota is available (skip if exhausted).
+            if not quota_gone:
+                enrich_tasks = []
+                enrich_indices = []
+                for i, p in enumerate(sorted_results):
+                    if p.get("leagueId") in _INTL_LEAGUES:
+                        enrich_tasks.append(_resolve_club_for_intl_player(p))
+                        enrich_indices.append(i)
+                if enrich_tasks:
+                    enriched = await aio.gather(*enrich_tasks, return_exceptions=True)
+                    for idx, result in zip(enrich_indices, enriched):
+                        if isinstance(result, dict):
+                            sorted_results[idx] = result
+            return {"players": sorted_results}
     except Exception:
         pass
 
@@ -468,7 +577,65 @@ async def search_players(req: PlayerSearchRequest):
     # Sort and quality-filter using helpers defined at the top of the handler.
     # all_match is the PRIMARY criterion so a perfect name match (e.g. "van de Ven")
     # always beats a team-enriched partial match (e.g. "Aravena").
-    return {"players": _apply_sort_and_quality(players)}
+    final_players = _apply_sort_and_quality(players)
+
+    # Write live API results back to cache so future cache-first searches
+    # return the real club (e.g. Liverpool/Lille for Jonathan David) instead
+    # of the national-team entry that may already be in cache.
+    async def _write_api_results_to_cache(player_list):
+        try:
+            from cache import COL_PLAYERS
+            from utils import strip_accents
+            import unicodedata as _ud
+            def _clean(s):
+                return ''.join(
+                    c for c in _ud.normalize('NFD', (s or '').lower())
+                    if _ud.category(c) != 'Mn'
+                )
+            for pl in player_list:
+                pid = pl.get("id")
+                team_name = pl.get("teamName") or ""
+                league_id_val = pl.get("leagueId") or 0
+                name = pl.get("name") or ""
+                if not pid or not team_name or not name:
+                    continue
+                # Only write back entries from real club leagues (not national teams)
+                if league_id_val in _INTL_LEAGUES or league_id_val == 667:
+                    continue
+                name_clean = _clean(name)
+                existing = await db[COL_PLAYERS].find_one(
+                    {"playerId": pid, "leagueId": league_id_val}, {"_id": 0}
+                )
+                if not existing:
+                    # Insert a new cache entry for this player×league so future
+                    # cache searches find the club entry directly.
+                    await db[COL_PLAYERS].insert_one({
+                        "playerId": pid,
+                        "name": name,
+                        "nameClean": name_clean,
+                        "teamId": pl.get("teamId") or 0,
+                        "teamName": team_name,
+                        "leagueId": league_id_val,
+                        "position": pl.get("position") or "",
+                        "_cachedAt": time.time(),
+                    })
+                else:
+                    # Update teamName/teamId in existing entry if they differ
+                    if (existing.get("teamName") != team_name or
+                            existing.get("teamId") != pl.get("teamId")):
+                        await db[COL_PLAYERS].update_one(
+                            {"playerId": pid, "leagueId": league_id_val},
+                            {"$set": {
+                                "teamName": team_name,
+                                "teamId": pl.get("teamId") or 0,
+                                "_cachedAt": time.time(),
+                            }}
+                        )
+        except Exception as e:
+            print(f"[PLAYER CACHE WRITEBACK] Error: {e}")
+
+    aio.ensure_future(_write_api_results_to_cache(final_players))
+    return {"players": final_players}
 
 
 @router.get("/leagues/search")
