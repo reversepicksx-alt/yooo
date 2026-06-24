@@ -1,32 +1,31 @@
 import os, time, json, urllib.request, urllib.error
-import jwt  # PyJWT
+import jwt
 
-KEY_ID      = os.environ["ASC_KEY_ID"]
-ISSUER_ID   = os.environ["ASC_ISSUER_ID"]
-PRIVATE_KEY = os.environ["ASC_PRIVATE_KEY"]
-BUNDLE_ID   = "com.reversepicks.app"
-PRODUCT_ID  = "reversepicks_weekly"
-TARGET_PRICE = "12.99"
+KEY_ID       = os.environ["ASC_KEY_ID"]
+ISSUER_ID    = os.environ["ASC_ISSUER_ID"]
+PRIVATE_KEY  = os.environ["ASC_PRIVATE_KEY"]
+BUNDLE_ID    = "com.reversepicks.app"
+APP_ID       = "6781092173"
+
+PLANS = [
+    {"product_id": "reversepicks_weekly",  "name": "Weekly",  "duration": "ONE_WEEK",  "price": "12.99"},
+    {"product_id": "reversepicks_monthly", "name": "Monthly", "duration": "ONE_MONTH", "price": "49.99"},
+]
 
 def make_token():
     now = int(time.time())
     return jwt.encode(
         {"iss": ISSUER_ID, "iat": now, "exp": now + 1200, "aud": "appstoreconnect-v1"},
-        PRIVATE_KEY,
-        algorithm="ES256",
-        headers={"kid": KEY_ID},
+        PRIVATE_KEY, algorithm="ES256", headers={"kid": KEY_ID},
     )
 
 def asc(method, path, body=None):
     token = make_token()
-    url = f"https://api.appstoreconnect.apple.com{path}"
-    data = json.dumps(body).encode() if body else None
-    req = urllib.request.Request(
-        url, data=data, method=method,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-        },
+    data  = json.dumps(body).encode() if body else None
+    req   = urllib.request.Request(
+        f"https://api.appstoreconnect.apple.com{path}",
+        data=data, method=method,
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
     )
     try:
         with urllib.request.urlopen(req) as r:
@@ -34,67 +33,149 @@ def asc(method, path, body=None):
     except urllib.error.HTTPError as e:
         return e.code, json.loads(e.read())
 
-# ── 1. Find app ───────────────────────────────────────────────────────────────
-print("Looking up app…")
-status, resp = asc("GET", f"/v1/apps?filter[bundleId]={BUNDLE_ID}&fields[apps]=name,bundleId")
-apps = resp.get("data", [])
-if not apps:
-    print("❌ App not found:", json.dumps(resp, indent=2))
-    exit(1)
-app_id = apps[0]["id"]
-print(f"✅ App: {apps[0]['attributes']['name']} ({app_id})")
+def ok(status): return status in (200, 201)
 
-# ── 2. Find subscription groups ───────────────────────────────────────────────
-print("\nFetching subscription groups…")
-status, resp = asc("GET", f"/v1/apps/{app_id}/subscriptionGroups?fields[subscriptionGroups]=referenceName")
+# ── 1. Find or create subscription group ──────────────────────────────────────
+print("── Subscription group ───────────────────")
+status, resp = asc("GET", f"/v1/apps/{APP_ID}/subscriptionGroups?fields[subscriptionGroups]=referenceName")
 groups = resp.get("data", [])
-print(f"Found {len(groups)} group(s)")
-if not groups:
-    print("⚠️  No subscription groups — create them in App Store Connect first.")
-    exit(0)
+print(f"Existing groups: {len(groups)}")
 
-# ── 3. Find reversepicks_weekly ───────────────────────────────────────────────
-weekly_id = None
+group_id = None
 for g in groups:
-    status, resp = asc("GET", f"/v1/subscriptionGroups/{g['id']}/subscriptions?fields[subscriptions]=productId,name,state")
-    subs = resp.get("data", [])
-    print(f"  Group '{g['attributes'].get('referenceName')}': {len(subs)} sub(s)")
-    for s in subs:
-        attr = s["attributes"]
-        print(f"    → {attr.get('productId')} | {attr.get('name')} | {attr.get('state')}")
-        if attr.get("productId") == PRODUCT_ID:
-            weekly_id = s["id"]
+    print(f"  Found: {g['attributes']['referenceName']} ({g['id']})")
+    group_id = g["id"]  # use first existing
 
-if not weekly_id:
-    print(f"\n⚠️  '{PRODUCT_ID}' not found in App Store Connect.")
-    print("Create it first (Monetization → Subscriptions), then re-run this script.")
-    exit(0)
-print(f"\n✅ Found {PRODUCT_ID}: {weekly_id}")
+if not group_id:
+    print("Creating subscription group…")
+    status, resp = asc("POST", "/v1/subscriptionGroups", {
+        "data": {
+            "type": "subscriptionGroups",
+            "attributes": {"referenceName": "ReversePicks Pro"},
+            "relationships": {"app": {"data": {"type": "apps", "id": APP_ID}}},
+        }
+    })
+    if ok(status):
+        group_id = resp["data"]["id"]
+        print(f"✅ Group created: {group_id}")
+    else:
+        print(f"❌ Group creation failed (HTTP {status}):", json.dumps(resp, indent=2))
+        exit(1)
 
-# ── 4. Get $12.99 price point for USA ─────────────────────────────────────────
-print("\nFetching USD price points…")
-status, resp = asc("GET", f"/v1/subscriptions/{weekly_id}/pricePoints?filter[territory]=USA&fields[subscriptionPricePoints]=customerPrice,proceeds")
-price_points = resp.get("data", [])
-target = next((p for p in price_points if p["attributes"]["customerPrice"] == TARGET_PRICE), None)
-if not target:
-    available = sorted([p["attributes"]["customerPrice"] for p in price_points], key=float)
-    print(f"❌ ${TARGET_PRICE} price point not found. Available: {available[:15]}")
-    exit(1)
-print(f"✅ Found ${TARGET_PRICE} price point: {target['id']}")
+# ── 2. Find or create each subscription ───────────────────────────────────────
+print("\n── Subscriptions ────────────────────────")
+status, resp = asc("GET", f"/v1/subscriptionGroups/{group_id}/subscriptions?fields[subscriptions]=productId,name,state")
+existing_subs = {s["attributes"]["productId"]: s["id"] for s in resp.get("data", [])}
+print(f"Existing subs: {list(existing_subs.keys())}")
 
-# ── 5. Set the price ──────────────────────────────────────────────────────────
-print(f"\nSetting {PRODUCT_ID} to ${TARGET_PRICE}…")
-status, resp = asc("POST", "/v1/subscriptionPrices", {
-    "data": {
-        "type": "subscriptionPrices",
-        "attributes": {"preserveCurrentPrice": False, "startDate": None},
-        "relationships": {
-            "subscription": {"data": {"type": "subscriptions", "id": weekly_id}},
-            "subscriptionPricePoint": {"data": {"type": "subscriptionPricePoints", "id": target["id"]}},
-        },
-    }
-})
-if status in (200, 201):
-    print(f"✅ Price set to ${TARGET_PRICE} successfully!")
-else:
-    print(f"❌ Failed (HTTP {status}):", json.dumps(resp, indent=2))
+sub_ids = {}
+for plan in PLANS:
+    pid = plan["product_id"]
+    if pid in existing_subs:
+        sub_ids[pid] = existing_subs[pid]
+        print(f"  ✅ Already exists: {pid} ({sub_ids[pid]})")
+        continue
+
+    print(f"  Creating {pid}…")
+    status, resp = asc("POST", "/v1/subscriptions", {
+        "data": {
+            "type": "subscriptions",
+            "attributes": {
+                "productId":             pid,
+                "name":                  plan["name"],
+                "subscriptionPeriod":    plan["duration"],
+                "reviewNote":            "ReversePicks Pro subscription — soccer player props analytics.",
+                "familySharable":        False,
+            },
+            "relationships": {
+                "group": {"data": {"type": "subscriptionGroups", "id": group_id}},
+            },
+        }
+    })
+    if ok(status):
+        sub_ids[pid] = resp["data"]["id"]
+        print(f"  ✅ Created: {pid} ({sub_ids[pid]})")
+    else:
+        print(f"  ❌ Failed (HTTP {status}):", json.dumps(resp, indent=2))
+
+# ── 3. Add English localization (required before review) ──────────────────────
+print("\n── Localizations ────────────────────────")
+DESCRIPTIONS = {
+    "reversepicks_weekly":  "7-day Pro access. Soccer player props analytics.",
+    "reversepicks_monthly": "Monthly Pro access. Soccer player props analytics.",
+}
+for plan in PLANS:
+    pid = plan["product_id"]
+    if pid not in sub_ids: continue
+    sub_id = sub_ids[pid]
+
+    # check existing
+    status, resp = asc("GET", f"/v1/subscriptions/{sub_id}/subscriptionLocalizations")
+    locs = resp.get("data", [])
+    has_en = any(l["attributes"].get("locale","").startswith("en") for l in locs)
+    if has_en:
+        print(f"  ✅ {pid}: English localization exists")
+        continue
+
+    print(f"  Adding English localization for {pid}…")
+    status, resp = asc("POST", "/v1/subscriptionLocalizations", {
+        "data": {
+            "type": "subscriptionLocalizations",
+            "attributes": {
+                "locale":      "en-US",
+                "name":        plan["name"],
+                "description": DESCRIPTIONS[pid],
+            },
+            "relationships": {
+                "subscription": {"data": {"type": "subscriptions", "id": sub_id}},
+            },
+        }
+    })
+    if ok(status):
+        print(f"  ✅ Localization added for {pid}")
+    else:
+        print(f"  ❌ Localization failed (HTTP {status}):", json.dumps(resp, indent=2))
+
+# ── 4. Set prices ─────────────────────────────────────────────────────────────
+print("\n── Prices ───────────────────────────────")
+for plan in PLANS:
+    pid = plan["product_id"]
+    if pid not in sub_ids: continue
+    sub_id = sub_ids[pid]
+    target_price = plan["price"]
+
+    print(f"  Fetching price points for {pid}…")
+    all_pps = []
+    next_url = f"/v1/subscriptions/{sub_id}/pricePoints?filter[territory]=USA&fields[subscriptionPricePoints]=customerPrice,proceeds&limit=200"
+    while next_url:
+        # next_url may be a full URL or a path
+        path = next_url if next_url.startswith("/") else "/" + next_url.split("appstoreconnect.apple.com", 1)[-1]
+        status, resp = asc("GET", path)
+        all_pps.extend(resp.get("data", []))
+        raw_next = resp.get("links", {}).get("next")
+        next_url = raw_next if raw_next and raw_next != next_url else None
+    pps = all_pps
+    print(f"  Total price points fetched: {len(pps)}")
+    pp = next((p for p in pps if p["attributes"]["customerPrice"] == target_price), None)
+    if not pp:
+        available = sorted([p["attributes"]["customerPrice"] for p in pps], key=float)
+        print(f"  ❌ ${target_price} not found. Sample (highest 10): {available[-10:]}")
+        continue
+    print(f"  ✅ Found ${target_price} price point: {pp['id']}")
+
+    status, resp = asc("POST", "/v1/subscriptionPrices", {
+        "data": {
+            "type": "subscriptionPrices",
+            "attributes": {"preserveCurrentPrice": False},
+            "relationships": {
+                "subscription":           {"data": {"type": "subscriptions",           "id": sub_id}},
+                "subscriptionPricePoint": {"data": {"type": "subscriptionPricePoints", "id": pp["id"]}},
+            },
+        }
+    })
+    if ok(status):
+        print(f"  ✅ {pid} → ${target_price}")
+    else:
+        print(f"  ❌ Price failed (HTTP {status}):", json.dumps(resp, indent=2))
+
+print("\n✅ Done")
