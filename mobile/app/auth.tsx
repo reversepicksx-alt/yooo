@@ -19,9 +19,8 @@ type Step = 'email' | 'pricing';
 const INPUT_STYLE = Platform.OS === 'web' ? { outlineWidth: 0 } : {};
 
 const PLANS = [
-  { key: 'weekly',    label: 'Weekly',   sub: 'Billed weekly',  price: '$15',    unit: '/week',  popular: false },
-  { key: 'monthly',   label: 'Monthly',  sub: 'Save 8%',        price: '$49.99', unit: '/month', popular: true  },
-  { key: 'quarterly', label: '3 Months', sub: 'Save 24%',       price: '$99.99', unit: '/3mo',   popular: false },
+  { key: 'weekly',  label: 'Weekly',  sub: 'Billed weekly',  price: '$9.99',  unit: '/week',  popular: false },
+  { key: 'monthly', label: 'Monthly', sub: 'Billed monthly', price: '$59.99', unit: '/month', popular: true  },
 ];
 
 export default function AuthScreen() {
