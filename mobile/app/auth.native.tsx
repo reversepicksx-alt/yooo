@@ -253,13 +253,6 @@ export default function AuthScreen() {
           REVERSEPICKS
         </Animated.Text>
         <Animated.View style={[styles.splProgressBar, { width: splProgress.interpolate({ inputRange: [0,1], outputRange: ['0%','100%'] }) }]} />
-        <View style={styles.splChips}>
-          {[['⚽','Soccer Props'],['🤖','AI Powered'],['📊','Edge Analytics']].map(([icon, label], i) => (
-            <Animated.View key={i} style={[styles.splChip, { opacity: [splChip0Opac,splChip1Opac,splChip2Opac][i] }]}>
-              <Text style={styles.splChipText}>{icon} {label}</Text>
-            </Animated.View>
-          ))}
-        </View>
       </Animated.View>
     );
   }
@@ -558,14 +551,14 @@ const styles = StyleSheet.create({
     opacity: 0.15,
   },
   splCenter: {
-    width: 140, height: 140,
+    width: 220, height: 220,
     alignItems: 'center', justifyContent: 'center',
   },
   splRing: {
-    width: 120, height: 120, borderRadius: 60,
+    width: 200, height: 200, borderRadius: 100,
     borderWidth: 1.5, borderColor: Colors.primary,
   },
-  splLogo:  { width: 100, height: 100, zIndex: 2 },
+  splLogo:  { width: 180, height: 180, zIndex: 2 },
   splScan: {
     position: 'absolute',
     top: 0, left: -10, right: -10,
