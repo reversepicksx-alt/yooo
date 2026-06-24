@@ -9,24 +9,18 @@ channel = "stable-25_05"
 [userenv]
 
 [userenv.shared]
-MONGO_URL = "mongodb+srv://josselj001_db_user:BjAzgoASteNCPRft@reverse.4h7msnc.mongodb.net/?appName=Reverse&tls=true&tlsAllowInvalidCertificates=true"
 DB_NAME = "reversepicks"
 PORT = "8000"
 REACT_APP_BACKEND_URL = ""
 EXPO_PUBLIC_API_URL = "http://localhost:8000"
 CDM_INVERSION_MODE = "live"
 SCENARIO_PRIORS_MODE = "live"
-ADMIN_SECRET = "rp-admin-settle-2026"
 LUCK_STRIP_ENABLED = "1"
 BETA_TEST_EMAILS = "tester1@gmail.com,tester2@icloud.com"
 REVENUECAT_PROJECT_ID = "proj3a3fd517"
 REVENUECAT_TEST_STORE_APP_ID = "app5e026f7361"
 REVENUECAT_APPLE_APP_STORE_APP_ID = "appce9b46665f"
 REVENUECAT_GOOGLE_PLAY_STORE_APP_ID = "app37a722c43f"
-EXPO_PUBLIC_REVENUECAT_TEST_API_KEY = "test_MBqWVmRraEPFVrADaxWrEaRvvzV"
-EXPO_PUBLIC_REVENUECAT_IOS_API_KEY = "appl_zQjVghGLoFUYWqbpqaPBwrNGJxF"
-EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY = "goog_hXbMoUvTLCUyHEnIyyFqLkOmFmB"
-REVENUECAT_WEBHOOK_SECRET = "1a2236b240fd405fb3f5d7ee86970813"
 
 [workflows]
 runButton = "Project"
