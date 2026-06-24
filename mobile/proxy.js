@@ -17,6 +17,7 @@ process.on('uncaughtException',  (err)    => console.error('[Proxy] Uncaught exc
 process.on('unhandledRejection', (reason) => console.error('[Proxy] Unhandled rejection (survived):', reason));
 
 const IS_PRODUCTION = process.env.PRODUCTION === 'true';
+const BUILD_TS = Date.now(); // unique per proxy start — used for cache busting
 
 const PORT         = 5000;
 const BACKEND_PORT = parseInt(process.env.BACKEND_PORT || '8000', 10);
@@ -127,9 +128,10 @@ const LOADING_SCREEN = `
   </div>
 </div>
 <style>
-#rp-loading-screen{position:fixed;top:0;left:0;right:0;bottom:0;background:#050505;z-index:99999;overflow:hidden;transition:opacity .4s ease-out}
-.rp-eye-img-wrap{position:absolute;left:50%;top:42%;transform:translate(-50%,-52%);width:min(88vw,68vh * 1.562);height:min(88vw / 1.562, 68vh)}
-.rp-eye-img{width:100%;height:100%;object-fit:contain;display:block}
+#rp-loading-screen{position:fixed;top:0;left:0;right:0;bottom:0;background:#050505;z-index:99999;overflow:hidden;transition:opacity .5s ease-out}
+/* Eye image — blended into black via radial mask */
+.rp-eye-img-wrap{position:absolute;left:50%;top:42%;transform:translate(-50%,-52%);width:min(88vw, calc(68vh * 1.562));height:min(calc(88vw / 1.562), 68vh)}
+.rp-eye-img{width:100%;height:100%;object-fit:contain;display:block;-webkit-mask-image:radial-gradient(ellipse 80% 70% at 50% 48%,#000 45%,transparent 100%);mask-image:radial-gradient(ellipse 80% 70% at 50% 48%,#000 45%,transparent 100%)}
 /* Eyelids */
 .rp-lid{position:absolute;left:0;right:0;background:#050505;z-index:10}
 .rp-lid-top{top:0;height:55%;animation:lidOpen-top .82s cubic-bezier(.4,0,.2,1) .05s forwards}
@@ -160,7 +162,16 @@ const LOADING_SCREEN = `
 .rp-prog-fill{height:2px;background:#39FF14;box-shadow:0 0 8px 2px #39FF14;animation:prog 3s .9s ease-out forwards}
 @keyframes prog{0%{width:0}60%{width:70%}80%{width:85%}100%{width:92%}}
 </style>
-<script>(function(){var e=document.getElementById('rp-loading-screen');function h(){if(e){e.style.opacity='0';setTimeout(function(){if(e&&e.parentNode)e.parentNode.removeChild(e);},400);}}window.addEventListener('load',h);setTimeout(h,9000);})();</script>`;
+<script>
+(function(){
+  /* React will call window.__rpHideLoader() when it mounts its own screen.
+     Fallback: auto-hide after 10s in case React fails to signal. */
+  var e=document.getElementById('rp-loading-screen');
+  function hide(){if(!e)return;e.style.opacity='0';setTimeout(function(){if(e&&e.parentNode)e.parentNode.removeChild(e);e=null;},500);}
+  window.__rpHideLoader=hide;
+  setTimeout(hide,10000);
+})();
+</script>`;
 
 const MANIFEST = JSON.stringify({
   name: 'ReversePicks', short_name: 'ReversePicks',
@@ -205,6 +216,12 @@ const server = http.createServer((req, res) => {
   }
 
   if (IS_PRODUCTION) {
+    // Cache-bust: redirect bare / to /?_v=BUILD_TS so browsers always fetch fresh HTML
+    if (pathname === '/' && !req.url.includes('_v=')) {
+      res.writeHead(302, { 'Location': `/?_v=${BUILD_TS}`, 'Cache-Control': 'no-store' });
+      return res.end();
+    }
+
     // Special routes
     if (pathname === '/manifest.json') {
       res.writeHead(200, { 'Content-Type': 'application/json' });

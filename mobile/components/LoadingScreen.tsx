@@ -154,6 +154,11 @@ export default function LoadingScreen() {
   const tagOpacity = useSharedValue(0);
 
   useEffect(() => {
+    // Signal proxy HTML loading screen to hide — React has mounted
+    if (typeof window !== 'undefined' && (window as any).__rpHideLoader) {
+      (window as any).__rpHideLoader();
+    }
+
     // 1. Eyelids OPEN (reveal the eye)
     topLidY.value    = withTiming(-(H * 0.52 + IMG_H * 0.54), {
       duration: 820,
