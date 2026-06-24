@@ -88,12 +88,14 @@ function useSubscriptionContext() {
     packages,
     isSubscribed,
     isLoading: customerInfoQuery.isLoading || offeringsQuery.isLoading,
+    pkgLoading: offeringsQuery.isLoading,
     purchase: purchaseMutation.mutateAsync,
     restore: restoreMutation.mutateAsync,
     isPurchasing: purchaseMutation.isPending,
     isRestoring: restoreMutation.isPending,
     purchaseError: purchaseMutation.error,
     refetchCustomerInfo: customerInfoQuery.refetch,
+    refetchOfferings: offeringsQuery.refetch,
   };
 }
 

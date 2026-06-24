@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   Platform, ActivityIndicator, Image, Alert,
-  KeyboardAvoidingView, ScrollView,
+  KeyboardAvoidingView, ScrollView, Animated,
 } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -18,7 +18,7 @@ const INPUT_STYLE = Platform.OS === 'web' ? { outlineWidth: 0 } : {};
 
 const FEATURES = [
   'AI-powered soccer player prop predictions',
-  'Bayesian confidence scoring on every pick',
+  'Advanced confidence scoring on every pick',
   'Live match intel & tactical breakdowns',
   'Scan bet slips to get instant analysis',
 ];
@@ -32,7 +32,7 @@ function getErrorMessage(e: unknown): string {
 export default function AuthScreen() {
   const insets = useSafeAreaInsets();
   const { loginWithResponse } = useAuth();
-  const { packages, isLoading: pkgLoading, purchase, restore, isPurchasing, isRestoring } = useSubscription();
+  const { packages, pkgLoading, purchase, restore, isPurchasing, isRestoring, refetchCustomerInfo, refetchOfferings } = useSubscription();
 
   type Step = 'paywall' | 'email' | 'code';
   const [step, setStep]       = useState<Step>(Platform.OS === 'ios' ? 'paywall' : 'email');
@@ -49,6 +49,37 @@ export default function AuthScreen() {
   const [showOwner, setShowOwner]   = useState(false);
   const [ownerCode, setOwnerCode]   = useState('');
   const [ownerLoading, setOwnerLoading] = useState(false);
+
+  // Splash animation
+  const [showSplash, setShowSplash] = useState(Platform.OS === 'ios');
+  const splashOpacity  = useRef(new Animated.Value(1)).current;
+  const logoScale      = useRef(new Animated.Value(0.6)).current;
+  const logoOpacity    = useRef(new Animated.Value(0)).current;
+  const textOpacity    = useRef(new Animated.Value(0)).current;
+  const textY          = useRef(new Animated.Value(16)).current;
+
+  useEffect(() => {
+    if (!showSplash) return;
+    // Logo springs in
+    Animated.parallel([
+      Animated.spring(logoScale,   { toValue: 1, friction: 6, tension: 80, useNativeDriver: true }),
+      Animated.timing(logoOpacity, { toValue: 1, duration: 400, useNativeDriver: true }),
+    ]).start();
+    // Text slides up after 300ms
+    const t1 = setTimeout(() => {
+      Animated.parallel([
+        Animated.timing(textOpacity, { toValue: 1, duration: 400, useNativeDriver: true }),
+        Animated.timing(textY,       { toValue: 0, duration: 400, useNativeDriver: true }),
+      ]).start();
+    }, 300);
+    // Fade out after 1.8s
+    const t2 = setTimeout(() => {
+      Animated.timing(splashOpacity, { toValue: 0, duration: 500, useNativeDriver: true })
+        .start(() => setShowSplash(false));
+    }, 1800);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     return () => { if (resendRef.current) clearInterval(resendRef.current); };
@@ -223,6 +254,22 @@ export default function AuthScreen() {
     }
   };
 
+  // ── SPLASH ─────────────────────────────────────────────────────────────────
+  if (showSplash) {
+    return (
+      <Animated.View style={[styles.splashRoot, { opacity: splashOpacity }]}>
+        <Animated.Image
+          source={require('../assets/logo.png')}
+          style={[styles.splashLogo, { opacity: logoOpacity, transform: [{ scale: logoScale }] }]}
+          resizeMode="contain"
+        />
+        <Animated.Text style={[styles.splashName, { opacity: textOpacity, transform: [{ translateY: textY }] }]}>
+          REVERSEPICKS
+        </Animated.Text>
+      </Animated.View>
+    );
+  }
+
   // ── PAYWALL ────────────────────────────────────────────────────────────────
   if (step === 'paywall') {
     return (
@@ -258,7 +305,15 @@ export default function AuthScreen() {
             </View>
           ) : packages.length === 0 ? (
             <View style={styles.pkgEmpty}>
-              <Text style={styles.pkgEmptyText}>Plans unavailable right now. Try again later.</Text>
+              <Text style={styles.pkgEmptyText}>Plans unavailable right now.</Text>
+              <TouchableOpacity
+                style={styles.retryBtn}
+                onPress={() => refetchOfferings()}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="refresh" size={14} color={Colors.primary} />
+                <Text style={styles.retryBtnText}>Try Again</Text>
+              </TouchableOpacity>
             </View>
           ) : (
             packages.map((pkg, idx) => {
@@ -566,6 +621,25 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.background,
   },
 
+  // ── Splash ──────────────────────────────────────────────────────────────
+  splashRoot: {
+    flex: 1,
+    backgroundColor: Colors.background,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 20,
+  },
+  splashLogo: {
+    width: 100,
+    height: 100,
+  },
+  splashName: {
+    color: Colors.text,
+    fontSize: 18,
+    fontWeight: '800',
+    letterSpacing: 6,
+  },
+
   // ── Paywall ─────────────────────────────────────────────────────────────
   paywallScroll: {
     paddingHorizontal: 24,
@@ -632,11 +706,27 @@ const styles = StyleSheet.create({
   pkgEmpty: {
     alignItems: 'center',
     paddingVertical: 20,
+    gap: 12,
   },
   pkgEmptyText: {
     color: Colors.textSecondary,
     fontSize: 14,
     textAlign: 'center',
+  },
+  retryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+  },
+  retryBtnText: {
+    color: Colors.primary,
+    fontSize: 13,
+    fontWeight: '600',
   },
   planCard: {
     flexDirection: 'row',
