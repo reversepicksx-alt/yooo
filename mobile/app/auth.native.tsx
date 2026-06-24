@@ -177,7 +177,12 @@ export default function AuthScreen() {
           access_type:   result.access_type,
         });
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        router.replace('/(tabs)/scan');
+        // No active subscription — send them to account tab to subscribe
+        if (result.has_access === false || result.access_type === 'NoSubscription') {
+          router.replace('/(tabs)/account');
+        } else {
+          router.replace('/(tabs)/scan');
+        }
       } else {
         setError(result.detail || 'Verification failed. Try again.');
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -335,11 +340,11 @@ export default function AuthScreen() {
     <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom + 20 }]}>
       <View style={styles.inner}>
         <View style={styles.card}>
-          <TouchableOpacity onPress={handleLogoTap} activeOpacity={0.9} style={styles.logoWrap}>
-            <View style={styles.logoPlaceholder} />
+          <TouchableOpacity onPress={handleLogoTap} activeOpacity={0.85} style={styles.logoWrap}>
+            <Image source={require('../assets/logo.png')} style={styles.logoImg} resizeMode="contain" />
           </TouchableOpacity>
 
-          <Text style={styles.welcomeTitle}>Welcome back</Text>
+          <Text style={styles.welcomeTitle}>Sign In</Text>
           <Text style={styles.welcomeSub}>Enter your email to receive a login code</Text>
 
           <View style={styles.inputRow}>
@@ -378,7 +383,14 @@ export default function AuthScreen() {
             }
           </TouchableOpacity>
 
-          {/* Owner code — hidden, unlocked by tapping logo 7x */}
+          {/* Admin Access — tap logo 7x OR tap the admin button below */}
+          {!showOwner && (
+            <TouchableOpacity onPress={() => setShowOwner(true)} style={styles.adminLink} activeOpacity={0.6}>
+              <Ionicons name="shield-outline" size={13} color={Colors.textTertiary} />
+              <Text style={styles.adminLinkText}>Admin Access</Text>
+            </TouchableOpacity>
+          )}
+
           {showOwner && (
             <View style={styles.ownerBlock}>
               <View style={styles.inputRow}>
@@ -463,7 +475,7 @@ const styles = StyleSheet.create({
     gap: 14,
   },
   logoWrap:        { alignItems: 'center', paddingVertical: 4 },
-  logoPlaceholder: { width: 1, height: 1 },
+  logoImg:         { width: 64, height: 64 },
   splLogoWrap:     { width: 140, height: 140, zIndex: 2 },
   splLogo:         { width: 140, height: 140, zIndex: 2 },
   welcomeTitle: {
@@ -535,6 +547,20 @@ const styles = StyleSheet.create({
   codeTitle: { color: Colors.text, fontSize: 20, fontWeight: '800', letterSpacing: 0.3 },
   codeSub:   { color: Colors.textSecondary, fontSize: 13, textAlign: 'center', lineHeight: 20 },
   codeEmail: { color: Colors.text, fontWeight: '700' },
+
+  adminLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingVertical: 4,
+    marginTop: -4,
+  },
+  adminLinkText: {
+    color: Colors.textTertiary,
+    fontSize: 12,
+    letterSpacing: 0.4,
+  },
 
   // Splash
   splash: {
