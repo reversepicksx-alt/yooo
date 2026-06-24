@@ -479,6 +479,21 @@ async def verify_code(req: VerifyCodeRequest):
     }
 
 
+@router.post("/reviewer-login")
+async def reviewer_login():
+    """No-code login for the Apple App Store reviewer demo account."""
+    reviewer_email = "reversepicksx@gmail.com"
+    token = await create_session(reviewer_email, "Owner")
+    return {
+        "verified": True,
+        "email": reviewer_email,
+        "session_token": token,
+        "access_type": "Owner",
+        "has_access": True,
+        "message": "Reviewer access granted.",
+    }
+
+
 @router.post("/owner-login")
 async def owner_login(req: OwnerLoginRequest):
     """Owner passphrase login — full access, no email needed."""

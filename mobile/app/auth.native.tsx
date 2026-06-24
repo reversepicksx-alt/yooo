@@ -94,6 +94,8 @@ export default function AuthScreen() {
   };
 
   // ── OTP send ───────────────────────────────────────────────────────────────
+  const REVIEWER_EMAIL = 'reversepicksx@gmail.com';
+
   const handleSendCode = async (emailOverride?: string) => {
     const trimmed = (emailOverride ?? email).trim().toLowerCase();
     if (!trimmed || !trimmed.includes('@')) {
@@ -103,6 +105,29 @@ export default function AuthScreen() {
     setLoading(true);
     setError('');
     setInfo('');
+
+    // Reviewer demo account — skip OTP, log in directly
+    if (trimmed === REVIEWER_EMAIL) {
+      try {
+        const result = await apiCall('/api/auth/reviewer-login', { method: 'POST' });
+        if (result.verified) {
+          await loginWithResponse({
+            email:         result.email,
+            session_token: result.session_token,
+            access_type:   result.access_type,
+          });
+          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          router.replace('/(tabs)/scan');
+        }
+      } catch (e: unknown) {
+        setError(e instanceof Error ? e.message : 'Login failed.');
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
     try {
       const result = await apiCall('/api/auth/send-code', {
         method: 'POST',
