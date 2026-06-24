@@ -25,7 +25,7 @@ async def _send_otp_email(email: str, code: str):
     from email.mime.multipart import MIMEMultipart
 
     gmail_user = "reversepicksx@gmail.com"
-    gmail_pass = os.environ.get("GMAIL_APP_PASSWORD", "")
+    gmail_pass = os.environ.get("GMAIL_APP_PASSWORD", "").replace(" ", "").strip()
     if not gmail_pass:
         print(f"[OTP] GMAIL_APP_PASSWORD not set — code for {email}: {code}")
         return
