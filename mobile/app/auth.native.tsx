@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  Platform, ActivityIndicator, Image,
+  Platform, ActivityIndicator, Image, Alert,
   KeyboardAvoidingView, ScrollView,
 } from 'react-native';
 import { router } from 'expo-router';
@@ -11,17 +11,31 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@/contexts/AuthContext';
 import Colors from '@/constants/colors';
 import { apiCall } from '@/lib/api';
+import { useSubscription } from '@/lib/revenuecat';
+import type { PurchasesPackage } from 'react-native-purchases';
 
 const INPUT_STYLE = Platform.OS === 'web' ? { outlineWidth: 0 } : {};
 
+const FEATURES = [
+  'AI-powered soccer player prop predictions',
+  'Bayesian confidence scoring on every pick',
+  'Live match intel & tactical breakdowns',
+  'Scan bet slips to get instant analysis',
+];
+
+function getErrorMessage(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  if (typeof e === 'string') return e;
+  return 'Something went wrong. Please try again.';
+}
 
 export default function AuthScreen() {
   const insets = useSafeAreaInsets();
   const { loginWithResponse } = useAuth();
+  const { packages, isLoading: pkgLoading, purchase, restore, isPurchasing, isRestoring } = useSubscription();
 
-  // Steps: 'email' → 'code' (OTP entry)
-  type Step = 'email' | 'code';
-  const [step, setStep]       = useState<Step>('email');
+  type Step = 'paywall' | 'email' | 'code';
+  const [step, setStep]       = useState<Step>(Platform.OS === 'ios' ? 'paywall' : 'email');
   const [email, setEmail]     = useState('');
   const [code, setCode]       = useState('');
   const [loading, setLoading] = useState(false);
@@ -29,6 +43,7 @@ export default function AuthScreen() {
   const [info, setInfo]       = useState('');
   const [resendTimer, setResendTimer] = useState(0);
   const resendRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [buyingId, setBuyingId] = useState<string | null>(null);
 
   // Owner mode
   const [showOwner, setShowOwner]   = useState(false);
@@ -49,6 +64,36 @@ export default function AuthScreen() {
     }, 1000);
   };
 
+  // ── Apple IAP purchase ─────────────────────────────────────────────────────
+  const handleSubscribe = async (pkg: PurchasesPackage) => {
+    setBuyingId(pkg.identifier);
+    try {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      await purchase(pkg);
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setInfo('Subscribed! Now enter your email to create your account.');
+      setStep('email');
+    } catch (e: any) {
+      if (e?.userCancelled) return;
+      Alert.alert('Purchase Failed', getErrorMessage(e));
+    } finally {
+      setBuyingId(null);
+    }
+  };
+
+  const handleRestore = async () => {
+    try {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      await restore();
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setInfo('Purchases restored! Enter your email to sign in.');
+      setStep('email');
+    } catch (e: any) {
+      Alert.alert('Restore Failed', getErrorMessage(e));
+    }
+  };
+
+  // ── OTP send ───────────────────────────────────────────────────────────────
   const handleSendCode = async (emailOverride?: string) => {
     const trimmed = (emailOverride ?? email).trim().toLowerCase();
     if (!trimmed || !trimmed.includes('@')) {
@@ -82,6 +127,7 @@ export default function AuthScreen() {
     }
   };
 
+  // ── OTP verify ─────────────────────────────────────────────────────────────
   const handleVerifyCode = async () => {
     const trimmedCode = code.trim();
     if (trimmedCode.length !== 6) {
@@ -104,7 +150,6 @@ export default function AuthScreen() {
           access_type:   result.access_type,
         });
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        // No active subscription — send them to account tab to subscribe
         if (result.has_access === false || result.access_type === 'NoSubscription') {
           router.replace('/(tabs)/account');
         } else {
@@ -122,6 +167,7 @@ export default function AuthScreen() {
     }
   };
 
+  // ── Owner login ────────────────────────────────────────────────────────────
   const handleOwnerLogin = async () => {
     if (!ownerCode.trim()) return;
     setOwnerLoading(true);
@@ -151,6 +197,122 @@ export default function AuthScreen() {
       setOwnerLoading(false);
     }
   };
+
+  // ── PAYWALL ────────────────────────────────────────────────────────────────
+  if (step === 'paywall') {
+    return (
+      <ScrollView
+        style={styles.root}
+        contentContainerStyle={[styles.paywallScroll, { paddingTop: insets.top + 20, paddingBottom: insets.bottom + 32 }]}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Logo + header */}
+        <View style={styles.paywallTop}>
+          <Image source={require('../assets/logo.png')} style={styles.paywallLogo} resizeMode="contain" />
+          <Text style={styles.paywallBrand}>REVERSEPICKS</Text>
+          <Text style={styles.paywallHeadline}>Pro Analytics</Text>
+          <Text style={styles.paywallSub}>AI-powered soccer player prop predictions</Text>
+        </View>
+
+        {/* Features */}
+        <View style={styles.featureList}>
+          {FEATURES.map((f, i) => (
+            <View key={i} style={styles.featureRow}>
+              <Ionicons name="checkmark-circle" size={18} color={Colors.primary} />
+              <Text style={styles.featureText}>{f}</Text>
+            </View>
+          ))}
+        </View>
+
+        {/* Plans */}
+        <View style={styles.plansWrap}>
+          {pkgLoading ? (
+            <View style={styles.pkgLoading}>
+              <ActivityIndicator size="small" color={Colors.primary} />
+              <Text style={styles.pkgLoadingText}>Loading plans…</Text>
+            </View>
+          ) : packages.length === 0 ? (
+            <View style={styles.pkgEmpty}>
+              <Text style={styles.pkgEmptyText}>Plans unavailable right now. Try again later.</Text>
+            </View>
+          ) : (
+            packages.map((pkg, idx) => {
+              const isMonthly = pkg.identifier === '$rc_monthly' || pkg.packageType === 'MONTHLY';
+              const isBuying  = buyingId === pkg.identifier;
+              const label     = isMonthly ? 'Monthly' : 'Weekly';
+              const price     = pkg.product?.priceString ?? '—';
+              const period    = isMonthly ? '/ month' : '/ week';
+              return (
+                <TouchableOpacity
+                  key={pkg.identifier}
+                  style={[styles.planCard, isMonthly && styles.planCardFeatured]}
+                  onPress={() => handleSubscribe(pkg)}
+                  disabled={!!buyingId || isRestoring}
+                  activeOpacity={0.8}
+                >
+                  {isMonthly && (
+                    <View style={styles.planBadge}>
+                      <Text style={styles.planBadgeText}>BEST VALUE</Text>
+                    </View>
+                  )}
+                  <View style={styles.planLeft}>
+                    <Text style={[styles.planLabel, isMonthly && styles.planLabelFeatured]}>{label}</Text>
+                    <Text style={styles.planPeriod}>{period}</Text>
+                  </View>
+                  <View style={styles.planRight}>
+                    {isBuying ? (
+                      <ActivityIndicator size="small" color={isMonthly ? '#000' : Colors.primary} />
+                    ) : (
+                      <>
+                        <Text style={[styles.planPrice, isMonthly && styles.planPriceFeatured]}>{price}</Text>
+                        <Ionicons name="chevron-forward" size={16} color={isMonthly ? '#000' : Colors.textTertiary} />
+                      </>
+                    )}
+                  </View>
+                </TouchableOpacity>
+              );
+            })
+          )}
+        </View>
+
+        <Text style={styles.paywallDisclosure}>
+          Subscriptions auto-renew unless cancelled 24h before period ends. Manage anytime in Apple Settings.
+        </Text>
+
+        {/* Restore */}
+        <TouchableOpacity
+          style={styles.restoreBtn}
+          onPress={handleRestore}
+          disabled={isRestoring || !!buyingId}
+          activeOpacity={0.7}
+        >
+          {isRestoring
+            ? <ActivityIndicator size="small" color={Colors.textSecondary} />
+            : <Text style={styles.restoreBtnText}>Restore Purchases</Text>
+          }
+        </TouchableOpacity>
+
+        {/* Sign in link */}
+        <TouchableOpacity
+          style={styles.signInLink}
+          onPress={() => { setError(''); setInfo(''); setStep('email'); }}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.signInLinkText}>Already a member? <Text style={styles.signInLinkBold}>Sign In</Text></Text>
+        </TouchableOpacity>
+
+        {/* Admin access */}
+        <TouchableOpacity
+          style={styles.adminLink}
+          onPress={() => { setShowOwner(v => !v); setStep('email'); }}
+          activeOpacity={0.6}
+        >
+          <Ionicons name="shield-outline" size={13} color={Colors.textTertiary} />
+          <Text style={styles.adminLinkText}>Admin Access</Text>
+        </TouchableOpacity>
+      </ScrollView>
+    );
+  }
 
   // ── OTP Code Entry ────────────────────────────────────────────────────────
   if (step === 'code') {
@@ -246,6 +408,13 @@ export default function AuthScreen() {
         showsVerticalScrollIndicator={false}
       >
       <View style={[styles.inner, { paddingTop: insets.top + 8, paddingBottom: insets.bottom + 20 }]}>
+        {Platform.OS === 'ios' && (
+          <TouchableOpacity onPress={() => { setError(''); setInfo(''); setStep('paywall'); }} style={styles.backRow}>
+            <Ionicons name="arrow-back" size={18} color={Colors.textSecondary} />
+            <Text style={styles.backRowText}>Back</Text>
+          </TouchableOpacity>
+        )}
+
         <View style={styles.card}>
           <View style={styles.logoWrap}>
             <Image source={require('../assets/logo.png')} style={styles.logoImg} resizeMode="contain" />
@@ -360,6 +529,170 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.background,
   },
+
+  // ── Paywall ─────────────────────────────────────────────────────────────
+  paywallScroll: {
+    paddingHorizontal: 24,
+    alignItems: 'stretch',
+  },
+  paywallTop: {
+    alignItems: 'center',
+    marginBottom: 28,
+  },
+  paywallLogo: {
+    width: 72,
+    height: 72,
+    marginBottom: 10,
+  },
+  paywallBrand: {
+    color: Colors.primary,
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 4,
+    marginBottom: 6,
+  },
+  paywallHeadline: {
+    color: Colors.text,
+    fontSize: 30,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+    textAlign: 'center',
+  },
+  paywallSub: {
+    color: Colors.textSecondary,
+    fontSize: 14,
+    textAlign: 'center',
+    marginTop: 6,
+    lineHeight: 20,
+  },
+  featureList: {
+    gap: 12,
+    marginBottom: 28,
+  },
+  featureRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  featureText: {
+    color: Colors.text,
+    fontSize: 15,
+    flex: 1,
+    lineHeight: 20,
+  },
+  plansWrap: {
+    gap: 12,
+    marginBottom: 20,
+  },
+  pkgLoading: {
+    alignItems: 'center',
+    paddingVertical: 24,
+    gap: 8,
+  },
+  pkgLoadingText: {
+    color: Colors.textSecondary,
+    fontSize: 14,
+  },
+  pkgEmpty: {
+    alignItems: 'center',
+    paddingVertical: 20,
+  },
+  pkgEmptyText: {
+    color: Colors.textSecondary,
+    fontSize: 14,
+    textAlign: 'center',
+  },
+  planCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.card,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: Colors.border,
+    paddingHorizontal: 18,
+    paddingVertical: 16,
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  planCardFeatured: {
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
+  },
+  planBadge: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    backgroundColor: 'rgba(0,0,0,0.25)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderBottomLeftRadius: 10,
+  },
+  planBadgeText: {
+    color: '#000',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+  planLeft: {
+    flex: 1,
+  },
+  planLabel: {
+    color: Colors.text,
+    fontSize: 17,
+    fontWeight: '700',
+  },
+  planLabelFeatured: {
+    color: '#000',
+  },
+  planPeriod: {
+    color: Colors.textSecondary,
+    fontSize: 13,
+    marginTop: 2,
+  },
+  planRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  planPrice: {
+    color: Colors.primary,
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  planPriceFeatured: {
+    color: '#000',
+  },
+  paywallDisclosure: {
+    color: Colors.textTertiary,
+    fontSize: 11,
+    textAlign: 'center',
+    lineHeight: 16,
+    marginBottom: 16,
+  },
+  restoreBtn: {
+    alignItems: 'center',
+    paddingVertical: 8,
+    marginBottom: 4,
+  },
+  restoreBtnText: {
+    color: Colors.textSecondary,
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  signInLink: {
+    alignItems: 'center',
+    paddingVertical: 10,
+  },
+  signInLinkText: {
+    color: Colors.textSecondary,
+    fontSize: 14,
+  },
+  signInLinkBold: {
+    color: Colors.primary,
+    fontWeight: '700',
+  },
+
+  // ── Email / OTP ──────────────────────────────────────────────────────────
   inner: {
     flex: 1,
     justifyContent: 'center',
@@ -369,8 +702,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    marginBottom: 20,
-    paddingTop: 8,
+    paddingBottom: 16,
   },
   backRowText: { color: Colors.textSecondary, fontSize: 14 },
   card: {
@@ -452,7 +784,6 @@ const styles = StyleSheet.create({
   codeTitle: { color: Colors.text, fontSize: 20, fontWeight: '800', letterSpacing: 0.3 },
   codeSub:   { color: Colors.textSecondary, fontSize: 13, textAlign: 'center', lineHeight: 20 },
   codeEmail: { color: Colors.text, fontWeight: '700' },
-
   adminLink: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -466,5 +797,4 @@ const styles = StyleSheet.create({
     fontSize: 12,
     letterSpacing: 0.4,
   },
-
 });
