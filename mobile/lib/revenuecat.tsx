@@ -80,10 +80,7 @@ function useSubscriptionContext() {
     Platform.OS !== "web" &&
     customerInfo?.entitlements.active?.[REVENUECAT_ENTITLEMENT_IDENTIFIER] !== undefined;
 
-  const allPackages = offeringsQuery.data?.current?.availablePackages ?? [];
-  const packages = allPackages.filter((p: any) =>
-    p.identifier === '$rc_weekly' || p.identifier === '$rc_monthly'
-  );
+  const packages = offeringsQuery.data?.current?.availablePackages ?? [];
 
   return {
     customerInfo,

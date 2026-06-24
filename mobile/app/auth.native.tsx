@@ -109,7 +109,7 @@ export default function AuthScreen() {
     // Reviewer demo account — skip OTP, log in directly
     if (trimmed === REVIEWER_EMAIL) {
       try {
-        const result = await apiCall('/api/auth/reviewer-login', { method: 'POST' });
+        const result = await apiCall<any>('/api/auth/reviewer-login', { method: 'POST' });
         if (result.verified) {
           await loginWithResponse({
             email:         result.email,
@@ -129,7 +129,7 @@ export default function AuthScreen() {
     }
 
     try {
-      const result = await apiCall('/api/auth/send-code', {
+      const result = await apiCall<any>('/api/auth/send-code', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: trimmed }),
@@ -163,7 +163,7 @@ export default function AuthScreen() {
     setError('');
     setInfo('');
     try {
-      const result = await apiCall('/api/auth/verify-code', {
+      const result = await apiCall<any>('/api/auth/verify-code', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: email.trim().toLowerCase(), code: trimmedCode }),
@@ -198,7 +198,7 @@ export default function AuthScreen() {
     setOwnerLoading(true);
     setError('');
     try {
-      const result = await apiCall('/api/auth/owner-login', {
+      const result = await apiCall<any>('/api/auth/owner-login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ code: ownerCode.trim() }),
@@ -262,35 +262,46 @@ export default function AuthScreen() {
             </View>
           ) : (
             packages.map((pkg, idx) => {
-              const isMonthly = pkg.identifier === '$rc_monthly' || pkg.packageType === 'MONTHLY';
+              const pt        = pkg.packageType ?? '';
+              const isFeatured = ['MONTHLY','THREE_MONTH','SIX_MONTH','ANNUAL'].includes(pt);
               const isBuying  = buyingId === pkg.identifier;
-              const label     = isMonthly ? 'Monthly' : 'Weekly';
               const price     = pkg.product?.priceString ?? '—';
-              const period    = isMonthly ? '/ month' : '/ week';
+              const labelMap: Record<string, string> = {
+                WEEKLY: 'Weekly', MONTHLY: 'Monthly',
+                THREE_MONTH: '3 Months', SIX_MONTH: '6 Months',
+                ANNUAL: 'Annual', TWO_MONTH: '2 Months',
+              };
+              const periodMap: Record<string, string> = {
+                WEEKLY: '/ week', MONTHLY: '/ month',
+                THREE_MONTH: '/ 3 months', SIX_MONTH: '/ 6 months',
+                ANNUAL: '/ year', TWO_MONTH: '/ 2 months',
+              };
+              const label  = labelMap[pt] ?? pkg.product?.title ?? pt;
+              const period = periodMap[pt] ?? '';
               return (
                 <TouchableOpacity
                   key={pkg.identifier}
-                  style={[styles.planCard, isMonthly && styles.planCardFeatured]}
+                  style={[styles.planCard, isFeatured && styles.planCardFeatured]}
                   onPress={() => handleSubscribe(pkg)}
                   disabled={!!buyingId || isRestoring}
                   activeOpacity={0.8}
                 >
-                  {isMonthly && (
+                  {isFeatured && (
                     <View style={styles.planBadge}>
                       <Text style={styles.planBadgeText}>BEST VALUE</Text>
                     </View>
                   )}
                   <View style={styles.planLeft}>
-                    <Text style={[styles.planLabel, isMonthly && styles.planLabelFeatured]}>{label}</Text>
+                    <Text style={[styles.planLabel, isFeatured && styles.planLabelFeatured]}>{label}</Text>
                     <Text style={styles.planPeriod}>{period}</Text>
                   </View>
                   <View style={styles.planRight}>
                     {isBuying ? (
-                      <ActivityIndicator size="small" color={isMonthly ? '#000' : Colors.primary} />
+                      <ActivityIndicator size="small" color={isFeatured ? '#000' : Colors.primary} />
                     ) : (
                       <>
-                        <Text style={[styles.planPrice, isMonthly && styles.planPriceFeatured]}>{price}</Text>
-                        <Ionicons name="chevron-forward" size={16} color={isMonthly ? '#000' : Colors.textTertiary} />
+                        <Text style={[styles.planPrice, isFeatured && styles.planPriceFeatured]}>{price}</Text>
+                        <Ionicons name="chevron-forward" size={16} color={isFeatured ? '#000' : Colors.textTertiary} />
                       </>
                     )}
                   </View>
