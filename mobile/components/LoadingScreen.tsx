@@ -12,10 +12,18 @@ const SHORT = Math.min(W, H);
 const NEON  = '#39FF14';
 const DARK  = '#050505';
 
-// Eye center is at roughly 50% x, 52% y in the artwork
+// Eye artwork: 1492×955, eye pupil is at ~50% x, ~52% y in the image
+const IMG_ASPECT = 1492 / 955;
+// Size: fill 88% of width, but cap so image height ≤ 68% of screen height
+const IMG_W = Math.min(W * 0.88, H * 0.68 * IMG_ASPECT);
+const IMG_H = IMG_W / IMG_ASPECT;
+const IMG_L = (W - IMG_W) / 2;
+const IMG_T = H * 0.42 - IMG_H * 0.52;   // so eye pupil lands at 42% from top
+
+// Eye center in screen coordinates (drives all glow / ring / scan positioning)
 const EYE_CX = W * 0.5;
-const EYE_CY = H * 0.52;
-const RING_R = SHORT * 0.26;
+const EYE_CY = H * 0.42;
+const RING_R  = SHORT * 0.22;
 
 // ── Sonar ring ────────────────────────────────────────────────────────────────
 function SonarRing({ delay }: { delay: number }) {
@@ -131,15 +139,15 @@ export default function LoadingScreen() {
 
     // 4. Scan line loop
     const startScan = () => {
-      scanY.value     = EYE_CY - SHORT * 0.8;
+      scanY.value     = IMG_T - 10;
       scanOpacity.value = 0;
       scanOpacity.value = withSequence(
         withTiming(0.9, { duration: 150 }),
-        withTiming(0.9, { duration: 2700 }),
+        withTiming(0.9, { duration: 2200 }),
         withTiming(0,   { duration: 150 }),
       );
-      scanY.value = withTiming(EYE_CY + SHORT * 0.8, {
-        duration: 3000,
+      scanY.value = withTiming(IMG_T + IMG_H + 10, {
+        duration: 2500,
         easing: Easing.inOut(Easing.quad),
       });
     };
@@ -179,48 +187,28 @@ export default function LoadingScreen() {
     transform: [{ translateY: hudTranslateY.value }],
   }));
 
-  // Sparkle positions scattered around the artwork
+  // Sparkle positions — scattered around the eye artwork area
   const sparkles = [
-    { x: W * 0.13, y: H * 0.17, delay: 200,  size: 7 },
-    { x: W * 0.87, y: H * 0.15, delay: 900,  size: 9 },
-    { x: W * 0.08, y: H * 0.44, delay: 1600, size: 6 },
-    { x: W * 0.92, y: H * 0.40, delay: 500,  size: 8 },
-    { x: W * 0.22, y: H * 0.76, delay: 1300, size: 7 },
-    { x: W * 0.78, y: H * 0.74, delay: 700,  size: 9 },
-    { x: W * 0.50, y: H * 0.11, delay: 1100, size: 10 },
-    { x: W * 0.35, y: H * 0.28, delay: 400,  size: 5 },
-    { x: W * 0.65, y: H * 0.26, delay: 1800, size: 6 },
+    { x: IMG_L + IMG_W * 0.08, y: IMG_T + IMG_H * 0.12, delay: 200,  size: 7 },
+    { x: IMG_L + IMG_W * 0.92, y: IMG_T + IMG_H * 0.10, delay: 900,  size: 9 },
+    { x: IMG_L + IMG_W * 0.03, y: IMG_T + IMG_H * 0.52, delay: 1600, size: 6 },
+    { x: IMG_L + IMG_W * 0.97, y: IMG_T + IMG_H * 0.48, delay: 500,  size: 8 },
+    { x: IMG_L + IMG_W * 0.18, y: IMG_T + IMG_H * 0.85, delay: 1300, size: 7 },
+    { x: IMG_L + IMG_W * 0.82, y: IMG_T + IMG_H * 0.82, delay: 700,  size: 9 },
+    { x: IMG_L + IMG_W * 0.50, y: IMG_T - 10,           delay: 1100, size: 10 },
+    { x: IMG_L + IMG_W * 0.32, y: IMG_T + IMG_H * 0.25, delay: 400,  size: 5 },
+    { x: IMG_L + IMG_W * 0.68, y: IMG_T + IMG_H * 0.22, delay: 1800, size: 6 },
   ];
 
   return (
     <Animated.View style={[styles.root, containerAnim]}>
 
-      {/* ── Eye artwork — always fully visible ─────────────────────────── */}
-      {Platform.OS === 'web' ? (
-        <View
-          style={[
-            StyleSheet.absoluteFill as any,
-            {
-              backgroundImage: `url(${(require('../assets/splash-eye.jpeg') as any).uri})`,
-              backgroundSize: 'cover',
-              backgroundPosition: 'center 48%',
-              filter: 'brightness(1.7) saturate(1.3) contrast(1.05)',
-            } as any,
-          ]}
-        />
-      ) : (
-        <Image
-          source={require('../assets/splash-eye.jpeg')}
-          style={styles.bg}
-          resizeMode="cover"
-        />
-      )}
-
-      {/* ── Subtle green ambient tint (boosts native greens on all platforms) */}
-      <View style={styles.greenAmbient} pointerEvents="none" />
-
-      {/* ── Very light edge vignette ───────────────────────────────────── */}
-      <View style={styles.vignette} pointerEvents="none" />
+      {/* ── Eye artwork — centered, smaller, black shows around it ──────── */}
+      <Image
+        source={require('../assets/splash-eye.jpeg')}
+        style={styles.eyeImg}
+        resizeMode="contain"
+      />
 
       {/* ── Outer atmospheric glow around eye ──────────────────────────── */}
       <Animated.View style={[styles.outerGlow, outerGlowAnim]} pointerEvents="none" />
@@ -262,23 +250,12 @@ const styles = StyleSheet.create({
     zIndex: 999,
   },
 
-  bg: {
+  eyeImg: {
     position: 'absolute',
-    ...(Platform.OS === 'web'
-      ? { top: 0, left: 0, width: '100%' as any, height: '100%' as any }
-      : { width: W, height: H }),
-  },
-
-  greenAmbient: {
-    ...StyleSheet.absoluteFillObject as any,
-    backgroundColor: 'rgba(57,255,20,0.05)',
-  },
-
-  vignette: {
-    ...StyleSheet.absoluteFillObject as any,
-    ...(Platform.OS === 'web'
-      ? ({ boxShadow: 'inset 0 0 110px 30px rgba(5,5,5,0.45)' } as any)
-      : {}),
+    width: IMG_W,
+    height: IMG_H,
+    left: IMG_L,
+    top: IMG_T,
   },
 
   outerGlow: {

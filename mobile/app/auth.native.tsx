@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  Platform, ActivityIndicator, Animated, Image,
+  Platform, ActivityIndicator, Animated, Image, Dimensions,
 } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -10,6 +10,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@/contexts/AuthContext';
 import Colors from '@/constants/colors';
 import { apiCall } from '@/lib/api';
+
+const { width: SW, height: SH } = Dimensions.get('window');
+const SPL_IMG_ASPECT = 1492 / 955;
+const SPL_IMG_W = Math.min(SW * 0.82, SH * 0.60 * SPL_IMG_ASPECT);
+const SPL_IMG_H = SPL_IMG_W / SPL_IMG_ASPECT;
+const SPL_IMG_L = (SW - SPL_IMG_W) / 2;
+const SPL_IMG_T = SH * 0.42 - SPL_IMG_H * 0.52;
 
 const INPUT_STYLE = Platform.OS === 'web' ? { outlineWidth: 0 } : {};
 
@@ -226,6 +233,18 @@ export default function AuthScreen() {
   if (showSplash) {
     return (
       <Animated.View style={[styles.splash, { opacity: splashOpacity, transform: [{ scale: splashScale }] }]}>
+        {/* Eye artwork — centered, black shows around it */}
+        <Image
+          source={require('../assets/splash-eye.jpeg')}
+          style={{
+            position: 'absolute',
+            width: SPL_IMG_W,
+            height: SPL_IMG_H,
+            left: SPL_IMG_L,
+            top: SPL_IMG_T,
+          }}
+          resizeMode="contain"
+        />
         <Animated.View style={[styles.splBurst, { transform: [{ scale: splBurstScale }], opacity: splBurstOpac }]} />
         <View style={styles.splCenter}>
           <Animated.View style={{ transform: [{ scale: splR1Scale }], opacity: splR1Opac, ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' }}>
