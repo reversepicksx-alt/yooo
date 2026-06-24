@@ -1,5 +1,8 @@
 {
   "name": "reversepicks",
   "private": true,
-  "version": "2.0.0"
+  "version": "2.0.0",
+  "dependencies": {
+    "@replit/revenuecat-sdk": "^4.2.0"
+  }
 }
