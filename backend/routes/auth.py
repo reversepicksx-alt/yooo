@@ -6,8 +6,13 @@ from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from config import db, OWNER_EMAILS
-from models import VerifySessionRequest
+import stripe as _stripe
+
+from config import db, OWNER_EMAILS, LIFETIME_SUB_EMAILS, BETA_TEST_EMAILS
+from models import (
+    VerifySessionRequest, VerifyAccessRequest, LoginRequest,
+    SetPasswordRequest, ResetPasswordRequest,
+)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -118,7 +123,258 @@ async def create_session(email: str, access_type: str) -> str:
         pass
     return session_token
 
-# ── Models ────────────────────────────────────────────────────────────────────
+# ── Web access check (Stripe / Square / manual grants) ────────────────────────
+async def _check_access_local(email_lower: str):
+    if email_lower in OWNER_EMAILS:
+        return "Owner"
+    if email_lower in LIFETIME_SUB_EMAILS:
+        return "Lifetime"
+    if email_lower in BETA_TEST_EMAILS:
+        return "Beta"
+    grant = await db.manual_access_grants.find_one({"email": email_lower}, {"_id": 0})
+    if grant:
+        access_type = grant.get("access_type", "Manual")
+        if access_type == "Complimentary":
+            expires_raw = grant.get("expiresAt")
+            if expires_raw:
+                try:
+                    exp_dt = datetime.fromisoformat(str(expires_raw))
+                    if exp_dt.tzinfo is None:
+                        exp_dt = exp_dt.replace(tzinfo=timezone.utc)
+                    if datetime.now(timezone.utc) >= exp_dt:
+                        return None
+                except Exception:
+                    pass
+            stripe_record = await db.stripe_subscriptions.find_one({"email": email_lower}, {"_id": 0, "status": 1, "currentPeriodEnd": 1})
+            if stripe_record:
+                _st = stripe_record.get("status", "")
+                if _st == "past_due":
+                    return None
+                if _st == "canceled":
+                    _cpe_raw = stripe_record.get("currentPeriodEnd")
+                    _blocked = True
+                    if _cpe_raw:
+                        try:
+                            _cpe_dt = datetime.fromisoformat(str(_cpe_raw).replace(" ", "T"))
+                            if _cpe_dt.tzinfo is None:
+                                _cpe_dt = _cpe_dt.replace(tzinfo=timezone.utc)
+                            if datetime.now(timezone.utc) < _cpe_dt:
+                                _blocked = False
+                        except Exception:
+                            pass
+                    if _blocked:
+                        return None
+        return access_type
+    square_sub = await db.square_subscriptions.find_one({"email": email_lower, "status": {"$in": ["ACTIVE", "PENDING"]}}, {"_id": 0})
+    if square_sub:
+        return "Premium (Square)"
+    lapsed_sub = await db.square_subscriptions.find_one({"email": email_lower, "status": {"$in": ["CANCELED", "EXPIRED"]}}, {"_id": 0})
+    if lapsed_sub:
+        expires_at_raw = lapsed_sub.get("expiresAt")
+        if expires_at_raw:
+            try:
+                exp_dt = datetime.fromisoformat(str(expires_at_raw).replace(" ", "T"))
+                if exp_dt.tzinfo is None:
+                    exp_dt = exp_dt.replace(tzinfo=timezone.utc)
+                if datetime.now(timezone.utc) < exp_dt:
+                    return "Premium (Square)"
+            except Exception:
+                pass
+    stripe_sub = await db.stripe_subscriptions.find_one({"email": email_lower, "status": {"$in": ["active", "trialing"]}}, {"_id": 0})
+    if stripe_sub:
+        return "Premium (Stripe)"
+    stripe_canceled = await db.stripe_subscriptions.find_one({"email": email_lower, "status": "canceled"}, {"_id": 0})
+    if stripe_canceled:
+        if stripe_canceled.get("canceledReason") == "payment_failed":
+            pass
+        else:
+            cpe_raw = stripe_canceled.get("currentPeriodEnd")
+            if cpe_raw:
+                try:
+                    cpe_dt = datetime.fromisoformat(str(cpe_raw).replace(" ", "T"))
+                    if cpe_dt.tzinfo is None:
+                        cpe_dt = cpe_dt.replace(tzinfo=timezone.utc)
+                    if datetime.now(timezone.utc) < cpe_dt:
+                        return "Premium (Stripe)"
+                except Exception:
+                    pass
+    return None
+
+def _sub_period_end_ts(sub_data: dict):
+    try:
+        items = sub_data.get("items", {}).get("data", [])
+        if items:
+            ts = items[0].get("current_period_end")
+            if ts:
+                return int(ts)
+    except Exception:
+        pass
+    try:
+        return int(sub_data.get("current_period_end", 0)) or None
+    except Exception:
+        return None
+
+async def _check_stripe_live(email_lower: str):
+    try:
+        key = os.environ.get("STRIPE_SECRET_KEY", "")
+        if not key:
+            return None
+        _stripe.api_key = key
+        customers = _stripe.Customer.list(email=email_lower, limit=10)
+        if not customers.data:
+            return None
+        best_sub = None
+        priority_map = {"active": 0, "trialing": 1}
+        now_ts = datetime.now(timezone.utc).timestamp()
+        for cust in customers.data:
+            for st in ["active", "trialing"]:
+                subs_result = _stripe.Subscription.list(customer=cust.id, status=st, limit=5)
+                for sub in subs_result.data:
+                    sub_data = sub._data if hasattr(sub, '_data') else {}
+                    priority = priority_map.get(st, 99)
+                    if best_sub is None or priority < priority_map.get(best_sub[0], 99):
+                        best_sub = (st, sub, sub_data, cust.id)
+        if not best_sub:
+            return None
+        st, sub, sub_data, cust_id = best_sub
+        sub_id = (sub_data.get("id") or "") if sub_data else sub.id
+        if sub_data.get("cancel_at_period_end"):
+            cpe = _sub_period_end_ts(sub_data)
+            if cpe and cpe > now_ts:
+                end_iso = datetime.fromtimestamp(int(cpe), tz=timezone.utc).isoformat()
+                now_str = datetime.now(timezone.utc).isoformat()
+                await db.stripe_subscriptions.update_one(
+                    {"email": email_lower},
+                    {"$set": {"email": email_lower, "stripeSubscriptionId": sub_id, "status": "canceled",
+                              "canceledAt": now_str, "currentPeriodEnd": end_iso, "updatedAt": now_str,
+                              "source": "stripe", "autoRestored": True}},
+                    upsert=True,
+                )
+                return "Premium (Stripe)"
+            return None
+        plan_key = "monthly"
+        try:
+            items_data = sub_data.get("items", {}).get("data", []) if sub_data else []
+            if items_data:
+                price = items_data[0].get("price", {})
+                lk = price.get("lookup_key") or ""
+                if lk.startswith("reversepicks_"):
+                    plan_key = lk.replace("reversepicks_", "")
+                else:
+                    rec = price.get("recurring") or {}
+                    if rec.get("interval") == "week":
+                        plan_key = "weekly"
+                    elif rec.get("interval") == "month" and rec.get("interval_count", 1) >= 3:
+                        plan_key = "quarterly"
+        except Exception:
+            pass
+        end_iso = ""
+        try:
+            ts = _sub_period_end_ts(sub_data)
+            if ts:
+                end_iso = datetime.fromtimestamp(int(ts), tz=timezone.utc).isoformat()
+        except Exception:
+            pass
+        now = datetime.now(timezone.utc).isoformat()
+        await db.stripe_subscriptions.update_one(
+            {"email": email_lower},
+            {"$set": {"email": email_lower, "stripeSubscriptionId": sub_id, "planKey": plan_key,
+                      "status": st, "currentPeriodEnd": end_iso, "subscribedAt": now,
+                      "updatedAt": now, "source": "stripe", "autoRestored": True},
+             "$unset": {"canceledAt": ""}},
+            upsert=True,
+        )
+        return "Premium (Stripe)"
+    except Exception as e:
+        print(f"[STRIPE LIVE FALLBACK] Error for {email_lower}: {e}")
+        return None
+
+async def check_web_access(email_lower: str):
+    """Full web access check: local DB + live Stripe fallback."""
+    if not email_lower:
+        return None
+    result = await _check_access_local(email_lower)
+    if result:
+        return result
+    return await _check_stripe_live(email_lower)
+
+# ── Web endpoints (Stripe / Square / website login) ───────────────────────────
+@router.post("/verify-access")
+@router.post("/verify-whop")
+async def verify_access(req: VerifyAccessRequest):
+    email_lower = req.email.lower().strip()
+    access_type = await check_web_access(email_lower)
+    if not access_type:
+        return {"verified": False, "email": email_lower, "message": "No active membership found."}
+    token = await create_session(email_lower, access_type)
+    return {"verified": True, "email": email_lower, "session_token": token, "access_type": access_type, "message": "Access granted"}
+
+@router.post("/login")
+async def login(req: LoginRequest):
+    email_lower = req.email.lower().strip()
+    access_type = await check_web_access(email_lower)
+    if not access_type:
+        raise HTTPException(status_code=403, detail="Your subscription has expired. Please resubscribe to regain access.")
+    token = await create_session(email_lower, access_type)
+    return {"verified": True, "email": email_lower, "session_token": token, "access_type": access_type, "message": "Login successful"}
+
+@router.post("/set-password")
+async def set_password(req: SetPasswordRequest):
+    email_lower = req.email.lower().strip()
+    access_type = await _check_access_local(email_lower)
+    if not access_type:
+        raise HTTPException(status_code=401, detail="No active membership found.")
+    token = await create_session(email_lower, access_type)
+    return {"verified": True, "email": email_lower, "session_token": token, "access_type": access_type, "message": "Access granted"}
+
+@router.post("/reset-password")
+async def reset_password(req: ResetPasswordRequest):
+    email_lower = req.email.lower().strip()
+    access_type = await _check_access_local(email_lower)
+    if not access_type:
+        raise HTTPException(status_code=401, detail="No active membership found.")
+    token = await create_session(email_lower, access_type)
+    return {"verified": True, "email": email_lower, "session_token": token, "access_type": access_type, "message": "Access granted"}
+
+class LinkPaymentRequest(BaseModel):
+    login_email: str
+    payment_email: str
+
+@router.post("/link-payment")
+async def link_payment(req: LinkPaymentRequest):
+    login_email   = req.login_email.lower().strip()
+    payment_email = req.payment_email.lower().strip()
+    if not login_email or not payment_email:
+        raise HTTPException(status_code=400, detail="Both emails are required.")
+    if login_email == payment_email:
+        access_type = await check_web_access(login_email)
+        if not access_type:
+            return {"verified": False, "message": "No active membership found for that email."}
+        token = await create_session(login_email, access_type)
+        return {"verified": True, "email": login_email, "session_token": token, "access_type": access_type}
+    payment_access = await _check_access_local(payment_email)
+    if not payment_access:
+        payment_access = await _check_stripe_live(payment_email)
+    if not payment_access:
+        return {"verified": False, "message": "No active subscription found for the payment email."}
+    existing_sub = await db.stripe_subscriptions.find_one({"email": payment_email}, {"_id": 0})
+    now = datetime.now(timezone.utc).isoformat()
+    if existing_sub:
+        mirrored = {k: v for k, v in existing_sub.items() if k != "_id"}
+        mirrored.update({"email": login_email, "linkedFrom": payment_email, "linkedAt": now, "updatedAt": now})
+        await db.stripe_subscriptions.update_one({"email": login_email}, {"$set": mirrored}, upsert=True)
+    else:
+        await db.manual_access_grants.update_one(
+            {"email": login_email},
+            {"$set": {"email": login_email, "access_type": "Manual", "linkedFrom": payment_email,
+                      "grantedAt": now, "note": f"Payment verified via {payment_email}"}},
+            upsert=True,
+        )
+    token = await create_session(login_email, payment_access)
+    return {"verified": True, "email": login_email, "session_token": token,
+            "access_type": payment_access, "message": "Payment verified! Access granted."}
+
+# ── OTP Models ────────────────────────────────────────────────────────────────
 class SendCodeRequest(BaseModel):
     email: str
 
@@ -258,16 +514,21 @@ async def verify_session(req: VerifySessionRequest):
     if access_type == "Owner":
         return {"valid": True, "access_type": "Owner"}
 
-    # Re-check Apple IAP
-    current = await _check_apple_access(email_lower)
+    # Apple IAP sessions — re-check Apple only
+    if "Apple" in access_type or access_type == "NoSubscription":
+        current = await _check_apple_access(email_lower)
+        if not current:
+            if access_type == "NoSubscription":
+                return {"valid": True, "access_type": "NoSubscription"}
+            await db.sessions.delete_one({"email": email_lower, "session_token": req.session_token})
+            return {"valid": False}
+        return {"valid": True, "access_type": current}
+
+    # Web sessions (Stripe / Square / manual) — re-check web access
+    current = await check_web_access(email_lower)
     if not current:
-        # If they have NoSubscription session (just verified email, no sub yet),
-        # keep them valid so they can see the paywall
-        if access_type == "NoSubscription":
-            return {"valid": True, "access_type": "NoSubscription"}
         await db.sessions.delete_one({"email": email_lower, "session_token": req.session_token})
         return {"valid": False}
-
     return {"valid": True, "access_type": current}
 
 
