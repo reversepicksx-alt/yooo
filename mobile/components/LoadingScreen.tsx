@@ -25,12 +25,15 @@ const NEON   = '#39FF14';
 const GOLD   = '#FFD700';
 const DARK   = '#050505';
 
+// Use the shorter dimension so proportions hold on both portrait mobile + landscape web
+const SHORT      = Math.min(W, H);
+
 // Eye position on screen (image is landscape, displayed cover on portrait)
 const EYE_CX     = W * 0.5;
 const EYE_CY     = H * 0.47;
-const EYE_HALF_H = H * 0.125;
-const IRIS_R     = W * 0.175;
-const CROWN_Y    = H * 0.11;
+const EYE_HALF_H = SHORT * 0.13;
+const IRIS_R     = SHORT * 0.19;
+const CROWN_Y    = H * 0.13;
 
 // ─── Sonar ring ────────────────────────────────────────────────────────────────
 function SonarRing({ delay }: { delay: number }) {
@@ -119,6 +122,7 @@ export default function LoadingScreen({
   const scanOpacity = useSharedValue(0);
   const pupilPulse  = useSharedValue(1);
   const progress    = useSharedValue(0);
+  const centerGlow  = useSharedValue(0.3);
 
   // 12 fixed star shared values (hooks must not be in a loop)
   const st0  = useSharedValue(0.4); const st1  = useSharedValue(0.8);
@@ -150,6 +154,15 @@ export default function LoadingScreen({
   };
 
   useEffect(() => {
+    // 0. Center glow – pulses from eye center, illuminates artwork on any viewport
+    centerGlow.value = withRepeat(
+      withSequence(
+        withTiming(1,    { duration: 2500 }),
+        withTiming(0.35, { duration: 2500 }),
+      ),
+      -1,
+    );
+
     // 1. Fade in
     fadeIn.value = withTiming(1, { duration: 900, easing: Easing.out(Easing.quad) });
 
@@ -293,6 +306,10 @@ export default function LoadingScreen({
     opacity: crownGlow.value,
   }));
 
+  const centerGlowAnim = useAnimatedStyle(() => ({
+    opacity: centerGlow.value,
+  }));
+
   const scanAnim = useAnimatedStyle(() => ({
     transform: [{ translateY: scanY.value }],
     opacity: scanOpacity.value,
@@ -333,12 +350,38 @@ export default function LoadingScreen({
       {/* ── Background image ─────────────────────────────────────────────── */}
       <Image
         source={require('../assets/splash-eye.jpeg')}
-        style={styles.bg}
+        style={[
+          styles.bg,
+          Platform.OS === 'web' && ({ filter: 'brightness(1.35) saturate(1.2)' } as any),
+        ]}
         resizeMode="cover"
       />
 
-      {/* ── Edge vignette (darkens corners, eye glows through center) ──── */}
-      <View style={styles.vignette} />
+      {/* ── Edge vignette (native only — web image fills naturally) ──── */}
+      {Platform.OS !== 'web' && <View style={styles.vignette} />}
+
+      {/* ── Web: permanent radial gradient illuminates eye center ──── */}
+      {Platform.OS === 'web' && (
+        <View
+          style={[
+            StyleSheet.absoluteFill,
+            {
+              background: `radial-gradient(ellipse 46% 56% at ${EYE_CX}px ${EYE_CY}px, rgba(57,255,20,0.13) 0%, rgba(57,255,20,0.07) 40%, transparent 68%)`,
+              pointerEvents: 'none',
+            } as any,
+          ]}
+        />
+      )}
+
+      {/* ── Center atmospheric glow — pulsing layer (all platforms) ─── */}
+      <Animated.View
+        style={[
+          styles.centerGlow,
+          { left: EYE_CX - SHORT * 0.7, top: EYE_CY - SHORT * 0.7 },
+          centerGlowAnim,
+        ]}
+        pointerEvents="none"
+      />
 
       {/* ── Sonar pulse rings from eye center ────────────────────────── */}
       <SonarRing delay={0}    />
@@ -528,7 +571,7 @@ export default function LoadingScreen({
 const styles = StyleSheet.create({
   root: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: DARK,
+    backgroundColor: '#010e01',
     zIndex: 999,
   },
   bg: {
@@ -539,13 +582,38 @@ const styles = StyleSheet.create({
     left: 0,
   },
 
-  // Vignette: darkens the edges, lets the eye blaze through center
+  // Vignette native: thick border creates a dark frame
   vignette: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'transparent',
-    borderWidth: W * 0.35,
-    borderColor: 'rgba(5,5,5,0.72)',
+    borderWidth: Math.min(W, H) * 0.15,
+    borderColor: 'rgba(5,5,5,0.65)',
     borderRadius: 0,
+  },
+  // Vignette web: inset box-shadow creates a smooth radial dark edge
+  vignetteWeb: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'transparent',
+    ...(Platform.OS === 'web'
+      ? ({ boxShadow: 'inset 0 0 220px 80px rgba(5,5,5,0.88)' } as any)
+      : {}),
+  },
+
+  // Center atmospheric glow
+  centerGlow: {
+    position: 'absolute',
+    width:  SHORT * 1.4,
+    height: SHORT * 1.4,
+    borderRadius: SHORT * 0.7,
+    backgroundColor: 'transparent',
+    ...(Platform.OS === 'web'
+      ? ({ boxShadow: `0 0 ${SHORT * 0.6}px ${SHORT * 0.25}px rgba(57,255,20,0.18), 0 0 ${SHORT * 0.3}px ${SHORT * 0.1}px rgba(57,255,20,0.1)` } as any)
+      : {
+          shadowColor: NEON,
+          shadowOffset: { width: 0, height: 0 },
+          shadowOpacity: 0.5,
+          shadowRadius: SHORT * 0.4,
+        }),
   },
 
   // Sonar ring

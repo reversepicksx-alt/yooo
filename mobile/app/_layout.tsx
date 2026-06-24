@@ -86,7 +86,7 @@ function AppBoot() {
     }
   }, [isLoading]);
 
-  if (Platform.OS !== 'web' && isLoading) {
+  if (isLoading) {
     return <LoadingScreen />;
   }
 
