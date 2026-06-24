@@ -119,6 +119,24 @@ async def _check_access_local(email_lower: str):
             except Exception:
                 pass
         # No expiresAt, or already past it — access denied
+    # Apple IAP subscriptions (RevenueCat)
+    apple_iap = await db.apple_iap_subscriptions.find_one({"email": email_lower}, {"_id": 0})
+    if apple_iap:
+        iap_status = apple_iap.get("status", "")
+        if iap_status == "active":
+            return "Premium (Apple)"
+        if iap_status in ("canceled", "billing_issue"):
+            # Keep access until the paid period actually expires
+            expires_raw = apple_iap.get("expiresAt")
+            if expires_raw:
+                try:
+                    exp_dt = datetime.fromisoformat(str(expires_raw).replace("Z", "+00:00"))
+                    if exp_dt.tzinfo is None:
+                        exp_dt = exp_dt.replace(tzinfo=timezone.utc)
+                    if datetime.now(timezone.utc) < exp_dt:
+                        return "Premium (Apple)"
+                except Exception:
+                    pass
     # Whop: DISABLED — platform disconnected. No Whop members get access.
     # Stripe subscriptions — active and trialing only
     stripe_sub = await db.stripe_subscriptions.find_one(
@@ -461,3 +479,55 @@ async def link_payment(req: LinkPaymentRequest):
         "access_type": payment_access,
         "message": "Payment verified! Access granted.",
     }
+
+
+# ── Apple IAP fast-path grant ─────────────────────────────────────────────────
+# Called immediately after a successful purchase/restore from the mobile app.
+# The RevenueCat webhook is the durable source of truth, but can lag a few
+# seconds; this gives the user instant access without waiting for the webhook.
+
+class IAPGrantRequest(BaseModel):
+    email: str
+    session_token: str
+    product_id: str
+    expires_at_ms: int | None = None
+
+
+@router.post("/iap-grant")
+async def iap_grant(req: IAPGrantRequest):
+    email_lower = req.email.lower().strip()
+    session = await db.sessions.find_one(
+        {"email": email_lower, "session_token": req.session_token}, {"_id": 0}
+    )
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid session")
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    expires_iso: str | None = None
+    if req.expires_at_ms:
+        try:
+            from datetime import timezone as _tz
+            expires_iso = datetime.fromtimestamp(req.expires_at_ms / 1000, tz=_tz.utc).isoformat()
+        except Exception:
+            pass
+
+    await db.apple_iap_subscriptions.update_one(
+        {"email": email_lower},
+        {"$set": {
+            "email":      email_lower,
+            "status":     "active",
+            "productId":  req.product_id,
+            "expiresAt":  expires_iso,
+            "updatedAt":  now_iso,
+        }},
+        upsert=True,
+    )
+
+    # Update session access_type so any verify-session call reflects the new status
+    await db.sessions.update_one(
+        {"email": email_lower},
+        {"$set": {"access_type": "Premium (Apple)", "last_active": now_iso}},
+    )
+
+    print(f"[IAP GRANT] {email_lower} → Premium (Apple) | product={req.product_id} | expires={expires_iso}")
+    return {"ok": True, "access_type": "Premium (Apple)"}

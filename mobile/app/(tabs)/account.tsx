@@ -80,15 +80,34 @@ function formatExpiryDate(ms?: number): string {
 
 function IAPPaywall() {
   const { packages, isLoading, purchase, restore, isPurchasing, isRestoring } = useSubscription();
+  const { email, session } = useAuth();
   const [buyingId, setBuyingId] = useState<string | null>(null);
   const [confirmPkg, setConfirmPkg] = useState<PurchasesPackage | null>(null);
+
+  const grantBackend = async (productId: string, expiresAtMs?: number) => {
+    if (!email || !session?.token) return;
+    try {
+      await fetch('/api/auth/iap-grant', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, session_token: session.token, product_id: productId, expires_at_ms: expiresAtMs ?? null }),
+      });
+    } catch (e) {
+      console.warn('[IAP] backend grant failed (webhook will sync shortly):', e);
+    }
+  };
 
   const handlePurchase = async (pkg: PurchasesPackage) => {
     setBuyingId(pkg.identifier);
     try {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      await purchase(pkg);
+      const customerInfo = await purchase(pkg);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      const entitlement = customerInfo?.entitlements?.active?.['pro'];
+      const expiresMs = entitlement?.expirationDate
+        ? new Date(entitlement.expirationDate).getTime()
+        : undefined;
+      await grantBackend(pkg.product?.identifier ?? pkg.identifier, expiresMs);
       Alert.alert('Subscribed!', 'Welcome to ReversePicks Pro. Your subscription is now active.');
     } catch (e: any) {
       if (e?.userCancelled) return;
@@ -102,8 +121,15 @@ function IAPPaywall() {
   const handleRestore = async () => {
     try {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      await restore();
+      const customerInfo = await restore();
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      const entitlement = customerInfo?.entitlements?.active?.['pro'];
+      if (entitlement) {
+        const expiresMs = entitlement.expirationDate
+          ? new Date(entitlement.expirationDate).getTime()
+          : undefined;
+        await grantBackend(entitlement.productIdentifier, expiresMs);
+      }
       Alert.alert('Restored', 'Your purchases have been restored.');
     } catch (e: any) {
       Alert.alert('Restore Failed', getErrorMessage(e));

@@ -54,9 +54,11 @@ from routes.dota2_routes import router as dota2_router
 from routes.lol_routes import router as lol_router
 from routes.cbase_routes import router as cbase_router
 from routes.notifications import router as notifications_router
+from routes.revenuecat_webhook import router as revenuecat_webhook_router
 from cache import seed_cache, background_refresh_loop
 
 app.include_router(auth_router)
+app.include_router(revenuecat_webhook_router)
 app.include_router(community_router)
 app.include_router(leagues_router)
 app.include_router(players_router)
