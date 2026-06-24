@@ -18,7 +18,7 @@ const LONG_TIMEOUT_MS    = 90_000;   // 90 s — soccer / MLB / scan
 const CS2_TIMEOUT_MS     = 150_000;  // 150 s — CS2 first-call cold cache hits 20+ BDL endpoints
 const SHORT_TIMEOUT_MS   = 15_000;   // 15 s — all other API calls
 
-async function apiCall<T = unknown>(endpoint: string, options: RequestInit = {}): Promise<T> {
+export async function apiCall<T = unknown>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const base = getApiBase();
   const url = `${base}${endpoint}`;
   const isCs2Predict = endpoint.startsWith(CS2_PREDICT_PATH);
