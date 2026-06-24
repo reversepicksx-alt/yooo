@@ -242,6 +242,11 @@ export default function AuthScreen() {
           <Animated.View style={{ transform: [{ scale: splR2Scale }], opacity: splR2Opac, ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' }}>
             <View style={[styles.splRing, { width: 160, height: 160, borderRadius: 80 }]} />
           </Animated.View>
+          <Animated.Image
+            source={require('../assets/logo.png')}
+            style={[styles.splLogo, { transform: [{ scale: splLogoScale }], opacity: splLogoOpac }]}
+            resizeMode="contain"
+          />
           <Animated.View style={[styles.splScan, { transform: [{ translateY: splScanY }], opacity: splScanOpac }]} />
         </View>
         <Animated.Text style={[styles.splTitle, { opacity: splTxtOpac, transform: [{ translateY: splTxtY }] }]}>
@@ -558,8 +563,8 @@ const styles = StyleSheet.create({
     width: 120, height: 120, borderRadius: 60,
     borderWidth: 1.5, borderColor: Colors.primary,
   },
-  splLogoWrap: { width: 80, height: 80, borderRadius: 40, overflow: 'hidden', zIndex: 2 },
-  splLogo:     { width: 80, height: 80 },
+  splLogoWrap: { width: 140, height: 140, zIndex: 2 },
+  splLogo:     { width: 140, height: 140, zIndex: 2 },
   splScan: {
     position: 'absolute',
     top: 0, left: -10, right: -10,
