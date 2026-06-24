@@ -13,8 +13,6 @@ import { apiCall } from '@/lib/api';
 
 const INPUT_STYLE = Platform.OS === 'web' ? { outlineWidth: 0 } : {};
 
-// Tap logo 7 times to reveal owner code input
-const OWNER_TAP_COUNT = 7;
 
 export default function AuthScreen() {
   const insets = useSafeAreaInsets();
@@ -32,7 +30,6 @@ export default function AuthScreen() {
   const resendRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Owner mode
-  const [ownerTaps, setOwnerTaps]   = useState(0);
   const [showOwner, setShowOwner]   = useState(false);
   const [ownerCode, setOwnerCode]   = useState('');
   const [ownerLoading, setOwnerLoading] = useState(false);
@@ -225,16 +222,6 @@ export default function AuthScreen() {
     }
   };
 
-  const handleLogoTap = () => {
-    const next = ownerTaps + 1;
-    setOwnerTaps(next);
-    if (next >= OWNER_TAP_COUNT) {
-      setShowOwner(true);
-      setOwnerTaps(0);
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-    }
-  };
-
   // ── Splash ────────────────────────────────────────────────────────────────
   if (showSplash) {
     return (
@@ -340,9 +327,9 @@ export default function AuthScreen() {
     <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom + 20 }]}>
       <View style={styles.inner}>
         <View style={styles.card}>
-          <TouchableOpacity onPress={handleLogoTap} activeOpacity={0.85} style={styles.logoWrap}>
+          <View style={styles.logoWrap}>
             <Image source={require('../assets/logo.png')} style={styles.logoImg} resizeMode="contain" />
-          </TouchableOpacity>
+          </View>
 
           <Text style={styles.welcomeTitle}>Sign In</Text>
           <Text style={styles.welcomeSub}>Enter your email to receive a login code</Text>
