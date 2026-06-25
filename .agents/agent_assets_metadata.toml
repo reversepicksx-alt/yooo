@@ -365,3 +365,9 @@ id = "25SnQ8wcPvUxPxCFDJk-K"
 uri = "file://SubscriptionKey_9NSAR9532S.tar.gz"
 type = "unspecified"
 title = "P8 key (preserves filename)"
+
+[[outputs]]
+id = "ydgQJ7w4TBRiOIzIjik_Y"
+uri = "file://RevenueCat_P8_Keys.tar.gz"
+type = "unspecified"
+title = "Both P8 keys (AuthKey + SubscriptionKey)"
