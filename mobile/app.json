@@ -9,8 +9,6 @@
     "newArchEnabled": true,
     "scheme": "reversepicks",
     "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
       "backgroundColor": "#050505"
     },
     "ios": {
