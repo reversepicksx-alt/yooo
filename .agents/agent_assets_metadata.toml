@@ -407,3 +407,9 @@ id = "VUT_j_5DZ-BlAIp1KugJx"
 uri = "file://attached_assets/IMG_5433_1782383969145.png"
 type = "image"
 title = "RevenueCat Error - File Too Large"
+
+[[outputs]]
+id = "fzL45n5Cc_QhgQHXVr2pQ"
+uri = "file://mobile/public/assets/revenuecat_keys.zip"
+type = "unspecified"
+title = "revenuecat_keys.zip — both .p8 files inside"
