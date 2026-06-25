@@ -413,3 +413,15 @@ id = "fzL45n5Cc_QhgQHXVr2pQ"
 uri = "file://mobile/public/assets/revenuecat_keys.zip"
 type = "unspecified"
 title = "revenuecat_keys.zip — both .p8 files inside"
+
+[[outputs]]
+id = "qqLTGllQUY0XDiOTg3ebd"
+uri = "file://mobile/public/assets/SubscriptionKey_9NSAR9532S.txt"
+type = "text"
+title = "SubscriptionKey_9NSAR9532S.p8"
+
+[[outputs]]
+id = "kTOdZ-fLGvNZzI-UvzY8d"
+uri = "file://mobile/public/assets/AuthKey_9NSAR9532S.txt"
+type = "text"
+title = "AuthKey_9NSAR9532S.p8"
