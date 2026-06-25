@@ -186,12 +186,6 @@ const server = http.createServer((req, res) => {
   }
 
   if (IS_PRODUCTION) {
-    // Cache-bust: redirect bare / to /?_v=BUILD_TS so browsers always fetch fresh HTML
-    if (pathname === '/' && !req.url.includes('_v=')) {
-      res.writeHead(302, { 'Location': `/?_v=${BUILD_TS}`, 'Cache-Control': 'no-store' });
-      return res.end();
-    }
-
     // Special routes
     if (pathname === '/manifest.json') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
