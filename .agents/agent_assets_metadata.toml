@@ -358,4 +358,10 @@ title = "Current App Icon (build 82)"
 id = "fdPIzqyli1q2KC4lYuGhN"
 uri = "file://SubscriptionKey_9NSAR9532S.txt"
 type = "text"
-title = "SubscriptionKey_9NSAR9532S.p8 (downloadable as .txt)"
+title = "P8 key text (rename to .p8)"
+
+[[outputs]]
+id = "25SnQ8wcPvUxPxCFDJk-K"
+uri = "file://SubscriptionKey_9NSAR9532S.tar.gz"
+type = "unspecified"
+title = "P8 key (preserves filename)"
