@@ -114,6 +114,12 @@ uri = "file://attached_assets/icon_b3r4.png"
 type = "image"
 title = "b2.3 rounded ultra glow v4"
 
+[[generated]]
+id = "ELxgwi7hpeEB9sSiI5QVs"
+uri = "file://attached_assets/generated_images/key_to_type.png"
+type = "image"
+title = "P8 key typing reference"
+
 [[outputs]]
 id = "IdBO4fXLAJGGVIzxE-3A1"
 uri = "file://attached_assets/cheat_sheet_2_1.png"
@@ -383,3 +389,9 @@ id = "QSizQOMJ-cXV2wa0jedKD"
 uri = "file://AuthKey_only.tar.gz"
 type = "unspecified"
 title = "AuthKey_9NSAR9532S.p8"
+
+[[outputs]]
+id = "_gPZWzTWFH9hGKqkEhn1D"
+uri = "file://attached_assets/generated_images/key_to_type.png"
+type = "image"
+title = "P8 Key - Type This Into Notes"
