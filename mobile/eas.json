@@ -21,7 +21,10 @@
     "production": {
       "autoIncrement": true,
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://reversepicks.com"
+        "EXPO_PUBLIC_API_URL": "https://reversepicks.com",
+        "EXPO_PUBLIC_REVENUECAT_IOS_API_KEY": "appl_zQjVghGLoFUYWqbpqaPBwrNGJxF",
+        "EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY": "goog_hXbMoUvTLCUyHEnIyyFqLkOmFmB",
+        "EXPO_PUBLIC_REVENUECAT_TEST_API_KEY": "test_MBqWVmRraEPFVrADaxWrEaRvvzV"
       },
       "ios": {
         "image": "latest"
