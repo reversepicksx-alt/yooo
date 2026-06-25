@@ -137,7 +137,7 @@ const LOADING_SCREEN = `
 <script>
 (function(){
   var e=document.getElementById('rp-loading-screen');
-  function hide(){if(!e)return;e.style.opacity='0';setTimeout(function(){if(e&&e.parentNode)e.parentNode.removeChild(e);e=null;},500);}
+  function hide(){if(!e)return;if(e.parentNode)e.parentNode.removeChild(e);e=null;}
   window.__rpHideLoader=hide;
   setTimeout(hide,10000);
 })();
