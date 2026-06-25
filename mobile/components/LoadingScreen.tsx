@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { View, Text, Image, StyleSheet, Platform, Dimensions } from 'react-native';
+import { View, Image, StyleSheet, Platform, Dimensions } from 'react-native';
 import Animated, {
   useSharedValue, useAnimatedStyle, withTiming, withDelay, Easing,
 } from 'react-native-reanimated';
@@ -7,6 +7,16 @@ import Animated, {
 const { width: W, height: H } = Dimensions.get('window');
 const NEON = '#39FF14';
 const DARK = '#050505';
+
+// Final logo size in the custom loading screen
+const LOGO_SIZE = Math.min(W * 0.52, 220);
+
+// On native the iOS splash image is 1024×1024 rendered with resizeMode:contain.
+// It fills the screen width (390pt on iPhone 14) → 390/1024 ≈ 0.381 scale factor.
+// The RP crest occupies ~25% of the 1024px image → 1024*0.25*0.381 ≈ 97pt visible.
+// Starting native scale so our logo matches the native splash size exactly:
+//   97 / LOGO_SIZE ≈ 97 / 203 ≈ 0.48
+const NATIVE_SPLASH_SCALE = 97 / LOGO_SIZE; // ≈ 0.48
 
 // ── Single letter with staggered pop-in ────────────────────────────────────
 function RevLetter({ char, delay }: { char: string; delay: number }) {
@@ -32,32 +42,46 @@ function RevLetter({ char, delay }: { char: string; delay: number }) {
 
 // ── Main loading screen ─────────────────────────────────────────────────────
 export default function LoadingScreen({ onDone }: { onDone?: () => void }) {
-  const logoOpacity = useSharedValue(0);
-  const logoScale   = useSharedValue(0.78);
+  const isNative = Platform.OS !== 'web';
+
+  // Native: logo starts at the native-splash size & opacity so the transition
+  // from iOS splash → this screen is invisible (same logo, same position).
+  // The logo then scales up to full size as the text fades in.
+  // Web: logo fades in from 0 after the HTML pre-loader is removed.
+  const logoOpacity = useSharedValue(isNative ? 1 : 0);
+  const logoScale   = useSharedValue(isNative ? NATIVE_SPLASH_SCALE : 0.78);
   const hudOpacity  = useSharedValue(0);
   const tagOpacity  = useSharedValue(0);
   const progress    = useSharedValue(0);
 
   useEffect(() => {
-    // Signal proxy HTML loading screen to hide — React has mounted
+    // Tell the web HTML pre-loader to hide — React has mounted
     if (typeof window !== 'undefined' && (window as any).__rpHideLoader) {
       (window as any).__rpHideLoader();
     }
 
-    // Logo entrance
-    logoOpacity.value = withTiming(1, { duration: 700, easing: Easing.out(Easing.cubic) });
-    logoScale.value   = withTiming(1, { duration: 700, easing: Easing.out(Easing.cubic) });
+    if (!isNative) {
+      // Web: fade + scale logo in after HTML pre-loader clears
+      logoOpacity.value = withTiming(1, { duration: 700, easing: Easing.out(Easing.cubic) });
+      logoScale.value   = withTiming(1, { duration: 700, easing: Easing.out(Easing.cubic) });
+    } else {
+      // Native: logo is already visible at splash size — scale up to full size
+      // in sync with the text appearing so it feels like one unified animation
+      logoScale.value = withTiming(1, { duration: 600, easing: Easing.out(Easing.cubic) });
+    }
 
-    // HUD (brand letters)
-    hudOpacity.value = withDelay(600, withTiming(1, { duration: 400 }));
+    // REVERSEPICKS letters
+    const hudDelay = isNative ? 150 : 600;
+    hudOpacity.value = withDelay(hudDelay, withTiming(1, { duration: 400 }));
 
     // Tagline
-    tagOpacity.value = withDelay(1400, withTiming(0.85, { duration: 500 }));
+    const tagDelay = isNative ? 800 : 1400;
+    tagOpacity.value = withDelay(tagDelay, withTiming(0.85, { duration: 500 }));
 
     // Progress bar
-    progress.value = withDelay(600, withTiming(0.92, { duration: 3000, easing: Easing.out(Easing.cubic) }));
+    const progDelay = isNative ? 150 : 600;
+    progress.value = withDelay(progDelay, withTiming(0.92, { duration: 3000, easing: Easing.out(Easing.cubic) }));
 
-    // Done callback
     const t = setTimeout(() => onDone?.(), 2800);
     return () => clearTimeout(t);
   }, []);
@@ -77,8 +101,14 @@ export default function LoadingScreen({ onDone }: { onDone?: () => void }) {
   return (
     <View style={styles.root}>
 
-      {/* ── RP Logo ──────────────────────────────────────────────── */}
-      <Animated.View style={[styles.logoWrap, logoAnim]} pointerEvents="none">
+      {/* ── RP Logo ──────────────────────────────────────────────────────────
+          On native: no marginBottom — logo stays at true screen center
+          matching the iOS native splash logo position exactly.
+          On web: marginBottom pushes logo up in the normal flex flow.     */}
+      <Animated.View
+        style={[styles.logoWrap, isNative && styles.logoWrapNative, logoAnim]}
+        pointerEvents="none"
+      >
         <Image
           source={require('../assets/logo.png')}
           style={styles.logoImg}
@@ -86,8 +116,13 @@ export default function LoadingScreen({ onDone }: { onDone?: () => void }) {
         />
       </Animated.View>
 
-      {/* ── REVERSEPICKS + tagline + progress ────────────────────── */}
-      <Animated.View style={[styles.hud, hudAnim]} pointerEvents="none">
+      {/* ── REVERSEPICKS + tagline + progress ────────────────────────────────
+          On native: absolutely positioned so it doesn't shift the logo out
+          of center. On web: normal flow below the logo.                   */}
+      <Animated.View
+        style={[styles.hud, isNative ? styles.hudNative : styles.hudWeb, hudAnim]}
+        pointerEvents="none"
+      >
         <View style={styles.brandRow}>
           {BRAND.split('').map((ch, i) => (
             <RevLetter key={i} char={ch} delay={i * 55} />
@@ -121,18 +156,38 @@ const styles = StyleSheet.create({
   logoWrap: {
     alignItems: 'center',
     justifyContent: 'center',
+    // Web default: marginBottom is set via logoWrapWeb (not needed — hudWeb in flow)
     marginBottom: H * 0.06,
   },
 
+  // On native: no marginBottom so the logo sits at true screen center
+  logoWrapNative: {
+    marginBottom: 0,
+  },
+
   logoImg: {
-    width:  Math.min(W * 0.52, 220),
-    height: Math.min(W * 0.52, 220),
+    width:  LOGO_SIZE,
+    height: LOGO_SIZE,
   },
 
   hud: {
     alignItems: 'center',
     gap: 10,
   },
+
+  // Native: absolutely positioned below the logo so it doesn't move the logo
+  // out of center. Top ~64% of screen height puts text just below the logo.
+  hudNative: {
+    position: 'absolute',
+    top: H * 0.64,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    gap: 10,
+  },
+
+  // Web: normal flow (logo has marginBottom to push it up)
+  hudWeb: {},
 
   brandRow: {
     flexDirection: 'row',
