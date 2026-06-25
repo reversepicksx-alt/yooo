@@ -336,12 +336,12 @@ export default function FuzzySearchInput({
           onBlur={() => { setTimeout(dismiss, 200); }}
           editable={!confirmed}
         />
-        {!loading && value.length > 0 && !confirmed && (
+        {!loading && value.length > 0 && (
           <TouchableOpacity
             onPress={() => { onChangeText(''); setResults([]); setShowDropdown(false); setHasSearched(false); }}
             style={styles.clearBtn}
           >
-            <Ionicons name="close-circle" size={15} color="#555" />
+            <Ionicons name="close-circle" size={15} color={confirmed ? Colors.primary : '#555'} />
           </TouchableOpacity>
         )}
       </View>
