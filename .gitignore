@@ -21,3 +21,9 @@ coverage/
 *.env.*
 .pythonlibs/
 .local/
+
+# Apple private keys — must NEVER be committed
+*.p8
+AuthKey_*.txt
+SubscriptionKey_*.txt
+*_keys.zip

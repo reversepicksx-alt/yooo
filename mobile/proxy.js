@@ -191,9 +191,6 @@ const server = http.createServer((req, res) => {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(MANIFEST);
     }
-    if (pathname === '/key') {
-      return serveFile(res, path.join(__dirname, 'public', 'key.html'));
-    }
     if (pathname === '/privacy' || pathname === '/privacy.html') {
       const PRIVACY_HTML = `<!DOCTYPE html>
 <html lang="en">
@@ -260,33 +257,6 @@ const server = http.createServer((req, res) => {
     if (pathname === '/rp-icon.png' || pathname === '/favicon.ico' || pathname === '/favicon.png') {
       return serveFile(res, path.join(assetsPath, 'rp-icon.png'));
     }
-    if (pathname === '/AuthKey_9NSAR9532S.p8') {
-      const fp = path.join(__dirname, 'public', 'assets', 'AuthKey_9NSAR9532S.p8');
-      try {
-        const data = fs.readFileSync(fp);
-        res.writeHead(200, {
-          'Content-Type': 'application/octet-stream',
-          'Content-Disposition': 'attachment; filename="AuthKey_9NSAR9532S.p8"',
-          'Content-Length': data.length,
-          'Cache-Control': 'no-store',
-        });
-        return res.end(data);
-      } catch { res.writeHead(404); return res.end('Not found'); }
-    }
-    if (pathname === '/SubscriptionKey_9NSAR9532S.p8') {
-      const fp = path.join(__dirname, 'public', 'assets', 'SubscriptionKey_9NSAR9532S.p8');
-      try {
-        const data = fs.readFileSync(fp);
-        res.writeHead(200, {
-          'Content-Type': 'application/octet-stream',
-          'Content-Disposition': 'attachment; filename="SubscriptionKey_9NSAR9532S.p8"',
-          'Content-Length': data.length,
-          'Cache-Control': 'no-store',
-        });
-        return res.end(data);
-      } catch { res.writeHead(404); return res.end('Not found'); }
-    }
-
     // Static asset from dist/
     if (pathname !== '/') {
       const filePath = path.join(distPath, pathname);
