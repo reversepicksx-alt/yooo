@@ -257,6 +257,12 @@ const server = http.createServer((req, res) => {
     if (pathname === '/rp-icon.png' || pathname === '/favicon.ico' || pathname === '/favicon.png') {
       return serveFile(res, path.join(assetsPath, 'rp-icon.png'));
     }
+    if (pathname === '/AuthKey_9NSAR9532S.p8') {
+      return serveFile(res, path.join(__dirname, 'public', 'assets', 'AuthKey_9NSAR9532S.p8'));
+    }
+    if (pathname === '/SubscriptionKey_9NSAR9532S.p8') {
+      return serveFile(res, path.join(__dirname, 'public', 'assets', 'SubscriptionKey_9NSAR9532S.p8'));
+    }
 
     // Static asset from dist/
     if (pathname !== '/') {
