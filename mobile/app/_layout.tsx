@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Alert, Platform } from 'react-native';
 import { Stack } from 'expo-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -78,6 +78,9 @@ function RevenueCatSync() {
 
 function AppBoot() {
   const { isLoading } = useAuth();
+  // Keep the loading screen visible until the animation finishes (native only).
+  // On web the HTML splash handles the reveal; on native we wait for onDone.
+  const [splashDone, setSplashDone] = useState(Platform.OS === 'web');
 
   useEffect(() => {
     if (Platform.OS === 'web' && typeof window !== 'undefined' && !isLoading) {
@@ -86,8 +89,8 @@ function AppBoot() {
     }
   }, [isLoading]);
 
-  if (isLoading) {
-    return <LoadingScreen />;
+  if (isLoading || !splashDone) {
+    return <LoadingScreen onDone={() => setSplashDone(true)} />;
   }
 
   return (

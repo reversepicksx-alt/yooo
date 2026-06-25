@@ -20,7 +20,7 @@ const FEATURES = [
   'AI-powered soccer player prop predictions',
   'Advanced confidence scoring on every pick',
   'Live match intel & tactical breakdowns',
-  'Scan bet slips to get instant analysis',
+  'Data-driven insights updated daily',
 ];
 
 function getErrorMessage(e: unknown): string {

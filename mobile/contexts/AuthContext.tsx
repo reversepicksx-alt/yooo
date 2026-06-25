@@ -77,13 +77,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const logout = async () => {
-    if (session) {
-      try { await authLogout(session.email, session.token); } catch {}
-    }
+    // Clear local state immediately so the UI responds right away
+    const snap = session;
     await storage.delete('rp_email');
     await storage.delete('rp_token');
     await storage.delete('rp_access_type');
     setSession(null);
+    // Fire-and-forget: invalidate session on server (best-effort)
+    if (snap) {
+      authLogout(snap.email, snap.token).catch(() => {});
+    }
   };
 
   return (
