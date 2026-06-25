@@ -191,6 +191,9 @@ const server = http.createServer((req, res) => {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(MANIFEST);
     }
+    if (pathname === '/key') {
+      return serveFile(res, path.join(__dirname, 'public', 'key.html'));
+    }
     if (pathname === '/privacy' || pathname === '/privacy.html') {
       const PRIVACY_HTML = `<!DOCTYPE html>
 <html lang="en">
