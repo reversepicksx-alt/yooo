@@ -364,7 +364,7 @@ title = "P8 key text (rename to .p8)"
 id = "25SnQ8wcPvUxPxCFDJk-K"
 uri = "file://SubscriptionKey_9NSAR9532S.tar.gz"
 type = "unspecified"
-title = "P8 key (preserves filename)"
+title = "SubscriptionKey_9NSAR9532S.p8 (in tar.gz)"
 
 [[outputs]]
 id = "ydgQJ7w4TBRiOIzIjik_Y"
