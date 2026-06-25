@@ -50,8 +50,8 @@ export default function AuthScreen() {
   const [ownerCode, setOwnerCode]   = useState('');
   const [ownerLoading, setOwnerLoading] = useState(false);
 
-  // Splash animation
-  const [showSplash, setShowSplash] = useState(Platform.OS === 'ios');
+  // Splash animation — skip on native (native splash + LoadingScreen already handle this)
+  const [showSplash, setShowSplash] = useState(false);
   const splashOpacity  = useRef(new Animated.Value(1)).current;
   const logoScale      = useRef(new Animated.Value(0.6)).current;
   const logoOpacity    = useRef(new Animated.Value(0)).current;

@@ -2,7 +2,6 @@ import React, { createContext, useContext } from "react";
 import { Platform } from "react-native";
 import Purchases, { type PurchasesPackage } from "react-native-purchases";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import Constants from "expo-constants";
 
 const REVENUECAT_TEST_API_KEY = process.env.EXPO_PUBLIC_REVENUECAT_TEST_API_KEY;
 const REVENUECAT_IOS_API_KEY = process.env.EXPO_PUBLIC_REVENUECAT_IOS_API_KEY;
@@ -11,12 +10,8 @@ const REVENUECAT_ANDROID_API_KEY = process.env.EXPO_PUBLIC_REVENUECAT_ANDROID_AP
 export const REVENUECAT_ENTITLEMENT_IDENTIFIER = "pro";
 
 function getRevenueCatApiKey(): string {
-  if (Platform.OS === "web") {
-    return REVENUECAT_TEST_API_KEY ?? "";
-  }
-
-  const isDev = __DEV__ || Constants.executionEnvironment === "storeClient";
-  if (isDev) return REVENUECAT_TEST_API_KEY ?? "";
+  if (Platform.OS === "web") return REVENUECAT_TEST_API_KEY ?? "";
+  if (__DEV__) return REVENUECAT_TEST_API_KEY ?? "";
   if (Platform.OS === "ios") return REVENUECAT_IOS_API_KEY ?? "";
   if (Platform.OS === "android") return REVENUECAT_ANDROID_API_KEY ?? "";
   return REVENUECAT_TEST_API_KEY ?? "";
@@ -88,7 +83,7 @@ function useSubscriptionContext() {
     packages,
     isSubscribed,
     isLoading: customerInfoQuery.isLoading || offeringsQuery.isLoading,
-    pkgLoading: offeringsQuery.isLoading,
+    pkgLoading: offeringsQuery.isLoading || offeringsQuery.isFetching,
     purchase: purchaseMutation.mutateAsync,
     restore: restoreMutation.mutateAsync,
     isPurchasing: purchaseMutation.isPending,
