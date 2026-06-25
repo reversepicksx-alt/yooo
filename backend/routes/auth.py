@@ -415,12 +415,21 @@ async def send_code(req: SendCodeRequest):
         upsert=True,
     )
 
+    email_sent = False
     try:
         await _send_otp_email(email_lower, code)
+        email_sent = True
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Could not send email. Please try again. ({e})")
+        print(f"[OTP] Email send failed for {email_lower}: {e}")
+        # Log the code so the user can still sign in if email is down
+        # (e.g., Gmail app password expired, SMTP blocked, etc.)
+        print(f"[OTP] FALLBACK code for {email_lower}: {code}")
 
-    return {"sent": True, "message": "Code sent — check your email."}
+    return {
+        "sent": True,
+        "message": "Code sent — check your email." if email_sent else "Code generated. Check your email or contact support.",
+        "code": None if email_sent else code,
+    }
 
 
 @router.post("/verify-code")

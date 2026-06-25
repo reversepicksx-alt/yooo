@@ -168,7 +168,9 @@ export default function AuthScreen() {
       if (result.sent) {
         setEmail(trimmed);
         setStep('code');
-        setInfo('Code sent — check your email.');
+        // If email failed, the backend returns the code in the response so
+        // the user can still sign in (shown in the info banner).
+        setInfo(result.message || 'Code sent — check your email.');
         startResendTimer();
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } else {

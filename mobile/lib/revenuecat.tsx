@@ -66,7 +66,15 @@ function useSubscriptionContext() {
   });
 
   const restoreMutation = useMutation({
-    mutationFn: async () => Purchases.restorePurchases(),
+    mutationFn: async () => {
+      const customerInfo = await Purchases.restorePurchases();
+      const hasActive =
+        customerInfo?.entitlements?.active?.[REVENUECAT_ENTITLEMENT_IDENTIFIER] !== undefined;
+      if (!hasActive) {
+        throw new Error("No active purchases found to restore.");
+      }
+      return customerInfo;
+    },
     onSuccess: () => customerInfoQuery.refetch(),
   });
 

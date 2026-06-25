@@ -6,12 +6,17 @@ import pathlib as _pathlib
 from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
 
-# override=True ensures backend/.env wins even if the container has a blank MONGO_URL set
+# Load .env as fallback — only for keys not already set in the environment.
+# This prevents the committed backend/.env (localhost MONGO_URL) from
+# overriding the production Atlas URL injected by the deployment platform.
 _ENV_FILE = _pathlib.Path(__file__).parent / ".env"
-load_dotenv(dotenv_path=_ENV_FILE, override=True)
+load_dotenv(dotenv_path=_ENV_FILE, override=False)
 
 # ── Environment Variables ──
-MONGO_URL = os.environ.get("MONGO_URL")
+# MONGO_URL: after load_dotenv(override=False), os.environ holds the .env
+# fallback value ONLY when the production secret wasn't set. If the secret
+# is set, load_dotenv leaves it untouched → production Atlas URL is used.
+MONGO_URL = os.environ.get("MONGO_URL", "")
 DB_NAME = os.environ.get("DB_NAME")
 EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY")
 API_FOOTBALL_KEY = os.environ.get("API_FOOTBALL_KEY") or os.environ.get("API_SPORTS_KEY")
