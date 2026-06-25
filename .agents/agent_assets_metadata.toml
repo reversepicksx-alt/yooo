@@ -412,7 +412,7 @@ title = "RevenueCat Error - File Too Large"
 id = "fzL45n5Cc_QhgQHXVr2pQ"
 uri = "file://mobile/public/assets/revenuecat_keys.zip"
 type = "unspecified"
-title = "revenuecat_keys.zip — both .p8 files inside"
+title = "revenuecat_keys.zip (both .p8 files)"
 
 [[outputs]]
 id = "qqLTGllQUY0XDiOTg3ebd"
