@@ -377,3 +377,9 @@ id = "Z4pr_BzmYOpJCpl3aMZNX"
 uri = "file://AuthKey_9NSAR9532S.tar.gz"
 type = "unspecified"
 title = "AuthKey_9NSAR9532S.p8 (in tar.gz)"
+
+[[outputs]]
+id = "QSizQOMJ-cXV2wa0jedKD"
+uri = "file://AuthKey_only.tar.gz"
+type = "unspecified"
+title = "AuthKey_9NSAR9532S.p8"
