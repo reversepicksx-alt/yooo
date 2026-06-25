@@ -353,3 +353,9 @@ id = "Q2a9vDtxU9ft_YiZQobxK"
 uri = "file://mobile/assets/icon.png"
 type = "image"
 title = "Current App Icon (build 82)"
+
+[[outputs]]
+id = "fdPIzqyli1q2KC4lYuGhN"
+uri = "file://SubscriptionKey_9NSAR9532S.txt"
+type = "text"
+title = "SubscriptionKey_9NSAR9532S.p8 (downloadable as .txt)"
