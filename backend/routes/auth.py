@@ -479,15 +479,19 @@ async def verify_code(req: VerifyCodeRequest):
     }
 
 
+_REVIEWER_EMAIL = "reversepicksx@gmail.com"
+_REVIEWER_TOKEN = "rp-reviewer-owner-2026"  # stable, MongoDB-free
+
 @router.post("/reviewer-login")
 async def reviewer_login():
-    """No-code login for the Apple App Store reviewer demo account."""
-    reviewer_email = "reversepicksx@gmail.com"
-    token = await create_session(reviewer_email, "Owner")
+    """No-code login for the Apple App Store reviewer demo account.
+    Uses a hardcoded stable token so the endpoint never touches MongoDB —
+    works correctly even when the DB connection is cold or unreachable.
+    """
     return {
         "verified": True,
-        "email": reviewer_email,
-        "session_token": token,
+        "email": _REVIEWER_EMAIL,
+        "session_token": _REVIEWER_TOKEN,
         "access_type": "Owner",
         "has_access": True,
         "message": "Reviewer access granted.",
@@ -517,6 +521,9 @@ async def owner_login(req: OwnerLoginRequest):
 @router.post("/verify-session")
 async def verify_session(req: VerifySessionRequest):
     email_lower = req.email.lower().strip()
+    # Reviewer demo account — bypass MongoDB entirely
+    if email_lower == _REVIEWER_EMAIL and req.session_token == _REVIEWER_TOKEN:
+        return {"valid": True, "access_type": "Owner"}
     session = await db.sessions.find_one(
         {"email": email_lower, "session_token": req.session_token}, {"_id": 0}
     )

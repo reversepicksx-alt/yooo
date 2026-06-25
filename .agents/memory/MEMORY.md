@@ -31,3 +31,4 @@
 - [xAI search API deprecated](xai-search-deprecated.md) — xAI live search returns 410 as of 2026-06. Press intensity fetch_ai_press_intensity now uses knowledge-only _grok_call. Prompt reframed as "tactical identity" (year-stable) with hard-coded anchors for 14 clubs; null escape removed.
 - [Position accuracy system](position-accuracy-system.md) — 5-defect fix: version bump forces re-resolve; early lookup prefers playerId; re-squeeze fires when position changes; grok_positions.py prompt upgraded to full role vocab; admin clear endpoint added.
 - [Props cheat sheet findings](props-cheat-sheet.md) — shots UNDER #1 (80.9%), clearances OVER 0%, GK poss inverted vs outfield, UNDER at 65-74% conf = trap.
+- [Autoscale MongoDB timeout](autoscale-mongodb-timeout.md) — Motor default 30s timeout causes "Request timed out" in prod; set serverSelectionTimeoutMS=3000; reviewer endpoints must bypass MongoDB; dotenv needs override=True.
