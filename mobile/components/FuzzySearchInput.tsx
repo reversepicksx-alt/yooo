@@ -125,21 +125,24 @@ export default function FuzzySearchInput({
   const [loading, setLoading] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
+  const [searchError, setSearchError] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastQueryRef = useRef('');
 
   const doSearch = useCallback(async (q: string) => {
-    if (q.length < 2) { setResults([]); setShowDropdown(false); setHasSearched(false); return; }
+    if (q.length < 2) { setResults([]); setShowDropdown(false); setHasSearched(false); setSearchError(false); return; }
 
     if (staticItems) {
       const filtered = localFuzzy(staticItems, q);
       setResults(filtered);
       setShowDropdown(true);
       setHasSearched(true);
+      setSearchError(false);
       return;
     }
 
     setLoading(true);
+    setSearchError(false);
     try {
       let r: any[] = [];
       if (searchType === 'teams') {
@@ -169,7 +172,10 @@ export default function FuzzySearchInput({
       setShowDropdown(r.length > 0);
       setHasSearched(true);
     } catch {
-      setResults([]); setShowDropdown(false);
+      setResults([]);
+      setShowDropdown(false);
+      setSearchError(true);
+      setHasSearched(true);
     } finally {
       setLoading(false);
     }
@@ -181,7 +187,7 @@ export default function FuzzySearchInput({
     if (debounceRef.current) clearTimeout(debounceRef.current);
     if (confirmed) { setResults([]); setShowDropdown(false); return; }
     if (text.length < 2) {
-      setResults([]); setShowDropdown(false); setHasSearched(false); return;
+      setResults([]); setShowDropdown(false); setHasSearched(false); setSearchError(false); return;
     }
     const delay = staticItems ? 60 : DEBOUNCE_MS;
     debounceRef.current = setTimeout(() => {
@@ -222,8 +228,8 @@ export default function FuzzySearchInput({
     onSelectStaticItem?.(item.raw ?? item, item.primary);
   };
 
-  const showEmpty = !loading && hasSearched && results.length === 0 && value.length >= 2;
-  const shouldShow = !confirmed && ((showDropdown && results.length > 0) || showEmpty);
+  const showEmpty = !loading && hasSearched && !searchError && results.length === 0 && value.length >= 2;
+  const shouldShow = !confirmed && ((showDropdown && results.length > 0) || showEmpty || (!loading && searchError && value.length >= 2));
 
   const renderItem = (item: any, index: number) => {
     if (staticItems) {
@@ -338,7 +344,7 @@ export default function FuzzySearchInput({
         />
         {!loading && value.length > 0 && (
           <TouchableOpacity
-            onPress={() => { onChangeText(''); setResults([]); setShowDropdown(false); setHasSearched(false); }}
+            onPress={() => { onChangeText(''); setResults([]); setShowDropdown(false); setHasSearched(false); setSearchError(false); }}
             style={styles.clearBtn}
           >
             <Ionicons name="close-circle" size={15} color={confirmed ? Colors.primary : '#555'} />
@@ -353,7 +359,12 @@ export default function FuzzySearchInput({
             keyboardShouldPersistTaps="always"
             nestedScrollEnabled
           >
-            {showEmpty ? (
+            {searchError ? (
+              <View style={styles.emptyRow}>
+                <Ionicons name="wifi-outline" size={13} color="#f0a500" style={{ marginRight: 6 }} />
+                <Text style={[styles.emptyText, { color: '#f0a500' }]}>Search unavailable — try again</Text>
+              </View>
+            ) : showEmpty ? (
               <View style={styles.emptyRow}>
                 <Ionicons name="search-outline" size={13} color="#555" style={{ marginRight: 6 }} />
                 <Text style={styles.emptyText}>No results for "{value}"</Text>

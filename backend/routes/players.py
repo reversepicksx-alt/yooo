@@ -216,7 +216,7 @@ async def _search_players_cache(query: str, league_id: int = None, relaxed: bool
 
 @router.post("/players/search")
 async def search_players(req: PlayerSearchRequest):
-    if len(req.query) < 3:
+    if len(req.query) < 2:
         return {"players": []}
     season = req.season or CURRENT_SEASON
     query_lower = req.query.lower().strip()
