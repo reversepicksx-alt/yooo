@@ -85,7 +85,7 @@ externalPort = 3000
 [deployment]
 deploymentTarget = "autoscale"
 run = ["bash", "-c", "(sleep 5 && cd /home/runner/workspace/backend && /home/runner/workspace/.pythonlibs/bin/python3.12 -m uvicorn server:app --host 0.0.0.0 --port 8000) & cd /home/runner/workspace/mobile && PRODUCTION=true node proxy.js"]
-build = ["bash", "-c", "echo 'Build: 1782348580117' && cd mobile && ([ -f dist/index.html ] && echo '[BUILD] dist already present, skipping export.' || (([ -d node_modules ] || npm install --legacy-peer-deps --silent) && npx expo export -p web --output-dir dist)) && echo '[BUILD] dist ready.'"]
+build = ["bash", "-c", "echo 'Build: 1782350093718' && cd mobile && ([ -f dist/index.html ] && echo '[BUILD] dist already present, skipping export.' || (([ -d node_modules ] || npm install --legacy-peer-deps --silent) && npx expo export -p web --output-dir dist)) && echo '[BUILD] dist ready.'"]
 
 [postMerge]
 path = "scripts/post-merge.sh"

@@ -2,10 +2,13 @@ import os
 import asyncio as aio
 import time
 from datetime import datetime, timezone
+import pathlib as _pathlib
 from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
 
-load_dotenv()
+# override=True ensures backend/.env wins even if the container has a blank MONGO_URL set
+_ENV_FILE = _pathlib.Path(__file__).parent / ".env"
+load_dotenv(dotenv_path=_ENV_FILE, override=True)
 
 # ── Environment Variables ──
 MONGO_URL = os.environ.get("MONGO_URL")
@@ -199,37 +202,14 @@ api_semaphore = aio.Semaphore(10)
 # ── Chat sessions (in-memory) ──
 chat_sessions: dict = {}
 
-# ── Database — Atlas SRV fallback ──
-def _resolve_mongo_url() -> str:
-    """
-    Try the configured MONGO_URL (Atlas SRV).
-    If DNS resolution fails at startup, fall back to the local MongoDB
-    that the workflow command starts on localhost:27017.
-    This must run synchronously at import time so every module gets the
-    correct `db` reference from the start.
-    """
-    atlas_url = MONGO_URL
-    local_url = f"mongodb://localhost:27017"
-    if not atlas_url or "mongodb+srv://" not in atlas_url:
-        return atlas_url or local_url
-    try:
-        import dns.resolver as _dns
-        host = atlas_url.split("@")[-1].split("/")[0].split("?")[0]
-        r = _dns.Resolver()
-        r.lifetime = 4
-        r.timeout = 4
-        r.resolve(f"_mongodb._tcp.{host}", "SRV")
-        return atlas_url            # Atlas DNS works — use Atlas
-    except Exception as _e:
-        import sys
-        print(
-            f"[CONFIG] Atlas SRV DNS unavailable ({type(_e).__name__}): {_e}\n"
-            f"[CONFIG] → Falling back to local MongoDB at localhost:27017",
-            file=sys.stderr, flush=True,
-        )
-        return local_url
-
-_EFFECTIVE_MONGO_URL = _resolve_mongo_url()
+# ── Database URL resolution ──
+# Motor/PyMongo handles mongodb+srv:// SRV resolution internally — no manual
+# DNS pre-check needed.  The pre-check was causing autoscale deployments to
+# silently fall back to localhost when Atlas DNS was slow/blocked at import time.
+_local_url = "mongodb://localhost:27017"
+_EFFECTIVE_MONGO_URL: str = MONGO_URL if MONGO_URL else _local_url
+import sys as _sys
+print(f"[CONFIG] MongoDB target: {'Atlas' if 'mongodb+srv' in _EFFECTIVE_MONGO_URL else 'localhost'}", file=_sys.stderr, flush=True)
 _DB_NAME = DB_NAME or "reversepicks"
 mongo_client = AsyncIOMotorClient(_EFFECTIVE_MONGO_URL)
 db = mongo_client[_DB_NAME]
