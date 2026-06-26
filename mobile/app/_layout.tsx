@@ -89,7 +89,15 @@ function AppBoot() {
     }
   }, [isLoading]);
 
-  if (isLoading || !splashDone) {
+  // On web the proxy HTML splash (#rp-loading-screen) handles the loading animation.
+  // Rendering the React LoadingScreen on top creates a double loading screen, so
+  // we return null and let __rpHideLoader() dismiss the HTML splash when ready.
+  if (Platform.OS === 'web' && isLoading) {
+    return null;
+  }
+
+  // Native: show the React animated loading screen until auth + fonts are ready.
+  if (Platform.OS !== 'web' && (isLoading || !splashDone)) {
     return <LoadingScreen onDone={() => setSplashDone(true)} />;
   }
 
