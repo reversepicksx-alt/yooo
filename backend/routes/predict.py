@@ -2156,22 +2156,23 @@ async def predict(req: PredictionRequest):
                 if s_team_name.lower() == req.opponentName.lower() or str(s_team_id) == str(req.opponentId):
                     standing_data["oppRank"] = s.get("rank")
 
-        # Determine canonical (home_team_id, away_team_id) for cache key
-        _is_home = player_venue == "home"
-        # For neutral venue, the user's "home/away" entry is meaningless — use
-        # playerIsHome from the fixture odds to know which team API-Football
-        # calls the home team. This prevents possession inversion in WC/tournament games.
-        if _is_neutral:
-            _pih_flag = match_odds.get("playerIsHome") if match_odds else None
-            if _pih_flag is not None:
-                _is_home = bool(_pih_flag)
-            else:
-                # No odds data available — use team ID as a deterministic tiebreaker
-                # so BOTH player scans always produce the same fixture-perspective
-                # homePoss/awayPoss values. Without this, both teams are assigned
-                # is_home=False (formula-away), the formula is symmetric, and teams
-                # with similar qualifier stats produce identical possession numbers.
-                _is_home = (actual_team_id or 0) < (req.opponentId or 0)
+        # Determine canonical (home_team_id, away_team_id) for cache key.
+        # Use the fixture's playerIsHome flag when available — this tells us
+        # which team API-Football actually designated as "home" in the fixture,
+        # regardless of what the user typed in the venue field. This is the
+        # ONLY reliable source of truth for home/away orientation.
+        _pih_flag = match_odds.get("playerIsHome") if match_odds else None
+        if _pih_flag is not None:
+            _is_home = bool(_pih_flag)
+        elif _is_neutral:
+            # No odds data available — use team ID as a deterministic tiebreaker
+            # so BOTH player scans always produce the same fixture-perspective
+            # homePoss/awayPoss values. Without this, both teams are assigned
+            # is_home=False (formula-away), the formula is symmetric, and teams
+            # with similar qualifier stats produce identical possession numbers.
+            _is_home = (actual_team_id or 0) < (req.opponentId or 0)
+        else:
+            _is_home = player_venue == "home"
         _home_id = actual_team_id if _is_home else req.opponentId
         _away_id = req.opponentId if _is_home else actual_team_id
         _dom_cache_key = (_home_id, _away_id) if (_home_id and _away_id) else None
@@ -6359,27 +6360,21 @@ Analyze ALL data thoroughly. Return JSON only."""
         # We normalise here so moneyline.home ALWAYS = the team in
         # real_matchup["homeTeam"] and moneyline.away ALWAYS = awayTeam.
         if match_odds:
-            # Determine orientation: does the prediction's "home" side align with
-            # the fixture's "home" side as tagged by get_match_odds()?
-            _player_is_fixture_home = match_odds.get("playerIsHome")
-            if _player_is_fixture_home is None:
-                # Fallback: no tag → assume alignment with player_venue
-                _player_is_fixture_home = (player_venue == "home")
-            # Prediction's "home" = player's team when player_venue=="home",
-            #                      = opponent's team when player_venue!="home".
-            # Fixture's "home"    = player's team when playerIsHome==True,
-            #                      = opponent's team when playerIsHome==False.
-            # These agree when: (player_venue=="home") == _player_is_fixture_home
-            _pred_home_matches_fixture_home = (player_venue == "home") == _player_is_fixture_home
+            # _is_home is the canonical truth: it tells us whether the player's team
+            # is the fixture's home team (from playerIsHome in match_odds). When
+            # _is_home is True, real_matchup.homeTeam == player's team == fixture home,
+            # so moneyline.home should use the fixture's home odds directly.
+            # When _is_home is False, real_matchup.homeTeam == opponent == fixture away,
+            # so moneyline.home must use the fixture's away odds (swap required).
+            _pred_home_is_fixture_home = _is_home
 
             if match_odds.get("americanOdds"):
                 ao = match_odds["americanOdds"]
                 if ao.get("home") and ao.get("away") and ao.get("draw"):
-                    if _pred_home_matches_fixture_home:
+                    if _pred_home_is_fixture_home:
                         home_ml, away_ml = str(ao["home"]), str(ao["away"])
                     else:
-                        # Prediction home/away orientation is flipped vs fixture —
-                        # swap the odds so labels always match displayed team names.
+                        # Prediction home is the fixture away team — swap odds.
                         home_ml, away_ml = str(ao["away"]), str(ao["home"])
                     real_matchup["moneyline"] = {
                         "home": home_ml,
@@ -6390,14 +6385,14 @@ Analyze ALL data thoroughly. Return JSON only."""
                 bo = match_odds["bookmakerOdds"]
                 h, d, a = bo.get("homeWin", ""), bo.get("draw", ""), bo.get("awayWin", "")
                 if h and d and a and h != "N/A" and d != "N/A" and a != "N/A":
-                    if _pred_home_matches_fixture_home:
+                    if _pred_home_is_fixture_home:
                         real_matchup["moneyline"] = {"home": h, "draw": d, "away": a}
                     else:
                         real_matchup["moneyline"] = {"home": a, "draw": d, "away": h}
             # Normalize favorite to prediction's perspective (not fixture's)
             if match_odds.get("favorite"):
                 raw_fav = match_odds["favorite"]  # "home" or "away" in fixture terms
-                if _pred_home_matches_fixture_home:
+                if _pred_home_is_fixture_home:
                     real_matchup["favorite"] = raw_fav
                 else:
                     # Flip: fixture "home" maps to prediction "away" and vice versa
@@ -6437,8 +6432,10 @@ Analyze ALL data thoroughly. Return JSON only."""
             real_matchup["expectedGameType"] = "one-sided" if _poss_diff >= 12 else "open"
 
         # 4. Always set team names from request data (deterministic)
-        real_matchup["homeTeam"] = player_team_display if player_venue == "home" else req.opponentName
-        real_matchup["awayTeam"] = req.opponentName if player_venue == "home" else player_team_display
+        # Use _is_home (which is now based on playerIsHome from the fixture) to
+        # determine which team is the home team, NOT the user's venue input.
+        real_matchup["homeTeam"] = player_team_display if _is_home else req.opponentName
+        real_matchup["awayTeam"] = req.opponentName if _is_home else player_team_display
 
         # Expose team/opponent names at the TOP LEVEL of the response so the
         # frontend can use them directly without digging into matchupOverview.
