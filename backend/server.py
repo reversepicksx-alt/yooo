@@ -1333,3 +1333,202 @@ async def force_settle():
         return {"ok": True, "message": "Settlement run complete — check picks for updates"}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/admin/bulk-resettle-zero-picks")
+async def bulk_resettle_zero_picks(payload: dict):
+    """
+    Find all settled picks where actualValue=0 and propType is a count stat
+    (pass_attempts, crosses, tackles, etc.) and re-settle them via API-Football.
+    These are almost always wrong settlements from the BDL path returning None/0.
+
+    Body: { "secret": "...", "dryRun": true/false }
+    """
+    import os
+    from datetime import datetime, timezone
+    from routes.picks import _settle_soccer_pick
+
+    secret = payload.get("secret", "")
+    if secret != os.environ.get("ADMIN_SECRET", ""):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Invalid secret")
+
+    dry_run = payload.get("dryRun", True)
+
+    _COUNT_PROPS = {
+        "pass_attempts", "passes", "crosses", "tackles", "key_passes",
+        "shots", "shots_on_target", "interceptions", "blocks", "dribbles",
+        "dribbles_success", "fouls_drawn", "fouls_committed", "clearances",
+        "duels_won",
+    }
+
+    candidates = await db.picks.find(
+        {
+            "status": "settled",
+            "result": {"$in": ["miss", "hit"]},
+            "actualValue": 0,
+            "propType": {"$in": list(_COUNT_PROPS)},
+            "sport": "soccer",
+        },
+        {"_id": 0}
+    ).to_list(200)
+
+    results = []
+    for pick_doc in candidates:
+        pick_id    = pick_doc.get("pickId", "")
+        player_id  = pick_doc.get("playerId") or 0
+        team_id    = pick_doc.get("teamId")   or 0
+        opponent   = pick_doc.get("opponentName", "")
+        prop_type  = pick_doc.get("propType", "")
+        league_id  = pick_doc.get("leagueId") or 0
+
+        pick_for_settle = {**pick_doc, "status": "live", "id": pick_id}
+
+        entry = {
+            "pickId":       pick_id,
+            "playerName":   pick_doc.get("playerName"),
+            "propType":     prop_type,
+            "line":         pick_doc.get("line"),
+            "recommendation": pick_doc.get("recommendation"),
+            "previousResult": pick_doc.get("result"),
+        }
+
+        if dry_run:
+            entry["action"] = "would-resettle (dryRun=true)"
+            results.append(entry)
+            continue
+
+        try:
+            result = await _settle_soccer_pick(
+                pick_for_settle, team_id, player_id, opponent, prop_type, league_id
+            )
+        except Exception as e:
+            entry["action"] = f"error: {e}"
+            results.append(entry)
+            continue
+
+        if not result:
+            entry["action"] = "settlement-returned-none (match not found or stat unavailable)"
+            results.append(entry)
+            continue
+
+        update_fields = {
+            "status":         result.get("status", "settled"),
+            "result":         result.get("result"),
+            "actualValue":    result.get("actualValue"),
+            "minutesPlayed":  result.get("minutesPlayed"),
+            "settledAt":      datetime.now(timezone.utc).isoformat(),
+            "resettledAt":    datetime.now(timezone.utc).isoformat(),
+            "resettleReason": f"Bulk resettle: was {pick_doc.get('result')} with actualValue=0",
+        }
+        for key in ("matchScore", "homeTeam", "awayTeam", "finalHomeGoals",
+                    "finalAwayGoals", "homePoss", "awayPoss", "fixtureDate", "voidReason"):
+            if result.get(key) is not None:
+                update_fields[key] = result[key]
+
+        await db.picks.update_one({"pickId": pick_id}, {"$set": update_fields})
+
+        entry["action"]         = "resettled"
+        entry["newResult"]      = result.get("result")
+        entry["newActualValue"] = result.get("actualValue")
+        entry["minutesPlayed"]  = result.get("minutesPlayed")
+        results.append(entry)
+
+    return {
+        "ok":      True,
+        "dryRun":  dry_run,
+        "found":   len(candidates),
+        "results": results,
+    }
+
+
+@app.post("/api/admin/force-resettle-pick")
+async def force_resettle_pick(payload: dict):
+    """
+    Re-settle a pick that was incorrectly settled (e.g. actualValue=0 from BDL).
+    Bypasses the already-settled guard and re-fetches from API-Football.
+
+    Body: { "secret": "...", "pickId": "..." }
+    """
+    import os
+    from datetime import datetime, timezone
+    from routes.picks import _settle_soccer_pick
+
+    secret = payload.get("secret", "")
+    if secret != os.environ.get("ADMIN_SECRET", ""):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Invalid secret")
+
+    pick_id = payload.get("pickId", "").strip()
+    if not pick_id:
+        return {"ok": False, "error": "pickId is required"}
+
+    pick_doc = await db.picks.find_one({"pickId": pick_id}, {"_id": 0})
+    if not pick_doc:
+        return {"ok": False, "error": f"Pick {pick_id!r} not found"}
+
+    prev_status = pick_doc.get("status")
+    prev_result = pick_doc.get("result")
+    prev_actual = pick_doc.get("actualValue")
+
+    # Build the args _settle_soccer_pick expects.
+    # DB doc stores these at the top level (saved by save_pick).
+    player_id  = pick_doc.get("playerId") or 0
+    team_id    = pick_doc.get("teamId")   or 0
+    opponent   = pick_doc.get("opponentName", "")
+    prop_type  = pick_doc.get("propType", "")
+    league_id  = pick_doc.get("leagueId") or 0
+
+    # _settle_soccer_pick reads pick.get("timestamp") — ensure it's present.
+    # Force status to "live" so _build_soccer_update's settled-guard doesn't block.
+    pick_for_settle = {**pick_doc, "status": "live", "id": pick_id}
+
+    try:
+        result = await _settle_soccer_pick(
+            pick_for_settle, team_id, player_id, opponent, prop_type, league_id
+        )
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {"ok": False, "error": f"Settlement raised: {e}"}
+
+    if not result:
+        return {
+            "ok": False,
+            "error": "Settlement returned None — match not found or stat unavailable",
+            "previousResult": prev_result,
+            "previousActualValue": prev_actual,
+        }
+
+    # Apply the corrected settlement to the DB.
+    update_fields = {
+        "status":         result.get("status", "settled"),
+        "result":         result.get("result"),
+        "actualValue":    result.get("actualValue"),
+        "minutesPlayed":  result.get("minutesPlayed"),
+        "settledAt":      datetime.now(timezone.utc).isoformat(),
+        "resettledAt":    datetime.now(timezone.utc).isoformat(),
+        "resettleReason": f"Admin force-resettle (was {prev_result}, actualValue={prev_actual})",
+    }
+    for key in ("matchScore", "homeTeam", "awayTeam", "finalHomeGoals",
+                "finalAwayGoals", "homePoss", "awayPoss", "fixtureDate",
+                "voidReason"):
+        if result.get(key) is not None:
+            update_fields[key] = result[key]
+
+    await db.picks.update_one({"pickId": pick_id}, {"$set": update_fields})
+
+    return {
+        "ok": True,
+        "pickId":       pick_id,
+        "playerName":   pick_doc.get("playerName"),
+        "propType":     prop_type,
+        "line":         pick_doc.get("line"),
+        "recommendation": pick_doc.get("recommendation"),
+        "previousResult": prev_result,
+        "previousActualValue": prev_actual,
+        "newResult":    result.get("result"),
+        "newActualValue": result.get("actualValue"),
+        "minutesPlayed": result.get("minutesPlayed"),
+        "matchScore":   result.get("matchScore"),
+    }

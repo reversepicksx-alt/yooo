@@ -33,7 +33,10 @@ LEAGUE_TO_BDL: dict[int, str] = {
     2:   "/ucl/v1",              # UEFA Champions League
     3:   "/ucl/v1",              # Europa League — route to UCL client (similar)
     253: "/mls/v1",              # MLS
-    1:   "/fifa/worldcup/v1",    # FIFA World Cup
+    # NOTE: World Cup (leagueId=1) intentionally NOT routed through BDL.
+    # BDL's /fifa/worldcup/v1 returns Tier-2 stats (passes_total, etc.) as None/0,
+    # causing incorrect zero-settlements. API-Football's fixtures/players endpoint
+    # provides accurate, fully-populated WC player stats and is used instead.
 }
 
 # Seasons to try, newest-first.  MLS uses the calendar year (2026 season = 2026).

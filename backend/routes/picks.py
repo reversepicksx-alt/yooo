@@ -2110,6 +2110,20 @@ async def _build_bdl_soccer_update(
         update["matchStatus"] = "final"
         return update
 
+    # Zero-value guard: BDL Tier-2 stats (passes_total, tackles, etc.) can be
+    # None which resolves to 0 above. Never settle a count prop at 0 for a
+    # player who played 30+ min — it almost certainly means the stat is missing.
+    _BDL_COUNT_PROPS = {
+        "pass_attempts", "passes", "crosses", "tackles", "key_passes",
+        "shots", "shots_on_target", "interceptions", "blocks", "dribbles",
+        "dribbles_success", "fouls_drawn", "fouls_committed", "clearances",
+        "duels_won",
+    }
+    if current_value_safe == 0 and pick.get("propType", "") in _BDL_COUNT_PROPS and minutes_played >= 30:
+        print(f"[BDL-SETTLE-DEFER] {pick.get('playerName','')} {pick.get('propType','')} — BDL Tier-2 stat=0 with {minutes_played} min; likely None/missing, deferring")
+        update["matchStatus"] = "final"
+        return update
+
     _DNP_THRESHOLD = 30
     if minutes_played < _DNP_THRESHOLD:
         result_str        = "dnp"
@@ -2371,6 +2385,21 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
         # If stat came back as None (API didn't return the field), defer to background loop
         if not _stat_available and minutes_played >= 30:
             print(f"[SETTLE-DEFER] {pick.get('playerName','')} {pick.get('propType','')} — stat unavailable despite {minutes_played} min played; deferring to background loop")
+            update["matchStatus"] = "final"
+            return update
+
+        # Zero-value guard for count props: a field player who played 30+ min
+        # will never have 0 pass attempts, crosses, tackles, etc. A zero return
+        # almost always means the stat hasn't been populated yet by the API.
+        # Defer settlement and let the background loop retry with fresh data.
+        _COUNT_PROPS = {
+            "pass_attempts", "passes", "crosses", "tackles", "key_passes",
+            "shots", "shots_on_target", "interceptions", "blocks", "dribbles",
+            "dribbles_success", "fouls_drawn", "fouls_committed", "clearances",
+            "duels_won",
+        }
+        if current_value == 0 and pick.get("propType", "") in _COUNT_PROPS and minutes_played >= 30:
+            print(f"[SETTLE-DEFER] {pick.get('playerName','')} {pick.get('propType','')} — stat=0 with {minutes_played} min played; likely unpopulated, deferring")
             update["matchStatus"] = "final"
             return update
 
@@ -2666,6 +2695,19 @@ async def _settle_soccer_pick(pick, team_id, player_id, opponent, prop_type, lea
         }
 
     if actual_value is not None:
+        # Zero-value guard: count stats should never be 0 for a player who
+        # played 30+ minutes. Zero means the API hasn't populated the stat yet.
+        # Return None to defer so the background loop retries with fresh data.
+        _COUNT_PROPS_SETTLE = {
+            "pass_attempts", "passes", "crosses", "tackles", "key_passes",
+            "shots", "shots_on_target", "interceptions", "blocks", "dribbles",
+            "dribbles_success", "fouls_drawn", "fouls_committed", "clearances",
+            "duels_won",
+        }
+        if actual_value == 0 and prop_type in _COUNT_PROPS_SETTLE and minutes_played >= 30:
+            print(f"[SETTLE-DEFER] {pick.get('playerName','')} {prop_type} — stat=0 with {minutes_played} min; likely unpopulated, deferring")
+            return None
+
         line = pick.get("line", 0)
         recommendation = pick.get("recommendation", "over")
         result_str = _settle_result(actual_value, line, recommendation)
