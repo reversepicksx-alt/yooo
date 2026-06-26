@@ -1,7 +1,8 @@
 import React, { useEffect } from 'react';
 import { View, Image, StyleSheet, Platform, Dimensions } from 'react-native';
 import Animated, {
-  useSharedValue, useAnimatedStyle, withTiming, withDelay, withSequence, Easing,
+  useSharedValue, useAnimatedStyle, withTiming, withDelay,
+  withSequence, withSpring, Easing,
 } from 'react-native-reanimated';
 
 const { width: W, height: H } = Dimensions.get('window');
@@ -9,7 +10,6 @@ const NEON = '#39FF14';
 const DARK = '#050505';
 
 const LOGO_SIZE = Math.min(W * 0.52, 220);
-
 const NATIVE_SPLASH_SCALE = 97 / LOGO_SIZE;
 
 function RevLetter({ char, delay }: { char: string; delay: number }) {
@@ -42,7 +42,20 @@ export default function LoadingScreen({ onDone }: { onDone?: () => void }) {
   const hudOpacity  = useSharedValue(0);
   const tagOpacity  = useSharedValue(0);
   const progress    = useSharedValue(0);
-  const boltOpacity = useSharedValue(0);
+
+  // 4 independent bolt animations for staggered flash effect
+  const bolt1 = useSharedValue(0);
+  const bolt2 = useSharedValue(0);
+  const bolt3 = useSharedValue(0);
+  const bolt4 = useSharedValue(0);
+
+  // Expanding ring animations
+  const ring1Scale   = useSharedValue(0.2);
+  const ring1Opacity = useSharedValue(0);
+  const ring2Scale   = useSharedValue(0.2);
+  const ring2Opacity = useSharedValue(0);
+  const ring3Scale   = useSharedValue(0.2);
+  const ring3Opacity = useSharedValue(0);
 
   useEffect(() => {
     if (typeof window !== 'undefined' && (window as any).__rpHideLoader) {
@@ -53,32 +66,66 @@ export default function LoadingScreen({ onDone }: { onDone?: () => void }) {
       logoOpacity.value = withTiming(1, { duration: 700, easing: Easing.out(Easing.cubic) });
       logoScale.value   = withTiming(1, { duration: 700, easing: Easing.out(Easing.cubic) });
     } else {
-      const SPIN_EASE = Easing.bezier(0.22, 1, 0.36, 1);
-      logoScale.value  = withTiming(1,   { duration: 1300, easing: SPIN_EASE });
-      logoRotate.value = withTiming(720, { duration: 1300, easing: SPIN_EASE });
-
-      boltOpacity.value = withDelay(1340,
-        withSequence(
-          withTiming(1, { duration: 65 }),
-          withTiming(0, { duration: 90 }),
-          withDelay(260, withTiming(1, { duration: 65 })),
-          withTiming(0, { duration: 90 }),
-          withDelay(240, withTiming(1, { duration: 65 })),
-          withTiming(0, { duration: 130 }),
-        )
+      // Scale: from splash size → grow slightly during spin → overshoot → settle
+      logoScale.value = withSequence(
+        withTiming(1,    { duration: 3200, easing: Easing.linear }),
+        withTiming(1.06, { duration: 400,  easing: Easing.out(Easing.cubic) }),
+        withSpring(1,    { damping: 8, stiffness: 180 }),
       );
+
+      // Spin: fast linear 20 rotations, then spring-snap to exact position
+      logoRotate.value = withSequence(
+        withTiming(7020, { duration: 3200, easing: Easing.linear }),
+        withTiming(7290, { duration: 450,  easing: Easing.out(Easing.cubic) }),
+        withSpring(7200, { damping: 6, stiffness: 200 }),
+      );
+
+      // 5-round lightning storm starting just after linear spin finishes
+      const FLASH_DUR = 55;
+      const FLASH_GAP = 110;
+      const mkFlash = (offset: number) =>
+        withDelay(3250 + offset,
+          withSequence(
+            withTiming(1, { duration: FLASH_DUR }),
+            withTiming(0, { duration: FLASH_DUR }),
+            withDelay(FLASH_GAP, withTiming(1, { duration: FLASH_DUR })),
+            withTiming(0, { duration: FLASH_DUR }),
+            withDelay(FLASH_GAP, withTiming(1, { duration: FLASH_DUR })),
+            withTiming(0, { duration: FLASH_DUR }),
+            withDelay(FLASH_GAP, withTiming(1, { duration: FLASH_DUR })),
+            withTiming(0, { duration: FLASH_DUR }),
+            withDelay(FLASH_GAP, withTiming(1, { duration: FLASH_DUR })),
+            withTiming(0, { duration: 120 }),
+          )
+        );
+      bolt1.value = mkFlash(0);
+      bolt2.value = mkFlash(60);
+      bolt3.value = mkFlash(30);
+      bolt4.value = mkFlash(90);
+
+      // Expanding electric rings (3 waves)
+      const mkRing = (scl: Animated.SharedValue<number>, opc: Animated.SharedValue<number>, delay: number) => {
+        scl.value = withDelay(delay, withTiming(3.5, { duration: 900, easing: Easing.out(Easing.cubic) }));
+        opc.value = withDelay(delay, withSequence(
+          withTiming(0.85, { duration: 80 }),
+          withTiming(0,    { duration: 820, easing: Easing.in(Easing.cubic) }),
+        ));
+      };
+      mkRing(ring1Scale, ring1Opacity, 3260);
+      mkRing(ring2Scale, ring2Opacity, 3520);
+      mkRing(ring3Scale, ring3Opacity, 3780);
     }
 
-    const hudDelay = isNative ? 1500 : 600;
+    const hudDelay = isNative ? 4300 : 600;
     hudOpacity.value = withDelay(hudDelay, withTiming(1, { duration: 400 }));
 
-    const tagDelay = isNative ? 2150 : 1400;
+    const tagDelay = isNative ? 5100 : 1400;
     tagOpacity.value = withDelay(tagDelay, withTiming(0.85, { duration: 500 }));
 
     const progDelay = isNative ? 400 : 600;
-    progress.value = withDelay(progDelay, withTiming(0.92, { duration: 4500, easing: Easing.out(Easing.cubic) }));
+    progress.value = withDelay(progDelay, withTiming(0.92, { duration: 6500, easing: Easing.out(Easing.cubic) }));
 
-    const duration = isNative ? 5000 : 2800;
+    const duration = isNative ? 7000 : 2800;
     const t = setTimeout(() => onDone?.(), duration);
     return () => clearTimeout(t);
   }, []);
@@ -92,15 +139,32 @@ export default function LoadingScreen({ onDone }: { onDone?: () => void }) {
     transform: [{ rotate: `${logoRotate.value}deg` }],
   }));
 
-  const boltAnim  = useAnimatedStyle(() => ({ opacity: boltOpacity.value }));
-  const hudAnim   = useAnimatedStyle(() => ({ opacity: hudOpacity.value }));
-  const tagAnim   = useAnimatedStyle(() => ({ opacity: tagOpacity.value }));
+  const bolt1Anim = useAnimatedStyle(() => ({ opacity: bolt1.value }));
+  const bolt2Anim = useAnimatedStyle(() => ({ opacity: bolt2.value }));
+  const bolt3Anim = useAnimatedStyle(() => ({ opacity: bolt3.value }));
+  const bolt4Anim = useAnimatedStyle(() => ({ opacity: bolt4.value }));
+
+  const ring1Anim = useAnimatedStyle(() => ({
+    opacity: ring1Opacity.value,
+    transform: [{ scale: ring1Scale.value }],
+  }));
+  const ring2Anim = useAnimatedStyle(() => ({
+    opacity: ring2Opacity.value,
+    transform: [{ scale: ring2Scale.value }],
+  }));
+  const ring3Anim = useAnimatedStyle(() => ({
+    opacity: ring3Opacity.value,
+    transform: [{ scale: ring3Scale.value }],
+  }));
+
+  const hudAnim = useAnimatedStyle(() => ({ opacity: hudOpacity.value }));
+  const tagAnim = useAnimatedStyle(() => ({ opacity: tagOpacity.value }));
   const progressAnim = useAnimatedStyle(() => ({
     width: `${progress.value * 100}%` as any,
   }));
 
   const BRAND = 'REVERSEPICKS';
-  const LETTER_BASE = isNative ? 1500 : 0;
+  const LETTER_BASE = isNative ? 4300 : 0;
 
   return (
     <View style={styles.root}>
@@ -109,17 +173,38 @@ export default function LoadingScreen({ onDone }: { onDone?: () => void }) {
         style={[styles.logoWrap, isNative && styles.logoWrapNative, scaleAnim]}
         pointerEvents="none"
       >
+        {/* Expanding electric shockwave rings */}
         {isNative && (
-          <Animated.View style={[styles.boltWrap, boltAnim]}>
-            {[0, 45, 90, 135].map((angle) => (
-              <View
-                key={angle}
-                style={[styles.boltRay, { transform: [{ rotate: `${angle}deg` }] }]}
-              />
-            ))}
-          </Animated.View>
+          <>
+            <Animated.View style={[styles.ring, ring1Anim]} />
+            <Animated.View style={[styles.ring, ring2Anim]} />
+            <Animated.View style={[styles.ring, ring3Anim]} />
+          </>
         )}
 
+        {/* Lightning bolt rays — 4 independent groups, staggered */}
+        {isNative && (
+          <>
+            <Animated.View style={[styles.boltWrap, bolt1Anim]}>
+              <View style={[styles.boltRay, { transform: [{ rotate: '0deg'   }] }]} />
+              <View style={[styles.boltRay, { transform: [{ rotate: '90deg'  }] }]} />
+            </Animated.View>
+            <Animated.View style={[styles.boltWrap, bolt2Anim]}>
+              <View style={[styles.boltRay, { transform: [{ rotate: '45deg'  }] }]} />
+              <View style={[styles.boltRay, { transform: [{ rotate: '135deg' }] }]} />
+            </Animated.View>
+            <Animated.View style={[styles.boltWrap, bolt3Anim]}>
+              <View style={[styles.boltRay, { transform: [{ rotate: '22.5deg'  }] }]} />
+              <View style={[styles.boltRay, { transform: [{ rotate: '112.5deg' }] }]} />
+            </Animated.View>
+            <Animated.View style={[styles.boltWrap, bolt4Anim]}>
+              <View style={[styles.boltRay, { transform: [{ rotate: '67.5deg'  }] }]} />
+              <View style={[styles.boltRay, { transform: [{ rotate: '157.5deg' }] }]} />
+            </Animated.View>
+          </>
+        )}
+
+        {/* Rotating logo */}
         <Animated.View style={isNative ? rotateAnim : undefined}>
           <Image
             source={require('../assets/logo.png')}
@@ -172,24 +257,38 @@ const styles = StyleSheet.create({
     marginBottom: 0,
   },
 
+  ring: {
+    position: 'absolute',
+    width: LOGO_SIZE,
+    height: LOGO_SIZE,
+    borderRadius: LOGO_SIZE / 2,
+    borderWidth: 2,
+    borderColor: NEON,
+    shadowColor: NEON,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 1,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+
   boltWrap: {
     position: 'absolute',
-    width: LOGO_SIZE * 2.2,
-    height: LOGO_SIZE * 2.2,
+    width: LOGO_SIZE * 2.4,
+    height: LOGO_SIZE * 2.4,
     alignItems: 'center',
     justifyContent: 'center',
   },
 
   boltRay: {
     position: 'absolute',
-    width: 1.5,
-    height: LOGO_SIZE * 2.0,
+    width: 2,
+    height: LOGO_SIZE * 2.2,
     backgroundColor: NEON,
     shadowColor: NEON,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 1,
-    shadowRadius: 8,
-    elevation: 10,
+    shadowRadius: 10,
+    elevation: 12,
   },
 
   logoImg: {

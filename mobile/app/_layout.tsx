@@ -87,7 +87,7 @@ function AppBoot() {
     if (Platform.OS !== 'web') return;
     if (isLoading) return;
     const elapsed = Date.now() - webSplashStart.current;
-    const remaining = Math.max(0, 4200 - elapsed);
+    const remaining = Math.max(0, 6500 - elapsed);
     const t = setTimeout(() => {
       if (typeof window !== 'undefined') {
         const hide = (window as any).__rpHideLoader;
