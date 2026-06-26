@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Alert, Platform } from 'react-native';
 import { Stack } from 'expo-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -78,21 +78,28 @@ function RevenueCatSync() {
 
 function AppBoot() {
   const { isLoading } = useAuth();
-  // Keep the loading screen visible until the animation finishes (native only).
-  // On web the HTML splash handles the reveal; on native we wait for onDone.
   const [splashDone, setSplashDone] = useState(Platform.OS === 'web');
+  // Enforce minimum 4.2s web splash so the logo spin + lightning always completes
+  const webSplashStart = useRef(Date.now());
+  const [webSplashReady, setWebSplashReady] = useState(false);
 
   useEffect(() => {
-    if (Platform.OS === 'web' && typeof window !== 'undefined' && !isLoading) {
-      const hide = (window as any).__rpHideLoader;
-      if (typeof hide === 'function') hide();
-    }
+    if (Platform.OS !== 'web') return;
+    if (isLoading) return;
+    const elapsed = Date.now() - webSplashStart.current;
+    const remaining = Math.max(0, 4200 - elapsed);
+    const t = setTimeout(() => {
+      if (typeof window !== 'undefined') {
+        const hide = (window as any).__rpHideLoader;
+        if (typeof hide === 'function') hide();
+      }
+      setWebSplashReady(true);
+    }, remaining);
+    return () => clearTimeout(t);
   }, [isLoading]);
 
-  // On web the proxy HTML splash (#rp-loading-screen) handles the loading animation.
-  // Rendering the React LoadingScreen on top creates a double loading screen, so
-  // we return null and let __rpHideLoader() dismiss the HTML splash when ready.
-  if (Platform.OS === 'web' && isLoading) {
+  // On web: hold until auth done AND minimum splash time passed
+  if (Platform.OS === 'web' && (!webSplashReady || isLoading)) {
     return null;
   }
 

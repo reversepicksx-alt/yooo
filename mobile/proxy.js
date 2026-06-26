@@ -124,39 +124,66 @@ const PWA_TAGS = `    <link rel="icon" type="image/png" href="/rp-icon.png" />
 
 function buildLoadingScreen() { return `
 <div id="rp-loading-screen">
-  <div class="rp-logo-wrap">
-    <img class="rp-logo-img" src="${getLogoPath()}" alt="ReversePicks" />
-  </div>
-  <div class="rp-hud">
-    <div class="rp-brand">
-      <span class="rp-ch" style="animation-delay:.65s">R</span><span class="rp-ch" style="animation-delay:.70s">E</span><span class="rp-ch" style="animation-delay:.75s">V</span><span class="rp-ch" style="animation-delay:.80s">E</span><span class="rp-ch" style="animation-delay:.85s">R</span><span class="rp-ch" style="animation-delay:.90s">S</span><span class="rp-ch" style="animation-delay:.95s">E</span><span class="rp-ch" style="animation-delay:1.00s">P</span><span class="rp-ch" style="animation-delay:1.05s">I</span><span class="rp-ch" style="animation-delay:1.10s">C</span><span class="rp-ch" style="animation-delay:1.15s">K</span><span class="rp-ch" style="animation-delay:1.20s">S</span>
+  <div class="rp-scene">
+    <div class="rp-logo-outer">
+      <svg class="rp-svg" viewBox="-150 -150 300 300" xmlns="http://www.w3.org/2000/svg">
+        <polyline class="rp-bolt rp-b0" points="92,0 122,-24 108,4 145,12"/>
+        <polyline class="rp-bolt rp-b1" points="65,-65 88,-98 75,-80 102,-112"/>
+        <polyline class="rp-bolt rp-b2" points="0,-92 22,-118 2,-100 -14,-138"/>
+        <polyline class="rp-bolt rp-b3" points="-65,-65 -88,-98 -75,-80 -102,-112"/>
+        <polyline class="rp-bolt rp-b4" points="-92,0 -122,24 -108,-4 -145,-12"/>
+        <polyline class="rp-bolt rp-b5" points="65,65 88,98 75,80 102,112"/>
+        <polyline class="rp-bolt rp-b6" points="0,92 -22,118 -2,100 14,138"/>
+        <polyline class="rp-bolt rp-b7" points="-65,65 -88,98 -75,80 -102,112"/>
+      </svg>
+      <div class="rp-logo-wrap">
+        <img class="rp-logo-img" src="${getLogoPath()}" alt="ReversePicks" />
+      </div>
     </div>
-    <div class="rp-tag">THE EYE SEES WHAT OTHERS MISS</div>
-    <div class="rp-prog-track"><div class="rp-prog-fill"></div></div>
+    <div class="rp-hud">
+      <div class="rp-brand">
+        <span class="rp-ch" style="animation-delay:1.42s">R</span><span class="rp-ch" style="animation-delay:1.475s">E</span><span class="rp-ch" style="animation-delay:1.53s">V</span><span class="rp-ch" style="animation-delay:1.585s">E</span><span class="rp-ch" style="animation-delay:1.64s">R</span><span class="rp-ch" style="animation-delay:1.695s">S</span><span class="rp-ch" style="animation-delay:1.75s">E</span><span class="rp-ch" style="animation-delay:1.805s">P</span><span class="rp-ch" style="animation-delay:1.86s">I</span><span class="rp-ch" style="animation-delay:1.915s">C</span><span class="rp-ch" style="animation-delay:1.97s">K</span><span class="rp-ch" style="animation-delay:2.025s">S</span>
+      </div>
+      <div class="rp-tag">THE EYE SEES WHAT OTHERS MISS</div>
+      <div class="rp-prog-track"><div class="rp-prog-fill"></div></div>
+    </div>
   </div>
 </div>
 <style>
-#rp-loading-screen{position:fixed;top:0;left:0;right:0;bottom:0;background:#050505;z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;transition:opacity .5s ease-out}
-.rp-logo-wrap{display:flex;align-items:center;justify-content:center;margin-bottom:min(6vh,40px);animation:logoIn .7s cubic-bezier(.22,1,.36,1) .05s both}
-@keyframes logoIn{from{opacity:0;transform:scale(.75)}to{opacity:1;transform:scale(1)}}
-.rp-logo-img{width:min(52vw,220px);height:min(52vw,220px);object-fit:contain;display:block}
-.rp-hud{display:flex;flex-direction:column;align-items:center;gap:10px;opacity:0;animation:hudIn .5s .6s forwards}
-@keyframes hudIn{to{opacity:1}}
+#rp-loading-screen{position:fixed;top:0;left:0;right:0;bottom:0;background:#050505;z-index:99999;display:flex;align-items:center;justify-content:center;transition:opacity .6s ease-out}
+.rp-scene{display:flex;flex-direction:column;align-items:center}
+.rp-logo-outer{position:relative;display:flex;align-items:center;justify-content:center;margin-bottom:min(6vh,40px)}
+.rp-svg{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:min(90vw,460px);height:min(90vw,460px);overflow:visible;pointer-events:none}
+.rp-bolt{fill:none;stroke:#39FF14;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 0 5px #39FF14) drop-shadow(0 0 12px rgba(57,255,20,.5));opacity:0}
+.rp-b0{animation:bF .13s .74s ease-out,bF .11s 1.38s ease-out}
+.rp-b1{animation:bF .13s .80s ease-out,bF .11s 1.50s ease-out}
+.rp-b2{animation:bF .13s .86s ease-out,bF .11s 1.28s ease-out}
+.rp-b3{animation:bF .13s .91s ease-out,bF .11s 1.58s ease-out}
+.rp-b4{animation:bF .13s .96s ease-out,bF .11s 1.38s ease-out}
+.rp-b5{animation:bF .13s 1.01s ease-out,bF .11s 1.44s ease-out}
+.rp-b6{animation:bF .13s .78s ease-out,bF .11s 1.32s ease-out}
+.rp-b7{animation:bF .13s .88s ease-out}
+@keyframes bF{0%{opacity:0}15%{opacity:1}100%{opacity:0}}
+.rp-logo-wrap{display:flex;align-items:center;justify-content:center;animation:logoSpin 1.35s cubic-bezier(.22,1,.36,1) .08s both}
+@keyframes logoSpin{0%{opacity:0;transform:scale(.75) rotate(0deg)}55%{opacity:1;transform:scale(1.04) rotate(680deg)}75%{transform:scale(.97) rotate(714deg)}90%{transform:scale(1.01) rotate(720deg)}100%{transform:scale(1) rotate(720deg)}}
+.rp-logo-img{width:min(52vw,220px);height:min(52vw,220px);object-fit:contain;display:block;animation:logoGlow 2s .3s ease-in-out}
+@keyframes logoGlow{0%{filter:drop-shadow(0 0 14px #39FF14)}30%{filter:drop-shadow(0 0 40px #39FF14) drop-shadow(0 0 80px rgba(57,255,20,.55))}55%{filter:drop-shadow(0 0 8px #39FF14)}78%{filter:drop-shadow(0 0 30px #39FF14) drop-shadow(0 0 60px rgba(57,255,20,.4))}100%{filter:drop-shadow(0 0 12px rgba(57,255,20,.25))}}
+.rp-hud{display:flex;flex-direction:column;align-items:center;gap:10px}
 .rp-brand{display:flex;gap:2px}
 .rp-ch{font-family:system-ui,-apple-system,sans-serif;font-size:clamp(14px,4.5vw,22px);font-weight:900;color:#fff;letter-spacing:3px;opacity:0;transform:scale(.3);animation:chPop .22s forwards;text-shadow:0 0 18px rgba(57,255,20,.7)}
 @keyframes chPop{to{opacity:1;transform:scale(1)}}
-.rp-tag{font-family:system-ui,-apple-system,sans-serif;font-size:clamp(7px,2vw,9px);font-weight:600;color:#39FF14;letter-spacing:2.5px;text-transform:uppercase;opacity:0;animation:tagIn .5s 1.4s forwards}
+.rp-tag{font-family:system-ui,-apple-system,sans-serif;font-size:clamp(7px,2vw,9px);font-weight:600;color:#39FF14;letter-spacing:2.5px;text-transform:uppercase;opacity:0;animation:tagIn .5s 2.35s forwards}
 @keyframes tagIn{to{opacity:.85}}
-.rp-prog-track{width:min(48vw,240px);height:2px;border-radius:1px;background:rgba(57,255,20,.2);overflow:hidden;margin-top:2px}
-.rp-prog-fill{height:2px;background:#39FF14;box-shadow:0 0 8px 2px #39FF14;animation:prog 3s .6s ease-out forwards}
-@keyframes prog{0%{width:0}60%{width:70%}80%{width:85%}100%{width:92%}}
+.rp-prog-track{width:min(48vw,240px);height:2px;border-radius:1px;background:rgba(57,255,20,.2);overflow:hidden;margin-top:4px}
+.rp-prog-fill{height:2px;background:#39FF14;box-shadow:0 0 8px 2px #39FF14;animation:prog 4.5s .5s ease-out forwards}
+@keyframes prog{0%{width:0}40%{width:55%}70%{width:78%}90%{width:88%}100%{width:94%}}
 </style>
 <script>
 (function(){
   var e=document.getElementById('rp-loading-screen');
-  function hide(){if(!e)return;if(e.parentNode)e.parentNode.removeChild(e);e=null;}
+  function hide(){if(!e)return;e.style.opacity='0';setTimeout(function(){if(e&&e.parentNode)e.parentNode.removeChild(e);e=null;},650);}
   window.__rpHideLoader=hide;
-  setTimeout(hide,10000);
+  setTimeout(hide,14000);
 })();
 </script>`; }
 
