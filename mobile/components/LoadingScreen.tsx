@@ -41,7 +41,6 @@ export default function LoadingScreen({ onDone }: { onDone?: () => void }) {
   const logoRotate  = useSharedValue(0);
   const hudOpacity  = useSharedValue(0);
   const tagOpacity  = useSharedValue(0);
-  const progress    = useSharedValue(0);
 
   // 4 independent bolt animations for staggered flash effect
   const bolt1 = useSharedValue(0);
@@ -118,9 +117,6 @@ export default function LoadingScreen({ onDone }: { onDone?: () => void }) {
     const tagDelay = isNative ? 3400 : 1400;
     tagOpacity.value = withDelay(tagDelay, withTiming(0.85, { duration: 500 }));
 
-    const progDelay = isNative ? 300 : 600;
-    progress.value = withDelay(progDelay, withTiming(0.92, { duration: 4000, easing: Easing.out(Easing.cubic) }));
-
     const duration = isNative ? 4500 : 2800;
     const t = setTimeout(() => onDone?.(), duration);
     return () => clearTimeout(t);
@@ -155,10 +151,6 @@ export default function LoadingScreen({ onDone }: { onDone?: () => void }) {
 
   const hudAnim = useAnimatedStyle(() => ({ opacity: hudOpacity.value }));
   const tagAnim = useAnimatedStyle(() => ({ opacity: tagOpacity.value }));
-  const progressAnim = useAnimatedStyle(() => ({
-    width: `${progress.value * 100}%` as any,
-  }));
-
   const BRAND = 'REVERSEPICKS';
   const LETTER_BASE = isNative ? 2600 : 0;
 
@@ -224,9 +216,6 @@ export default function LoadingScreen({ onDone }: { onDone?: () => void }) {
           THE EYE SEES WHAT OTHERS MISS
         </Animated.Text>
 
-        <View style={styles.progressTrack}>
-          <Animated.View style={[styles.progressFill, progressAnim]} />
-        </View>
       </Animated.View>
 
     </View>
@@ -336,25 +325,4 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
 
-  progressTrack: {
-    width: W * 0.48,
-    height: 2,
-    borderRadius: 1,
-    backgroundColor: 'rgba(57,255,20,0.2)',
-    overflow: 'hidden',
-    marginTop: 2,
-  },
-
-  progressFill: {
-    height: 2,
-    backgroundColor: NEON,
-    ...(Platform.OS === 'web'
-      ? ({ boxShadow: `0 0 8px 2px ${NEON}` } as any)
-      : {
-          shadowColor: NEON,
-          shadowOffset: { width: 0, height: 0 },
-          shadowOpacity: 1,
-          shadowRadius: 6,
-        }),
-  },
 });

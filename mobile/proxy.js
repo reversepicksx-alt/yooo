@@ -150,7 +150,6 @@ function buildLoadingScreen() { return `
         <span class="rp-ch" style="animation-delay:2.80s">R</span><span class="rp-ch" style="animation-delay:2.855s">E</span><span class="rp-ch" style="animation-delay:2.91s">V</span><span class="rp-ch" style="animation-delay:2.965s">E</span><span class="rp-ch" style="animation-delay:3.02s">R</span><span class="rp-ch" style="animation-delay:3.075s">S</span><span class="rp-ch" style="animation-delay:3.13s">E</span><span class="rp-ch" style="animation-delay:3.185s">P</span><span class="rp-ch" style="animation-delay:3.24s">I</span><span class="rp-ch" style="animation-delay:3.295s">C</span><span class="rp-ch" style="animation-delay:3.35s">K</span><span class="rp-ch" style="animation-delay:3.405s">S</span>
       </div>
       <div class="rp-tag">THE EYE SEES WHAT OTHERS MISS</div>
-      <div class="rp-prog-track"><div class="rp-prog-fill"></div></div>
     </div>
   </div>
 </div>
@@ -198,9 +197,6 @@ function buildLoadingScreen() { return `
 @keyframes chPop{to{opacity:1;transform:scale(1)}}
 .rp-tag{font-family:system-ui,-apple-system,sans-serif;font-size:clamp(7px,2vw,9px);font-weight:600;color:#39FF14;letter-spacing:2.5px;text-transform:uppercase;opacity:0;animation:tagIn .5s 3.6s forwards}
 @keyframes tagIn{to{opacity:.85}}
-.rp-prog-track{width:min(48vw,240px);height:2px;border-radius:1px;background:rgba(57,255,20,.2);overflow:hidden;margin-top:4px}
-.rp-prog-fill{height:2px;background:#39FF14;box-shadow:0 0 8px 2px #39FF14;animation:prog 4s .3s ease-out forwards}
-@keyframes prog{0%{width:0}35%{width:50%}65%{width:75%}85%{width:88%}100%{width:94%}}
 </style>
 <script>
 (function(){
