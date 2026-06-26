@@ -12,7 +12,7 @@ import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import NotificationBell from '@/components/NotificationBell';
 import { useQueryClient } from '@tanstack/react-query';
-import { scanProp, predict, cs2Predict, wtaPredict, savePick, searchCs2Players, searchCs2Teams, searchWtaPlayers, PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, LEAGUES, PredictionResult, ScanResult, Cs2Player, Cs2Team, WtaPlayer, getPlayerContexts, getTeamNextMatch, getPrizePicksLines, PlayerContext, NextMatchData, PPLine } from '@/lib/api';
+import { scanProp, predict, cs2Predict, wtaPredict, savePick, searchCs2Players, searchCs2Teams, searchWtaPlayers, PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, LEAGUES, PredictionResult, ScanResult, Cs2Player, Cs2Team, WtaPlayer, getPlayerContexts, getTeamNextMatch, PlayerContext, NextMatchData } from '@/lib/api';
 import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult, FuzzyLeagueResult, StaticItem } from '@/components/FuzzySearchInput';
 import LeaguePickerModal from '@/components/LeaguePickerModal';
 import { useAuth } from '@/contexts/AuthContext';
@@ -145,8 +145,6 @@ export default function ScanScreen() {
   const [contextsLoading, setContextsLoading] = useState(false);
   const [nextMatchLoading, setNextMatchLoading] = useState(false);
   const [autoMatch, setAutoMatch] = useState<NextMatchData | null>(null);
-  const [ppLines, setPpLines] = useState<PPLine[]>([]);
-  const [ppLinesLoading, setPpLinesLoading] = useState(false);
   const [propType, setPropType] = useState(PROP_TYPES[0].value);
   const [line, setLine] = useState('');
   const [leagueId, setLeagueId] = useState(39);
@@ -778,12 +776,6 @@ export default function ScanScreen() {
                 setSelectedContext(null);
                 setAutoMatch(null);
                 setPlayerContexts([]);
-                setPpLines([]);
-                // Fetch PrizePicks lines immediately for this player
-                setPpLinesLoading(true);
-                getPrizePicksLines(p.playerName).then(res => {
-                  setPpLines(res?.lines || []);
-                }).catch(() => {}).finally(() => setPpLinesLoading(false));
                 if (p.leagueId) {
                   setLeagueId(p.leagueId);
                   const lg = LEAGUES.find(l => l.id === p.leagueId);
@@ -922,77 +914,6 @@ export default function ScanScreen() {
                 <TouchableOpacity onPress={() => { setAutoMatch(null); setSelectedContext(null); }} style={{ marginTop: 6 }}>
                   <Text style={{ color: Colors.textSecondary, fontSize: 10 }}>✕ clear auto-fill</Text>
                 </TouchableOpacity>
-              </View>
-            )}
-
-            {/* ── PrizePicks Line Tracker — fires immediately on player select ── */}
-            {ppLinesLoading && (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12, padding: 10, backgroundColor: '#111', borderRadius: 8, borderWidth: 1, borderColor: '#2a2a2a' }}>
-                <ActivityIndicator size="small" color="#60A5FA" />
-                <Text style={{ color: Colors.textSecondary, fontSize: 12 }}>Fetching live lines…</Text>
-              </View>
-            )}
-            {!ppLinesLoading && ppLines.length > 0 && (() => {
-              const tierColor = (tier: string) =>
-                tier === 'demon' ? '#EF4444' : tier === 'goblin' ? '#F97316' : '#60A5FA';
-              const tierLabel = (tier: string) =>
-                tier === 'demon' ? 'DEMON' : tier === 'goblin' ? 'GOBLIN' : 'STANDARD';
-              const opponent = ppLines[0]?.opponent || '';
-              const league   = ppLines[0]?.league || '';
-              const gameStart = ppLines[0]?.gameStart
-                ? new Date(ppLines[0].gameStart).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-                : '';
-              return (
-                <View style={{ marginBottom: 12, padding: 10, backgroundColor: 'rgba(96,165,250,0.06)', borderRadius: 8, borderWidth: 1, borderColor: 'rgba(96,165,250,0.25)' }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      <Ionicons name="analytics-outline" size={11} color="#60A5FA" />
-                      <Text style={{ color: '#60A5FA', fontSize: 11, fontWeight: '700', letterSpacing: 0.5 }}>LINES</Text>
-                    </View>
-                    {(opponent || gameStart) ? (
-                      <Text style={{ color: Colors.textSecondary, fontSize: 10 }}>
-                        {opponent ? `vs ${opponent}` : ''}{gameStart ? ` · ${gameStart}` : ''}{league ? ` · ${league}` : ''}
-                      </Text>
-                    ) : null}
-                  </View>
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-                    {ppLines.map((pl, idx) => (
-                      <TouchableOpacity
-                        key={idx}
-                        onPress={() => {
-                          const match = PROP_TYPES.find(pt => pt.value === pl.statInternal);
-                          if (match) { setPropType(match.value); }
-                          if (pl.line !== null) { setLine(String(pl.line)); }
-                          Haptics.selectionAsync();
-                        }}
-                        style={{
-                          flexDirection: 'row', alignItems: 'center', gap: 6,
-                          backgroundColor: '#1a1a1a', borderRadius: 6,
-                          paddingHorizontal: 10, paddingVertical: 7,
-                          borderWidth: 1, borderColor: '#2a2a2a',
-                        }}
-                      >
-                        <Text style={{ color: Colors.text, fontSize: 13, fontWeight: '600' }}>
-                          {pl.line !== null ? pl.line : '—'}
-                          {pl.flashLine && pl.flashLine !== pl.line ? (
-                            <Text style={{ color: '#FCD34D', fontSize: 10 }}> ⚡{pl.flashLine}</Text>
-                          ) : null}
-                        </Text>
-                        <Text style={{ color: Colors.textSecondary, fontSize: 11 }}>{pl.statLabel}</Text>
-                        <View style={{ backgroundColor: tierColor(pl.tier), borderRadius: 4, paddingHorizontal: 5, paddingVertical: 2 }}>
-                          <Text style={{ color: '#fff', fontSize: 9, fontWeight: '700' }}>{tierLabel(pl.tier)}</Text>
-                        </View>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                  <Text style={{ color: Colors.textSecondary, fontSize: 10, marginTop: 6 }}>Tap a line to auto-fill prop &amp; line</Text>
-                </View>
-              );
-            })()}
-            {!ppLinesLoading && ppLines.length === 0 && resolvedPlayer && (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10, paddingHorizontal: 2 }}>
-                <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#444' }} />
-                <Text style={{ color: '#555', fontSize: 11 }}>No live lines found today</Text>
               </View>
             )}
 

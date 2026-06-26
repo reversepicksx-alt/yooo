@@ -4483,22 +4483,7 @@ Expected possession for {req.opponentName}: {match_dominance['oppExpectedPoss']}
         if web_intel:
             match_context += f"\n\n[LIVE WEB INTELLIGENCE — Pre-match intel fetched in real-time]\n{web_intel}\n>>> Integrate this live intelligence into your analysis. Prioritize confirmed injuries and lineup changes. <<<" 
 
-        # ── PRIZEPICKS MARKET REFERENCE ──────────────────────────────────────
-        # Look up the live PrizePicks board for this player+prop. No API call —
-        # reads from the MongoDB cache refreshed every 4h. Fast and non-blocking.
         _pp_ctx_dict: dict = {}
-        try:
-            from prizepicks_client import lookup_player_prop as _pp_lookup, \
-                build_pp_context_string as _pp_ctx_str, \
-                build_pp_response as _pp_resp
-            _pp_match = await _pp_lookup(db, req.playerName, req.propType)
-            if _pp_match:
-                _pp_prompt = _pp_ctx_str(_pp_match, req.line or 0)
-                if _pp_prompt:
-                    match_context += f"\n\n{_pp_prompt}"
-                _pp_ctx_dict = _pp_resp(_pp_match, req.line or 0)
-        except Exception as _pp_err:
-            print(f"[PP] Market lookup error: {_pp_err}")
 
         # Inject hit rate context into prompt
         hit_rate_context = ""
@@ -6800,10 +6785,6 @@ Analyze ALL data thoroughly. Return JSON only."""
             prediction["tacticalBreakdown"] = _m_full_block
             prediction["sharpSummary"] = _m_sharp_summary
             print(f"[PURE MATH] AI summary absent — using math-only tacticalBreakdown ({len(_m_full_block)} chars)")
-
-        # ── PrizePicks market context — attach to response ───────────────────
-        if _pp_ctx_dict:
-            prediction["prizePicksContext"] = _pp_ctx_dict
 
         # ── Game Script — attach computed scenario probabilities + script analysis
         # The gameScript engine uses Poisson(λ_h) × Poisson(λ_a) to forecast likely
