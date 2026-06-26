@@ -22,8 +22,12 @@ coverage/
 .pythonlibs/
 .local/
 
-# Apple private keys — must NEVER be committed
+# Apple/RevenueCat private keys — must NEVER be committed
 *.p8
 AuthKey_*.txt
+AuthKey_*.tar.gz
 SubscriptionKey_*.txt
+SubscriptionKey_*.tar.gz
+RevenueCat_P8_Keys*.tar.gz
 *_keys.zip
+*_keys.tar.gz
