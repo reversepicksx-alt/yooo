@@ -136,6 +136,38 @@ async def _search_players_cache(query: str, league_id: int = None, relaxed: bool
                 ).limit(50).to_list(50)
             docs.extend(abbrev_docs or [])
 
+        # Pass C — first+last word search: handles middle-name queries
+        # e.g. "Roberto Carlos Lopes" → stored "Roberto Lopes" or "R. Lopes"
+        if len(parts) >= 3:
+            q_first, q_last = parts[0], parts[-1]
+            # C1: first + last word (drops all middle names)
+            fl_filt: dict = {"$and": [
+                {"nameClean": {"$regex": re.escape(q_first)}},
+                {"nameClean": {"$regex": re.escape(q_last)}},
+            ]}
+            if effective_league_id:
+                fl_filt["leagueId"] = effective_league_id
+            fl_docs = await db[COL_PLAYERS].find(fl_filt, {"_id": 0}).limit(50).to_list(50)
+            if not fl_docs and effective_league_id:
+                fl_docs = await db[COL_PLAYERS].find(
+                    {"$and": [{"nameClean": {"$regex": re.escape(q_first)}},
+                              {"nameClean": {"$regex": re.escape(q_last)}}]},
+                    {"_id": 0}
+                ).limit(50).to_list(50)
+            docs.extend(fl_docs or [])
+            # C2: initial+last for abbreviated first names with middle name
+            # e.g. "Roberto Carlos Lopes" → /^r\..*lopes$/
+            il_pattern = rf"^{re.escape(q_first[0])}\..+{re.escape(q_last)}$"
+            il_filt: dict = {"nameClean": {"$regex": il_pattern}}
+            if effective_league_id:
+                il_filt["leagueId"] = effective_league_id
+            il_docs = await db[COL_PLAYERS].find(il_filt, {"_id": 0}).limit(20).to_list(20)
+            if not il_docs and effective_league_id:
+                il_docs = await db[COL_PLAYERS].find(
+                    {"nameClean": {"$regex": il_pattern}}, {"_id": 0}
+                ).limit(20).to_list(20)
+            docs.extend(il_docs or [])
+
     # Deduplicate by playerId: for each player keep the best-ranked entry.
     # Priority: top-5 club leagues > other real leagues > 667 friendlies.
     # leagueId=667 (Friendlies) entries are often "opponent team" artefacts
@@ -279,11 +311,28 @@ async def search_players(req: PlayerSearchRequest):
                 all_match      = 0
                 abbrev_rescued = True
 
+        # Middle-name rescue: "Roberto Carlos Lopes" → stored "Roberto Lopes" / "R. Lopes"
+        # When the query has ≥3 parts and the stored name matches the FIRST and LAST
+        # query word (ignoring middle names), treat it as a valid match.
+        middle_rescued = False
+        if all_match == 1 and not abbrev_rescued and len(query_parts) >= 3:
+            q_first, q_last = query_parts[0], query_parts[-1]
+            last_ok      = q_last in name_norm
+            first_direct = q_first in name_norm
+            nt = name_norm.split()
+            first_initial_ok = (
+                nt and len(nt[0]) <= 2 and nt[0].rstrip(".").isalpha() and
+                nt[0].rstrip(".") == q_first[0]
+            )
+            if last_ok and (first_direct or first_initial_ok):
+                all_match      = 0
+                middle_rescued = True
+
         # Exact-word match: every query part appears as a complete word in the name.
         # e.g. "messi" is a word in "l. messi" but NOT in "messias".
         # Treat abbreviated-name rescues as exact-word matches so they sort above
         # reversed-name false positives (e.g. "David Jonathan" for "Jonathan David").
-        exact_word  = 0 if (abbrev_rescued or all(w in name_words for w in query_parts)) else 1
+        exact_word  = 0 if (abbrev_rescued or middle_rescued or all(w in name_words for w in query_parts)) else 1
 
         # Reversed-name penalty: "David Jonathan" must not beat "J. David" when
         # the query is "Jonathan David".  If the stored name has all query words
@@ -507,6 +556,8 @@ async def search_players(req: PlayerSearchRequest):
             13, 11,                  # Copa Libertadores, Copa Sudamericana
             128, 242, 239, 265,      # Argentina, Ecuador, Colombia, Chile
             270, 281, 299, 250, 21,  # Uruguay, Peru, Venezuela, Paraguay, Bolivia
+            88, 94, 144, 179, 203,   # Netherlands, Portugal, Belgium, Scotland, Turkey
+            197, 357, 262, 169,      # Greece, Ireland (LOI), Mexico Liga MX, Russia
         ]
         async def try_league(lid):
             for s in [season + 1, season]:
@@ -525,6 +576,18 @@ async def search_players(req: PlayerSearchRequest):
     if not all_players:
         try:
             data = await api_football_request("players/profiles", {"search": req.query})
+            if data:
+                all_players.extend([extract_player(item) for item in data])
+        except Exception:
+            pass
+
+    # Strategy 3b: for 3+ word queries, also search profiles by "first last" (drop middle)
+    # e.g. "Roberto Carlos Lopes" → search "Roberto Lopes" directly
+    if not all_players and len(req.query.strip().split()) >= 3:
+        parts_q = req.query.strip().split()
+        fl_query = f"{parts_q[0]} {parts_q[-1]}"
+        try:
+            data = await api_football_request("players/profiles", {"search": fl_query})
             if data:
                 all_players.extend([extract_player(item) for item in data])
         except Exception:

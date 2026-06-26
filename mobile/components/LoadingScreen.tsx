@@ -68,29 +68,25 @@ export default function LoadingScreen({ onDone }: { onDone?: () => void }) {
     } else {
       // Scale: from splash size → grow slightly during spin → overshoot → settle
       logoScale.value = withSequence(
-        withTiming(1,    { duration: 3200, easing: Easing.linear }),
+        withTiming(1,    { duration: 1800, easing: Easing.linear }),
         withTiming(1.06, { duration: 400,  easing: Easing.out(Easing.cubic) }),
         withSpring(1,    { damping: 8, stiffness: 180 }),
       );
 
-      // Spin: fast linear 20 rotations, then spring-snap to exact position
+      // Spin: 5 rotations, then spring-snap to exact position
       logoRotate.value = withSequence(
-        withTiming(7020, { duration: 3200, easing: Easing.linear }),
-        withTiming(7290, { duration: 450,  easing: Easing.out(Easing.cubic) }),
-        withSpring(7200, { damping: 6, stiffness: 200 }),
+        withTiming(1710, { duration: 1800, easing: Easing.linear }),
+        withTiming(1890, { duration: 400,  easing: Easing.out(Easing.cubic) }),
+        withSpring(1800, { damping: 6, stiffness: 200 }),
       );
 
-      // 5-round lightning storm starting just after linear spin finishes
+      // 3-round lightning storm starting just as linear spin finishes
       const FLASH_DUR = 55;
       const FLASH_GAP = 110;
       const mkFlash = (offset: number) =>
-        withDelay(3250 + offset,
+        withDelay(1850 + offset,
           withSequence(
             withTiming(1, { duration: FLASH_DUR }),
-            withTiming(0, { duration: FLASH_DUR }),
-            withDelay(FLASH_GAP, withTiming(1, { duration: FLASH_DUR })),
-            withTiming(0, { duration: FLASH_DUR }),
-            withDelay(FLASH_GAP, withTiming(1, { duration: FLASH_DUR })),
             withTiming(0, { duration: FLASH_DUR }),
             withDelay(FLASH_GAP, withTiming(1, { duration: FLASH_DUR })),
             withTiming(0, { duration: FLASH_DUR }),
@@ -111,21 +107,21 @@ export default function LoadingScreen({ onDone }: { onDone?: () => void }) {
           withTiming(0,    { duration: 820, easing: Easing.in(Easing.cubic) }),
         ));
       };
-      mkRing(ring1Scale, ring1Opacity, 3260);
-      mkRing(ring2Scale, ring2Opacity, 3520);
-      mkRing(ring3Scale, ring3Opacity, 3780);
+      mkRing(ring1Scale, ring1Opacity, 1870);
+      mkRing(ring2Scale, ring2Opacity, 2120);
+      mkRing(ring3Scale, ring3Opacity, 2370);
     }
 
-    const hudDelay = isNative ? 4300 : 600;
+    const hudDelay = isNative ? 2600 : 600;
     hudOpacity.value = withDelay(hudDelay, withTiming(1, { duration: 400 }));
 
-    const tagDelay = isNative ? 5100 : 1400;
+    const tagDelay = isNative ? 3400 : 1400;
     tagOpacity.value = withDelay(tagDelay, withTiming(0.85, { duration: 500 }));
 
-    const progDelay = isNative ? 400 : 600;
-    progress.value = withDelay(progDelay, withTiming(0.92, { duration: 6500, easing: Easing.out(Easing.cubic) }));
+    const progDelay = isNative ? 300 : 600;
+    progress.value = withDelay(progDelay, withTiming(0.92, { duration: 4000, easing: Easing.out(Easing.cubic) }));
 
-    const duration = isNative ? 7000 : 2800;
+    const duration = isNative ? 4500 : 2800;
     const t = setTimeout(() => onDone?.(), duration);
     return () => clearTimeout(t);
   }, []);
@@ -164,7 +160,7 @@ export default function LoadingScreen({ onDone }: { onDone?: () => void }) {
   }));
 
   const BRAND = 'REVERSEPICKS';
-  const LETTER_BASE = isNative ? 4300 : 0;
+  const LETTER_BASE = isNative ? 2600 : 0;
 
   return (
     <View style={styles.root}>
