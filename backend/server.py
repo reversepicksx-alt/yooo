@@ -1348,8 +1348,8 @@ async def bulk_resettle_zero_picks(payload: dict):
     from datetime import datetime, timezone
     from routes.picks import _settle_soccer_pick
 
-    secret = payload.get("secret", "")
-    if secret != os.environ.get("ADMIN_SECRET", ""):
+    _admin_secret = os.environ.get("ADMIN_SECRET", "")
+    if not _admin_secret or payload.get("secret", "") != _admin_secret:
         from fastapi import HTTPException
         raise HTTPException(status_code=403, detail="Invalid secret")
 
@@ -1454,8 +1454,8 @@ async def force_resettle_pick(payload: dict):
     from datetime import datetime, timezone
     from routes.picks import _settle_soccer_pick
 
-    secret = payload.get("secret", "")
-    if secret != os.environ.get("ADMIN_SECRET", ""):
+    _admin_secret = os.environ.get("ADMIN_SECRET", "")
+    if not _admin_secret or payload.get("secret", "") != _admin_secret:
         from fastapi import HTTPException
         raise HTTPException(status_code=403, detail="Invalid secret")
 
