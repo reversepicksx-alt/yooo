@@ -6,6 +6,7 @@ import re
 from fastapi import APIRouter, Query
 from team_resolver import find_team, _normalize, COL_TEAMS_MASTER, SCAN_ALIASES, _pick_best
 from config import db
+from utils import api_football_request
 
 router = APIRouter(prefix="/api/search", tags=["search"])
 
@@ -147,5 +148,24 @@ async def search_teams(
         results = nat_hits + [r for r in results if r.get("teamId") not in {n["teamId"] for n in nat_hits}]
     except Exception:
         pass
+
+    # Strategy 4: API-Football live fallback.
+    # When local cache returns fewer than 3 results, hit the /teams?search= endpoint
+    # so users can find any club on earth (promoted/relegated teams, cup-only clubs, etc.).
+    if len(results) < 3 and len(q) >= 3:
+        try:
+            api_data = await api_football_request("teams", {"search": q})
+            for entry in (api_data or []):
+                t = (entry.get("team") or {})
+                tid = t.get("id", 0)
+                tname = t.get("name", "")
+                if not tid or not tname or tid in seen:
+                    continue
+                seen.add(tid)
+                results.append({"teamId": tid, "teamName": tname, "leagueId": 0})
+                if len(results) >= 8:
+                    break
+        except Exception:
+            pass
 
     return {"results": results[:8]}

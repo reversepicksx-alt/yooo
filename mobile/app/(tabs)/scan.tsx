@@ -944,7 +944,7 @@ export default function ScanScreen() {
                     if (!t) setResolvedManualOpponent(null);
                   }}
                   placeholder={leagueId === 1 ? 'e.g. France, Argentina, Spain…' : 'e.g. Arsenal, Real Madrid…'}
-                  confirmed={!!resolvedManualOpponent || manualOpponentQuery.trim().length > 1}
+                  confirmed={!!resolvedManualOpponent}
                   staticItems={leagueId === 1 ? WC_NATIONS : undefined}
                   onSelectTeam={(t: FuzzyTeamResult) => {
                     setResolvedManualOpponent(t);

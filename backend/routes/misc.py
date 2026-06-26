@@ -29,15 +29,23 @@ async def player_contexts(player_id: int):
     subsequent calls return it instantly even if the live API is slow/down.
     """
     now = datetime.now(timezone.utc)
-    cutoff = now - timedelta(hours=_CONTEXT_CACHE_TTL_H)
 
     # ── Cache read ────────────────────────────────────────────────────────────
+    # Respect per-record TTL: records without a national team are stored with
+    # ttlHours=1 so they retry quickly after an API quota / transient failure.
     cached = await db[COL_PLAYER_CTX_CACHE].find_one(
-        {"playerId": player_id, "cachedAt": {"$gte": cutoff}},
-        {"_id": 0, "contexts": 1}
+        {"playerId": player_id},
+        {"_id": 0, "contexts": 1, "cachedAt": 1, "ttlHours": 1}
     )
     if cached:
-        return {"contexts": cached["contexts"]}
+        ttl_h = cached.get("ttlHours", _CONTEXT_CACHE_TTL_H)
+        cached_at = cached.get("cachedAt")
+        if cached_at:
+            # Normalise: make cached_at timezone-aware if MongoDB returned naive
+            if cached_at.tzinfo is None:
+                cached_at = cached_at.replace(tzinfo=timezone.utc)
+            if (now - cached_at).total_seconds() < ttl_h * 3600:
+                return {"contexts": cached["contexts"]}
 
     # ── Live build ────────────────────────────────────────────────────────────
     # Load national team IDs from cache
@@ -103,10 +111,20 @@ async def player_contexts(player_id: int):
     # ── Cache write ───────────────────────────────────────────────────────────
     # Only cache when we have at least the club context (avoids storing empty
     # results when the player ID is wrong or not yet active).
+    # If no national team context was found (API-Football call may have failed or
+    # quota exhausted), use a much shorter TTL (1 h) so we retry sooner instead
+    # of serving a stale single-club result for a full 12 h.
+    has_national = any(c.get("isNational") for c in contexts)
+    effective_ttl_h = _CONTEXT_CACHE_TTL_H if has_national else 1
     if contexts:
         await db[COL_PLAYER_CTX_CACHE].update_one(
             {"playerId": player_id},
-            {"$set": {"playerId": player_id, "contexts": contexts, "cachedAt": now}},
+            {"$set": {
+                "playerId": player_id,
+                "contexts": contexts,
+                "cachedAt": now,
+                "ttlHours": effective_ttl_h,
+            }},
             upsert=True,
         )
 
