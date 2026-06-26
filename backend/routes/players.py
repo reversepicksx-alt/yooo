@@ -549,15 +549,13 @@ async def search_players(req: PlayerSearchRequest):
                         continue
 
     # Strategy 2: major domestic leagues + Copa Lib/Sud + all SA leagues
-    if not all_players:
+    if not all_players and not quota_gone:
         major_leagues = [
             39, 140, 135, 78, 61,   # EPL, La Liga, Serie A, Bundesliga, Ligue 1
             253, 71, 307,            # MLS, Brasileirao, Saudi Pro
             13, 11,                  # Copa Libertadores, Copa Sudamericana
             128, 242, 239, 265,      # Argentina, Ecuador, Colombia, Chile
             270, 281, 299, 250, 21,  # Uruguay, Peru, Venezuela, Paraguay, Bolivia
-            88, 94, 144, 179, 203,   # Netherlands, Portugal, Belgium, Scotland, Turkey
-            197, 357, 262, 169,      # Greece, Ireland (LOI), Mexico Liga MX, Russia
         ]
         async def try_league(lid):
             for s in [season + 1, season]:
@@ -573,7 +571,7 @@ async def search_players(req: PlayerSearchRequest):
             all_players.extend(r)
 
     # Strategy 3: profiles
-    if not all_players:
+    if not all_players and not quota_gone:
         try:
             data = await api_football_request("players/profiles", {"search": req.query})
             if data:
@@ -583,7 +581,7 @@ async def search_players(req: PlayerSearchRequest):
 
     # Strategy 3b: for 3+ word queries, also search profiles by "first last" (drop middle)
     # e.g. "Roberto Carlos Lopes" → search "Roberto Lopes" directly
-    if not all_players and len(req.query.strip().split()) >= 3:
+    if not all_players and not quota_gone and len(req.query.strip().split()) >= 3:
         parts_q = req.query.strip().split()
         fl_query = f"{parts_q[0]} {parts_q[-1]}"
         try:
@@ -594,7 +592,7 @@ async def search_players(req: PlayerSearchRequest):
             pass
 
     # Strategy 4: last name from profiles
-    if not all_players and " " in req.query:
+    if not all_players and not quota_gone and " " in req.query:
         last_name = req.query.strip().split()[-1]
         try:
             data = await api_football_request("players/profiles", {"search": last_name})
