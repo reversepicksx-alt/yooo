@@ -19,6 +19,23 @@ process.on('unhandledRejection', (reason) => console.error('[Proxy] Unhandled re
 const IS_PRODUCTION = process.env.PRODUCTION === 'true';
 const BUILD_TS = Date.now(); // unique per proxy start — used for cache busting
 
+// ── Dynamically resolve the hashed logo path from the built dist ────────────
+function resolveLogoPath() {
+  try {
+    const assetDir = path.join(distPath, 'assets', 'assets');
+    const files = fs.readdirSync(assetDir);
+    const logo = files.find(f => f.startsWith('logo.') && f.endsWith('.png'));
+    if (logo) return `/assets/assets/${logo}`;
+  } catch {}
+  // fallback: serve the raw asset from mobile/assets
+  return '/rp-logo-fallback.png';
+}
+let _logoPath = null;
+function getLogoPath() {
+  if (!_logoPath) _logoPath = resolveLogoPath();
+  return _logoPath;
+}
+
 const PORT         = 5000;
 const BACKEND_PORT = parseInt(process.env.BACKEND_PORT || '8000', 10);
 const METRO_PORT   = 5001;
@@ -105,10 +122,10 @@ const PWA_TAGS = `    <link rel="icon" type="image/png" href="/rp-icon.png" />
     <meta name="apple-mobile-web-app-title" content="ReversePicks" />
     <link rel="manifest" href="/manifest.json" />`;
 
-const LOADING_SCREEN = `
+function buildLoadingScreen() { return `
 <div id="rp-loading-screen">
   <div class="rp-logo-wrap">
-    <img class="rp-logo-img" src="/assets/assets/logo.5a940b54f2aa2f16efb69c6a99bbec24.png" alt="ReversePicks" />
+    <img class="rp-logo-img" src="${getLogoPath()}" alt="ReversePicks" />
   </div>
   <div class="rp-hud">
     <div class="rp-brand">
@@ -141,7 +158,7 @@ const LOADING_SCREEN = `
   window.__rpHideLoader=hide;
   setTimeout(hide,10000);
 })();
-</script>`;
+</script>`; }
 
 const MANIFEST = JSON.stringify({
   name: 'ReversePicks', short_name: 'ReversePicks',
@@ -163,7 +180,7 @@ function serveIndex(res) {
     let html = fs.readFileSync(indexPath, 'utf8');
     html = html.replace(/<title>[^<]*<\/title>/, '<title>ReversePicks \u2014 Elite Prop Intelligence</title>');
     html = html.replace('</head>', `${PWA_TAGS}\n  </head>`);
-    html = html.replace('</body>', `${LOADING_SCREEN}\n</body>`);
+    html = html.replace('</body>', `${buildLoadingScreen()}\n</body>`);
     res.writeHead(200, {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',

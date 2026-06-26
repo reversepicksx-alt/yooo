@@ -929,7 +929,7 @@ export default function ScanScreen() {
             {ppLinesLoading && (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12, padding: 10, backgroundColor: '#111', borderRadius: 8, borderWidth: 1, borderColor: '#2a2a2a' }}>
                 <ActivityIndicator size="small" color="#60A5FA" />
-                <Text style={{ color: Colors.textSecondary, fontSize: 12 }}>Checking PrizePicks board…</Text>
+                <Text style={{ color: Colors.textSecondary, fontSize: 12 }}>Fetching live lines…</Text>
               </View>
             )}
             {!ppLinesLoading && ppLines.length > 0 && (() => {
@@ -992,7 +992,7 @@ export default function ScanScreen() {
             {!ppLinesLoading && ppLines.length === 0 && resolvedPlayer && (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10, paddingHorizontal: 2 }}>
                 <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#444' }} />
-                <Text style={{ color: '#555', fontSize: 11 }}>Not on PrizePicks board today</Text>
+                <Text style={{ color: '#555', fontSize: 11 }}>No live lines found today</Text>
               </View>
             )}
 

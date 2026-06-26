@@ -84,7 +84,7 @@ function AppBoot() {
 
   useEffect(() => {
     if (Platform.OS === 'web' && typeof window !== 'undefined' && !isLoading) {
-      const hide = (window as any).__hideSplash;
+      const hide = (window as any).__rpHideLoader;
       if (typeof hide === 'function') hide();
     }
   }, [isLoading]);
