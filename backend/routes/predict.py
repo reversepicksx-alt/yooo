@@ -1379,7 +1379,11 @@ async def predict(req: PredictionRequest):
         ai_digest_task = _noop_str()
 
         # Situation engine inputs
-        _sit_is_home = player_venue == "home"
+        # Use the fixture's canonical home/away assignment (from match_odds) when available,
+        # just like we do for possession/moneyline/team labels. This ensures the situation
+        # engine (knockout aggregate, home/away multipliers) also sees correct orientation.
+        _sit_pih = (match_odds or {}).get("playerIsHome")
+        _sit_is_home = bool(_sit_pih) if _sit_pih is not None else (player_venue == "home")
         _sit_home_id = actual_team_id if _sit_is_home else req.opponentId
         _sit_away_id = req.opponentId if _sit_is_home else actual_team_id
         _sit_match_round = (match_odds or {}).get("matchRound", "")
@@ -6446,7 +6450,7 @@ Analyze ALL data thoroughly. Return JSON only."""
         prediction["teamName"]     = corrected_team_name or req.teamName or ""
         prediction["homeTeam"]     = real_matchup["homeTeam"]
         prediction["awayTeam"]     = real_matchup["awayTeam"]
-        prediction["isHome"]       = (player_venue == "home")
+        prediction["isHome"]       = _is_home
 
         # 5. Deterministic keyMatchupFactor — MUST align with computed possession numbers.
         # Overrides AI-generated text to prevent contradictions like "Liverpool dominates

@@ -14,7 +14,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.reversepicks.app",
-      "buildNumber": "1",
+      "buildNumber": "107",
       "icon": "./assets/rp-icon.png",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
