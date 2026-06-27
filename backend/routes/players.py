@@ -286,8 +286,8 @@ async def search_players(req: PlayerSearchRequest):
     _TOP5_LEAGUES = {39, 140, 135, 78, 61}   # EPL, LaLiga, SerieA, Bund., Ligue1
 
     def sort_key(p):
-        has_team    = 0 if p["teamName"] else 1
-        name_norm   = _strip(p["name"].lower())
+        has_team    = 0 if p.get("teamName") else 1
+        name_norm   = _strip((p.get("name") or "").lower())
         first_norm  = _strip((p.get("firstname") or "").lower())
         name_words  = set(name_norm.split())
         all_match   = 0 if all(w in name_norm for w in query_parts) else 1
@@ -440,21 +440,10 @@ async def search_players(req: PlayerSearchRequest):
         cache_results = await _search_players_cache(req.query, req.league_id, relaxed=quota_gone)
         if cache_results:
             sorted_results = _apply_sort_and_quality(cache_results)
-            # Enrich any player whose best cache entry is under a national-team /
-            # international league — fetch their real club from API-Football.
-            # Only do this when quota is available (skip if exhausted).
-            if not quota_gone:
-                enrich_tasks = []
-                enrich_indices = []
-                for i, p in enumerate(sorted_results):
-                    if p.get("leagueId") in _INTL_LEAGUES:
-                        enrich_tasks.append(_resolve_club_for_intl_player(p))
-                        enrich_indices.append(i)
-                if enrich_tasks:
-                    enriched = await aio.gather(*enrich_tasks, return_exceptions=True)
-                    for idx, result in zip(enrich_indices, enriched):
-                        if isinstance(result, dict):
-                            sorted_results[idx] = result
+            # NOTE: intentionally skipping _resolve_club_for_intl_player here.
+            # Enrichment makes sequential API calls (up to 3 per player) which can
+            # push total search time past the frontend's 15s timeout → "Search unavailable".
+            # Team/league info is resolved properly via getPlayerContexts after selection.
             return {"players": sorted_results}
     except Exception:
         pass

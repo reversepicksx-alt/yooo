@@ -128,6 +128,7 @@ export default function FuzzySearchInput({
   const [searchError, setSearchError] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastQueryRef = useRef('');
+  const searchIdRef = useRef(0);
 
   const doSearch = useCallback(async (q: string) => {
     if (q.length < 2) { setResults([]); setShowDropdown(false); setHasSearched(false); setSearchError(false); return; }
@@ -141,6 +142,7 @@ export default function FuzzySearchInput({
       return;
     }
 
+    const myId = ++searchIdRef.current;
     setLoading(true);
     setSearchError(false);
     try {
@@ -168,16 +170,18 @@ export default function FuzzySearchInput({
       } else if (searchType === 'wta_players') {
         r = await searchWtaPlayers(q);
       }
+      if (searchIdRef.current !== myId) return;
       setResults(r);
       setShowDropdown(r.length > 0);
       setHasSearched(true);
     } catch {
+      if (searchIdRef.current !== myId) return;
       setResults([]);
       setShowDropdown(false);
       setSearchError(true);
       setHasSearched(true);
     } finally {
-      setLoading(false);
+      if (searchIdRef.current === myId) setLoading(false);
     }
   }, [searchType, leagueId, staticItems]);
 
