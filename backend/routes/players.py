@@ -699,6 +699,22 @@ async def search_players(req: PlayerSearchRequest):
     return {"players": final_players}
 
 
+@router.get("/leagues/by-id/{league_id}")
+async def get_league_by_id(league_id: int):
+    """Look up a single league by numeric ID from the MongoDB leagues cache."""
+    from cache import COL_LEAGUES
+    try:
+        doc = await db[COL_LEAGUES].find_one(
+            {"leagueId": league_id},
+            {"_id": 0, "name": 1, "country": 1}
+        )
+        if doc and doc.get("name"):
+            return {"id": league_id, "name": doc["name"], "country": doc.get("country", "")}
+    except Exception:
+        pass
+    return {"id": league_id, "name": "", "country": ""}
+
+
 @router.get("/leagues/search")
 async def search_leagues(search: str = ""):
     """Search leagues by name or country from the MongoDB cache (1200+ leagues)."""

@@ -919,6 +919,14 @@ export async function getTeamNextMatch(teamId: number): Promise<NextMatchData> {
   return apiCall(`/api/teams/${teamId}/next-match`);
 }
 
+export async function getLeagueById(id: number): Promise<{ id: number; name: string; country: string }> {
+  try {
+    return await apiCall(`/api/leagues/by-id/${id}`);
+  } catch {
+    return { id, name: '', country: '' };
+  }
+}
+
 
 export interface SubscriptionStatus {
   active: boolean;

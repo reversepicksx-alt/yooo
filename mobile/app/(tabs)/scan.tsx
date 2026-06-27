@@ -12,7 +12,7 @@ import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import NotificationBell from '@/components/NotificationBell';
 import { useQueryClient } from '@tanstack/react-query';
-import { scanProp, predict, cs2Predict, wtaPredict, savePick, searchCs2Players, searchCs2Teams, searchWtaPlayers, PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, LEAGUES, PredictionResult, ScanResult, Cs2Player, Cs2Team, WtaPlayer, getPlayerContexts, getTeamNextMatch, PlayerContext, NextMatchData } from '@/lib/api';
+import { scanProp, predict, cs2Predict, wtaPredict, savePick, searchCs2Players, searchCs2Teams, searchWtaPlayers, PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, LEAGUES, PredictionResult, ScanResult, Cs2Player, Cs2Team, WtaPlayer, getPlayerContexts, getTeamNextMatch, getLeagueById, PlayerContext, NextMatchData } from '@/lib/api';
 import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult, FuzzyLeagueResult, StaticItem } from '@/components/FuzzySearchInput';
 import LeaguePickerModal from '@/components/LeaguePickerModal';
 import { useAuth } from '@/contexts/AuthContext';
@@ -147,8 +147,8 @@ export default function ScanScreen() {
   const [autoMatch, setAutoMatch] = useState<NextMatchData | null>(null);
   const [propType, setPropType] = useState(PROP_TYPES[0].value);
   const [line, setLine] = useState('');
-  const [leagueId, setLeagueId] = useState(39);
-  const [leagueQuery, setLeagueQuery] = useState('Premier League');
+  const [leagueId, setLeagueId] = useState(0);
+  const [leagueQuery, setLeagueQuery] = useState('');
   const [showPropPicker, setShowPropPicker] = useState(false);
   const [showLeaguePicker, setShowLeaguePicker] = useState(false);
   const [showSportPicker, setShowSportPicker] = useState(false);
@@ -776,11 +776,12 @@ export default function ScanScreen() {
                 setSelectedContext(null);
                 setAutoMatch(null);
                 setPlayerContexts([]);
-                if (p.leagueId) {
-                  setLeagueId(p.leagueId);
-                  const lg = LEAGUES.find(l => l.id === p.leagueId);
-                  setLeagueQuery(lg?.name || '');
-                }
+                // Reset league — next-match fetch below will set it correctly.
+                // Don't carry over the search result's leagueId; it's often 667
+                // (friendlies cache entry) which is not a real competition, and
+                // the LEAGUES shortlist only has 8 entries so the name would be blank.
+                setLeagueId(0);
+                setLeagueQuery('');
                 Haptics.selectionAsync();
                 // Fetch all team contexts for this player (club + national team)
                 if (p.playerId) {
@@ -800,7 +801,17 @@ export default function ScanScreen() {
                           const _isWcHost = WC_HOST_NAMES.has((ctxs[0].teamName || '').toLowerCase().trim());
                           setVenueOverride(nm.leagueId === 1 && !_isWcHost ? 'neutral' : (nm.isHome ? 'home' : 'away'));
                         }
-                        if (nm?.leagueId) { setLeagueId(nm.leagueId); setLeagueQuery(nm.leagueName || ''); }
+                        if (nm?.leagueId) {
+                          setLeagueId(nm.leagueId); setLeagueQuery(nm.leagueName || '');
+                        } else {
+                          // next-match failed — look up league name by ID from MongoDB
+                          const fallbackId = ctxs[0].leagueId || 0;
+                          if (fallbackId && fallbackId !== 667) {
+                            const lgInfo = await getLeagueById(fallbackId);
+                            setLeagueId(fallbackId);
+                            setLeagueQuery(lgInfo?.name || '');
+                          }
+                        }
                       } catch {}
                       setNextMatchLoading(false);
                     } else if (ctxs.length > 1) {
@@ -810,10 +821,14 @@ export default function ScanScreen() {
                         const nm = await getTeamNextMatch(ctxs[0].teamId);
                         if (nm?.leagueId) {
                           setLeagueId(nm.leagueId); setLeagueQuery(nm.leagueName || '');
-                        } else if (ctxs[0].isNational) {
-                          const fallbackId = ctxs[0].leagueId || 1;
-                          setLeagueId(fallbackId);
-                          setLeagueQuery(fallbackId === 1 ? 'FIFA World Cup' : '');
+                        } else {
+                          // next-match failed — look up league name by ID from MongoDB
+                          const fallbackId = ctxs[0].leagueId || 0;
+                          if (fallbackId && fallbackId !== 667) {
+                            const lgInfo = await getLeagueById(fallbackId);
+                            setLeagueId(fallbackId);
+                            setLeagueQuery(lgInfo?.name || '');
+                          }
                         }
                       } catch {}
                     }
@@ -860,14 +875,16 @@ export default function ScanScreen() {
                               const _isWcHost = WC_HOST_NAMES.has((ctx.teamName || '').toLowerCase().trim());
                               setVenueOverride(nm.leagueId === 1 && !_isWcHost ? 'neutral' : (nm.isHome ? 'home' : 'away'));
                             }
-                            // Set league from next-match result, or fall back to context's own leagueId
-                            // for national teams (prevents club league bleeding through)
+                            // Set league from next-match result; fall back to MongoDB lookup by leagueId
                             if (nm?.leagueId) {
                               setLeagueId(nm.leagueId); setLeagueQuery(nm.leagueName || '');
-                            } else if (ctx.isNational) {
-                              const fallbackId = ctx.leagueId || 1;
-                              setLeagueId(fallbackId);
-                              setLeagueQuery(fallbackId === 1 ? 'FIFA World Cup' : '');
+                            } else {
+                              const fallbackId = ctx.leagueId || 0;
+                              if (fallbackId && fallbackId !== 667) {
+                                const lgInfo = await getLeagueById(fallbackId);
+                                setLeagueId(fallbackId);
+                                setLeagueQuery(lgInfo?.name || '');
+                              }
                             }
                           } catch {}
                           setNextMatchLoading(false);
