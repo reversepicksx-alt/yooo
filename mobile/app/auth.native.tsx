@@ -176,6 +176,31 @@ export default function AuthScreen() {
     setError('');
     setInfo('');
 
+    // Owner email — instant login, no code
+    if (trimmed === 'reversepicksx@gmail.com') {
+      try {
+        const result = await apiCall<any>('/api/auth/verify-access', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: trimmed }),
+        });
+        if (result.verified) {
+          await loginWithResponse({
+            email:         result.email,
+            session_token: result.session_token,
+            access_type:   result.access_type,
+          });
+          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          setLoading(false);
+          setBioLoading(false);
+          router.replace('/(tabs)/scan');
+          return;
+        }
+      } catch {
+        // fall through to normal OTP
+      }
+    }
+
     // Link RevenueCat identity BEFORE sending code
     try {
       if (Platform.OS !== 'web') {
@@ -410,6 +435,15 @@ export default function AuthScreen() {
               <Text style={styles.landingBtnText}>Sign In</Text>
             </TouchableOpacity>
 
+            <TouchableOpacity
+              style={styles.landingBtnSecondary}
+              onPress={() => { setStep('email'); setError(''); setInfo(''); }}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="person-add-outline" size={18} color={Colors.primary} />
+              <Text style={styles.landingBtnTextSecondary}>Sign Up</Text>
+            </TouchableOpacity>
+
             {/* Owner panel — revealed by 5 logo taps */}
             {showOwner && (
               <View style={styles.ownerBlock}>
@@ -465,8 +499,8 @@ export default function AuthScreen() {
           </TouchableOpacity>
 
           <View style={styles.card}>
-            <Text style={styles.welcomeTitle}>Sign In</Text>
-            <Text style={styles.welcomeSub}>Enter your email to receive a secure login code</Text>
+            <Text style={styles.welcomeTitle}>Welcome</Text>
+            <Text style={styles.welcomeSub}>Enter your email to sign in or get started</Text>
 
             <View style={styles.inputRow}>
               <Ionicons name="mail-outline" size={17} color={Colors.textSecondary} style={styles.icon} />
@@ -667,11 +701,6 @@ const styles = StyleSheet.create({
   },
   landingBtnText: { color: '#000', fontWeight: '800', fontSize: 15, letterSpacing: 0.5 },
   landingBtnTextSecondary: { color: Colors.primary, fontWeight: '700', fontSize: 15, letterSpacing: 0.5 },
-
-  // Auth toggle
-  authToggleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, marginTop: 4 },
-  authToggleText: { color: Colors.textSecondary, fontSize: 13 },
-  authToggleLink: { color: Colors.primary, fontSize: 13, fontWeight: '700' },
 
   backBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: Colors.card, borderRadius: Colors.radius, borderWidth: 1, borderColor: Colors.borderSubtle, height: 50, marginTop: 4 },
   backBtnText: { color: Colors.text, fontSize: 14, fontWeight: '600' },
