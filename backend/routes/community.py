@@ -122,7 +122,21 @@ async def send_message(req: SendMessageRequest):
 
         is_everyone = "@all" in text_body.lower()
 
+        # @all rate limit: max once per email per 60 seconds to prevent spam
+        _can_everyone = True
         if is_everyone:
+            _now = datetime.now(timezone.utc)
+            _last = await db.community_messages.find_one(
+                {"email": req.email.lower().strip(), "text": {"$regex": "@all", "$options": "i"}},
+                sort=[("createdAt", -1)],
+                projection={"createdAt": 1},
+            )
+            if _last and isinstance(_last.get("createdAt"), datetime):
+                _delta = (_now - _last["createdAt"]).total_seconds()
+                if _delta < 60:
+                    _can_everyone = False
+
+        if is_everyone and _can_everyone:
             _aio.create_task(send_everyone(
                 sender_email=req.email.lower().strip(),
                 title=notif_title,

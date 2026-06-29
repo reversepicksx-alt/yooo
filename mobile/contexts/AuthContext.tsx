@@ -46,7 +46,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const token = await storage.get('rp_token');
         if (email && token) {
           const result = await verifySession(email, token) as { valid?: boolean };
-          if (result?.valid === false) throw new Error('Session invalid');
+          if (!result?.valid) throw new Error('Session invalid');
           const accessType = await storage.get('rp_access_type') || undefined;
           setSession({ email, token, accessType });
         }

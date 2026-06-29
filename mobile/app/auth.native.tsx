@@ -12,7 +12,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import Colors from '@/constants/colors';
 import { apiCall } from '@/lib/api';
 import { useSubscription } from '@/lib/revenuecat';
-import type { PurchasesPackage } from 'react-native-purchases';
+import Purchases, { type PurchasesPackage } from 'react-native-purchases';
 
 const INPUT_STYLE = Platform.OS === 'web' ? { outlineWidth: 0 } : {};
 
@@ -100,8 +100,22 @@ export default function AuthScreen() {
     setBuyingId(pkg.identifier);
     try {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      await purchase(pkg);
+      const customerInfo = await purchase(pkg);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+      // RevenueCat purchase is anonymous until we logIn.
+      // If user already typed an email, link the purchase NOW so the webhook
+      // arrives with the correct email → verify-code can find the IAP record.
+      const trimmedEmail = email.trim().toLowerCase();
+      if (trimmedEmail && trimmedEmail.includes('@')) {
+        try {
+          await Purchases.logIn(trimmedEmail);
+          console.log('[RevenueCat] Purchase linked to', trimmedEmail);
+        } catch (rcErr) {
+          console.warn('[RevenueCat] logIn after purchase (non-fatal):', rcErr);
+        }
+      }
+
       setInfo('Subscribed! Now enter your email to create your account.');
       setStep('email');
     } catch (e: any) {
@@ -136,6 +150,19 @@ export default function AuthScreen() {
     setLoading(true);
     setError('');
     setInfo('');
+
+    // CRITICAL: RevenueCat purchases are anonymous by default. We MUST logIn
+    // with the user's email so their purchase is linked to this identity.
+    // Without this, the RevenueCat webhook writes the purchase under an
+    // anonymous ID → verify-code can't find it → user is permanently NoSubscription.
+    try {
+      if (Platform.OS !== 'web') {
+        await Purchases.logIn(trimmed);
+        console.log('[RevenueCat] Logged in as', trimmed);
+      }
+    } catch (rcErr) {
+      console.warn('[RevenueCat] logIn error (non-fatal):', rcErr);
+    }
 
     // Reviewer demo account — skip OTP, log in directly
     if (trimmed === REVIEWER_EMAIL) {
@@ -202,6 +229,35 @@ export default function AuthScreen() {
         body: JSON.stringify({ email: email.trim().toLowerCase(), code: trimmedCode }),
       });
       if (result.verified) {
+        // If backend says NoSubscription but RevenueCat has an active entitlement
+        // (webhook arrived with anonymous ID, or logIn happened after purchase),
+        // fast-path grant so the user isn't stuck on the paywall.
+        if (result.access_type === 'NoSubscription' && Platform.OS === 'ios') {
+          try {
+            const rcInfo = await Purchases.getCustomerInfo();
+            const hasEnt = rcInfo?.entitlements?.active?.['pro'] !== undefined;
+            if (hasEnt) {
+              const exp = rcInfo.entitlements.active['pro'].expirationDate;
+              const expMs = exp ? new Date(exp).getTime() : undefined;
+              await fetch('/api/auth/iap-grant', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  email: result.email,
+                  session_token: result.session_token,
+                  product_id: rcInfo.entitlements.active['pro'].productIdentifier || 'unknown',
+                  expires_at_ms: expMs ?? null,
+                }),
+              });
+              // Update the local session to Premium (Apple)
+              result.access_type = 'Premium (Apple)';
+              result.has_access = true;
+            }
+          } catch (rcErr) {
+            console.warn('[IAP] RevenueCat fast-path grant failed:', rcErr);
+          }
+        }
+
         await loginWithResponse({
           email:         result.email,
           session_token: result.session_token,

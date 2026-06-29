@@ -289,6 +289,27 @@ async def _check_stripe_live(email_lower: str):
         print(f"[STRIPE LIVE FALLBACK] Error for {email_lower}: {e}")
         return None
 
+async def check_access(email_lower: str) -> str | None:
+    """Unified access check for both web and Apple IAP users.
+
+    Used by community.py, picks.py, and other protected routes that need to
+    verify a subscription regardless of whether the user paid via Stripe,
+    Square, Apple IAP, or has a manual grant.
+    """
+    if not email_lower:
+        return None
+    # 1) Local grants (owner, lifetime, beta, manual, square, stripe local)
+    result = await _check_access_local(email_lower)
+    if result:
+        return result
+    # 2) Apple IAP (RevenueCat / App Store)
+    apple = await _check_apple_access(email_lower)
+    if apple:
+        return apple
+    # 3) Live Stripe fallback
+    return await _check_stripe_live(email_lower)
+
+
 async def check_web_access(email_lower: str):
     """Full web access check: local DB + live Stripe fallback."""
     if not email_lower:

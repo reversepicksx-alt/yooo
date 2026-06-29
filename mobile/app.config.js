@@ -12,7 +12,7 @@ export default {
     ios: {
       supportsTablet: false,
       bundleIdentifier: "com.reversepicks.app",
-      buildNumber: "107",
+      buildNumber: "113",
       icon: "./assets/rp-icon.png",
     },
     android: {
