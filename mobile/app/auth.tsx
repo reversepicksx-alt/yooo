@@ -275,15 +275,41 @@ export default function AuthScreen() {
   };
 
   if (step === 'pricing') {
+    const FEATURES = [
+      { icon: 'flash', text: 'AI-powered player prop predictions' },
+      { icon: 'analytics', text: 'Bayesian probability engine' },
+      { icon: 'scan', text: 'Scan any sportsbook slip instantly' },
+      { icon: 'chatbubble-ellipses', text: 'Tactical AI chat + live intel' },
+    ];
     return (
-      <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+      <ScrollView
+        style={[styles.root, { paddingTop: insets.top }]}
+        contentContainerStyle={{ paddingBottom: insets.bottom + 20 }}
+        showsVerticalScrollIndicator={false}
+      >
         <View style={styles.pricingContainer}>
           <View style={styles.pricingHero}>
             <Image source={require('../assets/logo.png')} style={styles.pricingLogo} resizeMode="contain" />
-            <Text style={styles.pricingTitle}>CHOOSE YOUR PLAN</Text>
+            <Text style={styles.pricingTitle}>UNLOCK THE EDGE</Text>
+            <Text style={styles.pricingTagline}>
+              Data-driven soccer prop analysis trusted by sharp bettors.
+            </Text>
+          </View>
+
+          <View style={styles.featuresList}>
+            {FEATURES.map((f, i) => (
+              <View key={i} style={styles.featureRow}>
+                <View style={styles.featureIcon}>
+                  <Ionicons name={f.icon as any} size={14} color={Colors.primary} />
+                </View>
+                <Text style={styles.featureText}>{f.text}</Text>
+              </View>
+            ))}
           </View>
 
           {!!error && <ErrorBox message={error} />}
+
+          <Text style={styles.planSectionLabel}>CHOOSE YOUR PLAN</Text>
 
           {PLANS.map(plan => (
             <TouchableOpacity
@@ -316,12 +342,17 @@ export default function AuthScreen() {
             </TouchableOpacity>
           ))}
 
+          <View style={styles.socialProofRow}>
+            <Ionicons name="shield-checkmark" size={13} color={Colors.primary} />
+            <Text style={styles.socialProofText}>Cancel anytime · Instant access · Secure checkout</Text>
+          </View>
+
           <TouchableOpacity style={styles.backBtn} onPress={goBack} activeOpacity={0.8}>
             <Ionicons name="arrow-back" size={15} color={Colors.text} />
             <Text style={styles.backBtnText}>Back to Login</Text>
           </TouchableOpacity>
         </View>
-      </View>
+      </ScrollView>
     );
   }
 
@@ -714,11 +745,66 @@ const styles = StyleSheet.create({
   pricingHero: { alignItems: 'center', marginBottom: 8 },
   pricingLogo: { width: 60, height: 60, marginBottom: 12 },
   pricingTitle: {
-    fontSize: 13,
-    fontWeight: '800',
+    fontSize: 18,
+    fontWeight: '900',
     color: Colors.primary,
     letterSpacing: 3,
     textTransform: 'uppercase',
+    marginBottom: 6,
+  },
+  pricingTagline: {
+    fontSize: 13,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 19,
+    paddingHorizontal: 12,
+  },
+  featuresList: {
+    backgroundColor: Colors.card,
+    borderRadius: Colors.radius,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+    padding: 14,
+    gap: 10,
+  },
+  featureRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  featureIcon: {
+    width: 26,
+    height: 26,
+    borderRadius: 8,
+    backgroundColor: Colors.primaryDim,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  featureText: {
+    fontSize: 13,
+    color: Colors.text,
+    fontWeight: '500',
+    flex: 1,
+  },
+  planSectionLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: Colors.textSecondary,
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+    textAlign: 'center',
+  },
+  socialProofRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: -4,
+  },
+  socialProofText: {
+    fontSize: 11,
+    color: Colors.textSecondary,
+    textAlign: 'center',
   },
   planCard: {
     backgroundColor: Colors.card,

@@ -1,4 +1,4 @@
-import { Tabs, Redirect } from 'expo-router';
+import { Tabs, Redirect, router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { View, StyleSheet, Platform } from 'react-native';
 import Colors from '@/constants/colors';
@@ -22,7 +22,7 @@ export default function TabLayout() {
     }
   }, [session, isLoading]);
 
-  if (isLoading) return null;
+  if (isLoading) return <View style={{ flex: 1, backgroundColor: '#050505' }} />;
   if (!session) return <Redirect href="/auth" />;
 
   return (

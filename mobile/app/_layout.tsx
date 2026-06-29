@@ -90,8 +90,8 @@ function AppBoot() {
   useEffect(() => {
     if (Platform.OS !== 'web') return;
     if (isLoading) return;
-    // Small delay so React commits the auth-driven navigation before overlay disappears.
-    const t = setTimeout(hideWebOverlay, 300);
+    // Delay so the auth-driven route transition fully commits before overlay fades.
+    const t = setTimeout(hideWebOverlay, 1200);
     return () => clearTimeout(t);
   }, [isLoading]);
 
