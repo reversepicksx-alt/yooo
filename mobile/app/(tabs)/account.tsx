@@ -432,17 +432,15 @@ export default function AccountScreen() {
   // RevenueCat state (iOS native only)
   const { isSubscribed: hasIAP, isLoading: iapLoading } = useSubscription();
 
-  const isSquareSub = session?.accessType?.toLowerCase().includes('square');
   const isStripeSub = session?.accessType?.toLowerCase().includes('stripe');
   const isLifetime = session?.accessType?.toLowerCase().includes('lifetime');
-  const isWhop = session?.accessType?.toLowerCase().includes('whop');
   const isOwner = session?.accessType?.toLowerCase() === 'owner';
 
   // On iOS native: subscription section is always IAP-driven
   const isIOSNative = Platform.OS === 'ios';
 
-  // On web/android: keep existing Stripe flow for Square/Stripe subscribers
-  const showStripeManagement = !isIOSNative && (isSquareSub || isStripeSub) && !isLifetime && !isOwner;
+  // On web/android: show Stripe management for active Stripe subscribers
+  const showStripeManagement = !isIOSNative && isStripeSub && !isLifetime && !isOwner;
 
   const fetchSubStatus = useCallback(async () => {
     if (!session?.email || !showStripeManagement) return;
@@ -525,8 +523,7 @@ export default function AccountScreen() {
     setActionLoading(true);
     try {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      const forceStripeType = isSquareSub ? 'stripe' : (session.accessType || 'stripe');
-      const result = await resubscribeCheckout(session.email, planKey, forceStripeType);
+      const result = await resubscribeCheckout(session.email, planKey, 'stripe');
       const url = result.checkoutUrl || result.checkout_url || result.redirect_url;
       if (url) {
         setPlanPickerVisible(false);
@@ -613,7 +610,7 @@ export default function AccountScreen() {
         </View>
 
         {/* ── iOS native: Apple IAP subscription section ── */}
-        {isIOSNative && !isLifetime && !isOwner && !isWhop && (
+        {isIOSNative && !isLifetime && !isOwner && (
           <>
             <Text style={styles.sectionLabel}>Subscription</Text>
             {iapLoading ? (
@@ -640,14 +637,6 @@ export default function AccountScreen() {
         {showStripeManagement && (
           <>
             <Text style={styles.sectionLabel}>Subscription</Text>
-            {isSquareSub && (
-              <View style={styles.squareNotice}>
-                <Ionicons name="information-circle-outline" size={16} color="#f59e0b" />
-                <Text style={styles.squareNoticeText}>
-                  Square billing has ended. Use "New Subscription" below to continue with Stripe.
-                </Text>
-              </View>
-            )}
             {subLoading && !subStatus ? (
               <View style={styles.menuGroup}>
                 {[1, 2, 3].map(i => (
@@ -671,14 +660,14 @@ export default function AccountScreen() {
                 {subStatus.cardLast4 && (
                   <MenuRow icon="wallet-outline" label="Payment" value={`${subStatus.cardBrand || 'Card'} •••• ${subStatus.cardLast4}`} />
                 )}
-                {!isCanceled && !isSquareSub && (
+                {!isCanceled && (
                   <MenuRow icon="swap-horizontal-outline" label="Change Plan" onPress={() => setPlanPickerVisible(true)} loading={actionLoading} />
                 )}
-                {isCanceled || isSquareSub ? (
+                {isCanceled ? (
                   <MenuRow
                     icon="refresh-outline"
-                    label={isSquareSub ? 'New Subscription (Stripe)' : 'Resubscribe'}
-                    value={isSquareSub ? 'Switch to secure Stripe billing' : 'Choose a new plan'}
+                    label="Resubscribe"
+                    value="Choose a new plan"
                     onPress={() => setPlanPickerVisible(true)}
                     loading={actionLoading}
                   />
@@ -719,7 +708,7 @@ export default function AccountScreen() {
         loading={actionLoading}
         onSelect={isCanceled ? handleResubscribePlan : handleChangePlan}
         onClose={() => setPlanPickerVisible(false)}
-        isResubscribe={isCanceled || isSquareSub}
+        isResubscribe={isCanceled}
       />
     </View>
   );
@@ -825,14 +814,6 @@ const styles = StyleSheet.create({
     gap: 10, paddingVertical: 24,
   },
   subLoadingText: { fontSize: 13, color: Colors.textTertiary },
-
-  squareNotice: {
-    flexDirection: 'row', alignItems: 'flex-start', gap: 8,
-    backgroundColor: 'rgba(245,158,11,0.1)', borderWidth: 1,
-    borderColor: 'rgba(245,158,11,0.3)', borderRadius: 10,
-    padding: 12, marginBottom: 10,
-  },
-  squareNoticeText: { flex: 1, fontSize: 12, color: '#f59e0b', lineHeight: 18 },
 
   modalOverlay: {
     flex: 1, backgroundColor: Colors.overlay, justifyContent: 'flex-end',

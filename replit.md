@@ -36,7 +36,7 @@ The project is structured into `backend/` (FastAPI, MongoDB) and `mobile/` (Expo
 - **MongoDB**: Runs on `localhost:27017` with database `reversepicks`. Production data persists at `/home/runner/.reversepicks_db`.
 - **API Client**: `mobile/lib/api.ts` handles API calls, using relative URLs for web and an environment variable (`EXPO_PUBLIC_API_URL`) or localhost fallback for native.
 - **Auth Flow**: Uses `/api/auth/verify-access` and `/api/auth/set-password` or `/api/auth/login`.
-- **Subscription Management**: Integrated into `account.tsx` with Square API wrappers for plan details, changes, cancellation, and resubscription.
+- **Subscription Management**: Integrated into `account.tsx` with Stripe API wrappers for plan details, changes, cancellation, and resubscription.
 - **Line-Deviation Intelligence Engine**: `calibration.py` computes line deviation bands based on settled picks, providing data-driven hit rates and confidence adjustments for "UNDER" and "OVER" scenarios.
 - **AI Architecture**:
     - **Primary AI**: Grok-3 (prediction synthesis — all tactical reasoning, sharpSummary, and breakdown).
@@ -55,8 +55,8 @@ The project is structured into `backend/` (FastAPI, MongoDB) and `mobile/` (Expo
 
 ### Feature Specifications
 - **Scan / Predict Screen**: Two modes: "Scan" (image OCR via AI) and "Manual" (player name input).
-- **Subscription Support**: Weekly, Monthly, Quarterly plans managed via Square.
-- **Access Control**: Owner email, `LIFETIME_SUB_EMAILS` env var, manual MongoDB grants, and Square subscription webhooks.
+- **Subscription Support**: Weekly, Monthly, Quarterly plans managed via Stripe.
+- **Access Control**: Owner email, `LIFETIME_SUB_EMAILS` env var, manual MongoDB grants, Stripe subscriptions, and Apple IAP.
 - **Pick Card Delete (platform-split)**:
   - **Web**: a small `trash-outline` icon sits at the bottom-right of every pick card. It's rendered as a real DOM `<button>` (not `Pressable`/`TouchableOpacity`/`RectButton`) with `onClick` + `onPointerDown`/`onMouseDown`/`onTouchStart` `stopPropagation`, so the click fires reliably and never bubbles up to the parent `Pressable` that opens the analysis modal. Swipe-to-delete is disabled on web (`SwipeableRow` returns children directly when `Platform.OS === 'web'`) because react-native-gesture-handler's web shim is unreliable for nested touch handlers and browser users have no swipe affordance anyway. The "Tap for analysis" hint was removed (redundant — the whole card is tappable).
   - **Native iOS/Android (app store builds)**: keeps the iOS-Mail-style swipe-to-reveal `DELETE` button via `ReanimatedSwipeable` (`friction=1.5`, `leftThreshold=40`, `dragOffsetFromLeftEdge=6`, `overshootLeft=false`). Tap on the revealed `TouchableOpacity` fires the Cancel/Delete confirm `Alert`; light haptic on will-open. We deliberately do NOT auto-fire delete on `onSwipeableOpen` so users can swipe back to cancel. The `trackBar` under the OVER/UNDER pill is 6.5px tall with `borderRadius: 3.5` for a chunky-but-thin iOS look.
@@ -71,7 +71,8 @@ The project is structured into `backend/` (FastAPI, MongoDB) and `mobile/` (Expo
 - **MongoDB**: Primary database for all application data.
 - **API-Football**: Source for soccer player statistics, fixtures, teams, and standings data.
 - **Google Gemini API**: Sole AI provider. Gemini 2.5 Flash for predictions, scan OCR, position resolution, MLB/CS2/WTA analysis. Gemini 2.5 Pro for tactical chat.
-- **Square API**: For subscription management and payment processing.
+- **Stripe API**: For subscription management and payment processing.
+- **RevenueCat**: For Apple In-App Purchase subscription management.
 - **Expo**: Framework for building the React Native mobile application.
 - **React Native Reanimated**: Animation library.
 - **Express.js**: Used in `mobile/proxy.js` for the reverse proxy.

@@ -961,54 +961,29 @@ export interface SubscriptionStatus {
   canceledAt?: string;
 }
 
-export async function getSubscriptionStatus(email: string, accessType?: string): Promise<SubscriptionStatus> {
-  const isStripe = accessType?.toLowerCase().includes('stripe');
-  if (isStripe) {
-    return apiCall<SubscriptionStatus>(`/api/stripe/status/${encodeURIComponent(email)}`);
-  }
-  return apiCall<SubscriptionStatus>(`/api/square/status/${encodeURIComponent(email)}`);
+export async function getSubscriptionStatus(email: string, _accessType?: string): Promise<SubscriptionStatus> {
+  return apiCall<SubscriptionStatus>(`/api/stripe/status/${encodeURIComponent(email)}`);
 }
 
-export async function cancelSubscription(email: string, accessType?: string): Promise<{ success: boolean; status?: string; message?: string }> {
-  const isStripe = accessType?.toLowerCase().includes('stripe');
-  if (isStripe) {
-    return apiCall('/api/stripe/cancel', {
-      method: 'POST',
-      body: JSON.stringify({ email }),
-    });
-  }
-  return apiCall('/api/square/cancel', {
+export async function cancelSubscription(email: string, _accessType?: string): Promise<{ success: boolean; status?: string; message?: string }> {
+  return apiCall('/api/stripe/cancel', {
     method: 'POST',
     body: JSON.stringify({ email }),
   });
 }
 
-export async function changePlan(email: string, newPlanKey: string, accessType?: string): Promise<{ success?: boolean; previous_plan?: string; new_plan?: string; new_label?: string; message?: string }> {
-  const isStripe = accessType?.toLowerCase().includes('stripe');
-  if (isStripe) {
-    return apiCall('/api/stripe/change-plan', {
-      method: 'POST',
-      body: JSON.stringify({ email, new_plan_key: newPlanKey }),
-    });
-  }
-  return apiCall('/api/square/change-plan', {
+export async function changePlan(email: string, newPlanKey: string, _accessType?: string): Promise<{ success?: boolean; previous_plan?: string; new_plan?: string; new_label?: string; message?: string }> {
+  return apiCall('/api/stripe/change-plan', {
     method: 'POST',
     body: JSON.stringify({ email, new_plan_key: newPlanKey }),
   });
 }
 
-export async function resubscribeCheckout(email: string, planKey: string, accessType?: string): Promise<{ checkoutUrl?: string; checkout_url?: string; redirect_url?: string; error?: string }> {
+export async function resubscribeCheckout(email: string, planKey: string, _accessType?: string): Promise<{ checkoutUrl?: string; checkout_url?: string; redirect_url?: string; error?: string }> {
   const redirectUrl = typeof window !== 'undefined' && window.location != null
     ? `${window.location.origin}/auth`
     : 'https://reversepicks.com/auth';
-  const isStripe = accessType?.toLowerCase().includes('stripe');
-  if (isStripe) {
-    return apiCall('/api/stripe/resubscribe-checkout', {
-      method: 'POST',
-      body: JSON.stringify({ email, planKey, redirectUrl }),
-    });
-  }
-  return apiCall('/api/square/resubscribe-checkout', {
+  return apiCall('/api/stripe/resubscribe-checkout', {
     method: 'POST',
     body: JSON.stringify({ email, planKey, redirectUrl }),
   });

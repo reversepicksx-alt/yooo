@@ -35,34 +35,16 @@ XAI_API_KEY = "gemini-via-replit" if _gemini_avail else None
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GROK_MODEL = "gemini-2.5-flash"
 GROK_REASONING_MODEL = "gemini-2.5-flash"
-SQUARE_ACCESS_TOKEN = os.environ.get("SQUARE_ACCESS_TOKEN")
-SQUARE_APPLICATION_ID = os.environ.get("SQUARE_APPLICATION_ID")
-SQUARE_LOCATION_ID = os.environ.get("SQUARE_LOCATION_ID")
-SQUARE_ENVIRONMENT = os.environ.get("SQUARE_ENVIRONMENT", "sandbox")
-WHOP_API_KEY = os.environ.get("WHOP_API_KEY")
-WHOP_COMPANY_ID = os.environ.get("WHOP_COMPANY_ID")
-
 # ── Dynamic settings (overridable via admin panel, persisted in MongoDB) ──
 _dynamic_settings = {}
 
 DYNAMIC_KEYS = [
     "API_FOOTBALL_KEY",
-    "SQUARE_ACCESS_TOKEN",
-    "SQUARE_APPLICATION_ID",
-    "SQUARE_LOCATION_ID",
-    "SQUARE_ENVIRONMENT",
-    "DISABLE_SQUARE_BILLING",
 ]
 
 # Env fallbacks for each key
 _ENV_DEFAULTS = {
     "API_FOOTBALL_KEY": API_FOOTBALL_KEY,
-    "SQUARE_ACCESS_TOKEN": SQUARE_ACCESS_TOKEN,
-    "SQUARE_APPLICATION_ID": SQUARE_APPLICATION_ID,
-    "SQUARE_LOCATION_ID": SQUARE_LOCATION_ID,
-    "SQUARE_ENVIRONMENT": SQUARE_ENVIRONMENT,
-    # Square billing is permanently disabled — default "true" means off unless DB explicitly says otherwise
-    "DISABLE_SQUARE_BILLING": os.environ.get("DISABLE_SQUARE_BILLING", "true"),
 }
 
 async def init_dynamic_settings():
@@ -135,7 +117,6 @@ LIFETIME_SUB_EMAILS = [e.lower() for e in LIFETIME_SUB_EMAILS]
 # ── Complimentary Access (email → ISO expiry date, auto-expires) ──
 COMPLIMENTARY_MEMBERS = {
     "xaviersteverson@gmail.com":       "2026-07-13",  # 3 months comp
-    # Square members — access through their paid charged_through_date
     "veinzice@gmail.com":              "2026-04-16",
     "rayhanekobeni@gmail.com":         "2026-05-01",
     "jeffreyabega@gmail.com":          "2026-04-16",

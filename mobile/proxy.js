@@ -296,7 +296,7 @@ const server = http.createServer((req, res) => {
   <p>Your email address is stored securely in our database. We retain it for as long as your account is active or as needed to provide our services.</p>
 
   <h2>Third-Party Services</h2>
-  <p>We use Square for payment processing. Square's privacy policy governs any payment data you provide during checkout. We do not store your payment card details.</p>
+  <p>We use Stripe for payment processing. Stripe's privacy policy governs any payment data you provide during checkout. We do not store your payment card details.</p>
 
   <h2>Your Rights</h2>
   <p>You may request deletion of your account and associated data at any time by contacting us at <a href="mailto:reversepicksx@gmail.com">reversepicksx@gmail.com</a>.</p>

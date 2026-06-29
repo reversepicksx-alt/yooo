@@ -120,7 +120,7 @@ async def create_session(email: str, access_type: str) -> str:
     )
     return session_token
 
-# ── Web access check (Stripe / Square / manual grants) ────────────────────────
+# ── Web access check (Stripe / manual grants) ────────────────────────
 async def _check_access_local(email_lower: str):
     if email_lower in OWNER_EMAILS:
         return "Owner"
@@ -162,21 +162,6 @@ async def _check_access_local(email_lower: str):
                     if _blocked:
                         return None
         return access_type
-    square_sub = await db.square_subscriptions.find_one({"email": email_lower, "status": {"$in": ["ACTIVE", "PENDING"]}}, {"_id": 0})
-    if square_sub:
-        return "Premium (Square)"
-    lapsed_sub = await db.square_subscriptions.find_one({"email": email_lower, "status": {"$in": ["CANCELED", "EXPIRED"]}}, {"_id": 0})
-    if lapsed_sub:
-        expires_at_raw = lapsed_sub.get("expiresAt")
-        if expires_at_raw:
-            try:
-                exp_dt = datetime.fromisoformat(str(expires_at_raw).replace(" ", "T"))
-                if exp_dt.tzinfo is None:
-                    exp_dt = exp_dt.replace(tzinfo=timezone.utc)
-                if datetime.now(timezone.utc) < exp_dt:
-                    return "Premium (Square)"
-            except Exception:
-                pass
     stripe_sub = await db.stripe_subscriptions.find_one({"email": email_lower, "status": {"$in": ["active", "trialing"]}}, {"_id": 0})
     if stripe_sub:
         return "Premium (Stripe)"
@@ -287,15 +272,15 @@ async def _check_stripe_live(email_lower: str):
         return None
 
 async def check_access(email_lower: str) -> str | None:
-    """Unified access check for both web and Apple IAP users.
+    """Unified access check for web and Apple IAP users.
 
     Used by community.py, picks.py, and other protected routes that need to
     verify a subscription regardless of whether the user paid via Stripe,
-    Square, Apple IAP, or has a manual grant.
+    Apple IAP, or has a manual grant.
     """
     if not email_lower:
         return None
-    # 1) Local grants (owner, lifetime, beta, manual, square, stripe local)
+    # 1) Local grants (owner, lifetime, beta, manual, stripe local)
     result = await _check_access_local(email_lower)
     if result:
         return result
@@ -316,9 +301,8 @@ async def check_web_access(email_lower: str):
         return result
     return await _check_stripe_live(email_lower)
 
-# ── Web endpoints (Stripe / Square / website login) ───────────────────────────
+# ── Web endpoints (Stripe / website login) ───────────────────────────
 @router.post("/verify-access")
-@router.post("/verify-whop")
 async def verify_access(req: VerifyAccessRequest):
     email_lower = req.email.lower().strip()
     access_type = await check_access(email_lower)
@@ -571,7 +555,7 @@ async def verify_session(req: VerifySessionRequest):
             return {"valid": False}
         return {"valid": True, "access_type": current}
 
-    # Web sessions (Stripe / Square / manual) — re-check web access
+    # Web sessions (Stripe / manual) — re-check web access
     current = await check_web_access(email_lower)
     if not current:
         await db.sessions.delete_one({"email": email_lower, "session_token": req.session_token})

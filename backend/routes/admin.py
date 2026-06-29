@@ -52,15 +52,9 @@ async def update_settings(req: AdminSettingsRequest):
     if req.key not in DYNAMIC_KEYS:
         raise HTTPException(status_code=400, detail=f"Unsupported setting: {req.key}")
     val = req.value.strip()
-    if req.key == "SQUARE_ENVIRONMENT":
-        if val not in ("sandbox", "production"):
-            raise HTTPException(status_code=400, detail="Must be 'sandbox' or 'production'.")
-    elif not val or len(val) < 5:
+    if not val or len(val) < 5:
         raise HTTPException(status_code=400, detail="Value too short.")
     await set_dynamic_setting(req.key, val)
-    # Clear cached Square plans when Square keys change so they get recreated
-    if req.key.startswith("SQUARE_"):
-        await db.square_plans.delete_many({})
     return {"success": True, "message": f"{req.key} updated. Changes are live immediately."}
 
 
@@ -91,15 +85,6 @@ async def test_api_key(req: AdminTestKeyRequest):
             return {"valid": False, "error": str(errors) if errors else "Unknown error"}
     except Exception as e:
         return {"valid": False, "error": str(e)}
-
-
-@router.get("/square-config")
-async def get_square_config():
-    """Public endpoint: returns Square App ID + Location ID for the payment form."""
-    return {
-        "appId": get_dynamic_setting("SQUARE_APPLICATION_ID"),
-        "locationId": get_dynamic_setting("SQUARE_LOCATION_ID"),
-    }
 
 
 @router.get("/calibration")

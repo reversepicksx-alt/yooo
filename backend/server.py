@@ -26,7 +26,6 @@ from routes.picks import router as picks_router
 from routes.chat import router as chat_router
 from routes.misc import router as misc_router
 from routes.tactical import router as tactical_router
-from routes.square import router as square_router
 from routes.stripe_pay import router as stripe_router
 from routes.admin import router as admin_router
 from routes.miss_analysis import router as miss_router
@@ -69,7 +68,6 @@ app.include_router(picks_router)
 app.include_router(chat_router)
 app.include_router(misc_router)
 app.include_router(tactical_router)
-app.include_router(square_router)
 app.include_router(stripe_router)
 app.include_router(admin_router)
 app.include_router(miss_router)
@@ -150,8 +148,6 @@ async def seed_grants():
     asyncio.create_task(build_teams_cache(force=False))
     # Start 24h auto-refresh loop for transfers + data freshness
     asyncio.create_task(background_refresh_loop())
-    asyncio.create_task(_auto_sync_square_payments())
-    asyncio.create_task(_auto_sync_whop_memberships())
     asyncio.create_task(_overdue_subscription_sweep())
     # Auto-backfill positions for picks missing them (runs once at startup)
     asyncio.create_task(_auto_backfill_positions())
@@ -479,313 +475,8 @@ Only the JSON array, no markdown."""
 
 
 
-async def _auto_sync_square_payments():
-    """On startup, sync Square subscriptions to local DB for webhook matching."""
-    import asyncio
-    await asyncio.sleep(5)
-    try:
-        from routes.square import get_square_client, PLANS
-        from datetime import timedelta, timezone, datetime
-        import os
-
-        # If Square billing is disabled, cancel all active Square subscriptions so Square
-        # stops independently retrying charges against customers.
-        disabled = (get_dynamic_setting("DISABLE_SQUARE_BILLING") or "").lower() in ("1", "true", "yes", "on")
-        if disabled:
-            print("[SQUARE SYNC] Square billing is DISABLED — canceling all active Square subscriptions to stop recurring charges")
-            try:
-                _client = get_square_client()
-                _loc = os.environ.get("SQUARE_LOCATION_ID")
-                if _client and _loc:
-                    _result = _client.subscriptions.search(
-                        query={"filter": {"location_ids": [_loc]}}
-                    )
-                    _all_subs = (_result.subscriptions or []) if _result else []
-                    _billable = [s for s in _all_subs if s.status in ("ACTIVE", "PENDING")]
-                    _canceled = 0
-                    for _sub in _billable:
-                        try:
-                            _client.subscriptions.cancel(subscription_id=_sub.id)
-                            _canceled += 1
-                            print(f"[SQUARE SYNC] Canceled {_sub.status} sub {_sub.id} (customer {_sub.customer_id})")
-                        except Exception as _ce:
-                            _cerr = str(_ce).lower()
-                            if "already" not in _cerr and "cancel" not in _cerr:
-                                print(f"[SQUARE SYNC] Could not cancel {_sub.id}: {_ce}")
-                    print(f"[SQUARE SYNC] Subscriptions — canceled {_canceled} of {len(_billable)} billable")
-                    # Also void outstanding invoices so Square stops retrying failed charges.
-                    # Only fetch first page (up to 200) to avoid hanging on large accounts.
-                    try:
-                        _inv_resp = _client.invoices.list(location_id=_loc)
-                        _first_page = next(iter(_inv_resp.pages()), None)
-                        _invoices = _first_page.items if _first_page else []
-                        _voided = 0
-                        for _inv in _invoices:
-                            _inv_status = getattr(_inv, "status", "")
-                            if _inv_status in ("UNPAID", "PARTIALLY_PAID", "SCHEDULED"):
-                                try:
-                                    _client.invoices.cancel(invoice_id=_inv.id, version=_inv.version or 0)
-                                    _voided += 1
-                                    print(f"[SQUARE SYNC] Voided invoice {_inv.id} ({_inv_status})")
-                                except Exception as _ie:
-                                    print(f"[SQUARE SYNC] Could not void invoice {_inv.id}: {_ie}")
-                        if _invoices:
-                            print(f"[SQUARE SYNC] Invoices — voided {_voided} of {len(_invoices)} checked")
-                        else:
-                            print("[SQUARE SYNC] Invoices — none found on first page")
-                    except Exception as _ie2:
-                        print(f"[SQUARE SYNC] Invoice check skipped: {_ie2}")
-            except Exception as _e:
-                print(f"[SQUARE SYNC] Error canceling active subs: {_e}")
-            return
-
-        client = get_square_client()
-        if not client:
-            print("[SQUARE SYNC] No Square client available, skipping")
-            return
-
-        location_id = os.environ.get("SQUARE_LOCATION_ID")
-        if not location_id:
-            print("[SQUARE SYNC] No SQUARE_LOCATION_ID, skipping")
-            return
-
-        # Fetch all subscriptions from Square
-        result = client.subscriptions.search(
-            query={"filter": {"location_ids": [location_id]}}
-        )
-        sq_subs = result.subscriptions or []
-        if not sq_subs:
-            print("[SQUARE SYNC] No subscriptions found in Square")
-            return
-
-        print(f"[SQUARE SYNC] Found {len(sq_subs)} subscriptions in Square")
-
-        # Sort: ACTIVE subscriptions first so they take priority over CANCELLED
-        sq_subs.sort(key=lambda s: 0 if s.status == "ACTIVE" else 1)
-
-        # Track which emails already have ACTIVE subs to prevent overwrite
-        active_emails = set()
-        # Detect duplicate ACTIVE subs per customer and cancel extras immediately
-        from collections import defaultdict as _dd
-        active_by_customer: dict = _dd(list)
-        for _s in sq_subs:
-            if _s.status == "ACTIVE":
-                active_by_customer[_s.customer_id].append(_s.id)
-        for _cust_id, _sub_ids in active_by_customer.items():
-            if len(_sub_ids) > 1:
-                try:
-                    _cust = client.customers.get(customer_id=_cust_id)
-                    _email = (_cust.customer.email_address or "").lower().strip()
-                except Exception:
-                    _email = _cust_id
-                # Keep first (oldest), cancel the rest
-                for _dup_id in _sub_ids[1:]:
-                    try:
-                        client.subscriptions.cancel(subscription_id=_dup_id)
-                        print(f"[SQUARE SYNC] Duplicate ACTIVE sub canceled for {_email}: {_dup_id}")
-                    except Exception as _ce:
-                        _cerr = str(_ce).lower()
-                        if "pending" not in _cerr and "already" not in _cerr:
-                            print(f"[SQUARE SYNC] Could not cancel duplicate {_dup_id} for {_email}: {_ce}")
-
-        synced = 0
-        for sub in sq_subs:
-            # Resolve customer email
-            email = ""
-            try:
-                cust = client.customers.get(customer_id=sub.customer_id)
-                email = (cust.customer.email_address or "").lower().strip()
-            except Exception:
-                continue
-
-            if not email:
-                continue
-
-            sq_status = sub.status  # ACTIVE, CANCELED, PAUSED, etc.
-
-            # Skip if we already synced a sub for this email (ACTIVE takes priority,
-            # duplicates of any status are skipped — first sub processed wins)
-            if email in active_emails:
-                continue
-
-            # Never override a manually-blocked user, even if Square shows ACTIVE
-            existing_rec = await db.square_subscriptions.find_one({"email": email}, {"_id": 0, "manuallyBlocked": 1})
-            if existing_rec and existing_rec.get("manuallyBlocked"):
-                print(f"[SQUARE SYNC] Skipping {email} — manually blocked")
-                active_emails.add(email)  # Prevent further processing
-                continue
-
-            our_status = "ACTIVE" if sq_status == "ACTIVE" else "EXPIRED"
-            start_date = str(sub.start_date)[:10] if sub.start_date else ""
-
-            # Determine plan from subscription variation_id
-            plan_key = "weekly"  # default
-            if sub.plan_variation_id:
-                # Match variation_id to our stored plans
-                plan_doc = await db.square_plans.find_one(
-                    {"variation_id": sub.plan_variation_id}, {"_id": 0, "key": 1}
-                )
-                if plan_doc and plan_doc.get("key"):
-                    plan_key = plan_doc["key"]
-                else:
-                    # Fallback: use existing DB value or infer from cadence
-                    existing = await db.square_subscriptions.find_one(
-                        {"email": email}, {"_id": 0, "planKey": 1}
-                    )
-                    if existing and existing.get("planKey"):
-                        plan_key = existing["planKey"]
-                    else:
-                        try:
-                            if sub.charged_through_date and sub.start_date:
-                                start = datetime.fromisoformat(str(sub.start_date))
-                                charged = datetime.fromisoformat(str(sub.charged_through_date))
-                                diff = (charged - start).days
-                                if diff <= 10:
-                                    plan_key = "weekly"
-                                elif diff <= 35:
-                                    plan_key = "monthly"
-                                else:
-                                    plan_key = "quarterly"
-                        except Exception:
-                            pass
-
-            plan_info = PLANS.get(plan_key, {})
-
-            # Calculate expiration
-            # CANCELED subs: expire on the cancel date (revoke access immediately, not at charged_through)
-            # ACTIVE subs: expire at charged_through_date (next billing date)
-            expires_at = ""
-            if sq_status == "CANCELED":
-                # Revoke access on cancel date — NEVER give future access for a canceled sub
-                from datetime import date as _date
-                today_str = _date.today().isoformat()
-                cancel_date = str(getattr(sub, 'canceled_date', '') or '').strip()[:10]
-                charged_str = str(sub.charged_through_date or '').strip()[:10] if sub.charged_through_date else ''
-
-                # Use the EARLIEST of: cancel_date, charged_through_date, today
-                candidates = [d for d in [cancel_date, charged_str, today_str] if d]
-                expires_day = min(candidates) if candidates else today_str
-                expires_at = expires_day + "T23:59:59+00:00"
-                print(f"[SQUARE SYNC] CANCELED sub {email}: access expires {expires_at} (cancel={cancel_date or 'N/A'}, charged={charged_str or 'N/A'})")
-            elif sub.charged_through_date:
-                expires_at = str(sub.charged_through_date) + "T23:59:59+00:00"
-            elif start_date:
-                cadence_days = {"weekly": 7, "monthly": 30, "quarterly": 90}
-                try:
-                    start_dt = datetime.fromisoformat(start_date)
-                    expires_at = (start_dt + timedelta(days=cadence_days.get(plan_key, 30))).isoformat()
-                except Exception:
-                    pass
-
-            now = datetime.now(timezone.utc).isoformat()
-
-            await db.square_subscriptions.update_one(
-                {"email": email},
-                {"$set": {
-                    "email": email,
-                    "squareSubscriptionId": sub.id,
-                    "squareCustomerId": sub.customer_id,
-                    "planKey": plan_key,
-                    "planName": plan_info.get("name", plan_key),
-                    "status": our_status,
-                    "subscribedAt": start_date,
-                    "expiresAt": expires_at,
-                    "updatedAt": now,
-                    "source": "square_sync",
-                }},
-                upsert=True,
-            )
-            if sq_status == "ACTIVE":
-                active_emails.add(email)
-            synced += 1
-
-        print(f"[SQUARE SYNC] Synced {synced} subscriptions (IDs stored for webhook matching)")
-
-    except Exception as e:
-        print(f"[SQUARE SYNC] Error: {e}")
-
-
-async def _auto_sync_whop_memberships():
-    """
-    Honour existing Whop subscribers until their plan expires — no new Whop members added.
-
-    NEW-SIGNUP FREEZE: upsert=False means we ONLY update records already in our DB.
-    Any email not already present is ignored, so new Whop signups never gain access.
-    Members who cancel/expire on Whop get marked 'expired' here automatically.
-    All new subscribers must go through Stripe.
-    """
-    import asyncio, httpx, os
-    await asyncio.sleep(8)
-    try:
-        api_key = os.environ.get("WHOP_API_KEY", "")
-        if not api_key:
-            print("[WHOP SYNC] No WHOP_API_KEY, skipping")
-            return
-
-        from datetime import datetime, timezone
-        still_active_emails: set = set()
-        page = 1
-
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            while page <= 20:
-                resp = await client.get(
-                    "https://api.whop.com/api/v2/memberships",
-                    params={"valid": "true", "per_page": 50, "page": page},
-                    headers={"Authorization": f"Bearer {api_key}"},
-                )
-                if resp.status_code != 200:
-                    print(f"[WHOP SYNC] API error {resp.status_code}: {resp.text[:100]}")
-                    break
-
-                data = resp.json()
-                memberships = data.get("data", [])
-                if not memberships:
-                    break
-
-                for m in memberships:
-                    email = (m.get("email") or "").lower().strip()
-                    if not email:
-                        continue
-                    is_active = m.get("valid") or m.get("status") == "active"
-                    if not is_active:
-                        continue
-                    still_active_emails.add(email)
-                    # upsert=False: only update EXISTING records — never create new Whop members
-                    await db.whop_subscriptions.update_one(
-                        {"email": email},
-                        {"$set": {
-                            "status": "active",
-                            "whop_id": m.get("id"),
-                            "plan": m.get("plan"),
-                            "updatedAt": datetime.now(timezone.utc).isoformat(),
-                        }},
-                        upsert=False,
-                    )
-
-                pagination = data.get("pagination", {})
-                if page >= pagination.get("total_page", 1):
-                    break
-                page += 1
-
-        # Expire any existing Whop records whose plans have since cancelled/lapsed on Whop
-        if still_active_emails:
-            expired = await db.whop_subscriptions.update_many(
-                {"email": {"$nin": list(still_active_emails)}, "status": "active"},
-                {"$set": {"status": "expired", "updatedAt": datetime.now(timezone.utc).isoformat()}},
-            )
-            if expired.modified_count:
-                print(f"[WHOP SYNC] Expired {expired.modified_count} lapsed Whop sub(s)")
-
-        print(f"[WHOP SYNC] Honoured {len(still_active_emails)} existing Whop subs. New signups frozen — Stripe only.")
-
-    except Exception as e:
-        print(f"[WHOP SYNC] Error: {e}")
-
-
 async def _overdue_subscription_sweep():
-    """Periodically expire Square subscribers whose paid period has ended.
-    When Square billing is disabled, uses local DB expiresAt only (no Square API calls).
-    When enabled, also checks Square directly for overdue charged_through dates."""
+    """Periodically expire Stripe subscribers whose paid period has ended."""
     import asyncio
     await asyncio.sleep(15)
     while True:
@@ -796,106 +487,36 @@ async def _overdue_subscription_sweep():
             now_iso = now.isoformat()
             canceled_count = 0
 
-            billing_disabled = (get_dynamic_setting("DISABLE_SQUARE_BILLING") or "").lower() in ("1", "true", "yes", "on")
+            # Expire anyone whose currentPeriodEnd has passed
+            active_subs = await db.stripe_subscriptions.find(
+                {"status": {"$in": ["active", "trialing", "canceled"]}},
+                {"_id": 0, "email": 1, "currentPeriodEnd": 1}
+            ).to_list(200)
 
-            if billing_disabled:
-                # ── DB-only sweep: expire anyone whose accessHonoredThrough has passed ──
-                # Includes CANCELED subs — they must not get perpetual free access
-                active_subs = await db.square_subscriptions.find(
-                    {"status": {"$in": ["ACTIVE", "PENDING", "CANCELED"]}}, {"_id": 0, "email": 1, "expiresAt": 1, "accessHonoredThrough": 1}
-                ).to_list(200)
-
-                for sub in active_subs:
-                    email = sub.get("email", "")
-                    # Use accessHonoredThrough if set, else expiresAt
-                    through_raw = sub.get("accessHonoredThrough") or sub.get("expiresAt", "")
-                    if not through_raw:
-                        continue
-                    try:
-                        through_date = date_type.fromisoformat(str(through_raw)[:10])
-                    except Exception:
-                        continue
-                    if through_date > date_type.today():
-                        continue  # Still has valid time
-
-                    days_overdue = (date_type.today() - through_date).days
-                    print(f"[OVERDUE SWEEP] {email}: honored period ended {through_date} ({days_overdue}d ago) — expiring")
-                    await db.square_subscriptions.update_one(
-                        {"email": email},
-                        {"$set": {
-                            "status": "EXPIRED",
-                            "expiredReason": "honored_period_ended",
-                            "updatedAt": now_iso,
-                        }}
-                    )
-                    await db.sessions.delete_many({"email": email})
-                    canceled_count += 1
-
-            else:
-                # ── Square API sweep (original behaviour when billing is active) ──
-                import os
-                from routes.square import get_square_client
-
-                client = get_square_client()
-                location_id = os.environ.get("SQUARE_LOCATION_ID")
-                if not client or not location_id:
-                    await asyncio.sleep(3600)
+            for sub in active_subs:
+                email = sub.get("email", "")
+                cpe_raw = sub.get("currentPeriodEnd", "")
+                if not cpe_raw:
+                    continue
+                try:
+                    cpe_date = date_type.fromisoformat(str(cpe_raw)[:10])
+                except Exception:
+                    continue
+                if cpe_date > date_type.today():
                     continue
 
-                result = client.subscriptions.search(
-                    query={"filter": {"location_ids": [location_id]}}
+                days_overdue = (date_type.today() - cpe_date).days
+                print(f"[OVERDUE SWEEP] {email}: Stripe period ended {cpe_date} ({days_overdue}d ago) — expiring")
+                await db.stripe_subscriptions.update_one(
+                    {"email": email},
+                    {"$set": {
+                        "status": "expired",
+                        "expiredReason": "period_ended",
+                        "updatedAt": now_iso,
+                    }}
                 )
-                sq_subs = result.subscriptions or []
-
-                today = date_type.today()
-
-                for sub in sq_subs:
-                    if sub.status not in ("ACTIVE", "PENDING"):
-                        continue
-
-                    charged_through = getattr(sub, 'charged_through_date', None)
-                    if not charged_through:
-                        continue
-
-                    try:
-                        ct_date = date_type.fromisoformat(str(charged_through)[:10])
-                    except Exception:
-                        continue
-
-                    if ct_date > today:
-                        continue
-
-                    email = ""
-                    try:
-                        cust = client.customers.get(customer_id=sub.customer_id)
-                        email = (cust.customer.email_address or "").lower().strip()
-                    except Exception:
-                        pass
-
-                    days_overdue = (today - ct_date).days
-                    print(f"[OVERDUE SWEEP] {email or sub.id}: overdue by {days_overdue} day(s), charged_through={ct_date}")
-
-                    try:
-                        client.subscriptions.cancel(subscription_id=sub.id)
-                        print(f"[OVERDUE SWEEP] Auto-canceled {email or sub.id}")
-                    except Exception as ce:
-                        err_msg = str(ce).lower()
-                        if "pending cancel" not in err_msg and "already" not in err_msg:
-                            print(f"[OVERDUE SWEEP] Cancel failed for {email or sub.id}: {ce}")
-                            continue
-
-                    if email:
-                        await db.square_subscriptions.update_one(
-                            {"email": email},
-                            {"$set": {
-                                "status": "EXPIRED",
-                                "expiredReason": "payment_overdue",
-                                "updatedAt": now_iso,
-                            }}
-                        )
-                        await db.sessions.delete_many({"email": email})
-
-                    canceled_count += 1
+                await db.sessions.delete_many({"email": email})
+                canceled_count += 1
 
             if canceled_count > 0:
                 print(f"[OVERDUE SWEEP] Expired {canceled_count} subscription(s)")
