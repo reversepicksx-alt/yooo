@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Zap, Loader2, Lock, Mail, ShieldAlert, CreditCard, Check, ArrowLeft, User } from 'lucide-react';
-import { verifyWhop, authLogin, setPassword as apiSetPassword, resetPassword, squareCreateCheckout, squareVerifyCheckout, squareVerifyPayment, getSquarePlans, getSquareConfig } from '../../api';
+import { verifyAccess, authLogin, setPassword as apiSetPassword, resetPassword, stripeCreateCheckout, stripeVerifyPayment, getStripePlans } from '../../api';
 
 export function LoginPage({ onAuth }) {
   const [step, setStep] = useState('email');
@@ -11,7 +11,7 @@ export function LoginPage({ onAuth }) {
   const [error, setError] = useState(null);
   const [accessType, setAccessType] = useState(null);
 
-  // Square subscribe state
+  // Stripe subscribe state
   const [showSubscribe, setShowSubscribe] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState(null);
   const [subEmail, setSubEmail] = useState('');
@@ -34,7 +34,7 @@ export function LoginPage({ onAuth }) {
 
   useEffect(() => {
     if (showSubscribe && plans.length === 0) {
-      getSquarePlans().then(res => setPlans(res.plans || [])).catch(err => console.error('[PLANS] Load error:', err));
+      getStripePlans().then(res => setPlans(res.plans || [])).catch(err => console.error('[PLANS] Load error:', err));
     }
   }, [showSubscribe]); // eslint-disable-line
 
@@ -44,7 +44,7 @@ export function LoginPage({ onAuth }) {
     setLoading(true);
     setError(null);
     try {
-      const res = await verifyWhop(email);
+      const res = await verifyAccess(email);
       if (res.verified) {
         localStorage.setItem('rp_email', res.email);
         localStorage.setItem('rp_token', res.session_token);
@@ -135,7 +135,7 @@ export function LoginPage({ onAuth }) {
     setPassword('');
     setConfirmPassword('');
     try {
-      const res = await verifyWhop(email);
+      const res = await verifyAccess(email);
       if (res.verified) {
         localStorage.setItem('rp_email', res.email);
         localStorage.setItem('rp_token', res.session_token);
@@ -154,7 +154,7 @@ export function LoginPage({ onAuth }) {
     }
   };
 
-  // Square checkout redirect flow
+  // Stripe checkout redirect flow
   const handleCheckoutRedirect = async () => {
     if (subPassword.length < 6) { setSubError('Password must be at least 6 characters.'); return; }
     if (subPassword !== subConfirmPw) { setSubError('Passwords do not match.'); return; }
@@ -162,7 +162,7 @@ export function LoginPage({ onAuth }) {
     setSubLoading(true);
     setSubError(null);
     try {
-      const res = await squareCreateCheckout({
+      const res = await stripeCreateCheckout({
         email: subEmail,
         firstName: subFirstName,
         lastName: subLastName,
@@ -171,7 +171,7 @@ export function LoginPage({ onAuth }) {
         redirectUrl: window.location.origin,
       });
       if (res.checkoutUrl) {
-        // Redirect to Square's hosted checkout page
+        // Redirect to Stripe's hosted checkout page
         window.location.href = res.checkoutUrl;
       } else {
         setSubError('Failed to create checkout link.');
@@ -183,7 +183,7 @@ export function LoginPage({ onAuth }) {
     }
   };
 
-  // Handle return from Square checkout
+  // Handle return from Stripe checkout
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const checkoutToken = params.get('checkout_token');
@@ -192,7 +192,7 @@ export function LoginPage({ onAuth }) {
       window.history.replaceState({}, '', window.location.pathname);
       // Verify checkout and activate account
       setSubLoading(true);
-      squareVerifyCheckout(checkoutToken)
+      stripeVerifyPayment(verifyEmail, verifyPassword)
         .then(res => {
           if (res.success) {
             localStorage.setItem('rp_email', res.email);
@@ -218,7 +218,7 @@ export function LoginPage({ onAuth }) {
     setVerifyError(null);
     setVerifySuccess(null);
     try {
-      const res = await squareVerifyPayment(verifyEmail, verifyPassword);
+      const res = await stripeVerifyPayment(verifyEmail, verifyPassword);
       if (res.success && res.session_token) {
         setVerifySuccess(res.message || 'Payment verified! Logging you in...');
         localStorage.setItem('rp_email', res.email);
@@ -274,7 +274,7 @@ export function LoginPage({ onAuth }) {
           </div>
           <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.15em', textTransform: 'uppercase', color: 'var(--accent)', textAlign: 'center', marginBottom: 8 }}>Verify Your Payment</p>
           <p style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', marginBottom: 16 }}>
-            Already paid but can't access? Enter your email below and we'll verify your payment with Square.
+            Already paid but can't access? Enter your email below and we'll verify your payment with Stripe.
           </p>
           <form onSubmit={handleVerifyPayment} className="login-form">
             <div className="login-field">
@@ -295,7 +295,7 @@ export function LoginPage({ onAuth }) {
             </div>
             <button className="btn-primary" type="submit" disabled={verifyLoading || !verifyEmail.trim() || verifyPassword.length < 6} data-testid="verify-payment-btn">
               {verifyLoading ? <Loader2 className="animate-spin" /> : <Check style={{ width: 16, height: 16 }} />}
-              {verifyLoading ? 'Checking Square...' : 'Verify My Payment'}
+              {verifyLoading ? 'Checking Stripe...' : 'Verify My Payment'}
             </button>
             <button type="button" className="btn-secondary" onClick={() => { setShowVerifyPayment(false); setVerifyError(null); setVerifySuccess(null); setVerifyPassword(''); }}>
               <ArrowLeft style={{ width: 14, height: 14 }} /> Back
@@ -423,9 +423,9 @@ export function LoginPage({ onAuth }) {
                 <div className="badge neon" style={{ marginBottom: 8 }}>
                   {selectedPlan === 'weekly' ? '$11/week' : selectedPlan === 'monthly' ? '$39.99/month' : '$99.99/3 months'}
                 </div>
-                <p style={{ fontSize: 11, color: 'var(--text-muted)' }}>You'll be redirected to Square's secure checkout</p>
+                <p style={{ fontSize: 11, color: 'var(--text-muted)' }}>You'll be redirected to Stripe's secure checkout</p>
               </div>
-              <div data-testid="square-checkout-info" style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 12, padding: '20px 16px', border: '1px solid rgba(255,255,255,0.06)', textAlign: 'center' }}>
+              <div data-testid="stripe-checkout-info" style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 12, padding: '20px 16px', border: '1px solid rgba(255,255,255,0.06)', textAlign: 'center' }}>
                 <div style={{ display: 'flex', justifyContent: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>
                     <CreditCard style={{ width: 14, height: 14 }} /> Card
@@ -438,7 +438,7 @@ export function LoginPage({ onAuth }) {
                   </div>
                 </div>
                 <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', marginBottom: 16 }}>
-                  Secure payment powered by Square. All major cards, Apple Pay & Google Pay accepted.
+                  Secure payment powered by Stripe. All major cards, Apple Pay & Google Pay accepted.
                 </p>
                 <button
                   data-testid="sub-checkout-btn"
@@ -458,7 +458,7 @@ export function LoginPage({ onAuth }) {
                     transition: 'opacity 0.2s',
                   }}
                 >
-                  {subLoading ? 'Redirecting...' : 'Pay Securely with Square'}
+                  {subLoading ? 'Redirecting...' : 'Pay Securely with Stripe'}
                 </button>
               </div>
               <button className="btn-secondary" onClick={() => setSubStep('details')} style={{ marginTop: 12, width: '100%' }}>

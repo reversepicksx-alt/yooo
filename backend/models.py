@@ -62,9 +62,11 @@ class Cs2PredictRequest(BaseModel):
     line: float = 0
     opponentName: str = ""
     opponentId: Optional[int] = None
+    opponentRank: Optional[int] = None
     matchId: Optional[int] = None
     matchDate: str = ""
     maps: Optional[int] = None
+    mapName: Optional[str] = None
     tournament: Optional[str] = None
     playerTeamRank: Optional[int] = None
     playerTeamStartsCt: Optional[bool] = None

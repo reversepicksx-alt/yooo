@@ -18,7 +18,7 @@ async function apiCall(endpoint, options = {}) {
 }
 
 // Auth APIs
-export async function verifyWhop(email) {
+export async function verifyAccess(email) {
   return apiCall('/api/auth/verify-access', { method: 'POST', body: JSON.stringify({ email }) });
 }
 
@@ -234,7 +234,7 @@ export const SUPPORTED_LEAGUES = [
 
 
 
-// Square Subscription APIs
+// Stripe Subscription APIs
 
 // Manual Search APIs
 export async function getManualLeagues() {
@@ -263,73 +263,44 @@ export async function backfillPositions(email, token) {
   return apiCall(`/api/intel/backfill-positions?email=${encodeURIComponent(email)}&token=${encodeURIComponent(token)}`, { method: 'POST' });
 }
 
-export async function getSquarePlans() {
-  return apiCall('/api/square/plans');
+export async function getStripePlans() {
+  return apiCall('/api/stripe/plans');
 }
 
-export async function squareSubscribe(data) {
-  return apiCall('/api/square/subscribe', {
+export async function stripeCreateCheckout(data) {
+  return apiCall('/api/stripe/create-checkout', {
     method: 'POST',
     body: JSON.stringify(data),
   });
 }
 
-export async function squareCreateCheckout(data) {
-  return apiCall('/api/square/create-checkout', {
-    method: 'POST',
-    body: JSON.stringify(data),
-  });
-}
-
-export async function squareVerifyCheckout(checkoutToken) {
-  return apiCall('/api/square/verify-checkout', {
-    method: 'POST',
-    body: JSON.stringify({ checkoutToken }),
-  });
-}
-
-export async function squareVerifyPayment(email, password) {
-  return apiCall('/api/square/verify-payment', {
-    method: 'POST',
-    body: JSON.stringify({ email, password }),
-  });
-}
-
-export async function squareAdminBulkVerify(email) {
-  return apiCall('/api/square/admin/bulk-verify', {
+export async function stripeVerifyPayment(email) {
+  return apiCall('/api/stripe/verify-payment', {
     method: 'POST',
     body: JSON.stringify({ email }),
   });
 }
 
-export async function squareAdminActivate(adminEmail, customerEmail, planKey) {
-  return apiCall('/api/square/admin/activate', {
-    method: 'POST',
-    body: JSON.stringify({ admin_email: adminEmail, customer_email: customerEmail, plan_key: planKey }),
-  });
+export async function getStripeSubscriptionStatus(email) {
+  return apiCall(`/api/stripe/status/${encodeURIComponent(email)}`);
 }
 
-export async function getSquareSubscriptionStatus(email) {
-  return apiCall(`/api/square/status/${encodeURIComponent(email)}`);
-}
-
-export async function cancelSquareSubscription(email) {
-  return apiCall('/api/square/cancel', {
+export async function cancelStripeSubscription(email) {
+  return apiCall('/api/stripe/cancel', {
     method: 'POST',
     body: JSON.stringify({ email }),
   });
 }
 
-export async function squareResubscribeCheckout(email, planKey, redirectUrl) {
-  return apiCall('/api/square/resubscribe-checkout', {
+export async function stripeResubscribeCheckout(email, planKey, redirectUrl) {
+  return apiCall('/api/stripe/resubscribe-checkout', {
     method: 'POST',
     body: JSON.stringify({ email, planKey, redirectUrl }),
   });
 }
 
-
-export async function changeSquarePlan(email, newPlanKey) {
-  return apiCall('/api/square/change-plan', {
+export async function changeStripePlan(email, newPlanKey) {
+  return apiCall('/api/stripe/change-plan', {
     method: 'POST',
     body: JSON.stringify({ email, new_plan_key: newPlanKey }),
   });
@@ -357,6 +328,6 @@ export async function testApiKey(email, token, api_key) {
   });
 }
 
-export async function getSquareConfig() {
-  return apiCall('/api/admin/square-config');
+export async function getStripeConfig() {
+  return apiCall('/api/admin/stripe-config');
 }

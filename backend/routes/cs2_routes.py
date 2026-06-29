@@ -284,8 +284,11 @@ async def get_rankings():
 
 @router.post("/predict")
 async def cs2_predict(req: Cs2PredictRequest):
-    from routes.auth import check_access
-    access = await check_access(req.email.lower().strip())
+    from routes.auth import verify_session
+    sess = await verify_session(req)
+    if not sess.get("valid"):
+        raise HTTPException(status_code=401, detail="Invalid or expired session. Please sign in again.")
+    access = sess.get("access_type", "")
     if not access or access == "NoSubscription":
         raise HTTPException(status_code=403, detail="Active subscription required")
     prop_type = req.propType.lower().strip()

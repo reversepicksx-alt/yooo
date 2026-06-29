@@ -3,6 +3,7 @@ import uuid
 import random
 import string
 from datetime import datetime, timezone, timedelta
+from typing import Union
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -528,14 +529,24 @@ async def owner_login(req: OwnerLoginRequest):
     }
 
 
-@router.post("/verify-session")
-async def verify_session(req: VerifySessionRequest):
-    email_lower = req.email.lower().strip()
+async def verify_session(req_or_email_token: Union[VerifySessionRequest, dict]) -> dict:
+    """Unified session verification: accepts VerifySessionRequest (session_token)
+    or a plain dict with {email, token}. Returns {valid, access_type?}."""
+    if isinstance(req_or_email_token, VerifySessionRequest):
+        email_lower = req_or_email_token.email.lower().strip()
+        token = req_or_email_token.session_token
+    elif hasattr(req_or_email_token, "email"):
+        email_lower = req_or_email_token.email.lower().strip()
+        token = getattr(req_or_email_token, "token", None) or getattr(req_or_email_token, "session_token", "")
+    else:
+        email_lower = req_or_email_token["email"].lower().strip()
+        token = req_or_email_token.get("token") or req_or_email_token.get("session_token", "")
+
     # Reviewer demo account — bypass MongoDB entirely
-    if email_lower == _REVIEWER_EMAIL and req.session_token == _REVIEWER_TOKEN:
+    if email_lower == _REVIEWER_EMAIL and token == _REVIEWER_TOKEN:
         return {"valid": True, "access_type": "Owner"}
     session = await db.sessions.find_one(
-        {"email": email_lower, "session_token": req.session_token}, {"_id": 0}
+        {"email": email_lower, "session_token": token}, {"_id": 0}
     )
     if not session:
         return {"valid": False}
@@ -552,16 +563,21 @@ async def verify_session(req: VerifySessionRequest):
         if not current:
             if access_type == "NoSubscription":
                 return {"valid": True, "access_type": "NoSubscription"}
-            await db.sessions.delete_one({"email": email_lower, "session_token": req.session_token})
+            await db.sessions.delete_one({"email": email_lower, "session_token": token})
             return {"valid": False}
         return {"valid": True, "access_type": current}
 
     # Web sessions (Stripe / manual) — re-check web access
     current = await check_web_access(email_lower)
     if not current:
-        await db.sessions.delete_one({"email": email_lower, "session_token": req.session_token})
+        await db.sessions.delete_one({"email": email_lower, "session_token": token})
         return {"valid": False}
     return {"valid": True, "access_type": current}
+
+
+@router.post("/verify-session")
+async def verify_session_endpoint(req: VerifySessionRequest):
+    return await verify_session(req)
 
 
 @router.post("/logout")

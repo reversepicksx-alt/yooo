@@ -3,7 +3,7 @@ import { User, Shield, BarChart3, Mail, Lock, Loader2, Zap, Activity,
   LogOut, Settings, Edit3, Eye, EyeOff, Check, X,
   CreditCard, ArrowRightLeft, Calendar, AlertCircle, TrendingUp, TrendingDown
 } from 'lucide-react';
-import { getSquareSubscriptionStatus, changeSquarePlan, cancelSquareSubscription, squareResubscribeCheckout, getCalibrationStats } from '../../api';
+import { getStripeSubscriptionStatus, changeStripePlan, cancelStripeSubscription, stripeResubscribeCheckout, getCalibrationStats } from '../../api';
 import { toast } from 'sonner';
 
 const PLAN_OPTIONS = [
@@ -28,7 +28,7 @@ function SubscriptionManager({ email }) {
   async function fetchStatus() {
     setLoading(true);
     try {
-      const data = await getSquareSubscriptionStatus(email);
+      const data = await getStripeSubscriptionStatus(email);
       setSubStatus(data);
     } catch {
       setSubStatus(null);
@@ -42,16 +42,16 @@ function SubscriptionManager({ email }) {
     setChangingPlan(true);
     try {
       if (isCanceled) {
-        // Resubscribe: redirect to Square checkout for new payment
+        // Resubscribe: redirect to Stripe checkout for new payment
         const redirectUrl = window.location.origin;
-        const result = await squareResubscribeCheckout(email, newKey, redirectUrl);
+        const result = await stripeResubscribeCheckout(email, newKey, redirectUrl);
         if (result.checkoutUrl) {
           window.location.href = result.checkoutUrl;
           return; // Redirecting — don't reset state
         }
         toast.error('Failed to create checkout link.');
       } else {
-        const result = await changeSquarePlan(email, newKey);
+        const result = await changeStripePlan(email, newKey);
         toast.success(result.message || `Switched to ${result.new_plan}`);
         setShowPlans(false);
         await fetchStatus();
@@ -67,7 +67,7 @@ function SubscriptionManager({ email }) {
     if (canceling) return;
     setCanceling(true);
     try {
-      await cancelSquareSubscription(email);
+      await cancelStripeSubscription(email);
       toast.success('Subscription canceled successfully');
       setShowCancelConfirm(false);
       await fetchStatus();
@@ -629,15 +629,14 @@ export function ProfileTab({
           <div className="space-y-3">
             {[
               { key: 'API_FOOTBALL_KEY', label: 'API-Sports Key', testable: true },
-              { key: 'SQUARE_ACCESS_TOKEN', label: 'Square Access Token' },
-              { key: 'SQUARE_APPLICATION_ID', label: 'Square App ID' },
-              { key: 'SQUARE_LOCATION_ID', label: 'Square Location ID' },
-              { key: 'SQUARE_ENVIRONMENT', label: 'Square Environment' },
+              { key: 'STRIPE_SECRET_KEY', label: 'Stripe Secret Key' },
+              { key: 'STRIPE_PUBLISHABLE_KEY', label: 'Stripe Publishable Key' },
+              { key: 'STRIPE_WEBHOOK_SECRET', label: 'Stripe Webhook Secret' },
             ].map(({ key, label, testable }) => (
               <div key={key}>
                 <div className="profile-field" style={{ cursor: 'pointer' }}
                   onClick={() => { if (adminEditKey !== key) { setAdminEditKey(key); setAdminEditValue(''); setAdminTestResult(null); } }}>
-                  <div className="profile-field-icon"><Shield style={{ width: 16, height: 16, color: key.startsWith('SQUARE') ? '#818cf8' : '#f59e0b' }} /></div>
+                  <div className="profile-field-icon"><Shield style={{ width: 16, height: 16, color: key.startsWith('STRIPE') ? '#818cf8' : '#f59e0b' }} /></div>
                   <div className="profile-field-content">
                     <div className="profile-field-label">{label}</div>
                     <div className="profile-field-value" style={{ fontFamily: 'monospace', fontSize: 11 }} data-testid={`admin-val-${key}`}>
@@ -653,7 +652,7 @@ export function ProfileTab({
                         type={adminShowKey ? 'text' : 'password'}
                         value={adminEditValue}
                         onChange={e => { setAdminEditValue(e.target.value); setAdminTestResult(null); }}
-                        placeholder={key === 'SQUARE_ENVIRONMENT' ? 'sandbox or production' : `Paste new ${label}`}
+                        placeholder={`Paste new ${label}`}
                         data-testid={`admin-input-${key}`}
                         autoFocus
                         style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: 'var(--text-primary)', fontSize: 13, fontFamily: 'monospace' }}

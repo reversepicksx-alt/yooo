@@ -9,7 +9,7 @@ import {
   getTeamsByLeague, searchPlayers, predict, predictCombo, startChat, sendChatMessage,
   startTactical, sendTacticalMessage,
   checkApiStatus, SUPPORTED_LEAGUES,
-  verifyWhop, authLogin, setPassword as apiSetPassword, resetPassword, verifySession, authLogout,
+  verifyAccess, authLogin, setPassword as apiSetPassword, resetPassword, verifySession, authLogout,
   getPickOfTheDay, savePick, listPicks, deletePick, correctPick, liveUpdatePicks,
   scanProp, reResolvePick, analyzeMiss, getMisses,
   getAdminSettings, updateAdminSetting, testApiKey
