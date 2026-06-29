@@ -165,7 +165,9 @@ export default function AuthScreen() {
           session_token: result.session_token,
           access_type: result.access_type,
         });
-        router.replace('/paywall');
+        // Web is Stripe-only — send non-subscribers to the account tab (Stripe),
+        // never the iOS App Store paywall.
+        router.replace('/(tabs)/account');
       } else {
         // Has active subscription
         await loginWithResponse({

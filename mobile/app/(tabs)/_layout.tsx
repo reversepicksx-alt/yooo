@@ -20,7 +20,9 @@ export default function TabLayout() {
     if (!isLoading && !session) {
       router.replace('/auth');
     }
-    if (!isLoading && session && session.accessType === 'NoSubscription') {
+    // Hard paywall is native-only (iOS App Store / RevenueCat). The website is
+    // Stripe-only and must not be bounced to the in-app App Store paywall.
+    if (!isLoading && session && session.accessType === 'NoSubscription' && Platform.OS !== 'web') {
       router.replace('/paywall');
     }
   }, [session, isLoading]);

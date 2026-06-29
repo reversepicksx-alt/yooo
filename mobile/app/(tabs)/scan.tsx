@@ -86,7 +86,9 @@ type Sport = 'soccer' | 'cs2' | 'wta';
 export default function ScanScreen() {
   const insets = useSafeAreaInsets();
   const { session, logout, accessType } = useAuth();
-  const isNoSub = !accessType || accessType === 'NoSubscription';
+  // Hard paywall gating is native-only (iOS App Store / RevenueCat). The website is
+  // Stripe-only and must never show the in-app App Store paywall.
+  const isNoSub = Platform.OS !== 'web' && (!accessType || accessType === 'NoSubscription');
   const qc = useQueryClient();
   const [mode, setMode] = useState<Mode>('scan');
   const [phase, setPhase] = useState<Phase>('idle');
