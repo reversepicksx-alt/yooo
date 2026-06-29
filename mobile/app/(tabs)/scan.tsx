@@ -797,7 +797,6 @@ export default function ScanScreen() {
                 </TouchableOpacity>
               </>
             )}
-        </>
 
         {/* ─── MANUAL FORM — Soccer ─── */}
         {sport === 'soccer' && phase !== 'result' && phase !== 'saved' && (
