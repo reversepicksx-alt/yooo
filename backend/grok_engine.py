@@ -1738,37 +1738,46 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
 
     opponent_id = pick.get("opponentId", 0)
 
-    # Find matching finished fixture — prefer opponentId match, fall back to name match
+    # PERMANENT FIX: if we stored the exact fixtureId on the pick, match by
+    # ID directly.  This skips all fuzzy opponent-name matching and is the
+    # single source of truth for which match the pick belongs to.
+    _stored_fid = pick.get("fixtureId")
     matched = None
-    for f in fixtures:
-        status = f.get("fixture", {}).get("status", {}).get("short", "")
-        if status not in ("FT", "AET", "PEN"):
-            continue
-        # Timestamp guard: for finished fixtures, ensure the match ENDED after
-        # the pick was saved.  Without this, a Germany pick saved at 14:00 can
-        # match a completely different Germany match that finished at 13:30
-        # (kicked off 12:00, within the old 3h "after kickoff" window).
-        # The correct rule: finished games must end after pick creation.
-        fix_date = f.get("fixture", {}).get("date", "")
-        if fix_date and pick_created_at:
-            try:
-                fix_dt = datetime.fromisoformat(fix_date.replace("Z", "+00:00"))
-                # Rough match end = kickoff + 2 hours (covers FT, AET, penalties)
-                fix_end = fix_dt + timedelta(hours=2)
-                if fix_end < pick_created_at:
-                    continue  # Match was over before pick was saved — skip
-            except Exception:
-                pass
+    if _stored_fid:
+        for f in fixtures:
+            if f.get("fixture", {}).get("id") == _stored_fid:
+                matched = f
+                print(f"[AUTO-SETTLE] {pick.get('playerName','')} matched by stored fixtureId={_stored_fid}")
+                break
+        if not matched:
+            # Stored fixtureId not in the fetched batch (e.g. different season
+            # window) — fall through to fuzzy matching as safety net.
+            pass
 
-        home_id = f.get("teams", {}).get("home", {}).get("id", 0)
-        away_id = f.get("teams", {}).get("away", {}).get("id", 0)
-        home_name = f.get("teams", {}).get("home", {}).get("name", "")
-        away_name = f.get("teams", {}).get("away", {}).get("name", "")
+    if not matched:
+        for f in fixtures:
+            status = f.get("fixture", {}).get("status", {}).get("short", "")
+            if status not in ("FT", "AET", "PEN"):
+                continue
+            # Timestamp guard: for finished fixtures, ensure the match ENDED after
+            # the pick was saved.
+            fix_date = f.get("fixture", {}).get("date", "")
+            if fix_date and pick_created_at:
+                try:
+                    fix_dt = datetime.fromisoformat(fix_date.replace("Z", "+00:00"))
+                    fix_end = fix_dt + timedelta(hours=2)
+                    if fix_end < pick_created_at:
+                        continue
+                except Exception:
+                    pass
 
-        # Primary: match by opponentId (most reliable — immune to name abbreviations)
-        if opponent_id and (home_id == opponent_id or away_id == opponent_id):
-            matched = f
-            break
+            home_id = f.get("teams", {}).get("home", {}).get("id", 0)
+            away_id = f.get("teams", {}).get("away", {}).get("id", 0)
+
+            # Primary: match by opponentId (most reliable)
+            if opponent_id and (home_id == opponent_id or away_id == opponent_id):
+                matched = f
+                break
 
         # Fallback: fuzzy name match (handles partial names like "Sporting KC" vs "Sporting Kansas City")
         if opponent:

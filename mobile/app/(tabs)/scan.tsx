@@ -86,9 +86,8 @@ type Sport = 'soccer' | 'cs2' | 'wta';
 export default function ScanScreen() {
   const insets = useSafeAreaInsets();
   const { session, logout, accessType } = useAuth();
-  // Hard paywall gating is native-only (iOS App Store / RevenueCat). The website is
-  // Stripe-only and must never show the in-app App Store paywall.
-  const isNoSub = Platform.OS !== 'web' && (!accessType || accessType === 'NoSubscription');
+  // Paywall gating — all platforms (web Stripe + native RevenueCat) enforce subscription
+  const isNoSub = !accessType || accessType === 'NoSubscription';
   const qc = useQueryClient();
   const [mode, setMode] = useState<Mode>('scan');
   const [phase, setPhase] = useState<Phase>('idle');
@@ -582,6 +581,10 @@ export default function ScanScreen() {
         moneyline: prediction.moneyline || undefined,
         projHomePoss: sport === 'soccer' && Number.isFinite(projHomePoss) ? projHomePoss : undefined,
         projAwayPoss: Number.isFinite(projAwayPoss) ? projAwayPoss : undefined,
+        // Permanent fix: store the exact fixtureId so settlement never does
+        // fuzzy fixture matching again.  This is the single source of truth
+        // for which match this pick belongs to.
+        fixtureId: (prediction as any).fixtureId || undefined,
         // Soccer: persist AI analysis on the pick so the analysis modal can show it
         ...(sport === 'soccer' ? {
           sharpSummary:      prediction.sharpSummary  || undefined,
@@ -690,7 +693,13 @@ export default function ScanScreen() {
             </Text>
             <TouchableOpacity
               style={styles.paywallOverlayBtn}
-              onPress={() => router.push('/paywall')}
+              onPress={() => {
+                if (Platform.OS === 'web') {
+                  router.push('/(tabs)/account');
+                } else {
+                  router.push('/paywall');
+                }
+              }}
               activeOpacity={0.85}
             >
               <Text style={styles.paywallOverlayBtnText}>Get Access</Text>
@@ -774,6 +783,13 @@ export default function ScanScreen() {
                     <Ionicons name="flash" size={16} color="#000" />
                     <Text style={styles.predictBtnText}>RUN PREDICTION</Text>
                   </TouchableOpacity>
+                )}
+
+                {phase === 'analyzing' && (
+                  <View style={{ alignItems: 'center', paddingVertical: 12, gap: 8 }}>
+                    <ActivityIndicator size="small" color={Colors.primary} />
+                    <Text style={{ color: Colors.primary, fontSize: 12, fontWeight: '700' }}>Analyzing…</Text>
+                  </View>
                 )}
 
                 <TouchableOpacity onPress={reset} style={styles.rescanBtn}>

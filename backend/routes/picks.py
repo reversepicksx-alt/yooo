@@ -324,6 +324,11 @@ async def save_pick(req: SavePickRequest):
         "opponentId": pick.get("_request", {}).get("opponentId", 0),
         "opponentName": pick.get("opponent") or pick.get("opponentName", ""),
         "leagueId": pick.get("_request", {}).get("leagueId", 0),
+        # Permanent fix: store the exact fixtureId so settlement never needs
+        # fuzzy fixture matching again.  If the client didn't send one, the
+        # live-tracking / settlement paths will still attempt to resolve it
+        # by team name, but any future pick with this field is bulletproof.
+        "fixtureId": pick.get("fixtureId") or None,
         "propType": normalized_prop,
         "line": pick.get("line", 0),
         "recommendation": (pick.get("recommendation") or "over").lower(),
