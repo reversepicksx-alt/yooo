@@ -6004,7 +6004,7 @@ Analyze ALL data thoroughly. Return JSON only."""
                     _bt_proj  = prediction.get("projectedValue", req.line)
                     _p_dir    = _bt_p_under if _bt_dir == "under" else _bt_p_over
                     _proj_disp = f"{_bt_proj:.1f}" if isinstance(_bt_proj, (int, float)) else str(_bt_proj)
-                    prediction["sharpSummary"] = (
+                    _replacement_summary = (
                         f"The Reverse Formula projects {req.playerName} to finish at "
                         f"{_proj_disp} — {_dir_word} {req.line}. The 3-layer statistical "
                         f"model gives {_p_dir:.0f}% probability the {_dir_word} lands; "
@@ -6018,6 +6018,16 @@ Analyze ALL data thoroughly. Return JSON only."""
                         f"volume and possession factors push the stat above the line "
                         f"despite the cautious market pricing."
                     )
+                    prediction["sharpSummary"] = _replacement_summary
+                    # Wipe all AI narrative fields that may contradict the new direction.
+                    # The AI writes these before BAYESIAN TRUTH flips the direction;
+                    # keeping stale text causes the badge to say OVER while the
+                    # Verdict/Reasoning/Matchup sections all explain UNDER.
+                    for _narr_key in ("tacticalBreakdown", "reasoning", "scenarioAnalysis",
+                                      "keyEvidence", "sensitivityTests", "subRisk",
+                                      "gameFlowDynamics", "uncertaintyNote"):
+                        prediction[_narr_key] = ""
+                    prediction["tacticalAlerts"] = []
                     try:
                         if _soc_ck:
                             await db.grok_response_cache.delete_one({"_k": _soc_ck})
@@ -6026,7 +6036,7 @@ Analyze ALL data thoroughly. Return JSON only."""
                     print(
                         f"[DIRECTION GUARD] {req.playerName}/{req.propType}: "
                         f"sharpSummary said {_alt_dir} but final rec={_bt_dir.upper()} — "
-                        f"replaced summary, cleared AI cache"
+                        f"replaced summary, wiped narrative fields, cleared AI cache"
                     )
 
             # ── LOW CONVICTION FILTER ─────────────────────────────────────────

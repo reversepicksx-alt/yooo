@@ -765,24 +765,16 @@ export default function ScanScreen() {
                   </View>
                 )}
 
-                <TouchableOpacity
-                  style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnLoading]}
-                  onPress={() => runPredict(scanResult)}
-                  disabled={phase === 'analyzing'}
-                  activeOpacity={0.85}
-                >
-                  {phase === 'analyzing' ? (
-                    <>
-                      <ActivityIndicator color="#000" size="small" />
-                      <Text style={styles.predictBtnText}>Analyzing…</Text>
-                    </>
-                  ) : (
-                    <>
-                      <Ionicons name="flash" size={16} color="#000" />
-                      <Text style={styles.predictBtnText}>RUN PREDICTION</Text>
-                    </>
-                  )}
-                </TouchableOpacity>
+                {phase === 'detected' && (
+                  <TouchableOpacity
+                    style={styles.predictBtn}
+                    onPress={() => runPredict(scanResult)}
+                    activeOpacity={0.85}
+                  >
+                    <Ionicons name="flash" size={16} color="#000" />
+                    <Text style={styles.predictBtnText}>RUN PREDICTION</Text>
+                  </TouchableOpacity>
+                )}
 
                 <TouchableOpacity onPress={reset} style={styles.rescanBtn}>
                   <Ionicons name="refresh-outline" size={14} color={Colors.textSecondary} />
