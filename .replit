@@ -21,6 +21,7 @@ expertMode = true
   REVENUECAT_TEST_STORE_APP_ID = "app5e026f7361"
   REVENUECAT_APPLE_APP_STORE_APP_ID = "appce9b46665f"
   REVENUECAT_GOOGLE_PLAY_STORE_APP_ID = "app37a722c43f"
+REVIEWER_LOGIN_ENABLED = "1"
 
   [workflows]
   runButton = "Project"

@@ -19,7 +19,6 @@ import Purchases from 'react-native-purchases';
 const { width: SCREEN_W } = Dimensions.get('window');
 
 type Step = 'landing' | 'email' | 'code';
-type Mode = 'signin' | 'signup';
 
 function getErrorMessage(e: unknown): string {
   if (e instanceof Error) return e.message;
@@ -50,7 +49,6 @@ export default function AuthScreen() {
   const { loginWithResponse } = useAuth();
 
   const [step, setStep]       = useState<Step>('landing');
-  const [mode, setMode]       = useState<Mode>('signin');
   const [email, setEmail]     = useState('');
   const [code, setCode]       = useState('');
   const [loading, setLoading] = useState(false);
@@ -168,8 +166,6 @@ export default function AuthScreen() {
   };
 
   // ── OTP send ─────────────────────────────────────────────────────────────────
-  const REVIEWER_EMAIL = 'reversepicksx@gmail.com';
-
   const handleSendCode = async (emailOverride?: string) => {
     const trimmed = (emailOverride ?? email).trim().toLowerCase();
     if (!trimmed || !trimmed.includes('@')) {
@@ -187,29 +183,6 @@ export default function AuthScreen() {
       }
     } catch (rcErr) {
       console.warn('[RevenueCat] logIn error (non-fatal):', rcErr);
-    }
-
-    // Reviewer demo account — skip OTP
-    if (trimmed === REVIEWER_EMAIL) {
-      try {
-        const result = await apiCall<any>('/api/auth/reviewer-login', { method: 'POST' });
-        if (result.verified) {
-          await loginWithResponse({
-            email:         result.email,
-            session_token: result.session_token,
-            access_type:   result.access_type,
-          });
-          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          router.replace('/(tabs)/scan');
-        }
-      } catch (e: unknown) {
-        setError(e instanceof Error ? e.message : 'Login failed.');
-        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      } finally {
-        setLoading(false);
-        setBioLoading(false);
-      }
-      return;
     }
 
     try {
@@ -430,20 +403,11 @@ export default function AuthScreen() {
 
             <TouchableOpacity
               style={styles.landingBtnPrimary}
-              onPress={() => { setMode('signin'); setStep('email'); setError(''); setInfo(''); }}
+              onPress={() => { setStep('email'); setError(''); setInfo(''); }}
               activeOpacity={0.85}
             >
               <Ionicons name="log-in-outline" size={18} color="#000" />
               <Text style={styles.landingBtnText}>Sign In</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.landingBtnSecondary}
-              onPress={() => { setMode('signup'); setStep('email'); setError(''); setInfo(''); }}
-              activeOpacity={0.85}
-            >
-              <Ionicons name="person-add-outline" size={18} color={Colors.primary} />
-              <Text style={styles.landingBtnTextSecondary}>Sign Up</Text>
             </TouchableOpacity>
 
             {/* Owner panel — revealed by 5 logo taps */}
@@ -501,14 +465,8 @@ export default function AuthScreen() {
           </TouchableOpacity>
 
           <View style={styles.card}>
-            <Text style={styles.welcomeTitle}>
-              {mode === 'signin' ? 'Sign In' : 'Sign Up'}
-            </Text>
-            <Text style={styles.welcomeSub}>
-              {mode === 'signin'
-                ? 'Enter your email to receive a secure login code'
-                : 'Enter your email to get started'}
-            </Text>
+            <Text style={styles.welcomeTitle}>Sign In</Text>
+            <Text style={styles.welcomeSub}>Enter your email to receive a secure login code</Text>
 
             <View style={styles.inputRow}>
               <Ionicons name="mail-outline" size={17} color={Colors.textSecondary} style={styles.icon} />
@@ -569,19 +527,6 @@ export default function AuthScreen() {
               </TouchableOpacity>
             )}
 
-            <View style={styles.authToggleRow}>
-              <Text style={styles.authToggleText}>
-                {mode === 'signin' ? "New here? " : "Already a member? "}
-              </Text>
-              <TouchableOpacity
-                onPress={() => { setMode(mode === 'signin' ? 'signup' : 'signin'); setError(''); setInfo(''); }}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.authToggleLink}>
-                  {mode === 'signin' ? 'Sign Up' : 'Sign In'}
-                </Text>
-              </TouchableOpacity>
-            </View>
           </View>
 
           <Text style={styles.inlineTerms}>By continuing you agree to our Terms & Privacy Policy</Text>
