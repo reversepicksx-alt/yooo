@@ -7,8 +7,10 @@ import {
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
-import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
+// expo-local-authentication loaded lazily to avoid native-bridge crash on older devices
+let LocalAuthentication: typeof import('expo-local-authentication') | null = null;
+try { LocalAuthentication = require('expo-local-authentication'); } catch { LocalAuthentication = null; }
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@/contexts/AuthContext';
 import Colors from '@/constants/colors';
@@ -117,8 +119,8 @@ export default function AuthScreen() {
           ? await SecureStore.getItemAsync('rp_email')
           : localStorage.getItem('rp_email');
         if (stored) setSavedEmail(stored);
-        if (Platform.OS !== 'web') {
-          const hasHW  = await LocalAuthentication.hasHardwareAsync();
+        if (Platform.OS !== 'web' && LocalAuthentication) {
+          const hasHW   = await LocalAuthentication.hasHardwareAsync();
           const enrolled = await LocalAuthentication.isEnrolledAsync();
           setBioAvailable(hasHW && enrolled);
         }
@@ -183,7 +185,7 @@ export default function AuthScreen() {
 
   // ── Biometric login ──────────────────────────────────────────────────────────
   const handleBiometricLogin = async () => {
-    if (!savedEmail) return;
+    if (!savedEmail || !LocalAuthentication) return;
     setBioLoading(true);
     try {
       const result = await LocalAuthentication.authenticateAsync({

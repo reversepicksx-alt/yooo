@@ -17,6 +17,7 @@ import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult, FuzzyLeagueResult
 import LeaguePickerModal from '@/components/LeaguePickerModal';
 import { useAuth } from '@/contexts/AuthContext';
 import LoadingScreen from '@/components/LoadingScreen';
+import Reanimated, { FadeInDown } from 'react-native-reanimated';
 
 
 const SCREEN_W = Dimensions.get('window').width;
@@ -645,9 +646,18 @@ export default function ScanScreen() {
       keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
     >
     <View style={[styles.root, { paddingTop: topPad }]}>
-      <View style={{ flexDirection: 'row', justifyContent: 'flex-end', paddingHorizontal: 14, paddingVertical: 2 }}>
+      {/* ─── Branded header ─── */}
+      <View style={styles.scanHeader}>
+        <View style={styles.scanHeaderBrand}>
+          <Image source={require('../../assets/logo.png')} style={styles.scanHeaderLogo} resizeMode="contain" />
+          <View>
+            <Text style={styles.scanHeaderTitle}>REVERSEPICKS</Text>
+            <Text style={styles.scanHeaderSub}>AI Player Props</Text>
+          </View>
+        </View>
         <NotificationBell />
       </View>
+
       <ScrollView
         contentContainerStyle={styles.body}
         keyboardShouldPersistTaps="handled"
@@ -664,23 +674,27 @@ export default function ScanScreen() {
                   onPress={() => setShowSportPicker(true)}
                   activeOpacity={0.85}
                 >
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    <Ionicons
-                      name={
-                        sport === 'soccer' ? 'football' :
-                        sport === 'cs2' ? 'game-controller' :
-                        'tennisball'
-                      }
-                      size={18}
-                      color={Colors.primary}
-                    />
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                    <View style={styles.sportSelectorIcon}>
+                      <Ionicons
+                        name={
+                          sport === 'soccer' ? 'football' :
+                          sport === 'cs2' ? 'game-controller' :
+                          'tennisball'
+                        }
+                        size={16}
+                        color={Colors.primary}
+                      />
+                    </View>
                     <Text style={styles.sportSelectorText}>
                       {sport === 'soccer' ? 'Soccer' :
                        sport === 'cs2' ? 'CS2' :
                        'WTA Tennis'}
                     </Text>
                   </View>
-                  <Text style={styles.sportSelectorChange}>Change</Text>
+                  <View style={styles.sportSelectorChangePill}>
+                    <Text style={styles.sportSelectorChange}>Change</Text>
+                  </View>
                 </TouchableOpacity>
                 {analyzeError && (
                   <View style={styles.inlineError}>
@@ -1217,6 +1231,7 @@ export default function ScanScreen() {
         {/* ─── RESULT: Full Analysis ─── */}
         {phase === 'result' && prediction && (
           <>
+            <Reanimated.View entering={FadeInDown.springify().damping(14).stiffness(100).delay(50)}>
             <View ref={analysisRef} collapsable={false} style={styles.captureContainer}>
             <View style={styles.analysisCard}>
               {/* Top accent stripe — color signals OVER/UNDER at a glance */}
@@ -3226,6 +3241,7 @@ export default function ScanScreen() {
             <TouchableOpacity style={styles.newBtn} onPress={reset}>
               <Text style={styles.newBtnText}>Analyze Another</Text>
             </TouchableOpacity>
+          </Reanimated.View>
           </>
         )}
 
@@ -3500,22 +3516,72 @@ const styles = StyleSheet.create({
   },
   modeTabText: { fontSize: 13, color: Colors.textSecondary, fontWeight: '600', letterSpacing: 0.3 },
   modeTabTextActive: { color: Colors.primary, fontWeight: '700' },
+  // ── Scan screen branded header ────────────────────────────────────────────
+  scanHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#141414',
+  },
+  scanHeaderBrand: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  scanHeaderLogo: {
+    width: 36,
+    height: 36,
+  },
+  scanHeaderTitle: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: Colors.text,
+    letterSpacing: 1.5,
+  },
+  scanHeaderSub: {
+    fontSize: 10,
+    color: Colors.primary,
+    fontWeight: '600',
+    letterSpacing: 0.5,
+    marginTop: 1,
+  },
+
   // Sport selector uses modal (2×2 grid) — sportTab styles removed
   sportSelectorBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginHorizontal: 20,
     backgroundColor: '#111111',
     borderRadius: 14,
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 13,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#222',
+    borderColor: '#1e1e1e',
+  },
+  sportSelectorIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    backgroundColor: 'rgba(57,255,20,0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(57,255,20,0.15)',
   },
   sportSelectorText: { fontSize: 14, fontWeight: '700', color: Colors.text, letterSpacing: 0.3 },
-  sportSelectorChange: { fontSize: 11, color: Colors.primary, fontWeight: '600' },
+  sportSelectorChangePill: {
+    backgroundColor: 'rgba(57,255,20,0.08)',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(57,255,20,0.15)',
+  },
+  sportSelectorChange: { fontSize: 11, color: Colors.primary, fontWeight: '700', letterSpacing: 0.3 },
   sportPickerSheet: {
     backgroundColor: '#111111',
     borderRadius: 20,

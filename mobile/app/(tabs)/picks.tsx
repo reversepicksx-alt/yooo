@@ -17,7 +17,13 @@ import Reanimated, {
   useAnimatedStyle,
   interpolate,
   Extrapolation,
+  useSharedValue,
+  withRepeat,
+  withSequence,
+  withTiming,
+  FadeInDown,
 } from 'react-native-reanimated';
+import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import NotificationBell from '@/components/NotificationBell';
 import { listPicks, deletePick, fetchPickAnalysis, Pick } from '@/lib/api';
@@ -152,6 +158,18 @@ function SwipeLeftAction({
       </Reanimated.View>
     </TouchableOpacity>
   );
+}
+
+function PulsingDot() {
+  const opacity = useSharedValue(1);
+  React.useEffect(() => {
+    opacity.value = withRepeat(
+      withSequence(withTiming(0.2, { duration: 700 }), withTiming(1, { duration: 700 })),
+      -1, false
+    );
+  }, []);
+  const style = useAnimatedStyle(() => ({ opacity: opacity.value }));
+  return <Reanimated.View style={[{ width: 5, height: 5, borderRadius: 2.5, backgroundColor: Colors.primary }, style]} />;
 }
 
 function SwipeableRow({
@@ -344,10 +362,10 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete?: () => void }) {
         <Text style={styles.cardPlayer} numberOfLines={1}>{pick.playerName}</Text>
         <View style={styles.cardRight}>
           {live && !won && !lost && hasLiveData && (
-            <View style={styles.liveBadge}>
-              <View style={styles.liveDot} />
+            <Reanimated.View entering={FadeInDown.duration(300)} style={styles.liveBadge}>
+              <PulsingDot />
               <Text style={styles.liveText}>LIVE</Text>
-            </View>
+            </Reanimated.View>
           )}
           {live && !won && !lost && !hasLiveData && (
             <View style={styles.pendingBadge}>
@@ -734,26 +752,37 @@ export default function PicksScreen() {
     });
   }, []);
 
+  const sessionErrCount = useRef(0);
   const { data: picks = [], isLoading, refetch, isRefetching, error } = useQuery({
     queryKey: ['picks', session?.email],
     queryFn: async () => {
       if (!session) return [];
       try {
-        return await listPicks(session.email, session.token);
+        const result = await listPicks(session.email, session.token);
+        sessionErrCount.current = 0; // reset on success
+        return result;
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
-        // If auth failed, don't silently return [] — re-throw so error state is set
-        if (msg.includes('Invalid session') || msg.includes('401') || msg.includes('Unauthorized')) {
-          throw new Error('SESSION_INVALID');
+        // Only treat as SESSION_INVALID when the backend explicitly rejects the token
+        // (actual HTTP 401 → api.ts throws 'Your session expired. Please sign in again.')
+        // Network timeouts / server errors are NOT session failures — just return stale data
+        const isAuthFailure = msg.includes('Your session expired') || msg.includes('Invalid session');
+        if (isAuthFailure) {
+          sessionErrCount.current += 1;
+          // Need 3 consecutive auth failures before showing session-expired UI
+          // (avoids false positives from a single network blip)
+          if (sessionErrCount.current >= 3) throw new Error('SESSION_INVALID');
+          return []; // silent on first 2 failures
         }
-        throw e;
+        // Server/network errors — return empty silently; don't alarm the user
+        return [];
       }
     },
     enabled: !!session,
     refetchInterval: 15000,
-    refetchIntervalInBackground: true,
-    retry: 2,
-    retryDelay: 2000,
+    refetchIntervalInBackground: false,
+    retry: 1,
+    retryDelay: 3000,
   });
 
   useFocusEffect(
@@ -882,17 +911,25 @@ export default function PicksScreen() {
           <ActivityIndicator color={Colors.primary} size="large" />
         </View>
       ) : activeTab === 'live' && live.length === 0 ? (
-        <View style={styles.empty}>
-          <Ionicons name="timer-outline" size={52} color={Colors.textTertiary} />
+        <Reanimated.View entering={FadeInDown.duration(400).springify()} style={styles.empty}>
+          <View style={styles.emptyIconWrap}>
+            <Ionicons name="radio-outline" size={36} color={Colors.primary} />
+          </View>
           <Text style={styles.emptyTitle}>No live picks</Text>
-          <Text style={styles.emptySub}>Scan a prop slip and save a prediction to track it here.</Text>
-        </View>
+          <Text style={styles.emptySub}>Run a prediction on the Predict tab and save it — it'll appear here and update live as your game plays.</Text>
+          <TouchableOpacity style={styles.emptyAction} onPress={() => router.replace('/(tabs)/scan')}>
+            <Ionicons name="scan-outline" size={14} color="#000" />
+            <Text style={styles.emptyActionText}>Make a Prediction</Text>
+          </TouchableOpacity>
+        </Reanimated.View>
       ) : activeTab === 'history' && history.length === 0 ? (
-        <View style={styles.empty}>
-          <Ionicons name="archive-outline" size={52} color={Colors.textTertiary} />
+        <Reanimated.View entering={FadeInDown.duration(400).springify()} style={styles.empty}>
+          <View style={styles.emptyIconWrap}>
+            <Ionicons name="checkmark-circle-outline" size={36} color={Colors.textTertiary} />
+          </View>
           <Text style={styles.emptyTitle}>No settled picks yet</Text>
-          <Text style={styles.emptySub}>Picks move here once their game is finished and results are confirmed.</Text>
-        </View>
+          <Text style={styles.emptySub}>Your record will appear here once your saved picks have games that finish. Check back after kickoff.</Text>
+        </Reanimated.View>
       ) : activeTab === 'live' ? (
         <FlatList
           data={live}
@@ -1370,9 +1407,22 @@ const styles = StyleSheet.create({
   recordKey: { fontSize: 9, color: Colors.textTertiary, fontWeight: '600', letterSpacing: 0.5, marginTop: 2 },
 
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, paddingHorizontal: 40 },
+  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, paddingHorizontal: 40, paddingTop: 60, paddingBottom: 40 },
+  emptyIconWrap: {
+    width: 72, height: 72, borderRadius: 36,
+    backgroundColor: 'rgba(57,255,20,0.06)',
+    borderWidth: 1, borderColor: 'rgba(57,255,20,0.12)',
+    alignItems: 'center', justifyContent: 'center',
+    marginBottom: 4,
+  },
   emptyTitle: { fontSize: 18, fontWeight: '700', color: Colors.text },
   emptySub: { fontSize: 14, color: Colors.textSecondary, textAlign: 'center', lineHeight: 21 },
+  emptyAction: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: Colors.primary, borderRadius: 10,
+    paddingHorizontal: 20, paddingVertical: 11, marginTop: 6,
+  },
+  emptyActionText: { color: '#000', fontWeight: '800', fontSize: 14 },
   list: { paddingHorizontal: 14, paddingBottom: 40, gap: 10 },
 
   card: {
