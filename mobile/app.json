@@ -29,6 +29,9 @@
             ]
           }
         ]
+      },
+      "entitlements": {
+        "com.apple.developer.applesignin": true
       }
     },
     "android": {
@@ -66,7 +69,8 @@
           "sounds": []
         }
       ],
-      "expo-font"
+      "expo-font",
+      "expo-apple-authentication"
     ],
     "extra": {
       "router": {},
