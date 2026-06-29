@@ -164,41 +164,71 @@ async def team_next_match(team_id: int):
     # Leagues to skip — pre-season club friendlies / test events
     _SKIP_LEAGUES = {667, 666}
 
-    # ── 1. Upcoming fixtures ──────────────────────────────────────────────────
-    # Fetch general next-20 AND WC 2026 specifically in parallel.
-    # The WC call is necessary because national teams' WC fixtures sometimes
-    # don't appear in the generic next:20 window (e.g. between matchdays or
-    # when the scheduler hasn't published the knockout round fixtures yet).
+    # ── 0. TODAY'S fixtures (critical for live-match tracking) ────────────────
+    # A match that is currently live (1H, 2H, LIVE, ET) does NOT appear in the
+    # "next:N" endpoint — it is no longer "upcoming".  Without this check, users
+    # trying to predict on a match that is literally happening right now get
+    # the NEXT future fixture (e.g. Netherlands in September) instead.
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     try:
-        fixtures, wc_fixtures = await asyncio.gather(
-            api_football_request("fixtures", {"team": team_id, "next": 20}),
-            api_football_request("fixtures", {"team": team_id, "league": 1, "season": 2026, "next": 5}),
+        # API-Football "date" requires season for some leagues; try multiple
+        # seasons in parallel (current club season 2025-26 + WC 2026 + prev 2025).
+        today_results = await asyncio.gather(
+            api_football_request("fixtures", {"team": team_id, "date": today_str, "season": 2025}),
+            api_football_request("fixtures", {"team": team_id, "date": today_str, "season": 2026}),
             return_exceptions=True,
         )
-        if isinstance(fixtures, Exception):
-            fixtures = None
-        if isinstance(wc_fixtures, Exception):
-            wc_fixtures = None
+        today_fixtures = []
+        _seen_today: set = set()
+        for batch in today_results:
+            for f in (batch if isinstance(batch, list) else []):
+                _fid = f.get("fixture", {}).get("id")
+                if _fid and _fid not in _seen_today:
+                    _seen_today.add(_fid)
+                    today_fixtures.append(f)
     except Exception:
-        fixtures = None
-        wc_fixtures = None
+        today_fixtures = []
 
-    # Merge: general results first, then WC-specific (avoids duplicates via seen set)
-    _all_upcoming = []
-    _seen_fids: set = set()
-    for _batch in [fixtures, wc_fixtures]:
-        for _f in (_batch or []):
-            _fid = _f.get("fixture", {}).get("id")
-            if _fid and _fid not in _seen_fids:
-                _seen_fids.add(_fid)
-                _all_upcoming.append(_f)
-
+    # Accept any non-friendly fixture today (scheduled, live, or just finished)
     fx = None
-    for candidate in _all_upcoming:
+    for candidate in (today_fixtures or []):
         lid = candidate.get("league", {}).get("id", 0)
         if lid not in _SKIP_LEAGUES:
             fx = candidate
             break
+
+    # ── 1. Upcoming fixtures ──────────────────────────────────────────────────
+    if not fx:
+        # Fetch general next-20 AND WC 2026 specifically in parallel.
+        try:
+            fixtures, wc_fixtures = await asyncio.gather(
+                api_football_request("fixtures", {"team": team_id, "next": 20}),
+                api_football_request("fixtures", {"team": team_id, "league": 1, "season": 2026, "next": 5}),
+                return_exceptions=True,
+            )
+            if isinstance(fixtures, Exception):
+                fixtures = None
+            if isinstance(wc_fixtures, Exception):
+                wc_fixtures = None
+        except Exception:
+            fixtures = None
+            wc_fixtures = None
+
+        # Merge: general results first, then WC-specific (avoids duplicates via seen set)
+        _all_upcoming = []
+        _seen_fids: set = set()
+        for _batch in [fixtures, wc_fixtures]:
+            for _f in (_batch or []):
+                _fid = _f.get("fixture", {}).get("id")
+                if _fid and _fid not in _seen_fids:
+                    _seen_fids.add(_fid)
+                    _all_upcoming.append(_f)
+
+        for candidate in _all_upcoming:
+            lid = candidate.get("league", {}).get("id", 0)
+            if lid not in _SKIP_LEAGUES:
+                fx = candidate
+                break
 
     result = None
     if fx:

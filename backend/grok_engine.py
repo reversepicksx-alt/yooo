@@ -1780,9 +1780,27 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
                 break
 
         # Fallback: fuzzy name match (handles partial names like "Sporting KC" vs "Sporting Kansas City")
-        if opponent:
-            # Resolve common team abbreviations to canonical names
-            _TEAM_ALIASES = {
+        if opponent and not matched:
+            for f in fixtures:
+                status = f.get("fixture", {}).get("status", {}).get("short", "")
+                if status not in ("FT", "AET", "PEN"):
+                    continue
+                # Timestamp guard
+                fix_date = f.get("fixture", {}).get("date", "")
+                if fix_date and pick_created_at:
+                    try:
+                        fix_dt = datetime.fromisoformat(fix_date.replace("Z", "+00:00"))
+                        fix_end = fix_dt + timedelta(hours=2)
+                        if fix_end < pick_created_at:
+                            continue
+                    except Exception:
+                        pass
+
+                home_name = f.get("teams", {}).get("home", {}).get("name", "")
+                away_name = f.get("teams", {}).get("away", {}).get("name", "")
+
+                # Resolve common team abbreviations to canonical names
+                _TEAM_ALIASES = {
                 "lafc": "los angeles fc",
                 "la galaxy": "los angeles galaxy",
                 "nycfc": "new york city fc",
@@ -1804,33 +1822,33 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
                 "hertha": "hertha berlin",
                 "sociedad": "real sociedad",
                 "betis": "real betis",
-            }
-            opp_raw = strip_accents(opponent.lower().strip())
-            opp_lower = _TEAM_ALIASES.get(opp_raw, opp_raw)
-            home_lower = strip_accents(home_name.lower())
-            away_lower = strip_accents(away_name.lower())
+                }
+                opp_raw = strip_accents(opponent.lower().strip())
+                opp_lower = _TEAM_ALIASES.get(opp_raw, opp_raw)
+                home_lower = strip_accents(home_name.lower())
+                away_lower = strip_accents(away_name.lower())
             # Also resolve home/away canonical names through alias map (reverse lookup)
-            home_resolved = _TEAM_ALIASES.get(home_lower, home_lower)
-            away_resolved = _TEAM_ALIASES.get(away_lower, away_lower)
+                home_resolved = _TEAM_ALIASES.get(home_lower, home_lower)
+                away_resolved = _TEAM_ALIASES.get(away_lower, away_lower)
             # Substring both ways (try both raw and resolved)
-            name_hit = any([
-                opp_lower in home_lower, opp_lower in away_lower,
-                home_lower in opp_lower, away_lower in opp_lower,
-                opp_raw in home_lower, opp_raw in away_lower,
-                home_lower in opp_raw, away_lower in opp_raw,
-            ])
+                name_hit = any([
+                    opp_lower in home_lower, opp_lower in away_lower,
+                    home_lower in opp_lower, away_lower in opp_lower,
+                    opp_raw in home_lower, opp_raw in away_lower,
+                    home_lower in opp_raw, away_lower in opp_raw,
+                ])
             # Also check first word match (e.g. "Sporting" in "Sporting Kansas City")
-            if not name_hit:
-                opp_words = set(opp_lower.split())
-                home_words = set(home_lower.split())
-                away_words = set(away_lower.split())
-                stopwords = {"fc", "cf", "sc", "ac", "united", "city", "the", "de", "1.", "sv", "vfb"}
-                home_shared = (opp_words & home_words) - stopwords
-                away_shared = (opp_words & away_words) - stopwords
-                name_hit = len(home_shared) >= 2 or len(away_shared) >= 2
-            if name_hit:
-                matched = f
-                break
+                if not name_hit:
+                    opp_words = set(opp_lower.split())
+                    home_words = set(home_lower.split())
+                    away_words = set(away_lower.split())
+                    stopwords = {"fc", "cf", "sc", "ac", "united", "city", "the", "de", "1.", "sv", "vfb"}
+                    home_shared = (opp_words & home_words) - stopwords
+                    away_shared = (opp_words & away_words) - stopwords
+                    name_hit = len(home_shared) >= 2 or len(away_shared) >= 2
+                if name_hit:
+                    matched = f
+                    break
 
     if not matched:
         return False
