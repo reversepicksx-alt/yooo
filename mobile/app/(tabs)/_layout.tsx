@@ -20,6 +20,9 @@ export default function TabLayout() {
     if (!isLoading && !session) {
       router.replace('/auth');
     }
+    if (!isLoading && session && session.accessType === 'NoSubscription') {
+      router.replace('/paywall');
+    }
   }, [session, isLoading]);
 
   if (isLoading) return <View style={{ flex: 1, backgroundColor: '#050505' }} />;

@@ -118,6 +118,7 @@ function AppBoot() {
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: Colors.background } }}>
         <Stack.Screen name="index" />
         <Stack.Screen name="auth" />
+        <Stack.Screen name="paywall" options={{ gestureEnabled: false }} />
         <Stack.Screen name="(tabs)" />
       </Stack>
     </>

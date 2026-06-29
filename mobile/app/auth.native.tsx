@@ -288,7 +288,7 @@ export default function AuthScreen() {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
         if (result.has_access === false || result.access_type === 'NoSubscription') {
-          router.replace('/(tabs)/account');
+          router.replace('/paywall');
         } else {
           router.replace('/(tabs)/scan');
         }

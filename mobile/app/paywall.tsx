@@ -1,0 +1,334 @@
+import { useState, useEffect, useCallback } from 'react';
+import {
+  View, Text, StyleSheet, ScrollView, TouchableOpacity,
+  ActivityIndicator, Platform, Image, Alert,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { router } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
+import Colors from '@/constants/colors';
+import { useAuth } from '@/contexts/AuthContext';
+import { useSubscription, REVENUECAT_ENTITLEMENT_IDENTIFIER } from '@/lib/revenuecat';
+import Purchases, { type PurchasesPackage } from 'react-native-purchases';
+
+const FEATURES = [
+  'Unlimited AI player prop predictions',
+  'Tactical breakdowns & sharp summaries',
+  'Real-time injury & lineup intel',
+  'All major leagues + tournaments',
+  'Soccer, NBA, NFL, NHL & more',
+];
+
+function getErrorMessage(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  if (typeof e === 'string') return e;
+  return 'Something went wrong. Please try again.';
+}
+
+export default function PaywallScreen() {
+  const insets = useSafeAreaInsets();
+  const { session, loginWithResponse } = useAuth();
+  const {
+    packages, isLoading, purchase, restore,
+    isPurchasing, isRestoring,
+  } = useSubscription();
+
+  const [selectedPkg, setSelectedPkg] = useState<PurchasesPackage | null>(null);
+  const [buyingId, setBuyingId] = useState<string | null>(null);
+
+  // If somehow a subscribed user lands here, push them into the app
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    Purchases.getCustomerInfo().then(info => {
+      const hasEnt = info?.entitlements?.active?.[REVENUECAT_ENTITLEMENT_IDENTIFIER] !== undefined;
+      if (hasEnt) router.replace('/(tabs)/scan');
+    }).catch(() => {});
+  }, []);
+
+  const syncBackendAndEnter = useCallback(async (productId: string, expiresAtMs?: number) => {
+    if (!session?.email || !session?.token) return;
+    try {
+      await fetch('/api/auth/iap-grant', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: session.email,
+          session_token: session.token,
+          product_id: productId,
+          expires_at_ms: expiresAtMs ?? null,
+        }),
+      });
+    } catch {
+      // webhook will sync eventually
+    }
+    // Update local session so future gate checks pass
+    await loginWithResponse({
+      email: session.email,
+      session_token: session.token,
+      access_type: 'Premium (Apple)',
+    });
+  }, [session, loginWithResponse]);
+
+  const handlePurchase = async (pkg: PurchasesPackage) => {
+    if (Platform.OS === 'web') return;
+    setBuyingId(pkg.identifier);
+    try {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      const customerInfo = await purchase(pkg);
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      const ent = customerInfo?.entitlements?.active?.[REVENUECAT_ENTITLEMENT_IDENTIFIER];
+      const expMs = ent?.expirationDate ? new Date(ent.expirationDate).getTime() : undefined;
+      await syncBackendAndEnter(pkg.product?.identifier ?? pkg.identifier, expMs);
+      router.replace('/(tabs)/scan');
+    } catch (e: any) {
+      if (e?.userCancelled) return;
+      Alert.alert('Purchase Failed', getErrorMessage(e));
+    } finally {
+      setBuyingId(null);
+    }
+  };
+
+  const handleRestore = async () => {
+    if (Platform.OS === 'web') return;
+    try {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      const customerInfo = await restore();
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      const ent = customerInfo?.entitlements?.active?.[REVENUECAT_ENTITLEMENT_IDENTIFIER];
+      if (ent) {
+        const expMs = ent.expirationDate ? new Date(ent.expirationDate).getTime() : undefined;
+        await syncBackendAndEnter(ent.productIdentifier, expMs);
+        router.replace('/(tabs)/scan');
+      } else {
+        Alert.alert('No Purchases Found', 'There are no active subscriptions to restore.');
+      }
+    } catch (e: any) {
+      Alert.alert('Restore Failed', getErrorMessage(e));
+    }
+  };
+
+  // ── WEB FALLBACK ──
+  if (Platform.OS === 'web') {
+    return (
+      <View style={[styles.root, { paddingTop: insets.top + 40, paddingBottom: insets.bottom + 24 }]}>
+        <ScrollView contentContainerStyle={styles.inner} showsVerticalScrollIndicator={false}>
+          <Image source={require('./assets/logo.png')} style={styles.logo} resizeMode="contain" />
+          <Text style={styles.headline}>ReversePicks Pro</Text>
+          <Text style={styles.subhead}>Get unlimited AI predictions on iOS.</Text>
+          {FEATURES.map((f, i) => (
+            <View key={i} style={styles.bulletRow}>
+              <Ionicons name="checkmark-circle" size={18} color={Colors.primary} />
+              <Text style={styles.bulletText}>{f}</Text>
+            </View>
+          ))}
+          <View style={styles.webCard}>
+            <Text style={styles.webCardText}>
+              Subscriptions are available exclusively through the App Store. Download ReversePicks on your iPhone to subscribe and unlock full access.
+            </Text>
+          </View>
+        </ScrollView>
+      </View>
+    );
+  }
+
+  // ── NATIVE PAYWALL ──
+  return (
+    <View style={[styles.root, { paddingTop: insets.top + 20, paddingBottom: insets.bottom + 24 }]}>
+      <ScrollView contentContainerStyle={styles.inner} showsVerticalScrollIndicator={false}>
+
+        {/* Logo */}
+        <Image source={require('./assets/logo.png')} style={styles.logo} resizeMode="contain" />
+
+        {/* Headline */}
+        <Text style={styles.headline}>Unlock Full Access</Text>
+        <Text style={styles.subhead}>AI-powered player prop predictions for every match</Text>
+
+        {/* Feature bullets */}
+        <View style={styles.bulletWrap}>
+          {FEATURES.map((f, i) => (
+            <View key={i} style={styles.bulletRow}>
+              <Ionicons name="checkmark-circle" size={18} color={Colors.primary} />
+              <Text style={styles.bulletText}>{f}</Text>
+            </View>
+          ))}
+        </View>
+
+        {/* Plans */}
+        {isLoading ? (
+          <View style={styles.loader}>
+            <ActivityIndicator color={Colors.primary} />
+            <Text style={styles.loaderText}>Loading plans…</Text>
+          </View>
+        ) : packages.length === 0 ? (
+          <View style={styles.loader}>
+            <Text style={styles.loaderText}>No plans available. Pull down to retry.</Text>
+          </View>
+        ) : (
+          <View style={styles.plansWrap}>
+            {packages.map((pkg) => {
+              const isSelected = selectedPkg?.identifier === pkg.identifier;
+              const isBuying = buyingId === pkg.identifier;
+              const title = pkg.product?.title ?? pkg.packageType ?? pkg.identifier;
+              const price = pkg.product?.priceString ?? '—';
+              const period = pkg.product?.subscriptionPeriod ?? '';
+              const desc = pkg.product?.description ?? '';
+              return (
+                <TouchableOpacity
+                  key={pkg.identifier}
+                  style={[styles.planCard, isSelected && styles.planCardActive]}
+                  onPress={() => setSelectedPkg(pkg)}
+                  activeOpacity={0.8}
+                  disabled={!!buyingId || isRestoring}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.planTitle}>{title}</Text>
+                    {desc ? <Text style={styles.planDesc}>{desc}</Text> : null}
+                    {period ? <Text style={styles.planPeriod}>{period}</Text> : null}
+                  </View>
+                  <View style={{ alignItems: 'flex-end' }}>
+                    <Text style={styles.planPrice}>{price}</Text>
+                    {isSelected && (
+                      <View style={styles.checkDot}>
+                        <Ionicons name="checkmark" size={12} color="#000" />
+                      </View>
+                    )}
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        )}
+
+        {/* CTA */}
+        <TouchableOpacity
+          style={[
+            styles.ctaBtn,
+            (!selectedPkg || isPurchasing || isRestoring) && styles.ctaBtnDisabled,
+          ]}
+          onPress={() => selectedPkg && handlePurchase(selectedPkg)}
+          disabled={!selectedPkg || isPurchasing || isRestoring}
+          activeOpacity={0.85}
+        >
+          {isPurchasing || !!buyingId ? (
+            <ActivityIndicator color="#000" size="small" />
+          ) : (
+            <Text style={styles.ctaText}>
+              {selectedPkg ? 'Continue' : 'Select a plan'}
+            </Text>
+          )}
+        </TouchableOpacity>
+
+        {/* Restore */}
+        <TouchableOpacity
+          style={styles.restoreWrap}
+          onPress={handleRestore}
+          disabled={isRestoring || !!buyingId}
+          activeOpacity={0.7}
+        >
+          {isRestoring ? (
+            <ActivityIndicator size="small" color={Colors.textSecondary} />
+          ) : (
+            <Text style={styles.restoreText}>Restore Purchases</Text>
+          )}
+        </TouchableOpacity>
+
+        {/* Apple disclosure */}
+        <Text style={styles.disclosure}>
+          Subscription automatically renews at the same price unless cancelled at least 24 hours before the end of the current period. Payment is charged to your Apple ID account at confirmation of purchase. Manage or cancel anytime in Apple Settings.
+        </Text>
+      </ScrollView>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  root: { flex: 1, backgroundColor: Colors.background },
+  inner: {
+    paddingHorizontal: 24,
+    paddingBottom: 20,
+    alignItems: 'center',
+    gap: 20,
+  },
+  logo: { width: 64, height: 64, marginTop: 8 },
+  headline: {
+    color: Colors.text,
+    fontSize: 26,
+    fontWeight: '800',
+    textAlign: 'center',
+    letterSpacing: 0.3,
+  },
+  subhead: {
+    color: Colors.textSecondary,
+    fontSize: 14,
+    textAlign: 'center',
+    lineHeight: 20,
+    marginTop: -8,
+  },
+  bulletWrap: { width: '100%', gap: 10, marginTop: 4 },
+  bulletRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  bulletText: { color: Colors.text, fontSize: 14, flex: 1, lineHeight: 20 },
+  plansWrap: { width: '100%', gap: 10, marginTop: 4 },
+  planCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.card,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: 16,
+    gap: 12,
+  },
+  planCardActive: {
+    borderColor: Colors.primary,
+    backgroundColor: 'rgba(57,255,20,0.06)',
+  },
+  planTitle: { color: Colors.text, fontSize: 15, fontWeight: '700' },
+  planDesc: { color: Colors.textSecondary, fontSize: 12, marginTop: 2 },
+  planPeriod: { color: Colors.textTertiary, fontSize: 11, marginTop: 2 },
+  planPrice: { color: Colors.text, fontSize: 16, fontWeight: '800' },
+  checkDot: {
+    width: 20, height: 20, borderRadius: 10,
+    backgroundColor: Colors.primary,
+    alignItems: 'center', justifyContent: 'center',
+    marginTop: 4,
+  },
+  ctaBtn: {
+    width: '100%',
+    backgroundColor: Colors.primary,
+    borderRadius: 14,
+    height: 56,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 8,
+    shadowColor: Colors.primary,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.35,
+    shadowRadius: 16,
+    elevation: 8,
+  },
+  ctaBtnDisabled: { opacity: 0.5 },
+  ctaText: { color: '#000', fontWeight: '800', fontSize: 16, letterSpacing: 0.5 },
+  restoreWrap: { paddingVertical: 8, alignItems: 'center' },
+  restoreText: { color: Colors.textSecondary, fontSize: 14, fontWeight: '600' },
+  disclosure: {
+    color: Colors.textTertiary,
+    fontSize: 10,
+    textAlign: 'center',
+    lineHeight: 16,
+    marginTop: 8,
+    paddingHorizontal: 8,
+  },
+  loader: { alignItems: 'center', gap: 8, paddingVertical: 20 },
+  loaderText: { color: Colors.textSecondary, fontSize: 13 },
+  webCard: {
+    backgroundColor: Colors.card,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: 20,
+    marginTop: 8,
+    width: '100%',
+  },
+  webCardText: { color: Colors.textSecondary, fontSize: 13, lineHeight: 20, textAlign: 'center' },
+});

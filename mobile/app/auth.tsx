@@ -146,7 +146,7 @@ export default function AuthScreen() {
           session_token: result.session_token,
           access_type: result.access_type,
         });
-        router.replace('/(tabs)/account');
+        router.replace('/paywall');
       } else {
         // Has active subscription
         await loginWithResponse({
