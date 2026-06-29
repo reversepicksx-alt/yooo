@@ -14,6 +14,14 @@ export default {
       bundleIdentifier: "com.reversepicks.app",
       buildNumber: "113",
       icon: "./assets/rp-icon.png",
+      infoPlist: {
+        ITSAppUsesNonExemptEncryption: false,
+        NSCameraUsageDescription: "ReversePicks needs camera access to scan prop slips.",
+        NSPhotoLibraryUsageDescription: "ReversePicks needs access to your photos to scan prop slips.",
+        NSPhotoLibraryAddUsageDescription: "ReversePicks needs access to save images.",
+        NSUserNotificationsUsageDescription: "ReversePicks sends you pick alerts and result notifications.",
+        CFBundleURLTypes: [{ CFBundleURLSchemes: ["reversepicks"] }],
+      },
     },
     android: {
       adaptiveIcon: { foregroundImage: "./assets/rp-icon.png", backgroundColor: "#050505" },
