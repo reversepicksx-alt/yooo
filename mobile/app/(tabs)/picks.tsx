@@ -11,22 +11,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Reanimated, {
   useAnimatedStyle,
-  interpolate,
-  Extrapolation,
   useSharedValue,
   withRepeat,
   withSequence,
   withTiming,
   FadeInDown,
 } from 'react-native-reanimated';
-// ReanimatedSwipeable loaded lazily — its module crashes the web bundle when
-// imported at the top level (native-only JSX syntax in the package source).
-const _getNativeSwipeable = () => {
-  if (Platform.OS === 'web') return null;
-  try {
-    return require('react-native-gesture-handler/ReanimatedSwipeable').default as any;
-  } catch { return null; }
-};
+import SwipeablePickRow from '@/components/SwipeablePickRow';
 import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import NotificationBell from '@/components/NotificationBell';
@@ -91,79 +82,6 @@ function pickDnp(p: Pick) {
   return p.result === 'dnp';
 }
 
-function SwipeLeftAction({
-  drag,
-  onPress,
-}: {
-  drag: SharedValue<number>;
-  onPress: () => void;
-}) {
-  // The action sits behind the card on the LEFT side. As the card is dragged
-  // to the right, `drag` increases from 0 → +N. We grow the icon/text in.
-  const animatedStyle = useAnimatedStyle(() => {
-    const scale = interpolate(drag.value, [0, 60, 120], [0.5, 0.9, 1], Extrapolation.CLAMP);
-    const opacity = interpolate(drag.value, [0, 30, 80], [0, 0.6, 1], Extrapolation.CLAMP);
-    return { transform: [{ scale }], opacity };
-  });
-
-  // WEB: render a native <button> so the click is handled by the browser
-  // directly — bypasses every quirk of react-native-web's Pressable, RNGH's
-  // RectButton, and ReanimatedSwipeable's gesture detection. Tap-to-delete
-  // is now identical to clicking any other HTML button on the page.
-  if (Platform.OS === 'web') {
-    return (
-      <View style={styles.swipeAction} pointerEvents="box-none">
-        {/* @ts-ignore react-native-web accepts raw DOM elements when wrapped
-            — we deliberately use a real <button> for reliability. */}
-        <button
-          type="button"
-          onClick={(e: React.MouseEvent) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onPress();
-          }}
-          style={{
-            all: 'unset',
-            cursor: 'pointer',
-            width: '100%',
-            height: '100%',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 3,
-          }}
-          aria-label="Delete pick"
-        >
-          <Reanimated.View style={[styles.swipeActionInner, animatedStyle]} pointerEvents="none">
-            <Ionicons name="trash" size={22} color="#fff" />
-            <Text style={styles.swipeActionText}>DELETE</Text>
-          </Reanimated.View>
-        </button>
-      </View>
-    );
-  }
-
-  // NATIVE iOS/Android: TouchableOpacity from react-native works fine here
-  // because the swipe gesture is in its idle state (open) and isn't actively
-  // capturing touches. Earlier breakage was specifically a web rendering
-  // path issue, not a native gesture-conflict issue.
-  return (
-    <TouchableOpacity
-      style={styles.swipeAction}
-      onPress={onPress}
-      activeOpacity={0.85}
-      accessibilityRole="button"
-      accessibilityLabel="Delete pick"
-    >
-      <Reanimated.View style={[styles.swipeActionInner, animatedStyle]}>
-        <Ionicons name="trash" size={22} color="#fff" />
-        <Text style={styles.swipeActionText}>DELETE</Text>
-      </Reanimated.View>
-    </TouchableOpacity>
-  );
-}
-
 function PulsingDot() {
   const opacity = useSharedValue(1);
   React.useEffect(() => {
@@ -176,52 +94,6 @@ function PulsingDot() {
   return <Reanimated.View style={[{ width: 5, height: 5, borderRadius: 2.5, backgroundColor: Colors.primary }, style]} />;
 }
 
-function SwipeableRow({
-  onDelete,
-  children,
-}: {
-  onDelete: () => void;
-  children: React.ReactNode;
-}) {
-  const swipeRef = useRef<any>(null);
-
-  // WEB: don't wrap in a swipeable at all. The browser doesn't have native
-  // swipe-to-delete UX, the gesture-handler web shim is flaky, and we now
-  // surface the trash bin directly inside PickCard for web users. Just
-  // render children straight through.
-  if (Platform.OS === 'web') {
-    return <>{children}</>;
-  }
-
-  // NATIVE iOS/Android: keep the iOS-Mail-style swipe-to-reveal action.
-  // Tapping DELETE confirms; swiping closed dismisses without action.
-  const NativeSwipeable = _getNativeSwipeable();
-  if (!NativeSwipeable) return <>{children}</>;
-  return (
-    <NativeSwipeable
-      ref={swipeRef}
-      friction={1.5}
-      leftThreshold={40}
-      dragOffsetFromLeftEdge={6}
-      overshootLeft={false}
-      enableTrackpadTwoFingerGesture
-      renderLeftActions={(_progress, drag) => (
-        <SwipeLeftAction
-          drag={drag}
-          onPress={() => {
-            swipeRef.current?.close();
-            onDelete();
-          }}
-        />
-      )}
-      onSwipeableWillOpen={() => {
-        try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
-      }}
-    >
-      {children}
-    </NativeSwipeable>
-  );
-}
 
 function PickCard({ pick, onDelete }: { pick: Pick; onDelete?: () => void }) {
   const won = pickWon(pick);
@@ -956,7 +828,7 @@ export default function PicksScreen() {
             ) : (
               <PickCard pick={item} onDelete={onDeleteForItem} />
             );
-            return <SwipeableRow onDelete={onDeleteForItem}>{card}</SwipeableRow>;
+            return <SwipeablePickRow onDelete={onDeleteForItem}>{card}</SwipeablePickRow>;
           }}
           contentContainerStyle={styles.list}
           refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={Colors.primary} />}
@@ -988,14 +860,14 @@ export default function PicksScreen() {
             const pickItem = item.pick;
             const onDeleteForItem = () => handleDelete(pickItem);
             return (
-              <SwipeableRow onDelete={onDeleteForItem}>
+              <SwipeablePickRow onDelete={onDeleteForItem}>
                 <Pressable
                   onPress={() => handlePickPress(pickItem)}
                   style={({ pressed }) => [{ opacity: pressed ? 0.92 : 1 }]}
                 >
                   <PickCard pick={pickItem} onDelete={onDeleteForItem} />
                 </Pressable>
-              </SwipeableRow>
+              </SwipeablePickRow>
             );
           }}
           contentContainerStyle={[styles.list, { paddingTop: 4 }]}
@@ -1548,20 +1420,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0.1,
   },
 
-  swipeAction: {
-    backgroundColor: Colors.error,
-    justifyContent: 'center',
-    alignItems: 'center',
-    width: 84,
-    borderRadius: 12,
-  },
-  swipeActionInner: { alignItems: 'center', justifyContent: 'center', gap: 3 },
-  swipeActionText: {
-    color: '#fff',
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
   tapHint: {
     flexDirection: 'row', alignItems: 'center', gap: 3,
     paddingTop: 4, borderTopWidth: 1, borderTopColor: Colors.borderSubtle,
