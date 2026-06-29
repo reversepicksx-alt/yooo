@@ -490,10 +490,10 @@ async def verify_code(req: VerifyCodeRequest):
     }
 
 
-def _is_dev_or_review_env() -> bool:
-    """Reviewer-login is only exposed in non-production environments
-    or when REVIEWER_LOGIN_ENABLED env var is explicitly set."""
-    return os.environ.get("REVIEWER_LOGIN_ENABLED") == "1" or os.environ.get("PRODUCTION") != "true"
+def _is_reviewer_login_enabled() -> bool:
+    """Secure-by-default: reviewer-login is ONLY enabled when
+    REVIEWER_LOGIN_ENABLED=1 is explicitly set. Never infer from PRODUCTION."""
+    return os.environ.get("REVIEWER_LOGIN_ENABLED") == "1"
 
 _REVIEWER_EMAIL = "reversepicksx@gmail.com"
 _REVIEWER_TOKEN = "rp-reviewer-owner-2026"  # stable, MongoDB-free
@@ -505,7 +505,7 @@ async def reviewer_login():
     works correctly even when the DB connection is cold or unreachable.
     DISABLED in production unless REVIEWER_LOGIN_ENABLED=1 is set.
     """
-    if not _is_dev_or_review_env():
+    if not _is_reviewer_login_enabled():
         raise HTTPException(status_code=404, detail="Not found")
     return {
         "verified": True,
