@@ -133,6 +133,20 @@ export async function linkPayment(loginEmail: string, paymentEmail: string): Pro
   });
 }
 
+export async function requestCode(email: string): Promise<{ sent: boolean; message: string }> {
+  return apiCall('/api/auth/send-code', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+}
+
+export async function verifyCode(email: string, code: string): Promise<AuthResponse & { has_access?: boolean; message?: string }> {
+  return apiCall('/api/auth/verify-code', {
+    method: 'POST',
+    body: JSON.stringify({ email, code }),
+  });
+}
+
 export async function createCheckout(email: string, planKey: string): Promise<{ checkoutUrl?: string; checkout_url?: string; redirect_url?: string; error?: string }> {
   const redirectUrl = typeof window !== 'undefined' && window.location != null
     ? `${window.location.origin}/auth`

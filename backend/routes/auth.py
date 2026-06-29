@@ -321,7 +321,7 @@ async def check_web_access(email_lower: str):
 @router.post("/verify-whop")
 async def verify_access(req: VerifyAccessRequest):
     email_lower = req.email.lower().strip()
-    access_type = await check_web_access(email_lower)
+    access_type = await check_access(email_lower)
     if not access_type:
         return {"verified": False, "email": email_lower, "message": "No active membership found."}
     token = await create_session(email_lower, access_type)
