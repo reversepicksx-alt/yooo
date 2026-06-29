@@ -203,7 +203,7 @@ function buildLoadingScreen() { return `
   var e=document.getElementById('rp-loading-screen');
   function hide(){if(!e)return;e.style.opacity='0';setTimeout(function(){if(e&&e.parentNode)e.parentNode.removeChild(e);e=null;},650);}
   window.__rpHideLoader=hide;
-  setTimeout(hide,3000);
+  setTimeout(hide,15000);
 })();
 </script>`; }
 
