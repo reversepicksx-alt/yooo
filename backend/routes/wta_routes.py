@@ -9,7 +9,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from models import WtaPredictRequest
 
 from config import db, XAI_API_KEY
 import wta_client
@@ -155,22 +155,12 @@ async def head_to_head(p1: int, p2: int):
 
 # ── Predict ───────────────────────────────────────────────────────────────────
 
-class WtaPredictRequest(BaseModel):
-    playerName:       str
-    playerId:         Optional[int] = None
-    opponentName:     Optional[str] = ""
-    opponentId:       Optional[int] = None
-    propType:         str
-    line:             float
-    surface:          Optional[str] = None     # "Hard" | "Clay" | "Grass"
-    round:            Optional[str] = None     # "F" | "SF" | "QF" | "R16" | ...
-    tournament:       Optional[str] = None
-    subjectRank:      Optional[int] = None
-    opponentRank:     Optional[int] = None
-
-
 @router.post("/predict")
 async def wta_predict(req: WtaPredictRequest):
+    from routes.auth import check_access
+    access = await check_access(req.email.lower().strip())
+    if not access or access == "NoSubscription":
+        raise HTTPException(status_code=403, detail="Active subscription required")
     prop_type = req.propType.lower().strip()
     if prop_type not in wta_engine.WTA_PROPS:
         raise HTTPException(

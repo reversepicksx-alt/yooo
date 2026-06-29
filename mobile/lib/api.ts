@@ -56,8 +56,10 @@ export async function apiCall<T = unknown>(endpoint: string, options: RequestIni
       message = `Endpoint missing (${endpoint}). Please refresh and try again.`;
     } else if (resp.status === 502 || resp.status === 503 || resp.status === 504) {
       message = 'Server is unreachable right now. Please try again in a moment.';
-    } else if (resp.status === 401 || resp.status === 403) {
+    } else if (resp.status === 401) {
       message = 'Your session expired. Please sign in again.';
+    } else if (resp.status === 403) {
+      message = 'Predictions require an active subscription. Tap Account to manage your plan.';
     } else if (resp.status >= 500) {
       message = `Server error (${resp.status}). Please try again.`;
     } else {

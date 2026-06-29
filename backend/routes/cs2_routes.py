@@ -7,7 +7,7 @@ import logging
 import json
 import re
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from models import Cs2PredictRequest
 from typing import Optional
 
 from config import db, XAI_API_KEY
@@ -282,23 +282,12 @@ async def get_rankings():
 
 # ── Predict ───────────────────────────────────────────────────────────────────
 
-class Cs2PredictRequest(BaseModel):
-    playerNickname:      str
-    playerId:            Optional[int]  = None
-    teamName:            Optional[str]  = ""
-    teamId:              Optional[int]  = None
-    propType:            str
-    line:                float
-    opponentName:        Optional[str]  = ""
-    opponentRank:        Optional[int]  = None
-    mapName:             Optional[str]  = None   # e.g. "Mirage", "de_nuke"
-    # NEW v4 parameters
-    playerTeamRank:      Optional[int]  = None   # player's team world rank (underdog compression)
-    playerTeamStartsCt:  Optional[bool] = None   # True = player's team starts CT
-
-
 @router.post("/predict")
 async def cs2_predict(req: Cs2PredictRequest):
+    from routes.auth import check_access
+    access = await check_access(req.email.lower().strip())
+    if not access or access == "NoSubscription":
+        raise HTTPException(status_code=403, detail="Active subscription required")
     prop_type = req.propType.lower().strip()
     if prop_type not in cs2_engine.CS2_PROPS:
         raise HTTPException(

@@ -33,6 +33,8 @@ class PlayerSearchRequest(BaseModel):
 
 
 class PredictionRequest(BaseModel):
+    email: str
+    token: str
     leagueId: int = 0
     playerId: int = 0
     playerName: str
@@ -48,6 +50,39 @@ class PredictionRequest(BaseModel):
     sport: str = "soccer"
     odds: Optional[dict] = None
 
+
+class Cs2PredictRequest(BaseModel):
+    email: str
+    token: str
+    playerNickname: str
+    playerId: Optional[int] = None
+    teamName: str = ""
+    teamId: Optional[int] = None
+    propType: str = ""
+    line: float = 0
+    opponentName: str = ""
+    opponentId: Optional[int] = None
+    matchId: Optional[int] = None
+    matchDate: str = ""
+    maps: Optional[int] = None
+    tournament: Optional[str] = None
+    playerTeamRank: Optional[int] = None
+    playerTeamStartsCt: Optional[bool] = None
+
+class WtaPredictRequest(BaseModel):
+    email: str
+    token: str
+    playerName: str
+    playerId: int = 0
+    opponentName: str = ""
+    opponentId: Optional[int] = None
+    propType: str = ""
+    line: float = 0
+    surface: str = ""
+    round: str = ""
+    tournament: str = ""
+    subjectRank: Optional[int] = None
+    opponentRank: Optional[int] = None
 
 class ComboRequest(BaseModel):
     leagueId: int

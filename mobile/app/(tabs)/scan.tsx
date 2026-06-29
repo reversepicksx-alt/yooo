@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   TextInput, ActivityIndicator, Alert, Platform, Modal, Image, Dimensions,
-  KeyboardAvoidingView, Animated,
+  KeyboardAvoidingView, Animated, Linking,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
@@ -85,7 +85,8 @@ type Sport = 'soccer' | 'cs2' | 'wta';
 
 export default function ScanScreen() {
   const insets = useSafeAreaInsets();
-  const { session, logout } = useAuth();
+  const { session, logout, accessType } = useAuth();
+  const isNoSub = !accessType || accessType === 'NoSubscription';
   const qc = useQueryClient();
   const [mode, setMode] = useState<Mode>('scan');
   const [phase, setPhase] = useState<Phase>('idle');
@@ -409,11 +410,17 @@ export default function ScanScreen() {
   };
 
   const runPredict = async (data: ScanResult, inManual = false) => {
+    if (!session?.email || !session?.token) {
+      Alert.alert('Sign In Required', 'Please sign in to run predictions.');
+      return;
+    }
     setPhase('analyzing');
     setAnalyzeError(null);
     setManualError(null);
     try {
       const req = {
+        email: session.email,
+        token: session.token,
         playerName: data.playerName,
         playerId: data.playerId || 0,
         teamId: data.teamId || 0,
@@ -465,12 +472,18 @@ export default function ScanScreen() {
   };
 
   const handleCs2Analyze = async () => {
+    if (!session?.email || !session?.token) {
+      Alert.alert('Sign In Required', 'Please sign in to run predictions.');
+      return;
+    }
     if (!cs2PlayerQuery.trim()) { setManualError('Enter a player nickname.'); return; }
     if (!line.trim() || isNaN(parseFloat(line))) { setManualError('Enter a valid line value (e.g. 21.5).'); return; }
     setManualError(null);
     setPhase('analyzing');
     try {
       const result = await cs2Predict({
+        email:              session.email,
+        token:              session.token,
         playerNickname:     cs2PlayerQuery.trim(),
         playerId:           cs2ResolvedPlayer?.id || null,
         teamName:           cs2ResolvedPlayer?.team?.name || '',
@@ -501,12 +514,18 @@ export default function ScanScreen() {
 
   // ── WTA handlers ─────────────────────────────────────────────────────────
   const handleWtaAnalyze = async () => {
+    if (!session?.email || !session?.token) {
+      Alert.alert('Sign In Required', 'Please sign in to run predictions.');
+      return;
+    }
     if (!wtaPlayerQuery.trim()) { setManualError('Enter a player name.'); return; }
     if (!line.trim() || isNaN(parseFloat(line))) { setManualError('Enter a valid line value (e.g. 22.5).'); return; }
     setManualError(null);
     setPhase('analyzing');
     try {
       const result = await wtaPredict({
+        email:        session.email,
+        token:        session.token,
         playerName:   wtaPlayerQuery.trim(),
         playerId:     wtaResolvedPlayer?.id || null,
         opponentName: wtaResolvedOpponent?.fullName || wtaOpponentQuery.trim() || '',
@@ -663,6 +682,25 @@ export default function ScanScreen() {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
+        {/* ─── PAYWALL OVERLAY (NoSubscription) ─── */}
+        {isNoSub && (
+          <View style={styles.paywallCard}>
+            <Ionicons name="lock-closed" size={28} color={Colors.primary} />
+            <Text style={styles.paywallTitle}>Unlock Predictions</Text>
+            <Text style={styles.paywallBody}>
+              Predictions require an active subscription. Tap below to manage your plan in Account settings.
+            </Text>
+            <TouchableOpacity
+              style={styles.paywallBtn}
+              onPress={() => router.push('/(tabs)/account')}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.paywallBtnText}>Go to Account</Text>
+              <Ionicons name="arrow-forward" size={16} color="#000" />
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* ─── SCAN SECTION ─── */}
         <>
             {/* Idle: cartoon sports image only */}
@@ -719,7 +757,7 @@ export default function ScanScreen() {
             )}
 
             {/* Detected: image-only scan result */}
-            {(phase === 'detected' || phase === 'analyzing') && scanResult && (
+            {(phase === 'detected' || (phase === 'analyzing' && scannedImageUri)) && scanResult && (
               <>
                 {/* Full-width image only */}
                 {scannedImageUri && (
@@ -762,7 +800,7 @@ export default function ScanScreen() {
         </>
 
         {/* ─── MANUAL FORM — Soccer ─── */}
-        {sport === 'soccer' && phase !== 'result' && phase !== 'saved' && !(phase === 'analyzing' && scanResult) && (
+        {sport === 'soccer' && phase !== 'result' && phase !== 'saved' && (
           <View style={styles.manualForm}>
             {scanFillHint && (
               <View style={styles.scanFillHint}>
@@ -3534,6 +3572,47 @@ const styles = StyleSheet.create({
   scanHeaderLogo: {
     width: 36,
     height: 36,
+  },
+
+  // ── Paywall card ──
+  paywallCard: {
+    backgroundColor: Colors.card,
+    borderRadius: Colors.radiusLg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: 22,
+    alignItems: 'center',
+    gap: 12,
+    marginHorizontal: 20,
+    marginVertical: 16,
+  },
+  paywallTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: Colors.text,
+    textAlign: 'center',
+  },
+  paywallBody: {
+    fontSize: 13,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 19,
+  },
+  paywallBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: Colors.primary,
+    borderRadius: Colors.radiusLg,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    marginTop: 4,
+  },
+  paywallBtnText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#000',
   },
   scanHeaderTitle: {
     fontSize: 15,

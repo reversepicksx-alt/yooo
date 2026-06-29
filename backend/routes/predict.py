@@ -84,6 +84,10 @@ def _soccer_gk_fantasy(gl: dict) -> float:
 
 @router.post("/predict")
 async def predict(req: PredictionRequest):
+    from routes.auth import check_access
+    access = await check_access(req.email.lower().strip())
+    if not access or access == "NoSubscription":
+        raise HTTPException(status_code=403, detail="Active subscription required")
     try:
         today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         # Prediction cache REMOVED: returning stale cached predictions caused
