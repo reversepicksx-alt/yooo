@@ -757,7 +757,7 @@ export default function ScanScreen() {
             )}
 
             {/* Detected: image-only scan result */}
-            {(phase === 'detected' || (phase === 'analyzing' && scannedImageUri)) && scanResult && (
+            {(phase === 'detected' || phase === 'analyzing') && scanResult && (
               <>
                 {/* Full-width image only */}
                 {scannedImageUri && (
