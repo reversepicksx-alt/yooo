@@ -36,8 +36,8 @@ async def _send_otp_email(email: str, code: str):
         return
 
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"{code} — Your ReversePicks Login Code"
-    msg["From"]    = f"ReversePicks <{gmail_user}>"
+    msg["Subject"] = f"{code} — Your Reverse Picks Login Code"
+    msg["From"]    = f"Reverse Picks <{gmail_user}>"
     msg["To"]      = email
 
     html = f"""
@@ -47,7 +47,7 @@ async def _send_otp_email(email: str, code: str):
         <img src="https://reversepicks.com/logo.png" width="64" style="margin-bottom:20px;" />
         <h2 style="color:#39FF14;font-size:22px;margin:0 0 8px;">Your Login Code</h2>
         <p style="color:#aaa;font-size:14px;margin:0 0 28px;">
-          Use this code to sign in to ReversePicks. It expires in 10 minutes.
+          Use this code to sign in to Reverse Picks. It expires in 10 minutes.
         </p>
         <div style="background:#050505;border-radius:12px;border:1.5px solid #39FF14;
                     padding:20px 0;margin-bottom:28px;">

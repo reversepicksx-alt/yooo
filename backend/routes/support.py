@@ -22,7 +22,7 @@ def _send_email_sync(name: str, sender_email: str, message: str):
     if not smtp_password:
         raise RuntimeError("Email service not configured.")
 
-    subject = f"[ReversePicks Support] Message from {name or sender_email or 'User'}"
+    subject = f"[Reverse Picks Support] Message from {name or sender_email or 'User'}"
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
@@ -38,7 +38,7 @@ def _send_email_sync(name: str, sender_email: str, message: str):
 
     html = f"""
     <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px">
-      <h2 style="color:#39FF14;margin-bottom:4px">ReversePicks Support</h2>
+      <h2 style="color:#39FF14;margin-bottom:4px">Reverse Picks Support</h2>
       <p style="color:#888;font-size:13px;margin-top:0">New message from the app</p>
       <hr style="border-color:#333;margin:16px 0">
       <table style="width:100%;border-collapse:collapse">

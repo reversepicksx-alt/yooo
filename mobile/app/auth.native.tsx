@@ -189,7 +189,7 @@ export default function AuthScreen() {
     setBioLoading(true);
     try {
       const result = await LocalAuthentication.authenticateAsync({
-        promptMessage: 'Sign in to ReversePicks',
+        promptMessage: 'Sign in to Reverse Picks',
         fallbackLabel: 'Use passcode',
         disableDeviceFallback: false,
       });

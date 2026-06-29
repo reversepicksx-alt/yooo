@@ -169,7 +169,7 @@ function IAPPaywall() {
         ? new Date(entitlement.expirationDate).getTime()
         : undefined;
       await grantBackend(pkg.product?.identifier ?? pkg.identifier, expiresMs);
-      Alert.alert('Subscribed!', 'Welcome to ReversePicks Pro. Your subscription is now active.');
+      Alert.alert('Subscribed!', 'Welcome to Reverse Picks Pro. Your subscription is now active.');
     } catch (e: any) {
       if (e?.userCancelled) return;
       Alert.alert('Purchase Failed', getErrorMessage(e));
@@ -241,7 +241,7 @@ function IAPPaywall() {
 
       <View style={styles.paywallHeader}>
         <Ionicons name="flash" size={28} color={Colors.primary} />
-        <Text style={styles.paywallTitle}>ReversePicks Pro</Text>
+        <Text style={styles.paywallTitle}>Reverse Picks Pro</Text>
         <Text style={styles.paywallSub}>AI-powered soccer player props analytics</Text>
       </View>
 
@@ -552,7 +552,7 @@ export default function AccountScreen() {
 
   const handleLogout = async () => {
     if (Platform.OS === 'web') {
-      if (typeof window !== 'undefined' && !window.confirm('Sign out of ReversePicks?')) return;
+      if (typeof window !== 'undefined' && !window.confirm('Sign out of Reverse Picks?')) return;
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       await logout();
     } else {
@@ -709,7 +709,7 @@ export default function AccountScreen() {
 
         <View style={styles.footer}>
           <Image source={require('../../assets/logo.png')} style={styles.footerLogo} resizeMode="contain" />
-          <Text style={styles.footerText}>ReversePicks · Soccer AI Analytics</Text>
+          <Text style={styles.footerText}>Reverse Picks · Soccer AI Analytics</Text>
         </View>
       </ScrollView>
 

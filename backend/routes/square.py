@@ -47,7 +47,7 @@ async def _ensure_plans_exist():
                     "type": "SUBSCRIPTION_PLAN",
                     "id": f"#{key}_plan",
                     "subscription_plan_data": {
-                        "name": f"ReversePicks {plan['name']}",
+                        "name": f"Reverse Picks {plan['name']}",
                         "all_items": True,
                     },
                 },
@@ -189,7 +189,7 @@ async def create_checkout(req: CheckoutRequest):
         checkout_body = {
             "idempotency_key": str(uuid.uuid4()),
             "quick_pay": {
-                "name": f"ReversePicks {PLANS[plan_key]['name']} Subscription",
+                "name": f"Reverse Picks {PLANS[plan_key]['name']} Subscription",
                 "price_money": {
                     "amount": PLANS[plan_key]["amount"],
                     "currency": "USD",
@@ -422,7 +422,7 @@ async def resubscribe_checkout(req: ResubscribeRequest):
         checkout_body = {
             "idempotency_key": str(uuid.uuid4()),
             "quick_pay": {
-                "name": f"ReversePicks {PLANS[plan_key]['name']} Subscription",
+                "name": f"Reverse Picks {PLANS[plan_key]['name']} Subscription",
                 "price_money": {
                     "amount": PLANS[plan_key]["amount"],
                     "currency": "USD",

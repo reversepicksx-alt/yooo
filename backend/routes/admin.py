@@ -212,7 +212,7 @@ async def generate_checkout_link(req: CheckoutLinkRequest):
                 unit_amount=plan["amount"],
                 currency="usd",
                 recurring={"interval": plan["interval"], "interval_count": plan["interval_count"]},
-                product_data={"name": f"ReversePicks {plan['name']}"},
+                product_data={"name": f"Reverse Picks {plan['name']}"},
                 lookup_key=f"reversepicks_{plan_key}",
             )
             price_id = price.id

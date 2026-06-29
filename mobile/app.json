@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "ReversePicks",
+    "name": "Reverse Picks",
     "slug": "reversepicks",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -18,11 +18,11 @@
       "icon": "./assets/rp-icon.png",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
-        "NSCameraUsageDescription": "ReversePicks needs camera access to scan prop slips.",
-        "NSPhotoLibraryUsageDescription": "ReversePicks needs access to your photos to scan prop slips.",
-        "NSPhotoLibraryAddUsageDescription": "ReversePicks needs access to save images.",
-        "NSUserNotificationsUsageDescription": "ReversePicks sends you pick alerts and result notifications.",
-        "NSFaceIDUsageDescription": "ReversePicks uses Face ID to sign you in quickly and securely.",
+        "NSCameraUsageDescription": "Reverse Picks needs camera access to scan prop slips.",
+        "NSPhotoLibraryUsageDescription": "Reverse Picks needs access to your photos to scan prop slips.",
+        "NSPhotoLibraryAddUsageDescription": "Reverse Picks needs access to save images.",
+        "NSUserNotificationsUsageDescription": "Reverse Picks sends you pick alerts and result notifications.",
+        "NSFaceIDUsageDescription": "Reverse Picks uses Face ID to sign you in quickly and securely.",
         "CFBundleURLTypes": [
           {
             "CFBundleURLSchemes": [
@@ -56,8 +56,8 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "ReversePicks needs access to your photos to scan prop slips.",
-          "cameraPermission": "ReversePicks needs camera access to scan prop slips."
+          "photosPermission": "Reverse Picks needs access to your photos to scan prop slips.",
+          "cameraPermission": "Reverse Picks needs camera access to scan prop slips."
         }
       ],
       [
@@ -72,7 +72,7 @@
       [
         "expo-local-authentication",
         {
-          "faceIDPermission": "ReversePicks uses Face ID to sign you in quickly and securely."
+          "faceIDPermission": "Reverse Picks uses Face ID to sign you in quickly and securely."
         }
       ]
     ],

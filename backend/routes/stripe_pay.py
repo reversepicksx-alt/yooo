@@ -52,7 +52,7 @@ def _get_or_create_price(plan_key: str) -> str:
             "interval": plan["interval"],
             "interval_count": plan["interval_count"],
         },
-        product_data={"name": f"ReversePicks {plan['name']}"},
+        product_data={"name": f"Reverse Picks {plan['name']}"},
         lookup_key=lookup_key,
     )
     return price.id
