@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { Alert, Platform, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { Platform, View } from 'react-native';
 import { Stack } from 'expo-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -11,7 +11,6 @@ import { registerPushToken } from '@/lib/api';
 import LoadingScreen from '@/components/LoadingScreen';
 import { initializeRevenueCat, setRevenueCatUserId, SubscriptionProvider } from '@/lib/revenuecat';
 
-// Initialize RevenueCat once at module load (before any component renders)
 try {
   initializeRevenueCat();
 } catch (err: any) {
@@ -63,7 +62,6 @@ function PushRegistrar() {
   return null;
 }
 
-// Logs user into RevenueCat whenever they authenticate
 function RevenueCatSync() {
   const { session } = useAuth();
 
@@ -76,50 +74,42 @@ function RevenueCatSync() {
   return null;
 }
 
+/** Dismiss the HTML loading overlay that the proxy injected before React mounted. */
+function hideWebOverlay() {
+  try {
+    const hide = (window as any).__rpHideLoader;
+    if (typeof hide === 'function') hide();
+  } catch {}
+}
+
 function AppBoot() {
   const { isLoading } = useAuth();
   const [splashDone, setSplashDone] = useState(Platform.OS === 'web');
-  const webSplashStart = useRef(Date.now());
-  const [webSplashReady, setWebSplashReady] = useState(false);
 
-  const showApp = () => {
-    setWebSplashReady(true);
-    requestAnimationFrame(() => {
-      if (typeof window !== 'undefined') {
-        const hide = (window as any).__rpHideLoader;
-        if (typeof hide === 'function') hide();
-      }
-    });
-  };
-
-  // Normal path: auth resolved → wait for minimum 4s splash then show app.
+  // ── Web: hide the HTML overlay once auth resolves ─────────────────────────
   useEffect(() => {
     if (Platform.OS !== 'web') return;
     if (isLoading) return;
-    const elapsed = Date.now() - webSplashStart.current;
-    const remaining = Math.max(0, 4000 - elapsed);
-    const t = setTimeout(showApp, remaining);
+    // Small delay so React commits the auth-driven navigation before overlay disappears.
+    const t = setTimeout(hideWebOverlay, 300);
     return () => clearTimeout(t);
   }, [isLoading]);
 
-  // Hard-cap: if auth is still stuck after 8s (backend unreachable), force show anyway.
+  // Hard-cap: if backend is unreachable and isLoading never clears, force-hide at 8s.
   useEffect(() => {
     if (Platform.OS !== 'web') return;
-    const t = setTimeout(showApp, 8000);
+    const t = setTimeout(hideWebOverlay, 8000);
     return () => clearTimeout(t);
   }, []);
-
-  // On web: hold until auth done AND minimum splash time passed.
-  // Return a dark placeholder so there's no flash of black screen.
-  if (Platform.OS === 'web' && !webSplashReady) {
-    return <View style={{ flex: 1, backgroundColor: Colors.background }} />;
-  }
 
   // Native: show the React animated loading screen until auth + fonts are ready.
   if (Platform.OS !== 'web' && (isLoading || !splashDone)) {
     return <LoadingScreen onDone={() => setSplashDone(true)} />;
   }
 
+  // Always render the full Stack on web immediately — the HTML overlay
+  // (z-index 99999, injected by proxy.js) covers it until hideWebOverlay() fires.
+  // On native this renders after the LoadingScreen finishes.
   return (
     <>
       <StatusBar style="light" />
