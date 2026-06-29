@@ -1231,7 +1231,7 @@ export default function ScanScreen() {
         {/* ─── RESULT: Full Analysis ─── */}
         {phase === 'result' && prediction && (
           <>
-            <Reanimated.View entering={FadeInDown.springify().damping(14).stiffness(100).delay(50)}>
+            <Reanimated.View entering={Platform.OS !== 'web' ? FadeInDown.springify().damping(14).stiffness(100).delay(50) : undefined}>
             <View ref={analysisRef} collapsable={false} style={styles.captureContainer}>
             <View style={styles.analysisCard}>
               {/* Top accent stripe — color signals OVER/UNDER at a glance */}

@@ -29,3 +29,24 @@ placeholder <View> instead of the app. Looked like a permanent black screen.
 persist until the URL changes. Always do a clean rebuild (`rm -rf dist`) when
 fixing web boot issues — expo's content hash changes with any source change,
 forcing Safari to download fresh.
+
+## Second issue found same session
+`react-native-gesture-handler/ReanimatedSwipeable` has native-only JSX syntax
+in its module source that crashes when Metro bundles for web. A static top-level
+import crashes the entire file's module, preventing React from mounting — which
+means no useEffects run and `hideWebOverlay()` is never called.
+
+**Pattern**: Any `react-native-gesture-handler` subpath import that is
+native-only MUST be lazy-required inside a `Platform.OS !== 'web'` guard:
+```js
+const _getNativeSwipeable = () => {
+  if (Platform.OS === 'web') return null;
+  try { return require('react-native-gesture-handler/ReanimatedSwipeable').default; }
+  catch { return null; }
+};
+```
+
+Also: Reanimated `entering={FadeInDown...}` props must be `undefined` on web:
+```jsx
+entering={Platform.OS !== 'web' ? FadeInDown.duration(300) : undefined}
+```

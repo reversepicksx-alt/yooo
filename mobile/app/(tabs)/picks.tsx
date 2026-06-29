@@ -9,11 +9,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import ReanimatedSwipeable, {
-  SwipeableMethods,
-} from 'react-native-gesture-handler/ReanimatedSwipeable';
 import Reanimated, {
-  SharedValue,
   useAnimatedStyle,
   interpolate,
   Extrapolation,
@@ -23,6 +19,14 @@ import Reanimated, {
   withTiming,
   FadeInDown,
 } from 'react-native-reanimated';
+// ReanimatedSwipeable loaded lazily — its module crashes the web bundle when
+// imported at the top level (native-only JSX syntax in the package source).
+const _getNativeSwipeable = () => {
+  if (Platform.OS === 'web') return null;
+  try {
+    return require('react-native-gesture-handler/ReanimatedSwipeable').default as any;
+  } catch { return null; }
+};
 import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import NotificationBell from '@/components/NotificationBell';
@@ -179,7 +183,7 @@ function SwipeableRow({
   onDelete: () => void;
   children: React.ReactNode;
 }) {
-  const swipeRef = useRef<SwipeableMethods | null>(null);
+  const swipeRef = useRef<any>(null);
 
   // WEB: don't wrap in a swipeable at all. The browser doesn't have native
   // swipe-to-delete UX, the gesture-handler web shim is flaky, and we now
@@ -191,8 +195,10 @@ function SwipeableRow({
 
   // NATIVE iOS/Android: keep the iOS-Mail-style swipe-to-reveal action.
   // Tapping DELETE confirms; swiping closed dismisses without action.
+  const NativeSwipeable = _getNativeSwipeable();
+  if (!NativeSwipeable) return <>{children}</>;
   return (
-    <ReanimatedSwipeable
+    <NativeSwipeable
       ref={swipeRef}
       friction={1.5}
       leftThreshold={40}
@@ -213,7 +219,7 @@ function SwipeableRow({
       }}
     >
       {children}
-    </ReanimatedSwipeable>
+    </NativeSwipeable>
   );
 }
 
@@ -362,7 +368,7 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete?: () => void }) {
         <Text style={styles.cardPlayer} numberOfLines={1}>{pick.playerName}</Text>
         <View style={styles.cardRight}>
           {live && !won && !lost && hasLiveData && (
-            <Reanimated.View entering={FadeInDown.duration(300)} style={styles.liveBadge}>
+            <Reanimated.View entering={Platform.OS !== 'web' ? FadeInDown.duration(300) : undefined} style={styles.liveBadge}>
               <PulsingDot />
               <Text style={styles.liveText}>LIVE</Text>
             </Reanimated.View>
@@ -911,7 +917,7 @@ export default function PicksScreen() {
           <ActivityIndicator color={Colors.primary} size="large" />
         </View>
       ) : activeTab === 'live' && live.length === 0 ? (
-        <Reanimated.View entering={FadeInDown.duration(400).springify()} style={styles.empty}>
+        <Reanimated.View entering={Platform.OS !== 'web' ? FadeInDown.duration(400).springify() : undefined} style={styles.empty}>
           <View style={styles.emptyIconWrap}>
             <Ionicons name="radio-outline" size={36} color={Colors.primary} />
           </View>
@@ -923,7 +929,7 @@ export default function PicksScreen() {
           </TouchableOpacity>
         </Reanimated.View>
       ) : activeTab === 'history' && history.length === 0 ? (
-        <Reanimated.View entering={FadeInDown.duration(400).springify()} style={styles.empty}>
+        <Reanimated.View entering={Platform.OS !== 'web' ? FadeInDown.duration(400).springify() : undefined} style={styles.empty}>
           <View style={styles.emptyIconWrap}>
             <Ionicons name="checkmark-circle-outline" size={36} color={Colors.textTertiary} />
           </View>
