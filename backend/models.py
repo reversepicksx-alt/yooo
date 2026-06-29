@@ -136,6 +136,5 @@ class AdminTestKeyRequest(BaseModel):
 
 class AppleAuthRequest(BaseModel):
     identity_token: str
-    user_id: str
     email: Optional[str] = None
     full_name: Optional[str] = None

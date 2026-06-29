@@ -11,17 +11,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@/contexts/AuthContext';
 import Colors from '@/constants/colors';
 import { apiCall } from '@/lib/api';
-import { useSubscription } from '@/lib/revenuecat';
-import Purchases, { type PurchasesPackage } from 'react-native-purchases';
+import * as AppleAuthentication from 'expo-apple-authentication';
+import Purchases from 'react-native-purchases';
 
 const INPUT_STYLE = Platform.OS === 'web' ? { outlineWidth: 0 } : {};
-
-const FEATURES = [
-  'AI-powered soccer player prop predictions',
-  'Advanced confidence scoring on every pick',
-  'Live match intel & tactical breakdowns',
-  'Data-driven insights updated daily',
-];
 
 function getErrorMessage(e: unknown): string {
   if (e instanceof Error) return e.message;
@@ -32,10 +25,9 @@ function getErrorMessage(e: unknown): string {
 export default function AuthScreen() {
   const insets = useSafeAreaInsets();
   const { loginWithResponse } = useAuth();
-  const { packages, pkgLoading, purchase, restore, isPurchasing, isRestoring, refetchCustomerInfo, refetchOfferings } = useSubscription();
 
-  type Step = 'paywall' | 'email' | 'code';
-  const [step, setStep]       = useState<Step>(Platform.OS === 'ios' ? 'paywall' : 'email');
+  type Step = 'email' | 'code';
+  const [step, setStep]       = useState<Step>('email');
   const [email, setEmail]     = useState('');
   const [code, setCode]       = useState('');
   const [loading, setLoading] = useState(false);
@@ -43,7 +35,6 @@ export default function AuthScreen() {
   const [info, setInfo]       = useState('');
   const [resendTimer, setResendTimer] = useState(0);
   const resendRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [buyingId, setBuyingId] = useState<string | null>(null);
 
   // Owner mode
   const [showOwner, setShowOwner]   = useState(false);
@@ -95,46 +86,49 @@ export default function AuthScreen() {
     }, 1000);
   };
 
-  // ── Apple IAP purchase ─────────────────────────────────────────────────────
-  const handleSubscribe = async (pkg: PurchasesPackage) => {
-    setBuyingId(pkg.identifier);
+  // ── Sign in with Apple ───────────────────────────────────────────────────
+  const handleAppleSignIn = async () => {
     try {
+      setLoading(true);
+      setError('');
+      setInfo('');
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      const customerInfo = await purchase(pkg);
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
-      // RevenueCat purchase is anonymous until we logIn.
-      // If user already typed an email, link the purchase NOW so the webhook
-      // arrives with the correct email → verify-code can find the IAP record.
-      const trimmedEmail = email.trim().toLowerCase();
-      if (trimmedEmail && trimmedEmail.includes('@')) {
-        try {
-          await Purchases.logIn(trimmedEmail);
-          console.log('[RevenueCat] Purchase linked to', trimmedEmail);
-        } catch (rcErr) {
-          console.warn('[RevenueCat] logIn after purchase (non-fatal):', rcErr);
-        }
+      const credential = await AppleAuthentication.signInAsync({
+        requestedScopes: [AppleAuthentication.AppleAuthenticationScope.FULL_NAME, AppleAuthentication.AppleAuthenticationScope.EMAIL],
+      });
+
+      if (!credential.identityToken) {
+        throw new Error('Apple authentication did not return an identity token.');
       }
 
-      setInfo('Subscribed! Now enter your email to create your account.');
-      setStep('email');
-    } catch (e: any) {
-      if (e?.userCancelled) return;
-      Alert.alert('Purchase Failed', getErrorMessage(e));
-    } finally {
-      setBuyingId(null);
-    }
-  };
+      const result: any = await apiCall('/auth/apple-auth', {
+        method: 'POST',
+        body: JSON.stringify({
+          identity_token: credential.identityToken,
+          email: credential.email ?? undefined,
+        }),
+      });
 
-  const handleRestore = async () => {
-    try {
-      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      await restore();
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      setInfo('Purchases restored! Enter your email to sign in.');
-      setStep('email');
+      if (result?.verified) {
+        await loginWithResponse({
+          email:         result.email,
+          session_token: result.session_token,
+          access_type:   result.access_type,
+        });
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        router.replace('/(tabs)/scan');
+      } else {
+        setError(result?.detail || 'Apple Sign In failed. Try again.');
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      }
     } catch (e: any) {
-      Alert.alert('Restore Failed', getErrorMessage(e));
+      if (e?.code === 'ERR_CANCELED') return; // user cancelled
+      console.error('[Apple Sign In]', e);
+      setError(getErrorMessage(e));
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -328,141 +322,6 @@ export default function AuthScreen() {
     );
   }
 
-  // ── PAYWALL ────────────────────────────────────────────────────────────────
-  if (step === 'paywall') {
-    return (
-      <ScrollView
-        style={styles.root}
-        contentContainerStyle={[styles.paywallScroll, { paddingTop: insets.top + 20, paddingBottom: insets.bottom + 32 }]}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Logo + header */}
-        <View style={styles.paywallTop}>
-          <Image source={require('../assets/logo.png')} style={styles.paywallLogo} resizeMode="contain" />
-          <Text style={styles.paywallBrand}>REVERSEPICKS</Text>
-          <Text style={styles.paywallHeadline}>Pro Analytics</Text>
-          <Text style={styles.paywallSub}>AI-powered soccer player prop predictions</Text>
-        </View>
-
-        {/* Features */}
-        <View style={styles.featureList}>
-          {FEATURES.map((f, i) => (
-            <View key={i} style={styles.featureRow}>
-              <Ionicons name="checkmark-circle" size={18} color={Colors.primary} />
-              <Text style={styles.featureText}>{f}</Text>
-            </View>
-          ))}
-        </View>
-
-        {/* Plans */}
-        <View style={styles.plansWrap}>
-          {pkgLoading ? (
-            <View style={styles.pkgLoading}>
-              <ActivityIndicator size="small" color={Colors.primary} />
-              <Text style={styles.pkgLoadingText}>Loading plans…</Text>
-            </View>
-          ) : packages.length === 0 ? (
-            <View style={styles.pkgEmpty}>
-              <Text style={styles.pkgEmptyText}>Plans unavailable right now.</Text>
-              <TouchableOpacity
-                style={styles.retryBtn}
-                onPress={() => refetchOfferings()}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="refresh" size={14} color={Colors.primary} />
-                <Text style={styles.retryBtnText}>Try Again</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            packages.map((pkg, idx) => {
-              const pt        = pkg.packageType ?? '';
-              const isFeatured = ['MONTHLY','THREE_MONTH','SIX_MONTH','ANNUAL'].includes(pt);
-              const isBuying  = buyingId === pkg.identifier;
-              const price     = pkg.product?.priceString ?? '—';
-              const labelMap: Record<string, string> = {
-                WEEKLY: 'Weekly', MONTHLY: 'Monthly',
-                THREE_MONTH: '3 Months', SIX_MONTH: '6 Months',
-                ANNUAL: 'Annual', TWO_MONTH: '2 Months',
-              };
-              const periodMap: Record<string, string> = {
-                WEEKLY: '/ week', MONTHLY: '/ month',
-                THREE_MONTH: '/ 3 months', SIX_MONTH: '/ 6 months',
-                ANNUAL: '/ year', TWO_MONTH: '/ 2 months',
-              };
-              const label  = labelMap[pt] ?? pkg.product?.title ?? pt;
-              const period = periodMap[pt] ?? '';
-              return (
-                <TouchableOpacity
-                  key={pkg.identifier}
-                  style={[styles.planCard, isFeatured && styles.planCardFeatured]}
-                  onPress={() => handleSubscribe(pkg)}
-                  disabled={!!buyingId || isRestoring}
-                  activeOpacity={0.8}
-                >
-                  {isFeatured && (
-                    <View style={styles.planBadge}>
-                      <Text style={styles.planBadgeText}>BEST VALUE</Text>
-                    </View>
-                  )}
-                  <View style={styles.planLeft}>
-                    <Text style={[styles.planLabel, isFeatured && styles.planLabelFeatured]}>{label}</Text>
-                    <Text style={styles.planPeriod}>{period}</Text>
-                  </View>
-                  <View style={styles.planRight}>
-                    {isBuying ? (
-                      <ActivityIndicator size="small" color={isFeatured ? '#000' : Colors.primary} />
-                    ) : (
-                      <>
-                        <Text style={[styles.planPrice, isFeatured && styles.planPriceFeatured]}>{price}</Text>
-                        <Ionicons name="chevron-forward" size={16} color={isFeatured ? '#000' : Colors.textTertiary} />
-                      </>
-                    )}
-                  </View>
-                </TouchableOpacity>
-              );
-            })
-          )}
-        </View>
-
-        <Text style={styles.paywallDisclosure}>
-          Subscriptions auto-renew unless cancelled 24h before period ends. Manage anytime in Apple Settings.
-        </Text>
-
-        {/* Restore */}
-        <TouchableOpacity
-          style={styles.restoreBtn}
-          onPress={handleRestore}
-          disabled={isRestoring || !!buyingId}
-          activeOpacity={0.7}
-        >
-          {isRestoring
-            ? <ActivityIndicator size="small" color={Colors.textSecondary} />
-            : <Text style={styles.restoreBtnText}>Restore Purchases</Text>
-          }
-        </TouchableOpacity>
-
-        {/* Sign in link */}
-        <TouchableOpacity
-          style={styles.signInLink}
-          onPress={() => { setError(''); setInfo(''); setStep('email'); }}
-          activeOpacity={0.7}
-        >
-          <Text style={styles.signInLinkText}>Already a member? <Text style={styles.signInLinkBold}>Sign In</Text></Text>
-        </TouchableOpacity>
-
-        {/* Admin access */}
-        <TouchableOpacity
-          style={styles.adminLink}
-          onPress={() => { setShowOwner(v => !v); setStep('email'); }}
-          activeOpacity={0.6}
-        >
-          <Ionicons name="shield-outline" size={13} color={Colors.textTertiary} />
-          <Text style={styles.adminLinkText}>Admin Access</Text>
-        </TouchableOpacity>
-      </ScrollView>
-    );
-  }
-
   // ── OTP Code Entry ────────────────────────────────────────────────────────
   if (step === 'code') {
     return (
@@ -557,12 +416,6 @@ export default function AuthScreen() {
         showsVerticalScrollIndicator={false}
       >
       <View style={[styles.inner, { paddingTop: insets.top + 8, paddingBottom: insets.bottom + 20 }]}>
-        {Platform.OS === 'ios' && (
-          <TouchableOpacity onPress={() => { setError(''); setInfo(''); setStep('paywall'); }} style={styles.backRow}>
-            <Ionicons name="arrow-back" size={18} color={Colors.textSecondary} />
-            <Text style={styles.backRowText}>Back</Text>
-          </TouchableOpacity>
-        )}
 
         <View style={styles.card}>
           <View style={styles.logoWrap}>
@@ -607,6 +460,23 @@ export default function AuthScreen() {
                 </View>
             }
           </TouchableOpacity>
+
+          {Platform.OS === 'ios' && (
+            <>
+              <View style={styles.orDivider}>
+                <View style={styles.orLine} />
+                <Text style={styles.orText}>or</Text>
+                <View style={styles.orLine} />
+              </View>
+              <AppleAuthentication.AppleAuthenticationButton
+                buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
+                buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.WHITE}
+                cornerRadius={8}
+                style={styles.appleBtn}
+                onPress={handleAppleSignIn}
+              />
+            </>
+          )}
 
           {!showOwner && (
             <TouchableOpacity onPress={() => setShowOwner(true)} style={styles.adminLink} activeOpacity={0.6}>
@@ -698,184 +568,6 @@ const styles = StyleSheet.create({
     letterSpacing: 6,
   },
 
-  // ── Paywall ─────────────────────────────────────────────────────────────
-  paywallScroll: {
-    paddingHorizontal: 24,
-    alignItems: 'stretch',
-  },
-  paywallTop: {
-    alignItems: 'center',
-    marginBottom: 28,
-  },
-  paywallLogo: {
-    width: 72,
-    height: 72,
-    marginBottom: 10,
-  },
-  paywallBrand: {
-    color: Colors.primary,
-    fontSize: 13,
-    fontWeight: '800',
-    letterSpacing: 4,
-    marginBottom: 6,
-  },
-  paywallHeadline: {
-    color: Colors.text,
-    fontSize: 30,
-    fontWeight: '900',
-    letterSpacing: 0.5,
-    textAlign: 'center',
-  },
-  paywallSub: {
-    color: Colors.textSecondary,
-    fontSize: 14,
-    textAlign: 'center',
-    marginTop: 6,
-    lineHeight: 20,
-  },
-  featureList: {
-    gap: 12,
-    marginBottom: 28,
-  },
-  featureRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  featureText: {
-    color: Colors.text,
-    fontSize: 15,
-    flex: 1,
-    lineHeight: 20,
-  },
-  plansWrap: {
-    gap: 12,
-    marginBottom: 20,
-  },
-  pkgLoading: {
-    alignItems: 'center',
-    paddingVertical: 24,
-    gap: 8,
-  },
-  pkgLoadingText: {
-    color: Colors.textSecondary,
-    fontSize: 14,
-  },
-  pkgEmpty: {
-    alignItems: 'center',
-    paddingVertical: 20,
-    gap: 12,
-  },
-  pkgEmptyText: {
-    color: Colors.textSecondary,
-    fontSize: 14,
-    textAlign: 'center',
-  },
-  retryBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: Colors.primary,
-  },
-  retryBtnText: {
-    color: Colors.primary,
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  planCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.card,
-    borderRadius: 14,
-    borderWidth: 1.5,
-    borderColor: Colors.border,
-    paddingHorizontal: 18,
-    paddingVertical: 16,
-    position: 'relative',
-    overflow: 'hidden',
-  },
-  planCardFeatured: {
-    backgroundColor: Colors.primary,
-    borderColor: Colors.primary,
-  },
-  planBadge: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    backgroundColor: 'rgba(0,0,0,0.25)',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderBottomLeftRadius: 10,
-  },
-  planBadgeText: {
-    color: '#000',
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 1,
-  },
-  planLeft: {
-    flex: 1,
-  },
-  planLabel: {
-    color: Colors.text,
-    fontSize: 17,
-    fontWeight: '700',
-  },
-  planLabelFeatured: {
-    color: '#000',
-  },
-  planPeriod: {
-    color: Colors.textSecondary,
-    fontSize: 13,
-    marginTop: 2,
-  },
-  planRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  planPrice: {
-    color: Colors.primary,
-    fontSize: 18,
-    fontWeight: '800',
-  },
-  planPriceFeatured: {
-    color: '#000',
-  },
-  paywallDisclosure: {
-    color: Colors.textTertiary,
-    fontSize: 11,
-    textAlign: 'center',
-    lineHeight: 16,
-    marginBottom: 16,
-  },
-  restoreBtn: {
-    alignItems: 'center',
-    paddingVertical: 8,
-    marginBottom: 4,
-  },
-  restoreBtnText: {
-    color: Colors.textSecondary,
-    fontSize: 13,
-    fontWeight: '500',
-  },
-  signInLink: {
-    alignItems: 'center',
-    paddingVertical: 10,
-  },
-  signInLinkText: {
-    color: Colors.textSecondary,
-    fontSize: 14,
-  },
-  signInLinkBold: {
-    color: Colors.primary,
-    fontWeight: '700',
-  },
-
   // ── Email / OTP ──────────────────────────────────────────────────────────
   inner: {
     flex: 1,
@@ -953,6 +645,10 @@ const styles = StyleSheet.create({
     borderRadius: Colors.radius, padding: 10,
   },
   errorText: { color: Colors.error, fontSize: 13, flex: 1, lineHeight: 18 },
+  orDivider: { flexDirection: 'row', alignItems: 'center', gap: 10, marginVertical: 4 },
+  orLine:    { flex: 1, height: 1, backgroundColor: Colors.border },
+  orText:    { color: Colors.textTertiary, fontSize: 13, fontWeight: '500' },
+  appleBtn:  { width: '100%', height: 44 },
   ownerBlock: { gap: 10, marginTop: 4 },
   resendBtn: { alignItems: 'center', paddingVertical: 4 },
   resendBtnDisabled: { opacity: 0.4 },

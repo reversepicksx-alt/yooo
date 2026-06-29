@@ -11,7 +11,7 @@ import stripe as _stripe
 from config import db, OWNER_EMAILS, LIFETIME_SUB_EMAILS, BETA_TEST_EMAILS
 from models import (
     VerifySessionRequest, VerifyAccessRequest, LoginRequest,
-    SetPasswordRequest, ResetPasswordRequest,
+    SetPasswordRequest, ResetPasswordRequest, AppleAuthRequest,
 )
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -587,6 +587,88 @@ async def logout(req: VerifySessionRequest):
         {"email": req.email.lower().strip(), "session_token": req.session_token}
     )
     return {"success": True}
+
+
+@router.post("/apple-auth")
+async def apple_auth(req: AppleAuthRequest):
+    """Sign in with Apple — verify identity token, create/grant session."""
+    import jwt
+    import requests
+
+    # 1. Fetch Apple's public keys
+    try:
+        keys_resp = requests.get("https://appleid.apple.com/auth/keys", timeout=10)
+        keys = keys_resp.json().get("keys", [])
+    except Exception:
+        raise HTTPException(status_code=502, detail="Could not reach Apple auth servers.")
+
+    # 2. Decode header to find key ID
+    try:
+        unverified = jwt.decode(req.identity_token, options={"verify_signature": False})
+        kid = jwt.get_unverified_header(req.identity_token).get("kid")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid identity token.")
+
+    # 3. Find matching public key
+    apple_key = next((k for k in keys if k.get("kid") == kid), None)
+    if not apple_key:
+        raise HTTPException(status_code=400, detail="Apple signing key not found.")
+
+    # 4. Convert JWK to PEM
+    from cryptography.hazmat.primitives.asymmetric.ec import ECPublicNumbers
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.backends import default_backend
+    import base64
+
+    def b64_to_int(s: str) -> int:
+        return int.from_bytes(base64.urlsafe_b64decode(s + "=="), "big")
+
+    x = b64_to_int(apple_key["x"])
+    y = b64_to_int(apple_key["y"])
+    pub = ECPublicNumbers(x, y).public_key(default_backend())
+    pem = pub.public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+
+    # 5. Verify token
+    try:
+        payload = jwt.decode(
+            req.identity_token, pem, algorithms=["ES256"],
+            audience="com.reversepicks.app",
+        )
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Apple token expired.")
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Apple token verification failed: {e}")
+
+    apple_user_id = payload.get("sub")
+    apple_email = req.email or payload.get("email", "")
+    if not apple_email or "@" not in apple_email:
+        # Fallback: derive email from Apple user ID if private email relay
+        apple_email = f"{apple_user_id}@apple.private"
+
+    email_lower = apple_email.lower().strip()
+
+    # 6. Create session and grant access
+    access_type = "Premium (Apple)"
+    token = await create_session(email_lower, access_type)
+
+    # Persist Apple ID mapping
+    await db.apple_auth_ids.update_one(
+        {"appleUserId": apple_user_id},
+        {"$set": {"appleUserId": apple_user_id, "email": email_lower, "updatedAt": datetime.now(timezone.utc).isoformat()}},
+        upsert=True,
+    )
+
+    print(f"[APPLE AUTH] {email_lower} signed in via Apple | uid={apple_user_id[:20]}...")
+    return {
+        "verified": True,
+        "email": email_lower,
+        "session_token": token,
+        "access_type": access_type,
+        "has_access": True,
+    }
 
 
 @router.post("/iap-grant")
