@@ -12,8 +12,16 @@ router = APIRouter(prefix="/api", tags=["combo"])
 @router.post("/predict-combo")
 async def predict_combo(req: ComboRequest):
     """Start combo prediction — returns job_id immediately, frontend polls for result."""
+    from routes.auth import verify_session
+    sess = await verify_session(req)
+    if not sess.get("valid"):
+        raise HTTPException(status_code=401, detail="Invalid or expired session. Please sign in again.")
+    access = sess.get("access_type", "")
+    if not access or access == "NoSubscription":
+        raise HTTPException(status_code=403, detail="Active subscription required")
+
     job_id = uuid.uuid4().hex[:12]
-    
+
     # Store job status
     await db.combo_jobs.insert_one({
         "jobId": job_id,

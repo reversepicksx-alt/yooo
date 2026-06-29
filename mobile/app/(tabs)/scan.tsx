@@ -682,15 +682,21 @@ export default function ScanScreen() {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        {/* ─── PAYWALL STRIP (NoSubscription) ─── */}
+        {/* ─── PAYWALL OVERLAY (NoSubscription) ─── */}
         {isNoSub && (
-          <View style={styles.paywallStrip}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <Ionicons name="lock-closed" size={16} color={Colors.textTertiary} />
-              <Text style={styles.paywallStripText}>
-                Subscription required · <Text style={{ color: Colors.primary, fontWeight: '700' }} onPress={() => router.push('/(tabs)/account')}>Get Access</Text>
-              </Text>
-            </View>
+          <View style={styles.paywallOverlay}>
+            <Ionicons name="lock-closed" size={48} color={Colors.primary} style={{ marginBottom: 16 }} />
+            <Text style={styles.paywallOverlayTitle}>Unlock Predictions</Text>
+            <Text style={styles.paywallOverlayBody}>
+              Get unlimited AI player prop predictions, tactical breakdowns, and sharp summaries.
+            </Text>
+            <TouchableOpacity
+              style={styles.paywallOverlayBtn}
+              onPress={() => router.push('/paywall')}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.paywallOverlayBtnText}>Get Access</Text>
+            </TouchableOpacity>
           </View>
         )}
 
@@ -750,7 +756,7 @@ export default function ScanScreen() {
             )}
 
             {/* Detected: image-only scan result */}
-            {(phase === 'detected' || phase === 'analyzing') && scanResult && (
+            {(phase === 'detected' || (phase === 'analyzing' && mode === 'scan')) && scanResult && (
               <>
                 {/* Full-width image only */}
                 {scannedImageUri && (
@@ -3567,23 +3573,43 @@ const styles = StyleSheet.create({
     height: 36,
   },
 
-  // ── Paywall strip ──
-  paywallStrip: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  // ── Paywall overlay ──
+  paywallOverlay: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(5,5,5,0.92)',
+    zIndex: 50,
     justifyContent: 'center',
-    paddingVertical: 10,
-    marginHorizontal: 16,
-    marginTop: 8,
-    marginBottom: 4,
-    borderTopWidth: 1,
-    borderBottomWidth: 1,
-    borderColor: Colors.borderSubtle,
+    alignItems: 'center',
+    padding: 32,
+    gap: 12,
   },
-  paywallStripText: {
+  paywallOverlayTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: Colors.text,
+    letterSpacing: 0.5,
+    textAlign: 'center',
+  },
+  paywallOverlayBody: {
     fontSize: 13,
     color: Colors.textSecondary,
-    letterSpacing: 0.2,
+    textAlign: 'center',
+    lineHeight: 20,
+    maxWidth: 280,
+  },
+  paywallOverlayBtn: {
+    backgroundColor: Colors.primary,
+    paddingVertical: 14,
+    paddingHorizontal: 32,
+    borderRadius: 12,
+    marginTop: 8,
+  },
+  paywallOverlayBtnText: {
+    color: '#000',
+    fontWeight: '800',
+    fontSize: 15,
+    letterSpacing: 0.5,
   },
   scanHeaderTitle: {
     fontSize: 15,
