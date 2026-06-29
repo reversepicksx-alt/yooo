@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   Platform, ActivityIndicator, Image, Alert,
-  KeyboardAvoidingView, ScrollView, Animated, Linking, Dimensions,
+  KeyboardAvoidingView, ScrollView, Animated, Dimensions,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -17,8 +17,6 @@ import { apiCall } from '@/lib/api';
 import Purchases from 'react-native-purchases';
 
 const { width: SCREEN_W } = Dimensions.get('window');
-const TERMS_URL   = 'https://reversepicks.com/terms';
-const PRIVACY_URL = 'https://reversepicks.com/privacy';
 
 type Step = 'landing' | 'email' | 'code';
 type Mode = 'signin' | 'signup';
@@ -42,21 +40,6 @@ function ErrorBox({ message }: { message: string }) {
     <View style={styles.errorBox}>
       <Ionicons name="alert-circle-outline" size={15} color={Colors.error} />
       <Text style={styles.errorText}>{message}</Text>
-    </View>
-  );
-}
-
-function TermsFooter() {
-  return (
-    <View style={styles.termsRow}>
-      <Text style={styles.termsText}>By continuing you agree to our </Text>
-      <TouchableOpacity onPress={() => Linking.openURL(TERMS_URL)} activeOpacity={0.7}>
-        <Text style={styles.termsLink}>Terms</Text>
-      </TouchableOpacity>
-      <Text style={styles.termsText}> & </Text>
-      <TouchableOpacity onPress={() => Linking.openURL(PRIVACY_URL)} activeOpacity={0.7}>
-        <Text style={styles.termsLink}>Privacy Policy</Text>
-      </TouchableOpacity>
     </View>
   );
 }
@@ -423,7 +406,7 @@ export default function AuthScreen() {
               </TouchableOpacity>
             </View>
 
-            <TermsFooter />
+            <Text style={styles.inlineTerms}>By continuing you agree to our Terms & Privacy Policy</Text>
           </Animated.View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -436,77 +419,69 @@ export default function AuthScreen() {
     return (
       <KeyboardAvoidingView style={styles.root} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <ScrollView contentContainerStyle={{ flexGrow: 1 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-          <View style={[styles.inner, { paddingTop: insets.top + 8, paddingBottom: insets.bottom + 20 }]}>
+          <View style={[styles.inner, { paddingTop: insets.top + 40, paddingBottom: insets.bottom + 24 }]}>
 
-            <View style={styles.card}>
-              {/* Logo — tap 5× to reveal owner panel */}
-              <TouchableOpacity style={styles.logoWrap} onPress={handleLogoTap} activeOpacity={1}>
-                <Image source={require('../assets/logo.png')} style={styles.logoImg} resizeMode="contain" />
-              </TouchableOpacity>
+            {/* Logo — tap 5× to reveal owner panel */}
+            <TouchableOpacity onPress={handleLogoTap} activeOpacity={1} style={{ alignSelf: 'center', marginBottom: 28 }}>
+              <Image source={require('../assets/logo.png')} style={{ width: 72, height: 72 }} resizeMode="contain" />
+            </TouchableOpacity>
 
-              <Text style={styles.welcomeTitle}>Welcome</Text>
-              <Text style={styles.welcomeSub}>Trusted by 2,000+ sports bettors</Text>
+            <Text style={[styles.welcomeTitle, { marginBottom: 32 }]}>ReversePicks</Text>
 
-              <View style={styles.proofRow}>
-                <Ionicons name="people-outline" size={13} color={Colors.textTertiary} />
-                <Text style={styles.proofText}>Trusted by 2,000+ sports bettors</Text>
-              </View>
+            <TouchableOpacity
+              style={styles.landingBtnPrimary}
+              onPress={() => { setMode('signin'); setStep('email'); setError(''); setInfo(''); }}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="log-in-outline" size={18} color="#000" />
+              <Text style={styles.landingBtnText}>Sign In</Text>
+            </TouchableOpacity>
 
-              <TouchableOpacity
-                style={styles.landingBtnPrimary}
-                onPress={() => { setMode('signin'); setStep('email'); setError(''); setInfo(''); }}
-                activeOpacity={0.85}
-              >
-                <Ionicons name="log-in-outline" size={18} color="#000" />
-                <Text style={styles.landingBtnText}>Already a member? Sign In</Text>
-              </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.landingBtnSecondary}
+              onPress={() => { setMode('signup'); setStep('email'); setError(''); setInfo(''); }}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="person-add-outline" size={18} color={Colors.primary} />
+              <Text style={styles.landingBtnTextSecondary}>Sign Up</Text>
+            </TouchableOpacity>
 
-              <TouchableOpacity
-                style={styles.landingBtnSecondary}
-                onPress={() => { setMode('signup'); setStep('email'); setError(''); setInfo(''); }}
-                activeOpacity={0.85}
-              >
-                <Ionicons name="person-add-outline" size={18} color={Colors.primary} />
-                <Text style={styles.landingBtnTextSecondary}>New here? Sign Up</Text>
-              </TouchableOpacity>
-
-              {/* Owner panel — revealed by 5 logo taps */}
-              {showOwner && (
-                <View style={styles.ownerBlock}>
-                  <View style={styles.inputRow}>
-                    <Ionicons name="shield-outline" size={17} color={Colors.primary} style={styles.icon} />
-                    <TextInput
-                      style={[styles.input]}
-                      placeholder="Owner access code"
-                      placeholderTextColor={Colors.textTertiary}
-                      value={ownerCode}
-                      onChangeText={v => { setOwnerCode(v); setError(''); }}
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      secureTextEntry
-                      onSubmitEditing={handleOwnerLogin}
-                      returnKeyType="go"
-                    />
-                  </View>
-                  <TouchableOpacity
-                    style={[styles.btn, styles.btnOwner, ownerLoading && styles.btnDisabled]}
-                    onPress={handleOwnerLogin}
-                    disabled={ownerLoading}
-                    activeOpacity={0.85}
-                  >
-                    {ownerLoading
-                      ? <ActivityIndicator color="#000" size="small" />
-                      : <View style={styles.btnInner}>
-                          <Ionicons name="shield-checkmark" size={16} color={Colors.primary} />
-                          <Text style={[styles.btnText, { color: Colors.primary }]}>OWNER LOGIN</Text>
-                        </View>
-                    }
-                  </TouchableOpacity>
+            {/* Owner panel — revealed by 5 logo taps */}
+            {showOwner && (
+              <View style={styles.ownerBlock}>
+                <View style={styles.inputRow}>
+                  <Ionicons name="shield-outline" size={17} color={Colors.primary} style={styles.icon} />
+                  <TextInput
+                    style={[styles.input]}
+                    placeholder="Owner access code"
+                    placeholderTextColor={Colors.textTertiary}
+                    value={ownerCode}
+                    onChangeText={v => { setOwnerCode(v); setError(''); }}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    secureTextEntry
+                    onSubmitEditing={handleOwnerLogin}
+                    returnKeyType="go"
+                  />
                 </View>
-              )}
-            </View>
+                <TouchableOpacity
+                  style={[styles.btn, styles.btnOwner, ownerLoading && styles.btnDisabled]}
+                  onPress={handleOwnerLogin}
+                  disabled={ownerLoading}
+                  activeOpacity={0.85}
+                >
+                  {ownerLoading
+                    ? <ActivityIndicator color="#000" size="small" />
+                    : <View style={styles.btnInner}>
+                        <Ionicons name="shield-checkmark" size={16} color={Colors.primary} />
+                        <Text style={[styles.btnText, { color: Colors.primary }]}>OWNER LOGIN</Text>
+                      </View>
+                  }
+                </TouchableOpacity>
+              </View>
+            )}
 
-            <TermsFooter />
+            <Text style={styles.inlineTerms}>By continuing you agree to our Terms & Privacy Policy</Text>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -609,7 +584,7 @@ export default function AuthScreen() {
             </View>
           </View>
 
-          <TermsFooter />
+          <Text style={styles.inlineTerms}>By continuing you agree to our Terms & Privacy Policy</Text>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -640,33 +615,18 @@ const styles = StyleSheet.create({
     padding: 24,
     gap: 14,
   },
-  logoWrap:  { alignItems: 'center', paddingVertical: 4 },
-  logoImg:   { width: 64, height: 64 },
-  welcomeTitle: {
-    color: Colors.text,
-    fontSize: 22,
-    fontWeight: '800',
-    textAlign: 'center',
-    letterSpacing: 0.3,
-  },
   welcomeSub: {
     color: Colors.textSecondary,
     fontSize: 13,
     textAlign: 'center',
     lineHeight: 19,
   },
-  proofRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 5,
-    paddingVertical: 2,
-  },
-  proofText: {
-    color: Colors.textTertiary,
-    fontSize: 12,
-    fontWeight: '500',
-    letterSpacing: 0.2,
+  welcomeTitle: {
+    color: Colors.text,
+    fontSize: 22,
+    fontWeight: '800',
+    textAlign: 'center',
+    letterSpacing: 0.3,
   },
   inputRow: {
     flexDirection: 'row',
@@ -746,16 +706,7 @@ const styles = StyleSheet.create({
   codeTitle: { color: Colors.text, fontSize: 20, fontWeight: '800', letterSpacing: 0.3 },
   codeSub:   { color: Colors.textSecondary, fontSize: 13, textAlign: 'center', lineHeight: 20 },
   codeEmail: { color: Colors.text, fontWeight: '700' },
-  termsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingTop: 4,
-  },
-  termsText: { color: Colors.textTertiary, fontSize: 11, lineHeight: 18 },
-  termsLink: { color: Colors.textSecondary, fontSize: 11, lineHeight: 18, textDecorationLine: 'underline' },
+  inlineTerms: { color: Colors.textTertiary, fontSize: 11, textAlign: 'center', paddingTop: 8 },
 
   // Landing buttons
   landingBtnPrimary: {

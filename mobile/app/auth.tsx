@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  Platform, ActivityIndicator, Image, Linking, Modal, ScrollView, KeyboardAvoidingView,
+  Platform, ActivityIndicator, Image, Modal, ScrollView, KeyboardAvoidingView,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -185,16 +185,13 @@ export default function AuthScreen() {
         {/* ─── LANDING ─── */}
         {step === 'landing' && (
           <View style={styles.landingCard}>
-            <Text style={styles.landingHead}>Welcome</Text>
-            <Text style={styles.landingSub}>Trusted by 2,000+ sports bettors</Text>
-
             <TouchableOpacity
               style={styles.landingBtnPrimary}
               onPress={() => { setMode('signin'); setStep('email'); setError(''); setInfo(''); }}
               activeOpacity={0.85}
             >
               <Ionicons name="log-in-outline" size={18} color="#000" />
-              <Text style={styles.landingBtnText}>Already a member? Sign In</Text>
+              <Text style={styles.landingBtnText}>Sign In</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -203,17 +200,10 @@ export default function AuthScreen() {
               activeOpacity={0.85}
             >
               <Ionicons name="person-add-outline" size={18} color={Colors.primary} />
-              <Text style={styles.landingBtnTextSecondary}>New here? Sign Up</Text>
+              <Text style={styles.landingBtnTextSecondary}>Sign Up</Text>
             </TouchableOpacity>
 
-            <View style={styles.landingFooter}>
-              <Text style={styles.landingFooterText}>
-                By continuing you agree to our{' '}
-                <Text style={styles.landingFooterLink} onPress={() => Linking.openURL('https://reversepicks.com/terms')}>Terms</Text>
-                {' '}&{' '}
-                <Text style={styles.landingFooterLink} onPress={() => Linking.openURL('https://reversepicks.com/privacy')}>Privacy Policy</Text>
-              </Text>
-            </View>
+            <Text style={styles.inlineTerms}>By continuing you agree to our Terms & Privacy Policy</Text>
           </View>
         )}
 
@@ -513,8 +503,6 @@ const styles = StyleSheet.create({
 
   // Landing
   landingCard: { width: '100%', gap: 14, alignItems: 'center' },
-  landingHead: { fontSize: 20, fontWeight: '800', color: Colors.text },
-  landingSub: { fontSize: 13, color: Colors.textSecondary, marginTop: -6 },
   landingBtnPrimary: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10,
     backgroundColor: Colors.primary, borderRadius: Colors.radius, height: 54, width: '100%',
@@ -528,9 +516,7 @@ const styles = StyleSheet.create({
   },
   landingBtnText: { color: '#000', fontWeight: '800', fontSize: 15, letterSpacing: 0.5 },
   landingBtnTextSecondary: { color: Colors.primary, fontWeight: '700', fontSize: 15, letterSpacing: 0.5 },
-  landingFooter: { marginTop: 8 },
-  landingFooterText: { color: Colors.textSecondary, fontSize: 11, textAlign: 'center', lineHeight: 17 },
-  landingFooterLink: { color: Colors.primary, fontWeight: '600' },
+  inlineTerms: { color: Colors.textSecondary, fontSize: 11, textAlign: 'center', lineHeight: 17 },
 
   // Auth card (email / otp)
   authCard: { width: '100%', gap: 14 },

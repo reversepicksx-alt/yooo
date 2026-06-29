@@ -682,22 +682,15 @@ export default function ScanScreen() {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        {/* ─── PAYWALL OVERLAY (NoSubscription) ─── */}
+        {/* ─── PAYWALL STRIP (NoSubscription) ─── */}
         {isNoSub && (
-          <View style={styles.paywallCard}>
-            <Ionicons name="lock-closed" size={28} color={Colors.primary} />
-            <Text style={styles.paywallTitle}>Unlock Predictions</Text>
-            <Text style={styles.paywallBody}>
-              Predictions require an active subscription. Tap below to manage your plan in Account settings.
-            </Text>
-            <TouchableOpacity
-              style={styles.paywallBtn}
-              onPress={() => router.push('/(tabs)/account')}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.paywallBtnText}>Go to Account</Text>
-              <Ionicons name="arrow-forward" size={16} color="#000" />
-            </TouchableOpacity>
+          <View style={styles.paywallStrip}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Ionicons name="lock-closed" size={16} color={Colors.textTertiary} />
+              <Text style={styles.paywallStripText}>
+                Subscription required · <Text style={{ color: Colors.primary, fontWeight: '700' }} onPress={() => router.push('/(tabs)/account')}>Get Access</Text>
+              </Text>
+            </View>
           </View>
         )}
 
@@ -3574,45 +3567,23 @@ const styles = StyleSheet.create({
     height: 36,
   },
 
-  // ── Paywall card ──
-  paywallCard: {
-    backgroundColor: Colors.card,
-    borderRadius: Colors.radiusLg,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: 22,
-    alignItems: 'center',
-    gap: 12,
-    marginHorizontal: 20,
-    marginVertical: 16,
-  },
-  paywallTitle: {
-    fontSize: 17,
-    fontWeight: '800',
-    color: Colors.text,
-    textAlign: 'center',
-  },
-  paywallBody: {
-    fontSize: 13,
-    color: Colors.textSecondary,
-    textAlign: 'center',
-    lineHeight: 19,
-  },
-  paywallBtn: {
+  // ── Paywall strip ──
+  paywallStrip: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    backgroundColor: Colors.primary,
-    borderRadius: Colors.radiusLg,
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    marginTop: 4,
+    paddingVertical: 10,
+    marginHorizontal: 16,
+    marginTop: 8,
+    marginBottom: 4,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: Colors.borderSubtle,
   },
-  paywallBtnText: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#000',
+  paywallStripText: {
+    fontSize: 13,
+    color: Colors.textSecondary,
+    letterSpacing: 0.2,
   },
   scanHeaderTitle: {
     fontSize: 15,
