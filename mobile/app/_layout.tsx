@@ -79,7 +79,7 @@ function RevenueCatSync() {
 function AppBoot() {
   const { isLoading } = useAuth();
   const [splashDone, setSplashDone] = useState(Platform.OS === 'web');
-  // Enforce minimum 4.2s web splash so the logo spin + lightning always completes
+  // Enforce minimum 2.5s web splash so the logo spin + lightning always completes
   const webSplashStart = useRef(Date.now());
   const [webSplashReady, setWebSplashReady] = useState(false);
 
@@ -87,7 +87,7 @@ function AppBoot() {
     if (Platform.OS !== 'web') return;
     if (isLoading) return;
     const elapsed = Date.now() - webSplashStart.current;
-    const remaining = Math.max(0, 4000 - elapsed);
+    const remaining = Math.max(0, 2500 - elapsed);
     const t = setTimeout(() => {
       if (typeof window !== 'undefined') {
         const hide = (window as any).__rpHideLoader;

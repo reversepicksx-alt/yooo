@@ -405,13 +405,14 @@ export default function CommunityScreen() {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'] as any,
       allowsEditing: false,
-      quality: 0.35,
+      quality: 0.15,
       base64: true,
+      exif: false,
     });
     if (result.canceled || !result.assets[0]?.base64) return;
     const b64 = result.assets[0].base64;
-    if (b64.length > 900_000) {
-      Alert.alert('Image too large', 'Please choose a smaller photo.');
+    if (b64.length > 3_500_000) {
+      Alert.alert('Image too large', 'Please choose a smaller photo or screenshot.');
       return;
     }
     setPendingImage(b64);

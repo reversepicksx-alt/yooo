@@ -67,15 +67,15 @@ export default function LoadingScreen({ onDone }: { onDone?: () => void }) {
     } else {
       // Scale: from splash size → grow slightly during spin → overshoot → settle
       logoScale.value = withSequence(
-        withTiming(1,    { duration: 1800, easing: Easing.linear }),
-        withTiming(1.06, { duration: 400,  easing: Easing.out(Easing.cubic) }),
+        withTiming(1,    { duration: 1000, easing: Easing.linear }),
+        withTiming(1.06, { duration: 250,  easing: Easing.out(Easing.cubic) }),
         withSpring(1,    { damping: 8, stiffness: 180 }),
       );
 
       // Spin: 5 rotations, then spring-snap to exact position
       logoRotate.value = withSequence(
-        withTiming(1710, { duration: 1800, easing: Easing.linear }),
-        withTiming(1890, { duration: 400,  easing: Easing.out(Easing.cubic) }),
+        withTiming(1710, { duration: 1000, easing: Easing.linear }),
+        withTiming(1890, { duration: 250,  easing: Easing.out(Easing.cubic) }),
         withSpring(1800, { damping: 6, stiffness: 200 }),
       );
 
@@ -83,7 +83,7 @@ export default function LoadingScreen({ onDone }: { onDone?: () => void }) {
       const FLASH_DUR = 55;
       const FLASH_GAP = 110;
       const mkFlash = (offset: number) =>
-        withDelay(1850 + offset,
+        withDelay(1050 + offset,
           withSequence(
             withTiming(1, { duration: FLASH_DUR }),
             withTiming(0, { duration: FLASH_DUR }),
@@ -106,18 +106,18 @@ export default function LoadingScreen({ onDone }: { onDone?: () => void }) {
           withTiming(0,    { duration: 820, easing: Easing.in(Easing.cubic) }),
         ));
       };
-      mkRing(ring1Scale, ring1Opacity, 1870);
-      mkRing(ring2Scale, ring2Opacity, 2120);
-      mkRing(ring3Scale, ring3Opacity, 2370);
+      mkRing(ring1Scale, ring1Opacity, 1070);
+      mkRing(ring2Scale, ring2Opacity, 1320);
+      mkRing(ring3Scale, ring3Opacity, 1570);
     }
 
-    const hudDelay = isNative ? 2600 : 600;
+    const hudDelay = isNative ? 1300 : 600;
     hudOpacity.value = withDelay(hudDelay, withTiming(1, { duration: 400 }));
 
-    const tagDelay = isNative ? 3400 : 1400;
+    const tagDelay = isNative ? 1900 : 1400;
     tagOpacity.value = withDelay(tagDelay, withTiming(0.85, { duration: 500 }));
 
-    const duration = isNative ? 4500 : 2800;
+    const duration = isNative ? 2500 : 2800;
     const t = setTimeout(() => onDone?.(), duration);
     return () => clearTimeout(t);
   }, []);
@@ -152,7 +152,7 @@ export default function LoadingScreen({ onDone }: { onDone?: () => void }) {
   const hudAnim = useAnimatedStyle(() => ({ opacity: hudOpacity.value }));
   const tagAnim = useAnimatedStyle(() => ({ opacity: tagOpacity.value }));
   const BRAND = 'REVERSEPICKS';
-  const LETTER_BASE = isNative ? 2600 : 0;
+  const LETTER_BASE = isNative ? 1300 : 0;
 
   return (
     <View style={styles.root}>

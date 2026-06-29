@@ -718,7 +718,7 @@ function SportSectionHeader({
 
 export default function PicksScreen() {
   const insets = useSafeAreaInsets();
-  const { session } = useAuth();
+  const { session, logout } = useAuth();
   const qc = useQueryClient();
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const [activeTab, setActiveTab] = useState<Tab>('live');
@@ -868,10 +868,13 @@ export default function PicksScreen() {
           <Ionicons name="lock-closed-outline" size={44} color={Colors.textTertiary} />
           <Text style={[styles.emptyTitle, { marginTop: 12 }]}>Session expired</Text>
           <Text style={[styles.emptySub, { textAlign: 'center', marginTop: 6 }]}>
-            Your session timed out. Go to Account and tap Verify Access to restore your picks.
+            Your session timed out. Sign out and back in to restore your picks.
           </Text>
-          <TouchableOpacity onPress={() => refetch()} style={{ marginTop: 16 }}>
-            <Text style={{ color: Colors.primary, fontWeight: '700' }}>Retry</Text>
+          <TouchableOpacity onPress={() => logout()} style={{ marginTop: 18, backgroundColor: Colors.primary, paddingHorizontal: 24, paddingVertical: 10, borderRadius: 8 }}>
+            <Text style={{ color: '#000', fontWeight: '800', fontSize: 14 }}>Sign Out & Re-login</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => refetch()} style={{ marginTop: 12 }}>
+            <Text style={{ color: Colors.textTertiary, fontWeight: '600', fontSize: 13 }}>Retry</Text>
           </TouchableOpacity>
         </View>
       ) : isLoading ? (

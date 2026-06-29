@@ -81,7 +81,7 @@ async def send_message(req: SendMessageRequest):
     if not req.text.strip() and not req.imageData:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
-    if req.imageData and len(req.imageData) > 1_000_000:
+    if req.imageData and len(req.imageData) > 5_000_000:
         raise HTTPException(status_code=413, detail="Image too large — compress before sending")
 
     access = await check_access(req.email.lower().strip())

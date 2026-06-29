@@ -147,7 +147,7 @@ function buildLoadingScreen() { return `
     </div>
     <div class="rp-hud">
       <div class="rp-brand">
-        <span class="rp-ch" style="animation-delay:2.80s">R</span><span class="rp-ch" style="animation-delay:2.855s">E</span><span class="rp-ch" style="animation-delay:2.91s">V</span><span class="rp-ch" style="animation-delay:2.965s">E</span><span class="rp-ch" style="animation-delay:3.02s">R</span><span class="rp-ch" style="animation-delay:3.075s">S</span><span class="rp-ch" style="animation-delay:3.13s">E</span><span class="rp-ch" style="animation-delay:3.185s">P</span><span class="rp-ch" style="animation-delay:3.24s">I</span><span class="rp-ch" style="animation-delay:3.295s">C</span><span class="rp-ch" style="animation-delay:3.35s">K</span><span class="rp-ch" style="animation-delay:3.405s">S</span>
+        <span class="rp-ch" style="animation-delay:1.60s">R</span><span class="rp-ch" style="animation-delay:1.655s">E</span><span class="rp-ch" style="animation-delay:1.71s">V</span><span class="rp-ch" style="animation-delay:1.765s">E</span><span class="rp-ch" style="animation-delay:1.82s">R</span><span class="rp-ch" style="animation-delay:1.875s">S</span><span class="rp-ch" style="animation-delay:1.93s">E</span><span class="rp-ch" style="animation-delay:1.985s">P</span><span class="rp-ch" style="animation-delay:2.04s">I</span><span class="rp-ch" style="animation-delay:2.095s">C</span><span class="rp-ch" style="animation-delay:2.15s">K</span><span class="rp-ch" style="animation-delay:2.205s">S</span>
       </div>
       <div class="rp-tag">THE EYE SEES WHAT OTHERS MISS</div>
     </div>
@@ -158,23 +158,23 @@ function buildLoadingScreen() { return `
 .rp-scene{display:flex;flex-direction:column;align-items:center}
 .rp-logo-outer{position:relative;display:flex;align-items:center;justify-content:center;margin-bottom:min(6vh,40px)}
 .rp-ring{position:absolute;top:50%;left:50%;width:min(52vw,220px);height:min(52vw,220px);border:2px solid #39FF14;border-radius:50%;opacity:0;transform:translate(-50%,-50%) scale(0.2);box-shadow:0 0 12px 3px #39FF14,inset 0 0 12px 3px rgba(57,255,20,.4);pointer-events:none}
-.rp-r0{animation:ringExp .75s 2.08s ease-out,ringExp .75s 2.52s ease-out}
-.rp-r1{animation:ringExp .75s 2.24s ease-out,ringExp .75s 2.68s ease-out}
-.rp-r2{animation:ringExp .75s 2.40s ease-out}
-.rp-r3{animation:ringExp .75s 2.56s ease-out}
+.rp-r0{animation:ringExp .75s 1.08s ease-out,ringExp .75s 1.52s ease-out}
+.rp-r1{animation:ringExp .75s 1.24s ease-out,ringExp .75s 1.68s ease-out}
+.rp-r2{animation:ringExp .75s 1.40s ease-out}
+.rp-r3{animation:ringExp .75s 1.56s ease-out}
 @keyframes ringExp{0%{opacity:.85;transform:translate(-50%,-50%) scale(.25)}60%{opacity:.35;transform:translate(-50%,-50%) scale(1.9)}100%{opacity:0;transform:translate(-50%,-50%) scale(3.2)}}
 .rp-svg{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:min(95vw,500px);height:min(95vw,500px);overflow:visible;pointer-events:none}
 .rp-bolt{fill:none;stroke:#39FF14;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 0 6px #39FF14) drop-shadow(0 0 16px rgba(57,255,20,.6)) drop-shadow(0 0 30px rgba(57,255,20,.3));opacity:0}
-.rp-b0{animation:bF .09s 2.05s,bF .09s 2.31s,bF .09s 2.57s}
-.rp-b1{animation:bF .09s 2.13s,bF .09s 2.39s,bF .09s 2.65s}
-.rp-b2{animation:bF .09s 2.07s,bF .09s 2.33s,bF .09s 2.59s}
-.rp-b3{animation:bF .09s 2.16s,bF .09s 2.42s}
-.rp-b4{animation:bF .09s 2.09s,bF .09s 2.35s,bF .09s 2.61s}
-.rp-b5{animation:bF .09s 2.11s,bF .09s 2.37s,bF .09s 2.63s}
-.rp-b6{animation:bF .09s 2.19s,bF .09s 2.45s}
-.rp-b7{animation:bF .09s 2.22s,bF .09s 2.48s,bF .09s 2.74s}
+.rp-b0{animation:bF .09s 1.05s,bF .09s 1.31s,bF .09s 1.57s}
+.rp-b1{animation:bF .09s 1.13s,bF .09s 1.39s,bF .09s 1.65s}
+.rp-b2{animation:bF .09s 1.07s,bF .09s 1.33s,bF .09s 1.59s}
+.rp-b3{animation:bF .09s 1.16s,bF .09s 1.42s}
+.rp-b4{animation:bF .09s 1.09s,bF .09s 1.35s,bF .09s 1.61s}
+.rp-b5{animation:bF .09s 1.11s,bF .09s 1.37s,bF .09s 1.63s}
+.rp-b6{animation:bF .09s 1.19s,bF .09s 1.45s}
+.rp-b7{animation:bF .09s 1.22s,bF .09s 1.48s,bF .09s 1.74s}
 @keyframes bF{0%{opacity:0}12%{opacity:1}100%{opacity:0}}
-.rp-logo-wrap{display:flex;align-items:center;justify-content:center;animation:logoSpin 2.5s linear 0s both}
+.rp-logo-wrap{display:flex;align-items:center;justify-content:center;animation:logoSpin 1.5s linear 0s both}
 @keyframes logoSpin{
   0%  {opacity:0;transform:scale(.78) rotate(0deg);animation-timing-function:ease-in}
   5%  {opacity:1;transform:scale(1)   rotate(90deg);animation-timing-function:linear}
@@ -183,7 +183,7 @@ function buildLoadingScreen() { return `
   94% {           transform:scale(0.97) rotate(1768deg)}
   100%{           transform:scale(1)   rotate(1800deg)}
 }
-.rp-logo-img{width:min(52vw,220px);height:min(52vw,220px);object-fit:contain;display:block;animation:logoGlow 4.5s .2s ease-in-out}
+.rp-logo-img{width:min(52vw,220px);height:min(52vw,220px);object-fit:contain;display:block;animation:logoGlow 3s .2s ease-in-out}
 @keyframes logoGlow{
   0%  {filter:drop-shadow(0 0 20px #39FF14) drop-shadow(0 0 40px rgba(57,255,20,.5))}
   40% {filter:drop-shadow(0 0 50px #39FF14) drop-shadow(0 0 100px rgba(57,255,20,.7)) drop-shadow(0 0 150px rgba(57,255,20,.3))}
@@ -195,7 +195,7 @@ function buildLoadingScreen() { return `
 .rp-brand{display:flex;gap:2px}
 .rp-ch{font-family:system-ui,-apple-system,sans-serif;font-size:clamp(14px,4.5vw,22px);font-weight:900;color:#fff;letter-spacing:3px;opacity:0;transform:scale(.3);animation:chPop .22s forwards;text-shadow:0 0 18px rgba(57,255,20,.7)}
 @keyframes chPop{to{opacity:1;transform:scale(1)}}
-.rp-tag{font-family:system-ui,-apple-system,sans-serif;font-size:clamp(7px,2vw,9px);font-weight:600;color:#39FF14;letter-spacing:2.5px;text-transform:uppercase;opacity:0;animation:tagIn .5s 3.6s forwards}
+.rp-tag{font-family:system-ui,-apple-system,sans-serif;font-size:clamp(7px,2vw,9px);font-weight:600;color:#39FF14;letter-spacing:2.5px;text-transform:uppercase;opacity:0;animation:tagIn .5s 2.0s forwards}
 @keyframes tagIn{to{opacity:.85}}
 </style>
 <script>
@@ -203,7 +203,7 @@ function buildLoadingScreen() { return `
   var e=document.getElementById('rp-loading-screen');
   function hide(){if(!e)return;e.style.opacity='0';setTimeout(function(){if(e&&e.parentNode)e.parentNode.removeChild(e);e=null;},650);}
   window.__rpHideLoader=hide;
-  setTimeout(hide,20000);
+  setTimeout(hide,3000);
 })();
 </script>`; }
 

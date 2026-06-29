@@ -84,7 +84,7 @@ type Sport = 'soccer' | 'cs2' | 'wta';
 
 export default function ScanScreen() {
   const insets = useSafeAreaInsets();
-  const { session } = useAuth();
+  const { session, logout } = useAuth();
   const qc = useQueryClient();
   const [mode, setMode] = useState<Mode>('scan');
   const [phase, setPhase] = useState<Phase>('idle');
@@ -623,7 +623,11 @@ export default function ScanScreen() {
       qc.invalidateQueries({ queryKey: ['picks'] });
       router.push('/(tabs)/picks');
     } catch (e: unknown) {
-      setSaveError(e instanceof Error ? e.message : 'Save failed — try again');
+      const msg = e instanceof Error ? e.message : 'Save failed — try again';
+      setSaveError(msg);
+      if (msg.toLowerCase().includes('session') || msg.toLowerCase().includes('sign in')) {
+        setTimeout(() => logout(), 1500);
+      }
     } finally {
       setSaving(false);
     }
