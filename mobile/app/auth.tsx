@@ -41,6 +41,25 @@ export default function AuthScreen() {
   const [supportLoading, setSupportLoading] = useState(false);
   const [supportError, setSupportError] = useState('');
 
+  const handleSendSupport = async () => {
+    if (!supportMessage.trim()) return;
+    setSupportLoading(true);
+    setSupportError('');
+    try {
+      const resp = await contactSupport(supportName.trim(), email.trim(), supportMessage.trim());
+      if (resp.success) {
+        setSupportSent(true);
+        setSupportMessage('');
+      } else {
+        setSupportError(resp.error || 'Something went wrong. Please try again.');
+      }
+    } catch {
+      setSupportError('Network error. Please try again.');
+    } finally {
+      setSupportLoading(false);
+    }
+  };
+
   // ── Stripe redirect auto-login ──────────────────────────────────────────
   useEffect(() => {
     const isSuccess =

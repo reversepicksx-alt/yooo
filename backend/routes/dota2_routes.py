@@ -78,6 +78,13 @@ class Dota2PredictRequest(BaseModel):
 
 @router.post("/predict")
 async def dota2_predict(req: Dota2PredictRequest):
+    from routes.auth import verify_session
+    sess = await verify_session(req)
+    if not sess.get("valid"):
+        raise HTTPException(status_code=401, detail="Invalid or expired session. Please sign in again.")
+    access = sess.get("access_type", "")
+    if not access or access == "NoSubscription":
+        raise HTTPException(status_code=403, detail="Active subscription required")
     prop_type = req.propType.lower().strip()
     if prop_type not in dota2_engine.DOTA2_PROPS:
         raise HTTPException(status_code=400, detail=f"Unknown Dota2 prop: {prop_type}")

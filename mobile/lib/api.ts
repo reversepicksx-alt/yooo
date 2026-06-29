@@ -291,6 +291,7 @@ export interface PredictionResult {
   edgeScore?: number;
   fixtureDate?: string;
   opponentName?: string;
+  opponent?: string;
   confidenceLevel?: string;
   confidenceInterval?: [number, number];
   priorMean?: number;

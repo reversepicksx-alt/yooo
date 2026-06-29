@@ -153,6 +153,13 @@ async def get_sport_props(sport: str):
 
 @router.post("/predict")
 async def ai_sport_predict(req: AiSportPredictRequest):
+    from routes.auth import verify_session
+    sess = await verify_session(req)
+    if not sess.get("valid"):
+        raise HTTPException(status_code=401, detail="Invalid or expired session. Please sign in again.")
+    access = sess.get("access_type", "")
+    if not access or access == "NoSubscription":
+        raise HTTPException(status_code=403, detail="Active subscription required")
     sport = req.sport.lower().strip()
     if sport not in SPORT_PROPS:
         raise HTTPException(

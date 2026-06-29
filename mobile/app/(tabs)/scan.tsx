@@ -225,15 +225,21 @@ export default function ScanScreen() {
   };
 
   const reset = () => {
+    setMode('scan');
     setPhase('idle');
+    setSport('soccer');
     setScanResult(null);
     setScannedImageUri(null);
     setPrediction(null);
+    setPredictionRequest(null);
     setAnalyzeError(null);
     setManualError(null);
     setSaveError(null);
+    setSaving(false);
+    setSavingImage(false);
     setScanFillHint(null);
     setPickSaved(false);
+    setShowAltPlayers(false);
     setPlayerQuery('');
     setResolvedPlayer(null);
     setManualOpponentQuery('');
@@ -243,7 +249,6 @@ export default function ScanScreen() {
     setPlayerContexts([]);
     setSelectedContext(null);
     setAutoMatch(null);
-    setPpLines([]);
     setGameLogFilter('all');
     setAdjustedLine(null);
     setSharpExpanded(false);
@@ -254,15 +259,6 @@ export default function ScanScreen() {
     setShowLineEdit(false);
     setShowLeagueEditScan(false);
     setResolvedScanPlayer(null);
-    setMlbPlayerQuery('');
-    setMlbResolvedPlayer(null);
-    setMlbOpponentQuery('');
-    setMlbResolvedOpponent(null);
-    setMlbBatterHand(null);
-    setMlbPitcherHand(null);
-    setMlbPitcherEra('');
-    setMlbGameTotal('');
-    setMlbLineupSpot('');
     setCs2PlayerQuery('');
     setCs2ResolvedPlayer(null);
     setCs2OpponentQuery('');
@@ -744,15 +740,11 @@ export default function ScanScreen() {
 
             {/* Scanning */}
             {phase === 'scanning' && (
-              <LoadingScreen
-                label="SCANNING"
-                statuses={[
-                  'INITIALIZING OCR ENGINE',
-                  'READING PROP SLIP',
-                  'EXTRACTING PLAYER DATA',
-                  'READY',
-                ]}
-              />
+              <View style={{ alignItems: 'center', paddingVertical: 60, gap: 16 }}>
+                <ActivityIndicator size="large" color={Colors.primary} />
+                <Text style={{ color: Colors.primary, fontSize: 13, fontWeight: '800', letterSpacing: 2 }}>SCANNING</Text>
+                <Text style={{ color: Colors.textSecondary, fontSize: 11 }}>Reading prop slip…</Text>
+              </View>
             )}
 
             {/* Detected: image-only scan result */}

@@ -120,7 +120,7 @@ export default function PaywallScreen() {
     return (
       <View style={[styles.root, { paddingTop: insets.top + 40, paddingBottom: insets.bottom + 24 }]}>
         <ScrollView contentContainerStyle={styles.inner} showsVerticalScrollIndicator={false}>
-          <Image source={require('./assets/logo.png')} style={styles.logo} resizeMode="contain" />
+          <Image source={require('../assets/logo.png')} style={styles.logo} resizeMode="contain" />
           <Text style={styles.headline}>ReversePicks Pro</Text>
           <Text style={styles.subhead}>Get unlimited AI predictions on iOS.</Text>
           {FEATURES.map((f, i) => (
@@ -145,7 +145,7 @@ export default function PaywallScreen() {
       <ScrollView contentContainerStyle={styles.inner} showsVerticalScrollIndicator={false}>
 
         {/* Logo */}
-        <Image source={require('./assets/logo.png')} style={styles.logo} resizeMode="contain" />
+        <Image source={require('../assets/logo.png')} style={styles.logo} resizeMode="contain" />
 
         {/* Headline */}
         <Text style={styles.headline}>Unlock Full Access</Text>
