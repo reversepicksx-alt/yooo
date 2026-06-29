@@ -35,3 +35,4 @@
 - [Autoscale MongoDB timeout](autoscale-mongodb-timeout.md) — Motor default 30s timeout causes "Request timed out" in prod; set serverSelectionTimeoutMS=3000; reviewer endpoints must bypass MongoDB; dotenv needs override=True.
 - [Web splash race condition](web-splash-race.md) — never gate Stack render behind React state that also controls the HTML overlay; overlay and React are independent z-layers.
 - [Native-only module lazy require crash](native-lazy-require.md) — dynamic require() inside a React component body causes instant iOS crash with New Architecture (Hermes+Fabric). Use .native.tsx / .tsx platform split instead.
+- [Preview serves stale dist in PRODUCTION mode](preview-stale-dist.md) — Start application workflow runs PRODUCTION=true → serves pre-built mobile/dist, NOT live code. Source edits invisible until `npx expo export -p web --output-dir dist` rebuild + proxy restart. Deploy build cmd skips export if dist/index.html exists.
