@@ -444,9 +444,8 @@ async def send_code(req: SendCodeRequest):
         print(f"[OTP] FALLBACK code for {email_lower}: {code}")
 
     return {
-        "sent": True,
-        "message": "Code sent — check your email." if email_sent else "Code generated. Check your email or contact support.",
-        "code": None if email_sent else code,
+        "sent": email_sent,
+        "message": "Code sent — check your email." if email_sent else "We couldn't send the email right now. Please try again in a moment.",
     }
 
 
