@@ -47,7 +47,8 @@
       ]
     },
     "web": {
-      "bundler": "metro"
+      "bundler": "metro",
+      "htmlTemplate": "./web/index.html"
     },
     "plugins": [
       "expo-router",

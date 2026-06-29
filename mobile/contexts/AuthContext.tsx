@@ -47,11 +47,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (email && token) {
           let explicitlyInvalid = false;
           try {
-            const result = await verifySession(email, token) as { valid?: boolean };
+            // Race the session check against a 4s timeout so a slow/unreachable
+            // backend never hangs the app on a permanent black screen.
+            const result = await Promise.race([
+              verifySession(email, token) as Promise<{ valid?: boolean }>,
+              new Promise<{ valid?: boolean }>(resolve =>
+                setTimeout(() => resolve({}), 4000)
+              ),
+            ]);
             if (result?.valid === false) explicitlyInvalid = true;
           } catch {
-            // Network error or timeout — assume session is still valid,
-            // backend will reject with 401 if truly expired.
+            // Network error — assume session still valid; backend will 401 if truly expired.
           }
           if (explicitlyInvalid) {
             await storage.delete('rp_email');

@@ -1,7 +1,18 @@
-<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
+#!/usr/bin/env node
+/**
+ * patch-dist-html.js
+ * Runs after `expo export --platform web` to inject premium styles, meta tags,
+ * and a CSS loading spinner into dist/index.html.
+ * Expo's Metro bundler ignores htmlTemplate, so we patch after the fact.
+ */
+const fs = require('fs');
+const path = require('path');
+
+const distHtml = path.join(__dirname, 'dist', 'index.html');
+let html = fs.readFileSync(distHtml, 'utf8');
+
+// ── 1. Inject premium <head> content right after <meta charset…> ──────────
+const headInject = `
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, shrink-to-fit=no, viewport-fit=cover" />
   <title>ReversePicks — Elite Prop Intelligence</title>
   <meta name="description" content="AI-powered soccer player prop analytics. Bayesian projections, tactical insights, and data-driven predictions." />
@@ -14,12 +25,21 @@
   <meta name="theme-color" content="#050505" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="ReversePicks" />
-    <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
-    <title>ReversePicks</title>
-    <!-- The `react-native-web` recommended style reset: https://necolas.github.io/react-native-web/docs/setup/#root-element -->
-    <style id="expo-reset">
+  <meta name="apple-mobile-web-app-title" content="ReversePicks" />`;
+
+html = html.replace(
+  '<meta charset="utf-8" />',
+  '<meta charset="utf-8" />' + headInject
+);
+
+// Remove the old minimal viewport tag if present
+html = html.replace(
+  '<meta httpEquiv="X-UA-Compatible" content="IE=edge" />\n  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />',
+  '<meta httpEquiv="X-UA-Compatible" content="IE=edge" />'
+);
+
+// ── 2. Patch the expo-reset style block to add dark background + input fixes
+const expoResetNew = `<style id="expo-reset">
       html, body { height: 100%; }
       body { overflow: hidden; background: #050505; margin: 0; }
       #root { display: flex; height: 100%; flex: 1; background: #050505; }
@@ -57,18 +77,15 @@
         animation: rp-pulse 1.6s ease-in-out infinite;
         filter: drop-shadow(0 0 18px #39FF14aa);
       }
-    </style>
-  </head>
+    </style>`;
 
-  <body>
-    <!-- Use static rendering with Expo Router to support running without JavaScript. -->
-    <noscript>
-      You need to enable JavaScript to run this app.
-    </noscript>
-    <!-- The root element for your Expo app. -->
-    <div id="root"></div>
-  <script src="/_expo/static/js/web/index-a76458c19c2e2420544a176e526cd1ae.js" defer></script>
+html = html.replace(
+  /<style id="expo-reset">[\s\S]*?<\/style>/,
+  expoResetNew
+);
 
+// ── 3. Add the boot overlay and hide-on-load script just before </body> ────
+const bootOverlay = `
   <!-- CSS boot overlay — visible before React mounts, hidden by JS -->
   <div id="rp-boot">
     <img src="/rp-icon.png" alt="Loading ReversePicks…" />
@@ -90,6 +107,9 @@
         }
       }, 100);
     })();
-  </script>
-</body>
-</html>
+  </script>`;
+
+html = html.replace('</body>', bootOverlay + '\n</body>');
+
+fs.writeFileSync(distHtml, html, 'utf8');
+console.log('[patch-dist-html] dist/index.html patched successfully.');

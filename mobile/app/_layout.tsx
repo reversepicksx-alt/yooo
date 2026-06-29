@@ -79,32 +79,39 @@ function RevenueCatSync() {
 function AppBoot() {
   const { isLoading } = useAuth();
   const [splashDone, setSplashDone] = useState(Platform.OS === 'web');
-  // Enforce minimum 4s web splash so auth init + logo spin + lightning always completes
   const webSplashStart = useRef(Date.now());
   const [webSplashReady, setWebSplashReady] = useState(false);
 
+  const showApp = () => {
+    setWebSplashReady(true);
+    requestAnimationFrame(() => {
+      if (typeof window !== 'undefined') {
+        const hide = (window as any).__rpHideLoader;
+        if (typeof hide === 'function') hide();
+      }
+    });
+  };
+
+  // Normal path: auth resolved → wait for minimum 4s splash then show app.
   useEffect(() => {
     if (Platform.OS !== 'web') return;
     if (isLoading) return;
     const elapsed = Date.now() - webSplashStart.current;
     const remaining = Math.max(0, 4000 - elapsed);
-    const t = setTimeout(() => {
-      // 1. Let React render FIRST (swap from null → real app)
-      setWebSplashReady(true);
-      // 2. Only THEN fade the HTML native splash out so there's zero gap
-      requestAnimationFrame(() => {
-        if (typeof window !== 'undefined') {
-          const hide = (window as any).__rpHideLoader;
-          if (typeof hide === 'function') hide();
-        }
-      });
-    }, remaining);
+    const t = setTimeout(showApp, remaining);
     return () => clearTimeout(t);
   }, [isLoading]);
 
+  // Hard-cap: if auth is still stuck after 8s (backend unreachable), force show anyway.
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const t = setTimeout(showApp, 8000);
+    return () => clearTimeout(t);
+  }, []);
+
   // On web: hold until auth done AND minimum splash time passed.
   // Return a dark placeholder so there's no flash of black screen.
-  if (Platform.OS === 'web' && (!webSplashReady || isLoading)) {
+  if (Platform.OS === 'web' && !webSplashReady) {
     return <View style={{ flex: 1, backgroundColor: Colors.background }} />;
   }
 
