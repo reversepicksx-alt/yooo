@@ -490,6 +490,11 @@ async def verify_code(req: VerifyCodeRequest):
     }
 
 
+def _is_dev_or_review_env() -> bool:
+    """Reviewer-login is only exposed in non-production environments
+    or when REVIEWER_LOGIN_ENABLED env var is explicitly set."""
+    return os.environ.get("REVIEWER_LOGIN_ENABLED") == "1" or os.environ.get("PRODUCTION") != "true"
+
 _REVIEWER_EMAIL = "reversepicksx@gmail.com"
 _REVIEWER_TOKEN = "rp-reviewer-owner-2026"  # stable, MongoDB-free
 
@@ -498,7 +503,10 @@ async def reviewer_login():
     """No-code login for the Apple App Store reviewer demo account.
     Uses a hardcoded stable token so the endpoint never touches MongoDB —
     works correctly even when the DB connection is cold or unreachable.
+    DISABLED in production unless REVIEWER_LOGIN_ENABLED=1 is set.
     """
+    if not _is_dev_or_review_env():
+        raise HTTPException(status_code=404, detail="Not found")
     return {
         "verified": True,
         "email": _REVIEWER_EMAIL,
@@ -614,7 +622,7 @@ async def apple_auth(req: AppleAuthRequest):
         raise HTTPException(status_code=400, detail="Apple signing key not found.")
 
     # 4. Convert JWK to PEM
-    from cryptography.hazmat.primitives.asymmetric.ec import ECPublicNumbers
+    from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePublicNumbers, SECP256R1
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.backends import default_backend
     import base64
@@ -624,7 +632,7 @@ async def apple_auth(req: AppleAuthRequest):
 
     x = b64_to_int(apple_key["x"])
     y = b64_to_int(apple_key["y"])
-    pub = ECPublicNumbers(x, y).public_key(default_backend())
+    pub = EllipticCurvePublicNumbers(x, y, SECP256R1()).public_key(default_backend())
     pem = pub.public_bytes(
         serialization.Encoding.PEM,
         serialization.PublicFormat.SubjectPublicKeyInfo,

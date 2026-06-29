@@ -62,9 +62,12 @@ export async function getPlayerStats(playerId) {
 }
 
 export async function predict(request) {
+  // Inject auth credentials from localStorage so the backend session guard works
+  const email = (typeof localStorage !== 'undefined' && localStorage.getItem('rp_email')) || '';
+  const token = (typeof localStorage !== 'undefined' && localStorage.getItem('rp_token')) || '';
   return apiCall('/api/predict', {
     method: 'POST',
-    body: JSON.stringify(request),
+    body: JSON.stringify({ email, token, ...request }),
   });
 }
 
