@@ -1,4 +1,4 @@
-import { Tabs, router } from 'expo-router';
+import { Tabs, Redirect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { View, StyleSheet, Platform } from 'react-native';
 import Colors from '@/constants/colors';
@@ -23,7 +23,7 @@ export default function TabLayout() {
   }, [session, isLoading]);
 
   if (isLoading) return null;
-  if (!session) return null;
+  if (!session) return <Redirect href="/auth" />;
 
   return (
     <Tabs
