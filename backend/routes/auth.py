@@ -303,6 +303,7 @@ async def check_web_access(email_lower: str):
 
 # ── Web endpoints (Stripe / website login) ───────────────────────────
 @router.post("/verify-access")
+@router.post("/verify-whop")
 async def verify_access(req: VerifyAccessRequest):
     email_lower = req.email.lower().strip()
     access_type = await check_access(email_lower)
@@ -632,8 +633,21 @@ async def apple_auth(req: AppleAuthRequest):
 
     email_lower = apple_email.lower().strip()
 
-    # 6. Create session and grant access
-    access_type = "Premium (Apple)"
+    # 6. Check actual Apple IAP entitlement — do NOT blindly grant premium
+    access_type = await _check_apple_access(email_lower)
+    if not access_type:
+        # No active RevenueCat subscription — log them in as NoSubscription so app shows paywall
+        token = await create_session(email_lower, "NoSubscription")
+        print(f"[APPLE AUTH] {email_lower} signed in via Apple — NO active IAP, NoSubscription")
+        return {
+            "verified": True,
+            "email": email_lower,
+            "session_token": token,
+            "access_type": "NoSubscription",
+            "has_access": False,
+            "message": "Apple sign-in successful. Subscribe via App Store to unlock predictions.",
+        }
+
     token = await create_session(email_lower, access_type)
 
     # Persist Apple ID mapping
@@ -643,13 +657,14 @@ async def apple_auth(req: AppleAuthRequest):
         upsert=True,
     )
 
-    print(f"[APPLE AUTH] {email_lower} signed in via Apple | uid={apple_user_id[:20]}...")
+    print(f"[APPLE AUTH] {email_lower} signed in via Apple | access={access_type} | uid={apple_user_id[:20]}...")
     return {
         "verified": True,
         "email": email_lower,
         "session_token": token,
         "access_type": access_type,
         "has_access": True,
+        "message": "Access granted.",
     }
 
 

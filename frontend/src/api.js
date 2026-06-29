@@ -19,7 +19,7 @@ async function apiCall(endpoint, options = {}) {
 
 // Auth APIs
 export async function verifyWhop(email) {
-  return apiCall('/api/auth/verify-whop', { method: 'POST', body: JSON.stringify({ email }) });
+  return apiCall('/api/auth/verify-access', { method: 'POST', body: JSON.stringify({ email }) });
 }
 
 export async function authLogin(email, password) {
