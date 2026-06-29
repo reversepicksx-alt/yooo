@@ -394,6 +394,15 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete?: () => void }) {
         </View>
       )}
 
+      {/* Match ID — shown on every card when available */}
+      {pick.fixtureId != null && (
+        <View style={styles.matchCtxBlock}>
+          <Text style={[styles.matchCtxLine, { color: Colors.textTertiary, fontSize: 10 }]}>
+            Match ID: {pick.fixtureId}
+          </Text>
+        </View>
+      )}
+
       {/* WEB-ONLY trash bin in the bottom-right corner. We render a real
           HTML <button> so the click is handled by the browser directly —
           no react-native-web Pressable, no gesture handler, no synthetic
