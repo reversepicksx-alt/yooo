@@ -479,11 +479,10 @@ async def verify_code(req: VerifyCodeRequest):
     # Mark used (single-use)
     await db.auth_codes.update_one({"email": email_lower}, {"$set": {"used": True}})
 
-    # Check Apple IAP access
-    access_type = await _check_apple_access(email_lower)
+    # Check ALL subscription sources (local grants, Apple IAP, Stripe live)
+    access_type = await check_access(email_lower)
     if not access_type:
-        # No active subscription — still log them in but mark as no access
-        # so the app can show the paywall
+        # No active subscription anywhere — still log them in so the app can show the paywall
         token = await create_session(email_lower, "NoSubscription")
         return {
             "verified": True,
