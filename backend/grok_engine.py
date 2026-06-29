@@ -1610,7 +1610,8 @@ async def _try_settle_wc_via_gemini(pick: dict) -> bool:
             if pick_created_at and fix_date:
                 try:
                     fix_dt = datetime.fromisoformat(fix_date.replace("Z", "+00:00"))
-                    if fix_dt < (pick_created_at - timedelta(hours=3)):
+                    fix_end = fix_dt + timedelta(hours=2)
+                    if fix_end < pick_created_at:
                         continue
                 except Exception:
                     pass
@@ -1743,15 +1744,19 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
         status = f.get("fixture", {}).get("status", {}).get("short", "")
         if status not in ("FT", "AET", "PEN"):
             continue
-        # Timestamp guard: fixture must have ended after the pick was saved.
-        # Allow picks saved up to 3 hours after kickoff (user may save mid-match).
-        # Only skip fixtures that kicked off MORE than 3 hours before the pick.
+        # Timestamp guard: for finished fixtures, ensure the match ENDED after
+        # the pick was saved.  Without this, a Germany pick saved at 14:00 can
+        # match a completely different Germany match that finished at 13:30
+        # (kicked off 12:00, within the old 3h "after kickoff" window).
+        # The correct rule: finished games must end after pick creation.
         fix_date = f.get("fixture", {}).get("date", "")
         if fix_date and pick_created_at:
             try:
                 fix_dt = datetime.fromisoformat(fix_date.replace("Z", "+00:00"))
-                if fix_dt < (pick_created_at - timedelta(hours=3)):
-                    continue  # This game kicked off well before pick was made — skip
+                # Rough match end = kickoff + 2 hours (covers FT, AET, penalties)
+                fix_end = fix_dt + timedelta(hours=2)
+                if fix_end < pick_created_at:
+                    continue  # Match was over before pick was saved — skip
             except Exception:
                 pass
 
@@ -1858,6 +1863,22 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
                 break
 
         if actual_value is None:
+            return False
+
+        # Zero-value guard: count stats should never be 0 for a player who played
+        # 30+ minutes.  API-Football often populates fixture status=FT but leaves
+        # all player stats at 0 for 10-30 minutes post-match.  Defer settlement
+        # so the background loop retries with fresh data.
+        _COUNT_PROPS_SETTLE = {
+            "pass_attempts", "passes", "crosses", "tackles", "key_passes",
+            "shots", "shots_on_target", "interceptions", "blocks", "dribbles",
+            "dribbles_success", "fouls_drawn", "fouls_committed", "clearances",
+            "duels_won", "saves", "goals", "assists", "yellow_cards", "red_cards",
+            "offsides",
+        }
+        _mp = minutes_played or 0
+        if actual_value == 0 and prop_type in _COUNT_PROPS_SETTLE and _mp >= 30:
+            print(f"[AUTO-SETTLE-DEFER] {pick.get('playerName','')} {prop_type} — stat=0 with {_mp} min; likely unpopulated, deferring")
             return False
 
         # Minimum minutes threshold — if player played < 30 min, void as push
