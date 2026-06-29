@@ -22,6 +22,7 @@
         "NSPhotoLibraryUsageDescription": "ReversePicks needs access to your photos to scan prop slips.",
         "NSPhotoLibraryAddUsageDescription": "ReversePicks needs access to save images.",
         "NSUserNotificationsUsageDescription": "ReversePicks sends you pick alerts and result notifications.",
+        "NSFaceIDUsageDescription": "ReversePicks uses Face ID to sign you in quickly and securely.",
         "CFBundleURLTypes": [
           {
             "CFBundleURLSchemes": [
@@ -29,9 +30,6 @@
             ]
           }
         ]
-      },
-      "entitlements": {
-        "com.apple.developer.applesignin": true
       }
     },
     "android": {
@@ -70,7 +68,12 @@
         }
       ],
       "expo-font",
-      "expo-apple-authentication"
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "ReversePicks uses Face ID to sign you in quickly and securely."
+        }
+      ]
     ],
     "extra": {
       "router": {},

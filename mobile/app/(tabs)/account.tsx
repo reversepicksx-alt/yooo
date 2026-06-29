@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  Alert, Platform, Image, Modal, ActivityIndicator, Linking,
+  Alert, Platform, Image, Modal, ActivityIndicator, Linking, Animated,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
@@ -15,6 +15,67 @@ import {
 } from '@/lib/api';
 import { useSubscription } from '@/lib/revenuecat';
 import type { PurchasesPackage } from 'react-native-purchases';
+
+// ── Skeleton loader ────────────────────────────────────────────────────────────
+function SkeletonLine({ w, h = 14, mt = 0 }: { w: string | number; h?: number; mt?: number }) {
+  const anim = useRef(new Animated.Value(0.4)).current;
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(anim, { toValue: 1,   duration: 800, useNativeDriver: true }),
+        Animated.timing(anim, { toValue: 0.4, duration: 800, useNativeDriver: true }),
+      ])
+    ).start();
+  }, []);
+  return (
+    <Animated.View style={{
+      width: w as any, height: h, borderRadius: h / 2,
+      backgroundColor: '#2a2a2a', marginTop: mt, opacity: anim,
+    }} />
+  );
+}
+
+function AccountSkeleton() {
+  return (
+    <View style={{ paddingHorizontal: 20, paddingTop: 20, gap: 24 }}>
+      {/* profile card skeleton */}
+      <View style={{ flexDirection: 'row', gap: 16, alignItems: 'center', marginBottom: 4 }}>
+        <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: '#2a2a2a' }} />
+        <View style={{ flex: 1, gap: 8 }}>
+          <SkeletonLine w="60%" h={14} />
+          <SkeletonLine w="35%" h={10} />
+        </View>
+      </View>
+      {/* section label */}
+      <SkeletonLine w="25%" h={10} />
+      {/* menu group */}
+      <View style={{ backgroundColor: '#111', borderRadius: 16, borderWidth: 1, borderColor: '#1e1e1e', overflow: 'hidden', gap: 0 }}>
+        {[1, 2].map(i => (
+          <View key={i} style={{ flexDirection: 'row', alignItems: 'center', padding: 16, gap: 14, borderBottomWidth: 1, borderBottomColor: '#1e1e1e' }}>
+            <View style={{ width: 34, height: 34, borderRadius: 8, backgroundColor: '#1c1c1c' }} />
+            <View style={{ flex: 1, gap: 6 }}>
+              <SkeletonLine w="40%" h={13} />
+              <SkeletonLine w="55%" h={10} />
+            </View>
+          </View>
+        ))}
+      </View>
+      {/* subscription section */}
+      <SkeletonLine w="30%" h={10} />
+      <View style={{ backgroundColor: '#111', borderRadius: 16, borderWidth: 1, borderColor: '#1e1e1e', overflow: 'hidden' }}>
+        {[1, 2, 3].map(i => (
+          <View key={i} style={{ flexDirection: 'row', alignItems: 'center', padding: 16, gap: 14, borderBottomWidth: 1, borderBottomColor: '#1e1e1e' }}>
+            <View style={{ width: 34, height: 34, borderRadius: 8, backgroundColor: '#1c1c1c' }} />
+            <View style={{ flex: 1, gap: 6 }}>
+              <SkeletonLine w="45%" h={13} />
+              <SkeletonLine w="60%" h={10} />
+            </View>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
 
 function getErrorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
@@ -556,9 +617,16 @@ export default function AccountScreen() {
           <>
             <Text style={styles.sectionLabel}>Subscription</Text>
             {iapLoading ? (
-              <View style={[styles.menuGroup, styles.subLoadingWrap]}>
-                <ActivityIndicator size="small" color={Colors.primary} />
-                <Text style={styles.subLoadingText}>Loading…</Text>
+              <View style={styles.menuGroup}>
+                {[1, 2].map(i => (
+                  <View key={i} style={[styles.menuRow, { borderBottomWidth: i < 2 ? 1 : 0 }]}>
+                    <View style={[styles.menuIcon, { backgroundColor: '#1c1c1c' }]} />
+                    <View style={{ flex: 1, gap: 6 }}>
+                      <SkeletonLine w="45%" h={13} />
+                      <SkeletonLine w="60%" h={10} />
+                    </View>
+                  </View>
+                ))}
               </View>
             ) : hasIAP ? (
               <IAPSubscriptionInfo />
@@ -581,9 +649,16 @@ export default function AccountScreen() {
               </View>
             )}
             {subLoading && !subStatus ? (
-              <View style={[styles.menuGroup, styles.subLoadingWrap]}>
-                <ActivityIndicator size="small" color={Colors.primary} />
-                <Text style={styles.subLoadingText}>Loading subscription…</Text>
+              <View style={styles.menuGroup}>
+                {[1, 2, 3].map(i => (
+                  <View key={i} style={[styles.menuRow, { borderBottomWidth: i < 3 ? 1 : 0 }]}>
+                    <View style={[styles.menuIcon, { backgroundColor: '#1c1c1c' }]} />
+                    <View style={{ flex: 1, gap: 6 }}>
+                      <SkeletonLine w="40%" h={13} />
+                      <SkeletonLine w="55%" h={10} />
+                    </View>
+                  </View>
+                ))}
               </View>
             ) : subStatus ? (
               <View style={styles.menuGroup}>

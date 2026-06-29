@@ -40,3 +40,15 @@ EXPO_TOKEN=$EXPO_TOKEN EXPO_APPLE_ID=$APPLE_ID EXPO_APPLE_APP_SPECIFIC_PASSWORD=
 ## eas.json submit profile
 ascAppId: 6781092173
 appleTeamId: FDC3LJRAC7
+
+## Build history (successful)
+- Build 128 (2bd82434): first clean build after apple-auth removal → FINISHED, submitted to TestFlight
+- Build 129 (0ca0662d): all 7 auth polish improvements (Terms links, slide animations, Welcome back, Face ID, social proof, skeleton loaders, owner link behind 5 logo taps)
+
+## expo-local-authentication
+- Installed for Face ID; requires plugin in app.json with faceIDPermission + NSFaceIDUsageDescription in infoPlist
+- Biometric button only shows when `hasHardwareAsync() && isEnrolledAsync()` AND savedEmail exists in SecureStore
+
+## expo-apple-authentication — DO NOT re-add
+- Removed permanently to fix XCODE_BUILD_ERROR (entitlement mismatch with provisioning profile)
+- Re-adding requires manual provisioning profile regeneration via Apple 2FA (not feasible non-interactively)
