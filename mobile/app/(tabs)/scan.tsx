@@ -702,7 +702,7 @@ export default function ScanScreen() {
         )}
 
         {/* ─── SCAN SECTION ─── */}
-        <>
+        <View pointerEvents={isNoSub ? 'none' : 'auto'}>
             {/* Idle: cartoon sports image only */}
             {phase === 'idle' && (
               <>
@@ -3303,6 +3303,7 @@ export default function ScanScreen() {
             </TouchableOpacity>
           </View>
         )}
+        </View>
       </ScrollView>
 
       {/* Prop Picker Modal — SCAN mode correction */}

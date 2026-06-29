@@ -10,19 +10,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@/contexts/AuthContext';
 import Colors from '@/constants/colors';
 import {
-  verifyAccess, requestCode, verifyCode, createCheckout, linkPayment, contactSupport,
+  verifyAccess, requestCode, verifyCode, contactSupport,
 } from '@/lib/api';
 
-type Step = 'landing' | 'email' | 'otp' | 'pricing';
+type Step = 'landing' | 'email' | 'otp';
 type Mode = 'signin' | 'signup';
 
 const INPUT_STYLE = Platform.OS === 'web' ? { outlineWidth: 0 } as object : {};
-
-const PLANS = [
-  { key: 'weekly',    label: 'Weekly',   sub: 'Billed weekly',  price: '$15',    unit: '/week',  popular: false },
-  { key: 'monthly',   label: 'Monthly',  sub: 'Save 8%',        price: '$49.99', unit: '/month', popular: true  },
-  { key: 'quarterly', label: '3 Months', sub: 'Save 24%',       price: '$99.99', unit: '/3mo',   popular: false },
-];
 
 export default function AuthScreen() {
   const insets = useSafeAreaInsets();
@@ -38,10 +32,6 @@ export default function AuthScreen() {
   const [resendTimer, setResendTimer] = useState(0);
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
-  const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
-
-  const [showPaymentEmail, setShowPaymentEmail] = useState(false);
-  const [paymentEmail, setPaymentEmail] = useState('');
 
   // Support modal state
   const [showSupport, setShowSupport] = useState(false);
@@ -151,20 +141,12 @@ export default function AuthScreen() {
     try {
       const result = await verifyCode(trimmed, code);
       if (result.access_type === 'NoSubscription' || !result.has_access) {
-        // No active subscription
         await loginWithResponse({
           email: result.email,
           session_token: result.session_token,
           access_type: result.access_type,
         });
-        if (mode === 'signup') {
-          // New user: take them to plans
-          setStep('pricing');
-        } else {
-          // Existing member thought they had access
-          setError('No active subscription found. Choose a plan to get access.');
-          setTimeout(() => setStep('pricing'), 800);
-        }
+        router.replace('/(tabs)/account');
       } else {
         // Has active subscription
         await loginWithResponse({
@@ -187,222 +169,6 @@ export default function AuthScreen() {
     if (resendTimer > 0) return;
     await handleSendCode();
   };
-
-  const handleSubscribePlan = async (planKey: string) => {
-    const trimmed = email.trim().toLowerCase();
-    setCheckoutLoading(planKey);
-    setError('');
-    try {
-      const result = await createCheckout(trimmed, planKey);
-      const url = result.checkoutUrl || result.checkout_url || result.redirect_url;
-      if (url) {
-        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        if (Platform.OS === 'web' && typeof window !== 'undefined') {
-          try { window.sessionStorage.setItem('rp_checkout_email', trimmed); } catch {}
-          window.location.href = url;
-        } else {
-          await Linking.openURL(url);
-        }
-        setInfo('Complete payment in the browser, then tap "Already paid?" below.');
-        setStep('email');
-      } else {
-        setError(result.error || 'Could not create checkout. Try again.');
-      }
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Checkout failed. Try again.');
-    } finally {
-      setCheckoutLoading(null);
-    }
-  };
-
-  const handleAlreadyPaid = async () => {
-    const trimmed = email.trim().toLowerCase();
-    if (!trimmed) { setError('Enter your email address.'); return; }
-    const payTrimmed = paymentEmail.trim().toLowerCase();
-    if (showPaymentEmail && payTrimmed && payTrimmed !== trimmed) {
-      setLoading(true);
-      setError('');
-      try {
-        const result = await linkPayment(trimmed, payTrimmed);
-        if (result.verified && result.session_token && result.email) {
-          await loginWithResponse({
-            email: result.email,
-            session_token: result.session_token,
-            access_type: result.access_type,
-          });
-          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          router.replace('/(tabs)/scan');
-        } else {
-          setError(result.message || 'No active subscription found for that payment email.');
-          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-        }
-      } catch (e: unknown) {
-        setError(e instanceof Error ? e.message : 'Could not verify. Try again.');
-        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      } finally {
-        setLoading(false);
-      }
-      return;
-    }
-    setLoading(true);
-    setError('');
-    try {
-      const result = await verifyAccess(trimmed);
-      if (result.verified && result.session_token && result.email) {
-        await loginWithResponse({
-          email: result.email,
-          session_token: result.session_token,
-          access_type: result.access_type,
-        });
-        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        router.replace('/(tabs)/scan');
-      } else {
-        setShowPaymentEmail(true);
-        setError('No membership found. Enter the email you used at checkout below.');
-        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      }
-    } catch {
-      setShowPaymentEmail(true);
-      setError('Could not verify. Enter the email you used at checkout below.');
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleSendSupport = async () => {
-    const message = supportMessage.trim();
-    if (!message) return;
-    setSupportLoading(true);
-    setSupportError('');
-    try {
-      const result = await contactSupport(supportName.trim(), email.trim(), message);
-      if (result.success) {
-        setSupportSent(true);
-        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      } else {
-        setSupportError(result.error || 'Failed to send. Please try again.');
-        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      }
-    } catch {
-      setSupportError('Could not send message. Check your connection and try again.');
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-    } finally {
-      setSupportLoading(false);
-    }
-  };
-
-  // ── Pricing page ────────────────────────────────────────────────────────
-  if (step === 'pricing') {
-    const FEATURES = [
-      { icon: 'flash' as any,              text: 'AI-powered player prop predictions' },
-      { icon: 'analytics' as any,           text: 'Bayesian probability engine' },
-      { icon: 'scan' as any,               text: 'Scan any sportsbook slip instantly' },
-      { icon: 'chatbubble-ellipses' as any, text: 'Tactical AI chat + live intel' },
-    ];
-    return (
-      <ScrollView
-        style={[styles.root, { paddingTop: insets.top }]}
-        contentContainerStyle={{ paddingBottom: insets.bottom + 20 }}
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={styles.pricingContainer}>
-          <View style={styles.pricingHero}>
-            <Image source={require('../assets/logo.png')} style={styles.pricingLogo} resizeMode="contain" />
-            <Text style={styles.pricingTitle}>UNLOCK THE EDGE</Text>
-            <Text style={styles.pricingTagline}>
-              Data-driven soccer prop analysis trusted by sharp bettors.
-            </Text>
-          </View>
-
-          <View style={styles.featuresList}>
-            {FEATURES.map((f, i) => (
-              <View key={i} style={styles.featureRow}>
-                <View style={styles.featureIcon}>
-                  <Ionicons name={f.icon} size={14} color={Colors.primary} />
-                </View>
-                <Text style={styles.featureText}>{f.text}</Text>
-              </View>
-            ))}
-          </View>
-
-          {!!error && <ErrorBox message={error} />}
-
-          <Text style={styles.planSectionLabel}>CHOOSE YOUR PLAN</Text>
-
-          {PLANS.map(plan => (
-            <TouchableOpacity
-              key={plan.key}
-              style={[styles.planCard, plan.popular && styles.planCardPopular]}
-              onPress={() => handleSubscribePlan(plan.key)}
-              disabled={checkoutLoading !== null}
-              activeOpacity={0.8}
-            >
-              {plan.popular && (
-                <View style={styles.popularBadge}>
-                  <Text style={styles.popularText}>MOST POPULAR</Text>
-                </View>
-              )}
-              <View style={styles.planLeft}>
-                <Text style={styles.planName}>{plan.label}</Text>
-                <Text style={styles.planSub}>{plan.sub}</Text>
-              </View>
-              <View style={styles.planRight}>
-                {checkoutLoading === plan.key
-                  ? <ActivityIndicator color={Colors.primary} size="small" />
-                  : (
-                    <View style={styles.priceRow}>
-                      <Text style={styles.planPrice}>{plan.price}</Text>
-                      <Text style={styles.planUnit}>{plan.unit}</Text>
-                    </View>
-                  )
-                }
-              </View>
-            </TouchableOpacity>
-          ))}
-
-          <View style={styles.socialProofRow}>
-            <Ionicons name="shield-checkmark" size={13} color={Colors.primary} />
-            <Text style={styles.socialProofText}>Cancel anytime \u00b7 Instant access \u00b7 Secure checkout</Text>
-          </View>
-
-          <TouchableOpacity style={styles.backBtn} onPress={() => setStep('landing')} activeOpacity={0.8}>
-            <Ionicons name="arrow-back" size={15} color={Colors.text} />
-            <Text style={styles.backBtnText}>Back</Text>
-          </TouchableOpacity>
-
-          {showPaymentEmail && (
-            <View style={styles.paymentEmailBlock}>
-              <Text style={styles.paymentEmailLabel}>What email did you use at checkout?</Text>
-              <View style={styles.inputRow}>
-                <Ionicons name="receipt-outline" size={17} color={Colors.textSecondary} style={styles.icon} />
-                <TextInput
-                  style={[styles.input, INPUT_STYLE]}
-                  placeholder="Payment email"
-                  placeholderTextColor={Colors.textTertiary}
-                  value={paymentEmail}
-                  onChangeText={v => { setPaymentEmail(v); setError(''); }}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  autoComplete="email"
-                />
-              </View>
-            </View>
-          )}
-
-          <TouchableOpacity onPress={handleAlreadyPaid} disabled={loading} style={styles.alreadyPaidRow}>
-            {loading
-              ? <ActivityIndicator color={Colors.primary} size="small" />
-              : <Text style={styles.alreadyPaid}>
-                  {showPaymentEmail ? 'Verify with payment email' : 'Already paid? Verify your payment'}
-                </Text>
-            }
-          </TouchableOpacity>
-        </View>
-      </ScrollView>
-    );
-  }
 
   // ── Main auth screen (landing / email / otp) ───────────────────────────
   return (
@@ -806,39 +572,6 @@ const styles = StyleSheet.create({
   errorText: { color: Colors.error, fontSize: 13, flex: 1 },
   infoBox: { flexDirection: 'row', alignItems: 'flex-start', backgroundColor: Colors.primaryDim, padding: 12, borderRadius: Colors.radius, gap: 8 },
   infoText: { color: Colors.primary, fontSize: 13, flex: 1 },
-
-  // Pricing page
-  pricingContainer: { flex: 1, paddingHorizontal: 24, paddingTop: 20, gap: 14 },
-  pricingHero: { alignItems: 'center', marginBottom: 8 },
-  pricingLogo: { width: 60, height: 60, marginBottom: 12 },
-  pricingTitle: { fontSize: 18, fontWeight: '900', color: Colors.primary, letterSpacing: 3, textTransform: 'uppercase', marginBottom: 6 },
-  pricingTagline: { fontSize: 13, color: Colors.textSecondary, textAlign: 'center', lineHeight: 19, paddingHorizontal: 12 },
-  featuresList: { backgroundColor: Colors.card, borderRadius: Colors.radius, borderWidth: 1, borderColor: Colors.borderSubtle, padding: 14, gap: 10 },
-  featureRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  featureIcon: { width: 26, height: 26, borderRadius: 8, backgroundColor: Colors.primaryDim, alignItems: 'center', justifyContent: 'center' },
-  featureText: { fontSize: 13, color: Colors.text, fontWeight: '500', flex: 1 },
-  planSectionLabel: { fontSize: 10, fontWeight: '800', color: Colors.textSecondary, letterSpacing: 2, textTransform: 'uppercase', textAlign: 'center' },
-  socialProofRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: -4 },
-  socialProofText: { fontSize: 11, color: Colors.textSecondary, textAlign: 'center' },
-  planCard: { backgroundColor: Colors.card, borderRadius: Colors.radiusLg, borderWidth: 1, borderColor: Colors.borderSubtle, padding: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  planCardPopular: { borderColor: Colors.primary, borderWidth: 1.5, shadowColor: Colors.primary, shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.2, shadowRadius: 10, elevation: 6 },
-  popularBadge: { position: 'absolute', top: -11, right: 16, backgroundColor: Colors.primary, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 3 },
-  popularText: { color: '#000', fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
-  planLeft: { flex: 1 },
-  planName: { fontSize: 18, fontWeight: '700', color: Colors.text, marginBottom: 3 },
-  planSub: { fontSize: 12, color: Colors.textSecondary },
-  planRight: { alignItems: 'flex-end' },
-  priceRow: { flexDirection: 'row', alignItems: 'baseline', gap: 2 },
-  planPrice: { fontSize: 24, fontWeight: '800', color: Colors.primary },
-  planUnit: { fontSize: 13, color: Colors.textSecondary, fontWeight: '500' },
-  backBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: Colors.card, borderRadius: Colors.radius, borderWidth: 1, borderColor: Colors.borderSubtle, height: 50, marginTop: 4 },
-  backBtnText: { color: Colors.text, fontSize: 14, fontWeight: '600' },
-
-  // Already paid / payment email
-  alreadyPaidRow: { alignItems: 'center', paddingVertical: 6 },
-  alreadyPaid: { color: Colors.primary, fontSize: 13, fontWeight: '600', textDecorationLine: 'underline' },
-  paymentEmailBlock: { gap: 8 },
-  paymentEmailLabel: { color: Colors.textSecondary, fontSize: 12, fontWeight: '500', textAlign: 'center' },
 
   // Support
   supportRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 4, paddingHorizontal: 24 },

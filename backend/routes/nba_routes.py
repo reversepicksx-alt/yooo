@@ -138,6 +138,14 @@ class NbaPredictRequest(BaseModel):
 
 @router.post("/predict")
 async def nba_predict(req: NbaPredictRequest):
+    from routes.auth import verify_session
+    sess = await verify_session(req)
+    if not sess.get("valid"):
+        raise HTTPException(status_code=401, detail="Invalid or expired session. Please sign in again.")
+    access = sess.get("access_type", "")
+    if not access or access == "NoSubscription":
+        raise HTTPException(status_code=403, detail="Active subscription required")
+
     prop_type = req.propType.lower().strip()
     venue     = (req.venue or "home").lower()
     if venue not in ("home", "away"):

@@ -20,14 +20,8 @@ const { width: SCREEN_W } = Dimensions.get('window');
 const TERMS_URL   = 'https://reversepicks.com/terms';
 const PRIVACY_URL = 'https://reversepicks.com/privacy';
 
-type Step = 'landing' | 'email' | 'code' | 'pricing';
+type Step = 'landing' | 'email' | 'code';
 type Mode = 'signin' | 'signup';
-
-const PLANS = [
-  { key: 'weekly',    label: 'Weekly',   sub: 'Billed weekly',  price: '$15',    unit: '/week',  popular: false },
-  { key: 'monthly',   label: 'Monthly',  sub: 'Save 8%',        price: '$49.99', unit: '/month', popular: true  },
-  { key: 'quarterly', label: '3 Months', sub: 'Save 24%',       price: '$99.99', unit: '/3mo',   popular: false },
-];
 
 function getErrorMessage(e: unknown): string {
   if (e instanceof Error) return e.message;
@@ -311,12 +305,7 @@ export default function AuthScreen() {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
         if (result.has_access === false || result.access_type === 'NoSubscription') {
-          if (mode === 'signup') {
-            setStep('pricing');
-          } else {
-            setError('No active subscription found. Choose a plan to get access.');
-            setTimeout(() => setStep('pricing'), 800);
-          }
+          router.replace('/(tabs)/account');
         } else {
           router.replace('/(tabs)/scan');
         }
@@ -362,153 +351,6 @@ export default function AuthScreen() {
       setOwnerLoading(false);
     }
   };
-
-  // ── Pricing: Apple IAP plan selection ───────────────────────────────────────
-  const handleIapSubscribe = async (planKey: string) => {
-    setLoading(true);
-    setError('');
-    try {
-      // Map plan key to RevenueCat offering
-      const offerings = await Purchases.getOfferings();
-      const current = offerings.current;
-      if (!current) {
-        setError('Subscriptions not available. Please try again later.');
-        return;
-      }
-      const pkg = current.availablePackages.find(p =>
-        (planKey === 'weekly'    && p.identifier.includes('weekly')) ||
-        (planKey === 'monthly'   && p.identifier.includes('monthly')) ||
-        (planKey === 'quarterly' && (p.identifier.includes('quarterly') || p.identifier.includes('3month')))
-      );
-      if (!pkg) {
-        setError('That plan is not available right now.');
-        return;
-      }
-      const purchaseResult = await Purchases.purchasePackage(pkg);
-      if (purchaseResult.customerInfo.entitlements.active['pro']) {
-        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        router.replace('/(tabs)/scan');
-      } else {
-        setError('Purchase completed but subscription not active. Contact support.');
-      }
-    } catch (e: any) {
-      if (e.userCancelled) {
-        setInfo('Purchase cancelled.');
-      } else {
-        setError(e.message || 'Purchase failed. Try again.');
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // ── Already paid / restore purchases ──────────────────────────────────────────
-  const handleRestorePurchases = async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const customerInfo = await Purchases.restorePurchases();
-      if (customerInfo.entitlements.active['pro']) {
-        // Backend will sync on next login; for now just route to scan
-        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        router.replace('/(tabs)/scan');
-      } else {
-        setError('No previous purchases found on this device.');
-      }
-    } catch (e: any) {
-      setError(e.message || 'Could not restore purchases.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // ════════════════════════════════════════════════════════════════════════════
-  // ── PRICING STEP ────────────────────────────────────────────────────────────
-  if (step === 'pricing') {
-    const FEATURES = [
-      { icon: 'flash' as any,              text: 'AI-powered player prop predictions' },
-      { icon: 'analytics' as any,           text: 'Bayesian probability engine' },
-      { icon: 'scan' as any,               text: 'Scan any sportsbook slip instantly' },
-      { icon: 'chatbubble-ellipses' as any, text: 'Tactical AI chat + live intel' },
-    ];
-    return (
-      <ScrollView
-        style={[styles.root, { paddingTop: insets.top }]}
-        contentContainerStyle={{ paddingBottom: insets.bottom + 20 }}
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={styles.pricingContainer}>
-          <View style={styles.pricingHero}>
-            <Image source={require('../assets/logo.png')} style={styles.pricingLogo} resizeMode="contain" />
-            <Text style={styles.pricingTitle}>UNLOCK THE EDGE</Text>
-            <Text style={styles.pricingTagline}>
-              Data-driven soccer prop analysis trusted by sharp bettors.
-            </Text>
-          </View>
-
-          <View style={styles.featuresList}>
-            {FEATURES.map((f, i) => (
-              <View key={i} style={styles.featureRow}>
-                <View style={styles.featureIcon}>
-                  <Ionicons name={f.icon} size={14} color={Colors.primary} />
-                </View>
-                <Text style={styles.featureText}>{f.text}</Text>
-              </View>
-            ))}
-          </View>
-
-          {!!error && <ErrorBox message={error} />}
-
-          <Text style={styles.planSectionLabel}>CHOOSE YOUR PLAN</Text>
-
-          {PLANS.map(plan => (
-            <TouchableOpacity
-              key={plan.key}
-              style={[styles.planCard, plan.popular && styles.planCardPopular]}
-              onPress={() => handleIapSubscribe(plan.key)}
-              disabled={loading}
-              activeOpacity={0.8}
-            >
-              {plan.popular && (
-                <View style={styles.popularBadge}>
-                  <Text style={styles.popularText}>MOST POPULAR</Text>
-                </View>
-              )}
-              <View style={styles.planLeft}>
-                <Text style={styles.planName}>{plan.label}</Text>
-                <Text style={styles.planSub}>{plan.sub}</Text>
-              </View>
-              <View style={styles.planRight}>
-                {loading
-                  ? <ActivityIndicator color={Colors.primary} size="small" />
-                  : (
-                    <View style={styles.priceRow}>
-                      <Text style={styles.planPrice}>{plan.price}</Text>
-                      <Text style={styles.planUnit}>{plan.unit}</Text>
-                    </View>
-                  )
-                }
-              </View>
-            </TouchableOpacity>
-          ))}
-
-          <View style={styles.socialProofRow}>
-            <Ionicons name="shield-checkmark" size={13} color={Colors.primary} />
-            <Text style={styles.socialProofText}>Cancel anytime \u00b7 Instant access \u00b7 Secure checkout</Text>
-          </View>
-
-          <TouchableOpacity style={styles.restoreBtn} onPress={handleRestorePurchases} disabled={loading} activeOpacity={0.7}>
-            <Text style={styles.restoreText}>Restore Purchases</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity style={styles.backBtn} onPress={() => setStep('landing')} activeOpacity={0.8}>
-            <Ionicons name="arrow-back" size={15} color={Colors.text} />
-            <Text style={styles.backBtnText}>Back</Text>
-          </TouchableOpacity>
-        </View>
-      </ScrollView>
-    );
-  }
 
   // ════════════════════════════════════════════════════════════════════════════
   // ── CODE STEP ───────────────────────────────────────────────────────────────
@@ -935,32 +777,6 @@ const styles = StyleSheet.create({
   authToggleText: { color: Colors.textSecondary, fontSize: 13 },
   authToggleLink: { color: Colors.primary, fontSize: 13, fontWeight: '700' },
 
-  // Pricing
-  pricingContainer: { flex: 1, paddingHorizontal: 24, paddingTop: 20, gap: 14 },
-  pricingHero: { alignItems: 'center', marginBottom: 8 },
-  pricingLogo: { width: 60, height: 60, marginBottom: 12 },
-  pricingTitle: { fontSize: 18, fontWeight: '900', color: Colors.primary, letterSpacing: 3, textTransform: 'uppercase', marginBottom: 6 },
-  pricingTagline: { fontSize: 13, color: Colors.textSecondary, textAlign: 'center', lineHeight: 19, paddingHorizontal: 12 },
-  featuresList: { backgroundColor: Colors.card, borderRadius: Colors.radius, borderWidth: 1, borderColor: Colors.borderSubtle, padding: 14, gap: 10 },
-  featureRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  featureIcon: { width: 26, height: 26, borderRadius: 8, backgroundColor: 'rgba(57,255,20,0.1)', alignItems: 'center', justifyContent: 'center' },
-  featureText: { fontSize: 13, color: Colors.text, fontWeight: '500', flex: 1 },
-  planSectionLabel: { fontSize: 10, fontWeight: '800', color: Colors.textSecondary, letterSpacing: 2, textTransform: 'uppercase', textAlign: 'center' },
-  socialProofRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: -4 },
-  socialProofText: { fontSize: 11, color: Colors.textSecondary, textAlign: 'center' },
-  planCard: { backgroundColor: Colors.card, borderRadius: Colors.radiusLg, borderWidth: 1, borderColor: Colors.borderSubtle, padding: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  planCardPopular: { borderColor: Colors.primary, borderWidth: 1.5, shadowColor: Colors.primary, shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.2, shadowRadius: 10, elevation: 6 },
-  popularBadge: { position: 'absolute', top: -11, right: 16, backgroundColor: Colors.primary, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 3 },
-  popularText: { color: '#000', fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
-  planLeft: { flex: 1 },
-  planName: { fontSize: 18, fontWeight: '700', color: Colors.text, marginBottom: 3 },
-  planSub: { fontSize: 12, color: Colors.textSecondary },
-  planRight: { alignItems: 'flex-end' },
-  priceRow: { flexDirection: 'row', alignItems: 'baseline', gap: 2 },
-  planPrice: { fontSize: 24, fontWeight: '800', color: Colors.primary },
-  planUnit: { fontSize: 13, color: Colors.textSecondary, fontWeight: '500' },
   backBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: Colors.card, borderRadius: Colors.radius, borderWidth: 1, borderColor: Colors.borderSubtle, height: 50, marginTop: 4 },
   backBtnText: { color: Colors.text, fontSize: 14, fontWeight: '600' },
-  restoreBtn: { alignItems: 'center', paddingVertical: 8 },
-  restoreText: { color: Colors.textSecondary, fontSize: 13, fontWeight: '600', textDecorationLine: 'underline' },
 });
