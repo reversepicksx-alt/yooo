@@ -12,6 +12,13 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useSubscription, REVENUECAT_ENTITLEMENT_IDENTIFIER } from '@/lib/revenuecat';
 import Purchases, { type PurchasesPackage } from 'react-native-purchases';
 
+// ── Fallback demo plans (shown when RevenueCat returns empty in dev/TestFlight) ──
+const DEMO_PACKAGES: { title: string; price: string; period: string; desc: string }[] = [
+  { title: 'Weekly',   price: '$7.99',  period: '7 days',  desc: 'Full access, renews weekly' },
+  { title: 'Monthly',  price: '$19.99', period: '1 month', desc: 'Full access, renews monthly' },
+  { title: 'Quarterly', price: '$49.99', period: '3 months', desc: 'Best value, renews quarterly' },
+];
+
 const FEATURES = [
   'Unlimited AI player prop predictions',
   'Tactical breakdowns & sharp summaries',
@@ -31,7 +38,7 @@ export default function PaywallScreen() {
   const { session, loginWithResponse } = useAuth();
   const {
     packages, isLoading, purchase, restore,
-    isPurchasing, isRestoring,
+    isPurchasing, isRestoring, refetchOfferings,
   } = useSubscription();
 
   const [selectedPkg, setSelectedPkg] = useState<PurchasesPackage | null>(null);
@@ -162,7 +169,31 @@ export default function PaywallScreen() {
           </View>
         ) : packages.length === 0 ? (
           <View style={styles.loader}>
-            <Text style={styles.loaderText}>No plans available. Pull down to retry.</Text>
+            <Ionicons name="cloud-offline-outline" size={32} color={Colors.textTertiary} />
+            <Text style={styles.loaderText}>Plans unavailable</Text>
+            <Text style={[styles.loaderText, { fontSize: 11, marginTop: -4 }]}>
+              Check App Store agreements & product metadata, then retry
+            </Text>
+            <TouchableOpacity
+              style={[styles.retryBtn, { marginTop: 12 }]}
+              onPress={() => refetchOfferings()}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="refresh" size={14} color={Colors.primary} />
+              <Text style={styles.retryText}>Retry</Text>
+            </TouchableOpacity>
+            {/* Visual fallback — helps debug layout even when RC is empty */}
+            <View style={{ width: '100%', gap: 10, marginTop: 16, opacity: 0.35 }}>
+              {DEMO_PACKAGES.map((d, i) => (
+                <View key={i} style={styles.planCard}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.planTitle}>{d.title}</Text>
+                    <Text style={styles.planDesc}>{d.desc}</Text>
+                  </View>
+                  <Text style={styles.planPrice}>{d.price}</Text>
+                </View>
+              ))}
+            </View>
           </View>
         ) : (
           <View style={styles.plansWrap}>
@@ -318,6 +349,21 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     marginTop: 8,
     paddingHorizontal: 8,
+  },
+  retryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+  },
+  retryText: {
+    color: Colors.primary,
+    fontSize: 13,
+    fontWeight: '700',
   },
   loader: { alignItems: 'center', gap: 8, paddingVertical: 20 },
   loaderText: { color: Colors.textSecondary, fontSize: 13 },

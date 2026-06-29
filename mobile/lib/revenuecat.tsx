@@ -43,18 +43,38 @@ function useSubscriptionContext() {
     queryKey: ["revenuecat", "customer-info"],
     queryFn: async () => {
       if (Platform.OS === "web") return null;
-      return Purchases.getCustomerInfo();
+      try {
+        return await Purchases.getCustomerInfo();
+      } catch (e: any) {
+        console.error("[RevenueCat] getCustomerInfo failed:", e?.message ?? e);
+        throw e;
+      }
     },
     staleTime: 60_000,
+    retry: 1,
   });
 
   const offeringsQuery = useQuery({
     queryKey: ["revenuecat", "offerings"],
     queryFn: async () => {
       if (Platform.OS === "web") return null;
-      return Purchases.getOfferings();
+      try {
+        const offerings = await Purchases.getOfferings();
+        const pkgs = offerings?.current?.availablePackages ?? [];
+        if (pkgs.length === 0) {
+          console.warn("[RevenueCat] offerings returned 0 packages — check Apple agreements, product metadata, and bundle ID match");
+        } else {
+          console.log("[RevenueCat] offerings loaded:", pkgs.map(p => p.product?.identifier).join(", "));
+        }
+        return offerings;
+      } catch (e: any) {
+        console.error("[RevenueCat] getOfferings failed:", e?.message ?? e);
+        throw e;
+      }
     },
-    staleTime: 300_000,
+    staleTime: 30_000,
+    retry: 2,
+    refetchOnMount: true,
   });
 
   const purchaseMutation = useMutation({
