@@ -108,19 +108,16 @@ async def create_session(email: str, access_type: str) -> str:
             pass
         return existing["session_token"]
     session_token = str(uuid.uuid4())
-    try:
-        await db.sessions.update_one(
-            {"email": email},
-            {"$set": {
-                "email": email,
-                "session_token": session_token,
-                "access_type": access_type,
-                "last_active": datetime.now(timezone.utc).isoformat(),
-            }},
-            upsert=True,
-        )
-    except Exception:
-        pass
+    await db.sessions.update_one(
+        {"email": email},
+        {"$set": {
+            "email": email,
+            "session_token": session_token,
+            "access_type": access_type,
+            "last_active": datetime.now(timezone.utc).isoformat(),
+        }},
+        upsert=True,
+    )
     return session_token
 
 # ── Web access check (Stripe / Square / manual grants) ────────────────────────
