@@ -45,15 +45,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const email = await storage.get('rp_email');
         const token = await storage.get('rp_token');
         if (email && token) {
-          const result = await verifySession(email, token) as { valid?: boolean };
-          if (!result?.valid) throw new Error('Session invalid');
-          const accessType = await storage.get('rp_access_type') || undefined;
-          setSession({ email, token, accessType });
+          let explicitlyInvalid = false;
+          try {
+            const result = await verifySession(email, token) as { valid?: boolean };
+            if (result?.valid === false) explicitlyInvalid = true;
+          } catch {
+            // Network error or timeout — assume session is still valid,
+            // backend will reject with 401 if truly expired.
+          }
+          if (explicitlyInvalid) {
+            await storage.delete('rp_email');
+            await storage.delete('rp_token');
+            await storage.delete('rp_access_type');
+          } else {
+            const accessType = await storage.get('rp_access_type') || undefined;
+            setSession({ email, token, accessType });
+          }
         }
       } catch {
-        await storage.delete('rp_email');
-        await storage.delete('rp_token');
-        await storage.delete('rp_access_type');
+        // SecureStore read failure — leave session null (user re-logins)
       } finally {
         setIsLoading(false);
       }

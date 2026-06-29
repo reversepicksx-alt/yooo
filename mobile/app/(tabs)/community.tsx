@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
 import {
   View, Text, FlatList, TextInput, TouchableOpacity, Image,
   KeyboardAvoidingView, Platform, StyleSheet, ActivityIndicator,
-  Modal, Pressable, Alert, StatusBar, Dimensions,
+  Modal, Pressable, Alert, StatusBar, Dimensions, Keyboard, TouchableWithoutFeedback,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
@@ -549,13 +549,15 @@ export default function CommunityScreen() {
             <Text style={styles.loadingText}>Loading messages…</Text>
           </View>
         ) : messages.length === 0 ? (
-          <View style={styles.emptyWrap}>
-            <Text style={styles.emptyIcon}>💬</Text>
-            <Text style={styles.emptyTitle}>Welcome to Reverse Chat</Text>
-            <Text style={styles.emptyBody}>
-              Share picks, tag teammates, discuss matchups. Be the first to post.
-            </Text>
-          </View>
+          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+            <View style={styles.emptyWrap}>
+              <Text style={styles.emptyIcon}>💬</Text>
+              <Text style={styles.emptyTitle}>Welcome to Reverse Chat</Text>
+              <Text style={styles.emptyBody}>
+                Share picks, tag teammates, discuss matchups. Be the first to post.
+              </Text>
+            </View>
+          </TouchableWithoutFeedback>
         ) : (
           <FlatList
             ref={flatRef}
@@ -573,8 +575,26 @@ export default function CommunityScreen() {
         )}
 
         {/* ── Mention picker ─────────────────────────────────────────────── */}
-        {mentionQuery !== null && filteredParticipants.length > 0 && (
+        {mentionQuery !== null && (filteredParticipants.length > 0 || 'all'.startsWith(mentionQuery.toLowerCase())) && (
           <View style={styles.mentionBox}>
+            {'all'.startsWith(mentionQuery.toLowerCase()) && (
+              <TouchableOpacity
+                style={styles.mentionRow}
+                activeOpacity={0.7}
+                onPress={() => {
+                  const replaced = inputText.replace(/@(\w*)$/, '@all ');
+                  setInputText(replaced);
+                  setMentionQuery(null);
+                  inputRef.current?.focus();
+                }}
+              >
+                <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' }}>
+                  <Text style={{ color: '#000', fontSize: 13, fontWeight: '800' }}>@</Text>
+                </View>
+                <Text style={styles.mentionName}>Everyone</Text>
+                <Text style={styles.mentionEmail}>@all · notify all members</Text>
+              </TouchableOpacity>
+            )}
             {filteredParticipants.map((p) => (
               <TouchableOpacity
                 key={p.email}

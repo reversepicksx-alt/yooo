@@ -112,15 +112,14 @@ async def send_message(req: SendMessageRequest):
         pass
 
     # ── Push notifications ────────────────────────────────────────────────────
+    text_body = req.text.strip()
+    sender_name = display_name
+    notif_title = f"Reverse Chat — {sender_name}"
+    is_everyone = "@all" in text_body.lower()
+
     try:
         import asyncio as _aio
         from routes.push import send_notifications, send_everyone
-
-        text_body = req.text.strip()
-        sender_name = display_name
-        notif_title = f"Reverse Chat — {sender_name}"
-
-        is_everyone = "@all" in text_body.lower()
 
         # @all rate limit: max once per email per 60 seconds to prevent spam
         _can_everyone = True

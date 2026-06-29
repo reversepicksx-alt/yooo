@@ -625,9 +625,6 @@ export default function ScanScreen() {
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Save failed — try again';
       setSaveError(msg);
-      if (msg.toLowerCase().includes('session') || msg.toLowerCase().includes('sign in')) {
-        setTimeout(() => logout(), 1500);
-      }
     } finally {
       setSaving(false);
     }
@@ -661,14 +658,7 @@ export default function ScanScreen() {
             {/* Idle: cartoon sports image only */}
             {phase === 'idle' && (
               <>
-                <View style={styles.heroImageWrap}>
-                  <Image
-                    source={require('@/assets/sports-hero.png')}
-                    style={styles.heroImage}
-                    resizeMode="cover"
-                  />
-                </View>
-                {/* Sport selector button */}
+                {/* Sport selector */}
                 <TouchableOpacity
                   style={styles.sportSelectorBtn}
                   onPress={() => setShowSportPicker(true)}
@@ -758,7 +748,7 @@ export default function ScanScreen() {
         </>
 
         {/* ─── MANUAL FORM — Soccer ─── */}
-        {sport === 'soccer' && phase !== 'result' && phase !== 'saved' && (
+        {sport === 'soccer' && phase !== 'result' && phase !== 'saved' && !(phase === 'analyzing' && scanResult) && (
           <View style={styles.manualForm}>
             {scanFillHint && (
               <View style={styles.scanFillHint}>
@@ -766,7 +756,6 @@ export default function ScanScreen() {
                 <Text style={[styles.scanFillHintText, !scanFillHint.startsWith('✓') && { color: '#f0a500' }]}>{scanFillHint}</Text>
               </View>
             )}
-            <Text style={styles.fieldLabel}>Player Name</Text>
             <FuzzySearchInput
               value={playerQuery}
               onChangeText={(t) => { setPlayerQuery(t); if (!t) setResolvedPlayer(null); }}
@@ -941,7 +930,6 @@ export default function ScanScreen() {
             {/* ── League + Opponent — only shown when auto-match hasn't set them ── */}
             {!autoMatch?.found && (
               <>
-                <Text style={styles.fieldLabel}>League</Text>
                 <FuzzySearchInput
                   value={leagueQuery}
                   onChangeText={(t) => setLeagueQuery(t)}
@@ -956,7 +944,6 @@ export default function ScanScreen() {
                   }}
                 />
 
-                <Text style={styles.fieldLabel}>Opponent</Text>
                 <FuzzySearchInput
                   searchType="teams"
                   value={manualOpponentQuery}
@@ -982,48 +969,44 @@ export default function ScanScreen() {
               </>
             )}
 
-            <Text style={styles.fieldLabel}>Prop Type</Text>
-            <TouchableOpacity style={styles.pickerBtn} onPress={() => setShowPropPicker(true)}>
-              <Text style={styles.pickerBtnText}>{PROP_TYPES.find(p => p.value === propType)?.label || 'Select'}</Text>
-              <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
-            </TouchableOpacity>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <TouchableOpacity style={[styles.pickerBtn, { flex: 3 }]} onPress={() => setShowPropPicker(true)}>
+                <Text style={styles.pickerBtnText}>{PROP_TYPES.find(p => p.value === propType)?.label || 'Prop Type'}</Text>
+                <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
+              </TouchableOpacity>
+              <TextInput
+                style={[styles.textInput, INPUT_STYLE, { flex: 2 }]}
+                placeholder="Line"
+                placeholderTextColor={Colors.textTertiary}
+                value={line}
+                onChangeText={setLine}
+                keyboardType="decimal-pad"
+              />
+            </View>
 
-            <Text style={styles.fieldLabel}>Line Value</Text>
-            <TextInput
-              style={[styles.textInput, INPUT_STYLE]}
-              placeholder="e.g. 2.5"
-              placeholderTextColor={Colors.textTertiary}
-              value={line}
-              onChangeText={setLine}
-              keyboardType="decimal-pad"
-            />
-
-            <>
-              <Text style={styles.fieldLabel}>Venue</Text>
-              <View style={styles.venueToggle}>
-                  <TouchableOpacity
-                    style={[styles.venueOption, venueOverride === 'home' && styles.venueOptionActive]}
-                    onPress={() => { setVenueOverride('home'); Haptics.selectionAsync(); }}
-                  >
-                    <Ionicons name="home-outline" size={13} color={venueOverride === 'home' ? Colors.primary : Colors.textSecondary} />
-                    <Text style={[styles.venueOptionText, venueOverride === 'home' && styles.venueOptionTextActive]}>HOME</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.venueOption, venueOverride === 'neutral' && styles.venueOptionActive]}
-                    onPress={() => { setVenueOverride('neutral'); Haptics.selectionAsync(); }}
-                  >
-                    <Ionicons name="earth-outline" size={13} color={venueOverride === 'neutral' ? Colors.primary : Colors.textSecondary} />
-                    <Text style={[styles.venueOptionText, venueOverride === 'neutral' && styles.venueOptionTextActive]}>NEUTRAL</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.venueOption, venueOverride === 'away' && styles.venueOptionActive]}
-                    onPress={() => { setVenueOverride('away'); Haptics.selectionAsync(); }}
-                  >
-                    <Ionicons name="airplane-outline" size={13} color={venueOverride === 'away' ? Colors.primary : Colors.textSecondary} />
-                    <Text style={[styles.venueOptionText, venueOverride === 'away' && styles.venueOptionTextActive]}>AWAY</Text>
-                  </TouchableOpacity>
-                </View>
-            </>
+            <View style={styles.venueToggle}>
+                <TouchableOpacity
+                  style={[styles.venueOption, venueOverride === 'home' && styles.venueOptionActive]}
+                  onPress={() => { setVenueOverride('home'); Haptics.selectionAsync(); }}
+                >
+                  <Ionicons name="home-outline" size={13} color={venueOverride === 'home' ? Colors.primary : Colors.textSecondary} />
+                  <Text style={[styles.venueOptionText, venueOverride === 'home' && styles.venueOptionTextActive]}>HOME</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.venueOption, venueOverride === 'neutral' && styles.venueOptionActive]}
+                  onPress={() => { setVenueOverride('neutral'); Haptics.selectionAsync(); }}
+                >
+                  <Ionicons name="earth-outline" size={13} color={venueOverride === 'neutral' ? Colors.primary : Colors.textSecondary} />
+                  <Text style={[styles.venueOptionText, venueOverride === 'neutral' && styles.venueOptionTextActive]}>NEUTRAL</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.venueOption, venueOverride === 'away' && styles.venueOptionActive]}
+                  onPress={() => { setVenueOverride('away'); Haptics.selectionAsync(); }}
+                >
+                  <Ionicons name="airplane-outline" size={13} color={venueOverride === 'away' ? Colors.primary : Colors.textSecondary} />
+                  <Text style={[styles.venueOptionText, venueOverride === 'away' && styles.venueOptionTextActive]}>AWAY</Text>
+                </TouchableOpacity>
+              </View>
 
             {manualError && (
               <View style={styles.inlineError}>
