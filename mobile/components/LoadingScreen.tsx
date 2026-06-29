@@ -57,11 +57,10 @@ export default function LoadingScreen({ onDone }: { onDone?: () => void }) {
   const ring3Opacity = useSharedValue(0);
 
   useEffect(() => {
-    if (typeof window !== 'undefined' && (window as any).__rpHideLoader) {
-      (window as any).__rpHideLoader();
-    }
-
+    // Web: never hide the HTML splash here — AppBoot in _layout.tsx controls
+    // the hand-off so the HTML splash stays visible until React is ready.
     if (!isNative) {
+      // Skip __rpHideLoader on web; let AppBoot handle it after auth init.
       logoOpacity.value = withTiming(1, { duration: 700, easing: Easing.out(Easing.cubic) });
       logoScale.value   = withTiming(1, { duration: 700, easing: Easing.out(Easing.cubic) });
     } else {

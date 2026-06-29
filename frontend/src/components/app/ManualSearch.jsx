@@ -302,9 +302,9 @@ export function ManualSearch({ onResult, activeSport }) {
           </>
         )}
 
-        {/* STEP: Prop Config */}
+        {/* STEP: Prop Config — compact, no labels, single-row Prop+Line */}
         {step === 'prop' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {/* Player info */}
             <div style={{
               display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px',
@@ -319,41 +319,37 @@ export function ManualSearch({ onResult, activeSport }) {
               </div>
             </div>
 
-            {/* Opponent Select */}
-            <div>
-              <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Opponent</div>
-              <select
-                value={selectedOpponent?.teamId || ''}
-                onChange={e => {
-                  const t = opponentOptions.find(t => t.teamId === parseInt(e.target.value));
-                  setSelectedOpponent(t || null);
-                }}
-                data-testid="manual-opponent-select"
-                style={{
-                  width: '100%', padding: '8px 10px', borderRadius: 8,
-                  border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(0,0,0,0.4)',
-                  color: '#fff', fontSize: 12, fontFamily: 'inherit',
-                }}
-              >
-                <option value="">Select opponent...</option>
-                {opponentOptions.map(t => (
-                  <option key={t.teamId} value={t.teamId}>{t.name}</option>
-                ))}
-              </select>
-            </div>
-
-            {/* Venue */}
-            <div>
-              <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Venue</div>
-              <div style={{ display: 'flex', gap: 6 }}>
+            {/* Opponent + Venue row */}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <div style={{ flex: 2 }}>
+                <select
+                  value={selectedOpponent?.teamId || ''}
+                  onChange={e => {
+                    const t = opponentOptions.find(t => t.teamId === parseInt(e.target.value));
+                    setSelectedOpponent(t || null);
+                  }}
+                  data-testid="manual-opponent-select"
+                  style={{
+                    width: '100%', padding: '8px 10px', borderRadius: 8,
+                    border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(0,0,0,0.4)',
+                    color: '#fff', fontSize: 12, fontFamily: 'inherit',
+                  }}
+                >
+                  <option value="">Opponent...</option>
+                  {opponentOptions.map(t => (
+                    <option key={t.teamId} value={t.teamId}>{t.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ flex: 1, display: 'flex', gap: 4 }}>
                 {['home', 'away'].map(v => (
                   <button
                     key={v}
                     onClick={() => setVenue(v)}
                     data-testid={`manual-venue-${v}`}
                     style={{
-                      flex: 1, padding: '8px 0', borderRadius: 8, fontSize: 11, fontWeight: 800,
-                      textTransform: 'uppercase', letterSpacing: '0.06em', cursor: 'pointer',
+                      flex: 1, padding: '8px 0', borderRadius: 8, fontSize: 10, fontWeight: 800,
+                      textTransform: 'uppercase', letterSpacing: '0.04em', cursor: 'pointer',
                       border: '1.5px solid',
                       borderColor: venue === v ? 'var(--accent)' : 'rgba(255,255,255,0.06)',
                       background: venue === v ? 'var(--accent-dim)' : 'transparent',
@@ -364,44 +360,42 @@ export function ManualSearch({ onResult, activeSport }) {
               </div>
             </div>
 
-            {/* Prop Type */}
-            <div>
-              <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Prop Type</div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                {PROP_TYPES.map(pt => (
-                  <button
-                    key={pt}
-                    onClick={() => setPropType(pt)}
-                    data-testid={`manual-prop-${pt}`}
-                    style={{
-                      padding: '6px 10px', borderRadius: 6, fontSize: 9, fontWeight: 700,
-                      cursor: 'pointer', border: '1px solid',
-                      borderColor: propType === pt ? 'var(--accent)' : 'rgba(255,255,255,0.06)',
-                      background: propType === pt ? 'var(--accent-dim)' : 'transparent',
-                      color: propType === pt ? 'var(--accent)' : 'var(--text-secondary)',
-                      textTransform: 'uppercase', letterSpacing: '0.04em',
-                    }}
-                  >{PROP_LABELS[pt]}</button>
-                ))}
+            {/* Prop Type + Line in one row */}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <div style={{ flex: 3 }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                  {PROP_TYPES.map(pt => (
+                    <button
+                      key={pt}
+                      onClick={() => setPropType(pt)}
+                      data-testid={`manual-prop-${pt}`}
+                      style={{
+                        padding: '5px 8px', borderRadius: 5, fontSize: 9, fontWeight: 700,
+                        cursor: 'pointer', border: '1px solid',
+                        borderColor: propType === pt ? 'var(--accent)' : 'rgba(255,255,255,0.06)',
+                        background: propType === pt ? 'var(--accent-dim)' : 'transparent',
+                        color: propType === pt ? 'var(--accent)' : 'var(--text-secondary)',
+                        textTransform: 'uppercase', letterSpacing: '0.03em',
+                      }}
+                    >{PROP_LABELS[pt]}</button>
+                  ))}
+                </div>
               </div>
-            </div>
-
-            {/* Line */}
-            <div>
-              <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Line</div>
-              <input
-                type="number"
-                step="0.5"
-                value={line}
-                onChange={e => setLine(e.target.value)}
-                placeholder="e.g. 30.5"
-                data-testid="manual-line-input"
-                style={{
-                  width: '100%', padding: '8px 10px', borderRadius: 8,
-                  border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(0,0,0,0.4)',
-                  color: '#fff', fontSize: 14, fontWeight: 700, fontFamily: 'inherit',
-                }}
-              />
+              <div style={{ flex: 2 }}>
+                <input
+                  type="number"
+                  step="0.5"
+                  value={line}
+                  onChange={e => setLine(e.target.value)}
+                  placeholder="Line"
+                  data-testid="manual-line-input"
+                  style={{
+                    width: '100%', padding: '8px 10px', borderRadius: 8,
+                    border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(0,0,0,0.4)',
+                    color: '#fff', fontSize: 14, fontWeight: 700, fontFamily: 'inherit',
+                  }}
+                />
+              </div>
             </div>
 
             {/* Submit */}
@@ -414,7 +408,7 @@ export function ManualSearch({ onResult, activeSport }) {
                 background: (!propType || !line || !selectedOpponent) ? 'rgba(255,255,255,0.06)' : 'var(--accent)',
                 color: (!propType || !line || !selectedOpponent) ? 'var(--text-muted)' : '#000',
                 fontSize: 13, fontWeight: 900, cursor: (!propType || !line || !selectedOpponent) ? 'not-allowed' : 'pointer',
-                letterSpacing: '0.04em', transition: 'all 0.2s',
+                letterSpacing: '0.04em', transition: 'all 0.2s', marginTop: 4,
               }}
             >
               RUN PREDICTION

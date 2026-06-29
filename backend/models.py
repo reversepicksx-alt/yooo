@@ -132,3 +132,10 @@ class AdminTestKeyRequest(BaseModel):
     email: str
     token: str
     api_key: str
+
+
+class AppleAuthRequest(BaseModel):
+    identity_token: str
+    user_id: str
+    email: Optional[str] = None
+    full_name: Optional[str] = None

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Platform } from 'react-native';
+import { Alert, Platform, View } from 'react-native';
 import { Stack } from 'expo-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -89,18 +89,23 @@ function AppBoot() {
     const elapsed = Date.now() - webSplashStart.current;
     const remaining = Math.max(0, 4000 - elapsed);
     const t = setTimeout(() => {
-      if (typeof window !== 'undefined') {
-        const hide = (window as any).__rpHideLoader;
-        if (typeof hide === 'function') hide();
-      }
+      // 1. Let React render FIRST (swap from null → real app)
       setWebSplashReady(true);
+      // 2. Only THEN fade the HTML native splash out so there's zero gap
+      requestAnimationFrame(() => {
+        if (typeof window !== 'undefined') {
+          const hide = (window as any).__rpHideLoader;
+          if (typeof hide === 'function') hide();
+        }
+      });
     }, remaining);
     return () => clearTimeout(t);
   }, [isLoading]);
 
-  // On web: hold until auth done AND minimum splash time passed
+  // On web: hold until auth done AND minimum splash time passed.
+  // Return a dark placeholder so there's no flash of black screen.
   if (Platform.OS === 'web' && (!webSplashReady || isLoading)) {
-    return null;
+    return <View style={{ flex: 1, backgroundColor: Colors.background }} />;
   }
 
   // Native: show the React animated loading screen until auth + fonts are ready.
