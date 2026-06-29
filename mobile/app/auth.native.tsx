@@ -49,6 +49,7 @@ export default function AuthScreen() {
   const { loginWithResponse } = useAuth();
 
   const [step, setStep]       = useState<Step>('landing');
+  const [flow, setFlow]       = useState<'signin' | 'signup'>('signin');
   const [email, setEmail]     = useState('');
   const [code, setCode]       = useState('');
   const [loading, setLoading] = useState(false);
@@ -428,7 +429,7 @@ export default function AuthScreen() {
 
             <TouchableOpacity
               style={styles.landingBtnPrimary}
-              onPress={() => { setStep('email'); setError(''); setInfo(''); }}
+              onPress={() => { setFlow('signin'); setStep('email'); setError(''); setInfo(''); }}
               activeOpacity={0.85}
             >
               <Ionicons name="log-in-outline" size={18} color="#000" />
@@ -437,7 +438,7 @@ export default function AuthScreen() {
 
             <TouchableOpacity
               style={styles.landingBtnSecondary}
-              onPress={() => { setStep('email'); setError(''); setInfo(''); }}
+              onPress={() => { setFlow('signup'); setStep('email'); setError(''); setInfo(''); }}
               activeOpacity={0.85}
             >
               <Ionicons name="person-add-outline" size={18} color={Colors.primary} />
@@ -499,8 +500,8 @@ export default function AuthScreen() {
           </TouchableOpacity>
 
           <View style={styles.card}>
-            <Text style={styles.welcomeTitle}>Welcome</Text>
-            <Text style={styles.welcomeSub}>Enter your email to sign in or get started</Text>
+            <Text style={styles.welcomeTitle}>{flow === 'signup' ? 'Get Started' : 'Welcome'}</Text>
+            <Text style={styles.welcomeSub}>{flow === 'signup' ? 'Enter your email to choose a plan' : 'Enter your email to sign in'}</Text>
 
             <View style={styles.inputRow}>
               <Ionicons name="mail-outline" size={17} color={Colors.textSecondary} style={styles.icon} />

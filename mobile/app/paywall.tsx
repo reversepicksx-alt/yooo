@@ -35,7 +35,7 @@ function getErrorMessage(e: unknown): string {
 
 export default function PaywallScreen() {
   const insets = useSafeAreaInsets();
-  const { session, loginWithResponse } = useAuth();
+  const { session, loginWithResponse, logout } = useAuth();
   const {
     packages, isLoading, purchase, restore,
     isPurchasing, isRestoring, refetchOfferings,
@@ -143,6 +143,15 @@ export default function PaywallScreen() {
   return (
     <View style={[styles.root, { paddingTop: insets.top + 20, paddingBottom: insets.bottom + 24 }]}>
       <ScrollView contentContainerStyle={styles.inner} showsVerticalScrollIndicator={false}>
+
+        {/* Close / back to login */}
+        <TouchableOpacity
+          style={styles.closeBtn}
+          onPress={async () => { await logout(); router.replace('/auth'); }}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="close" size={22} color={Colors.textSecondary} />
+        </TouchableOpacity>
 
         {/* Logo */}
         <Image source={require('../assets/logo.png')} style={styles.logo} resizeMode="contain" />
@@ -264,6 +273,15 @@ export default function PaywallScreen() {
           )}
         </TouchableOpacity>
 
+        {/* Log out & back to sign-in */}
+        <TouchableOpacity
+          style={[styles.restoreWrap, { paddingTop: 2 }]}
+          onPress={async () => { await logout(); router.replace('/auth'); }}
+          activeOpacity={0.7}
+        >
+          <Text style={[styles.restoreText, { color: Colors.textTertiary, fontSize: 12 }]}>Log out and go back</Text>
+        </TouchableOpacity>
+
         {/* Apple disclosure */}
         <Text style={styles.disclosure}>
           Subscription automatically renews at the same price unless cancelled at least 24 hours before the end of the current period. Payment is charged to your Apple ID account at confirmation of purchase. Manage or cancel anytime in Apple Settings.
@@ -280,6 +298,10 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
     alignItems: 'center',
     gap: 20,
+  },
+  closeBtn: {
+    position: 'absolute', top: 0, right: 0,
+    width: 44, height: 44, alignItems: 'center', justifyContent: 'center', zIndex: 10,
   },
   logo: { width: 64, height: 64, marginTop: 8 },
   headline: {
