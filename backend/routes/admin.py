@@ -573,6 +573,71 @@ async def clear_player_position(req: _PositionClearRequest):
     }
 
 
+_OWNER_ACCESS_CODE = os.environ.get("OWNER_ACCESS_CODE", "").strip()
+
+async def _verify_owner_or_code(email: str, token: str):
+    """Accept either a live session token OR the OWNER_ACCESS_CODE env secret."""
+    email_lower = email.lower().strip()
+    if email_lower not in (OWNER_EMAIL, *[e for e in [os.environ.get("OWNER_EMAIL2","")]  if e]):
+        if email_lower != OWNER_EMAIL:
+            raise HTTPException(status_code=403, detail="Owner access required.")
+    # Fast path: direct access code match (no DB lookup needed)
+    if _OWNER_ACCESS_CODE and token == _OWNER_ACCESS_CODE:
+        return email_lower
+    # Slow path: session token
+    session = await db.sessions.find_one(
+        {"email": email_lower, "session_token": token}, {"_id": 0}
+    )
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid session or access code.")
+    return email_lower
+
+
+class UnsettlePickRequest(BaseModel):
+    email: str
+    token: str
+    pickIds: list = []             # reset by exact pickId
+    playerNames: list = []         # reset by player name (partial match, last 48h)
+
+
+@router.post("/unsettle-picks")
+async def admin_unsettle_picks(req: UnsettlePickRequest):
+    """Owner only: reset wrongly-settled picks back to 'live' so auto-settlement
+    can re-settle them correctly once the match finishes (FT).
+    Accepts either a session token or the OWNER_ACCESS_CODE directly."""
+    await _verify_owner_or_code(req.email, req.token)
+    from datetime import datetime, timezone, timedelta
+    updated = []
+    _unset_fields = {"$set": {"status": "live", "result": None, "actualValue": None,
+                               "settledAt": None, "settledBy": None,
+                               "voidReason": None, "hitPct": None},
+                     "$unset": {"settledAt": "", "settledBy": "", "voidReason": ""}}
+
+    # By pickId
+    for pid in (req.pickIds or []):
+        res = await db.picks.update_one({"pickId": pid}, _unset_fields)
+        if res.matched_count:
+            updated.append(pid)
+
+    # By player name (partial, case-insensitive, settled in last 48h)
+    if req.playerNames:
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
+        for name in req.playerNames:
+            import re as _re
+            pat = _re.compile(_re.escape(name.strip()), _re.IGNORECASE)
+            picks = await db.picks.find(
+                {"playerName": {"$regex": pat}, "status": "settled",
+                 "settledAt": {"$gt": cutoff}},
+                {"_id": 0, "pickId": 1, "playerName": 1}
+            ).to_list(20)
+            for p in picks:
+                res = await db.picks.update_one({"pickId": p["pickId"]}, _unset_fields)
+                if res.matched_count:
+                    updated.append(f"{p['pickId']}({p['playerName']})")
+
+    return {"success": True, "reset": updated, "count": len(updated)}
+
+
 class RefreshPlayerRequest(BaseModel):
     email: str
     token: str

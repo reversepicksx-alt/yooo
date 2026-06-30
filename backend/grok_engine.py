@@ -1853,6 +1853,14 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
     if not matched:
         return False
 
+    # CRITICAL: Never settle a match that isn't finished — regardless of how
+    # we matched (fixtureId direct or fuzzy). This is the single gate that
+    # prevents halftime / in-progress settlements.
+    _match_status = matched.get("fixture", {}).get("status", {}).get("short", "")
+    if _match_status not in ("FT", "AET", "PEN"):
+        print(f"[AUTO-SETTLE] SKIP {pick.get('playerName','?')} — status={_match_status} (not finished)")
+        return False
+
     fid = matched.get("fixture", {}).get("id")
     if not fid:
         return False
