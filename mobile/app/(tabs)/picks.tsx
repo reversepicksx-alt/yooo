@@ -394,12 +394,14 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete?: () => void }) {
         </View>
       )}
 
-      {/* Match ID — shown on every card when available */}
+      {/* Match ID — neon badge, impossible to miss */}
       {pick.fixtureId != null && (
-        <View style={styles.matchCtxBlock}>
-          <Text style={[styles.matchCtxLine, { color: Colors.textTertiary, fontSize: 10 }]}>
-            Match ID: {pick.fixtureId}
-          </Text>
+        <View style={{ marginTop: 6, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <View style={{ backgroundColor: 'rgba(57,255,20,0.12)', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, borderWidth: 1, borderColor: 'rgba(57,255,20,0.35)' }}>
+            <Text style={{ color: Colors.primary, fontSize: 10, fontWeight: '800', letterSpacing: 0.3 }}>
+              MATCH {pick.fixtureId}
+            </Text>
+          </View>
         </View>
       )}
 

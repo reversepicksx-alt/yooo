@@ -313,7 +313,20 @@ async def predict(req: PredictionRequest):
                     from datetime import date as date_type
                     today_str = date_type.today().isoformat()
                     try:
-                        today_fixtures = await api_football_request("fixtures", {"team": actual_team_id, "date": today_str})
+                        # API-Football "date" requires season for some leagues; try multiple seasons
+                        today_results = await asyncio.gather(
+                            api_football_request("fixtures", {"team": actual_team_id, "date": today_str, "season": 2025}),
+                            api_football_request("fixtures", {"team": actual_team_id, "date": today_str, "season": 2026}),
+                            return_exceptions=True,
+                        )
+                        today_fixtures = []
+                        _seen_today: set = set()
+                        for batch in today_results:
+                            for f in (batch if isinstance(batch, list) else []):
+                                _fid = f.get("fixture", {}).get("id")
+                                if _fid and _fid not in _seen_today:
+                                    _seen_today.add(_fid)
+                                    today_fixtures.append(f)
                         if today_fixtures:
                             # Prepend today's fixtures (higher priority — game is today)
                             existing_ids = {f.get("fixture", {}).get("id") for f in next_fixtures}

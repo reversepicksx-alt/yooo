@@ -972,6 +972,7 @@ export default function ScanScreen() {
                 </Text>
                 <Text style={{ color: Colors.textSecondary, fontSize: 11, marginTop: 2 }}>
                   {autoMatch.leagueName}{autoMatch.date ? ` · ${new Date(autoMatch.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : ''}
+                  {autoMatch.fixtureId ? ` · Match ${autoMatch.fixtureId}` : ''}
                 </Text>
                 <TouchableOpacity onPress={() => { setAutoMatch(null); setSelectedContext(null); }} style={{ marginTop: 6 }}>
                   <Text style={{ color: Colors.textSecondary, fontSize: 10 }}>✕ clear auto-fill</Text>

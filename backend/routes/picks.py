@@ -1898,13 +1898,41 @@ async def _process_api_football_live(picks: list, email: str) -> list:
         live = await api_football_request("fixtures", {"team": tid, "live": "all"}) or []
         if live:
             return live
-        return await api_football_request("fixtures", {"team": tid, "date": today}) or []
+        # API-Football "date" requires season for some leagues; try multiple
+        today_results = await aio.gather(
+            api_football_request("fixtures", {"team": tid, "date": today, "season": 2025}),
+            api_football_request("fixtures", {"team": tid, "date": today, "season": 2026}),
+            return_exceptions=True,
+        )
+        _seen: set = set()
+        out = []
+        for batch in today_results:
+            for f in (batch if isinstance(batch, list) else []):
+                _fid = f.get("fixture", {}).get("id")
+                if _fid and _fid not in _seen:
+                    _seen.add(_fid)
+                    out.append(f)
+        return out
 
     async def _by_league(lid: int) -> list:
         live = await api_football_request("fixtures", {"league": lid, "live": "all"}) or []
         if live:
             return live
-        return await api_football_request("fixtures", {"league": lid, "date": today}) or []
+        # API-Football "date" requires season for some leagues; try multiple
+        today_results = await aio.gather(
+            api_football_request("fixtures", {"league": lid, "date": today, "season": 2025}),
+            api_football_request("fixtures", {"league": lid, "date": today, "season": 2026}),
+            return_exceptions=True,
+        )
+        _seen: set = set()
+        out = []
+        for batch in today_results:
+            for f in (batch if isinstance(batch, list) else []):
+                _fid = f.get("fixture", {}).get("id")
+                if _fid and _fid not in _seen:
+                    _seen.add(_fid)
+                    out.append(f)
+        return out
 
     async def _all_live() -> list:
         return await api_football_request("fixtures", {"live": "all"}) or []
