@@ -175,12 +175,20 @@ def compute_bayesian_projection(
     opponent_clean_sheet_rate: float = None,  # fraction of recent games opp kept CS
     altitude_m: int = None,                   # venue altitude in metres (away only)
     opponent_foul_rate: float = None,         # opp avg fouls/game (set-piece orient.)
+    tournament_game_index: int = None,        # 1-based game index in tournament
+    player_stats: dict = None,                # club season stats for n=0 prior
 ) -> dict:
     """
     Compute a 3-layer Bayesian projection from raw game data.
     Returns the full bayesianMetrics dict with real computed values.
     """
     if not game_logs:
+        # Tournament n=0: use club season stats as prior instead of generic median
+        if player_stats and league_id and league_id in {1, 4, 5, 8, 9, 10}:
+            _club_prior = _build_club_prior(player_stats, prop_type, line, expected_minutes)
+            if _club_prior:
+                print(f"[TOURNAMENT n=0] {prop_type}: using club prior={_club_prior['priorMean']:.2f} (samples={_club_prior['priorSamples']})")
+                return _club_prior
         return _empty_metrics(line)
 
     # ── Is this a discrete count prop? ──────────────────────────────────────
@@ -1083,6 +1091,29 @@ def compute_bayesian_projection(
             print(f"[FATIGUE] {prop_type} rest={rest_days}d ({_fat_label}): "
                   f"×{_fat_mult} {_fat_before} → {posterior_mean}")
 
+        # ── TOURNAMENT COMPOUNDING FATIGUE ─────────────────────────────────
+        # In compressed tournament schedules (e.g. WC group stage, Copa America,
+        # Euros) where teams play every 2-3 days, volume props degrade
+        # game-over-game: game 1 = 1.0, game 2 = 0.96, game 3 = 0.92.
+        # Stacks with the rest_days multiplier above.
+        if (
+            tournament_game_index is not None
+            and tournament_game_index >= 2
+            and rest_days is not None
+            and rest_days <= 3
+            and _is_vol_fat
+        ):
+            _tourn_mult = max(1.0 - (tournament_game_index - 1) * 0.04, 0.88)
+            _t_before = posterior_mean
+            posterior_mean = round(posterior_mean * _tourn_mult, 1)
+            fatigue_info.update({
+                "tournament_applied": True,
+                "tournament_mult": _tourn_mult,
+                "tournament_game": tournament_game_index,
+            })
+            print(f"[TOURNAMENT FATIGUE] {prop_type} game={tournament_game_index} "
+                  f"×{_tourn_mult} {_t_before} → {posterior_mean}")
+
     # ── FIXTURE CONGESTION (internal — derived from game_logs dates) ─────────
     # Count games played in the last 14 days before the most recent game log.
     # 4+ games in 14 days = fixture congestion → compounding physical fatigue.
@@ -1856,6 +1887,88 @@ def compute_bayesian_projection(
         "altitudeLayer": altitude_info,
         # League style matrix — per-league tactical DNA correction
         "leagueStyleLayer": league_style_info,
+    }
+
+
+def _build_club_prior(player_stats: dict, prop_type: str, line: float, expected_minutes: float = 90.0) -> dict | None:
+    """Build a Bayesian metrics dict from club season stats when tournament game_logs are empty."""
+    _sfm = {
+        "goals": ("goals", "total"), "assists": ("goals", "assists"),
+        "shots_assisted": ("passes", "key"), "pass_attempts": ("passes", "total"),
+        "passes": ("passes", "total"), "shots": ("shots", "total"),
+        "shots_on_target": ("shots", "on"), "tackles": ("tackles", "total"),
+        "key_passes": ("passes", "key"), "saves": ("goals", "saves"),
+        "interceptions": ("tackles", "interceptions"), "blocks": ("tackles", "blocks"),
+        "dribbles": ("dribbles", "attempts"), "fouls_drawn": ("fouls", "drawn"),
+        "fouls_committed": ("fouls", "committed"), "crosses": ("passes", "cross"),
+        "clearances": ("tackles", "clearances"), "duels_won": ("duels", "won"),
+        "yellow_cards": ("cards", "yellow"),
+    }
+    _best_stat = None
+    _best_apps = 0
+    _best_mins = 0
+    for _stat_entry in (player_stats.get("statistics") or []):
+        _apps = _stat_entry.get("games", {}).get("appearences") or 0
+        _mins = _stat_entry.get("games", {}).get("minutes") or 0
+        if _apps >= 3 and _mins >= 270 and _apps > _best_apps:
+            _cat, _sub = _sfm.get(prop_type, ("passes", "total"))
+            _raw = _stat_entry.get(_cat, {}).get(_sub)
+            if _raw is not None:
+                _best_stat = _stat_entry
+                _best_apps = _apps
+                _best_mins = _mins
+    if not _best_stat:
+        return None
+
+    _cat, _sub = _sfm.get(prop_type, ("passes", "total"))
+    _raw_total = _best_stat.get(_cat, {}).get(_sub) or 0
+    _avg_per_game = round(_raw_total / _best_apps, 2) if _best_apps else 0
+    _avg_mins = round(_best_mins / _best_apps, 1) if _best_apps else 90
+    _exp_min = max(30.0, min(90.0, expected_minutes))
+    _denorm = _exp_min / 90.0
+    _prior_mean = round(_avg_per_game * _denorm, 1)
+
+    # Conservative std: 25% of mean (season avg is stable but noisy)
+    _prior_std = round(_prior_mean * 0.25, 1) if _prior_mean else 1.0
+    _n = min(_best_apps, 20)
+
+    return {
+        "posteriorMean": _prior_mean,
+        "posteriorStd": _prior_std,
+        "recommendation": "over" if _prior_mean >= line else "under",
+        "pOver": 50.0,
+        "pUnder": 50.0,
+        "confidenceInterval": [max(0, _prior_mean - _prior_std), _prior_mean + _prior_std],
+        "edgeZ": 0,
+        "priorMean": _prior_mean,
+        "priorStd": _prior_std,
+        "priorWeight": 100,
+        "priorSamples": _n,
+        "momentumEffect": 0,
+        "momentumMean": _prior_mean,
+        "momentumLabel": "CLUB SEASON",
+        "momentumWeight": 0,
+        "trendPerGame": 0,
+        "covariateAdjustment": 0,
+        "covariateWeight": 0,
+        "venueAvg": None,
+        "venueSamples": 0,
+        "reversalFlag": "NO DATA",
+        "streakFlag": "NONE",
+        "volatility": "LOW",
+        "cv": 0.25,
+        "pressIntensity": {
+            "score": 0.0, "multiplier": 1.0, "label": "Unknown", "signal_used": None,
+            "ppda": None, "reasoning": "",
+            "avg_defensive_actions": None, "avg_tackles": None, "avg_interceptions": None,
+            "avg_poss": None, "avg_passes": None,
+        },
+        "fatigueLayer": {"applied": False, "mult": 1.0, "reason": "Club season prior", "rest_days": None,
+                         "congestion_mult": 1.0, "congestion_games": 0},
+        "cleanSheetLayer": {"applied": False, "mult": 1.0, "cs_rate": None, "label": "unknown"},
+        "setPieceLayer": {"applied": False, "mult": 1.0, "foul_rate": None},
+        "altitudeLayer": {"applied": False, "mult": 1.0, "altitude_m": None},
+        "leagueStyleLayer": {"applied": False, "mult": 1.0, "league_id": None, "category": None},
     }
 
 

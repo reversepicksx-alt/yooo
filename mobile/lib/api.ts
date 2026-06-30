@@ -416,6 +416,8 @@ export interface PredictionResult {
   propHistoricalN?: number;
   coinFlip?: boolean;
   scenarioProbabilities?: { best: number; base: number; worst: number };
+  /** True when AI text generation is still running in the background; frontend should poll */
+  aiPending?: boolean;
   /** Populated when the player was resolved by name and multiple cache entries share the same
    *  abbreviated name (e.g. "J. Valencia" for three different players). The frontend should
    *  show a disambiguation banner so the user can verify the correct player was selected. */
@@ -707,6 +709,29 @@ export async function predict(request: Record<string, unknown>): Promise<Predict
     coinFlip: raw.coinFlip ?? undefined,
     playerCandidates: raw.playerCandidates ?? undefined,
     prizePicksContext: (raw as any).prizePicksContext ?? undefined,
+    aiPending: (raw as any).aiPending ?? undefined,
+  };
+}
+
+/**
+ * F5: Poll for AI narrative completion after receiving a math-only prediction.
+ * Returns the AI result (tacticalBreakdown, sharpSummary, etc.) when ready.
+ */
+export async function pollAiNarrative(
+  request: Record<string, unknown>
+): Promise<{ ready: boolean; failed: boolean; data: Record<string, unknown> | null }> {
+  const raw = await apiCall<{
+    ready: boolean;
+    failed: boolean;
+    data: Record<string, unknown> | null;
+  }>('/api/predict/ai-poll', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+  return {
+    ready: raw.ready ?? false,
+    failed: raw.failed ?? false,
+    data: raw.data ?? null,
   };
 }
 

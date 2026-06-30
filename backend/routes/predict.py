@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import uuid
 import asyncio as aio
 import statistics as stats_mod
@@ -2946,6 +2947,24 @@ async def predict(req: PredictionRequest):
             except Exception as _cs_err:
                 print(f"[CS RATE] err: {_cs_err}")
 
+            # 2b. TOURNAMENT GAME INDEX — derive from round string for compounding fatigue
+            _tourn_game_idx = None
+            _raw_round = (match_odds or {}).get("matchRound", "")
+            if _raw_round:
+                _round_digits = re.findall(r'\d+', _raw_round)
+                if _round_digits:
+                    _tourn_game_idx = int(_round_digits[0])
+                elif "group" in _raw_round.lower():
+                    _tourn_game_idx = 1
+                elif any(k in _raw_round.lower() for k in ("round of", "16", "eighth")):
+                    _tourn_game_idx = 4
+                elif any(k in _raw_round.lower() for k in ("quarter", "qf")):
+                    _tourn_game_idx = 5
+                elif any(k in _raw_round.lower() for k in ("semi", "sf")):
+                    _tourn_game_idx = 6
+                elif any(k in _raw_round.lower() for k in ("final", "3rd", "third")):
+                    _tourn_game_idx = 7
+
             # 3. ALTITUDE — high-altitude league mapping (away teams only)
             _HIGH_ALTITUDE_LEAGUES_V4 = {
                 270: 3640,   # Bolivia (La Paz, Sucre) — Liga Profesional
@@ -3012,6 +3031,8 @@ async def predict(req: PredictionRequest):
                 opponent_clean_sheet_rate=_opp_cs_rate_v4,
                 altitude_m=_altitude_m_v4,
                 opponent_foul_rate=_opp_foul_rate_v4,
+                tournament_game_index=_tourn_game_idx,
+                player_stats=player_stats,
             )
             _eb_samples = early_bayes.get("priorSamples", 0) if early_bayes else 0
             print(f"[BAYESIAN] {req.playerName}/{req.propType}: samples={_eb_samples}, logs={len(_bayes_logs)} (venue={player_venue})")
@@ -4719,67 +4740,118 @@ Analyze ALL data thoroughly. Return JSON only."""
             pass
         # ─────────────────────────────────────────────────────────────────────
 
-        # AI synthesis: Grok primary, Gemini fallback
+        # AI synthesis: Grok primary, Gemini fallback (ASYNC DECOUPLED — F5)
+        # If cached AI narrative exists, use it immediately. Otherwise fire AI
+        # as a background task; the frontend polls for completion.
+        ai_result = None
+        _ai_task = None
         if _pred_cached:
             ai_result = _pred_cached
+            print("[AI] Cache hit — narrative available immediately")
         else:
-            ai_result = await call_grok()
-            if ai_result:
-                print("[AI] Grok synthesis succeeded")
+            # Fire AI synthesis as a background task so we can return math now
+            async def _background_ai_synthesis():
+                """Run Grok → cache → store result for polling."""
+                _r = None
+                try:
+                    _r = await call_grok()
+                    if _r:
+                        print("[AI-BG] Grok synthesis succeeded")
+                except Exception as _e:
+                    print(f"[AI-BG] Grok error: {_e}")
+                if not _r or not isinstance(_r, dict) or not _r.get("tacticalBreakdown"):
+                    try:
+                        _r = await call_gemini()
+                        if _r:
+                            print("[AI-BG] Gemini fallback succeeded")
+                    except Exception as _e:
+                        print(f"[AI-BG] Gemini fallback error: {_e}")
+                if _r and isinstance(_r, dict):
+                    # Cache successful result
+                    try:
+                        await db.grok_response_cache.replace_one(
+                            {"_k": _soc_ck},
+                            {"_k": _soc_ck, "v": _r, "ts": datetime.now(timezone.utc)},
+                            upsert=True,
+                        )
+                        print(f"[PRED CACHE SET] soccer {_soc_ck[:70]}")
+                    except Exception:
+                        pass
+                    # Also store for polling by job key
+                    try:
+                        await db.ai_pending_jobs.replace_one(
+                            {"_k": _soc_ck},
+                            {
+                                "_k": _soc_ck,
+                                "v": _r,
+                                "ts": datetime.now(timezone.utc),
+                                "done": True,
+                                "playerName": req.playerName,
+                                "propType": req.propType,
+                            },
+                            upsert=True,
+                        )
+                    except Exception:
+                        pass
+                else:
+                    # Mark as failed so frontend stops polling
+                    try:
+                        await db.ai_pending_jobs.replace_one(
+                            {"_k": _soc_ck},
+                            {
+                                "_k": _soc_ck,
+                                "v": None,
+                                "ts": datetime.now(timezone.utc),
+                                "done": True,
+                                "failed": True,
+                                "playerName": req.playerName,
+                                "propType": req.propType,
+                            },
+                            upsert=True,
+                        )
+                    except Exception:
+                        pass
+            _ai_task = aio.create_task(_background_ai_synthesis())
+            print(f"[AI-ASYNC] Background synthesis fired for {_soc_ck[:70]}")
 
-        # BAYESIAN FALLBACK: If Grok AI failed (no text), try Gemini, then build minimal result from math
-        if not ai_result or not isinstance(ai_result, dict) or not ai_result.get("tacticalBreakdown"):
-            ai_result = await call_gemini()
-            if ai_result:
-                print("[AI] Gemini fallback synthesis succeeded")
-
-        # Store successful AI result in prediction cache for today
-        if ai_result and isinstance(ai_result, dict) and ai_result.get("tacticalBreakdown") and not _pred_cached:
-            try:
-                await db.grok_response_cache.replace_one(
-                    {"_k": _soc_ck},
-                    {"_k": _soc_ck, "v": ai_result, "ts": datetime.now(timezone.utc)},
-                    upsert=True,
-                )
-                print(f"[PRED CACHE SET] soccer {_soc_ck[:70]}")
-            except Exception:
-                pass
-
-        if not ai_result or not isinstance(ai_result, dict) or not ai_result.get("tacticalBreakdown"):
+        # If no cached AI and background task is running, seed with math-only result
+        if not ai_result:
             if early_bayes and early_bayes.get("posteriorMean"):
                 pv = early_bayes["posteriorMean"]
-                # Cap confidence at 72% (shows "High") when AI fails — the math had
-                # no AI sanity check so claiming "Very High" confidence would be misleading.
                 _raw_bayes_conf = max(early_bayes.get("pOver", 50), early_bayes.get("pUnder", 50))
                 _capped_conf = min(_raw_bayes_conf, 72)
                 ai_result = {
                     "projectedValue": pv,
                     "recommendation": early_bayes.get("recommendation", "over"),
                     "confidenceScore": _capped_conf,
-                    "reasoning": "AI models unavailable — projection based on Reverse Formula mathematical analysis.",
-                    "_source": "bayesian_fallback",
+                    "reasoning": "AI analysis loading... Refresh for full tactical breakdown.",
+                    "_source": "bayesian_async_pending",
                 }
-                print(f"[BAYESIAN FALLBACK] All AI models failed — using Bayesian projection: {pv}")
+                print(f"[AI-ASYNC] Math-only seed while AI runs in background: {pv}")
             else:
-                # No Bayesian data either — use the line as last resort
                 pv = req.line
                 ai_result = {
                     "projectedValue": pv,
                     "recommendation": "over",
                     "confidenceScore": 50,
-                    "reasoning": "Insufficient data for mathematical projection. AI models unavailable.",
-                    "_source": "fallback",
+                    "reasoning": "AI analysis loading...",
+                    "_source": "fallback_async_pending",
                 }
-                print(f"[FALLBACK] No Bayesian data and all AI models failed — using line: {pv}")
+                print(f"[AI-ASYNC] Fallback seed while AI runs: {pv}")
+        else:
+            # Cached AI available — use its source marker for timing
+            pass
 
         source_model = ai_result.get("_source", "gemini")
-        print(f"[TIMING] {source_model} done: {_t.time()-_t0:.1f}s, proj={pv}")
+        print(f"[TIMING] {source_model} ready: {_t.time()-_t0:.1f}s, proj={pv}")
 
         prediction = ai_result.copy()
         prediction.pop("_source", None)
         prediction["projectedValue"] = pv
         prediction["recommendation"] = "over" if pv > req.line else "under"
         prediction["sport"] = req.sport
+        # Tell frontend AI text is loading in background
+        prediction["aiPending"] = _ai_task is not None and not _pred_cached
 
         # scenarioProbabilities: prefer AI-assigned values; fall back to first-goal math
         _sp = prediction.get("scenarioProbabilities")
@@ -4906,16 +4978,23 @@ Analyze ALL data thoroughly. Return JSON only."""
 
                 # Weight: 5% per H2H game, max 25% — season data always dominates
                 _h2h_weight = min(_h2h_n_use * 0.05, 0.25)
+                # HIGH-TRUST H2H WEIGHT (13% per game, cap 40%):
+                # Opponent-specific history dominates over season baseline for
+                # defensive volume props where press shape is highly predictive.
                 # GK pass_attempts: opponent pressing style is the single most predictive
-                # factor for GK pass volume after venue. When facing Betis (3 home H2H
-                # games → 24.67 avg) vs a general home avg of 35, the H2H is the clearest
-                # signal of how this specific opponent affects this GK's distribution.
-                # Raise GK H2H rate (12% per game, cap 40%) to let opponent-specific
-                # history dominate over the general season baseline.
+                # factor after venue. CB/CDM pass props: specific opponent's press
+                # intensity and block depth are highly repeatable patterns.
                 _is_gk_h2h = (specific_position or "").upper() in {"GK", "GOALKEEPER"} or \
                               (player_position or "").lower() == "goalkeeper"
-                if _is_gk_h2h and req.propType in {"pass_attempts", "passes"}:
-                    _h2h_weight = min(_h2h_n_use * 0.13, 0.40)  # GK: 13% per game, cap 40%
+                _DEF_VOL_ROLES = {"CB", "CDM", "DM", "LB", "RB", "LWB", "RWB", "SW"}
+                _DEF_VOL_PROPS = {"pass_attempts", "passes", "tackles", "interceptions", "blocks", "clearances"}
+                _is_def_vol_h2h = (
+                    req.propType in _DEF_VOL_PROPS and
+                    ((specific_position or "").upper() in _DEF_VOL_ROLES or
+                     (player_role or "").upper() in _DEF_VOL_ROLES)
+                )
+                if (_is_gk_h2h and req.propType in {"pass_attempts", "passes"}) or _is_def_vol_h2h:
+                    _h2h_weight = min(_h2h_n_use * 0.13, 0.40)  # 13% per game, cap 40%
                 _old_bp = bayesian_posterior
                 bayesian_posterior = round(
                     _old_bp * (1 - _h2h_weight) + _h2h_avg_use * _h2h_weight, 1
@@ -7021,8 +7100,8 @@ Analyze ALL data thoroughly. Return JSON only."""
         await db.predictions.insert_one(prediction)
         prediction.pop("_id", None)
 
-        return prediction
 
+        return prediction
     except (json.JSONDecodeError, aio.TimeoutError):
         # Return a safe fallback prediction
         return {
@@ -7047,4 +7126,23 @@ Analyze ALL data thoroughly. Return JSON only."""
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
+
+
+
+# ── AI async polling endpoint ──────────────────────────────────────────────
+# F5 decoupling: frontend polls for AI narrative after receiving math result
+@router.post("/predict/ai-poll")
+async def ai_poll(req: PredictionRequest):
+    _ck = f"soc|{req.playerId or req.playerName}|{req.propType}|{req.line}|{req.opponentName or ''}|{datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
+    try:
+        _hit = await db.ai_pending_jobs.find_one({"_k": _ck}, {"_id": 0})
+        if _hit and _hit.get("done"):
+            if _hit.get("failed"):
+                return {"ready": True, "failed": True, "data": None}
+            return {"ready": True, "failed": False, "data": _hit.get("v")}
+        return {"ready": False, "failed": False, "data": None}
+    except Exception as e:
+        print(f"[AI-POLL] error: {e}")
+        return {"ready": False, "failed": False, "data": None}
+# ─────────────────────────────────────────────────────────────────────────
 

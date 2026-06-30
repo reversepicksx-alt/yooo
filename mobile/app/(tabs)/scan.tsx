@@ -12,7 +12,7 @@ import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import NotificationBell from '@/components/NotificationBell';
 import { useQueryClient } from '@tanstack/react-query';
-import { scanProp, predict, cs2Predict, wtaPredict, savePick, searchCs2Players, searchCs2Teams, searchWtaPlayers, PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, LEAGUES, PredictionResult, ScanResult, Cs2Player, Cs2Team, WtaPlayer, getPlayerContexts, getTeamNextMatch, getLeagueById, PlayerContext, NextMatchData } from '@/lib/api';
+import { scanProp, predict, cs2Predict, wtaPredict, savePick, pollAiNarrative, searchCs2Players, searchCs2Teams, searchWtaPlayers, PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, LEAGUES, PredictionResult, ScanResult, Cs2Player, Cs2Team, WtaPlayer, getPlayerContexts, getTeamNextMatch, getLeagueById, PlayerContext, NextMatchData } from '@/lib/api';
 import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult, FuzzyLeagueResult, StaticItem } from '@/components/FuzzySearchInput';
 import LeaguePickerModal from '@/components/LeaguePickerModal';
 import { useAuth } from '@/contexts/AuthContext';
@@ -97,6 +97,7 @@ export default function ScanScreen() {
   const [scannedImageUri, setScannedImageUri] = useState<string | null>(null);
   const [prediction, setPrediction] = useState<PredictionResult | null>(null);
   const [predictionRequest, setPredictionRequest] = useState<Record<string, unknown> | null>(null);
+  const [aiNarrativeLoading, setAiNarrativeLoading] = useState(false);
   const [showAltPlayers, setShowAltPlayers] = useState(false);
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
   const [manualError, setManualError] = useState<string | null>(null);
@@ -233,6 +234,7 @@ export default function ScanScreen() {
     setScannedImageUri(null);
     setPrediction(null);
     setPredictionRequest(null);
+    setAiNarrativeLoading(false);
     setAnalyzeError(null);
     setManualError(null);
     setSaveError(null);
@@ -445,10 +447,61 @@ export default function ScanScreen() {
       setShowAltPlayers(false);
       setPhase('result');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      // F5: if AI is still running in background, start polling for narrative
+      if (result.aiPending && sport === 'soccer') {
+        setAiNarrativeLoading(true);
+        pollForAiNarrative(req, result);
+      }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Analysis failed — try again';
       if (inManual) setManualError(msg); else setAnalyzeError(msg);
       setPhase(inManual ? 'idle' : 'detected');
+    }
+  };
+
+  /**
+   * F5: Poll for AI narrative in background. Updates the prediction state
+   * in-place when the AI synthesis completes, without re-rendering the whole screen.
+   */
+  const pollForAiNarrative = async (
+    req: Record<string, unknown>,
+    baseResult: PredictionResult,
+    attempts = 0
+  ) => {
+    if (attempts >= 24) {  // 24 * 3s = 72s max
+      setAiNarrativeLoading(false);
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 3000));
+    try {
+      const poll = await pollAiNarrative(req);
+      if (poll.ready && poll.data) {
+        const data = poll.data;
+        setPrediction((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            tacticalBreakdown: (data.tacticalBreakdown as string) || prev.tacticalBreakdown,
+            sharpSummary: (data.sharpSummary as string) || prev.sharpSummary,
+            reasoning: (data.reasoning as string) || prev.reasoning,
+            scenarioAnalysis: (data.scenarioAnalysis as string) || prev.scenarioAnalysis,
+            keyEvidence: (data.keyEvidence as string) || prev.keyEvidence,
+            gameFlowDynamics: (data.gameFlowDynamics as string) || prev.gameFlowDynamics,
+            aiProjection: (data.aiProjection as number) || prev.aiProjection,
+            aiPending: false,
+          };
+        });
+        setAiNarrativeLoading(false);
+        return;
+      }
+      if (poll.failed) {
+        setAiNarrativeLoading(false);
+        return;
+      }
+      // Not ready yet — recurse
+      pollForAiNarrative(req, baseResult, attempts + 1);
+    } catch {
+      setAiNarrativeLoading(false);
     }
   };
 
@@ -2819,6 +2872,12 @@ export default function ScanScreen() {
                         </Text>
                       </View>
                     </View>
+                    {aiNarrativeLoading && (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 }}>
+                        <ActivityIndicator size="small" color={Colors.primary} />
+                        <Text style={{ fontSize: 11, color: Colors.textTertiary }}>AI analysis loading...</Text>
+                      </View>
+                    )}
                     {summary ? (
                       <Text style={[styles.scoutSectionBody, { color: Colors.text, fontWeight: '600' }]} numberOfLines={sharpExpanded ? undefined : 2}>
                         {summary}
