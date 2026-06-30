@@ -1,0 +1,57 @@
+Hello,
+
+The issues we previously identified still need your attention.
+
+If you have any questions, we are here to help. Reply to this message in App Store Connect and let us know.
+
+Review Environment
+
+Submission ID: 2f39b557-a913-4477-89d2-83d269aaa922
+Review date: June 30, 2026
+Review Device: iPhone 17 Pro Max
+Version reviewed: 1.0 (152)
+
+Guideline 5.1.1(v) - Data Collection and Storage
+
+
+Issue Description
+
+The app supports account creation but does not include an option to initiate account deletion. Apps that support account creation must also offer account deletion to give users more control of the data they've shared while using an app.
+
+Follow these requirements when updating an app to support account deletion:
+
+- Only offering to temporarily deactivate or disable an account is insufficient.
+- If users need to visit a website to finish deleting their account, include a link directly to the website page where they can complete the process.
+- Apps may include confirmation steps to prevent users from accidentally deleting their account. However, only apps in highly-regulated industries may require users to use customer service resources, such as making a phone call or sending an email, to complete account deletion.
+
+Next Steps
+
+Update the app to support account deletion. Once account deletion has been added, or if it is already in place, reply to this message with a screen recording captured on a physical device that demonstrates:
+
+- Creating a new account or signing in with the demo account
+- Navigating to the account deletion option
+- The complete account deletion flow from initiation to confirmation
+
+Include the recording in the Notes field of the App Review Information section in App Store Connect for future submissions.
+
+If the app is unable to offer account deletion or needs to provide additional customer service flows to facilitate and confirm account deletion, either because the app operates in a highly-regulated industry or for some other reason, reply to App Review in App Store Connect and provide additional information or documentation. For questions regarding legal obligations, check with legal counsel.
+
+Resources
+
+Review frequently asked questions and learn more about the account deletion requirements.
+Guideline 2.1(b) - Information Needed
+
+
+We have started the review of the app, but we are not able to continue because we cannot locate the In-App Purchases, such as Monthly and Weekly, within the app at this time.
+
+Next Steps
+
+To help us proceed with the review of the app, please reply to this message providing the steps for locating the In-App Purchases in the app.
+
+Note that In-App Purchases are reviewed in an Apple-provided sandbox environment. Make sure they have been appropriately configured for review in the Apple-provided sandbox environment.
+
+If you are restricting access to In-App Purchases based on factors such as storefront or device configurations, please include this information in your reply along with steps to enable the In-App Purchases for our review. 
+
+Additionally, note that the Account Holder must accept the Paid Apps Agreement in the Business section of App Store Connect before paid In-App Purchases will function.
+
+Resources
