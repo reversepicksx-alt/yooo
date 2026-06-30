@@ -1076,6 +1076,22 @@ async def _run_auto_settlement():
                             all_fixtures.append(f)
 
                 team_picks = [p for p in soccer_picks if p.get("teamId") == tid]
+                # Also fetch WC fixtures for this team so WC picks flow through
+                # the normal soccer settlement path (same FT gate, same zero-value
+                # guards) instead of the broken Grok fallback.
+                _wc_picks = [p for p in team_picks if p.get("leagueId") == 1]
+                if _wc_picks:
+                    _wc_batch = await api_football_request(
+                        "fixtures",
+                        {"team": tid, "league": 1, "season": 2026,
+                         "from": _fx_from, "to": _fx_to}
+                    ) or []
+                    for f in _wc_batch:
+                        fid = f.get("fixture", {}).get("id")
+                        if fid and fid not in seen:
+                            seen.add(fid)
+                            all_fixtures.append(f)
+
                 for pick in team_picks:
                     result = await _try_settle_soccer(pick, all_fixtures)
                     if result:
@@ -1100,11 +1116,6 @@ async def _run_auto_settlement():
                             settled_count += 1
                             print(f"[ORPHAN-VOID] soccer {pick.get('playerName','?')} {pick.get('propType','?')} (no opponent)")
                             continue
-                    if not result and (pick.get("leagueId") == 1 or pick.get("wcMode")):
-                        # World Cup picks: API has no per-player stats → fall back to Gemini web search
-                        wc_result = await _try_settle_wc_via_gemini(pick)
-                        if wc_result:
-                            settled_count += 1
             except Exception:
                 continue
 
