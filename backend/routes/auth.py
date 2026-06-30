@@ -496,21 +496,20 @@ def _is_reviewer_login_enabled() -> bool:
     return os.environ.get("REVIEWER_LOGIN_ENABLED") == "1"
 
 _REVIEWER_EMAIL = "reversepicksx@gmail.com"
-_REVIEWER_TOKEN = "rp-reviewer-owner-2026"  # stable, MongoDB-free
 
 @router.post("/reviewer-login")
 async def reviewer_login():
     """No-code login for the Apple App Store reviewer demo account.
-    Uses a hardcoded stable token so the endpoint never touches MongoDB —
-    works correctly even when the DB connection is cold or unreachable.
-    DISABLED in production unless REVIEWER_LOGIN_ENABLED=1 is set.
+    Creates a real MongoDB session so no credentials are hardcoded in source.
+    DISABLED unless REVIEWER_LOGIN_ENABLED=1 is explicitly set.
     """
     if not _is_reviewer_login_enabled():
         raise HTTPException(status_code=404, detail="Not found")
+    token = await create_session(_REVIEWER_EMAIL, "Owner")
     return {
         "verified": True,
         "email": _REVIEWER_EMAIL,
-        "session_token": _REVIEWER_TOKEN,
+        "session_token": token,
         "access_type": "Owner",
         "has_access": True,
         "message": "Reviewer access granted.",
