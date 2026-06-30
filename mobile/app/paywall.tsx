@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  ActivityIndicator, Platform, Image, Alert,
+  ActivityIndicator, Platform, Image, Alert, TextInput, KeyboardAvoidingView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -10,6 +10,7 @@ import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSubscription, REVENUECAT_ENTITLEMENT_IDENTIFIER } from '@/lib/revenuecat';
+import { iapSignup } from '@/lib/api';
 import Purchases, { type PurchasesPackage } from 'react-native-purchases';
 
 // ── Fallback demo plans (shown when RevenueCat returns empty in dev/TestFlight) ──
@@ -43,6 +44,14 @@ export default function PaywallScreen() {
 
   const [selectedPkg, setSelectedPkg] = useState<PurchasesPackage | null>(null);
   const [buyingId, setBuyingId] = useState<string | null>(null);
+
+  // Guest-mode: purchase completed but no account yet — collect email to create one
+  const [showEmailCapture, setShowEmailCapture] = useState(false);
+  const [pendingProductId, setPendingProductId] = useState<string>('');
+  const [pendingExpiresAtMs, setPendingExpiresAtMs] = useState<number | undefined>(undefined);
+  const [guestEmail, setGuestEmail] = useState('');
+  const [guestEmailError, setGuestEmailError] = useState('');
+  const [guestEmailLoading, setGuestEmailLoading] = useState(false);
 
   // If somehow a subscribed user lands here, push them into the app
   useEffect(() => {
@@ -86,13 +95,53 @@ export default function PaywallScreen() {
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       const ent = customerInfo?.entitlements?.active?.[REVENUECAT_ENTITLEMENT_IDENTIFIER];
       const expMs = ent?.expirationDate ? new Date(ent.expirationDate).getTime() : undefined;
-      await syncBackendAndEnter(pkg.product?.identifier ?? pkg.identifier, expMs);
+      const productId = pkg.product?.identifier ?? pkg.identifier;
+
+      if (!session?.email) {
+        // New user — collect email to create account
+        setPendingProductId(productId);
+        setPendingExpiresAtMs(expMs);
+        setShowEmailCapture(true);
+        return;
+      }
+
+      await syncBackendAndEnter(productId, expMs);
       router.replace('/(tabs)/scan');
     } catch (e: any) {
       if (e?.userCancelled) return;
       Alert.alert('Purchase Failed', getErrorMessage(e));
     } finally {
       setBuyingId(null);
+    }
+  };
+
+  const handleGuestSignup = async () => {
+    const trimmed = guestEmail.trim().toLowerCase();
+    if (!trimmed || !trimmed.includes('@')) {
+      setGuestEmailError('Please enter a valid email address.');
+      return;
+    }
+    setGuestEmailLoading(true);
+    setGuestEmailError('');
+    try {
+      const result = await iapSignup(trimmed, pendingProductId, pendingExpiresAtMs);
+      if (result.session_token && result.email) {
+        // Log in to RevenueCat with the new email to link the purchase
+        try { await Purchases.logIn(trimmed); } catch {}
+        await loginWithResponse({
+          email: result.email,
+          session_token: result.session_token,
+          access_type: result.access_type,
+        });
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        router.replace('/(tabs)/scan');
+      } else {
+        setGuestEmailError(result.message || 'Could not create account. Please try again.');
+      }
+    } catch (e: unknown) {
+      setGuestEmailError(e instanceof Error ? e.message : 'Could not create account. Please try again.');
+    } finally {
+      setGuestEmailLoading(false);
     }
   };
 
@@ -114,6 +163,65 @@ export default function PaywallScreen() {
       Alert.alert('Restore Failed', getErrorMessage(e));
     }
   };
+
+  // ── POST-PURCHASE EMAIL CAPTURE (new users who tapped Sign Up / Plans first) ──
+  if (showEmailCapture) {
+    return (
+      <KeyboardAvoidingView
+        style={[styles.root, { paddingTop: insets.top + 20, paddingBottom: insets.bottom + 24 }]}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
+        <ScrollView contentContainerStyle={[styles.inner, { justifyContent: 'center', flex: 1 }]} showsVerticalScrollIndicator={false}>
+          <Image source={require('../assets/logo.png')} style={styles.logo} resizeMode="contain" />
+          <Text style={styles.headline}>Almost There!</Text>
+          <Text style={styles.subhead}>Enter your email to activate your subscription and create your account.</Text>
+
+          <View style={emailStyles.inputRow}>
+            <Ionicons name="mail-outline" size={17} color={Colors.textSecondary} style={{ marginRight: 8 }} />
+            <TextInput
+              style={[emailStyles.input, { outlineWidth: 0 } as any]}
+              placeholder="your@email.com"
+              placeholderTextColor={Colors.textTertiary}
+              value={guestEmail}
+              onChangeText={v => { setGuestEmail(v); setGuestEmailError(''); }}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoCorrect={false}
+              autoComplete="email"
+              textContentType="emailAddress"
+              returnKeyType="done"
+              onSubmitEditing={handleGuestSignup}
+              autoFocus
+            />
+          </View>
+
+          {!!guestEmailError && (
+            <View style={emailStyles.errorBox}>
+              <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />
+              <Text style={emailStyles.errorText}>{guestEmailError}</Text>
+            </View>
+          )}
+
+          <TouchableOpacity
+            style={[styles.ctaBtn, guestEmailLoading && styles.ctaBtnDisabled]}
+            onPress={handleGuestSignup}
+            disabled={guestEmailLoading}
+            activeOpacity={0.85}
+          >
+            {guestEmailLoading ? (
+              <ActivityIndicator color="#000" size="small" />
+            ) : (
+              <Text style={styles.ctaText}>Activate Subscription</Text>
+            )}
+          </TouchableOpacity>
+
+          <Text style={emailStyles.legalNote}>
+            Your email is used only to access your account and for support. We do not share it with third parties.
+          </Text>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    );
+  }
 
   // ── WEB FALLBACK ──
   if (Platform.OS === 'web') {
@@ -399,4 +507,40 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   webCardText: { color: Colors.textSecondary, fontSize: 13, lineHeight: 20, textAlign: 'center' },
+});
+
+const emailStyles = StyleSheet.create({
+  inputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.card,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: 14,
+    height: 52,
+    width: '100%',
+  },
+  input: {
+    flex: 1,
+    color: Colors.text,
+    fontSize: 15,
+  },
+  errorBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(239,68,68,0.1)',
+    borderRadius: 8,
+    padding: 10,
+    width: '100%',
+  },
+  errorText: { color: '#ef4444', fontSize: 13, flex: 1 },
+  legalNote: {
+    color: Colors.textTertiary,
+    fontSize: 11,
+    textAlign: 'center',
+    lineHeight: 16,
+    paddingHorizontal: 8,
+  },
 });

@@ -119,6 +119,24 @@ export async function authLogout(email: string, session_token: string) {
   });
 }
 
+export async function deleteAccount(email: string, sessionToken: string): Promise<{ ok: boolean; message: string }> {
+  return apiCall('/api/auth/delete-account', {
+    method: 'POST',
+    body: JSON.stringify({ email, session_token: sessionToken }),
+  });
+}
+
+export async function iapSignup(
+  email: string,
+  productId: string,
+  expiresAtMs?: number,
+): Promise<AuthResponse & { has_access?: boolean; message?: string }> {
+  return apiCall('/api/auth/iap-signup', {
+    method: 'POST',
+    body: JSON.stringify({ email, product_id: productId, expires_at_ms: expiresAtMs ?? null }),
+  });
+}
+
 export async function verifySession(email: string, session_token: string) {
   return apiCall('/api/auth/verify-session', {
     method: 'POST',

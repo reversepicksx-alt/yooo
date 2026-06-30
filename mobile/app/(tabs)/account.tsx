@@ -11,7 +11,7 @@ import Colors from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   getSubscriptionStatus, cancelSubscription, changePlan,
-  resubscribeCheckout, PLAN_OPTIONS, type SubscriptionStatus,
+  resubscribeCheckout, PLAN_OPTIONS, deleteAccount, type SubscriptionStatus,
 } from '@/lib/api';
 import { useSubscription } from '@/lib/revenuecat';
 import type { PurchasesPackage } from 'react-native-purchases';
@@ -567,6 +567,58 @@ export default function AccountScreen() {
     }
   };
 
+  const handleDeleteAccount = () => {
+    const doDelete = async () => {
+      if (!session?.email || !session?.token) return;
+      try {
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+        await deleteAccount(session.email, session.token);
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        await logout();
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : 'Failed to delete account. Please try again.';
+        if (Platform.OS === 'web') {
+          window.alert(msg);
+        } else {
+          Alert.alert('Error', msg);
+        }
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      if (
+        typeof window !== 'undefined' &&
+        window.confirm(
+          'Permanently delete your account?\n\nThis will erase all your picks and subscription data. This cannot be undone.',
+        )
+      ) {
+        doDelete();
+      }
+    } else {
+      Alert.alert(
+        'Delete Account',
+        'This permanently deletes your account, all saved picks, and subscription history. This cannot be undone.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Delete Account',
+            style: 'destructive',
+            onPress: () => {
+              Alert.alert(
+                'Are you sure?',
+                'Your account and all data will be permanently deleted.',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Yes, Delete', style: 'destructive', onPress: doDelete },
+                ],
+              );
+            },
+          },
+        ],
+      );
+    }
+  };
+
   const initials = session?.email
     ? session.email.slice(0, 2).toUpperCase()
     : 'RP';
@@ -694,6 +746,7 @@ export default function AccountScreen() {
         <Text style={styles.sectionLabel}>Session</Text>
         <View style={styles.menuGroup}>
           <MenuRow icon="log-out-outline" label="Sign Out" onPress={handleLogout} danger />
+          <MenuRow icon="trash-outline" label="Delete Account" onPress={handleDeleteAccount} danger />
         </View>
 
         <View style={styles.footer}>

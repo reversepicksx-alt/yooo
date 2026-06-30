@@ -727,3 +727,96 @@ async def iap_grant(req: IAPGrantRequest):
     )
     print(f"[IAP GRANT] {email_lower} → Premium (Apple) | product={req.product_id} | expires={expires_iso}")
     return {"ok": True, "access_type": "Premium (Apple)"}
+
+
+# ── Pydantic models for new endpoints ─────────────────────────────────────────
+class DeleteAccountRequest(BaseModel):
+    email: str
+    session_token: str
+
+class IAPSignupRequest(BaseModel):
+    email: str
+    product_id: str
+    expires_at_ms: int | None = None
+
+
+@router.post("/delete-account")
+async def delete_account(req: DeleteAccountRequest):
+    """Permanently delete a user account and all associated data (Apple Guideline 5.1.1(v))."""
+    email_lower = req.email.lower().strip()
+
+    session_doc = await db.sessions.find_one(
+        {"email": email_lower, "session_token": req.session_token}, {"_id": 0}
+    )
+    if not session_doc:
+        raise HTTPException(status_code=401, detail="Invalid session. Please sign in again.")
+
+    # Cancel active Stripe subscription if one exists
+    try:
+        stripe_sub = await db.stripe_subscriptions.find_one(
+            {"email": email_lower, "status": {"$in": ["active", "trialing"]}}, {"_id": 0}
+        )
+        if stripe_sub and stripe_sub.get("subscriptionId"):
+            try:
+                _stripe.Subscription.cancel(stripe_sub["subscriptionId"])
+            except Exception as se:
+                print(f"[DELETE ACCOUNT] Stripe cancel skipped for {email_lower}: {se}")
+    except Exception:
+        pass
+
+    # Wipe all user data
+    await db.sessions.delete_many({"email": email_lower})
+    await db.apple_iap_subscriptions.delete_many({"email": email_lower})
+    await db.stripe_subscriptions.delete_many({"email": email_lower})
+    await db.picks.delete_many({"email": email_lower})
+    await db.manual_access_grants.delete_many({"email": email_lower})
+
+    print(f"[DELETE ACCOUNT] {email_lower} — account and all data permanently deleted")
+    return {"ok": True, "message": "Account deleted successfully."}
+
+
+@router.post("/iap-signup")
+async def iap_signup(req: IAPSignupRequest):
+    """Create a new account from a completed Apple IAP purchase (no prior session required)."""
+    email_lower = req.email.lower().strip()
+    if not email_lower or "@" not in email_lower:
+        raise HTTPException(status_code=400, detail="A valid email address is required.")
+
+    # Honour owner / lifetime overrides
+    if email_lower in OWNER_EMAILS:
+        access_type = "Owner"
+    elif email_lower in LIFETIME_SUB_EMAILS:
+        access_type = "Lifetime"
+    else:
+        access_type = "Premium (Apple)"
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    expires_iso: str | None = None
+    if req.expires_at_ms:
+        try:
+            expires_iso = datetime.fromtimestamp(req.expires_at_ms / 1000, tz=timezone.utc).isoformat()
+        except Exception:
+            pass
+
+    await db.apple_iap_subscriptions.update_one(
+        {"email": email_lower},
+        {"$set": {
+            "email":     email_lower,
+            "status":    "active",
+            "productId": req.product_id,
+            "expiresAt": expires_iso,
+            "updatedAt": now_iso,
+        }},
+        upsert=True,
+    )
+
+    token = await create_session(email_lower, access_type)
+    print(f"[IAP SIGNUP] {email_lower} | product={req.product_id} | expires={expires_iso}")
+    return {
+        "verified": True,
+        "email": email_lower,
+        "session_token": token,
+        "access_type": access_type,
+        "has_access": True,
+        "message": "Account created and access granted.",
+    }
