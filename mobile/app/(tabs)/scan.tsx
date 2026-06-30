@@ -411,6 +411,10 @@ export default function ScanScreen() {
       Alert.alert('Sign In Required', 'Please sign in to run predictions.');
       return;
     }
+    if (isNoSub) {
+      if (Platform.OS === 'web') { router.push('/(tabs)/account'); } else { router.push('/paywall'); }
+      return;
+    }
     setPhase('analyzing');
     setAnalyzeError(null);
     setManualError(null);
@@ -449,9 +453,18 @@ export default function ScanScreen() {
   };
 
   const handleManualAnalyze = async () => {
+    if (!session?.email || !session?.token) {
+      Alert.alert('Sign In Required', 'Please sign in to run predictions.');
+      return;
+    }
+    if (isNoSub) {
+      if (Platform.OS === 'web') { router.push('/(tabs)/account'); } else { router.push('/paywall'); }
+      return;
+    }
     if (!playerQuery.trim()) { setManualError('Enter a player name to analyze.'); return; }
     if (!line.trim() || isNaN(parseFloat(line))) { setManualError('Enter a valid line value (e.g. 2.5).'); return; }
     setManualError(null);
+    setMode('manual');
     const activeContext = selectedContext || (resolvedPlayer ? { teamId: resolvedPlayer.teamId, teamName: resolvedPlayer.teamName, leagueId: resolvedPlayer.leagueId, isNational: false } : null);
     const data: ScanResult = {
       playerName: playerQuery.trim(),
@@ -471,6 +484,10 @@ export default function ScanScreen() {
   const handleCs2Analyze = async () => {
     if (!session?.email || !session?.token) {
       Alert.alert('Sign In Required', 'Please sign in to run predictions.');
+      return;
+    }
+    if (isNoSub) {
+      if (Platform.OS === 'web') { router.push('/(tabs)/account'); } else { router.push('/paywall'); }
       return;
     }
     if (!cs2PlayerQuery.trim()) { setManualError('Enter a player nickname.'); return; }
@@ -513,6 +530,10 @@ export default function ScanScreen() {
   const handleWtaAnalyze = async () => {
     if (!session?.email || !session?.token) {
       Alert.alert('Sign In Required', 'Please sign in to run predictions.');
+      return;
+    }
+    if (isNoSub) {
+      if (Platform.OS === 'web') { router.push('/(tabs)/account'); } else { router.push('/paywall'); }
       return;
     }
     if (!wtaPlayerQuery.trim()) { setManualError('Enter a player name.'); return; }
