@@ -549,9 +549,6 @@ async def verify_session(req_or_email_token: Union[VerifySessionRequest, dict]) 
         email_lower = req_or_email_token["email"].lower().strip()
         token = req_or_email_token.get("token") or req_or_email_token.get("session_token", "")
 
-    # Reviewer demo account — bypass MongoDB entirely
-    if email_lower == _REVIEWER_EMAIL and token == _REVIEWER_TOKEN:
-        return {"valid": True, "access_type": "Owner"}
     session = await db.sessions.find_one(
         {"email": email_lower, "session_token": token}, {"_id": 0}
     )
