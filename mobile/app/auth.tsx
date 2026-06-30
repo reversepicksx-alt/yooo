@@ -373,15 +373,12 @@ export default function AuthScreen() {
 
               <TouchableOpacity
                 style={[styles.btn, styles.btnSubscribe]}
-                onPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  router.push('/paywall');
-                }}
+                onPress={handleShowPricing}
                 activeOpacity={0.85}
               >
                 <View style={styles.btnInner}>
                   <Ionicons name="card-outline" size={16} color="#000" />
-                  <Text style={styles.btnText}>Sign Up / Plans</Text>
+                  <Text style={styles.btnText}>Subscribe Now</Text>
                 </View>
               </TouchableOpacity>
 
