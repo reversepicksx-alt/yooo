@@ -425,3 +425,9 @@ id = "kTOdZ-fLGvNZzI-UvzY8d"
 uri = "file://mobile/public/assets/AuthKey_9NSAR9532S.txt"
 type = "text"
 title = "AuthKey_9NSAR9532S.p8"
+
+[[outputs]]
+id = "FlZQIlID-BU3AKKQbH-QH"
+uri = "file://docs/soccer-pipeline-full.md"
+type = "text"
+title = "Full Soccer Pipeline — 14 Stages, All Formulas, Improvements"
