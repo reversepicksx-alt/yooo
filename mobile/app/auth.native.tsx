@@ -438,11 +438,14 @@ export default function AuthScreen() {
 
             <TouchableOpacity
               style={styles.landingBtnSecondary}
-              onPress={() => { setFlow('signup'); setStep('email'); setError(''); setInfo(''); }}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                router.push('/paywall');
+              }}
               activeOpacity={0.85}
             >
-              <Ionicons name="person-add-outline" size={18} color={Colors.primary} />
-              <Text style={styles.landingBtnTextSecondary}>Sign Up</Text>
+              <Ionicons name="card-outline" size={18} color={Colors.primary} />
+              <Text style={styles.landingBtnTextSecondary}>Sign Up / Plans</Text>
             </TouchableOpacity>
 
             {/* Owner panel — revealed by 5 logo taps */}
