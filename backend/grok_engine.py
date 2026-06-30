@@ -1645,6 +1645,18 @@ async def _try_settle_wc_via_gemini(pick: dict) -> bool:
                     break
 
             if actual_value is not None:
+                # Zero-value guard: counting stats can never be 0 for a player
+                # who played 30+ minutes — API-Football marks FT but takes up to
+                # 20 min to populate player rows; defer so next run gets real stats.
+                _WC_COUNT_PROPS = {
+                    "pass_attempts", "passes", "crosses", "tackles", "key_passes",
+                    "shots", "shots_on_target", "interceptions", "blocks", "dribbles",
+                    "clearances", "saves",
+                }
+                _wc_mp = minutes_played or 0
+                if actual_value == 0 and prop_type in _WC_COUNT_PROPS and _wc_mp >= 30:
+                    print(f"[WC SETTLE DEFER] {player_name} {prop_type} — stat=0 with {_wc_mp} min; API not populated yet, deferring")
+                    return False
                 if minutes_played is not None and minutes_played < 30:
                     void_set = {
                         "status": "settled", "result": "push",
@@ -1672,48 +1684,26 @@ async def _try_settle_wc_via_gemini(pick: dict) -> bool:
                 print(f"[WC SETTLE API] {player_name}/{prop_type} fid={matched_fid} actual={actual_value} → {result.upper()}")
                 return True
             else:
-                print(f"[WC SETTLE] {player_name}/{prop_type}: fixture {matched_fid} found but no player stats in API-Football")
+                # Fixture is FT but player stats not populated yet — API-Football
+                # sometimes takes 5-20 min post-match to fill player rows.
+                # Return False so the next bot run (15 min) retries with fresh data.
+                print(f"[WC SETTLE] {player_name}/{prop_type}: fixture {matched_fid} FT but no player stats yet — deferring")
+                return False
         else:
             if not matched_fid:
-                print(f"[WC SETTLE] {player_name}/{prop_type}: no finished WC fixture matched opponent='{opp_name}'")
+                # No FT fixture found at all — match is not finished yet.
+                # NEVER fall through to AI guessing; just wait for FT.
+                print(f"[WC SETTLE] {player_name}/{prop_type}: no finished WC fixture for opponent='{opp_name}' — match not FT yet")
+                return False
     except Exception as _api_err:
         print(f"[WC SETTLE] API-Football stage error: {_api_err}")
-
-    # ── Stage 2: knowledge-only Grok (no live search — xAI search deprecated) ─
-    try:
-        full_prompt = (
-            "You are a sports stats lookup assistant. "
-            "Answer ONLY with a single number (the stat value) and nothing else. "
-            "Do not include any explanation, units, or words.\n\n"
-            f"What were {player_name}'s exact {prop_label} stats in the World Cup 2026 "
-            f"{match_desc} match? Reply with only the integer or decimal number."
-        )
-        raw = (await _grok_call(full_prompt, max_tokens=20, timeout=20) or "").strip()
-        nums = _re.findall(r"\d+(?:\.\d+)?", raw)
-        if not nums:
-            print(f"[WC SETTLE] {player_name}/{prop_type}: AI returned no number — '{raw[:80]}'")
-            return False
-
-        actual_value = float(nums[0])
-        result = "win" if (
-            (rec == "over" and actual_value > line) or
-            (rec == "under" and actual_value < line)
-        ) else "loss"
-        await db.picks.update_one(
-            {"pickId": pick_id},
-            {"$set": {
-                "status": "settled", "result": result,
-                "actualValue": actual_value,
-                "settledAt": datetime.now(timezone.utc).isoformat(),
-                "settledBy": "wc_ai", "wcSettled": True,
-            }}
-        )
-        print(f"[WC SETTLE AI] {player_name}/{prop_type} line={line} actual={actual_value} → {result.upper()}")
-        return True
-
-    except Exception as e:
-        print(f"[WC SETTLE] {player_name}/{prop_type} error: {e}")
         return False
+
+    # Stage 2 (Grok knowledge fallback) removed permanently.
+    # Grok has no real-time stats and returned "0" for in-progress matches,
+    # causing picks to settle with Final=0 mid-game. The API path above is
+    # the only reliable source; if it can't get stats, we defer to next run.
+    return False
 
 
 async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:

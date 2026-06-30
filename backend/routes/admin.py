@@ -608,9 +608,7 @@ async def admin_unsettle_picks(req: UnsettlePickRequest):
     await _verify_owner_or_code(req.email, req.token)
     from datetime import datetime, timezone, timedelta
     updated = []
-    _unset_fields = {"$set": {"status": "live", "result": None, "actualValue": None,
-                               "settledAt": None, "settledBy": None,
-                               "voidReason": None, "hitPct": None},
+    _unset_fields = {"$set": {"status": "live", "result": None, "actualValue": None, "hitPct": None},
                      "$unset": {"settledAt": "", "settledBy": "", "voidReason": ""}}
 
     # By pickId
