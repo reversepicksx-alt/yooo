@@ -1,6 +1,6 @@
 import os
 from datetime import datetime, timezone, timedelta
-from fastapi import FastAPI
+from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from config import db, LIFETIME_SUB_EMAILS, OWNER_EMAIL, OWNER_EMAILS, COMPLIMENTARY_MEMBERS, init_dynamic_settings, get_dynamic_setting
 
