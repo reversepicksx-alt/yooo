@@ -155,7 +155,6 @@ export default function ScanScreen() {
   const [leagueQuery, setLeagueQuery] = useState('');
   const [showPropPicker, setShowPropPicker] = useState(false);
   const [showLeaguePicker, setShowLeaguePicker] = useState(false);
-  const [showSportPicker, setShowSportPicker] = useState(false);
 
   // CS2 manual mode fields
   const [cs2PlayerQuery, setCs2PlayerQuery] = useState('');
@@ -786,34 +785,15 @@ export default function ScanScreen() {
             {/* Idle: cartoon sports image only */}
             {phase === 'idle' && (
               <>
-                {/* Sport selector */}
-                <TouchableOpacity
-                  style={styles.sportSelectorBtn}
-                  onPress={() => setShowSportPicker(true)}
-                  activeOpacity={0.85}
-                >
+                {/* Sport indicator — Soccer only for iOS build */}
+                <View style={styles.sportSelectorBtn}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                     <View style={styles.sportSelectorIcon}>
-                      <Ionicons
-                        name={
-                          sport === 'soccer' ? 'football' :
-                          sport === 'cs2' ? 'game-controller' :
-                          'tennisball'
-                        }
-                        size={16}
-                        color={Colors.primary}
-                      />
+                      <Ionicons name="football" size={16} color={Colors.primary} />
                     </View>
-                    <Text style={styles.sportSelectorText}>
-                      {sport === 'soccer' ? 'Soccer' :
-                       sport === 'cs2' ? 'CS2' :
-                       'WTA Tennis'}
-                    </Text>
+                    <Text style={styles.sportSelectorText}>Soccer</Text>
                   </View>
-                  <View style={styles.sportSelectorChangePill}>
-                    <Text style={styles.sportSelectorChange}>Change</Text>
-                  </View>
-                </TouchableOpacity>
+                </View>
                 {analyzeError && (
                   <View style={styles.inlineError}>
                     <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />
@@ -3589,63 +3569,6 @@ export default function ScanScreen() {
         }}
         title="League"
       />
-
-      {/* Sport Picker Modal — categorized list */}
-      <Modal visible={showSportPicker} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={[styles.sportPickerSheet, { width: '92%', maxHeight: '82%' }]}>
-            <View style={styles.sportPickerHeader}>
-              <Text style={styles.modalTitle}>SELECT SPORT</Text>
-              <TouchableOpacity onPress={() => setShowSportPicker(false)}>
-                <Text style={styles.sportPickerClose}>Close</Text>
-              </TouchableOpacity>
-            </View>
-            <ScrollView showsVerticalScrollIndicator={false}>
-              {([
-                { section: 'SOCCER', items: [
-                  { id: 'soccer' as Sport, label: 'Soccer', icon: 'football' as const },
-                ]},
-                { section: 'TENNIS', items: [
-                  { id: 'wta' as Sport, label: 'WTA Tennis', icon: 'tennisball' as const },
-                ]},
-                { section: 'ESPORTS', items: [
-                  { id: 'cs2' as Sport, label: 'CS2', icon: 'game-controller' as const },
-                ]},
-              ] as { section: string; items: { id: Sport; label: string; icon: any }[] }[]).map((group) => (
-                <View key={group.section}>
-                  <View style={styles.sportSectionHeader}>
-                    <Text style={styles.sportSectionLabel}>{group.section}</Text>
-                  </View>
-                  {group.items.map((s) => {
-                    const active = s.id === sport;
-                    return (
-                      <TouchableOpacity
-                        key={s.id}
-                        style={[styles.sportListItem, active && styles.sportListItemActive]}
-                        onPress={() => {
-                          setSport(s.id);
-                          reset();
-                          setShowSportPicker(false);
-                          // Non-soccer sports have no OCR scan — go straight to manual form
-                          if (s.id !== 'soccer') {
-                            setMode('manual');
-                          }
-                        }}
-                        activeOpacity={0.75}
-                      >
-                        <Ionicons name={s.icon} size={20} color={active ? Colors.primary : Colors.textSecondary} />
-                        <Text style={[styles.sportListLabel, active && styles.sportListLabelActive]}>{s.label}</Text>
-                        {active && <Ionicons name="checkmark" size={16} color={Colors.primary} style={{ marginLeft: 'auto' }} />}
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              ))}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
-
 
     </View>
     </KeyboardAvoidingView>
