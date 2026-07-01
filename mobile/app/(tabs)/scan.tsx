@@ -1780,9 +1780,12 @@ export default function ScanScreen() {
                 const rawOppAvg   = bm.rawOppAllowedAvg as number | undefined;
                 const pairShare   = bm.pairShare as number | undefined;
                 const compSeasAvg = bm.compSeasonAvg as number | undefined;
-                const momLabel = bm.momentumLabel as string | undefined;
-                const momEff   = bm.momentumEffect as number | undefined;
-                const isOver   = pOver != null && pUnder != null && pOver >= pUnder;
+                const momLabel    = bm.momentumLabel as string | undefined;
+                const momEff     = bm.momentumEffect as number | undefined;
+                const rotRisk    = bm.rotationRisk as string | undefined;
+                const rotAdjPct  = bm.rotationAdjPct as number | undefined;
+                const expMins    = bm.expectedMinutes as number | undefined;
+                const isOver     = pOver != null && pUnder != null && pOver >= pUnder;
                 const stakeColor = stakeLabel?.includes('RELEGATION') ? '#FF6B35'
                                  : stakeLabel?.includes('DEAD')        ? '#666'
                                  : stakeLabel?.includes('TITLE')       ? '#F59E0B'
@@ -1801,6 +1804,8 @@ export default function ScanScreen() {
                   chain.push({ label: 'SCEN', pct: (spInfo.multiplier - 1) * 100, color: spInfo.multiplier < 1 ? '#F59E0B' : Colors.primary, n: spInfo.n });
                 if (cdmInv.applied) chain.push({ label: 'CDM INV', pct: (cdmInv.mult - 1) * 100, color: '#A084E8' });
                 if (hcdb.applied)   chain.push({ label: 'DEEP BLK', pct: (hcdb.mult - 1) * 100, color: '#A084E8' });
+                if (rotRisk && rotRisk !== 'stable' && rotAdjPct != null && rotAdjPct !== 0)
+                  chain.push({ label: rotRisk === 'declining' ? 'ROTATION↓' : 'ROTATION↑', pct: rotAdjPct, color: rotRisk === 'declining' ? '#FF6B35' : Colors.primary });
                 if (rawOppAvg != null && oppAvg != null && Math.abs(rawOppAvg - oppAvg) >= 0.5)
                   chain.push({ label: 'PAIR CAL', pct: ((oppAvg - rawOppAvg) / rawOppAvg) * 100, color: '#F59E0B' });
 
@@ -1920,6 +1925,17 @@ export default function ScanScreen() {
                             )}
                           </View>
                         )}
+                        {rotRisk != null && rotRisk !== 'stable' && (
+                          <View style={styles.mfMetric}>
+                            <Text style={styles.mfMetricLabel}>ROTATION</Text>
+                            <Text style={[styles.mfMetricVal, { fontSize: 10,
+                              color: rotRisk === 'declining' ? '#FF6B35' : Colors.primary,
+                            }]}>{rotRisk === 'declining' ? 'DECLINING' : 'RETURNING'}</Text>
+                            {expMins != null && (
+                              <Text style={styles.mfMetricSub}>{expMins.toFixed(0)} min</Text>
+                            )}
+                          </View>
+                        )}
                         {lcInfo?.n != null && (
                           <View style={styles.mfMetric}>
                             <Text style={styles.mfMetricLabel}>LEAGUE CAL</Text>
@@ -1993,6 +2009,38 @@ export default function ScanScreen() {
                               {stMod.mult >= 1 ? '+' : ''}{((stMod.mult - 1) * 100).toFixed(0)}%
                             </Text>
                           )}
+                        </View>
+                      )}
+
+                      {/* ── Rotation Risk Banner ── */}
+                      {rotRisk && rotRisk !== 'stable' && rotAdjPct != null && rotAdjPct !== 0 && (
+                        <View style={[styles.mfStakeBanner, {
+                          borderColor: (rotRisk === 'declining' ? '#FF6B35' : Colors.primary) + '55',
+                          backgroundColor: (rotRisk === 'declining' ? '#FF6B35' : Colors.primary) + '0E',
+                          marginTop: 8,
+                        }]}>
+                          <Ionicons
+                            name={rotRisk === 'declining' ? 'time-outline' : 'trending-up-outline'}
+                            size={11}
+                            color={rotRisk === 'declining' ? '#FF6B35' : Colors.primary}
+                          />
+                          <View style={{ flex: 1 }}>
+                            <Text style={[styles.mfStakeBannerLabel, {
+                              color: rotRisk === 'declining' ? '#FF6B35' : Colors.primary,
+                            }]}>
+                              {rotRisk === 'declining' ? 'ROTATION RISK' : 'RETURNING TO FULL DUTY'}
+                            </Text>
+                            <Text style={styles.mfStakeBannerReason}>
+                              {rotRisk === 'declining'
+                                ? `Minutes trending down — projected ${expMins != null ? expMins.toFixed(0) + ' min' : 'adjusted'} this match`
+                                : `Minutes trending up — projected ${expMins != null ? expMins.toFixed(0) + ' min' : 'adjusted'} this match`}
+                            </Text>
+                          </View>
+                          <Text style={[styles.mfStakeBannerMult, {
+                            color: rotRisk === 'declining' ? '#FF6B35' : Colors.primary,
+                          }]}>
+                            {rotAdjPct > 0 ? '+' : ''}{rotAdjPct.toFixed(1)}%
+                          </Text>
                         </View>
                       )}
 
