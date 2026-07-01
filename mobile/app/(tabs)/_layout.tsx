@@ -74,6 +74,7 @@ export default function TabLayout() {
         options={{
           title: 'Reverse Chat',
           tabBarIcon: ({ focused }) => <TabIcon name="people" focused={focused} />,
+          href: Platform.OS === 'web' ? null : undefined,
         }}
       />
       <Tabs.Screen
