@@ -810,8 +810,19 @@ export default function AccountScreen() {
 
       {/* Username modal */}
       <Modal visible={usernameModal} transparent animationType="fade" onRequestClose={() => setUsernameModal(false)}>
-        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setUsernameModal(false)}>
-          <View style={styles.modalSheet}>
+        <View style={styles.modalOverlay}>
+          {/* Backdrop — tapping outside the sheet dismisses */}
+          <TouchableOpacity
+            style={[StyleSheet.absoluteFill, { zIndex: 1 }]}
+            activeOpacity={1}
+            onPress={() => setUsernameModal(false)}
+          />
+          {/* Sheet — catches touches so they don't bubble to backdrop */}
+          <View
+            style={[styles.modalSheet, { zIndex: 2 }]}
+            onStartShouldSetResponder={() => true}
+            onResponderTerminationRequest={() => false}
+          >
             <View style={styles.modalHandle} />
             <Text style={styles.modalTitle}>{profile.username ? 'Change Username' : 'Choose Username'}</Text>
             <Text style={styles.modalSubtitle}>3–20 characters. Letters, numbers, and underscores only.</Text>
@@ -844,7 +855,7 @@ export default function AccountScreen() {
               <Text style={styles.modalCancelText}>Cancel</Text>
             </TouchableOpacity>
           </View>
-        </TouchableOpacity>
+        </View>
       </Modal>
     </View>
   );
