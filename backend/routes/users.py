@@ -141,7 +141,7 @@ async def search_users(q: str = Query(..., min_length=1), limit: int = Query(10,
     results = []
     for d in docs:
         results.append({
-            "email": d.get("email", ""),
+            "id": d.get("email", ""),
             "username": d.get("username"),
             "displayName": d.get("displayName"),
             "label": d.get("username") or d.get("displayName") or d.get("email", "").split("@")[0],

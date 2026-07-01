@@ -32,12 +32,12 @@ const AVATAR_PALETTE = [
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Participant = { email: string; displayName: string; username?: string | null };
+type Participant = { id: string; name: string };
 
 type MessageGroup = {
   groupId: string;
-  email: string;
-  displayName: string;
+  senderId: string;
+  name: string;
   color: string;
   messages: CommunityMessage[];
   dayLabel: string;
@@ -49,10 +49,10 @@ type ListItem =
 
 // ─── Pure helpers ─────────────────────────────────────────────────────────────
 
-function hashColor(email: string): string {
+function hashColor(seed: string): string {
   let h = 0;
-  for (let i = 0; i < email.length; i++) {
-    h = (email.charCodeAt(i) + ((h << 5) - h)) | 0;
+  for (let i = 0; i < seed.length; i++) {
+    h = (seed.charCodeAt(i) + ((h << 5) - h)) | 0;
   }
   return AVATAR_PALETTE[Math.abs(h) % AVATAR_PALETTE.length];
 }
@@ -86,7 +86,7 @@ function groupMessages(msgs: CommunityMessage[]): MessageGroup[] {
   for (const msg of msgs) {
     const last = groups[groups.length - 1];
     const lastMsg = last?.messages[last.messages.length - 1];
-    const sameUser = last && last.email === msg.email;
+    const sameUser = last && last.senderId === msg.senderId;
     const sameDay = last && getDayLabel(lastMsg.createdAt) === getDayLabel(msg.createdAt);
     const within5min = last &&
       new Date(msg.createdAt).getTime() - new Date(lastMsg.createdAt).getTime() < 5 * 60 * 1000;
@@ -95,9 +95,9 @@ function groupMessages(msgs: CommunityMessage[]): MessageGroup[] {
     } else {
       groups.push({
         groupId: msg.id,
-        email: msg.email,
-        displayName: msg.displayName,
-        color: hashColor(msg.email),
+        senderId: msg.senderId,
+        name: msg.name,
+        color: hashColor(msg.senderId),
         messages: [msg],
         dayLabel: getDayLabel(msg.createdAt),
       });
@@ -189,16 +189,16 @@ const MessageGroupItem = memo(({
   onImagePress: (uri: string) => void;
   onReact: (msgId: string, emoji: string) => void;
 }) => {
-  const isOwn = group.email === myEmail;
+  const isOwn = group.senderId === myEmail;
   return (
     <View style={[styles.group, isOwn && styles.groupOwn]}>
       <View style={styles.groupLeft}>
-        <AvatarCircle color={group.color} name={group.displayName} />
+        <AvatarCircle color={group.color} name={group.name} />
       </View>
       <View style={styles.groupRight}>
         <View style={styles.groupHeader}>
           <Text style={[styles.displayName, { color: group.color }]}>
-            {isOwn ? 'You' : group.displayName}
+            {isOwn ? 'You' : group.name}
           </Text>
           <Text style={styles.timestamp}>{timeStr(group.messages[0].createdAt)}</Text>
         </View>

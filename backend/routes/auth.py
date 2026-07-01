@@ -94,11 +94,45 @@ async def _check_apple_access(email_lower: str) -> str | None:
                     pass
     return None
 
+_ANIMALS = [
+    "lion", "tiger", "wolf", "bear", "hawk", "eagle", "fox", "shark", "cobra",
+    "panther", "jaguar", "cheetah", "falcon", "dragon", "viper", "rhino",
+    "bull", "stallion", "orca", "raptor", "lynx", "puma", "bison", "leopard",
+]
+
+_COLORS = [
+    "neon", "dark", "green", "blue", "red", "gold", "silver", "black",
+    "white", "crimson", "azure", "emerald", "ruby", "sapphire", "jade",
+    "amber", "obsidian", "steel", "midnight", "shadow",
+]
+
+def _random_username() -> str:
+    return f"{_random.choice(_COLORS)}_{_random.choice(_ANIMALS)}_{_random.randint(1,9999)}"
+
+async def _ensure_username(email: str) -> str:
+    doc = await db.users.find_one({"email": email}, {"_id": 0, "username": 1})
+    if doc and doc.get("username"):
+        return doc["username"]
+    for _ in range(5):
+        name = _random_username()
+        taken = await db.users.find_one({"username": name}, {"_id": 0})
+        if not taken:
+            await db.users.update_one(
+                {"email": email},
+                {"$set": {"username": name, "updatedAt": datetime.now(timezone.utc)},
+                 "$setOnInsert": {"email": email, "createdAt": datetime.now(timezone.utc)}},
+                upsert=True,
+            )
+            return name
+    return email.split("@")[0]
+
 async def create_session(email: str, access_type: str) -> str:
     try:
         existing = await db.sessions.find_one({"email": email}, {"_id": 0})
     except Exception:
         existing = None
+    # Auto-generate random username for every new session
+    await _ensure_username(email)
     if existing and existing.get("session_token"):
         try:
             await db.sessions.update_one(

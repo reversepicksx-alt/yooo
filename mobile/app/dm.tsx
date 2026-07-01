@@ -51,9 +51,9 @@ export default function DmInboxScreen() {
 
   const handleOpen = (conv: DmConversation) => {
     if (session?.email) {
-      markDmRead(session.email, conv.otherEmail).catch(() => {});
+      markDmRead(session.email, conv.otherId).catch(() => {});
     }
-    router.push(`/dm-thread?email=${encodeURIComponent(conv.otherEmail)}&name=${encodeURIComponent(conv.otherName)}&image=${encodeURIComponent(conv.otherImage || '')}`);
+    router.push(`/dm-thread?otherId=${encodeURIComponent(conv.otherId)}&name=${encodeURIComponent(conv.otherName)}&image=${encodeURIComponent(conv.otherImage || '')}`);
   };
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
@@ -85,7 +85,7 @@ export default function DmInboxScreen() {
       ) : (
         <FlatList
           data={conversations}
-          keyExtractor={(item) => item.otherEmail}
+          keyExtractor={(item) => item.otherId}
           contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: insets.bottom + 20 }}
           refreshing={refreshing}
           onRefresh={() => { setRefreshing(true); load(); }}

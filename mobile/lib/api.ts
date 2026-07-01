@@ -1408,8 +1408,8 @@ export async function contactSupport(name: string, email: string, message: strin
 
 export interface CommunityMessage {
   id: string;
-  email: string;
-  displayName: string;
+  senderId: string;
+  name: string;
   text: string;
   imageData?: string | null;
   mentions: string[];
@@ -1462,7 +1462,7 @@ export async function deleteCommunityMessage(messageId: string, email: string): 
 }
 
 export async function fetchCommunityParticipants(): Promise<
-  Array<{ email: string; displayName: string }>
+  Array<{ id: string; name: string }>
 > {
   return apiCall('/api/community/participants');
 }
@@ -1567,15 +1567,16 @@ export async function searchUsers(q: string): Promise<{
 
 export interface DmMessage {
   id: string;
-  senderEmail: string;
-  recipientEmail: string;
+  senderId: string;
+  senderName?: string;
+  recipientId: string;
   text: string;
   read: boolean;
   createdAt: string;
 }
 
 export interface DmConversation {
-  otherEmail: string;
+  otherId: string;
   otherName: string;
   otherImage: string | null;
   lastMessage: string;
@@ -1601,10 +1602,10 @@ export async function getDmThread(email: string, other: string): Promise<DmMessa
   return apiCall(`/api/dm/thread?email=${encodeURIComponent(email)}&other=${encodeURIComponent(other)}`);
 }
 
-export async function markDmRead(email: string, otherEmail: string): Promise<{ ok: boolean }> {
+export async function markDmRead(email: string, otherId: string): Promise<{ ok: boolean }> {
   return apiCall('/api/dm/read', {
     method: 'PATCH',
-    body: JSON.stringify({ email, otherEmail }),
+    body: JSON.stringify({ email, otherEmail: otherId }),
   });
 }
 

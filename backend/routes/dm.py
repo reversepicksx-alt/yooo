@@ -33,8 +33,8 @@ def _serialize_dm(m: dict) -> dict:
         ts_str = str(ts) if ts else ""
     return {
         "id": m.get("messageId", str(m.get("_id", ""))),
-        "senderEmail": m.get("senderEmail", ""),
-        "recipientEmail": m.get("recipientEmail", ""),
+        "senderId": m.get("senderEmail", ""),
+        "recipientId": m.get("recipientEmail", ""),
         "text": m.get("text", ""),
         "read": m.get("read", False),
         "createdAt": ts_str,
@@ -97,12 +97,13 @@ async def get_inbox(email: str = Query(...)):
             {"email": other},
             {"_id": 0, "username": 1, "displayName": 1, "profileImage": 1}
         )
+        name = (
+            user.get("username") or user.get("displayName") or other.split("@")[0]
+            if user else other.split("@")[0]
+        )
         results.append({
-            "otherEmail": other,
-            "otherName": (
-                user.get("displayName") or user.get("username") or other.split("@")[0]
-                if user else other.split("@")[0]
-            ),
+            "otherId": other,
+            "otherName": name,
             "otherImage": user.get("profileImage") if user else None,
             "lastMessage": c.get("lastMessage", ""),
             "lastAt": (
@@ -134,7 +135,14 @@ async def get_thread(
         .limit(limit)
         .to_list(None)
     )
-    return [_serialize_dm(m) for m in msgs]
+    # Resolve sender usernames so email is never exposed in response
+    out = []
+    for m in msgs:
+        base = _serialize_dm(m)
+        s = await db.users.find_one({"email": base["senderId"]}, {"_id": 0, "username": 1, "displayName": 1})
+        base["senderName"] = (s.get("username") or s.get("displayName")) if s else base["senderId"].split("@")[0]
+        out.append(base)
+    return out
 
 
 @router.patch("/read")

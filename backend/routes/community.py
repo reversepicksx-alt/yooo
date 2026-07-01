@@ -17,8 +17,8 @@ def _serialize(m: dict) -> dict:
         ts_str = str(ts) if ts else ""
     return {
         "id": m.get("messageId", str(m.get("_id", ""))),
-        "email": m.get("email", ""),
-        "displayName": m.get("displayName", ""),
+        "senderId": m.get("email", ""),
+        "name": m.get("displayName", ""),
         "text": m.get("text", ""),
         "imageData": m.get("imageData"),
         "mentions": m.get("mentions", []),
@@ -89,14 +89,16 @@ async def send_message(req: SendMessageRequest):
     if not access:
         raise HTTPException(status_code=403, detail="No active subscription")
 
-    raw_name = req.email.split("@")[0]
-    display_name = " ".join(
-        w.capitalize() for w in raw_name.replace(".", " ").replace("_", " ").split()
+    email_lower = req.email.lower().strip()
+    user = await db.users.find_one({"email": email_lower}, {"_id": 0, "username": 1, "displayName": 1})
+    display_name = (
+        user.get("username") or user.get("displayName")
+        or " ".join(w.capitalize() for w in email_lower.split("@")[0].replace(".", " ").replace("_", " ").split())
     )
 
     msg = {
         "messageId": str(uuid.uuid4()),
-        "email": req.email.lower().strip(),
+        "email": email_lower,
         "displayName": display_name,
         "text": req.text.strip(),
         "imageData": req.imageData or None,
@@ -262,4 +264,9 @@ async def get_participants():
         {"$limit": 50},
     ]
     parts = await db.community_messages.aggregate(pipeline).to_list(None)
-    return [{"email": p["_id"], "displayName": p["displayName"]} for p in parts]
+    results = []
+    for p in parts:
+        user = await db.users.find_one({"email": p["_id"]}, {"_id": 0, "username": 1, "displayName": 1})
+        name = (user.get("username") or user.get("displayName") or p["displayName"]) if user else p["displayName"]
+        results.append({"id": p["_id"], "name": name})
+    return results
