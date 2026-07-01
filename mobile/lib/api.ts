@@ -442,6 +442,7 @@ export interface PredictionResult {
   propHistoricalRate?: number;
   propHistoricalN?: number;
   coinFlip?: boolean;
+  prizePicksContext?: string;
   scenarioProbabilities?: { best: number; base: number; worst: number };
   /** True when AI text generation is still running in the background; frontend should poll */
   aiPending?: boolean;
