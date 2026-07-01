@@ -128,6 +128,8 @@ function AppBoot() {
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="terms" />
         <Stack.Screen name="privacy" />
+        <Stack.Screen name="dm" />
+        <Stack.Screen name="dm-thread" />
       </Stack>
     </>
   );

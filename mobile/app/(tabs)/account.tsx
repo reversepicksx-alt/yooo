@@ -2,14 +2,17 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TextInput, StyleSheet, ScrollView, TouchableOpacity,
   Alert, Platform, Image, Modal, ActivityIndicator, Linking, Animated,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
+import * as ImagePicker from 'expo-image-picker';
 import NotificationBell from '@/components/NotificationBell';
 import { Ionicons } from '@expo/vector-icons';
+import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
-import { getUserProfile, setUsername } from '@/lib/api';
+import { getUserProfile, setUsername, setProfileImage } from '@/lib/api';
 import {
   getSubscriptionStatus, cancelSubscription, changePlan,
   resubscribeCheckout, PLAN_OPTIONS, deleteAccount, type SubscriptionStatus,
@@ -430,8 +433,8 @@ export default function AccountScreen() {
   const [actionLoading, setActionLoading] = useState(false);
   const [planPickerVisible, setPlanPickerVisible] = useState(false);
 
-  // Username state
-  const [profile, setProfile] = useState<{ username: string | null }>({ username: null });
+  // Profile state
+  const [profile, setProfile] = useState<{ username: string | null; profileImage?: string | null }>({ username: null });
   const [usernameModal, setUsernameModal] = useState(false);
   const [usernameInput, setUsernameInput] = useState('');
   const [usernameLoading, setUsernameLoading] = useState(false);
@@ -446,6 +449,9 @@ export default function AccountScreen() {
 
   // On iOS native: subscription section is always IAP-driven
   const isIOSNative = Platform.OS === 'ios';
+
+  // Profile image state
+  const [imageUploading, setImageUploading] = useState(false);
 
   // On web/android: show Stripe management for active Stripe subscribers
   const showStripeManagement = !isIOSNative && isStripeSub && !isLifetime && !isOwner;
@@ -474,6 +480,36 @@ export default function AccountScreen() {
       .then((p) => setProfile(p))
       .catch(() => setProfile({ username: null }));
   }, [session?.email]);
+
+  const handlePickProfileImage = async () => {
+    if (!session?.email) return;
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission needed', 'Allow photo library access to change your profile picture.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.6,
+      base64: true,
+      allowsEditing: true,
+      aspect: [1, 1],
+    });
+    if (result.canceled || !result.assets?.[0]?.base64) return;
+    setImageUploading(true);
+    try {
+      const base64 = `data:image/jpeg;base64,${result.assets[0].base64}`;
+      const res = await setProfileImage(session.email, base64);
+      if (res.ok) {
+        setProfile((prev) => ({ ...prev, profileImage: res.profileImage }));
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
+    } catch {
+      Alert.alert('Upload failed', 'Could not upload profile image. Try again.');
+    } finally {
+      setImageUploading(false);
+    }
+  };
 
   const handleSetUsername = async () => {
     if (!session?.email || !usernameInput.trim()) return;
@@ -676,13 +712,29 @@ export default function AccountScreen() {
     <View style={[styles.root, { paddingTop: topPad }]}>
       <View style={[styles.header, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingRight: 16 }]}>
         <Text style={styles.headerTitle}>Account</Text>
-        <NotificationBell />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          <TouchableOpacity onPress={() => router.push('/dm')} style={styles.headerIcon}>
+            <Ionicons name="mail-outline" size={22} color={Colors.text} />
+          </TouchableOpacity>
+          <NotificationBell />
+        </View>
       </View>
       <ScrollView contentContainerStyle={[styles.body, { paddingBottom: bottomPad + 20 }]}>
         <View style={styles.profileCard}>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>{initials}</Text>
-          </View>
+          <TouchableOpacity
+            style={[styles.avatar, { position: 'relative' }]}
+            onPress={handlePickProfileImage}
+            activeOpacity={0.8}
+          >
+            {profile.profileImage ? (
+              <Image source={{ uri: profile.profileImage }} style={{ width: 56, height: 56, borderRadius: 28 }} />
+            ) : (
+              <Text style={styles.avatarText}>{initials}</Text>
+            )}
+            <View style={styles.avatarEditBadge}>
+              <Ionicons name="camera" size={12} color={Colors.background} />
+            </View>
+          </TouchableOpacity>
           <View style={styles.profileInfo}>
             <Text style={styles.profileEmail} numberOfLines={1}>{session?.email}</Text>
             <View style={styles.accessBadge}>
@@ -703,6 +755,17 @@ export default function AccountScreen() {
             onPress={() => setUsernameModal(true)}
           />
           <MenuRow icon="shield-outline" label="Access Level" value={accessLabel} />
+          {!isOwner && (
+            <MenuRow
+              icon="chatbubble-outline"
+              label="Message Owner"
+              value="Get help & support"
+              onPress={() => {
+                const ownerEmail = 'reversepicksx@gmail.com';
+                router.push(`/dm-thread?email=${encodeURIComponent(ownerEmail)}&name=Reverse%20Picks%20Support&image=`);
+              }}
+            />
+          )}
         </View>
 
         {/* ── iOS native: Apple IAP subscription section ── */}
@@ -810,52 +873,58 @@ export default function AccountScreen() {
 
       {/* Username modal */}
       <Modal visible={usernameModal} transparent animationType="fade" onRequestClose={() => setUsernameModal(false)}>
-        <View style={styles.modalOverlay}>
-          {/* Backdrop — tapping outside the sheet dismisses */}
-          <TouchableOpacity
-            style={[StyleSheet.absoluteFill, { zIndex: 1 }]}
-            activeOpacity={1}
-            onPress={() => setUsernameModal(false)}
-          />
-          {/* Sheet — catches touches so they don't bubble to backdrop */}
-          <View
-            style={[styles.modalSheet, { zIndex: 2 }]}
-            onStartShouldSetResponder={() => true}
-            onResponderTerminationRequest={() => false}
-          >
-            <View style={styles.modalHandle} />
-            <Text style={styles.modalTitle}>{profile.username ? 'Change Username' : 'Choose Username'}</Text>
-            <Text style={styles.modalSubtitle}>3–20 characters. Letters, numbers, and underscores only.</Text>
-            <TextInput
-              style={styles.modalInput}
-              value={usernameInput}
-              onChangeText={(t) => { setUsernameInput(t); setUsernameError(''); }}
-              placeholder="e.g. soccer_fan_99"
-              placeholderTextColor={Colors.textTertiary}
-              autoCapitalize="none"
-              autoCorrect={false}
-              maxLength={20}
-              returnKeyType="done"
-              onSubmitEditing={handleSetUsername}
-            />
-            {usernameError ? <Text style={styles.modalError}>{usernameError}</Text> : null}
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 20 : 0}
+        >
+          <View style={styles.modalOverlay}>
+            {/* Backdrop — tapping outside the sheet dismisses */}
             <TouchableOpacity
-              style={[styles.buyBtn, { opacity: usernameLoading || !usernameInput.trim() ? 0.6 : 1 }]}
-              onPress={handleSetUsername}
-              disabled={usernameLoading || !usernameInput.trim()}
-              activeOpacity={0.8}
+              style={[StyleSheet.absoluteFill, { zIndex: 1 }]}
+              activeOpacity={1}
+              onPress={() => setUsernameModal(false)}
+            />
+            {/* Sheet — catches touches so they don't bubble to backdrop */}
+            <View
+              style={[styles.modalSheet, { zIndex: 2 }]}
+              onStartShouldSetResponder={() => true}
+              onResponderTerminationRequest={() => false}
             >
-              {usernameLoading ? (
-                <ActivityIndicator size="small" color={Colors.background} />
-              ) : (
-                <Text style={styles.buyBtnText}>{profile.username ? 'Update' : 'Set Username'}</Text>
-              )}
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.modalCancel} onPress={() => setUsernameModal(false)}>
-              <Text style={styles.modalCancelText}>Cancel</Text>
-            </TouchableOpacity>
+              <View style={styles.modalHandle} />
+              <Text style={styles.modalTitle}>{profile.username ? 'Change Username' : 'Choose Username'}</Text>
+              <Text style={styles.modalSubtitle}>3–20 characters. Letters, numbers, and underscores only.</Text>
+              <TextInput
+                style={styles.modalInput}
+                value={usernameInput}
+                onChangeText={(t) => { setUsernameInput(t); setUsernameError(''); }}
+                placeholder="e.g. soccer_fan_99"
+                placeholderTextColor={Colors.textTertiary}
+                autoCapitalize="none"
+                autoCorrect={false}
+                maxLength={20}
+                returnKeyType="done"
+                onSubmitEditing={handleSetUsername}
+              />
+              {usernameError ? <Text style={styles.modalError}>{usernameError}</Text> : null}
+              <TouchableOpacity
+                style={[styles.buyBtn, { opacity: usernameLoading || !usernameInput.trim() ? 0.6 : 1 }]}
+                onPress={handleSetUsername}
+                disabled={usernameLoading || !usernameInput.trim()}
+                activeOpacity={0.8}
+              >
+                {usernameLoading ? (
+                  <ActivityIndicator size="small" color={Colors.background} />
+                ) : (
+                  <Text style={styles.buyBtnText}>{profile.username ? 'Update' : 'Set Username'}</Text>
+                )}
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.modalCancel} onPress={() => setUsernameModal(false)}>
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
@@ -865,6 +934,7 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.background },
   header: { paddingHorizontal: 20, paddingBottom: 16 },
   headerTitle: { fontSize: 28, fontWeight: '800', color: Colors.text },
+  headerIcon: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   body: { paddingHorizontal: 20 },
   profileCard: {
     backgroundColor: Colors.card, borderRadius: Colors.radiusLg,
@@ -878,6 +948,15 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   avatarText: { fontSize: 20, fontWeight: '800', color: Colors.primary },
+  avatarEditBadge: {
+    position: 'absolute',
+    bottom: -2, right: -2,
+    width: 22, height: 22,
+    borderRadius: 11,
+    backgroundColor: Colors.primary,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 2, borderColor: Colors.background,
+  },
   profileInfo: { flex: 1 },
   profileEmail: { fontSize: 15, fontWeight: '600', color: Colors.text, marginBottom: 6 },
   accessBadge: {

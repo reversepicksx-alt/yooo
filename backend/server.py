@@ -1,7 +1,8 @@
 import os
+from datetime import datetime, timezone, timedelta
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from config import db, LIFETIME_SUB_EMAILS, OWNER_EMAIL, COMPLIMENTARY_MEMBERS, init_dynamic_settings, get_dynamic_setting
+from config import db, LIFETIME_SUB_EMAILS, OWNER_EMAIL, OWNER_EMAILS, COMPLIMENTARY_MEMBERS, init_dynamic_settings, get_dynamic_setting
 
 # ── Create App ──
 app = FastAPI(title="Reverse Picks API")
@@ -35,6 +36,7 @@ from routes.search import router as search_router
 from routes.support import router as support_router
 from routes.push import router as push_router
 from routes.users import router as users_router
+from routes.dm import router as dm_router
 from routes.mlb_routes import router as mlb_router
 from routes.cs2_routes import router as cs2_router
 from routes.wta_routes import router as wta_router
@@ -79,6 +81,7 @@ app.include_router(wta_router)
 app.include_router(support_router)
 app.include_router(push_router)
 app.include_router(users_router)
+app.include_router(dm_router)
 app.include_router(mlb_router)
 app.include_router(cs2_router)
 app.include_router(nba_router)
@@ -1155,3 +1158,38 @@ async def force_resettle_pick(payload: dict):
         "minutesPlayed": result.get("minutesPlayed"),
         "matchScore":   result.get("matchScore"),
     }
+
+
+@app.get("/api/admin/sessions")
+async def list_active_sessions(email: str = Query(...)):
+    """Owner-only: return all active sessions with last-active info."""
+    from config import OWNER_EMAILS
+    email_lower = email.lower().strip()
+    if email_lower not in OWNER_EMAILS:
+        raise HTTPException(status_code=403, detail="Owner access only")
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    sessions = (
+        await db.sessions.find(
+            {"last_active": {"$gte": cutoff.isoformat()}},
+            {"_id": 0, "email": 1, "access_type": 1, "last_active": 1}
+        )
+        .sort("last_active", -1)
+        .to_list(None)
+    )
+
+    results = []
+    for s in sessions:
+        user = await db.users.find_one(
+            {"email": s.get("email")},
+            {"_id": 0, "username": 1, "displayName": 1, "profileImage": 1}
+        )
+        results.append({
+            "email": s.get("email"),
+            "username": user.get("username") if user else None,
+            "displayName": user.get("displayName") if user else None,
+            "profileImage": user.get("profileImage") if user else None,
+            "accessType": s.get("access_type"),
+            "lastActive": s.get("last_active"),
+        })
+    return results

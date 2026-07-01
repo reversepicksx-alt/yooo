@@ -1528,6 +1528,7 @@ export async function getUserProfile(email: string): Promise<{
   email: string;
   username: string | null;
   displayName: string | null;
+  profileImage?: string | null;
 }> {
   return apiCall(`/api/users/me?email=${encodeURIComponent(email)}`);
 }
@@ -1543,6 +1544,16 @@ export async function setUsername(email: string, username: string): Promise<{
   });
 }
 
+export async function setProfileImage(email: string, imageBase64: string): Promise<{
+  ok: boolean;
+  profileImage: string;
+}> {
+  return apiCall('/api/users/profile-image', {
+    method: 'POST',
+    body: JSON.stringify({ email, imageBase64 }),
+  });
+}
+
 export async function searchUsers(q: string): Promise<{
   email: string;
   username: string | null;
@@ -1550,5 +1561,50 @@ export async function searchUsers(q: string): Promise<{
   label: string;
 }[]> {
   return apiCall(`/api/users/search?q=${encodeURIComponent(q)}`);
+}
+
+// ─── Direct Messages (Reverse Mail) ────────────────────────────────────────────────────────────────────
+
+export interface DmMessage {
+  id: string;
+  senderEmail: string;
+  recipientEmail: string;
+  text: string;
+  read: boolean;
+  createdAt: string;
+}
+
+export interface DmConversation {
+  otherEmail: string;
+  otherName: string;
+  otherImage: string | null;
+  lastMessage: string;
+  lastAt: string;
+  unreadCount: number;
+}
+
+export async function sendDm(senderEmail: string, recipientEmail: string, text: string): Promise<{
+  ok: boolean;
+  message: DmMessage;
+}> {
+  return apiCall('/api/dm/send', {
+    method: 'POST',
+    body: JSON.stringify({ senderEmail, recipientEmail, text }),
+  });
+}
+
+export async function getDmInbox(email: string): Promise<DmConversation[]> {
+  return apiCall(`/api/dm/inbox?email=${encodeURIComponent(email)}`);
+}
+
+export async function getDmThread(email: string, other: string): Promise<DmMessage[]> {
+  return apiCall(`/api/dm/thread?email=${encodeURIComponent(email)}&other=${encodeURIComponent(other)}`);
+}
+
+export async function markDmRead(email: string, otherEmail: string): Promise<{ ok: boolean }> {
+  return apiCall('/api/dm/read', {
+    method: 'PATCH',
+    body: JSON.stringify({ email, otherEmail }),
+  });
 }
 

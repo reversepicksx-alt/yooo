@@ -272,9 +272,26 @@ export default function CommunityScreen() {
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [reactionTarget, setReactionTarget] = useState<CommunityMessage | null>(null);
-  const [onlineCount] = useState(Math.floor(Math.random() * 8) + 3);
+  const [onlineCount, setOnlineCount] = useState(0);
+  const [activeUsers, setActiveUsers] = useState<any[]>([]);
+  const [showActiveUsers, setShowActiveUsers] = useState(false);
+  const isOwner = session?.accessType?.toLowerCase() === 'owner';
 
   // ── Data loading ──────────────────────────────────────────────────────────
+
+  const loadActiveUsers = useCallback(async () => {
+    if (!myEmail || !isOwner) return;
+    try {
+      const resp = await fetch(`/api/admin/sessions?email=${encodeURIComponent(myEmail)}`);
+      const data = await resp.json();
+      if (Array.isArray(data)) {
+        setActiveUsers(data);
+        setOnlineCount(data.length);
+      }
+    } catch {
+      // silently fail
+    }
+  }, [myEmail, isOwner]);
 
   const loadInitial = useCallback(async () => {
     try {
@@ -320,11 +337,14 @@ export default function CommunityScreen() {
     useCallback(() => {
       loadInitial();
       loadParticipants();
+      if (isOwner) loadActiveUsers();
       pollRef.current = setInterval(pollNew, POLL_MS);
+      const t2 = isOwner ? setInterval(loadActiveUsers, 15000) : null;
       return () => {
         if (pollRef.current) clearInterval(pollRef.current);
+        if (t2) clearInterval(t2);
       };
-    }, [loadInitial, pollNew, loadParticipants]),
+    }, [loadInitial, pollNew, loadParticipants, loadActiveUsers, isOwner]),
   );
 
   useEffect(() => {
@@ -563,10 +583,15 @@ export default function CommunityScreen() {
           <Text style={styles.headerTitle}>Reverse Chat</Text>
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <View style={styles.onlineBadge}>
+          <TouchableOpacity
+            style={styles.onlineBadge}
+            onPress={() => isOwner && setShowActiveUsers(true)}
+            activeOpacity={isOwner ? 0.7 : 1}
+            disabled={!isOwner}
+          >
             <View style={styles.onlineDot} />
             <Text style={styles.onlineText}>{onlineCount} online</Text>
-          </View>
+          </TouchableOpacity>
           <NotificationBell />
         </View>
       </View>
@@ -791,6 +816,49 @@ export default function CommunityScreen() {
             <Ionicons name="close" size={24} color="#fff" />
           </TouchableOpacity>
         </Pressable>
+      </Modal>
+
+      {/* ── Owner-only active users sheet ──────────────────────────────────── */}
+      <Modal
+        visible={showActiveUsers}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowActiveUsers(false)}
+      >
+        <TouchableOpacity
+          style={styles.auOverlay}
+          activeOpacity={1}
+          onPress={() => setShowActiveUsers(false)}
+        >
+          <View style={styles.auSheet} onStartShouldSetResponder={() => true}>
+            <Text style={styles.auTitle}>Active Users ({activeUsers.length})</Text>
+            <FlatList
+              data={activeUsers}
+              keyExtractor={(item) => item.email}
+              renderItem={({ item }) => (
+                <View style={styles.auRow}>
+                  <View style={styles.auAvatar}>
+                    <Text style={styles.auAvatarText}>
+                      {(item.displayName || item.username || item.email)[0].toUpperCase()}
+                    </Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.auName} numberOfLines={1}>
+                      {item.displayName || item.username || item.email.split('@')[0]}
+                    </Text>
+                    <Text style={styles.auEmail}>{item.email}</Text>
+                  </View>
+                  <Text style={styles.auAccess}>{item.accessType}</Text>
+                </View>
+              )}
+              ListEmptyComponent={(
+                <Text style={{ textAlign: 'center', color: Colors.textSecondary, padding: 20 }}>
+                  No active users in the last 7 days.
+                </Text>
+              )}
+            />
+          </View>
+        </TouchableOpacity>
       </Modal>
     </View>
   );
@@ -1222,5 +1290,40 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+
+  // Active users modal
+  auOverlay: {
+    flex: 1, backgroundColor: Colors.overlay,
+    justifyContent: 'flex-end',
+  },
+  auSheet: {
+    backgroundColor: Colors.card,
+    borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    padding: 24, paddingBottom: 40,
+    maxHeight: '70%',
+  },
+  auTitle: {
+    fontSize: 18, fontWeight: '800', color: Colors.text,
+    marginBottom: 16,
+  },
+  auRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingVertical: 10, borderBottomWidth: 0.5,
+    borderBottomColor: Colors.border,
+  },
+  auAvatar: {
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: Colors.primaryDim,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  auAvatarText: { fontSize: 14, fontWeight: '700', color: Colors.primary },
+  auName: { fontSize: 15, fontWeight: '600', color: Colors.text, flex: 1 },
+  auEmail: { fontSize: 12, color: Colors.textTertiary },
+  auAccess: {
+    fontSize: 11, fontWeight: '700', color: Colors.primary,
+    backgroundColor: Colors.primaryDim,
+    paddingHorizontal: 8, paddingVertical: 2,
+    borderRadius: 10,
   },
 });

@@ -21,6 +21,11 @@ class SetUsernameRequest(BaseModel):
     username: str
 
 
+class SetProfileImageRequest(BaseModel):
+    email: str
+    imageBase64: str
+
+
 class UsernameResponse(BaseModel):
     ok: bool
     username: Optional[str] = None
@@ -41,6 +46,7 @@ async def get_profile(email: str = Query(...)):
         "email": doc.get("email"),
         "username": doc.get("username"),
         "displayName": doc.get("displayName"),
+        "profileImage": doc.get("profileImage"),
         "createdAt": doc.get("createdAt"),
     }
 
@@ -88,6 +94,28 @@ async def set_username(req: SetUsernameRequest):
     return UsernameResponse(ok=True, username=username, message="Username saved")
 
 
+@router.post("/profile-image")
+async def set_profile_image(req: SetProfileImageRequest):
+    email_lower = req.email.lower().strip()
+    # Accept any size image — just store the base64 string directly
+    # (compression happens on the client; server stores whatever it receives)
+    await db.users.update_one(
+        {"email": email_lower},
+        {
+            "$set": {
+                "profileImage": req.imageBase64,
+                "updatedAt": datetime.now(timezone.utc),
+            },
+            "$setOnInsert": {
+                "email": email_lower,
+                "createdAt": datetime.now(timezone.utc),
+            },
+        },
+        upsert=True,
+    )
+    return {"ok": True, "profileImage": req.imageBase64}
+
+
 @router.get("/search")
 async def search_users(q: str = Query(..., min_length=1), limit: int = Query(10, le=20)):
     """Prefix search for username / displayName / email — used by @mention autocomplete."""
@@ -105,7 +133,7 @@ async def search_users(q: str = Query(..., min_length=1), limit: int = Query(10,
     }
 
     docs = (
-        await db.users.find(query, {"_id": 0, "email": 1, "username": 1, "displayName": 1})
+        await db.users.find(query, {"_id": 0, "email": 1, "username": 1, "displayName": 1, "profileImage": 1})
         .limit(limit)
         .to_list(None)
     )

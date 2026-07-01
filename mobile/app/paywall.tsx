@@ -26,7 +26,7 @@ const FEATURES = [
   'Tactical breakdowns & sharp summaries',
   'Real-time injury & lineup intel',
   'All major leagues + tournaments',
-  'Soccer, NBA, NFL, NHL & more',
+  'All major soccer leagues + international tournaments',
 ];
 
 function getErrorMessage(e: unknown): string {
