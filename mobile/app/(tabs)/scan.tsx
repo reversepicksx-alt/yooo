@@ -89,6 +89,8 @@ export default function ScanScreen() {
   // Paywall gating — all platforms (web Stripe + native RevenueCat) enforce subscription
   const isNoSub = !accessType || accessType === 'NoSubscription';
   const qc = useQueryClient();
+  // AbortController ref so reset() can cancel an in-flight prediction
+  const cancelAbortRef = useRef<AbortController | null>(null);
   const [mode, setMode] = useState<Mode>('scan');
   const [phase, setPhase] = useState<Phase>('idle');
   const [sport, setSport] = useState<Sport>('soccer');
@@ -226,6 +228,8 @@ export default function ScanScreen() {
   };
 
   const reset = () => {
+    cancelAbortRef.current?.abort();
+    cancelAbortRef.current = null;
     setMode('scan');
     setPhase('idle');
     setSport('soccer');
@@ -419,6 +423,8 @@ export default function ScanScreen() {
     setPhase('analyzing');
     setAnalyzeError(null);
     setManualError(null);
+    cancelAbortRef.current?.abort();
+    cancelAbortRef.current = new AbortController();
     try {
       const req = {
         email: session.email,
@@ -435,7 +441,7 @@ export default function ScanScreen() {
         line: data.line || 0,
         sport: sport,
       };
-      const result = await predict(req);
+      const result = await predict(req, cancelAbortRef.current.signal);
       if (result.error) {
         if (inManual) setManualError(result.error); else setAnalyzeError(result.error);
         setPhase(inManual ? 'idle' : 'detected');
@@ -452,9 +458,12 @@ export default function ScanScreen() {
         pollForAiNarrative(req, result);
       }
     } catch (e: unknown) {
+      if (e instanceof Error && e.message === '__CANCELLED__') return;
       const msg = e instanceof Error ? e.message : 'Analysis failed — try again';
       if (inManual) setManualError(msg); else setAnalyzeError(msg);
       setPhase(inManual ? 'idle' : 'detected');
+    } finally {
+      cancelAbortRef.current = null;
     }
   };
 
@@ -546,6 +555,8 @@ export default function ScanScreen() {
     if (!line.trim() || isNaN(parseFloat(line))) { setManualError('Enter a valid line value (e.g. 21.5).'); return; }
     setManualError(null);
     setPhase('analyzing');
+    cancelAbortRef.current?.abort();
+    cancelAbortRef.current = new AbortController();
     try {
       const result = await cs2Predict({
         email:              session.email,
@@ -559,7 +570,7 @@ export default function ScanScreen() {
         opponentName:       cs2OpponentQuery.trim() || '',
         mapName:            cs2MapName.trim() || undefined,
         playerTeamStartsCt: cs2TeamStartsCt !== null ? cs2TeamStartsCt : undefined,
-      });
+      }, cancelAbortRef.current.signal);
       if ((result as any).error) { setManualError((result as any).error); setPhase('idle'); return; }
       setScanResult({
         playerName:   result.playerName || cs2PlayerQuery.trim(),
@@ -573,8 +584,11 @@ export default function ScanScreen() {
       setPhase('result');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e: unknown) {
+      if (e instanceof Error && e.message === '__CANCELLED__') return;
       setManualError(e instanceof Error ? e.message : 'CS2 analysis failed — try again');
       setPhase('idle');
+    } finally {
+      cancelAbortRef.current = null;
     }
   };
 
@@ -592,6 +606,8 @@ export default function ScanScreen() {
     if (!line.trim() || isNaN(parseFloat(line))) { setManualError('Enter a valid line value (e.g. 22.5).'); return; }
     setManualError(null);
     setPhase('analyzing');
+    cancelAbortRef.current?.abort();
+    cancelAbortRef.current = new AbortController();
     try {
       const result = await wtaPredict({
         email:        session.email,
@@ -606,7 +622,7 @@ export default function ScanScreen() {
         round:        wtaRound,
         subjectRank:  wtaResolvedPlayer?.currentRank ?? null,
         opponentRank: wtaResolvedOpponent?.currentRank ?? null,
-      });
+      }, cancelAbortRef.current.signal);
       if ((result as any).error) { setManualError((result as any).error); setPhase('idle'); return; }
       setScanResult({
         playerName:   result.playerName || wtaPlayerQuery.trim(),
@@ -620,8 +636,11 @@ export default function ScanScreen() {
       setPhase('result');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e: unknown) {
+      if (e instanceof Error && e.message === '__CANCELLED__') return;
       setManualError(e instanceof Error ? e.message : 'WTA analysis failed — try again');
       setPhase('idle');
+    } finally {
+      cancelAbortRef.current = null;
     }
   };
 
@@ -843,6 +862,10 @@ export default function ScanScreen() {
                   <View style={{ alignItems: 'center', paddingVertical: 12, gap: 8 }}>
                     <ActivityIndicator size="small" color={Colors.primary} />
                     <Text style={{ color: Colors.primary, fontSize: 12, fontWeight: '700' }}>Analyzing…</Text>
+                    <TouchableOpacity onPress={reset} style={styles.cancelBtn}>
+                      <Ionicons name="close-circle-outline" size={14} color={Colors.error} />
+                      <Text style={styles.cancelBtnText}>Cancel</Text>
+                    </TouchableOpacity>
                   </View>
                 )}
 
@@ -1123,15 +1146,14 @@ export default function ScanScreen() {
             )}
 
             <TouchableOpacity
-              style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnLoading]}
-              onPress={handleManualAnalyze}
-              disabled={phase === 'analyzing'}
+              style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnCancel]}
+              onPress={phase === 'analyzing' ? reset : handleManualAnalyze}
               activeOpacity={0.85}
             >
               {phase === 'analyzing' ? (
                 <>
-                  <ActivityIndicator color="#000" size="small" />
-                  <Text style={styles.predictBtnText}>Analyzing…</Text>
+                  <Ionicons name="close-circle-outline" size={16} color="#fff" />
+                  <Text style={[styles.predictBtnText, { color: '#fff' }]}>Cancel</Text>
                 </>
               ) : (
                 <>
@@ -1206,15 +1228,14 @@ export default function ScanScreen() {
             )}
 
             <TouchableOpacity
-              style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnLoading]}
-              onPress={handleCs2Analyze}
-              disabled={phase === 'analyzing'}
+              style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnCancel]}
+              onPress={phase === 'analyzing' ? reset : handleCs2Analyze}
               activeOpacity={0.85}
             >
               {phase === 'analyzing' ? (
                 <>
-                  <ActivityIndicator color="#000" size="small" />
-                  <Text style={styles.predictBtnText}>Analyzing…</Text>
+                  <Ionicons name="close-circle-outline" size={16} color="#fff" />
+                  <Text style={[styles.predictBtnText, { color: '#fff' }]}>Cancel</Text>
                 </>
               ) : (
                 <>
@@ -1301,15 +1322,14 @@ export default function ScanScreen() {
             )}
 
             <TouchableOpacity
-              style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnLoading]}
-              onPress={handleWtaAnalyze}
-              disabled={phase === 'analyzing'}
+              style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnCancel]}
+              onPress={phase === 'analyzing' ? reset : handleWtaAnalyze}
               activeOpacity={0.85}
             >
               {phase === 'analyzing' ? (
                 <>
-                  <ActivityIndicator color="#000" size="small" />
-                  <Text style={styles.predictBtnText}>Analyzing…</Text>
+                  <Ionicons name="close-circle-outline" size={16} color="#fff" />
+                  <Text style={[styles.predictBtnText, { color: '#fff' }]}>Cancel</Text>
                 </>
               ) : (
                 <>
@@ -3990,12 +4010,24 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: 'rgba(57,255,20,0.4)',
   },
   predictBtnLoading: { opacity: 0.8 },
+  predictBtnCancel: {
+    backgroundColor: Colors.error,
+    borderWidth: 0,
+  },
   predictBtnText: { color: '#000', fontWeight: '800', fontSize: 16, letterSpacing: 0.5 },
   rescanBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
     justifyContent: 'center', paddingVertical: 14,
   },
   rescanText: { color: Colors.textSecondary, fontSize: 13 },
+  cancelBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 10, paddingVertical: 6,
+    borderRadius: 6,
+    backgroundColor: 'rgba(220,38,38,0.12)',
+    marginTop: 2,
+  },
+  cancelBtnText: { color: Colors.error, fontSize: 12, fontWeight: '700' },
 
   /* Manual form */
   manualForm: { gap: 8 },

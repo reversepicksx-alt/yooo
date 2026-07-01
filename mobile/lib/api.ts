@@ -29,6 +29,10 @@ export async function apiCall<T = unknown>(endpoint: string, options: RequestIni
   const timeoutMs = isCs2Predict ? CS2_TIMEOUT_MS : isLong ? LONG_TIMEOUT_MS : isMedium ? MEDIUM_TIMEOUT_MS : SHORT_TIMEOUT_MS;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  // Wire caller-supplied external signal into the internal controller so a user cancel also aborts the fetch
+  const externalSignal = options.signal;
+  const onExternalAbort = () => controller.abort();
+  externalSignal?.addEventListener('abort', onExternalAbort);
   let resp: Response;
   try {
     resp = await fetch(url, {
@@ -38,11 +42,16 @@ export async function apiCall<T = unknown>(endpoint: string, options: RequestIni
     });
   } catch (e: unknown) {
     if (e instanceof Error && e.name === 'AbortError') {
+      // If the caller cancelled via their own signal, throw a distinct error so the UI can silently bail
+      if (externalSignal?.aborted) {
+        throw new Error('__CANCELLED__');
+      }
       throw new Error('Request timed out. The server is taking too long — please try again.');
     }
     throw new Error('Cannot reach server. Please try again.');
   } finally {
     clearTimeout(timer);
+    externalSignal?.removeEventListener('abort', onExternalAbort);
   }
   if (!resp.ok) {
     const err = await resp.json().catch(() => null);
@@ -584,10 +593,11 @@ const GAME_LOG_FIELD_MAP: Record<string, string> = {
   duels_won: 'duels_won',
 };
 
-export async function predict(request: Record<string, unknown>): Promise<PredictionResult> {
+export async function predict(request: Record<string, unknown>, signal?: AbortSignal): Promise<PredictionResult> {
   const raw = await apiCall<RawPrediction>('/api/predict', {
     method: 'POST',
     body: JSON.stringify(request),
+    signal,
   });
   if (raw.error) return { error: raw.error };
   const rec = raw.recommendation?.toUpperCase() as 'OVER' | 'UNDER' | 'PASS' | undefined;
@@ -1242,10 +1252,11 @@ export async function searchWtaPlayers(query: string): Promise<WtaPlayer[]> {
   return apiCall<WtaPlayer[]>(`/api/wta/players/search?q=${encodeURIComponent(query)}`);
 }
 
-export async function wtaPredict(request: Record<string, unknown>): Promise<PredictionResult> {
+export async function wtaPredict(request: Record<string, unknown>, signal?: AbortSignal): Promise<PredictionResult> {
   const raw = await apiCall<any>('/api/wta/predict', {
     method: 'POST',
     body: JSON.stringify(request),
+    signal,
   });
   if (raw.error) return { error: raw.error } as PredictionResult;
   const bm  = raw.bayesianMetrics || {};
@@ -1305,10 +1316,11 @@ export async function wtaPredict(request: Record<string, unknown>): Promise<Pred
   } as unknown as PredictionResult;
 }
 
-export async function cs2Predict(request: Record<string, unknown>): Promise<PredictionResult> {
+export async function cs2Predict(request: Record<string, unknown>, signal?: AbortSignal): Promise<PredictionResult> {
   const raw = await apiCall<any>('/api/cs2/predict', {
     method: 'POST',
     body: JSON.stringify(request),
+    signal,
   });
   if (raw.error) return { error: raw.error } as PredictionResult;
   const bm  = raw.bayesianMetrics || {};
