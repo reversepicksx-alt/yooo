@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   ActivityIndicator, Platform, Image, Alert, TextInput, KeyboardAvoidingView,
-  Linking,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -13,9 +12,6 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useSubscription, REVENUECAT_ENTITLEMENT_IDENTIFIER } from '@/lib/revenuecat';
 import { iapSignup } from '@/lib/api';
 import Purchases, { type PurchasesPackage } from 'react-native-purchases';
-
-const PRIVACY_URL = 'https://reversepicks.com/privacy';
-const TERMS_URL   = 'https://reversepicks.com/terms';
 
 // ── Fallback demo plans (shown when RevenueCat returns empty in dev/TestFlight) ──
 const DEMO_PACKAGES: { title: string; price: string; period: string; desc: string }[] = [
@@ -396,11 +392,11 @@ export default function PaywallScreen() {
 
         {/* Legal links — required by App Store Guideline 3.1.2(c) */}
         <View style={styles.legalRow}>
-          <TouchableOpacity onPress={() => Linking.openURL(TERMS_URL)} activeOpacity={0.7}>
+          <TouchableOpacity onPress={() => router.push('/terms')} activeOpacity={0.7}>
             <Text style={styles.legalLink}>Terms of Use</Text>
           </TouchableOpacity>
           <Text style={styles.legalSep}>·</Text>
-          <TouchableOpacity onPress={() => Linking.openURL(PRIVACY_URL)} activeOpacity={0.7}>
+          <TouchableOpacity onPress={() => router.push('/privacy')} activeOpacity={0.7}>
             <Text style={styles.legalLink}>Privacy Policy</Text>
           </TouchableOpacity>
         </View>
