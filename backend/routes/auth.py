@@ -107,7 +107,7 @@ _COLORS = [
 ]
 
 def _random_username() -> str:
-    return f"{_random.choice(_COLORS)}_{_random.choice(_ANIMALS)}_{_random.randint(1,9999)}"
+    return f"{random.choice(_COLORS)}_{random.choice(_ANIMALS)}_{random.randint(1,9999)}"
 
 async def _ensure_username(email: str) -> str:
     doc = await db.users.find_one({"email": email}, {"_id": 0, "username": 1})
