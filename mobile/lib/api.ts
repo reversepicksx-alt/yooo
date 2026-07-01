@@ -1,9 +1,9 @@
 import { Platform } from 'react-native';
 
 const getApiBase = (): string => {
-  // On web: use relative URL — the proxy server handles /api → localhost:8000
+  // On web: call production API directly (same as iOS app) — never the dev backend
   if (Platform.OS === 'web' && typeof window !== 'undefined') {
-    return '';
+    return 'https://reversepicks.com';
   }
   // For native app builds: use EXPO_PUBLIC_API_URL or localhost fallback
   const env = process.env.EXPO_PUBLIC_API_URL;
