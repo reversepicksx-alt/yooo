@@ -82,7 +82,7 @@ externalPort = 3000
   [deployment]
 deploymentTarget = "vm"
 run = ["bash", "-c", "mkdir -p /home/runner/.reversepicks_db && rm -f /home/runner/.reversepicks_db/mongod.lock 2>/dev/null; (mongod --dbpath /home/runner/.reversepicks_db --logpath /home/runner/.reversepicks_mongo.log --fork --quiet 2>/dev/null || { mongod --dbpath /home/runner/.reversepicks_db --repair --quiet 2>/dev/null; mongod --dbpath /home/runner/.reversepicks_db --logpath /home/runner/.reversepicks_mongo.log --fork --quiet 2>/dev/null; }); (cd /home/runner/workspace/backend && while true; do /home/runner/workspace/.pythonlibs/bin/python3.12 -m uvicorn server:app --host 0.0.0.0 --port 8000; echo '[SUPERVISOR] uvicorn exited — restarting in 3s'; sleep 3; done) & cd /home/runner/workspace/mobile && PRODUCTION=true node proxy.js"]
-build = ["bash", "-c", "echo 'Build: 1782900000000' && cd mobile && ([ -d node_modules ] || npm install --legacy-peer-deps --silent) && npx expo export -p web --output-dir dist && echo '[BUILD] dist ready.'"]
+build = ["bash", "-c", "cd mobile && ([ -f dist/index.html ] && echo '[BUILD] using committed dist (skip export)' || (([ -d node_modules ] || npm install --legacy-peer-deps --silent) && npx expo export -p web --output-dir dist)) && echo '[BUILD] ready'"]
 
   [postMerge]
   path = "scripts/post-merge.sh"

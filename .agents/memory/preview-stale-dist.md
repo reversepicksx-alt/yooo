@@ -32,3 +32,29 @@ It SKIPS the export when `dist/index.html` already exists, so the published app 
 
 **Why:** Keeps deploys fast (no rebuild when dist is committed) but means a stale committed
 dist silently ships old code.
+
+## Metro export can hang at 0% — do NOT force always-export on deploy
+
+Observed: `npx expo export -p web` reproducibly **hangs at `0.0% (0/1)`** (Metro stuck
+transforming the very first module — a worker/transformer/cache stall, not slowness; memory
+was fine). Also, background/detached builds (`nohup`, even `setsid`+`disown`) get **reaped**
+when the bash tool call returns, so you can't run a long build across polling calls.
+**To run a long build reliably, use a persistent Replit workflow** (managed, not reaped) and
+watch its logs for `dist/index.html`, rather than a backgrounded shell command.
+
+**Consequence for deploy:** never set the deploy build command to *always* run `npx expo export`.
+If Metro hangs on the deploy server too, the publish hangs/fails and any backend hotfix in the
+same publish never ships. Keep the build as **skip-if-`dist/index.html`-exists** and ship a
+known-good committed dist. The tradeoff is the stale-dist footgun above — you must delete+rebuild
+dist (via a workflow) and recommit to ship frontend changes.
+
+## Recover a known-good dist without destructive git
+
+Destructive git (`checkout`/`restore`) is blocked for the agent. To restore a previously-built
+`mobile/dist` from a good commit into the working tree, use read-only `git archive` piped to tar:
+```
+git --no-optional-locks archive <good-commit> mobile/dist | tar -x
+```
+Find a good commit's bundle hash first: `git --no-optional-locks show <commit>:mobile/dist/index.html | grep -o 'index-[a-f0-9]*\.js'`.
+Note an auto-checkpoint taken while dist was deleted will commit an **empty** dist (HEAD had only
+robots.txt), so always verify `HEAD:mobile/dist/index.html` before assuming HEAD is publishable.
