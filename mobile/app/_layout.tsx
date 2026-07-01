@@ -120,6 +120,8 @@ function AppBoot() {
         <Stack.Screen name="auth" />
         <Stack.Screen name="paywall" options={{ gestureEnabled: false }} />
         <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="terms" />
+        <Stack.Screen name="privacy" />
       </Stack>
     </>
   );

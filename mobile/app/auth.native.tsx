@@ -407,9 +407,9 @@ export default function AuthScreen() {
 
             <Text style={styles.inlineTerms}>
               By continuing you agree to our{' '}
-              <Text style={styles.inlineTermsLink} onPress={() => Linking.openURL('https://reversepicks.com/terms')}>Terms of Use</Text>
+              <Text style={styles.inlineTermsLink} onPress={() => router.push('/terms')}>Terms of Use</Text>
               {' & '}
-              <Text style={styles.inlineTermsLink} onPress={() => Linking.openURL('https://reversepicks.com/privacy')}>Privacy Policy</Text>
+              <Text style={styles.inlineTermsLink} onPress={() => router.push('/privacy')}>Privacy Policy</Text>
             </Text>
           </Animated.View>
         </ScrollView>
@@ -490,9 +490,9 @@ export default function AuthScreen() {
 
             <Text style={styles.inlineTerms}>
               By continuing you agree to our{' '}
-              <Text style={styles.inlineTermsLink} onPress={() => Linking.openURL('https://reversepicks.com/terms')}>Terms of Use</Text>
+              <Text style={styles.inlineTermsLink} onPress={() => router.push('/terms')}>Terms of Use</Text>
               {' & '}
-              <Text style={styles.inlineTermsLink} onPress={() => Linking.openURL('https://reversepicks.com/privacy')}>Privacy Policy</Text>
+              <Text style={styles.inlineTermsLink} onPress={() => router.push('/privacy')}>Privacy Policy</Text>
             </Text>
           </View>
         </ScrollView>
@@ -579,9 +579,9 @@ export default function AuthScreen() {
 
           <Text style={styles.inlineTerms}>
             By continuing you agree to our{' '}
-            <Text style={styles.inlineTermsLink} onPress={() => Linking.openURL('https://reversepicks.com/terms')}>Terms of Use</Text>
+            <Text style={styles.inlineTermsLink} onPress={() => router.push('/terms')}>Terms of Use</Text>
             {' & '}
-            <Text style={styles.inlineTermsLink} onPress={() => Linking.openURL('https://reversepicks.com/privacy')}>Privacy Policy</Text>
+            <Text style={styles.inlineTermsLink} onPress={() => router.push('/privacy')}>Privacy Policy</Text>
           </Text>
         </View>
       </ScrollView>
