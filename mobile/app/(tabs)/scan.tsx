@@ -763,7 +763,7 @@ export default function ScanScreen() {
         <View style={styles.scanHeaderBrand}>
           <Image source={require('../../assets/logo.png')} style={styles.scanHeaderLogo} resizeMode="contain" />
           <View>
-            <Text style={styles.scanHeaderTitle}>REVERSEPICKS</Text>
+            <Text style={styles.scanHeaderTitle}>REVERSE PICKS</Text>
             <Text style={styles.scanHeaderSub}>AI Player Props</Text>
           </View>
         </View>
@@ -3633,9 +3633,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 18,
-    paddingVertical: 10,
+    paddingVertical: 12,
+    backgroundColor: 'rgba(8,8,8,0.85)',
     borderBottomWidth: 1,
-    borderBottomColor: '#141414',
+    borderBottomColor: 'rgba(57,255,20,0.08)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
   },
   scanHeaderBrand: {
     flexDirection: 'row',
