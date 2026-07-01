@@ -147,7 +147,7 @@ function buildLoadingScreen() { return `
     </div>
     <div class="rp-hud">
       <div class="rp-brand">
-        <span class="rp-ch" style="animation-delay:1.60s">R</span><span class="rp-ch" style="animation-delay:1.655s">E</span><span class="rp-ch" style="animation-delay:1.71s">V</span><span class="rp-ch" style="animation-delay:1.765s">E</span><span class="rp-ch" style="animation-delay:1.82s">R</span><span class="rp-ch" style="animation-delay:1.875s">S</span><span class="rp-ch" style="animation-delay:1.93s">E</span><span class="rp-ch" style="animation-delay:1.985s">P</span><span class="rp-ch" style="animation-delay:2.04s">I</span><span class="rp-ch" style="animation-delay:2.095s">C</span><span class="rp-ch" style="animation-delay:2.15s">K</span><span class="rp-ch" style="animation-delay:2.205s">S</span>
+        <span class="rp-ch" style="animation-delay:1.60s">R</span><span class="rp-ch" style="animation-delay:1.655s">E</span><span class="rp-ch" style="animation-delay:1.71s">V</span><span class="rp-ch" style="animation-delay:1.765s">E</span><span class="rp-ch" style="animation-delay:1.82s">R</span><span class="rp-ch" style="animation-delay:1.875s">S</span><span class="rp-ch" style="animation-delay:1.93s">E</span><span class="rp-ch" style="animation-delay:1.985s">&nbsp;</span><span class="rp-ch" style="animation-delay:2.04s">P</span><span class="rp-ch" style="animation-delay:2.095s">I</span><span class="rp-ch" style="animation-delay:2.15s">C</span><span class="rp-ch" style="animation-delay:2.205s">K</span><span class="rp-ch" style="animation-delay:2.26s">S</span>
       </div>
       <div class="rp-tag">THE EYE SEES WHAT OTHERS MISS</div>
     </div>
