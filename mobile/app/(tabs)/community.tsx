@@ -283,8 +283,7 @@ export default function CommunityScreen() {
   const loadActiveUsers = useCallback(async () => {
     if (!myEmail || !isOwner) return;
     try {
-      const resp = await fetch(`/api/admin/sessions?email=${encodeURIComponent(myEmail)}`);
-      const data = await resp.json();
+      const data = await apiCall<any[]>(`/api/admin/sessions?email=${encodeURIComponent(myEmail)}`);
       if (Array.isArray(data)) {
         setActiveUsers(data);
         setOnlineCount(data.length);
