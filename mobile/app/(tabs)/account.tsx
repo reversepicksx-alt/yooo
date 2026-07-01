@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity,
+  View, Text, TextInput, StyleSheet, ScrollView, TouchableOpacity,
   Alert, Platform, Image, Modal, ActivityIndicator, Linking, Animated,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -9,6 +9,7 @@ import NotificationBell from '@/components/NotificationBell';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
+import { getUserProfile, setUsername } from '@/lib/api';
 import {
   getSubscriptionStatus, cancelSubscription, changePlan,
   resubscribeCheckout, PLAN_OPTIONS, deleteAccount, type SubscriptionStatus,
@@ -429,6 +430,13 @@ export default function AccountScreen() {
   const [actionLoading, setActionLoading] = useState(false);
   const [planPickerVisible, setPlanPickerVisible] = useState(false);
 
+  // Username state
+  const [profile, setProfile] = useState<{ username: string | null }>({ username: null });
+  const [usernameModal, setUsernameModal] = useState(false);
+  const [usernameInput, setUsernameInput] = useState('');
+  const [usernameLoading, setUsernameLoading] = useState(false);
+  const [usernameError, setUsernameError] = useState('');
+
   // RevenueCat state (iOS native only)
   const { isSubscribed: hasIAP, isLoading: iapLoading } = useSubscription();
 
@@ -458,6 +466,35 @@ export default function AccountScreen() {
   useEffect(() => {
     fetchSubStatus();
   }, [fetchSubStatus]);
+
+  // Load user profile (username)
+  useEffect(() => {
+    if (!session?.email) return;
+    getUserProfile(session.email)
+      .then((p) => setProfile(p))
+      .catch(() => setProfile({ username: null }));
+  }, [session?.email]);
+
+  const handleSetUsername = async () => {
+    if (!session?.email || !usernameInput.trim()) return;
+    setUsernameLoading(true);
+    setUsernameError('');
+    try {
+      const res = await setUsername(session.email, usernameInput.trim());
+      if (res.ok) {
+        setProfile((prev) => ({ ...prev, username: res.username }));
+        setUsernameModal(false);
+        setUsernameInput('');
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } else {
+        setUsernameError(res.message || 'Could not save username');
+      }
+    } catch (e: any) {
+      setUsernameError(e?.message || 'Something went wrong');
+    } finally {
+      setUsernameLoading(false);
+    }
+  };
 
   const handleCancel = async () => {
     const doCancel = async () => {
@@ -658,6 +695,13 @@ export default function AccountScreen() {
         <Text style={styles.sectionLabel}>Account</Text>
         <View style={styles.menuGroup}>
           <MenuRow icon="mail-outline" label="Email" value={session?.email} />
+          <MenuRow
+            icon="at-outline"
+            label="Username"
+            value={profile.username ? `@${profile.username}` : 'Set username'}
+            valueColor={profile.username ? Colors.primary : Colors.textTertiary}
+            onPress={() => setUsernameModal(true)}
+          />
           <MenuRow icon="shield-outline" label="Access Level" value={accessLabel} />
         </View>
 
@@ -763,6 +807,45 @@ export default function AccountScreen() {
         onClose={() => setPlanPickerVisible(false)}
         isResubscribe={isCanceled}
       />
+
+      {/* Username modal */}
+      <Modal visible={usernameModal} transparent animationType="fade" onRequestClose={() => setUsernameModal(false)}>
+        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setUsernameModal(false)}>
+          <View style={styles.modalSheet}>
+            <View style={styles.modalHandle} />
+            <Text style={styles.modalTitle}>{profile.username ? 'Change Username' : 'Choose Username'}</Text>
+            <Text style={styles.modalSubtitle}>3–20 characters. Letters, numbers, and underscores only.</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={usernameInput}
+              onChangeText={(t) => { setUsernameInput(t); setUsernameError(''); }}
+              placeholder="e.g. soccer_fan_99"
+              placeholderTextColor={Colors.textTertiary}
+              autoCapitalize="none"
+              autoCorrect={false}
+              maxLength={20}
+              returnKeyType="done"
+              onSubmitEditing={handleSetUsername}
+            />
+            {usernameError ? <Text style={styles.modalError}>{usernameError}</Text> : null}
+            <TouchableOpacity
+              style={[styles.buyBtn, { opacity: usernameLoading || !usernameInput.trim() ? 0.6 : 1 }]}
+              onPress={handleSetUsername}
+              disabled={usernameLoading || !usernameInput.trim()}
+              activeOpacity={0.8}
+            >
+              {usernameLoading ? (
+                <ActivityIndicator size="small" color={Colors.background} />
+              ) : (
+                <Text style={styles.buyBtnText}>{profile.username ? 'Update' : 'Set Username'}</Text>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.modalCancel} onPress={() => setUsernameModal(false)}>
+              <Text style={styles.modalCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
 }
@@ -900,4 +983,12 @@ const styles = StyleSheet.create({
     alignItems: 'center', backgroundColor: '#1a1a1a',
   },
   modalCancelText: { fontSize: 15, fontWeight: '600', color: Colors.textSecondary },
+  modalInput: {
+    backgroundColor: '#1A1A1A', borderRadius: 12, paddingHorizontal: 16,
+    paddingVertical: 12, fontSize: 16, color: Colors.text,
+    borderWidth: 0.5, borderColor: Colors.border, marginBottom: 12,
+  },
+  modalError: {
+    fontSize: 13, color: Colors.error, textAlign: 'center', marginBottom: 12,
+  },
 });

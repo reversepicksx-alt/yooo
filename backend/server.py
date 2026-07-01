@@ -34,6 +34,7 @@ from routes.intel import router as intel_router
 from routes.search import router as search_router
 from routes.support import router as support_router
 from routes.push import router as push_router
+from routes.users import router as users_router
 from routes.mlb_routes import router as mlb_router
 from routes.cs2_routes import router as cs2_router
 from routes.wta_routes import router as wta_router
@@ -77,6 +78,7 @@ app.include_router(search_router)
 app.include_router(wta_router)
 app.include_router(support_router)
 app.include_router(push_router)
+app.include_router(users_router)
 app.include_router(mlb_router)
 app.include_router(cs2_router)
 app.include_router(nba_router)

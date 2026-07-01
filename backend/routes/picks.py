@@ -1487,6 +1487,15 @@ async def _process_bdl_live(picks: list, email: str) -> list:
             )
         except Exception:
             pass
+
+        # Push notification
+        try:
+            from routes.push import _send_pick_settled_push
+            import asyncio as _aio
+            _aio.create_task(_send_pick_settled_push(pick, result_str))
+        except Exception:
+            pass
+
         # In-app notification
         try:
             from routes.notifications import create_notification
@@ -2194,6 +2203,13 @@ async def _build_bdl_soccer_update(
     )
 
     try:
+        from routes.push import _send_pick_settled_push
+        import asyncio as _aio
+        _aio.create_task(_send_pick_settled_push(pick, result_str))
+    except Exception:
+        pass
+
+    try:
         from routes.notifications import create_notification
         _emoji = "✅" if result_str == "hit" else ("❌" if result_str == "miss" else "↔️")
         _prop  = pick.get("propType", "").replace("_", " ").title()
@@ -2475,6 +2491,14 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
             {"pickId": pick["pickId"], "email": email},
             {"$set": _settle_set}
         )
+
+        # Push notification
+        try:
+            from routes.push import _send_pick_settled_push
+            import asyncio as _aio
+            _aio.create_task(_send_pick_settled_push(pick, result_str))
+        except Exception:
+            pass
         # ── In-app notification ──────────────────────────────────────────────
         try:
             from routes.notifications import create_notification
@@ -2821,6 +2845,14 @@ async def _settle_cs2_pick(pick: dict) -> Optional[dict]:
         {"pickId": pick["pickId"], "email": pick.get("email", "")},
         {"$set": settle_set},
     )
+
+    # Push notification
+    try:
+        from routes.push import _send_pick_settled_push
+        import asyncio as _aio
+        _aio.create_task(_send_pick_settled_push(pick, result_str))
+    except Exception:
+        pass
 
     # ── In-app notification ──────────────────────────────────────────────────
     try:

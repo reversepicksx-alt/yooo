@@ -136,3 +136,37 @@ async def send_everyone(
     tokens = await _get_all_tokens(exclude_email=sender_email)
     print(f"[PUSH] @all → {len(tokens)} token(s): {title!r}")
     await _fire(tokens, title, body, data)
+
+
+# ── Pick settlement helper ───────────────────────────────────────────────────────────────────────────────
+
+async def _send_pick_settled_push(pick: dict, result: str):
+    """Fire a push notification when a pick settles.
+    pick: the dict before update (has email, playerName, propType, line, recommendation).
+    result: 'hit' | 'miss' | 'push' | 'dnp'
+    """
+    import asyncio as _aio
+
+    email = pick.get("email", "").lower().strip()
+    player = pick.get("playerName", "Player")
+    prop = pick.get("propType", "Prop").replace("_", " ").title()
+    line = pick.get("line", "")
+    rec = pick.get("recommendation", "over").upper()
+
+    if result == "hit":
+        title = "✅ Pick HIT!"
+    elif result == "miss":
+        title = "❌ Pick Miss"
+    elif result == "dnp":
+        title = "🔔 Pick DNP"
+    else:
+        title = "↔️ Pick Push"
+
+    body = f"{player} {prop} {rec} {line} — RESULT: {result.upper()}"
+
+    _aio.create_task(send_notifications(
+        emails=[email],
+        title=title,
+        body=body,
+        data={"screen": "picks", "pickId": pick.get("pickId", "")},
+    ))

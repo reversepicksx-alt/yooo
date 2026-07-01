@@ -1510,3 +1510,33 @@ export async function unregisterPushToken(payload: {
   });
 }
 
+// ── User Profile ────────────────────────────────────────────────────────────────────────────
+
+export async function getUserProfile(email: string): Promise<{
+  email: string;
+  username: string | null;
+  displayName: string | null;
+}> {
+  return apiCall(`/api/users/me?email=${encodeURIComponent(email)}`);
+}
+
+export async function setUsername(email: string, username: string): Promise<{
+  ok: boolean;
+  username: string | null;
+  message: string;
+}> {
+  return apiCall('/api/users/username', {
+    method: 'POST',
+    body: JSON.stringify({ email, username }),
+  });
+}
+
+export async function searchUsers(q: string): Promise<{
+  email: string;
+  username: string | null;
+  displayName: string | null;
+  label: string;
+}[]> {
+  return apiCall(`/api/users/search?q=${encodeURIComponent(q)}`);
+}
+

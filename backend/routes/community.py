@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime, timezone
 import uuid
+import re
 from config import db
 
 router = APIRouter()
@@ -111,6 +112,34 @@ async def send_message(req: SendMessageRequest):
     except Exception:
         pass
 
+    # ── Resolve @username mentions to emails ───────────────────────────────
+    resolved_mentions: list[str] = []
+    if req.mentions:
+        for m in req.mentions:
+            m_lower = m.lower().strip()
+            if not m_lower:
+                continue
+            if "@" in m_lower and "." in m_lower:
+                # already an email
+                resolved_mentions.append(m_lower)
+                continue
+            # try username lookup
+            user_doc = await db.users.find_one(
+                {"username": {"$regex": f"^{re.escape(m_lower)}$", "$options": "i"}},
+                {"email": 1}
+            )
+            if user_doc and user_doc.get("email"):
+                resolved_mentions.append(user_doc["email"].lower())
+            else:
+                # fallback: email prefix match
+                email_doc = await db.users.find_one(
+                    {"email": {"$regex": f"^{re.escape(m_lower)}@", "$options": "i"}},
+                    {"email": 1}
+                )
+                if email_doc:
+                    resolved_mentions.append(email_doc["email"].lower())
+    resolved_mentions = list(dict.fromkeys(resolved_mentions))
+
     # ── Push notifications ────────────────────────────────────────────────────
     text_body = req.text.strip()
     sender_name = display_name
@@ -142,24 +171,22 @@ async def send_message(req: SendMessageRequest):
                 body=text_body[:200],
                 data={"screen": "community"},
             ))
-        elif req.mentions:
-            mentioned_emails = [m.lower() for m in req.mentions if m]
-            if mentioned_emails:
-                _aio.create_task(send_notifications(
-                    emails=mentioned_emails,
-                    title=notif_title,
-                    body=text_body[:200],
-                    data={"screen": "community"},
-                ))
+        elif resolved_mentions:
+            _aio.create_task(send_notifications(
+                emails=resolved_mentions,
+                title=notif_title,
+                body=text_body[:200],
+                data={"screen": "community"},
+            ))
     except Exception as _pe:
         print(f"[PUSH] notification dispatch error: {_pe}")
 
     # ── In-app mention notifications ──────────────────────────────────────────
-    if req.mentions and not is_everyone:
+    if resolved_mentions and not is_everyone:
         try:
             import asyncio as _aio2
             from routes.notifications import create_notification
-            for _m_email in [m.lower() for m in req.mentions if m]:
+            for _m_email in resolved_mentions:
                 _aio2.create_task(create_notification(
                     email=_m_email,
                     ntype="mention",

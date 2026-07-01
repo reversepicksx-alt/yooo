@@ -19,6 +19,7 @@ import {
   reactToCommunityMessage,
   deleteCommunityMessage,
   fetchCommunityParticipants,
+  searchUsers,
 } from '@/lib/api';
 
 const { width: SW } = Dimensions.get('window');
@@ -31,7 +32,7 @@ const AVATAR_PALETTE = [
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Participant = { email: string; displayName: string };
+type Participant = { email: string; displayName: string; username?: string | null };
 
 type MessageGroup = {
   groupId: string;
@@ -345,11 +346,18 @@ export default function CommunityScreen() {
       const mentionMatches = text.match(/@\w+/g) || [];
       for (const tag of mentionMatches) {
         const name = tag.slice(1).toLowerCase();
+        // Try username match from mention results first
+        const fromSearch = mentionResults.find((p) => p.username?.toLowerCase() === name);
+        if (fromSearch) {
+          mentions.push(fromSearch.username || fromSearch.email);
+          continue;
+        }
+        // Fallback to displayName / email prefix match
         const found = participants.find(
           (p) => p.displayName.toLowerCase().replace(/\s/g, '') === name ||
                  p.email.split('@')[0].toLowerCase() === name,
         );
-        if (found) mentions.push(found.email);
+        if (found) mentions.push(found.username || found.email);
       }
     }
     // @all: backend detects the text itself and broadcasts to all tokens
@@ -392,7 +400,7 @@ export default function CommunityScreen() {
     } finally {
       setSending(false);
     }
-  }, [inputText, pendingImage, sending, myEmail, participants]);
+  }, [inputText, pendingImage, sending, myEmail, participants, mentionResults]);
 
   // ── Image pick ────────────────────────────────────────────────────────────
 
@@ -478,16 +486,41 @@ export default function CommunityScreen() {
 
   // ── Text change / mention detection ──────────────────────────────────────
 
+  // Mention search via API (usernames + display names)
+  const [mentionResults, setMentionResults] = useState<Participant[]>([]);
+  const mentionDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const handleTextChange = useCallback((text: string) => {
     setInputText(text);
-    setMentionQuery(getMentionQuery(text));
+    const query = getMentionQuery(text);
+    setMentionQuery(query);
+    if (query !== null) {
+      if (mentionDebounce.current) clearTimeout(mentionDebounce.current);
+      mentionDebounce.current = setTimeout(async () => {
+        try {
+          const res = await searchUsers(query);
+          setMentionResults(
+            res.map((u) => ({
+              email: u.email,
+              displayName: u.displayName || u.email.split('@')[0],
+              username: u.username,
+            }))
+          );
+        } catch {
+          setMentionResults([]);
+        }
+      }, 280);
+    } else {
+      setMentionResults([]);
+    }
   }, []);
 
   const handleMentionSelect = useCallback((participant: Participant) => {
-    const tag = participant.displayName.replace(/\s/g, '');
+    const tag = participant.username || participant.displayName.replace(/\s/g, '');
     const replaced = inputText.replace(/@(\w*)$/, `@${tag} `);
     setInputText(replaced);
     setMentionQuery(null);
+    setMentionResults([]);
     inputRef.current?.focus();
   }, [inputText]);
 
@@ -497,10 +530,12 @@ export default function CommunityScreen() {
   const listItems = buildListItems(groups);
 
   const filteredParticipants = mentionQuery !== null
-    ? participants.filter((p) =>
-        p.displayName.toLowerCase().includes(mentionQuery.toLowerCase()) ||
-        p.email.toLowerCase().includes(mentionQuery.toLowerCase()),
-      ).slice(0, 5)
+    ? (mentionResults.length
+        ? mentionResults
+        : participants.filter((p) =>
+            p.displayName.toLowerCase().includes(mentionQuery.toLowerCase()) ||
+            p.email.toLowerCase().includes(mentionQuery.toLowerCase()),
+          ).slice(0, 5))
     : [];
 
   const renderItem = useCallback(({ item }: { item: ListItem }) => {
@@ -603,8 +638,15 @@ export default function CommunityScreen() {
                 onPress={() => handleMentionSelect(p)}
               >
                 <AvatarCircle color={hashColor(p.email)} name={p.displayName} size={28} />
-                <Text style={styles.mentionName}>{p.displayName}</Text>
-                <Text style={styles.mentionEmail}>{p.email.split('@')[0]}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.mentionName}>
+                    {p.username ? `@${p.username}` : p.displayName}
+                  </Text>
+                  {p.username && (
+                    <Text style={[styles.mentionEmail, { fontSize: 11 }]}>{p.displayName}</Text>
+                  )}
+                </View>
+                {p.username && <Text style={styles.mentionTag}>@{p.username}</Text>}
               </TouchableOpacity>
             ))}
           </View>
@@ -1011,6 +1053,11 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: Colors.textTertiary,
     marginLeft: 2,
+  },
+  mentionTag: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.primary,
   },
 
   // Pending image
