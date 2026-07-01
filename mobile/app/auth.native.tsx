@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   Platform, ActivityIndicator, Image, Alert,
-  KeyboardAvoidingView, ScrollView, Animated, Dimensions,
+  KeyboardAvoidingView, ScrollView, Animated, Dimensions, Linking,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -405,7 +405,12 @@ export default function AuthScreen() {
               </TouchableOpacity>
             </View>
 
-            <Text style={styles.inlineTerms}>By continuing you agree to our Terms & Privacy Policy</Text>
+            <Text style={styles.inlineTerms}>
+              By continuing you agree to our{' '}
+              <Text style={styles.inlineTermsLink} onPress={() => Linking.openURL('https://reversepicks.com/terms')}>Terms of Use</Text>
+              {' & '}
+              <Text style={styles.inlineTermsLink} onPress={() => Linking.openURL('https://reversepicks.com/privacy')}>Privacy Policy</Text>
+            </Text>
           </Animated.View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -483,7 +488,12 @@ export default function AuthScreen() {
               </View>
             )}
 
-            <Text style={styles.inlineTerms}>By continuing you agree to our Terms & Privacy Policy</Text>
+            <Text style={styles.inlineTerms}>
+              By continuing you agree to our{' '}
+              <Text style={styles.inlineTermsLink} onPress={() => Linking.openURL('https://reversepicks.com/terms')}>Terms of Use</Text>
+              {' & '}
+              <Text style={styles.inlineTermsLink} onPress={() => Linking.openURL('https://reversepicks.com/privacy')}>Privacy Policy</Text>
+            </Text>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -567,7 +577,12 @@ export default function AuthScreen() {
 
           </View>
 
-          <Text style={styles.inlineTerms}>By continuing you agree to our Terms & Privacy Policy</Text>
+          <Text style={styles.inlineTerms}>
+            By continuing you agree to our{' '}
+            <Text style={styles.inlineTermsLink} onPress={() => Linking.openURL('https://reversepicks.com/terms')}>Terms of Use</Text>
+            {' & '}
+            <Text style={styles.inlineTermsLink} onPress={() => Linking.openURL('https://reversepicks.com/privacy')}>Privacy Policy</Text>
+          </Text>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -690,6 +705,7 @@ const styles = StyleSheet.create({
   codeSub:   { color: Colors.textSecondary, fontSize: 13, textAlign: 'center', lineHeight: 20 },
   codeEmail: { color: Colors.text, fontWeight: '700' },
   inlineTerms: { color: Colors.textTertiary, fontSize: 11, textAlign: 'center', paddingTop: 8 },
+  inlineTermsLink: { color: Colors.primary, textDecorationLine: 'underline' },
 
   // Landing buttons
   landingBtnPrimary: {

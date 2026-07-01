@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   ActivityIndicator, Platform, Image, Alert, TextInput, KeyboardAvoidingView,
+  Linking,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -392,11 +393,11 @@ export default function PaywallScreen() {
 
         {/* Legal links — required by App Store Guideline 3.1.2(c) */}
         <View style={styles.legalRow}>
-          <TouchableOpacity onPress={() => router.push('/terms')} activeOpacity={0.7}>
+          <TouchableOpacity onPress={() => Linking.openURL('https://reversepicks.com/terms')} activeOpacity={0.7}>
             <Text style={styles.legalLink}>Terms of Use</Text>
           </TouchableOpacity>
           <Text style={styles.legalSep}>·</Text>
-          <TouchableOpacity onPress={() => router.push('/privacy')} activeOpacity={0.7}>
+          <TouchableOpacity onPress={() => Linking.openURL('https://reversepicks.com/privacy')} activeOpacity={0.7}>
             <Text style={styles.legalLink}>Privacy Policy</Text>
           </TouchableOpacity>
         </View>
