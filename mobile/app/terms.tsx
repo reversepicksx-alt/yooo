@@ -25,17 +25,17 @@ export default function TermsScreen() {
 
         <Text style={styles.section}>1. Acceptance of Terms</Text>
         <Text style={styles.body}>
-          By downloading, installing, or using ReversePicks ("the App"), you agree to be bound by these Terms of Use. If you do not agree, do not use the App.
+          By downloading, installing, or using Reverse Picks ("the App"), you agree to be bound by these Terms of Use. If you do not agree, do not use the App.
         </Text>
 
         <Text style={styles.section}>2. Description of Service</Text>
         <Text style={styles.body}>
-          ReversePicks provides AI-powered player prop analytics and predictions for informational and entertainment purposes only. The App does not facilitate, facilitate, or encourage gambling. All predictions are statistical projections and do not constitute financial, legal, or betting advice. Past performance of predictions does not guarantee future results.
+          Reverse Picks provides AI-powered player prop analytics and predictions for informational and entertainment purposes only. The App does not facilitate, facilitate, or encourage gambling. All predictions are statistical projections and do not constitute financial, legal, or betting advice. Past performance of predictions does not guarantee future results.
         </Text>
 
         <Text style={styles.section}>3. Subscriptions and Billing</Text>
         <Text style={styles.body}>
-          ReversePicks offers auto-renewable subscription plans:{'\n\n'}
+          Reverse Picks offers auto-renewable subscription plans:{'\n\n'}
           • <Text style={styles.bold}>Weekly</Text> — access renews every 7 days{'\n\n'}
           • <Text style={styles.bold}>Monthly</Text> — access renews every 30 days{'\n\n'}
           • <Text style={styles.bold}>Quarterly</Text> — access renews every 3 months{'\n\n'}
@@ -57,7 +57,7 @@ export default function TermsScreen() {
 
         <Text style={styles.section}>6. Intellectual Property</Text>
         <Text style={styles.body}>
-          All content, algorithms, models, and software within ReversePicks are the proprietary property of ReversePicks and are protected by applicable intellectual property laws. These Terms do not grant you any rights to our trademarks or intellectual property.
+          All content, algorithms, models, and software within Reverse Picks are the proprietary property of Reverse Picks and are protected by applicable intellectual property laws. These Terms do not grant you any rights to our trademarks or intellectual property.
         </Text>
 
         <Text style={styles.section}>7. Disclaimer of Warranties</Text>
@@ -67,7 +67,7 @@ export default function TermsScreen() {
 
         <Text style={styles.section}>8. Limitation of Liability</Text>
         <Text style={styles.body}>
-          To the maximum extent permitted by law, ReversePicks shall not be liable for any indirect, incidental, special, consequential, or punitive damages arising from your use of the App, including any losses arising from reliance on predictions or analytics provided by the service.
+          To the maximum extent permitted by law, Reverse Picks shall not be liable for any indirect, incidental, special, consequential, or punitive damages arising from your use of the App, including any losses arising from reliance on predictions or analytics provided by the service.
         </Text>
 
         <Text style={styles.section}>9. Termination</Text>

@@ -1,5 +1,5 @@
 """
-Test suite for bug fixes in ReversePicks:
+Test suite for bug fixes in Reverse Picks:
 1. Natural search finding players (Gianluigi Donnarumma)
 2. International teams loading for WCQ and other tournaments
 3. Player search deduplication

@@ -1,4 +1,4 @@
-# ReversePicks — Product Requirements Document
+# Reverse Picks — Product Requirements Document
 
 ## Problem Statement
 Web app remake of a sports analytics tool for Soccer Player Props (pass attempts, shots, points, assists, etc.). Users scan prop screenshots, an AI Vision model extracts details, resolves the player/team, and runs a prediction pipeline.

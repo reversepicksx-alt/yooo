@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from config import db, LIFETIME_SUB_EMAILS, OWNER_EMAIL, COMPLIMENTARY_MEMBERS, init_dynamic_settings, get_dynamic_setting
 
 # ── Create App ──
-app = FastAPI(title="ReversePicks API")
+app = FastAPI(title="Reverse Picks API")
 
 app.add_middleware(
     CORSMiddleware,

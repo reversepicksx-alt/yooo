@@ -5,7 +5,7 @@ async function check() {
   const client = await getUncachableRevenueCatClient();
 
   const { data: projects } = await listProjects({ client, query: { limit: 20 } });
-  const project = projects.items?.find((p: any) => p.name === "ReversePicks") ?? projects.items?.[0];
+  const project = projects.items?.find((p: any) => p.name === "Reverse Picks") ?? projects.items?.[0];
   console.log(`Project: ${project.id}`);
 
   const { data: apps } = await listApps({ client, path: { project_id: project.id }, query: { limit: 20 } });

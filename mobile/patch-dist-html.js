@@ -14,18 +14,18 @@ let html = fs.readFileSync(distHtml, 'utf8');
 // ── 1. Inject premium <head> content right after <meta charset…> ──────────
 const headInject = `
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, shrink-to-fit=no, viewport-fit=cover" />
-  <title>ReversePicks — Elite Prop Intelligence</title>
+  <title>Reverse Picks — Elite Prop Intelligence</title>
   <meta name="description" content="AI-powered soccer player prop analytics. Bayesian projections, tactical insights, and data-driven predictions." />
   <link rel="icon" type="image/png" href="/rp-icon.png" />
   <link rel="shortcut icon" href="/rp-icon.png" />
   <link rel="apple-touch-icon" href="/rp-icon.png" />
   <meta property="og:type" content="website" />
-  <meta property="og:title" content="ReversePicks — Elite Prop Intelligence" />
+  <meta property="og:title" content="Reverse Picks — Elite Prop Intelligence" />
   <meta property="og:description" content="AI-powered soccer player prop analytics. Bayesian projections, tactical insights, and data-driven predictions." />
   <meta name="theme-color" content="#050505" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="ReversePicks" />`;
+  <meta name="apple-mobile-web-app-title" content="Reverse Picks" />`;
 
 html = html.replace(
   '<meta charset="utf-8" />',
@@ -88,7 +88,7 @@ html = html.replace(
 const bootOverlay = `
   <!-- CSS boot overlay — visible before React mounts, hidden by JS -->
   <div id="rp-boot">
-    <img src="/rp-icon.png" alt="Loading ReversePicks…" />
+    <img src="/rp-icon.png" alt="Loading Reverse Picks…" />
   </div>
   <script>
     // Hide the CSS overlay once React has rendered something into #root.

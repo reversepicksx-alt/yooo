@@ -1,6 +1,6 @@
 export default {
   expo: {
-    name: "ReversePicks",
+    name: "Reverse Picks",
     slug: "reversepicks",
     version: "1.0.0",
     orientation: "portrait",
@@ -16,10 +16,10 @@ export default {
       icon: "./assets/rp-icon.png",
       infoPlist: {
         ITSAppUsesNonExemptEncryption: false,
-        NSCameraUsageDescription: "ReversePicks needs camera access to scan prop slips.",
-        NSPhotoLibraryUsageDescription: "ReversePicks needs access to your photos to scan prop slips.",
-        NSPhotoLibraryAddUsageDescription: "ReversePicks needs access to save images.",
-        NSUserNotificationsUsageDescription: "ReversePicks sends you pick alerts and result notifications.",
+        NSCameraUsageDescription: "Reverse Picks needs camera access to scan prop slips.",
+        NSPhotoLibraryUsageDescription: "Reverse Picks needs access to your photos to scan prop slips.",
+        NSPhotoLibraryAddUsageDescription: "Reverse Picks needs access to save images.",
+        NSUserNotificationsUsageDescription: "Reverse Picks sends you pick alerts and result notifications.",
         CFBundleURLTypes: [{ CFBundleURLSchemes: ["reversepicks"] }],
       },
     },

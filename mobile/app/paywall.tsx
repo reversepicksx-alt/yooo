@@ -246,7 +246,7 @@ export default function PaywallScreen() {
       <View style={[styles.root, { paddingTop: insets.top + 40, paddingBottom: insets.bottom + 24 }]}>
         <ScrollView contentContainerStyle={styles.inner} showsVerticalScrollIndicator={false}>
           <Image source={require('../assets/logo.png')} style={styles.logo} resizeMode="contain" />
-          <Text style={styles.headline}>ReversePicks Pro</Text>
+          <Text style={styles.headline}>Reverse Picks Pro</Text>
           <Text style={styles.subhead}>Get unlimited AI predictions on iOS.</Text>
           {FEATURES.map((f, i) => (
             <View key={i} style={styles.bulletRow}>
@@ -256,7 +256,7 @@ export default function PaywallScreen() {
           ))}
           <View style={styles.webCard}>
             <Text style={styles.webCardText}>
-              Subscriptions are available exclusively through the App Store. Download ReversePicks on your iPhone to subscribe and unlock full access.
+              Subscriptions are available exclusively through the App Store. Download Reverse Picks on your iPhone to subscribe and unlock full access.
             </Text>
           </View>
         </ScrollView>

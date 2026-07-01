@@ -1,5 +1,5 @@
 """
-Test suite for ReversePicks league ID fixes and player search updates.
+Test suite for Reverse Picks league ID fixes and player search updates.
 Tests: International team categories, player photo removal, POTD loading, nationality display.
 """
 import pytest

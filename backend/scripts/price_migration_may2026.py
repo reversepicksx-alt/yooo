@@ -38,7 +38,7 @@ def get_or_create_stripe_price(plan_key: str) -> str:
         unit_amount=info["amount"],
         currency="usd",
         recurring={"interval": info["interval"], "interval_count": info["interval_count"]},
-        product_data={"name": f"ReversePicks {plan_key.capitalize()}"},
+        product_data={"name": f"Reverse Picks {plan_key.capitalize()}"},
         lookup_key=info["lookup"],
     )
     print(f"  [Stripe] Created new price {price.id} for {plan_key}")
@@ -49,29 +49,29 @@ def build_email(recipient: str, plan_key: str) -> MIMEMultipart:
     info = NEW_PRICES[plan_key]
     plan_name = plan_key.capitalize()
 
-    subject = f"ReversePicks — Upcoming Price Update ({info['new']})"
+    subject = f"Reverse Picks — Upcoming Price Update ({info['new']})"
 
     plain = f"""Hi,
 
-We wanted to give you a heads-up: the ReversePicks {plan_name} plan is moving from {info['old']} to {info['new']}.
+We wanted to give you a heads-up: the Reverse Picks {plan_name} plan is moving from {info['old']} to {info['new']}.
 
 This change takes effect on your next scheduled renewal — you won't be charged anything extra today.
 
 We appreciate your support. The model keeps getting sharper and we're committed to making every pick count.
 
-— ReversePicks
+— Reverse Picks
 reversepicksx@gmail.com
 """
 
     html = f"""
 <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:32px;background:#0a0a0a;color:#fff;border-radius:8px">
-  <h2 style="color:#39FF14;margin:0 0 4px">ReversePicks</h2>
+  <h2 style="color:#39FF14;margin:0 0 4px">Reverse Picks</h2>
   <p style="color:#666;font-size:13px;margin:0 0 28px">Elite Prop Intelligence</p>
 
   <p style="font-size:15px;line-height:1.6;color:#ddd">Hi,</p>
 
   <p style="font-size:15px;line-height:1.6;color:#ddd">
-    We wanted to give you a heads-up: the ReversePicks
+    We wanted to give you a heads-up: the Reverse Picks
     <strong style="color:#fff">{plan_name} plan</strong>
     is moving from
     <strong style="color:#aaa;text-decoration:line-through">{info['old']}</strong>
@@ -94,7 +94,7 @@ reversepicksx@gmail.com
   </p>
 
   <p style="font-size:14px;color:#aaa;margin-top:28px">
-    — ReversePicks<br>
+    — Reverse Picks<br>
     <a href="mailto:reversepicksx@gmail.com" style="color:#39FF14">reversepicksx@gmail.com</a>
   </p>
 </div>
@@ -131,7 +131,7 @@ async def run():
         return
 
     print("=" * 60)
-    print("ReversePicks price migration — May 2026")
+    print("Reverse Picks price migration — May 2026")
     print("=" * 60)
 
     # Pre-create new Stripe prices

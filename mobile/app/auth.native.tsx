@@ -430,7 +430,7 @@ export default function AuthScreen() {
               <Image source={require('../assets/logo.png')} style={{ width: 72, height: 72 }} resizeMode="contain" />
             </TouchableOpacity>
 
-            <Text style={[styles.welcomeTitle, { marginBottom: 32 }]}>ReversePicks</Text>
+            <Text style={[styles.welcomeTitle, { marginBottom: 32 }]}>Reverse Picks</Text>
 
             <TouchableOpacity
               style={styles.landingBtnPrimary}

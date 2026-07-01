@@ -302,5 +302,5 @@ Across all prop types, UNDER recommendations hit 60.2% for pass_attempts, 67.7% 
 
 ---
 
-*Cheat sheet generated from 2,426 settled soccer picks across 3,317 total picks in the ReversePicks database.*
+*Cheat sheet generated from 2,426 settled soccer picks across 3,317 total picks in the Reverse Picks database.*
 *Last updated: 2026-05-30*

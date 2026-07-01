@@ -1,8 +1,8 @@
-# ReversePicks — Soccer Player Props Analytics
+# Reverse Picks — Soccer Player Props Analytics
 
 ## Overview
 
-ReversePicks is a premium soccer player props analytics platform designed to provide data-driven insights for sports betting. It features a FastAPI and MongoDB backend supporting a React Native / Expo mobile frontend, intended for App Store deployment. The platform's core purpose is to analyze soccer player performance, predict prop outcomes, and offer tactical insights, leveraging advanced AI models and statistical calibration.
+Reverse Picks is a premium soccer player props analytics platform designed to provide data-driven insights for sports betting. It features a FastAPI and MongoDB backend supporting a React Native / Expo mobile frontend, intended for App Store deployment. The platform's core purpose is to analyze soccer player performance, predict prop outcomes, and offer tactical insights, leveraging advanced AI models and statistical calibration.
 
 ## User Preferences
 

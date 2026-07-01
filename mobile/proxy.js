@@ -1,5 +1,5 @@
 /**
- * ReversePicks production/dev proxy — zero npm dependencies.
+ * Reverse Picks production/dev proxy — zero npm dependencies.
  * Uses only Node.js built-in modules so it starts instantly on any deploy
  * without requiring `npm install` first.
  *
@@ -111,16 +111,16 @@ const PWA_TAGS = `    <style>html,body{background:#050505!important;margin:0;pad
     <meta name="description" content="AI-powered soccer player prop analytics. Bayesian projections, tactical insights, and data-driven predictions." />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://reversepicks.com/" />
-    <meta property="og:title" content="ReversePicks \u2014 Elite Prop Intelligence" />
+    <meta property="og:title" content="Reverse Picks \u2014 Elite Prop Intelligence" />
     <meta property="og:description" content="AI-powered soccer player prop analytics. Bayesian projections, tactical insights, and data-driven predictions." />
     <meta property="og:image" content="https://reversepicks.com/rp-icon.png" />
-    <meta property="og:site_name" content="ReversePicks" />
+    <meta property="og:site_name" content="Reverse Picks" />
     <meta name="twitter:card" content="summary" />
     <meta name="twitter:image" content="https://reversepicks.com/rp-icon.png" />
     <meta name="theme-color" content="#050505" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="ReversePicks" />
+    <meta name="apple-mobile-web-app-title" content="Reverse Picks" />
     <link rel="manifest" href="/manifest.json" />`;
 
 function buildLoadingScreen() { return `
@@ -142,7 +142,7 @@ function buildLoadingScreen() { return `
         <polyline class="rp-bolt rp-b7" points="-65,65 -90,102 -77,83 -105,114 -88,90 -118,130"/>
       </svg>
       <div class="rp-logo-wrap">
-        <img class="rp-logo-img" src="${getLogoPath()}" alt="ReversePicks" />
+        <img class="rp-logo-img" src="${getLogoPath()}" alt="Reverse Picks" />
       </div>
     </div>
     <div class="rp-hud">
@@ -208,7 +208,7 @@ function buildLoadingScreen() { return `
 </script>`; }
 
 const MANIFEST = JSON.stringify({
-  name: 'ReversePicks', short_name: 'ReversePicks',
+  name: 'Reverse Picks', short_name: 'Reverse Picks',
   description: 'Elite Prop Intelligence', start_url: '/',
   display: 'standalone', background_color: '#050505', theme_color: '#050505',
   icons: [
@@ -225,7 +225,7 @@ function serveIndex(res) {
   }
   try {
     let html = fs.readFileSync(indexPath, 'utf8');
-    html = html.replace(/<title>[^<]*<\/title>/, '<title>ReversePicks \u2014 Elite Prop Intelligence</title>');
+    html = html.replace(/<title>[^<]*<\/title>/, '<title>Reverse Picks \u2014 Elite Prop Intelligence</title>');
     html = html.replace('</head>', `${PWA_TAGS}\n  </head>`);
     html = html.replace('</body>', `${buildLoadingScreen()}\n</body>`);
     res.writeHead(200, {
@@ -261,7 +261,7 @@ const server = http.createServer((req, res) => {
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Privacy Policy — ReversePicks</title>
+<title>Privacy Policy — Reverse Picks</title>
 <style>
   body{margin:0;padding:0;background:#050505;color:#ccc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7}
   .wrap{max-width:720px;margin:0 auto;padding:48px 24px}
@@ -277,14 +277,14 @@ const server = http.createServer((req, res) => {
   <h1>Privacy Policy</h1>
   <p class="date">Last updated: June 17, 2026</p>
 
-  <p>ReversePicks ("we", "us", or "our") operates the ReversePicks mobile application (the "App"). This page explains what information we collect, how we use it, and your rights.</p>
+  <p>Reverse Picks ("we", "us", or "our") operates the Reverse Picks mobile application (the "App"). This page explains what information we collect, how we use it, and your rights.</p>
 
   <h2>Information We Collect</h2>
   <p>We collect only your <strong>email address</strong> when you create an account. This is used solely to authenticate you and manage your subscription.</p>
 
   <h2>How We Use Your Information</h2>
   <ul>
-    <li>To create and manage your ReversePicks account</li>
+    <li>To create and manage your Reverse Picks account</li>
     <li>To process and verify your subscription status</li>
     <li>To send essential account and service communications</li>
   </ul>
@@ -311,7 +311,7 @@ const server = http.createServer((req, res) => {
   <p>If you have questions about this Privacy Policy, please contact us at <a href="mailto:reversepicksx@gmail.com">reversepicksx@gmail.com</a>.</p>
 
   <hr/>
-  <p style="color:#444;font-size:.8rem">ReversePicks &mdash; Elite Prop Intelligence</p>
+  <p style="color:#444;font-size:.8rem">Reverse Picks &mdash; Elite Prop Intelligence</p>
 </div>
 </body>
 </html>`;
@@ -324,7 +324,7 @@ const server = http.createServer((req, res) => {
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Terms of Use — ReversePicks</title>
+<title>Terms of Use — Reverse Picks</title>
 <style>
   body{margin:0;padding:0;background:#050505;color:#ccc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7}
   .wrap{max-width:720px;margin:0 auto;padding:48px 24px}
@@ -340,13 +340,13 @@ const server = http.createServer((req, res) => {
   <h1>Terms of Use</h1>
   <p class="date">Last updated: June 1, 2026</p>
 
-  <p>By using the ReversePicks mobile application (the "App"), you agree to these Terms of Use. If you do not agree, do not use the App.</p>
+  <p>By using the Reverse Picks mobile application (the "App"), you agree to these Terms of Use. If you do not agree, do not use the App.</p>
 
   <h2>1. Description of Service</h2>
-  <p>ReversePicks provides AI-powered player prop analytics and predictions for informational and entertainment purposes only. The App does not facilitate gambling. Predictions are statistical projections, not financial or betting advice.</p>
+  <p>Reverse Picks provides AI-powered player prop analytics and predictions for informational and entertainment purposes only. The App does not facilitate gambling. Predictions are statistical projections, not financial or betting advice.</p>
 
   <h2>2. Subscriptions and Billing</h2>
-  <p>ReversePicks offers auto-renewable subscriptions. Payment is charged to your Apple ID at confirmation. Subscriptions auto-renew unless cancelled at least 24 hours before the end of the current period. Manage or cancel in your Apple ID Account Settings.</p>
+  <p>Reverse Picks offers auto-renewable subscriptions. Payment is charged to your Apple ID at confirmation. Subscriptions auto-renew unless cancelled at least 24 hours before the end of the current period. Manage or cancel in your Apple ID Account Settings.</p>
 
   <h2>3. Account</h2>
   <p>You must create an account with a valid email address. You are responsible for your credentials and all activity under your account. You must be at least 17 years old to use the App.</p>
@@ -355,7 +355,7 @@ const server = http.createServer((req, res) => {
   <p>Use the App for personal, non-commercial purposes only. Do not reproduce, distribute, or resell content. Do not reverse-engineer or automate access.</p>
 
   <h2>5. Intellectual Property</h2>
-  <p>All content, algorithms, and software are the proprietary property of ReversePicks.</p>
+  <p>All content, algorithms, and software are the proprietary property of Reverse Picks.</p>
 
   <h2>6. Disclaimer</h2>
   <p>The App is provided "as is". We do not warrant that predictions will be accurate. Use is at your sole risk.</p>
@@ -370,7 +370,7 @@ const server = http.createServer((req, res) => {
   <p>Contact us at <a href="mailto:reversepicksx@gmail.com">reversepicksx@gmail.com</a>.</p>
 
   <hr/>
-  <p style="color:#444;font-size:.8rem">ReversePicks &mdash; Elite Prop Intelligence</p>
+  <p style="color:#444;font-size:.8rem">Reverse Picks &mdash; Elite Prop Intelligence</p>
 </div>
 </body>
 </html>`;

@@ -1,4 +1,4 @@
-# ReversePicks Soccer Prediction Pipeline — Complete Technical Reference
+# Reverse Picks Soccer Prediction Pipeline — Complete Technical Reference
 
 ## Table of Contents
 1. [The 14 Stages](#part-1-the-14-stages)

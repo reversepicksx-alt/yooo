@@ -1,5 +1,5 @@
 """
-Test suite for 6 bug fixes in ReversePicks app:
+Test suite for 6 bug fixes in Reverse Picks app:
 1. Natural search should NOT be hardcoded to league 39 (MLS player should use MLS league)
 2. Backend team stats should try multiple seasons (2026, 2025, 2024)
 3. stats_list[-1] for current team instead of stats_list[0] (transferred players)

@@ -14,10 +14,10 @@ import {
   type CreateProductData,
 } from "@replit/revenuecat-sdk";
 
-const PROJECT_NAME = "ReversePicks";
-const APP_STORE_APP_NAME = "ReversePicks iOS";
+const PROJECT_NAME = "Reverse Picks";
+const APP_STORE_APP_NAME = "Reverse Picks iOS";
 const APP_STORE_BUNDLE_ID = "com.reversepicks.app";
-const PLAY_STORE_APP_NAME = "ReversePicks Android";
+const PLAY_STORE_APP_NAME = "Reverse Picks Android";
 const PLAY_STORE_PACKAGE_NAME = "com.reversepicks.app";
 
 const ENTITLEMENT_IDENTIFIER = "pro";

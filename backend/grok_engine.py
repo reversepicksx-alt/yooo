@@ -1,5 +1,5 @@
 """
-AI ENGINE — The data backbone powering the ReversePicks prediction system.
+AI ENGINE — The data backbone powering the Reverse Picks prediction system.
 Primary AI: Grok-3 (prediction synthesis).
 Secondary: Gemini 2.5 Pro/Flash (explanations, web search, tactical chat, OCR).
 """

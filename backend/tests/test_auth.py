@@ -1,5 +1,5 @@
 """
-Backend Auth Tests for ReversePicks
+Backend Auth Tests for Reverse Picks
 Tests the Whop-based authentication system including:
 - Owner auto-login bypass
 - Lifetime subscriber password setup flow

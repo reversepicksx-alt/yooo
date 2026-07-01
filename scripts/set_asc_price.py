@@ -51,7 +51,7 @@ if not group_id:
     status, resp = asc("POST", "/v1/subscriptionGroups", {
         "data": {
             "type": "subscriptionGroups",
-            "attributes": {"referenceName": "ReversePicks Pro"},
+            "attributes": {"referenceName": "Reverse Picks Pro"},
             "relationships": {"app": {"data": {"type": "apps", "id": APP_ID}}},
         }
     })
@@ -84,7 +84,7 @@ for plan in PLANS:
                 "productId":             pid,
                 "name":                  plan["name"],
                 "subscriptionPeriod":    plan["duration"],
-                "reviewNote":            "ReversePicks Pro subscription — soccer player props analytics.",
+                "reviewNote":            "Reverse Picks Pro subscription — soccer player props analytics.",
                 "familySharable":        False,
             },
             "relationships": {

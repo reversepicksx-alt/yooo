@@ -25,7 +25,7 @@ async function main() {
       client,
       path: { project_id: PROJECT_ID },
       body: {
-        name: "ReversePicks Production",
+        name: "Reverse Picks Production",
         url: WEBHOOK_URL,
         authorization_header: WEBHOOK_SECRET,
         environment: "production",

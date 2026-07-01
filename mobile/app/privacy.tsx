@@ -25,7 +25,7 @@ export default function PrivacyPolicyScreen() {
 
         <Text style={styles.section}>1. Information We Collect</Text>
         <Text style={styles.body}>
-          ReversePicks collects the following information to provide and improve the service:{'\n\n'}
+          Reverse Picks collects the following information to provide and improve the service:{'\n\n'}
           • <Text style={styles.bold}>Email address</Text> — used to identify your account and send important service notifications.{'\n\n'}
           • <Text style={styles.bold}>Subscription and purchase data</Text> — processed through Apple's App Store and RevenueCat. We receive confirmation of active entitlements but never see your payment card details.{'\n\n'}
           • <Text style={styles.bold}>Usage data</Text> — the player props and predictions you generate, stored to power your Picks history and improve our models.{'\n\n'}
@@ -35,7 +35,7 @@ export default function PrivacyPolicyScreen() {
         <Text style={styles.section}>2. How We Use Your Information</Text>
         <Text style={styles.body}>
           We use your information exclusively to:{'\n\n'}
-          • Provide the ReversePicks prediction and analytics service.{'\n\n'}
+          • Provide the Reverse Picks prediction and analytics service.{'\n\n'}
           • Authenticate your account and manage your subscription status.{'\n\n'}
           • Send transactional emails (account creation, subscription receipts). We do not send marketing emails without explicit consent.{'\n\n'}
           • Improve prediction accuracy by analysing anonymised, aggregated prop outcomes.
@@ -61,7 +61,7 @@ export default function PrivacyPolicyScreen() {
 
         <Text style={styles.section}>6. Children's Privacy</Text>
         <Text style={styles.body}>
-          ReversePicks is intended for users 17 years of age and older, consistent with its App Store age rating. We do not knowingly collect personal information from children under 13.
+          Reverse Picks is intended for users 17 years of age and older, consistent with its App Store age rating. We do not knowingly collect personal information from children under 13.
         </Text>
 
         <Text style={styles.section}>7. Your Rights</Text>

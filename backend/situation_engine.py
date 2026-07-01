@@ -1,5 +1,5 @@
 """
-SITUATION ENGINE — Elite Contextual Awareness for ReversePicks
+SITUATION ENGINE — Elite Contextual Awareness for Reverse Picks
 
 Provides four types of real-world situational intelligence that the base
 Bayesian + AI models cannot derive from season averages alone:

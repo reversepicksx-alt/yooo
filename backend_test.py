@@ -243,7 +243,7 @@ class ReversePicsAPITester:
         return success, response
 
 def main():
-    print("🚀 Starting ReversePicks API Testing...")
+    print("🚀 Starting Reverse Picks API Testing...")
     print("=" * 60)
     
     tester = ReversePicsAPITester()
