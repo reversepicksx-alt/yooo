@@ -1,0 +1,55 @@
+Hello,
+
+Thank you for your resubmission. Upon further review, we identified additional issues that need your attention. See below for more information.
+
+If you have any questions, we are here to help. Reply to this message in App Store Connect and let us know.
+
+Review Environment
+
+Submission ID: 96688c0d-fcbd-4a89-a2d7-f63dd5f955e0
+Review date: July 01, 2026
+Review Device: iPad Air 11-inch (M3)
+Version reviewed: 1.0 (154)
+
+Guideline 3 - Business
+
+
+Issue Description
+
+We began our review, but we are unable to continue because we need additional information about the app.
+
+Specifically, can you confirm that 9.99 USD and 59.99 USD are the intended prices of your In-App Purchase products, Monthly and Weekly? 
+
+Once we receive your confirmation, we will continue our review. If there's additional information you'd like to provide, please include it in your response to this message in App Store Connect.
+
+Resources
+
+Learn more about guideline 3 requirements in guideline 3.
+Guideline 3.1.2(c) - Business - Payments - Subscriptions
+
+Issue Description
+
+The submission did not include all the required information for apps offering auto-renewable subscriptions.
+
+The following information needs to be included within the app: a functional link to the Terms of Use (EULA) and a functional link to the privacy policy.
+
+You can use SubscriptionStoreView to easily include all of the required information in the app's purchase flow.
+
+The following information needs to be included in the App Store metadata: a functional link to the Terms of Use (EULA) (if you are using the standard Apple Terms of Use (EULA), include a link in the App Description, and if you are using a custom EULA, add it in App Store Connect).
+
+Next Steps
+
+Update the app and App Store metadata to include the information specified above.
+
+Once the app and metadata includes all of the required information, or if they already do, reply to this message with a screen recording to confirm. Include this information in the Notes field of the App Review Information section in App Store Connect for future submissions.
+
+Resources
+
+Apps offering auto-renewable subscriptions must include all of the following required information in the app itself:
+
+- Title of auto-renewing subscription (this may be the same as the In-App Purchase product name)
+- Length of subscription
+- Price of subscription, and price per unit if appropriate
+- Functional links to the privacy policy and Terms of Use (EULA)
+
+The app metadata must also include functional links to the privacy policy in the Privacy Policy field in App Store Connect and the Terms of Use (EULA) in the App Description or EULA field in App Store Connect.

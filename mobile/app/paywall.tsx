@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   ActivityIndicator, Platform, Image, Alert, TextInput, KeyboardAvoidingView,
+  Linking,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -12,6 +13,9 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useSubscription, REVENUECAT_ENTITLEMENT_IDENTIFIER } from '@/lib/revenuecat';
 import { iapSignup } from '@/lib/api';
 import Purchases, { type PurchasesPackage } from 'react-native-purchases';
+
+const PRIVACY_URL = 'https://reversepicks.com/privacy';
+const TERMS_URL   = 'https://reversepicks.com/terms';
 
 // ── Fallback demo plans (shown when RevenueCat returns empty in dev/TestFlight) ──
 const DEMO_PACKAGES: { title: string; price: string; period: string; desc: string }[] = [
@@ -390,6 +394,17 @@ export default function PaywallScreen() {
           <Text style={[styles.restoreText, { color: Colors.textTertiary, fontSize: 12 }]}>Log out and go back</Text>
         </TouchableOpacity>
 
+        {/* Legal links — required by App Store Guideline 3.1.2(c) */}
+        <View style={styles.legalRow}>
+          <TouchableOpacity onPress={() => Linking.openURL(TERMS_URL)} activeOpacity={0.7}>
+            <Text style={styles.legalLink}>Terms of Use</Text>
+          </TouchableOpacity>
+          <Text style={styles.legalSep}>·</Text>
+          <TouchableOpacity onPress={() => Linking.openURL(PRIVACY_URL)} activeOpacity={0.7}>
+            <Text style={styles.legalLink}>Privacy Policy</Text>
+          </TouchableOpacity>
+        </View>
+
         {/* Apple disclosure */}
         <Text style={styles.disclosure}>
           Subscription automatically renews at the same price unless cancelled at least 24 hours before the end of the current period. Payment is charged to your Apple ID account at confirmation of purchase. Manage or cancel anytime in Apple Settings.
@@ -472,12 +487,29 @@ const styles = StyleSheet.create({
   ctaText: { color: '#000', fontWeight: '800', fontSize: 16, letterSpacing: 0.5 },
   restoreWrap: { paddingVertical: 8, alignItems: 'center' },
   restoreText: { color: Colors.textSecondary, fontSize: 14, fontWeight: '600' },
+  legalRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 4,
+  },
+  legalLink: {
+    color: Colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '600',
+    textDecorationLine: 'underline',
+  },
+  legalSep: {
+    color: Colors.textTertiary,
+    fontSize: 12,
+  },
   disclosure: {
     color: Colors.textTertiary,
     fontSize: 10,
     textAlign: 'center',
     lineHeight: 16,
-    marginTop: 8,
+    marginTop: 4,
     paddingHorizontal: 8,
   },
   retryBtn: {
