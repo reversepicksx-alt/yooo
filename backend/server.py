@@ -105,6 +105,22 @@ app.include_router(notifications_router)
 # ── Startup: seed grants for lifetime VIPs ──
 @app.on_event("startup")
 async def seed_grants():
+    """ASGI lifespan startup. This MUST NEVER raise — if it does, uvicorn aborts
+    startup, the worker dies, and (in production) there is no supervisor to bring
+    it back, so the whole backend goes dark. All real work is delegated to
+    _run_startup_tasks(); any failure there is logged but swallowed so the port
+    always binds and the API (login, predictions, etc.) stays reachable."""
+    try:
+        await _run_startup_tasks()
+    except Exception as _startup_err:
+        import logging, traceback
+        logging.getLogger("server").error(
+            "[STARTUP] non-fatal error — backend will still serve the API. "
+            f"{type(_startup_err).__name__}: {_startup_err}\n{traceback.format_exc()}"
+        )
+
+
+async def _run_startup_tasks():
     # Load dynamic settings (API keys from MongoDB) before anything else
     await init_dynamic_settings()
     try:
