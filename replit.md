@@ -6,6 +6,7 @@ Reverse Picks is a premium soccer player props analytics platform designed to pr
 
 ## User Preferences
 
+- **After every fix, run an app navigation check** using the Playwright UI testing tool (`runTest`). The test must: open a fresh browser context, navigate to the app, enter the owner email (reversepicksx@gmail.com), click "VERIFY ACCESS", and confirm the app navigates to the authenticated main tab bar (no "Cannot reach server" or error screen). Show the result before marking any task complete.
 - The mobile application's design should feature a pure black background with neon green (#39FF14) accents, matching the RP crest logo.
 - The project should prioritize data integrity and persistence, especially for MongoDB data, by storing production data outside the workspace to ensure it's immune to redeployments.
 - API quota management for external services like API-Football should be robust, including a circuit breaker to prevent excessive calls.
