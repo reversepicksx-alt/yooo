@@ -1185,9 +1185,10 @@ async def list_active_sessions(email: str = Query(...)):
             {"_id": 0, "username": 1, "displayName": 1, "profileImage": 1}
         )
         results.append({
-            "email": s.get("email"),
-            "username": user.get("username") if user else None,
-            "displayName": user.get("displayName") if user else None,
+            "name": (
+                user.get("username") or user.get("displayName")
+                or s.get("email", "").split("@")[0]
+            ),
             "profileImage": user.get("profileImage") if user else None,
             "accessType": s.get("access_type"),
             "lastActive": s.get("last_active"),

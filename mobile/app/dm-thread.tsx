@@ -11,7 +11,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { getDmThread, sendDm, markDmRead, type DmMessage } from '@/lib/api';
 
 export default function DmThreadScreen() {
-  const { email: otherEmail, name, image } = useLocalSearchParams<{ email: string; name: string; image: string }>();
+  const { otherId, name, image } = useLocalSearchParams<{ otherId: string; name: string; image: string }>();
   const { session } = useAuth();
   const insets = useSafeAreaInsets();
   const flatRef = useRef<FlatList>(null);
@@ -22,7 +22,8 @@ export default function DmThreadScreen() {
   const [sending, setSending] = useState(false);
 
   const myEmail = session?.email || '';
-  const otherName = name || otherEmail?.split('@')[0] || 'User';
+  const otherEmail = otherId || '';
+  const otherName = name || 'User';
 
   const load = useCallback(async () => {
     if (!myEmail || !otherEmail) return;
@@ -97,7 +98,7 @@ export default function DmThreadScreen() {
             keyExtractor={(item) => item.id}
             contentContainerStyle={{ padding: 16, paddingBottom: 8 }}
             renderItem={({ item }) => {
-              const isMe = item.senderEmail === myEmail;
+              const isMe = item.senderId === myEmail;
               return (
                 <View style={[styles.bubbleWrap, isMe ? styles.bubbleWrapRight : styles.bubbleWrapLeft]}>
                   <View style={[styles.bubble, isMe ? styles.bubbleMe : styles.bubbleOther]}>

@@ -736,7 +736,9 @@ export default function AccountScreen() {
             </View>
           </TouchableOpacity>
           <View style={styles.profileInfo}>
-            <Text style={styles.profileEmail} numberOfLines={1}>{session?.email}</Text>
+            <Text style={styles.profileEmail} numberOfLines={1}>
+              {profile.username ? `@${profile.username}` : (session?.email?.split('@')[0] || 'User')}
+            </Text>
             <View style={styles.accessBadge}>
               <Ionicons name="shield-checkmark" size={11} color={Colors.primary} />
               <Text style={styles.accessText}>{accessLabel}</Text>

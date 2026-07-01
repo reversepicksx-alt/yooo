@@ -32,7 +32,7 @@ const AVATAR_PALETTE = [
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Participant = { id: string; name: string };
+type Participant = { id: string; name: string; username?: string | null };
 
 type MessageGroup = {
   groupId: string;
@@ -275,6 +275,7 @@ export default function CommunityScreen() {
   const [onlineCount, setOnlineCount] = useState(0);
   const [activeUsers, setActiveUsers] = useState<any[]>([]);
   const [showActiveUsers, setShowActiveUsers] = useState(false);
+  const [mentionResults, setMentionResults] = useState<Participant[]>([]);
   const isOwner = session?.accessType?.toLowerCase() === 'owner';
 
   // ── Data loading ──────────────────────────────────────────────────────────
@@ -369,31 +370,31 @@ export default function CommunityScreen() {
         // Try username match from mention results first
         const fromSearch = mentionResults.find((p) => p.username?.toLowerCase() === name);
         if (fromSearch) {
-          mentions.push(fromSearch.username || fromSearch.email);
+          mentions.push(fromSearch.username || fromSearch.id);
           continue;
         }
-        // Fallback to displayName / email prefix match
+        // Fallback to name / id prefix match
         const found = participants.find(
-          (p) => p.displayName.toLowerCase().replace(/\s/g, '') === name ||
-                 p.email.split('@')[0].toLowerCase() === name,
+          (p) => p.name.toLowerCase().replace(/\s/g, '') === name ||
+                 p.id.split('@')[0].toLowerCase() === name,
         );
-        if (found) mentions.push(found.username || found.email);
+        if (found) mentions.push(found.username || found.id);
       }
     }
     // @all: backend detects the text itself and broadcasts to all tokens
 
     const optimisticId = `pending-${Date.now()}`;
-    const optimistic: CommunityMessage = {
+    const optimistic: CommunityMessage & { pending: boolean } = {
       id: optimisticId,
-      email: myEmail,
-      displayName: myEmail.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+      senderId: myEmail,
+      name: myEmail.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
       text,
       imageData: pendingImage,
       mentions,
       reactions: {},
       createdAt: new Date().toISOString(),
       pending: true,
-    } as CommunityMessage & { pending: boolean };
+    };
 
     setMessages((prev) => [...prev, optimistic]);
     setInputText('');
@@ -507,7 +508,6 @@ export default function CommunityScreen() {
   // ── Text change / mention detection ──────────────────────────────────────
 
   // Mention search via API (usernames + display names)
-  const [mentionResults, setMentionResults] = useState<Participant[]>([]);
   const mentionDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleTextChange = useCallback((text: string) => {
@@ -521,8 +521,8 @@ export default function CommunityScreen() {
           const res = await searchUsers(query);
           setMentionResults(
             res.map((u) => ({
-              email: u.email,
-              displayName: u.displayName || u.email.split('@')[0],
+              id: u.id,
+              name: u.displayName || u.id.split('@')[0],
               username: u.username,
             }))
           );
@@ -536,7 +536,7 @@ export default function CommunityScreen() {
   }, []);
 
   const handleMentionSelect = useCallback((participant: Participant) => {
-    const tag = participant.username || participant.displayName.replace(/\s/g, '');
+    const tag = participant.username || participant.name.replace(/\s/g, '');
     const replaced = inputText.replace(/@(\w*)$/, `@${tag} `);
     setInputText(replaced);
     setMentionQuery(null);
@@ -553,8 +553,8 @@ export default function CommunityScreen() {
     ? (mentionResults.length
         ? mentionResults
         : participants.filter((p) =>
-            p.displayName.toLowerCase().includes(mentionQuery.toLowerCase()) ||
-            p.email.toLowerCase().includes(mentionQuery.toLowerCase()),
+            p.name.toLowerCase().includes(mentionQuery.toLowerCase()) ||
+            p.id.toLowerCase().includes(mentionQuery.toLowerCase()),
           ).slice(0, 5))
     : [];
 
@@ -657,18 +657,18 @@ export default function CommunityScreen() {
             )}
             {filteredParticipants.map((p) => (
               <TouchableOpacity
-                key={p.email}
+                key={p.id}
                 style={styles.mentionRow}
                 activeOpacity={0.7}
                 onPress={() => handleMentionSelect(p)}
               >
-                <AvatarCircle color={hashColor(p.email)} name={p.displayName} size={28} />
+                <AvatarCircle color={hashColor(p.id)} name={p.name} size={28} />
                 <View style={{ flex: 1 }}>
                   <Text style={styles.mentionName}>
-                    {p.username ? `@${p.username}` : p.displayName}
+                    {p.username ? `@${p.username}` : p.name}
                   </Text>
                   {p.username && (
-                    <Text style={[styles.mentionEmail, { fontSize: 11 }]}>{p.displayName}</Text>
+                    <Text style={[styles.mentionEmail, { fontSize: 11 }]}>{p.name}</Text>
                   )}
                 </View>
                 {p.username && <Text style={styles.mentionTag}>@{p.username}</Text>}
@@ -772,7 +772,7 @@ export default function CommunityScreen() {
                     </TouchableOpacity>
                   ))}
                 </View>
-                {reactionTarget.email === myEmail && (
+                {reactionTarget.senderId === myEmail && (
                   <>
                     <View style={styles.actionDivider} />
                     <TouchableOpacity
@@ -834,19 +834,18 @@ export default function CommunityScreen() {
             <Text style={styles.auTitle}>Active Users ({activeUsers.length})</Text>
             <FlatList
               data={activeUsers}
-              keyExtractor={(item) => item.email}
+              keyExtractor={(item) => item.name}
               renderItem={({ item }) => (
                 <View style={styles.auRow}>
                   <View style={styles.auAvatar}>
                     <Text style={styles.auAvatarText}>
-                      {(item.displayName || item.username || item.email)[0].toUpperCase()}
+                      {(item.name || '?')[0].toUpperCase()}
                     </Text>
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.auName} numberOfLines={1}>
-                      {item.displayName || item.username || item.email.split('@')[0]}
+                      {item.name}
                     </Text>
-                    <Text style={styles.auEmail}>{item.email}</Text>
                   </View>
                   <Text style={styles.auAccess}>{item.accessType}</Text>
                 </View>

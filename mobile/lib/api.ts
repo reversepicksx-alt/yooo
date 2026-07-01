@@ -1555,7 +1555,7 @@ export async function setProfileImage(email: string, imageBase64: string): Promi
 }
 
 export async function searchUsers(q: string): Promise<{
-  email: string;
+  id: string;
   username: string | null;
   displayName: string | null;
   label: string;
