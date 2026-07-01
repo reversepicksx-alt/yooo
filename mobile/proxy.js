@@ -318,6 +318,65 @@ const server = http.createServer((req, res) => {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       return res.end(PRIVACY_HTML);
     }
+    if (pathname === '/terms' || pathname === '/terms.html') {
+      const TERMS_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Terms of Use — ReversePicks</title>
+<style>
+  body{margin:0;padding:0;background:#050505;color:#ccc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7}
+  .wrap{max-width:720px;margin:0 auto;padding:48px 24px}
+  h1{color:#39FF14;font-size:2rem;margin-bottom:4px}
+  h2{color:#39FF14;font-size:1.1rem;margin-top:36px;margin-bottom:8px}
+  a{color:#39FF14}
+  .date{color:#666;font-size:.85rem;margin-bottom:32px}
+  hr{border:none;border-top:1px solid #222;margin:40px 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Terms of Use</h1>
+  <p class="date">Last updated: June 1, 2026</p>
+
+  <p>By using the ReversePicks mobile application (the "App"), you agree to these Terms of Use. If you do not agree, do not use the App.</p>
+
+  <h2>1. Description of Service</h2>
+  <p>ReversePicks provides AI-powered player prop analytics and predictions for informational and entertainment purposes only. The App does not facilitate gambling. Predictions are statistical projections, not financial or betting advice.</p>
+
+  <h2>2. Subscriptions and Billing</h2>
+  <p>ReversePicks offers auto-renewable subscriptions. Payment is charged to your Apple ID at confirmation. Subscriptions auto-renew unless cancelled at least 24 hours before the end of the current period. Manage or cancel in your Apple ID Account Settings.</p>
+
+  <h2>3. Account</h2>
+  <p>You must create an account with a valid email address. You are responsible for your credentials and all activity under your account. You must be at least 17 years old to use the App.</p>
+
+  <h2>4. Permitted Use</h2>
+  <p>Use the App for personal, non-commercial purposes only. Do not reproduce, distribute, or resell content. Do not reverse-engineer or automate access.</p>
+
+  <h2>5. Intellectual Property</h2>
+  <p>All content, algorithms, and software are the proprietary property of ReversePicks.</p>
+
+  <h2>6. Disclaimer</h2>
+  <p>The App is provided "as is". We do not warrant that predictions will be accurate. Use is at your sole risk.</p>
+
+  <h2>7. Limitation of Liability</h2>
+  <p>We are not liable for any damages arising from your use of the App, including reliance on predictions.</p>
+
+  <h2>8. Changes to Terms</h2>
+  <p>We may update these Terms. Continued use after changes constitutes acceptance.</p>
+
+  <h2>9. Contact</h2>
+  <p>Contact us at <a href="mailto:reversepicksx@gmail.com">reversepicksx@gmail.com</a>.</p>
+
+  <hr/>
+  <p style="color:#444;font-size:.8rem">ReversePicks &mdash; Elite Prop Intelligence</p>
+</div>
+</body>
+</html>`;
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      return res.end(TERMS_HTML);
+    }
     if (pathname === '/rp-icon.png' || pathname === '/favicon.ico' || pathname === '/favicon.png') {
       return serveFile(res, path.join(assetsPath, 'rp-icon.png'));
     }

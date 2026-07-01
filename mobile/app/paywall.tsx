@@ -35,6 +35,22 @@ function getErrorMessage(e: unknown): string {
   return 'Something went wrong. Please try again.';
 }
 
+/** Convert RevenueCat ISO 8601 subscriptionPeriod (P1W, P1M, P3M) to human label */
+function isoPeriodToLabel(raw: string): string {
+  if (!raw) return '';
+  const m = raw.match(/^P(\d+)([YMWD])$/);
+  if (!m) return raw;
+  const n = parseInt(m[1], 10);
+  const unit = m[2];
+  const map: Record<string, string> = {
+    D: n === 1 ? 'day' : 'days',
+    W: n === 1 ? 'week' : 'weeks',
+    M: n === 1 ? 'month' : 'months',
+    Y: n === 1 ? 'year' : 'years',
+  };
+  return `${n} ${map[unit] ?? unit}`;
+}
+
 export default function PaywallScreen() {
   const insets = useSafeAreaInsets();
   const { session, loginWithResponse, logout } = useAuth();
@@ -320,7 +336,8 @@ export default function PaywallScreen() {
               const isBuying = buyingId === pkg.identifier;
               const title = pkg.product?.title ?? pkg.packageType ?? pkg.identifier;
               const price = pkg.product?.priceString ?? '—';
-              const period = pkg.product?.subscriptionPeriod ?? '';
+              const periodRaw = pkg.product?.subscriptionPeriod ?? '';
+              const period = isoPeriodToLabel(periodRaw);
               const desc = pkg.product?.description ?? '';
               return (
                 <TouchableOpacity
@@ -332,7 +349,6 @@ export default function PaywallScreen() {
                 >
                   <View style={{ flex: 1 }}>
                     <Text style={styles.planTitle}>{title}</Text>
-                    {desc ? <Text style={styles.planDesc}>{desc}</Text> : null}
                     {period ? <Text style={styles.planPeriod}>{period}</Text> : null}
                   </View>
                   <View style={{ alignItems: 'flex-end' }}>
