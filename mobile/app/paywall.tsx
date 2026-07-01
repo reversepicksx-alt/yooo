@@ -400,6 +400,10 @@ export default function PaywallScreen() {
           <TouchableOpacity onPress={() => Linking.openURL('https://reversepicks.com/privacy')} activeOpacity={0.7}>
             <Text style={styles.legalLink}>Privacy Policy</Text>
           </TouchableOpacity>
+          <Text style={styles.legalSep}>·</Text>
+          <TouchableOpacity onPress={() => Linking.openURL('https://www.apple.com/legal/internet-services/itunes/dev/stdeula/')} activeOpacity={0.7}>
+            <Text style={styles.legalLink}>EULA</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Apple disclosure */}
