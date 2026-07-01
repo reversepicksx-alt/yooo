@@ -409,15 +409,15 @@ export default function PaywallScreen() {
 
         {/* Legal links — required by App Store Guideline 3.1.2(c) */}
         <View style={styles.legalRow}>
-          <TouchableOpacity onPress={() => router.push('/terms')} activeOpacity={0.7}>
+          <TouchableOpacity onPress={() => router.push('/terms')} activeOpacity={0.7} hitSlop={10} style={{ paddingVertical: 8, paddingHorizontal: 6 }}>
             <Text style={styles.legalLink}>Terms of Use</Text>
           </TouchableOpacity>
           <Text style={styles.legalSep}>·</Text>
-          <TouchableOpacity onPress={() => router.push('/privacy')} activeOpacity={0.7}>
+          <TouchableOpacity onPress={() => router.push('/privacy')} activeOpacity={0.7} hitSlop={10} style={{ paddingVertical: 8, paddingHorizontal: 6 }}>
             <Text style={styles.legalLink}>Privacy Policy</Text>
           </TouchableOpacity>
           <Text style={styles.legalSep}>·</Text>
-          <TouchableOpacity onPress={() => Linking.openURL('https://www.apple.com/legal/internet-services/itunes/dev/stdeula/')} activeOpacity={0.7}>
+          <TouchableOpacity onPress={() => Linking.openURL('https://www.apple.com/legal/internet-services/itunes/dev/stdeula/')} activeOpacity={0.7} hitSlop={10} style={{ paddingVertical: 8, paddingHorizontal: 6 }}>
             <Text style={styles.legalLink}>EULA</Text>
           </TouchableOpacity>
         </View>

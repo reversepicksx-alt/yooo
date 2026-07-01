@@ -405,12 +405,18 @@ export default function AuthScreen() {
               </TouchableOpacity>
             </View>
 
-            <Text style={styles.inlineTerms}>
-              By continuing you agree to our{' '}
-              <Text style={styles.inlineTermsLink} onPress={() => router.push('/terms')}>Terms of Use</Text>
-              {' & '}
-              <Text style={styles.inlineTermsLink} onPress={() => router.push('/privacy')}>Privacy Policy</Text>
-            </Text>
+            <View style={styles.inlineTerms}>
+              <Text style={{ color: Colors.textTertiary, fontSize: 11 }}>
+                By continuing you agree to our{' '}
+              </Text>
+              <TouchableOpacity onPress={() => router.push('/terms')} hitSlop={8} style={{ paddingVertical: 4, paddingHorizontal: 2 }}>
+                <Text style={styles.inlineTermsLink}>Terms of Use</Text>
+              </TouchableOpacity>
+              <Text style={{ color: Colors.textTertiary, fontSize: 11 }}>{' & '}</Text>
+              <TouchableOpacity onPress={() => router.push('/privacy')} hitSlop={8} style={{ paddingVertical: 4, paddingHorizontal: 2 }}>
+                <Text style={styles.inlineTermsLink}>Privacy Policy</Text>
+              </TouchableOpacity>
+            </View>
           </Animated.View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -488,12 +494,18 @@ export default function AuthScreen() {
               </View>
             )}
 
-            <Text style={styles.inlineTerms}>
-              By continuing you agree to our{' '}
-              <Text style={styles.inlineTermsLink} onPress={() => router.push('/terms')}>Terms of Use</Text>
-              {' & '}
-              <Text style={styles.inlineTermsLink} onPress={() => router.push('/privacy')}>Privacy Policy</Text>
-            </Text>
+            <View style={styles.inlineTerms}>
+              <Text style={{ color: Colors.textTertiary, fontSize: 11 }}>
+                By continuing you agree to our{' '}
+              </Text>
+              <TouchableOpacity onPress={() => router.push('/terms')} hitSlop={8} style={{ paddingVertical: 4, paddingHorizontal: 2 }}>
+                <Text style={styles.inlineTermsLink}>Terms of Use</Text>
+              </TouchableOpacity>
+              <Text style={{ color: Colors.textTertiary, fontSize: 11 }}>{' & '}</Text>
+              <TouchableOpacity onPress={() => router.push('/privacy')} hitSlop={8} style={{ paddingVertical: 4, paddingHorizontal: 2 }}>
+                <Text style={styles.inlineTermsLink}>Privacy Policy</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -577,12 +589,18 @@ export default function AuthScreen() {
 
           </View>
 
-          <Text style={styles.inlineTerms}>
-            By continuing you agree to our{' '}
-            <Text style={styles.inlineTermsLink} onPress={() => router.push('/terms')}>Terms of Use</Text>
-            {' & '}
-            <Text style={styles.inlineTermsLink} onPress={() => router.push('/privacy')}>Privacy Policy</Text>
-          </Text>
+          <View style={styles.inlineTerms}>
+            <Text style={{ color: Colors.textTertiary, fontSize: 11 }}>
+              By continuing you agree to our{' '}
+            </Text>
+            <TouchableOpacity onPress={() => router.push('/terms')} hitSlop={8} style={{ paddingVertical: 4, paddingHorizontal: 2 }}>
+              <Text style={styles.inlineTermsLink}>Terms of Use</Text>
+            </TouchableOpacity>
+            <Text style={{ color: Colors.textTertiary, fontSize: 11 }}>{' & '}</Text>
+            <TouchableOpacity onPress={() => router.push('/privacy')} hitSlop={8} style={{ paddingVertical: 4, paddingHorizontal: 2 }}>
+              <Text style={styles.inlineTermsLink}>Privacy Policy</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
