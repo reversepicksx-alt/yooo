@@ -2763,6 +2763,54 @@ async def predict(req: PredictionRequest):
                 reverse=True,
             )
 
+            # ── ROTATION RISK — minutes trend detection ───────────────────────
+            # Detects whether a player is being rotated out (declining minutes)
+            # or returning to full duty (increasing minutes) by comparing their
+            # average minutes in the last 3 games vs games 4-8.
+            #
+            # Why median alone misses this: a player who played 90, 90, 90, 65,
+            # 60, 58 has a median of ~77, completely hiding the clear trend.
+            # The trend layer adjusts _exp_mins proportionally, capped at ±15%.
+            _rotation_risk   = "stable"
+            _rotation_adj_pct = 0.0
+            try:
+                _ordered_mins = [
+                    float(g.get("minutes") or 0)
+                    for g in player_game_logs
+                    if (g.get("minutes") or 0) >= 20
+                ]
+                if len(_ordered_mins) >= 5:
+                    _recent_3   = _ordered_mins[:3]
+                    _prior_pool = _ordered_mins[3:min(8, len(_ordered_mins))]
+                    _recent_avg = sum(_recent_3) / len(_recent_3)
+                    _prior_avg  = sum(_prior_pool) / len(_prior_pool)
+                    _delta      = _recent_avg - _prior_avg
+                    # Require a meaningful absolute shift (≥8 min) to avoid
+                    # noise from minor fixture-length variance (e.g. 88 vs 90).
+                    if _prior_avg > 0 and abs(_delta) >= 8:
+                        # Scale proportional to the magnitude of the drop/rise,
+                        # but cap at ±15% so one anomalous sample can't swing
+                        # the projection by an absurd amount.
+                        _raw_adj = (_delta / _prior_avg)
+                        if _delta < 0:
+                            _rotation_risk    = "declining"
+                            _rotation_adj_pct = max(-0.15, _raw_adj * 0.6)
+                        else:
+                            _rotation_risk    = "returning"
+                            _rotation_adj_pct = min(0.10, _raw_adj * 0.4)
+                        print(
+                            f"[ROTATION] {req.playerName}: recent3={_recent_avg:.1f}min "
+                            f"prior={_prior_avg:.1f}min delta={_delta:+.1f} "
+                            f"→ {_rotation_risk} adj={_rotation_adj_pct:+.1%}"
+                        )
+            except Exception as _rot_err:
+                print(f"[ROTATION] detection error: {_rot_err}")
+
+            # Apply rotation multiplier to the median-based expected minutes
+            if _rotation_adj_pct != 0.0:
+                _exp_mins = max(30.0, min(90.0, _exp_mins * (1.0 + _rotation_adj_pct)))
+                print(f"[ROTATION] adjusted _exp_mins → {_exp_mins:.1f}min")
+
             _VENUE_SPLIT_PROPS = {"pass_attempts", "passes", "saves", "goalie_saves"}
             _bayes_logs = player_game_logs
             if _is_wc or _is_neutral:
@@ -4936,6 +4984,9 @@ Analyze ALL data thoroughly. Return JSON only."""
                 "pairShare":     (real_bayes or {}).get("pairShare"),
                 "compSeasonAvg": (real_bayes or {}).get("compSeasonAvg"),
                 "rawOppAllowedAvg": (real_bayes or {}).get("rawOppAllowedAvg"),
+                "rotationRisk":  locals().get("_rotation_risk", "stable"),
+                "rotationAdjPct": round(locals().get("_rotation_adj_pct", 0.0) * 100, 1),
+                "expectedMinutes": round(locals().get("_exp_mins", 90.0), 1),
             },
         }
 
@@ -7070,6 +7121,7 @@ Analyze ALL data thoroughly. Return JSON only."""
                     req.propType,
                     float(_raw_conf),
                     prediction.get("recommendation", "").upper() or None,
+                    line=req.line,
                 )
                 if _calibrated is not None:
                     _calibrated_rounded = round(_calibrated)
@@ -7092,6 +7144,7 @@ Analyze ALL data thoroughly. Return JSON only."""
                         print(
                             f"[CONF CALIB] {req.propType}: bayesian={_raw_conf}% "
                             f"empirical={_calibrated_rounded}% (no correction needed)"
+                            + (f" [line={req.line}]" if req.line else "")
                         )
         except Exception as _calib_err:
             print(f"[CONF CALIB] application failed: {_calib_err}")
