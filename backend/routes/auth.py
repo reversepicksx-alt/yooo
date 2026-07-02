@@ -800,6 +800,7 @@ async def delete_account(req: DeleteAccountRequest):
     await db.stripe_subscriptions.delete_many({"email": email_lower})
     await db.picks.delete_many({"email": email_lower})
     await db.manual_access_grants.delete_many({"email": email_lower})
+    await db.users.delete_many({"email": email_lower})
 
     print(f"[DELETE ACCOUNT] {email_lower} — account and all data permanently deleted")
     return {"ok": True, "message": "Account deleted successfully."}

@@ -14,13 +14,6 @@ import { useSubscription, REVENUECAT_ENTITLEMENT_IDENTIFIER } from '@/lib/revenu
 import { iapSignup } from '@/lib/api';
 import Purchases, { type PurchasesPackage } from 'react-native-purchases';
 
-// ── Fallback demo plans (shown when RevenueCat returns empty in dev/TestFlight) ──
-const DEMO_PACKAGES: { title: string; price: string; period: string; desc: string }[] = [
-  { title: 'Weekly',   price: '$7.99',  period: '7 days',  desc: 'Full access, renews weekly' },
-  { title: 'Monthly',  price: '$19.99', period: '1 month', desc: 'Full access, renews monthly' },
-  { title: 'Quarterly', price: '$49.99', period: '3 months', desc: 'Best value, renews quarterly' },
-];
-
 const FEATURES = [
   'Unlimited AI player prop predictions',
   'Tactical breakdowns & sharp summaries',
@@ -171,6 +164,13 @@ export default function PaywallScreen() {
       const ent = customerInfo?.entitlements?.active?.[REVENUECAT_ENTITLEMENT_IDENTIFIER];
       if (ent) {
         const expMs = ent.expirationDate ? new Date(ent.expirationDate).getTime() : undefined;
+        if (!session?.email) {
+          // New device / not logged in yet — collect email to link the restored purchase
+          setPendingProductId(ent.productIdentifier);
+          setPendingExpiresAtMs(expMs);
+          setShowEmailCapture(true);
+          return;
+        }
         await syncBackendAndEnter(ent.productIdentifier, expMs);
         router.replace('/(tabs)/scan');
       } else {
@@ -316,18 +316,6 @@ export default function PaywallScreen() {
               <Ionicons name="refresh" size={14} color={Colors.primary} />
               <Text style={styles.retryText}>Retry</Text>
             </TouchableOpacity>
-            {/* Visual fallback — helps debug layout even when RC is empty */}
-            <View style={{ width: '100%', gap: 10, marginTop: 16, opacity: 0.35 }}>
-              {DEMO_PACKAGES.map((d, i) => (
-                <View key={i} style={styles.planCard}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.planTitle}>{d.title}</Text>
-                    <Text style={styles.planDesc}>{d.desc}</Text>
-                  </View>
-                  <Text style={styles.planPrice}>{d.price}</Text>
-                </View>
-              ))}
-            </View>
           </View>
         ) : (
           <View style={styles.plansWrap}>
