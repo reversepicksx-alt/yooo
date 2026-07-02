@@ -2620,6 +2620,35 @@ async def predict(req: PredictionRequest):
                             (v for k, v in _rank_map.items() if _opp in k or k in _opp), None
                         )
 
+            # ── Quality flag + opponent tier per game log ──────────────────────
+            for _gl in game_log_summary["games"]:
+                _mins = _gl.get("minutes", 0) or 0
+                _gl["quality"] = _mins >= 60
+                _opp_rank = _gl.get("oppRank")
+                if _opp_rank is None:
+                    _gl["oppTier"] = None
+                elif _opp_rank <= 6:
+                    _gl["oppTier"] = "ELITE"
+                elif _opp_rank <= 15:
+                    _gl["oppTier"] = "STRONG"
+                elif _opp_rank <= 30:
+                    _gl["oppTier"] = "MID"
+                else:
+                    _gl["oppTier"] = "WEAK"
+
+            # ── Quality-filtered hit rates (≥60 min games only) ───────────────
+            if req.line and "hitRates" in game_log_summary:
+                _qual_vals = [
+                    g.get(target_field) for g in game_log_summary["games"]
+                    if g.get(target_field) is not None and (g.get("minutes", 0) or 0) >= 60
+                ]
+                if _qual_vals:
+                    _q_over = sum(1 for v in _qual_vals if v > req.line)
+                    _q_under = sum(1 for v in _qual_vals if v < req.line)
+                    game_log_summary["hitRates"]["qualityTotal"] = len(_qual_vals)
+                    game_log_summary["hitRates"]["qualityOverHits"] = _q_over
+                    game_log_summary["hitRates"]["qualityOverPct"] = round(_q_over / len(_qual_vals) * 100, 1)
+
             historical_data["playerGameLogs"] = game_log_summary
 
         # =============================================

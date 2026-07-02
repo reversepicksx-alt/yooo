@@ -260,6 +260,8 @@ export interface GameLog {
   minutes: number;
   score?: string;
   oppRank?: number | null;
+  oppTier?: string | null;
+  quality?: boolean;
   teamPossession?: number | null;
   opponentPossession?: number | null;
   blocks?: number | null;
@@ -621,6 +623,8 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
             minutes: (g.minutes as number) || 0,
             score: (g.score as string) || undefined,
             oppRank: (g.oppRank as number | null) ?? undefined,
+            oppTier: (g.oppTier as string | null) ?? undefined,
+            quality: (g.quality as boolean) ?? undefined,
             teamPossession: (g.teamPossession as number | null) ?? null,
             opponentPossession: (g.opponentPossession as number | null) ?? null,
             blocks: (g.tackles_blocks as number | null) ?? null,

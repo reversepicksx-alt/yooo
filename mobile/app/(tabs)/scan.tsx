@@ -114,6 +114,7 @@ export default function ScanScreen() {
   const [venueOverride, setVenueOverride] = useState<'home' | 'away' | 'neutral'>('home');
   const [gameLogFilter, setGameLogFilter] = useState<'all' | 'home' | 'away' | 'opp'>('all');
   const [adjustedLine, setAdjustedLine] = useState<number | null>(null);
+  const [deselectedLogIndices, setDeselectedLogIndices] = useState<Set<number>>(new Set());
   const [sharpExpanded, setSharpExpanded] = useState(false);
 
   // Manual team override — user can tap the team badge to change it
@@ -180,6 +181,11 @@ export default function ScanScreen() {
   const [wtaRound, setWtaRound] = useState<string>('R32');
   const [wtaShowRoundPicker, setWtaShowRoundPicker] = useState(false);
 
+
+  // Reset tile selections whenever a new prediction is loaded
+  useEffect(() => {
+    setDeselectedLogIndices(new Set());
+  }, [prediction?.player]);
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const analysisRef = useRef<any>(null);
@@ -2384,11 +2390,15 @@ export default function ScanScreen() {
 
             {/* ─── GAME LOG GRID ─── */}
             {prediction.gameLogs && prediction.gameLogs.length > 0 && (() => {
-              const realLogs = prediction.gameLogs.filter(g => !g.synthetic);
+              const realLogs = prediction.gameLogs!.filter(g => !g.synthetic);
               const allSynthetic = realLogs.length === 0;
               const displayLogs = allSynthetic ? [] : realLogs;
               const effectiveLine = adjustedLine ?? prediction.line;
-              const overCount = displayLogs.filter(g => g.value != null && effectiveLine != null && g.value >= effectiveLine).length;
+              const COLS = 6;
+              const tileW = (SCREEN_W - 40 - 16 - (COLS - 1) * 4) / COLS;
+              const oppPoss = prediction.possessionOppAvg;
+              const propT = prediction.propType || '';
+
               const filteredLogs = displayLogs.filter(g => {
                 if (gameLogFilter === 'opp') {
                   const norm = (s: string) => (s || '').toLowerCase().replace(/[\s.\-]/g, '').slice(0, 6);
@@ -2396,19 +2406,45 @@ export default function ScanScreen() {
                 }
                 return gameLogFilter === 'all' ? true : g.venue === gameLogFilter;
               });
-              const COLS = 6;
-              const tileW = (SCREEN_W - 40 - 16 - (COLS - 1) * 4) / COLS;
-              const oppPoss = prediction.possessionOppAvg;
+
+              // Map each filtered log to its index in displayLogs (for deselect tracking)
+              const filteredWithIdx = filteredLogs.map(g => ({ log: g, origIdx: displayLogs.indexOf(g) }));
+
+              // Selected = not deselected
+              const selectedLogs = filteredWithIdx.filter(({ origIdx }) => !deselectedLogIndices.has(origIdx)).map(({ log }) => log);
+              const selectedVals = selectedLogs.map(g => g.value).filter((v): v is number => v != null);
+              const selOver = selectedVals.filter(v => effectiveLine != null && v > effectiveLine).length;
+              const selTotal = selectedVals.length;
+              const selHitPct = selTotal > 0 ? Math.round(selOver / selTotal * 100) : 0;
+              const selectedMean = selectedVals.length > 0 ? selectedVals.reduce((a, b) => a + b, 0) / selectedVals.length : null;
+              const allVals = displayLogs.map(g => g.value).filter((v): v is number => v != null);
+              const allMean = allVals.length > 0 ? allVals.reduce((a, b) => a + b, 0) / allVals.length : null;
+              const hasDeselected = deselectedLogIndices.size > 0;
+              const hasLowMinGames = displayLogs.some(g => (g.minutes || 0) > 0 && (g.minutes || 0) < 60);
+
+              const tierColor = (tier: string | null | undefined): string | null => {
+                if (!tier) return null;
+                if (tier === 'ELITE') return '#FF453A';
+                if (tier === 'STRONG') return '#FF9F0A';
+                if (tier === 'MID') return '#FFD60A';
+                return '#34C759';
+              };
+              const minsColor = (mins: number): string => {
+                if (mins >= 80) return '#39FF14';
+                if (mins >= 60) return '#FFB347';
+                if (mins >= 45) return '#FF8C00';
+                return '#FF453A';
+              };
+
               return (
                 <View style={styles.gameLogsCard}>
-                  {/* Header row */}
+
+                  {/* ── Header ── */}
                   <View style={styles.gameLogsHeader}>
                     <View style={styles.glHeaderLeft}>
-                      <Ionicons name="pulse" size={10} color={Colors.textTertiary} />
+                      <Ionicons name="pulse" size={10} color={Colors.primary} />
                       <Text style={styles.gameLogsTitle}>
-                        {allSynthetic
-                          ? 'RECENT FORM'
-                          : `RECENT FORM (${displayLogs.length} GAMES)`}
+                        {allSynthetic ? 'GAME LOG' : `GAME LOG  ·  ${displayLogs.length} GAMES`}
                       </Text>
                     </View>
                     <View style={styles.glHeaderRight}>
@@ -2418,46 +2454,75 @@ export default function ScanScreen() {
                           <Text style={styles.glOppPossVal}>{oppPoss}%</Text>
                         </View>
                       )}
-                      {!allSynthetic && (
-                        <View style={styles.hitRateBadge}>
-                          <Text style={styles.hitRateBadgeText}>
-                            {overCount}/{displayLogs.length} HIT
-                          </Text>
-                        </View>
+                      {hasDeselected && (
+                        <TouchableOpacity
+                          onPress={() => { setDeselectedLogIndices(new Set()); Haptics.selectionAsync(); }}
+                          style={styles.glResetBtn}
+                        >
+                          <Text style={styles.glResetBtnText}>RESET ALL</Text>
+                        </TouchableOpacity>
                       )}
                     </View>
                   </View>
-                  {/* ── Adjustable Line ── */}
+
+                  {/* ── Live Hit Rate Bar ── */}
+                  {!allSynthetic && selTotal > 0 && (
+                    <View style={styles.glHitRateRow}>
+                      <View style={styles.glHitRateLeft}>
+                        <Text style={styles.glHitRateCount}>
+                          <Text style={{ color: selHitPct >= 55 ? Colors.success : Colors.error, fontWeight: '900' }}>{selOver}</Text>
+                          <Text style={{ color: Colors.textSecondary, fontWeight: '600' }}>/{selTotal}</Text>
+                        </Text>
+                        <Text style={styles.glHitRateLabel}>{hasDeselected ? 'SELECTED HIT' : 'OVER HIT RATE'}</Text>
+                      </View>
+                      <View style={styles.glHitRateBarWrap}>
+                        <View style={[styles.glHitRateFill, {
+                          width: `${selHitPct}%` as any,
+                          backgroundColor: selHitPct >= 60 ? Colors.success : selHitPct >= 50 ? '#FFB347' : Colors.error,
+                        }]} />
+                      </View>
+                      <Text style={[styles.glHitRatePct, { color: selHitPct >= 60 ? Colors.success : selHitPct >= 50 ? '#FFB347' : Colors.error }]}>
+                        {selHitPct}%
+                      </Text>
+                      {hasDeselected && selectedMean != null && allMean != null && (
+                        <Text style={styles.glSelectedMean}>
+                          {selectedMean.toFixed(1)}<Text style={{ color: Colors.textTertiary }}> vs {allMean.toFixed(1)}</Text>
+                        </Text>
+                      )}
+                    </View>
+                  )}
+
+                  {/* ── Line Adjuster ── */}
                   {!allSynthetic && effectiveLine != null && (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12, paddingVertical: 7, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)', marginBottom: 2 }}>
+                    <View style={styles.glLineAdjuster}>
                       <TouchableOpacity
                         onPress={() => { setAdjustedLine(+Math.max(0, effectiveLine - 0.5).toFixed(1)); Haptics.selectionAsync(); }}
-                        style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: 'rgba(255,255,255,0.07)', alignItems: 'center', justifyContent: 'center' }}
+                        style={styles.glLineBtn}
                       >
-                        <Text style={{ color: Colors.primary, fontSize: 18, fontWeight: '700', lineHeight: 20 }}>−</Text>
+                        <Text style={styles.glLineBtnText}>−</Text>
                       </TouchableOpacity>
                       <View style={{ alignItems: 'center', minWidth: 40 }}>
-                        <Text style={{ color: Colors.text, fontSize: 16, fontWeight: '800', letterSpacing: 0.5 }}>
-                          {Number.isInteger(effectiveLine) ? effectiveLine.toFixed(1) : effectiveLine}
-                        </Text>
-                        <Text style={{ color: Colors.textTertiary, fontSize: 8, letterSpacing: 0.8, marginTop: 1 }}>LINE</Text>
+                        <Text style={styles.glLineValue}>{Number.isInteger(effectiveLine) ? effectiveLine.toFixed(1) : effectiveLine}</Text>
+                        <Text style={styles.glLineLabel}>LINE</Text>
                       </View>
                       <TouchableOpacity
                         onPress={() => { setAdjustedLine(+(effectiveLine + 0.5).toFixed(1)); Haptics.selectionAsync(); }}
-                        style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: 'rgba(255,255,255,0.07)', alignItems: 'center', justifyContent: 'center' }}
+                        style={styles.glLineBtn}
                       >
-                        <Text style={{ color: Colors.primary, fontSize: 18, fontWeight: '700', lineHeight: 20 }}>+</Text>
+                        <Text style={styles.glLineBtnText}>+</Text>
                       </TouchableOpacity>
                       {adjustedLine !== null && adjustedLine !== prediction.line && (
                         <TouchableOpacity
                           onPress={() => { setAdjustedLine(null); Haptics.selectionAsync(); }}
-                          style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.06)' }}
+                          style={styles.glLineResetBtn}
                         >
-                          <Text style={{ color: Colors.textSecondary, fontSize: 9, fontWeight: '600', letterSpacing: 0.5 }}>RESET</Text>
+                          <Text style={styles.glLineResetText}>RESET LINE</Text>
                         </TouchableOpacity>
                       )}
                     </View>
                   )}
+
+                  {/* ── Synthetic fallback ── */}
                   {allSynthetic && (
                     <View style={styles.syntheticNotice}>
                       <Ionicons name="information-circle-outline" size={14} color={Colors.textSecondary} />
@@ -2466,6 +2531,8 @@ export default function ScanScreen() {
                       </Text>
                     </View>
                   )}
+
+                  {/* ── Filter Tabs ── */}
                   {!allSynthetic && displayLogs.some(g => g.venue === 'home' || g.venue === 'away') && (
                     <View style={styles.glTabRow}>
                       {(['all', 'home', 'away'] as const).map(f => (
@@ -2499,8 +2566,25 @@ export default function ScanScreen() {
                           </TouchableOpacity>
                         );
                       })()}
+                      {hasLowMinGames && (
+                        <TouchableOpacity
+                          style={styles.glTabQuality}
+                          onPress={() => {
+                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                            const toDeselect = new Set<number>();
+                            displayLogs.forEach((g, idx) => {
+                              if ((g.minutes || 0) > 0 && (g.minutes || 0) < 60) toDeselect.add(idx);
+                            });
+                            setDeselectedLogIndices(toDeselect);
+                          }}
+                        >
+                          <Text style={styles.glTabQualityText}>QUALITY</Text>
+                        </TouchableOpacity>
+                      )}
                     </View>
                   )}
+
+                  {/* ── Interactive Tile Grid ── */}
                   {!allSynthetic && (
                     <View style={styles.glGrid}>
                       {(() => {
@@ -2508,13 +2592,16 @@ export default function ScanScreen() {
                         const padCount = remainder === 0 ? 0 : COLS - remainder;
                         return (
                           <>
-                            {filteredLogs.map((g, i) => {
-                              const isOver = g.value != null && effectiveLine != null && g.value >= effectiveLine;
+                            {filteredWithIdx.map(({ log: g, origIdx }, i) => {
+                              const isOver = g.value != null && effectiveLine != null && g.value > effectiveLine;
+                              const isDeselected = deselectedLogIndices.has(origIdx);
+                              const mins = g.minutes || 0;
+                              const isLowMin = mins > 0 && mins < 60;
+                              const tc = tierColor(g.oppTier);
+                              const mc = minsColor(mins);
                               const oppRaw = g.opponent || '?';
                               const oppShort = oppRaw.replace(/^(al-?|fc |cf |rc |sc |cd |ud |sd |rcd |as |ss |ac |us |ac |sp |ca |cp |ue |ue |ce |cm |se |sk )/i, '').slice(0, 3).toUpperCase();
                               const scoreStr = g.score || '';
-                              const rankStr = g.oppRank != null ? `#${g.oppRank}` : '';
-                              const propT = prediction.propType || '';
                               const defSecondary: { val: number | null; label: string } | null =
                                 propT === 'blocks' ? { val: g.blocks ?? null, label: 'BLK' }
                                 : propT === 'interceptions' ? { val: g.interceptions ?? null, label: 'INT' }
@@ -2522,15 +2609,37 @@ export default function ScanScreen() {
                                 : propT === 'clearances' ? { val: g.clearances ?? null, label: 'CLR' }
                                 : null;
                               return (
-                                <View key={i} style={[styles.glTile, { width: tileW }, isOver ? styles.glTileOver : styles.glTileUnder]}>
-                                  {isOver && <View style={styles.glDot} />}
-                                  <Text style={[styles.glTileVal, { color: isOver ? Colors.success : Colors.error }]}>
+                                <TouchableOpacity
+                                  key={i}
+                                  activeOpacity={0.65}
+                                  onPress={() => {
+                                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                                    setDeselectedLogIndices(prev => {
+                                      const next = new Set(prev);
+                                      if (next.has(origIdx)) next.delete(origIdx); else next.add(origIdx);
+                                      return next;
+                                    });
+                                  }}
+                                  style={[
+                                    styles.glTile,
+                                    { width: tileW, opacity: isDeselected ? 0.25 : 1 },
+                                    isDeselected ? styles.glTileDeselected
+                                      : isOver ? styles.glTileOver : styles.glTileUnder,
+                                  ]}
+                                >
+                                  {tc && <View style={[styles.glTierDot, { backgroundColor: tc }]} />}
+                                  {isLowMin && !isDeselected && <View style={styles.glLowMinDot} />}
+                                  <Text style={[styles.glTileVal, {
+                                    color: isDeselected ? Colors.textTertiary : isOver ? Colors.success : Colors.error,
+                                  }]}>
                                     {g.value != null ? String(g.value) : '—'}
                                   </Text>
                                   {scoreStr ? (
                                     <Text style={styles.glTileScore}>{scoreStr}</Text>
                                   ) : (
-                                    <Text style={styles.glTileMins}>{g.minutes > 0 ? `${g.minutes}'` : '—'}</Text>
+                                    <Text style={[styles.glTileMins, isLowMin && !isDeselected && { color: '#FF8C00' }]}>
+                                      {mins > 0 ? `${mins}'` : '—'}
+                                    </Text>
                                   )}
                                   <View style={styles.glOppRow}>
                                     <View style={styles.glVenueBadge}>
@@ -2540,14 +2649,21 @@ export default function ScanScreen() {
                                     </View>
                                     <Text style={styles.glTileOpp} numberOfLines={1}>{oppShort}</Text>
                                   </View>
-                                  {rankStr ? <Text style={styles.glTileRank}>{rankStr}</Text> : null}
                                   {g.opponentPossession != null && (
                                     <Text style={styles.glTilePoss}>OPP {g.opponentPossession}%</Text>
                                   )}
                                   {defSecondary && defSecondary.val != null && (
                                     <Text style={styles.glTileSecStat}>{defSecondary.label} {defSecondary.val}</Text>
                                   )}
-                                </View>
+                                  {mins > 0 && (
+                                    <View style={styles.glMinsBarWrap}>
+                                      <View style={[styles.glMinsBarFill, {
+                                        width: `${Math.min(100, (mins / 90) * 100)}%` as any,
+                                        backgroundColor: isDeselected ? '#222' : mc,
+                                      }]} />
+                                    </View>
+                                  )}
+                                </TouchableOpacity>
                               );
                             })}
                             {Array.from({ length: padCount }).map((_, pi) => (
@@ -2558,6 +2674,8 @@ export default function ScanScreen() {
                       })()}
                     </View>
                   )}
+
+                  {/* ── Home/Away Averages ── */}
                   {!allSynthetic && (prediction.homeAvg != null || prediction.awayAvg != null) && (
                     <View style={styles.avgRow}>
                       {prediction.homeAvg != null && (
@@ -2568,6 +2686,8 @@ export default function ScanScreen() {
                       )}
                     </View>
                   )}
+
+                  {/* ── Defensive stats ── */}
                   {!allSynthetic && (() => {
                     const logsWithDef = displayLogs.filter(
                       g => g.blocks != null || g.interceptions != null || g.tackles != null || g.clearances != null
@@ -4569,6 +4689,58 @@ const styles = StyleSheet.create({
   glTileSecStat: {
     fontSize: 7, color: Colors.textSecondary, fontWeight: '700', letterSpacing: 0.3, marginTop: 1,
   },
+  glTileDeselected: {
+    backgroundColor: 'rgba(255,255,255,0.02)', borderColor: 'rgba(255,255,255,0.06)',
+  },
+  glTierDot: {
+    position: 'absolute', top: 3, right: 3, width: 5, height: 5, borderRadius: 2.5,
+  },
+  glLowMinDot: {
+    position: 'absolute', top: 3, left: 3, width: 5, height: 5, borderRadius: 2.5,
+    backgroundColor: '#FF8C00',
+  },
+  glMinsBarWrap: {
+    width: '100%', height: 2.5, backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 1.5, marginTop: 3, overflow: 'hidden',
+  },
+  glMinsBarFill: { height: '100%', borderRadius: 1.5 },
+  glHitRateRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)',
+  },
+  glHitRateLeft: { alignItems: 'center', minWidth: 34 },
+  glHitRateCount: { fontSize: 14, fontWeight: '800' },
+  glHitRateLabel: { fontSize: 7, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 0.8, marginTop: 1 },
+  glHitRateBarWrap: { flex: 1, height: 4, backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 2, overflow: 'hidden' },
+  glHitRateFill: { height: '100%', borderRadius: 2 },
+  glHitRatePct: { fontSize: 12, fontWeight: '800', minWidth: 36, textAlign: 'right' },
+  glSelectedMean: { fontSize: 9, color: Colors.textSecondary, fontWeight: '700' },
+  glResetBtn: {
+    backgroundColor: 'rgba(255,255,255,0.07)', borderRadius: 5,
+    paddingHorizontal: 9, paddingVertical: 3, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+  },
+  glResetBtnText: { fontSize: 9, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.5 },
+  glLineAdjuster: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12,
+    paddingVertical: 7, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)', marginBottom: 2,
+  },
+  glLineBtn: {
+    width: 30, height: 30, borderRadius: 15,
+    backgroundColor: 'rgba(255,255,255,0.07)', alignItems: 'center', justifyContent: 'center',
+  },
+  glLineBtnText: { color: Colors.primary, fontSize: 18, fontWeight: '700', lineHeight: 20 },
+  glLineValue: { color: Colors.text, fontSize: 16, fontWeight: '800', letterSpacing: 0.5 },
+  glLineLabel: { color: Colors.textTertiary, fontSize: 8, letterSpacing: 0.8, marginTop: 1 },
+  glLineResetBtn: {
+    paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.06)',
+  },
+  glLineResetText: { color: Colors.textSecondary, fontSize: 9, fontWeight: '600', letterSpacing: 0.5 },
+  glTabQuality: {
+    paddingHorizontal: 10, paddingVertical: 7, borderRadius: 7,
+    backgroundColor: 'rgba(255,140,0,0.10)', borderWidth: 1, borderColor: 'rgba(255,140,0,0.28)',
+    alignItems: 'center',
+  },
+  glTabQualityText: { fontSize: 10, fontWeight: '800', color: '#FF9500', letterSpacing: 0.5 },
 
   /* Game log header right (avg possession badge) */
   glHeaderRight: { flexDirection: 'row', alignItems: 'center', gap: 6 },
