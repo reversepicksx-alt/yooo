@@ -2712,9 +2712,17 @@ export default function ScanScreen() {
                                     </View>
                                     <Text style={styles.glTileOpp} numberOfLines={1}>{oppShort}</Text>
                                   </View>
-                                  {g.opponentPossession != null && (
-                                    <Text style={styles.glTilePoss}>OPP {g.opponentPossession}%</Text>
-                                  )}
+                                  {(g.teamPossession != null || g.opponentPossession != null) && (() => {
+                                    const tp = g.teamPossession ?? (g.opponentPossession != null ? 100 - g.opponentPossession : null);
+                                    const op = g.opponentPossession ?? (g.teamPossession != null ? 100 - g.teamPossession : null);
+                                    if (tp == null) return null;
+                                    const pc = tp >= 55 ? Colors.success : tp < 45 ? Colors.error : Colors.textSecondary;
+                                    return (
+                                      <Text style={[styles.glTilePoss, { color: pc }]}>
+                                        {tp}%{op != null ? `–${op}%` : ''}
+                                      </Text>
+                                    );
+                                  })()}
                                   {defSecondary && defSecondary.val != null && (
                                     <Text style={styles.glTileSecStat}>{defSecondary.label} {defSecondary.val}</Text>
                                   )}
@@ -3439,12 +3447,18 @@ export default function ScanScreen() {
                                 {rankStr ? (
                                   <Text style={styles.glTileRank}>{rankStr}</Text>
                                 ) : null}
-                                {/* Opponent possession */}
-                                {g.opponentPossession != null && (
-                                  <Text style={styles.glTilePoss}>
-                                    OPP {g.opponentPossession}%
-                                  </Text>
-                                )}
+                                {/* Team possession split */}
+                                {(g.teamPossession != null || g.opponentPossession != null) && (() => {
+                                  const tp = g.teamPossession ?? (g.opponentPossession != null ? 100 - g.opponentPossession : null);
+                                  const op = g.opponentPossession ?? (g.teamPossession != null ? 100 - g.teamPossession : null);
+                                  if (tp == null) return null;
+                                  const pc = tp >= 55 ? Colors.success : tp < 45 ? Colors.error : Colors.textSecondary;
+                                  return (
+                                    <Text style={[styles.glTilePoss, { color: pc }]}>
+                                      {tp}%{op != null ? `–${op}%` : ''}
+                                    </Text>
+                                  );
+                                })()}
                                 {/* Secondary defensive stat for relevant prop types */}
                                 {defSecondary && defSecondary.val != null && (
                                   <Text style={styles.glTileSecStat}>
@@ -3530,9 +3544,14 @@ export default function ScanScreen() {
                   <View key={i} style={[styles.h2hRow, i < arr.length - 1 && styles.h2hRowBorder]}>
                     <Text style={styles.h2hDate}>{m.date ? m.date.slice(0, 10) : '—'}</Text>
                     {score ? <Text style={styles.h2hScore}>{score}</Text> : null}
-                    {m.opponentPossession != null && (
-                      <Text style={styles.h2hPoss}>OPP {m.opponentPossession}%</Text>
-                    )}
+                    {(m.teamPossession != null || m.opponentPossession != null) && (() => {
+                      const tp = m.teamPossession ?? (m.opponentPossession != null ? 100 - m.opponentPossession : null);
+                      const op = m.opponentPossession ?? (m.teamPossession != null ? 100 - m.teamPossession : null);
+                      if (tp == null) return null;
+                      return (
+                        <Text style={styles.h2hPoss}>{tp}%{op != null ? `–${op}%` : ''}</Text>
+                      );
+                    })()}
                     <View style={styles.h2hRight}>
                       {(m.minutesPlayed ?? m.minutes) > 0 && (
                         <Text style={styles.h2hMins}>{m.minutesPlayed ?? m.minutes}'</Text>
