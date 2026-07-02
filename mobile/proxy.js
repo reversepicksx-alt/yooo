@@ -218,7 +218,7 @@ const MANIFEST = JSON.stringify({
   ],
 });
 
-function serveIndex(res) {
+function serveIndex(res, skipLoader) {
   const indexPath = path.join(distPath, 'index.html');
   if (!fs.existsSync(indexPath)) {
     res.writeHead(503, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
@@ -228,7 +228,9 @@ function serveIndex(res) {
     let html = fs.readFileSync(indexPath, 'utf8');
     html = html.replace(/<title>[^<]*<\/title>/, '<title>Reverse Picks \u2014 Elite Prop Intelligence</title>');
     html = html.replace('</head>', `${PWA_TAGS}\n  </head>`);
-    html = html.replace('</body>', `${buildLoadingScreen()}\n</body>`);
+    if (!skipLoader) {
+      html = html.replace('</body>', `${buildLoadingScreen()}\n</body>`);
+    }
     res.writeHead(200, {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
@@ -243,7 +245,9 @@ function serveIndex(res) {
 
 // ── Request handler ────────────────────────────────────────────────────────
 const server = http.createServer((req, res) => {
-  const pathname = url.parse(req.url).pathname || '/';
+  const parsedUrl = url.parse(req.url, true);
+  const pathname = parsedUrl.pathname || '/';
+  const skipLoader = parsedUrl.query && (parsedUrl.query.noloader === '1' || parsedUrl.query.shot === '1');
 
   // Always proxy /api/* to FastAPI backend
   if (pathname === '/api' || pathname.startsWith('/api/')) {
@@ -396,7 +400,7 @@ const server = http.createServer((req, res) => {
     }
 
     // SPA fallback
-    return serveIndex(res);
+    return serveIndex(res, skipLoader);
 
   } else {
     // Development: serve dist/ if built, otherwise proxy to Metro
@@ -407,7 +411,7 @@ const server = http.createServer((req, res) => {
         if (!filePath.startsWith(distPath + path.sep) && filePath !== distPath) { res.writeHead(403); return res.end('Forbidden'); }
         if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) return serveFile(res, filePath);
       }
-      return serveIndex(res);
+      return serveIndex(res, skipLoader);
     }
     // Proxy to Metro dev server
     const opts = { hostname: 'localhost', port: METRO_PORT, path: req.url, method: req.method, headers: req.headers };
