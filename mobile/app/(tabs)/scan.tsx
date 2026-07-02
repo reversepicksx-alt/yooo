@@ -182,9 +182,20 @@ export default function ScanScreen() {
   const [wtaShowRoundPicker, setWtaShowRoundPicker] = useState(false);
 
 
-  // Reset tile selections whenever a new prediction is loaded
+  // Auto-quality-filter whenever a new prediction loads:
+  // sub-60-min games are excluded automatically so the hit rate is clean by default.
+  // User can still tap any grey tile to restore it.
   useEffect(() => {
-    setDeselectedLogIndices(new Set());
+    if (!prediction?.gameLogs) {
+      setDeselectedLogIndices(new Set());
+      return;
+    }
+    const realLogs = prediction.gameLogs.filter(g => !g.synthetic);
+    const toDeselect = new Set<number>();
+    realLogs.forEach((g, idx) => {
+      if ((g.minutes || 0) > 0 && (g.minutes || 0) < 60) toDeselect.add(idx);
+    });
+    setDeselectedLogIndices(toDeselect);
   }, [prediction?.player]);
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
@@ -2675,6 +2686,56 @@ export default function ScanScreen() {
                     </View>
                   )}
 
+                  {/* ── Dot Legend ── */}
+                  {!allSynthetic && (
+                    <View style={styles.glLegendRow}>
+                      <View style={styles.glLegendGroup}>
+                        <Text style={styles.glLegendTitle}>OPP STRENGTH</Text>
+                        {([
+                          { color: '#FF453A', label: 'Elite' },
+                          { color: '#FF9F0A', label: 'Strong' },
+                          { color: '#FFD60A', label: 'Mid' },
+                          { color: '#34C759', label: 'Weak' },
+                        ] as const).map(({ color, label }) => (
+                          <View key={label} style={styles.glLegendItem}>
+                            <View style={[styles.glLegendDot, { backgroundColor: color }]} />
+                            <Text style={styles.glLegendLabel}>{label}</Text>
+                          </View>
+                        ))}
+                      </View>
+                      <View style={styles.glLegendDivider} />
+                      <View style={styles.glLegendGroup}>
+                        <Text style={styles.glLegendTitle}>MINUTES BAR</Text>
+                        {([
+                          { color: '#39FF14', label: '80+ min' },
+                          { color: '#FFB347', label: '60-79 min' },
+                          { color: '#FF8C00', label: '45-59 min' },
+                          { color: '#FF453A', label: '<45 low' },
+                        ] as const).map(({ color, label }) => (
+                          <View key={label} style={styles.glLegendItem}>
+                            <View style={[styles.glLegendBar, { backgroundColor: color }]} />
+                            <Text style={styles.glLegendLabel}>{label}</Text>
+                          </View>
+                        ))}
+                      </View>
+                      <View style={styles.glLegendDivider} />
+                      <View style={styles.glLegendGroup}>
+                        <Text style={styles.glLegendTitle}>TILE STATE</Text>
+                        <View style={styles.glLegendItem}>
+                          <View style={[styles.glLegendDot, { backgroundColor: '#FF8C00' }]} />
+                          <Text style={styles.glLegendLabel}>Left dot = {'<'}60' play</Text>
+                        </View>
+                        <View style={styles.glLegendItem}>
+                          <View style={[styles.glLegendDot, { backgroundColor: '#555' }]} />
+                          <Text style={styles.glLegendLabel}>Dimmed = excluded</Text>
+                        </View>
+                        <Text style={[styles.glLegendLabel, { marginTop: 4, fontStyle: 'italic' }]}>
+                          Tap any tile to toggle it
+                        </Text>
+                      </View>
+                    </View>
+                  )}
+
                   {/* ── Home/Away Averages ── */}
                   {!allSynthetic && (prediction.homeAvg != null || prediction.awayAvg != null) && (
                     <View style={styles.avgRow}>
@@ -4741,6 +4802,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   glTabQualityText: { fontSize: 10, fontWeight: '800', color: '#FF9500', letterSpacing: 0.5 },
+  glLegendRow: {
+    flexDirection: 'row', gap: 10,
+    paddingTop: 10, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.05)',
+  },
+  glLegendGroup: { flex: 1, gap: 4 },
+  glLegendDivider: { width: 1, backgroundColor: 'rgba(255,255,255,0.07)' },
+  glLegendTitle: {
+    fontSize: 7, fontWeight: '800', color: Colors.textTertiary,
+    letterSpacing: 1, marginBottom: 2,
+  },
+  glLegendItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  glLegendDot: { width: 5, height: 5, borderRadius: 2.5 },
+  glLegendBar: { width: 14, height: 2.5, borderRadius: 1.5 },
+  glLegendLabel: { fontSize: 8, color: Colors.textTertiary, fontWeight: '500' },
 
   /* Game log header right (avg possession badge) */
   glHeaderRight: { flexDirection: 'row', alignItems: 'center', gap: 6 },
