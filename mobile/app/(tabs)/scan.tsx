@@ -3087,9 +3087,27 @@ export default function ScanScreen() {
                 const recColor = isOver ? Colors.success : isUnder ? Colors.error : Colors.textSecondary;
                 const borderColor = isOver ? Colors.success : isUnder ? Colors.error : '#333';
                 const summary = prediction.sharpSummary || '';
-                const body = prediction.reasoning || prediction.tacticalBreakdown || '';
+                const qualitySignal = prediction.qualitySignal || '';
+                const keyFactors = prediction.keyFactors || [];
+                const body = prediction.reasoning || '';
+                const fullBreakdown = prediction.tacticalBreakdown || '';
                 const alerts = (prediction.tacticalAlerts || []) as string[];
-                const hasMore = body.length > 120;
+
+                const sections: { title: string; content: string }[] = [];
+                if (sharpExpanded && fullBreakdown) {
+                  const sectionNames = ['Matchup', 'Situation', 'Analysis', 'Scenarios', 'Risk', 'TL;DR'];
+                  let remaining = fullBreakdown;
+                  for (const title of sectionNames) {
+                    const idx = remaining.search(new RegExp(`\\*\\*${title}\\*\\*`, 'i'));
+                    if (idx < 0) continue;
+                    const afterHeader = remaining.slice(idx).replace(new RegExp(`^\\*\\*${title}\\*\\*[\\s\\-—]*`, 'i'), '');
+                    const nextIdx = afterHeader.search(/\*\*[A-Za-z;/]+\*\*/);
+                    const content = (nextIdx >= 0 ? afterHeader.slice(0, nextIdx) : afterHeader).trim();
+                    if (content) sections.push({ title, content });
+                    remaining = nextIdx >= 0 ? afterHeader.slice(nextIdx) : '';
+                  }
+                }
+
                 return (
                   <View style={[styles.scoutCard, { borderColor: borderColor + '44' }]}>
                     <View style={styles.scoutHeader}>
@@ -3101,31 +3119,70 @@ export default function ScanScreen() {
                         </Text>
                       </View>
                     </View>
+
                     {aiNarrativeLoading && (
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 }}>
                         <ActivityIndicator size="small" color={Colors.primary} />
                         <Text style={{ fontSize: 11, color: Colors.textTertiary }}>AI analysis loading...</Text>
                       </View>
                     )}
+
                     {summary ? (
-                      <Text style={[styles.scoutSectionBody, { color: Colors.text, fontWeight: '600' }]} numberOfLines={sharpExpanded ? undefined : 2}>
+                      <Text style={[styles.scoutSectionBody, { color: Colors.text, fontWeight: '600', marginTop: 6 }]}>
                         {summary}
                       </Text>
                     ) : null}
-                    {body ? (
-                      <TouchableOpacity onPress={() => setSharpExpanded(e => !e)} activeOpacity={0.8}>
-                        <Text style={[styles.scoutSectionBody, { color: Colors.textSecondary }]} numberOfLines={sharpExpanded ? undefined : 3}>
-                          {body}
-                        </Text>
-                        {hasMore && (
-                          <Text style={{ fontSize: 9, color: Colors.textTertiary, marginTop: 3, letterSpacing: 0.5, fontWeight: '700' }}>
-                            {sharpExpanded ? '▲ LESS' : '▼ MORE'}
+
+                    {qualitySignal ? (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 7,
+                        backgroundColor: Colors.primary + '13', borderRadius: 5,
+                        paddingHorizontal: 8, paddingVertical: 4,
+                        borderWidth: 1, borderColor: Colors.primary + '30', alignSelf: 'flex-start' }}>
+                        <Ionicons name="stats-chart" size={9} color={Colors.primary} />
+                        <Text style={{ fontSize: 10, color: Colors.primary, fontWeight: '700' }}>{qualitySignal}</Text>
+                      </View>
+                    ) : null}
+
+                    {keyFactors.length > 0 && (
+                      <View style={{ gap: 5, marginTop: 8 }}>
+                        {keyFactors.slice(0, 3).map((factor, i) => (
+                          <View key={i} style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 7 }}>
+                            <View style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: recColor, marginTop: 4, flexShrink: 0 }} />
+                            <Text style={{ fontSize: 11.5, color: Colors.text, flex: 1, lineHeight: 17, fontWeight: '500' }}>{factor}</Text>
+                          </View>
+                        ))}
+                      </View>
+                    )}
+
+                    {(body || fullBreakdown) ? (
+                      <TouchableOpacity onPress={() => setSharpExpanded(e => !e)} activeOpacity={0.8} style={{ marginTop: 8 }}>
+                        {body ? (
+                          <Text style={[styles.scoutSectionBody, { color: Colors.textSecondary }]} numberOfLines={sharpExpanded ? undefined : 2}>
+                            {body}
                           </Text>
+                        ) : null}
+                        {sharpExpanded && sections.length > 0 && (
+                          <View style={{ marginTop: 12, gap: 12 }}>
+                            {sections.map((sec, i) => (
+                              <View key={i} style={{ borderLeftWidth: 2, borderLeftColor: recColor + '44', paddingLeft: 8 }}>
+                                <Text style={{ fontSize: 8, color: recColor, fontWeight: '800', letterSpacing: 1.2, marginBottom: 3 }}>
+                                  {sec.title.toUpperCase()}
+                                </Text>
+                                <Text style={{ fontSize: 11, color: Colors.textSecondary, lineHeight: 17 }}>
+                                  {sec.content}
+                                </Text>
+                              </View>
+                            ))}
+                          </View>
                         )}
+                        <Text style={{ fontSize: 9, color: Colors.textTertiary, marginTop: 5, letterSpacing: 0.5, fontWeight: '700' }}>
+                          {sharpExpanded ? '▲ LESS' : '▼ FULL BREAKDOWN'}
+                        </Text>
                       </TouchableOpacity>
                     ) : null}
+
                     {alerts.length > 0 && (
-                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 5, marginTop: 4 }}>
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 5, marginTop: 6 }}>
                         {alerts.slice(0, 3).map((alert, i) => {
                           const isRisk = alert.toLowerCase().includes('risk') || alert.toLowerCase().includes('invalid') || alert.toLowerCase().includes('flip');
                           const isBoost = alert.toLowerCase().includes('boost') || alert.toLowerCase().includes('infl') || alert.toLowerCase().includes('rise');

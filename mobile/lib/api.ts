@@ -413,6 +413,8 @@ export interface PredictionResult {
   keyEvidence?: string;
   gameFlowDynamics?: string;
   scenarioAnalysis?: string;
+  keyFactors?: string[];
+  qualitySignal?: string;
   matchContext?: { league?: string; round?: string; date?: string };
   gameSituation?: {
     isKnockout: boolean;
@@ -647,7 +649,7 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
     confidence: raw.confidenceScore,
     rawConfidence: raw.rawConfidence ?? raw.confidenceScore,
     recommendation: rec,
-    reasoning: raw.tacticalBreakdown || raw.reasoning,
+    reasoning: raw.reasoning || undefined,
     confidenceLevel: raw.confidenceLevel,
     confidenceInterval: raw.confidenceInterval,
     bayesianProjection: bm.posteriorMean,
@@ -731,7 +733,9 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
     lineDeviationHitRate: raw.lineDeviationHitRate ?? undefined,
     dataQuality: raw.dataQuality ? { level: raw.dataQuality.level, message: raw.dataQuality.message, gamesWithData: raw.dataQuality.gamesWithData, totalGames: raw.dataQuality.totalGames } : undefined,
     analysisSummary: raw.analysisSummary ?? undefined,
-    tacticalBreakdown: raw.tacticalBreakdown || raw.reasoning || undefined,
+    tacticalBreakdown: raw.tacticalBreakdown || undefined,
+    keyFactors: Array.isArray(raw.keyFactors) ? (raw.keyFactors as string[]) : undefined,
+    qualitySignal: (raw as any).qualitySignal || undefined,
     blendNote: raw.blendNote || undefined,
     aiProjection: raw.aiProjection || undefined,
     bayesianComponent: raw.bayesianComponent || undefined,

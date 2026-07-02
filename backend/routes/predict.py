@@ -3399,6 +3399,27 @@ Season avg: {early_bayes['priorMean']} | Recent form (decay-weighted): {early_ba
 Streak: {early_bayes['streakFlag']} | Volatility: {early_bayes['volatility']} (CV={early_bayes['cv']}) | Reversal: {early_bayes['reversalFlag']}
 IMPORTANT: Never use the word "Bayesian" in your response. Always say "Reverse Formula" instead.
 >>> DIRECTION LOCK: The model's verdict is {bdir} {req.line} with projection {_pf_proj}. This is FINAL. Your ENTIRE analysis — every section, every sentence — must explain and support the {bdir} verdict. Do NOT argue for {'OVER' if bdir == 'UNDER' else 'UNDER'}. Do NOT present "tension" or "balanced" views. The math has already weighed all factors; your job is to narrate WHY the {bdir} verdict is tactically correct. Set aiProjection to a number on the {bdir} side of {req.line} (i.e. {'below' if bdir == 'UNDER' else 'above'} {req.line}). <<<"""
+                # ── Inject quality-filtered hit rate into AI prompt ──────────────
+                _ql_hr   = (historical_data.get("playerGameLogs") or {}).get("hitRates", {})
+                _ql_tot  = _ql_hr.get("qualityTotal", 0)
+                if _ql_tot >= 3 and req.line:
+                    _ql_ov   = _ql_hr.get("qualityOverHits", 0)
+                    _ql_pct  = _ql_hr.get("qualityOverPct", 0.0)
+                    _ql_un   = _ql_tot - _ql_ov
+                    _ql_un_pct = round(100 - _ql_pct, 1)
+                    _ql_raw_tot = len((historical_data.get("playerGameLogs") or {}).get("games", []))
+                    _ql_excl = _ql_raw_tot - _ql_tot
+                    _ql_excl_note = (
+                        f"{_ql_excl} sub-60-min game{'s' if _ql_excl != 1 else ''} excluded — partial-minute appearances distort the raw rate."
+                        if _ql_excl > 0 else "All logged games were 60+ minutes (full sample)."
+                    )
+                    _ql_dir = "OVER" if _ql_pct >= 50 else "UNDER"
+                    _ql_excl_suffix = f" — {_ql_excl} sub-60-min game{'s' if _ql_excl != 1 else ''} excluded" if _ql_excl > 0 else ""
+                    bayesian_prompt_anchor += f"""
+[QUALITY-FILTERED HIT RATE — 60+ MINUTE GAMES ONLY — USE AS PRIMARY SIGNAL]
+Full-game appearances: {_ql_ov}/{_ql_tot} ({_ql_pct}%) OVER {req.line} | {_ql_un}/{_ql_tot} ({_ql_un_pct}%) UNDER {req.line}
+{_ql_excl_note}
+This quality-filtered rate is the TRUE historical signal. Include it in qualitySignal as: '{_ql_ov} of {_ql_tot} full-game appearances ({_ql_pct}%) went {_ql_dir} {req.line}{_ql_excl_suffix}.'"""
                 # Inject redistribution context into prompt
                 if _redist_alerts:
                     _redist_mult_pct = round((_redist_multiplier - 1) * 100)
@@ -4075,6 +4096,10 @@ REQUIRED JSON FIELDS:
 "subRisk": One specific substitution or rotation risk with timing.
 "uncertaintyNote": One honest limitation of this projection.
 
+"qualitySignal": Exactly one sentence summarizing the quality-filtered (60+ min games) hit rate. Use the exact sentence provided in the [QUALITY-FILTERED HIT RATE] block if present (e.g. "9 of 11 full-game appearances (82%) went OVER 47.5 — 3 sub-60-min games excluded."). If no quality data was provided, set to empty string "".
+
+"keyFactors": Array of exactly 3 strings (max 65 chars each). The 3 most decisive tactical facts that explain the model's verdict. Each MUST cite a specific number or rate. Must directly support the model's direction. Bad: "Player has good form". Good: "6/8 home starts vs low-block teams went OVER 52". Good: "Away avg 43 passes — 12 below home avg (venue split key)". Good: "Opp allows 58% poss avg — CDM becomes recycling hub".
+
 POSITION-SPECIFIC REASONING FRAMEWORKS (apply the relevant one):
 
 GOALKEEPER (pass_attempts/saves/soccer_fantasy_gk):
@@ -4109,7 +4134,7 @@ CALIBRATION RULES:
 - BINARY LINES (0.5): UNDER 0.5 confidence NEVER exceeds 55%.
 - DEFENDER PASSES: Ball-playing CBs/LBs in possession teams hit 60-90+ per game routinely.
 
-JSON: {"confidenceScore":0,"confidenceLevel":"","aiProjection":0,"sharpSummary":"","reasoning":"","scenarioAnalysis":"","keyEvidence":"","sensitivityTests":"","subRisk":"","gameFlowDynamics":"","uncertaintyNote":"","tacticalBreakdown":"","matchupOverview":{"homeTeam":"","awayTeam":"","favorite":"","moneyline":{"home":"","draw":"","away":""},"expectedPossession":{"home":0,"away":0},"expectedGameType":"","keyMatchupFactor":""},"bayesianMetrics":{"priorMean":0,"momentumEffect":0,"covariateAdjustment":0,"reversalFlag":"stable"},"scenarioProbabilities":{"best":0,"base":0,"worst":0},"probabilityCurve":[],"recentSamples":[],"player":{"id":0,"name":"","team":"","position":""},"opponent":"","propType":"","line":0,"confidenceInterval":[0,0],"tacticalAlerts":[]}"""
+JSON: {"confidenceScore":0,"confidenceLevel":"","aiProjection":0,"sharpSummary":"","reasoning":"","scenarioAnalysis":"","keyEvidence":"","sensitivityTests":"","subRisk":"","gameFlowDynamics":"","uncertaintyNote":"","qualitySignal":"","keyFactors":[],"tacticalBreakdown":"","matchupOverview":{"homeTeam":"","awayTeam":"","favorite":"","moneyline":{"home":"","draw":"","away":""},"expectedPossession":{"home":0,"away":0},"expectedGameType":"","keyMatchupFactor":""},"bayesianMetrics":{"priorMean":0,"momentumEffect":0,"covariateAdjustment":0,"reversalFlag":"stable"},"scenarioProbabilities":{"best":0,"base":0,"worst":0},"probabilityCurve":[],"recentSamples":[],"player":{"id":0,"name":"","team":"","position":""},"opponent":"","propType":"","line":0,"confidenceInterval":[0,0],"tacticalAlerts":[]}"""
 
         # Build the data payload — use GPT summary as primary + Wave 2 deep data as supplement
         wave2_supplement = {}
