@@ -6,6 +6,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
+import { router } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import NotificationBell from '@/components/NotificationBell';
 import * as Haptics from 'expo-haptics';
@@ -596,6 +597,21 @@ export default function CommunityScreen() {
       </View>
       <View style={styles.headerDivider} />
 
+      {/* ── Message Owner banner (non-owners only) ───────────────────────── */}
+      {!isOwner && (
+        <TouchableOpacity
+          style={styles.ownerBanner}
+          activeOpacity={0.75}
+          onPress={() => {
+            router.push(`/dm-thread?email=${encodeURIComponent('reversepicksx@gmail.com')}&name=Reverse%20Picks%20Support&image=`);
+          }}
+        >
+          <Ionicons name="mail-outline" size={15} color={Colors.primary} />
+          <Text style={styles.ownerBannerText}>Have a question? Message the owner directly</Text>
+          <Ionicons name="chevron-forward" size={14} color={Colors.textTertiary} />
+        </TouchableOpacity>
+      )}
+
       {/* ── Messages ─────────────────────────────────────────────────────── */}
       <KeyboardAvoidingView
         style={styles.flex}
@@ -891,6 +907,13 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.border,
     marginHorizontal: 0,
   },
+  ownerBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingHorizontal: 16, paddingVertical: 9,
+    backgroundColor: Colors.primaryGlow,
+    borderBottomWidth: 0.5, borderBottomColor: Colors.border,
+  },
+  ownerBannerText: { flex: 1, fontSize: 12, color: Colors.primary, fontWeight: '600' },
   onlineBadge: {
     flexDirection: 'row',
     alignItems: 'center',
