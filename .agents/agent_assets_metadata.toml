@@ -437,3 +437,9 @@ id = "C2qDSRmXZVzLRiNj6FZUD"
 uri = "file://.local/preview/rp_icon_new_preview.png"
 type = "image"
 title = "New app icon preview (cropped to square, not yet applied)"
+
+[[outputs]]
+id = "AaWXtur4LemlNBuIoMQmw"
+uri = "file://.local/preview/rp_icon_new_preview_rounded.png"
+type = "image"
+title = "New app icon preview — rounded squircle shape (not yet applied)"
