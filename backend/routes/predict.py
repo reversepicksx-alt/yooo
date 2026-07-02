@@ -897,23 +897,51 @@ async def predict(req: PredictionRequest):
                         home_goals = fix_raw.get("goals", {}).get("home", 0) or 0
                         away_goals = fix_raw.get("goals", {}).get("away", 0) or 0
 
-                        # Helper: enrich game log with team possession from team stats cache
+                        # Helper: enrich game log with team possession from fixtures/statistics
                         async def _enrich_possession(gl_dict: dict) -> dict:
                             try:
-                                team_cache_key = f"fxt_{fid}_{actual_team_id}"
-                                team_cached = await db.fixture_player_cache.find_one(
-                                    {"_k": team_cache_key}, {"_id": 0, "d.possession": 1}
+                                poss_cache_key = f"fxt_poss_{fid}"
+                                cached_poss = await db.fixture_player_cache.find_one(
+                                    {"_k": poss_cache_key}, {"_id": 0, "d": 1}
                                 )
-                                if team_cached and team_cached.get("d"):
-                                    raw_poss = team_cached["d"].get("possession", "")
-                                    if raw_poss:
-                                        poss_str = str(raw_poss).replace("%", "").strip()
-                                        try:
-                                            team_poss = int(poss_str)
-                                            gl_dict["teamPossession"] = team_poss
-                                            gl_dict["opponentPossession"] = 100 - team_poss
-                                        except (ValueError, TypeError):
-                                            pass
+                                home_poss = away_poss = None
+                                if cached_poss and cached_poss.get("d"):
+                                    home_poss = cached_poss["d"].get("home_poss")
+                                    away_poss = cached_poss["d"].get("away_poss")
+                                else:
+                                    # Fetch live from fixtures/statistics — one call per fixture
+                                    fix_stats = await api_football_request("fixtures/statistics", {"fixture": fid})
+                                    if fix_stats:
+                                        for team_stats in fix_stats:
+                                            t_id = (team_stats.get("team") or {}).get("id")
+                                            stats_list = team_stats.get("statistics") or []
+                                            for s in stats_list:
+                                                if s.get("type") == "Ball Possession":
+                                                    raw = str(s.get("value") or "").replace("%", "").strip()
+                                                    try:
+                                                        pval = int(raw)
+                                                        if t_id == fix_raw.get("teams", {}).get("home", {}).get("id"):
+                                                            home_poss = pval
+                                                        else:
+                                                            away_poss = pval
+                                                    except (ValueError, TypeError):
+                                                        pass
+                                        # Cache for future calls (permanent — historical fixtures don't change)
+                                        if home_poss is not None or away_poss is not None:
+                                            await db.fixture_player_cache.update_one(
+                                                {"_k": poss_cache_key},
+                                                {"$set": {"_k": poss_cache_key, "d": {
+                                                    "home_poss": home_poss, "away_poss": away_poss
+                                                }}},
+                                                upsert=True
+                                            )
+                                # Assign to the game log based on this player's venue
+                                if fix_venue == "home" and home_poss is not None:
+                                    gl_dict["teamPossession"] = home_poss
+                                    gl_dict["opponentPossession"] = away_poss if away_poss is not None else 100 - home_poss
+                                elif fix_venue == "away" and away_poss is not None:
+                                    gl_dict["teamPossession"] = away_poss
+                                    gl_dict["opponentPossession"] = home_poss if home_poss is not None else 100 - away_poss
                             except Exception:
                                 pass
                             return gl_dict
