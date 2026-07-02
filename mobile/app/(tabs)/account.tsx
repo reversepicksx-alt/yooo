@@ -12,7 +12,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
-import { getUserProfile, setUsername, setProfileImage } from '@/lib/api';
+import { getUserProfile, setUsername, setProfileImage, getDmInbox } from '@/lib/api';
 import {
   getSubscriptionStatus, cancelSubscription, changePlan,
   resubscribeCheckout, PLAN_OPTIONS, deleteAccount, type SubscriptionStatus,
@@ -452,6 +452,7 @@ export default function AccountScreen() {
 
   // Profile image state
   const [imageUploading, setImageUploading] = useState(false);
+  const [dmUnreadCount, setDmUnreadCount] = useState(0);
 
   // On web/android: show Stripe management for active Stripe subscribers
   const showStripeManagement = !isIOSNative && isStripeSub && !isLifetime && !isOwner;
@@ -472,6 +473,21 @@ export default function AccountScreen() {
   useEffect(() => {
     fetchSubStatus();
   }, [fetchSubStatus]);
+
+  // Poll DM inbox for unread count
+  useEffect(() => {
+    if (!session?.email) return;
+    const refresh = async () => {
+      try {
+        const convs = await getDmInbox(session.email);
+        const total = convs.reduce((s, c) => s + (c.unreadCount || 0), 0);
+        setDmUnreadCount(total);
+      } catch {}
+    };
+    refresh();
+    const id = setInterval(refresh, 30_000);
+    return () => clearInterval(id);
+  }, [session?.email]);
 
   // Load user profile (username)
   useEffect(() => {
@@ -714,7 +730,16 @@ export default function AccountScreen() {
         <Text style={styles.headerTitle}>Account</Text>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
           <TouchableOpacity onPress={() => router.push('/dm')} style={styles.headerIcon}>
-            <Ionicons name="mail-outline" size={22} color={Colors.text} />
+            <Ionicons
+              name={dmUnreadCount > 0 ? 'mail' : 'mail-outline'}
+              size={22}
+              color={dmUnreadCount > 0 ? Colors.primary : Colors.text}
+            />
+            {dmUnreadCount > 0 && (
+              <View style={styles.dmBadge}>
+                <Text style={styles.dmBadgeText}>{dmUnreadCount > 99 ? '99+' : String(dmUnreadCount)}</Text>
+              </View>
+            )}
           </TouchableOpacity>
           <NotificationBell />
         </View>
@@ -937,6 +962,12 @@ const styles = StyleSheet.create({
   header: { paddingHorizontal: 20, paddingBottom: 16 },
   headerTitle: { fontSize: 28, fontWeight: '800', color: Colors.text },
   headerIcon: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  dmBadge: {
+    position: 'absolute', top: 2, right: 2,
+    backgroundColor: Colors.primary, borderRadius: 7,
+    minWidth: 14, height: 14, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 2,
+  },
+  dmBadgeText: { color: '#000', fontSize: 9, fontWeight: '800', lineHeight: 14 },
   body: { paddingHorizontal: 20 },
   profileCard: {
     backgroundColor: Colors.card, borderRadius: Colors.radiusLg,
