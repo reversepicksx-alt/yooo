@@ -2665,6 +2665,9 @@ async def predict(req: PredictionRequest):
         _lineup_status: str = "unknown"
         _quality_prior_applied: bool = False
         _quality_prior_dropped: int = 0
+        _opp_tier_filter_applied: bool = False
+        _opp_tier_filter_dropped: int = 0
+        _opp_tier_filter_kept_tiers: list = []
         try:
             from bayesian_engine import compute_bayesian_projection
 
@@ -2916,6 +2919,39 @@ async def predict(req: PredictionRequest):
                     f"dropped {_quality_prior_dropped} sub-60-min game{'s' if _quality_prior_dropped != 1 else ''} from prior, "
                     f"using {len(_quality_bayes_pool)} full-game logs"
                 )
+
+            # ── OPPONENT TIER AUTO-FILTER ─────────────────────────────────
+            # If the current opponent is ELITE/STRONG, the prior should only
+            # draw from games where the player faced comparably tough sides.
+            # Games vs weak opposition skew the prior optimistically for an
+            # ELITE opponent (opponent parks less, presses more, concedes
+            # fewer touches). Filter stacks on top of the 60-min filter.
+            _cur_opp_rank_for_tier = (standing_data or {}).get("oppRank")
+            if _cur_opp_rank_for_tier is not None:
+                if _cur_opp_rank_for_tier <= 15:
+                    _keep_tiers = {"ELITE", "STRONG"}          # facing top-15: only top-15 history
+                elif _cur_opp_rank_for_tier <= 30:
+                    _keep_tiers = {"ELITE", "STRONG", "MID"}   # facing mid: exclude weak history
+                else:
+                    _keep_tiers = None                          # facing weak: no tier filter needed
+                if _keep_tiers:
+                    # Keep games vs matching tiers; keep unknowns (oppTier=None) conservatively
+                    _tier_pool = [
+                        g for g in _bayes_logs
+                        if g.get("oppTier") in _keep_tiers or g.get("oppTier") is None
+                    ]
+                    if len(_tier_pool) >= _MIN_QUALITY_BAYES and len(_tier_pool) < len(_bayes_logs):
+                        _opp_tier_filter_dropped = len(_bayes_logs) - len(_tier_pool)
+                        _opp_tier_filter_kept_tiers = sorted(
+                            _keep_tiers, key=lambda t: {"ELITE": 0, "STRONG": 1, "MID": 2, "WEAK": 3}.get(t, 4)
+                        )
+                        _bayes_logs = _tier_pool
+                        _opp_tier_filter_applied = True
+                        print(
+                            f"[OPP TIER FILTER] {req.playerName}/{req.propType}: "
+                            f"opp_rank={_cur_opp_rank_for_tier}, kept={_opp_tier_filter_kept_tiers}, "
+                            f"dropped {_opp_tier_filter_dropped} games, using {len(_tier_pool)} remaining"
+                        )
 
             # ── LEAGUE-EMPIRICAL CALIBRATION lookup ──────────────────────
             # Returns a small, well-shrunken multiplicative nudge on the
@@ -3447,6 +3483,15 @@ This quality-filtered rate is the TRUE historical signal. Include it in qualityS
 The Reverse Formula EXCLUDED {_quality_prior_dropped} sub-60-min game{'s' if _quality_prior_dropped != 1 else ''} from the prior calculation. These were partial appearances (cameos, rotations, injury-limited games) — NOT representative of this player's full-game output.
 Prior mean {early_bayes.get('priorMean', '?')} is based on {early_bayes.get('priorSamples', '?')} FULL GAMES (60+ minutes) only.
 IMPORTANT: When narrating the projection, reference {early_bayes.get('priorMean', '?')} as the player's full-game average. Do NOT use a lower number — the lower raw average includes games where the player barely featured."""
+                # Inject opponent tier filter note
+                if _opp_tier_filter_applied and early_bayes:
+                    _kept_str = " + ".join(_opp_tier_filter_kept_tiers)
+                    bayesian_prompt_anchor += f"""
+[OPPONENT QUALITY FILTER — CRITICAL]
+The Reverse Formula also EXCLUDED {_opp_tier_filter_dropped} game{'s' if _opp_tier_filter_dropped != 1 else ''} vs lower-ranked opponents from the prior.
+Current opponent rank: {_cur_opp_rank_for_tier}. Only kept games vs {_kept_str} opposition (comparable difficulty).
+This ensures the prior reflects performance against teams of similar calibre, not inflated by results against easier sides.
+Prior mean {early_bayes.get('priorMean', '?')} is drawn exclusively from {_kept_str} matchups. Reference this as the player's quality-opposition average."""
                 # Inject redistribution context into prompt
                 if _redist_alerts:
                     _redist_mult_pct = round((_redist_multiplier - 1) * 100)

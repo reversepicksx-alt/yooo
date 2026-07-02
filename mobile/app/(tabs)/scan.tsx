@@ -2479,9 +2479,36 @@ export default function ScanScreen() {
                   <View style={styles.gameLogsHeader}>
                     <View style={styles.glHeaderLeft}>
                       <Ionicons name="pulse" size={10} color={Colors.primary} />
-                      <Text style={styles.gameLogsTitle}>
-                        {allSynthetic ? 'GAME LOG' : `GAME LOG  ·  ${displayLogs.length} GAMES`}
-                      </Text>
+                      <View>
+                        <Text style={styles.gameLogsTitle}>
+                          {allSynthetic ? 'GAME LOG' : `GAME LOG  ·  ${displayLogs.length} GAMES`}
+                        </Text>
+                        {prediction.opponentName && prediction.currentOppTier && (() => {
+                          const tierColor: Record<string, string> = {
+                            ELITE: '#FF4444', STRONG: '#FF8C00', MID: '#FFCC00', WEAK: '#39FF14',
+                          };
+                          const c = tierColor[prediction.currentOppTier] || '#888';
+                          return (
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                              <Text style={{ fontSize: 9, color: '#666', letterSpacing: 0.3 }}>
+                                vs {prediction.opponentName}
+                              </Text>
+                              <View style={{
+                                backgroundColor: c + '22', borderRadius: 3,
+                                paddingHorizontal: 4, paddingVertical: 1,
+                                borderWidth: 1, borderColor: c + '55',
+                              }}>
+                                <Text style={{ fontSize: 8, color: c, fontWeight: '800', letterSpacing: 0.6 }}>
+                                  {prediction.currentOppTier}
+                                </Text>
+                              </View>
+                              <Text style={{ fontSize: 8, color: '#555', letterSpacing: 0.2 }}>
+                                · auto-filtered
+                              </Text>
+                            </View>
+                          );
+                        })()}
+                      </View>
                     </View>
                     <View style={styles.glHeaderRight}>
                       {!allSynthetic && oppPoss != null && (
