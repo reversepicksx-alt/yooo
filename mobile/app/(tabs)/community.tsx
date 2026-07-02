@@ -607,7 +607,7 @@ export default function CommunityScreen() {
           }}
         >
           <Ionicons name="mail-outline" size={15} color={Colors.primary} />
-          <Text style={styles.ownerBannerText}>Have a question? Message the owner directly</Text>
+          <Text style={styles.ownerBannerText}>Have a question? Message Reverse directly</Text>
           <Ionicons name="chevron-forward" size={14} color={Colors.textTertiary} />
         </TouchableOpacity>
       )}
