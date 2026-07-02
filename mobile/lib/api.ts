@@ -415,6 +415,8 @@ export interface PredictionResult {
   scenarioAnalysis?: string;
   keyFactors?: string[];
   qualitySignal?: string;
+  currentOppTier?: string;
+  currentOppRank?: number;
   matchContext?: { league?: string; round?: string; date?: string };
   gameSituation?: {
     isKnockout: boolean;
@@ -736,6 +738,8 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
     tacticalBreakdown: raw.tacticalBreakdown || undefined,
     keyFactors: Array.isArray(raw.keyFactors) ? (raw.keyFactors as string[]) : undefined,
     qualitySignal: (raw as any).qualitySignal || undefined,
+    currentOppTier: (raw as any).currentOppTier || undefined,
+    currentOppRank: (raw as any).currentOppRank ?? undefined,
     blendNote: raw.blendNote || undefined,
     aiProjection: raw.aiProjection || undefined,
     bayesianComponent: raw.bayesianComponent || undefined,

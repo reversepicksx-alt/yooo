@@ -1374,9 +1374,34 @@ export default function ScanScreen() {
                   <Text style={styles.analysisPlayer} numberOfLines={1}>
                     {prediction.playerName}
                   </Text>
-                  <Text style={styles.analysisTeam} numberOfLines={1}>
-                    {[prediction.teamName, prediction.opponentName ? `vs ${prediction.opponentName}` : ''].filter(Boolean).join('  ·  ')}
-                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
+                    <Text style={styles.analysisTeam} numberOfLines={1}>
+                      {[prediction.teamName, prediction.opponentName ? `vs ${prediction.opponentName}` : ''].filter(Boolean).join('  ·  ')}
+                    </Text>
+                    {prediction.currentOppTier && (() => {
+                      const tierCfg: Record<string, { color: string; icon: string }> = {
+                        ELITE:  { color: '#FF4444', icon: '⬛' },
+                        STRONG: { color: '#FF8C00', icon: '⬛' },
+                        MID:    { color: '#FFCC00', icon: '⬛' },
+                        WEAK:   { color: '#39FF14', icon: '⬛' },
+                      };
+                      const cfg = tierCfg[prediction.currentOppTier] || { color: '#888', icon: '⬛' };
+                      return (
+                        <View style={{
+                          backgroundColor: cfg.color + '22',
+                          borderRadius: 4,
+                          paddingHorizontal: 6,
+                          paddingVertical: 2,
+                          borderWidth: 1,
+                          borderColor: cfg.color + '55',
+                        }}>
+                          <Text style={{ fontSize: 8, color: cfg.color, fontWeight: '800', letterSpacing: 0.8 }}>
+                            {prediction.currentOppTier}
+                          </Text>
+                        </View>
+                      );
+                    })()}
+                  </View>
                   <Text style={styles.analysisVenue}>
                     {venueOverride.toUpperCase()} · {PROP_LABELS[prediction.propType || ''] || prediction.propType}
                     {prediction.playerPosition ? `  ·  ${prediction.playerPosition}` : ''}

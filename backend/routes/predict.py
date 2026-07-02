@@ -2663,6 +2663,8 @@ async def predict(req: PredictionRequest):
         _redist_multiplier: float = 1.0
         _lineup_alert: str | None = None
         _lineup_status: str = "unknown"
+        _quality_prior_applied: bool = False
+        _quality_prior_dropped: int = 0
         try:
             from bayesian_engine import compute_bayesian_projection
 
@@ -2896,6 +2898,24 @@ async def predict(req: PredictionRequest):
                         )
                 except Exception as _e:
                     print(f"[LUCK STRIP] skipped due to error: {_e}")
+
+            # ── QUALITY PRIOR FILTER — exclude sub-60-min games from Bayesian prior ──
+            # Cameos, cup rotations, and partial appearances produce stat lines that
+            # are NOT representative of a player's full-game output. A player averaging
+            # 36.7 passes in full games but only 31.1 across all games (including 19-min
+            # substitute appearances) must have their prior anchored to the 36.7, not 31.1.
+            # Only filters when enough full-game samples exist to maintain Bayesian stability.
+            _MIN_QUALITY_BAYES = 6
+            _quality_bayes_pool = [g for g in _bayes_logs if (g.get("minutes", 0) or 0) >= 60]
+            if len(_quality_bayes_pool) >= _MIN_QUALITY_BAYES and len(_quality_bayes_pool) < len(_bayes_logs):
+                _quality_prior_dropped = len(_bayes_logs) - len(_quality_bayes_pool)
+                _bayes_logs = _quality_bayes_pool
+                _quality_prior_applied = True
+                print(
+                    f"[QUALITY PRIOR] {req.playerName}/{req.propType}: "
+                    f"dropped {_quality_prior_dropped} sub-60-min game{'s' if _quality_prior_dropped != 1 else ''} from prior, "
+                    f"using {len(_quality_bayes_pool)} full-game logs"
+                )
 
             # ── LEAGUE-EMPIRICAL CALIBRATION lookup ──────────────────────
             # Returns a small, well-shrunken multiplicative nudge on the
@@ -3420,6 +3440,13 @@ IMPORTANT: Never use the word "Bayesian" in your response. Always say "Reverse F
 Full-game appearances: {_ql_ov}/{_ql_tot} ({_ql_pct}%) OVER {req.line} | {_ql_un}/{_ql_tot} ({_ql_un_pct}%) UNDER {req.line}
 {_ql_excl_note}
 This quality-filtered rate is the TRUE historical signal. Include it in qualitySignal as: '{_ql_ov} of {_ql_tot} full-game appearances ({_ql_pct}%) went {_ql_dir} {req.line}{_ql_excl_suffix}.'"""
+                # Inject quality prior note when Bayesian prior was quality-filtered
+                if _quality_prior_applied and early_bayes:
+                    bayesian_prompt_anchor += f"""
+[QUALITY PRIOR — CRITICAL: WHY THE PRIOR IS {early_bayes.get('priorMean', '?')}]
+The Reverse Formula EXCLUDED {_quality_prior_dropped} sub-60-min game{'s' if _quality_prior_dropped != 1 else ''} from the prior calculation. These were partial appearances (cameos, rotations, injury-limited games) — NOT representative of this player's full-game output.
+Prior mean {early_bayes.get('priorMean', '?')} is based on {early_bayes.get('priorSamples', '?')} FULL GAMES (60+ minutes) only.
+IMPORTANT: When narrating the projection, reference {early_bayes.get('priorMean', '?')} as the player's full-game average. Do NOT use a lower number — the lower raw average includes games where the player barely featured."""
                 # Inject redistribution context into prompt
                 if _redist_alerts:
                     _redist_mult_pct = round((_redist_multiplier - 1) * 100)
@@ -4952,6 +4979,18 @@ Analyze ALL data thoroughly. Return JSON only."""
         prediction["projectedValue"] = pv
         prediction["recommendation"] = "over" if pv > req.line else "under"
         prediction["sport"] = req.sport
+        # Expose current opponent quality tier so the frontend can display it
+        _cur_opp_rank = (standing_data or {}).get("oppRank")
+        if _cur_opp_rank is not None:
+            prediction["currentOppRank"] = _cur_opp_rank
+            if _cur_opp_rank <= 6:
+                prediction["currentOppTier"] = "ELITE"
+            elif _cur_opp_rank <= 15:
+                prediction["currentOppTier"] = "STRONG"
+            elif _cur_opp_rank <= 30:
+                prediction["currentOppTier"] = "MID"
+            else:
+                prediction["currentOppTier"] = "WEAK"
         # Tell frontend AI text is loading in background
         prediction["aiPending"] = _ai_task is not None and not _pred_cached
 
