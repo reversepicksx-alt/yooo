@@ -175,7 +175,7 @@ async def _run_startup_tasks():
     # Fix MLB picks saved with sport='soccer' before the sport-detection fix
     asyncio.create_task(_backfill_mlb_sport())
     # AI Engine background tasks
-    from grok_engine import auto_settlement_loop, auto_scout_loop, pattern_mining_loop, mlb_live_loop
+    from ai_engine import auto_settlement_loop, auto_scout_loop, pattern_mining_loop, mlb_live_loop
     asyncio.create_task(auto_settlement_loop())
     asyncio.create_task(auto_scout_loop())
     asyncio.create_task(pattern_mining_loop())
@@ -190,8 +190,8 @@ async def _run_startup_tasks():
             _log.warning("[AI] AI_INTEGRATIONS_GEMINI_API_KEY not set — predictions will return empty AI narrative.")
             return
         try:
-            from grok_engine import _grok_call
-            _ping = await _grok_call("Reply with the single word: ready", max_tokens=10, timeout=15)
+            from ai_engine import _ai_call
+            _ping = await _ai_call("Reply with the single word: ready", max_tokens=10, timeout=15)
             if _ping:
                 print(f"[AI] Replit Gemini integration active — model gemini-2.5-flash ready.")
             else:
@@ -428,9 +428,9 @@ async def _auto_backfill_positions():
 
         print(f"[AUTO-BACKFILL] Cache resolved: {updated}/{len(picks)}. Unresolved: {len(unresolved)}")
 
-        # Step 3: Use Grok to batch-resolve remaining positions
+        # Step 3: Use Gemini to batch-resolve remaining positions
         if unresolved:
-            from grok_engine import _grok_call as _grok_pos
+            from ai_engine import _ai_call as _gemini_pos
             import json as _json
             # Deduplicate by player name+sport
             unique_players = {}
@@ -486,9 +486,9 @@ Only the JSON array, no markdown."""
                                             upsert=True
                                         )
                                 grok_updated += 1
-                        print(f"[AUTO-BACKFILL] Grok resolved: {grok_updated} players (batch {i//30+1})")
+                        print(f"[AUTO-BACKFILL] Gemini resolved: {grok_updated} players (batch {i//30+1})")
                 except Exception as e:
-                    print(f"[AUTO-BACKFILL] Grok batch error: {e}")
+                    print(f"[AUTO-BACKFILL] Gemini batch error: {e}")
 
         print(f"[AUTO-BACKFILL] Done. Total cache-resolved: {updated}, AI batches sent: {(len(unresolved)+29)//30 if unresolved else 0}")
     except Exception as e:
@@ -969,7 +969,7 @@ async def owner_top_props_table():
 @app.post("/api/admin/force-settle")
 async def force_settle():
     """Immediately run the auto-settlement bot — use to unblock stuck picks."""
-    from grok_engine import _run_auto_settlement
+    from ai_engine import _run_auto_settlement
     try:
         await _run_auto_settlement()
         return {"ok": True, "message": "Settlement run complete — check picks for updates"}

@@ -17,7 +17,7 @@ from config import (
 )
 from models import PredictionRequest
 from utils import api_football_request, get_recent_fixtures_fast, strip_accents, get_soccer_odds, decimal_to_american
-from grok_engine import fetch_web_intel, fetch_ai_press_intensity
+from ai_engine import fetch_web_intel, fetch_ai_press_intensity
 from prop_safety_cache import get_prop_safety as _get_prop_safety
 import soccer_bdl_client as _bdl_soc
 # game_script_intelligence removed — was distorting confidence scores for GK pass picks
@@ -3955,10 +3955,10 @@ CRITICAL: The single highest-pass-volume midfielder who sits deepest, dictates t
                     is_defender = player_position != "Goalkeeper"
 
                     async def resolve_pos_grok() -> str:
-                        """Call Grok to resolve position. Returns raw POSITION|ROLE string."""
-                        from grok_engine import _grok_call
+                        """Call Gemini to resolve position. Returns raw POSITION|ROLE string."""
+                        from ai_engine import _ai_call
                         sys_msg = "You are a football/soccer tactical analyst. Reply in EXACTLY this format on one line:\nPOSITION|ROLE\nNothing else."
-                        return await _grok_call(
+                        return await _ai_call(
                             pos_prompt, system=sys_msg,
                             temperature=0, max_tokens=20, timeout=15,
                         )
@@ -3981,17 +3981,17 @@ CRITICAL: The single highest-pass-volume midfielder who sits deepest, dictates t
                             if grok_pos:
                                 pos_code = grok_pos
                                 role_text = grok_role or ""
-                                print(f"[POS RESOLVE] Grok: {req.playerName} → {pos_code}")
+                                print(f"[POS RESOLVE] Gemini: {req.playerName} → {pos_code}")
                             else:
-                                raise ValueError("Grok returned invalid position")
+                                raise ValueError("Gemini returned invalid position")
                         except Exception as e:
-                            print(f"[POS RESOLVE] Grok position failed ({e}), retrying...")
+                            print(f"[POS RESOLVE] Gemini position failed ({e}), retrying...")
                             grok_text2 = await resolve_pos_grok()
                             pos_code, role_text = parse_pos_response(grok_text2, valid_positions)
                             if not pos_code:
-                                raise ValueError("Grok returned invalid position on retry")
+                                raise ValueError("Gemini returned invalid position on retry")
                     else:
-                        # Non-defenders: single Grok call (with stats context)
+                        # Non-defenders: single Gemini call (with stats context)
                         pos_text = await resolve_pos_grok()
                         pos_code, role_text = parse_pos_response(pos_text, valid_positions)
                         if not pos_code:
@@ -4813,11 +4813,11 @@ Odds: {json.dumps(match_odds.get('bookmakerOdds',{}), default=str) if match_odds
 Analyze ALL data thoroughly. Return JSON only."""
 
         async def call_gemini(label="grok-fallback", model=GROK_MODEL):
-            """Grok fallback — mirrors call_grok but as a named secondary attempt."""
+            """Gemini fallback — mirrors call_grok but as a named secondary attempt."""
             return await call_grok(label=label, model=model)
 
         # =============================================
-        # AI SYNTHESIS: Grok primary, Gemini fallback
+        # AI SYNTHESIS: Gemini primary, secondary fallback
         # Projection comes ONLY from the math engine — AI projectedValue is NEVER used.
         # =============================================
         ai_result = None
@@ -4827,7 +4827,7 @@ Analyze ALL data thoroughly. Return JSON only."""
 
         async def call_grok(label="ai", model=None):
             """Primary AI synthesis — Replit Gemini AI Integration."""
-            from grok_engine import _grok_call as _engine_call
+            from ai_engine import _ai_call as _engine_call
             import re as _re
             import html as _html
             try:
@@ -4893,7 +4893,7 @@ Analyze ALL data thoroughly. Return JSON only."""
                         print(f"[MULTI-AI] {label} — JSON truncated, repaired: {list(_repaired.keys())}")
                         return _repaired
                 print(f"[MULTI-AI] {label} non-JSON response: {text[:300]!r}")
-                raise ValueError("No valid JSON in Grok response")
+                raise ValueError("No valid JSON in AI response")
             except Exception as e:
                 print(f"[MULTI-AI] {label} failed: {e}")
                 return None
@@ -4902,11 +4902,11 @@ Analyze ALL data thoroughly. Return JSON only."""
         # Same player + prop + line + opponent on the same day returns the
         # cached AI synthesis (tacticalBreakdown / sharpSummary / reasoning).
         # Bayesian Truth still runs fresh on every request — only the
-        # expensive Grok narrative call is skipped on a cache hit.
+        # expensive Gemini narrative call is skipped on a cache hit.
         _soc_ck = f"soc|{req.playerId or req.playerName}|{req.propType}|{req.line}|{req.opponentName or ''}|{today_str}"
         _pred_cached = None
         try:
-            _pred_hit = await db.grok_response_cache.find_one({"_k": _soc_ck}, {"_id": 0, "v": 1})
+            _pred_hit = await db.ai_response_cache.find_one({"_k": _soc_ck}, {"_id": 0, "v": 1})
             if _pred_hit and isinstance(_pred_hit.get("v"), dict) and _pred_hit["v"].get("tacticalBreakdown"):
                 _pred_cached = _pred_hit["v"]
                 print(f"[PRED CACHE HIT] soccer {_soc_ck[:70]}")
@@ -4914,7 +4914,7 @@ Analyze ALL data thoroughly. Return JSON only."""
             pass
         # ─────────────────────────────────────────────────────────────────────
 
-        # AI synthesis: Grok primary, Gemini fallback (ASYNC DECOUPLED — F5)
+        # AI synthesis: Gemini primary, secondary fallback (ASYNC DECOUPLED — F5)
         # If cached AI narrative exists, use it immediately. Otherwise fire AI
         # as a background task; the frontend polls for completion.
         ai_result = None
@@ -4925,14 +4925,14 @@ Analyze ALL data thoroughly. Return JSON only."""
         else:
             # Fire AI synthesis as a background task so we can return math now
             async def _background_ai_synthesis():
-                """Run Grok → cache → store result for polling."""
+                """Run Gemini → cache → store result for polling."""
                 _r = None
                 try:
                     _r = await call_grok()
                     if _r:
-                        print("[AI-BG] Grok synthesis succeeded")
+                        print("[AI-BG] Gemini synthesis succeeded")
                 except Exception as _e:
-                    print(f"[AI-BG] Grok error: {_e}")
+                    print(f"[AI-BG] Gemini error: {_e}")
                 if not _r or not isinstance(_r, dict) or not _r.get("tacticalBreakdown"):
                     try:
                         _r = await call_gemini()
@@ -4943,7 +4943,7 @@ Analyze ALL data thoroughly. Return JSON only."""
                 if _r and isinstance(_r, dict):
                     # Cache successful result
                     try:
-                        await db.grok_response_cache.replace_one(
+                        await db.ai_response_cache.replace_one(
                             {"_k": _soc_ck},
                             {"_k": _soc_ck, "v": _r, "ts": datetime.now(timezone.utc)},
                             upsert=True,
@@ -6311,7 +6311,7 @@ Analyze ALL data thoroughly. Return JSON only."""
                     prediction["tacticalAlerts"] = []
                     try:
                         if _soc_ck:
-                            await db.grok_response_cache.delete_one({"_k": _soc_ck})
+                            await db.ai_response_cache.delete_one({"_k": _soc_ck})
                     except Exception:
                         pass
                     print(

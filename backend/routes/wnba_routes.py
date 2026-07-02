@@ -26,7 +26,7 @@ async def _get_wnba_ai_analysis(
     game_logs: list, prior_mean: float, streak_flag: str,
 ) -> dict:
     try:
-        from grok_engine import _grok_call
+        from ai_engine import _ai_call
 
         prop_label = prop_type.replace("_", " ").title()
         rec_label  = recommendation.upper()
@@ -58,7 +58,7 @@ RECENT GAME LOG:
 
 Write a sharp 2-3 sentence analysis of the {rec_label}. Focus on form, matchup, and usage. Be direct."""
 
-        text = (await _grok_call(prompt, temperature=0.7, max_tokens=1500, timeout=30) or "").strip()
+        text = (await _ai_call(prompt, temperature=0.7, max_tokens=1500, timeout=30) or "").strip()
         return {
             "sharpSummary":      text[:600] if text else "",
             "tacticalBreakdown": text,

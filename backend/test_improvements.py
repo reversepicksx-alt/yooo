@@ -251,10 +251,10 @@ check(
 # 6. Gemini retry: 429 path in grok_engine source
 # ──────────────────────────────────────────────────────────────────────────────
 print("\n── 6. Gemini retry on 429 ───────────────────────────────────────────")
-import grok_engine
+import ai_engine
 
-src_gemini        = inspect.getsource(grok_engine._gemini_call)
-src_gemini_search = inspect.getsource(grok_engine._gemini_search_call)
+src_gemini        = inspect.getsource(ai_engine._gemini_call)
+src_gemini_search = inspect.getsource(ai_engine._gemini_search_call)
 
 check(
     "_gemini_call: retry loop present (range(3))",

@@ -224,14 +224,14 @@ Return JSON ONLY (no markdown outside the JSON values):
 }}"""
 
     try:
-        from grok_engine import _grok_call as _cs2_ai
+        from ai_engine import _ai_call as _cs2_ai
         raw = await _cs2_ai(prompt, temperature=0.35, max_tokens=1400, timeout=18, json_mode=True)
         if raw:
             m = re.search(r'\{[\s\S]*\}', raw)
             if m:
                 return json.loads(m.group(0))
     except Exception as e:
-        log.warning(f"[CS2 AI] Grok failed: {e}")
+        log.warning(f"[CS2 AI] Gemini failed: {e}")
 
     return {}
 

@@ -31,7 +31,7 @@ The project is structured into `backend/` (FastAPI, MongoDB) and `mobile/` (Expo
 - **Login Flow**: Two-step authentication: email verification followed by password input or setup.
 
 ### Technical Implementations
-- **Backend**: FastAPI server (`server.py`) with uvicorn, running internally on port 8000. Includes modules for AI engines (`grok_engine.py`, `grok_positions.py`), calibration (`calibration.py`), and team resolution (`team_resolver.py`).
+- **Backend**: FastAPI server (`server.py`) with uvicorn, running internally on port 8000. Includes modules for AI engines (`ai_engine.py`, `ai_positions.py`), calibration (`calibration.py`), and team resolution (`team_resolver.py`).
 - **Mobile Frontend**: Expo React Native app.
 - **Proxy Server**: An Express.js proxy (`mobile/proxy.js`) runs on public port 5000, forwarding `/api/*` requests to the internal FastAPI backend (port 8000) and all other requests (`/*`) to the Expo Metro dev server (port 5001).
 - **MongoDB**: Runs on `localhost:27017` with database `reversepicks`. Production data persists at `/home/runner/.reversepicks_db`.
@@ -40,10 +40,10 @@ The project is structured into `backend/` (FastAPI, MongoDB) and `mobile/` (Expo
 - **Subscription Management**: Integrated into `account.tsx` with Stripe API wrappers for plan details, changes, cancellation, and resubscription.
 - **Line-Deviation Intelligence Engine**: `calibration.py` computes line deviation bands based on settled picks, providing data-driven hit rates and confidence adjustments for "UNDER" and "OVER" scenarios.
 - **AI Architecture**:
-    - **Primary AI**: Grok-3 (prediction synthesis — all tactical reasoning, sharpSummary, and breakdown).
+    - **Primary AI**: Gemini 2.5 Flash (prediction synthesis — all tactical reasoning, sharpSummary, and breakdown).
     - **Secondary AI**: Google Gemini 2.5 Pro/Flash (explanations, web search, tactical chat, scan/OCR vision, position resolution).
-    - Models used: `grok-3` (prediction synthesis), `gemini-2.5-flash` (web intel, MLB/CS2/WTA analysis, scan OCR, position resolution), `gemini-2.5-pro` (tactical chat).
-    - **Prediction flow**: (1) Bayesian engine computes projection + P(OVER)/P(UNDER); (2) Gemini web search fetches live injury/lineup intel (`fetch_web_intel`); (3) Grok synthesis call (`call_grok`) analyses all data and writes tacticalBreakdown + reasoning + sharpSummary; (4) Gemini fallback (`call_gemini`) if Grok fails; (5) [BAYESIAN TRUTH] override pins recommendation and confidenceScore to the Bayesian result. Grok/Gemini never override the math — they explain it.
+    - Models used: `gemini-2.5-flash` (prediction synthesis, (web intel, MLB/CS2/WTA analysis, scan OCR, position resolution), (web intel, MLB/CS2/WTA analysis, scan OCR, position resolution), `gemini-2.5-pro` (tactical chat).
+    - **Prediction flow**: (1) Bayesian engine computes projection + P(OVER)/P(UNDER); (2) Gemini web search fetches live injury/lineup intel (`fetch_web_intel`); (3) Gemini synthesis call analyses all data and writes tacticalBreakdown + reasoning + sharpSummary; (4) Gemini secondary fallback if first attempt fails; (5) [BAYESIAN TRUTH] override pins recommendation and confidenceScore to the Bayesian result. AI never overrides the math — they explain it.
 - **Bayesian Momentum Engine**: The `bayesian_engine.py` is configured to correctly process game logs sorted newest-first, applying decay weights accurately.
 - **Sample-Quality Filter ("luck strip")**: `backend/sample_quality.py` drops historical game logs distorted by game state — garbage-time cameos (sub-50min in ≥4-goal blowouts) and severe blowouts (≥5-goal margin) — from the prior calculation. Conservative: never reduces sample size below 6. Gated behind `LUCK_STRIP_ENABLED=1` env flag pending backtest validation. Wired in `routes/predict.py` after the venue split.
 - **Empirical Confidence Calibration**: `backend/confidence_calibration.py` builds a `{propType, confidence-bucket} → actualHitRate` table from settled picks, refreshed every 6h on the backend. Applied at the end of `/api/predict` only when bucket has n≥30 (otherwise pass-through). Trains against `pick.rawConfidence` (engine pre-calibration value) to avoid feedback loops; falls back to `confidenceScore` for legacy rows. Date cutoff `2026-05-15` excludes placeholder-era picks. The pre-calibration confidence is exposed as `rawConfidence` in the predict response and persisted on saved picks.

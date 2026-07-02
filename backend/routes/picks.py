@@ -450,7 +450,7 @@ async def save_pick(req: SavePickRequest):
     # never for MLB/CS2 prop types).
     elif sport == "soccer" and doc["propType"] not in _MLB_PROP_TYPES_SET and (not doc["position"] or doc["position"] in ("Unknown", "unknown", "")):
         try:
-            from grok_positions import resolve_position_ai
+            from ai_positions import resolve_position_ai
             resolved = await resolve_position_ai(doc["playerName"], "soccer")
             if resolved.get("position"):
                 doc["position"] = resolved["position"]

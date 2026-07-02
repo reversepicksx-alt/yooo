@@ -27,7 +27,7 @@ async def _get_nfl_ai_analysis(
     game_total: Optional[float] = None,
 ) -> dict:
     try:
-        from grok_engine import _grok_call
+        from ai_engine import _ai_call
 
         prop_label = prop_type.replace("_", " ").title()
         rec_label  = recommendation.upper()
@@ -61,7 +61,7 @@ RECENT GAME LOG:
 
 Write a sharp 2-3 sentence analysis of the {rec_label}. Focus on matchup, usage, and game script. Be direct."""
 
-        text = (await _grok_call(prompt, temperature=0.7, max_tokens=1500, timeout=30) or "").strip()
+        text = (await _ai_call(prompt, temperature=0.7, max_tokens=1500, timeout=30) or "").strip()
         return {
             "sharpSummary":      text[:600] if text else "",
             "tacticalBreakdown": text,

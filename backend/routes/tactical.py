@@ -474,8 +474,8 @@ async def tactical_message(req: TacticalMessageRequest):
     if data_context:
         full_context += f"\n\n{data_context}"
 
-    # ── PRIMARY: Grok tactical reasoning ──
-    from grok_engine import _grok_call as _grok_tactical
+    # ── PRIMARY: Gemini tactical reasoning ──
+    from ai_engine import _ai_call as _gemini_tactical
     ai_response = ""
     _grok_ok = False
     _ctx_prefix = f"[CONVERSATION CONTEXT]\n{history_text}\n[END CONTEXT]\n\n" if history_text else ""
@@ -490,11 +490,11 @@ async def tactical_message(req: TacticalMessageRequest):
         )
         _grok_ok = bool(ai_response)
         if not _grok_ok:
-            print("[TACTICAL] Grok primary returned empty response")
+            print("[TACTICAL] Gemini primary returned empty response")
     except Exception as _e:
-        print(f"[TACTICAL] Grok primary failed: {_e}")
+        print(f"[TACTICAL] Gemini primary failed: {_e}")
 
-    # ── FALLBACK: second Grok attempt if first failed ──
+    # ── FALLBACK: second Gemini attempt if first failed ──
     if not _grok_ok:
         try:
             ai_response = await _grok_tactical(
@@ -506,9 +506,9 @@ async def tactical_message(req: TacticalMessageRequest):
             )
             _grok_ok = bool(ai_response)
             if not _grok_ok:
-                print("[TACTICAL] Grok fallback also returned empty")
+                print("[TACTICAL] Gemini fallback also returned empty")
         except Exception as _e:
-            print(f"[TACTICAL] Grok fallback failed: {_e}")
+            print(f"[TACTICAL] Gemini fallback failed: {_e}")
 
     # ── Synthesis layer ──
     try:

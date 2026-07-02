@@ -917,7 +917,7 @@ async def scan_prop(req: ScanPropRequest):
 
         # ── Step 1: Gemini Vision OCR ──
         extracted = None
-        from grok_engine import gemini_scan_prop
+        from ai_engine import gemini_scan_prop
         scan_result = await gemini_scan_prop(req.image_base64, sport=sport)
         if scan_result and scan_result.get("playerName"):
             # For non-soccer sports: skip soccer validation, return extracted data directly

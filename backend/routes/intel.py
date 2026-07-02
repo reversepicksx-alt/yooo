@@ -481,7 +481,7 @@ async def intel_sheet(email: str, token: str, sport: str = "soccer"):
     unresolved = [r for r in rows if not r.get("position")]
     if unresolved:
         try:
-            from grok_positions import resolve_positions_ai_batch
+            from ai_positions import resolve_positions_ai_batch
             seen = set()
             batch = []
             for r in unresolved:

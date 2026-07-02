@@ -89,10 +89,10 @@ Return ONLY valid JSON, no markdown or explanation."""
     import json as jmod
 
     async def call_grok_analysis(label: str) -> tuple:
-        """Grok call with JSON mode for reliable parsing."""
+        """AI call with JSON mode for reliable parsing."""
         try:
-            from grok_engine import _grok_call
-            text = await _grok_call(prompt, temperature=0, max_tokens=500, timeout=20, json_mode=True)
+            from ai_engine import _ai_call
+            text = await _ai_call(prompt, temperature=0, max_tokens=500, timeout=20, json_mode=True)
             if not text:
                 return label, None
             return label, jmod.loads(text)
@@ -101,11 +101,11 @@ Return ONLY valid JSON, no markdown or explanation."""
             return label, None
 
     async def call_grok_analysis_retry(label: str) -> tuple:
-        """Second Grok call — non-JSON mode with manual parse as fallback."""
+        """Second AI call — non-JSON mode with manual parse as fallback."""
         import re as _re
         try:
-            from grok_engine import _grok_call
-            text = await _grok_call(prompt, temperature=0, max_tokens=500, timeout=20)
+            from ai_engine import _ai_call
+            text = await _ai_call(prompt, temperature=0, max_tokens=500, timeout=20)
             if not text:
                 return label, None
             text = text.strip()

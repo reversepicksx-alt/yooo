@@ -198,7 +198,7 @@ async def _run_ai_prediction(
     sport_context: str,
     valid_props: dict,
 ) -> dict:
-    from grok_engine import _grok_call as _ai_sport_call
+    from ai_engine import _ai_call as _ai_sport_call
 
     opponent_str = f" vs {req.opponentName}" if req.opponentName else ""
     venue_str    = f" ({req.venue.upper()})" if req.venue else ""
@@ -261,7 +261,7 @@ Rules:
 
         ai = json.loads(raw_text)
     except Exception as e:
-        log.warning(f"[AI SPORT] Grok error for {sport}/{req.playerName}: {e}")
+        log.warning(f"[AI SPORT] Gemini error for {sport}/{req.playerName}: {e}")
         # Fallback: coin-flip near 50/50 based on line vs estimated mean
         ai = {
             "projection":       req.line,

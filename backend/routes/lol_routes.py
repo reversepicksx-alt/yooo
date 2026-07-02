@@ -21,7 +21,7 @@ async def _get_ai_analysis(
     recommendation: str, match_logs: list,
 ) -> dict:
     try:
-        from grok_engine import _grok_call
+        from ai_engine import _ai_call
         prop_label = lol_engine.PROP_LABELS.get(prop_type, prop_type.replace("_", " ").title())
         conf = round(max(p_over, p_under))
         ctx_lines = []
@@ -44,7 +44,7 @@ RECENT MATCH LOG:
 {ctx}
 
 Write a sharp 2-3 sentence analysis focusing on champion pool, meta, and opponent matchup. Be direct."""
-        text = (await _grok_call(prompt, temperature=0.7, max_tokens=1500, timeout=30) or "").strip()
+        text = (await _ai_call(prompt, temperature=0.7, max_tokens=1500, timeout=30) or "").strip()
         return {"sharpSummary": text[:600], "tacticalBreakdown": text,
                 "reasoning": f"Bayesian: {projection} | P(OVER)={p_over}% P(UNDER)={p_under}%"}
     except Exception as e:
