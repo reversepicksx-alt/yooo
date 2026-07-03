@@ -56,8 +56,6 @@ const PROP_LABELS: Record<string, string> = {
   shots_assisted: 'Shot Assists', duels_won: 'Duels Won', passes: 'Passes',
   maps_1_3_kills: 'Maps 1-3 Kills',
   maps_1_3_headshots: 'Maps 1-3 Headshots',
-  soccer_fantasy_outfield: 'Player Score',
-  soccer_fantasy_gk: 'Goalkeeper Score',
 };
 
 const WC_HOST_NAMES = new Set(['mexico', 'united states', 'usa', 'canada']);

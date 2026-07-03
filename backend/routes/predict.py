@@ -39,50 +39,6 @@ _match_dom_cache: dict = {}
 _MATCH_DOM_TTL = 3600 * 6  # 6 hours
 
 
-# ── PrizePicks Soccer Fantasy Scoring Formulas ────────────────────────────────
-# Outfield Player Score (PrizePicks official formula):
-#   Goal +6 | Assist +3 | Shot on Target +1.5 | Key Pass +1 | Tackle +0.5
-#   Interception +0.5 | Clearance +0.5 | Foul Drawn +0.5 | Offside -0.5
-#   Yellow Card -1 | Red Card -3 | Missed Penalty -2
-#
-# Goalkeeper Score (PrizePicks official formula):
-#   Save +1 | Goal Allowed -1 | Clean Sheet (60+ min) +4 | Pen Save +5
-#   Yellow Card -1 | Red Card -3
-
-def _soccer_outfield_fantasy(gl: dict) -> float:
-    return round(
-        (gl.get("goals_total") or 0) * 6.0
-        + (gl.get("goals_assists") or 0) * 3.0
-        + (gl.get("shots_on") or 0) * 1.5
-        + (gl.get("passes_key") or 0) * 1.0
-        + (gl.get("tackles_total") or 0) * 0.5
-        + (gl.get("tackles_interceptions") or 0) * 0.5
-        + (gl.get("tackles_clearances") or 0) * 0.5
-        + (gl.get("fouls_drawn") or 0) * 0.5
-        - (gl.get("offsides") or 0) * 0.5
-        - (gl.get("cards_yellow") or 0) * 1.0
-        - (gl.get("cards_red") or 0) * 3.0
-        - (gl.get("penalty_missed") or 0) * 2.0,
-        2,
-    )
-
-
-def _soccer_gk_fantasy(gl: dict) -> float:
-    conceded = gl.get("goals_conceded") or 0
-    minutes = gl.get("minutes") or 0
-    clean_sheet = 1 if (conceded == 0 and minutes >= 60) else 0
-    return round(
-        (gl.get("goals_saves") or 0) * 1.0
-        - conceded * 1.0
-        + clean_sheet * 4.0
-        + (gl.get("penalty_saved") or 0) * 5.0
-        - (gl.get("cards_yellow") or 0) * 1.0
-        - (gl.get("cards_red") or 0) * 3.0,
-        2,
-    )
-# ─────────────────────────────────────────────────────────────────────────────
-
-
 @router.post("/predict")
 async def predict(req: PredictionRequest):
     from routes.auth import verify_session
@@ -708,8 +664,6 @@ async def predict(req: PredictionRequest):
                     "offsides": stats.get("offsides"),
                     "cards_red": stats.get("cards", {}).get("red"),
                 }
-                gl["fantasy_pts_outfield"] = _soccer_outfield_fantasy(gl)
-                gl["fantasy_pts_gk"] = _soccer_gk_fantasy(gl)
                 return gl
 
             stat_field_map = {
@@ -723,9 +677,6 @@ async def predict(req: PredictionRequest):
                 "fouls_drawn": "fouls_drawn", "fouls_committed": "fouls_committed",
                 "crosses": "passes_crosses", "clearances": "tackles_clearances",
                 "duels_won": "duels_won", "yellow_cards": "cards_yellow",
-                # PrizePicks soccer fantasy props
-                "soccer_fantasy_gk": "fantasy_pts_gk",
-                "soccer_fantasy_outfield": "fantasy_pts_outfield",
             }
 
             collected = []
@@ -770,11 +721,6 @@ async def predict(req: PredictionRequest):
                         if not minutes:
                             continue
                         gl = dict(d)
-                        # Back-fill fantasy scores for game logs cached before this feature
-                        if "fantasy_pts_outfield" not in gl:
-                            gl["fantasy_pts_outfield"] = _soccer_outfield_fantasy(gl)
-                        if "fantasy_pts_gk" not in gl:
-                            gl["fantasy_pts_gk"] = _soccer_gk_fantasy(gl)
                         gl["date"] = ""
                         gl["score"] = ""
                         gl["league"] = ""
@@ -2589,8 +2535,6 @@ async def predict(req: PredictionRequest):
                 "crosses":                "passes_crosses",
                 "duels_won":              "duels_won",
                 "yellow_cards":           "cards_yellow",
-                "soccer_fantasy_outfield": "fantasy_pts_outfield",
-                "soccer_fantasy_gk":       "fantasy_pts_gk",
             }
             target_field = target_field_map.get(req.propType, "passes_total")
             values = [g.get(target_field) for g in player_game_logs if g.get(target_field) is not None]
@@ -2803,9 +2747,6 @@ async def predict(req: PredictionRequest):
                 "fouls_drawn": "fouls_drawn", "fouls_committed": "fouls_committed",
                 "crosses": "passes_crosses", "clearances": "tackles_clearances",
                 "duels_won": "duels_won", "yellow_cards": "cards_yellow",
-                # PrizePicks soccer fantasy props
-                "soccer_fantasy_gk": "fantasy_pts_gk",
-                "soccer_fantasy_outfield": "fantasy_pts_outfield",
             }
             # VENUE-SPLIT PRIOR for possession-sensitive props
             # Pass attempts/passes vary by 10-15 for GKs and 5-10 for outfield players
@@ -3028,11 +2969,25 @@ async def predict(req: PredictionRequest):
                 if _bo and _scenario_probs.get("available"):
                     _expected_diff = (_scenario_probs["impliedHome"]
                                       - _scenario_probs["impliedAway"]) * 2.5
+                    # NEUTRAL-VENUE FIX: `player_venue` is forced to "neutral" for
+                    # non-host World Cup / tournament fixtures (see venueOverride
+                    # logic client-side), which previously caused every venue-gated
+                    # game-script boost below (CB managing-lead, CDM chase-mode, GK
+                    # high-scoring) to silently never fire — even for a huge favourite
+                    # like Argentina vs Cape Verde. `playerIsHome` reflects the
+                    # fixture's true home/away slot (from the odds/fixture data)
+                    # regardless of the neutral-venue display label, so the engine can
+                    # still tell which side is favoured. Falls back to the real venue
+                    # when not neutral, and to None (skip) when truly unknown.
+                    _pih_for_script = (match_odds or {}).get("playerIsHome")
+                    if _pih_for_script is None and not _is_neutral:
+                        _pih_for_script = (player_venue == "home")
                     _game_script = {
                         "expected_total_goals": _scenario_probs["expectedTotal"],
                         "expected_goal_diff":   round(_expected_diff, 2),
                         "implied_home":         _scenario_probs["impliedHome"],
                         "implied_away":         _scenario_probs["impliedAway"],
+                        "player_is_home":       _pih_for_script,
                     }
             except Exception as _gs_err:
                 print(f"[GAME SCRIPT] extraction failed: {_gs_err}")
@@ -4202,18 +4157,11 @@ REQUIRED JSON FIELDS:
 
 POSITION-SPECIFIC REASONING FRAMEWORKS (apply the relevant one):
 
-GOALKEEPER (pass_attempts/saves/soccer_fantasy_gk):
+GOALKEEPER (pass_attempts/saves):
 - pass_attempts: The INVERTED possession rule is everything. Low team possession = defenders constantly recycling under pressure to the GK = volume explosion. High team possession = GK barely involved in build-up = volume suppression. But READ THE OPPONENT — a team that presses relentlessly forces even dominant-possession GKs into rapid distribution. For saves: opponent SoT rate × GK save% × match tempo = your anchor. A high-block defensive team facing a prolific attacker on a high-tempo away game is the max-saves scenario.
-- soccer_fantasy_gk (Goalkeeper Score): PrizePicks formula: Save=+1, Goal Allowed=-1, Clean Sheet(60+ min)=+4, Penalty Save=+5, Yellow Card=-1, Red Card=-3. The CLEAN SHEET BONUS is the largest swing variable (+4). Project: if team expected possession > 60% AND opponent is poor offensively → strong clean sheet odds → bias OVER. If opponent averages 2+ goals/game or GK is away against a high-press → bias UNDER (goals conceded likely, no CS bonus). Average GK score ranges from 2-6 pts. A save-heavy GK (6+ saves) with no goals conceded is the max scenario.
 
 STRIKER/FORWARD (shots, goals, assists):
 - Think about SPACE, not just volume. A striker facing a high defensive line gets in behind for shots. A striker facing a deep block needs service from midfield — check if that midfield creates. Shots depend on penalty box entries, not just possession. An isolated striker in a low-block game can still pop off 4-5 shots if the team plays direct.
-
-OUTFIELD PLAYER SCORE (soccer_fantasy_outfield):
-- PrizePicks formula: Goal=+6, Assist=+3, Shot on Target=+1.5, Key Pass=+1, Tackle=+0.5, Interception=+0.5, Clearance=+0.5, Foul Drawn=+0.5, Offside=-0.5, Yellow Card=-1, Red Card=-3, Missed Penalty=-2.
-- Attackers: Goals (+6) and assists (+3) dominate. Shot on target volume (+1.5 each) is the secondary driver. A forward averaging 3 SOT/game generates 4.5 pts from shots alone. Yellow card risk (-1) matters for combative players. Average outfield score: 3-7 pts. A goal + assist + 2 SOT = 13 pts (big game). No goal/assist + 2 SOT + 2 tackles = 5 pts (workhorse game).
-- Midfielders: Key passes (+1 each) and tackles (+0.5 each) are volume contributors. A CM averaging 5 key passes and 3 tackles = 6.5 pts without a goal. Goal/assist are decisive swings.
-- Defenders: Clearances (+0.5), interceptions (+0.5), tackles (+0.5) accumulate steadily. A CB in a deep-block game averaging 6 clearances + 3 tackles + 2 interceptions = 5.5 pts baseline. Yellow card risk is the main downside.
 
 MIDFIELDER (passes, key_passes, assists):
 - Ball-circulation midfielders: possession % is the primary driver. Every 5% more possession = roughly 8-12 more passes for the deepest midfielder. Key passes / assists: look at how many times the team reaches the final third AND how the striker presses — a high striker press creates more through-ball opportunities.
@@ -4249,8 +4197,6 @@ JSON: {"confidenceScore":0,"confidenceLevel":"","aiProjection":0,"sharpSummary":
                 "goals": "goals_total", "assists": "goals_assists",
                 "duels_won": "duels_won", "yellow_cards": "cards_yellow",
                 "fouls_committed": "fouls_committed",
-                "soccer_fantasy_outfield": "fantasy_pts_outfield",
-                "soccer_fantasy_gk": "fantasy_pts_gk",
             }
             target_field = target_field_map.get(req.propType, "passes_total")
             values = [g.get(target_field) for g in player_game_logs if g.get(target_field) is not None]
@@ -4820,11 +4766,7 @@ This means the model has found SPECIFIC MATCHUP-AMPLIFICATION FACTORS that drive
 Your Analysis section MUST focus on: WHY does THIS specific opponent ({req.opponentName}) amplify this stat above the season average? Look at the game logs for the player's highest outputs — those opponents share traits with today's matchup. The LOW games are NOT the anchor.
 Amplification factors to explore: opponent defensive passivity, possession dominance scenario, positional matchup that inflates volume."""
 
-        _PROP_DISPLAY_LABELS = {
-            "soccer_fantasy_outfield": "PrizePicks Player Score (fantasy pts: Goal+6, Assist+3, SOT+1.5, KeyPass+1, Tackle/Int/Clear/FoulDrawn+0.5, Offside-0.5, Yellow-1, Red-3, MissedPen-2)",
-            "soccer_fantasy_gk":       "PrizePicks Goalkeeper Score (fantasy pts: Save+1, GoalAllowed-1, CleanSheet60min+4, PenSave+5, Yellow-1, Red-3)",
-        }
-        _prop_display = _PROP_DISPLAY_LABELS.get(req.propType, req.propType)
+        _prop_display = req.propType
 
         prompt = f"""{req.playerName} ({display_position}) — plays for {corrected_team_name} ({player_venue.upper()}) | OPPONENT: {req.opponentName} | {_prop_display} line {req.line}
 IMPORTANT: This player's current CLUB is {corrected_team_name}. Do NOT reference any national team or previous club in your analysis — use only "{corrected_team_name}" when referring to this player's team.{_disambig_note}

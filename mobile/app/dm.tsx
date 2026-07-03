@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity, StyleSheet,
-  ActivityIndicator, Modal, TextInput, Platform,
+  ActivityIndicator, Modal, TextInput, Platform, KeyboardAvoidingView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -171,7 +171,10 @@ export default function DmInboxScreen() {
         animationType="slide"
         onRequestClose={() => setComposeOpen(false)}
       >
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
           <View style={[styles.modalSheet, { paddingBottom: insets.bottom + 12 }]}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>New Message</Text>
@@ -190,6 +193,7 @@ export default function DmInboxScreen() {
                 autoFocus
                 autoCapitalize="none"
                 autoCorrect={false}
+                keyboardAppearance="dark"
               />
               {searching && <ActivityIndicator size="small" color={Colors.primary} />}
             </View>
@@ -226,7 +230,7 @@ export default function DmInboxScreen() {
               </View>
             ) : null}
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );

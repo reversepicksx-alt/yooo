@@ -17,7 +17,6 @@ SPORT_PROPS = {
         "tackles", "clearances", "dribbles", "crosses", "key_passes",
         "goals", "assists", "fouls_committed",
         "saves",                         # soccer GK saves
-        "soccer_fantasy_outfield", "soccer_fantasy_gk",
     ],
     "🎮 CS2": [
         "maps_1_2_kills", "map1_kills", "maps_1_3_kills",

@@ -1199,13 +1199,14 @@ async def list_active_sessions(email: str = Query(...)):
         user = await db.users.find_one(
             {"email": s.get("email")},
             {"_id": 0, "username": 1, "displayName": 1, "profileImage": 1}
-        )
+        ) or {}
         results.append({
+            "email": s.get("email"),
             "name": (
                 user.get("username") or user.get("displayName")
                 or s.get("email", "").split("@")[0]
             ),
-            "profileImage": user.get("profileImage") if user else None,
+            "profileImage": user.get("profileImage"),
             "accessType": s.get("access_type"),
             "lastActive": s.get("last_active"),
         })

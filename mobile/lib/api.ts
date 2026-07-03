@@ -1178,8 +1178,6 @@ export const PROP_TYPES = [
   { value: 'saves',                  label: 'Saves' },
   { value: 'dribbles',               label: 'Dribbles' },
   { value: 'crosses',                label: 'Crosses' },
-  { value: 'soccer_fantasy_outfield', label: 'Player Score' },
-  { value: 'soccer_fantasy_gk',      label: 'Goalkeeper Score' },
 ];
 
 export const CS2_PROP_TYPES = [

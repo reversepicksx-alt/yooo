@@ -21,6 +21,7 @@ import {
   deleteCommunityMessage,
   fetchCommunityParticipants,
   searchUsers,
+  apiCall,
 } from '@/lib/api';
 
 const { width: SW } = Dimensions.get('window');
@@ -849,9 +850,17 @@ export default function CommunityScreen() {
             <Text style={styles.auTitle}>Active Users ({activeUsers.length})</Text>
             <FlatList
               data={activeUsers}
-              keyExtractor={(item) => item.name}
+              keyExtractor={(item) => item.email || item.name}
               renderItem={({ item }) => (
-                <View style={styles.auRow}>
+                <TouchableOpacity
+                  style={styles.auRow}
+                  activeOpacity={0.7}
+                  disabled={!item.email || item.email === myEmail}
+                  onPress={() => {
+                    setShowActiveUsers(false);
+                    router.push(`/dm-thread?otherId=${encodeURIComponent(item.email)}&name=${encodeURIComponent(item.name)}&image=${encodeURIComponent(item.profileImage || '')}`);
+                  }}
+                >
                   <View style={styles.auAvatar}>
                     <Text style={styles.auAvatarText}>
                       {(item.name || '?')[0].toUpperCase()}
@@ -861,9 +870,15 @@ export default function CommunityScreen() {
                     <Text style={styles.auName} numberOfLines={1}>
                       {item.name}
                     </Text>
+                    {!!item.email && (
+                      <Text style={styles.auEmail} numberOfLines={1}>{item.email}</Text>
+                    )}
                   </View>
                   <Text style={styles.auAccess}>{item.accessType}</Text>
-                </View>
+                  {item.email && item.email !== myEmail && (
+                    <Ionicons name="chevron-forward" size={16} color={Colors.textTertiary} style={{ marginLeft: 6 }} />
+                  )}
+                </TouchableOpacity>
               )}
               ListEmptyComponent={(
                 <Text style={{ textAlign: 'center', color: Colors.textSecondary, padding: 20 }}>

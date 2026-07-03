@@ -42,8 +42,6 @@ PP_TO_INTERNAL: dict[str, str] = {
     "Shots Assisted":            "shots_assisted",
     "Goals Allowed":             "goals_allowed",
     "Goals Allowed (Combo)":     "goals_allowed",
-    "Goalie Fantasy Score":      "goalie_fantasy_score",
-    "Outfield Fantasy Score":    "outfield_fantasy_score",
 }
 
 # Reverse: internal propType → canonical PrizePicks stat name

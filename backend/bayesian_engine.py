@@ -680,6 +680,22 @@ def compute_bayesian_projection(
     BALL_CONTROL_PROPS = _SQUEEZE_HANDLED_PROPS
     _is_gk = (position or "").upper() in {"GK", "GOALKEEPER"}
 
+    # NEUTRAL-VENUE FIX: `venue` is "neutral" for non-host World Cup /
+    # tournament fixtures (see mobile venueOverride logic), which used to
+    # silently disable every favourite/underdog-aware boost below that gated
+    # on the literal string "home"/"away" — e.g. Argentina vs Cape Verde
+    # (huge favourite, neutral venue) got NO CB lead-manage boost, NO CDM
+    # deep-block boost, nothing. `game_script.player_is_home` carries the
+    # fixture's true home/away slot (from the odds) independent of the
+    # neutral display label, so we can still resolve which side is favoured.
+    # Real home/away matches are unaffected — `_effective_venue` just equals
+    # `venue` in that case.
+    _effective_venue = venue
+    if venue not in ("home", "away") and game_script and isinstance(game_script, dict):
+        _gs_pih = game_script.get("player_is_home")
+        if _gs_pih is not None:
+            _effective_venue = "home" if _gs_pih else "away"
+
     # ═══════════════════════════════════════════
     # OUTFIELD PLAYER POSSESSION SQUEEZE
     # GKs use an INVERTED model below — they are excluded here.
@@ -899,7 +915,7 @@ def compute_bayesian_projection(
     home_cdm_deep_block_info = {"applied": False, "multiplier": 1.0, "reason": ""}
     if (_cdm_mode != "off" and match_dominance
             and prop_type in {"pass_attempts", "passes"}
-            and venue == "home"
+            and _effective_venue == "home"
             and _pos_upper_for_cdm in _cdm_pos_set):
         _hcdb_team_poss = match_dominance.get("expectedPoss")      # home team's expected poss
         _hcdb_opp_poss  = match_dominance.get("oppExpectedPoss")   # opponent's expected poss
@@ -1384,12 +1400,16 @@ def compute_bayesian_projection(
         gs_mult = 1.0
         gs_reason = []
         _pos_upper = (position or "").upper()
+        # Neutral-venue fix (see `_effective_venue` computed above): use it here
+        # too so every favourite/underdog-aware boost below still resolves
+        # correctly for neutral-venue fixtures (World Cup etc.).
+        _script_venue = _effective_venue
         # Home CDM/CAM OVER passes — chase-mode boost when team is underdog.
         # Extends to attacking mids (CAM/AM). Magnitude increased from 7% to 20%
         # max: empirical data shows trailing teams generate 30-80% more passes
         # through their central mids when chasing — small multipliers were being
         # swamped by the base projection bias.
-        if (prop_type in {"pass_attempts", "passes"} and venue == "home"
+        if (prop_type in {"pass_attempts", "passes"} and _script_venue == "home"
                 and _pos_upper in {"CDM", "DM", "DMF", "CAM", "AM", "OM", "ACM"}
                 and expected_diff is not None and expected_diff < -0.5):
             chase_boost = min(0.20, abs(expected_diff) * 0.09)
@@ -1398,7 +1418,7 @@ def compute_bayesian_projection(
         # Away CDM/CAM OVER passes — symmetric pinned-back boost. Magnitude
         # increased from 6% to 18% max for same reason as above.
         if (_cdm_mode != "off"
-                and prop_type in {"pass_attempts", "passes"} and venue == "away"
+                and prop_type in {"pass_attempts", "passes"} and _script_venue == "away"
                 and _pos_upper in {"CDM", "DM", "DMF", "CM", "MC", "CMF", "CAM", "AM", "OM", "ACM"}
                 and expected_diff is not None and expected_diff > 0.5):
             away_chase_boost = min(0.18, abs(expected_diff) * 0.08)
@@ -1426,7 +1446,7 @@ def compute_bayesian_projection(
                     + f"; away pinned-back boost +{away_chase_boost*100:.1f}% (diff={expected_diff:.1f}) [shadow]"
                 ).lstrip("; ")
         # Away GK UNDER passes — high-scoring game suppression (boost projection up)
-        if (prop_type in {"pass_attempts", "passes"} and venue == "away" and _is_gk
+        if (prop_type in {"pass_attempts", "passes"} and _script_venue == "away" and _is_gk
                 and expected_total is not None and expected_total >= 3.0):
             highscore_boost = min(0.05, (expected_total - 2.5) * 0.025)
             gs_mult *= (1.0 + highscore_boost)
@@ -1446,12 +1466,12 @@ def compute_bayesian_projection(
                 and _pos_upper in _cb_set
                 and expected_diff is not None):
             # Home CB: home team is favourite
-            if venue == "home" and expected_diff > 0.3:
+            if _script_venue == "home" and expected_diff > 0.3:
                 cb_lead_boost = min(0.15, (expected_diff - 0.3) * 0.07)
                 gs_mult *= (1.0 + cb_lead_boost)
                 gs_reason.append(f"home CB lead-manage boost +{cb_lead_boost*100:.1f}% (diff={expected_diff:.1f})")
             # Away CB: away team is favourite (negative expected_diff = away fav)
-            elif venue == "away" and expected_diff < -0.3:
+            elif _script_venue == "away" and expected_diff < -0.3:
                 cb_lead_boost = min(0.15, (abs(expected_diff) - 0.3) * 0.07)
                 gs_mult *= (1.0 + cb_lead_boost)
                 gs_reason.append(f"away CB lead-manage boost +{cb_lead_boost*100:.1f}% (diff={expected_diff:.1f})")
