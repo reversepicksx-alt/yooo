@@ -126,17 +126,30 @@ def odds_tier_from_possession(proj_home, proj_away, venue):
     """
     Fallback odds-tier classifier using projected possession %.
     Used when moneyline is unavailable.
+
+    IMPORTANT: when possession data itself is unavailable (e.g. an
+    international friendly vs a minnow with no cached lineup/possession
+    model output), we must NOT silently default to 50/50 "close" — that
+    falsely tells the odds-tier-priors system "this is an even matchup"
+    for what may actually be a massive mismatch, applying a wrong-direction
+    nudge instead of no nudge at all. Return "unknown" so lookup_single()
+    finds no bucket and correctly applies zero adjustment (see
+    possession-fallback-unknown-tier.md).
     """
     if venue == "home":
-        poss = float(proj_home) if proj_home is not None else 50.0
+        if proj_home is None:
+            return "unknown"
+        poss = float(proj_home)
     elif venue == "away":
-        poss = float(proj_away) if proj_away is not None else 50.0
+        if proj_away is None:
+            return "unknown"
+        poss = float(proj_away)
     else:
         if proj_home is not None and proj_away is not None:
             gap = abs(float(proj_home) - float(proj_away))
             poss = 50.0 + gap / 2
         else:
-            poss = 50.0
+            return "unknown"
 
     if poss >= 72:
         return "heavy_favorite"

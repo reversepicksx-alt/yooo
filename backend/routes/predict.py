@@ -2271,8 +2271,19 @@ async def predict(req: PredictionRequest):
                     _cache_entry["awaySeasonAvg"] = match_dominance.get("teamSeasonAvg")
                 _match_dom_cache[_dom_cache_key] = {"ts": _time.time(), "dom": _cache_entry}
 
+        # hasRealPossData: True only when SOME real signal (possession stats,
+        # standings rank-gap, or odds-implied) actually populated expectedPoss —
+        # i.e. compute_match_dominance appended a note. When notes is empty the
+        # 50.0/50.0 values are a pure hardcoded default with zero information
+        # behind them (common for international friendlies vs minnows with no
+        # cached possession/standings/odds data at all) and must NOT be treated
+        # downstream as a genuine "close matchup" signal (see
+        # possession-fallback-unknown-tier.md).
+        match_dominance["hasRealPossData"] = bool(match_dominance.get("notes"))
         if match_dominance.get("notes"):
             print(f"[MATCH DOMINANCE] {req.playerName}: poss={match_dominance['expectedPoss']}%, mult={match_dominance['multiplier']}, {' | '.join(match_dominance['notes'])}")
+        else:
+            print(f"[MATCH DOMINANCE] {req.playerName}: NO real data available (poss/standings/odds all missing) — 50/50 default is uninformative")
 
         # ─────────────────────────────────────────────────────────────────────
         # H2H POSSESSION OVERRIDE
@@ -2367,6 +2378,7 @@ async def predict(req: PredictionRequest):
             match_dominance["expectedPoss"]    = _blended_poss
             match_dominance["oppExpectedPoss"] = _blended_opp
             match_dominance["h2hPossAvg"]      = _h2h_poss_avg
+            match_dominance["hasRealPossData"] = True
             match_dominance["h2hPossCount"]    = _h2h_n
             # Recompute multiplier from blended possession
             _PASS_H = {"pass_attempts", "key_passes", "crosses", "passes"}
@@ -3068,6 +3080,14 @@ async def predict(req: PredictionRequest):
                     # projected possession (already computed by match_dominance).
                     if match_odds and match_odds.get("americanOdds"):
                         _odds_tier = _ot_from_ml(match_odds["americanOdds"], player_venue)
+                    elif not match_dominance.get("hasRealPossData"):
+                        # No moneyline AND no real possession/standings/odds signal
+                        # (compute_match_dominance left pure 50/50 defaults with no
+                        # notes) — e.g. an international friendly vs a minnow with
+                        # sparse pre-match data. Do NOT let a fake "close" tier feed
+                        # the odds-tier-priors nudge; "unknown" finds no bucket and
+                        # lookup_single() correctly applies zero adjustment instead.
+                        _odds_tier = "unknown"
                     else:
                         # match_dominance["expectedPoss"]/["oppExpectedPoss"] are already
                         # remapped to the player's own team vs opponent (see remap logic
@@ -3080,7 +3100,7 @@ async def predict(req: PredictionRequest):
                         else:
                             _odds_tier = _ot_from_poss(_opp_poss, _team_poss, "away")
                     print(f"[ODDS TIER] {req.playerName} ({player_venue}): {_odds_tier} "
-                          f"(from={'moneyline' if (match_odds and match_odds.get('americanOdds')) else 'projPoss'})")
+                          f"(from={'moneyline' if (match_odds and match_odds.get('americanOdds')) else ('projPoss' if match_dominance.get('hasRealPossData') else 'no-data')})")
                     # Look up BOTH sides; engine applies the one matching recommendation.
                     # Pass player_venue so the lookup can try the fine-grained
                     # (tier x pos x prop x side x venue) bucket first and fall
@@ -5377,12 +5397,25 @@ Analyze ALL data thoroughly. Return JSON only."""
                     _poss_sens = {"pass_attempts", "passes", "key_passes", "crosses", "dribbles"}
                     _is_gk_conv = (specific_position or "").upper() in {"GK", "GOALKEEPER"} or (player_position or "").lower() == "goalkeeper"
                     if req.propType in _poss_sens and not _is_gk_conv:
-                        _exp_poss  = match_dominance.get("expectedPoss", 50.0)
-                        _avg_poss  = match_dominance.get("teamSeasonAvg") or 50.0
-                        _poss_diff = _exp_poss - _avg_poss      # +ve = more poss than usual
+                        _exp_poss  = match_dominance.get("expectedPoss")
+                        _avg_poss  = match_dominance.get("teamSeasonAvg")
                         _opp_diff  = _opp_allowed_avg - _old_bp # +ve = opp allows more than proj
+                        # expectedPoss/teamSeasonAvg are ALWAYS floats (default 50.0),
+                        # never None — checking hasRealPossData (set only when
+                        # compute_match_dominance found a genuine signal) is the only
+                        # reliable way to know whether poss_diff below is real or a
+                        # meaningless 0.0-vs-0.0 default comparison.
+                        _has_poss_data = (
+                            match_dominance.get("hasRealPossData")
+                            and _exp_poss is not None and _avg_poss is not None
+                        )
+                        if _has_poss_data:
+                            _poss_diff = _exp_poss - _avg_poss      # +ve = more poss than usual
+                        else:
+                            _poss_diff = 0.0
                         # Same-direction AND both material (≥5pp poss gap, ≥5 stat gap)
-                        if (_poss_diff * _opp_diff > 0
+                        if (_has_poss_data
+                                and _poss_diff * _opp_diff > 0
                                 and abs(_poss_diff) >= 5
                                 and abs(_opp_diff) >= 5):
                             # Boost scales with possession gap: 5pp→0.05 extra, 10pp→0.10, cap 0.15
@@ -5393,6 +5426,29 @@ Analyze ALL data thoroughly. Return JSON only."""
                                 f"opp_diff={_opp_diff:+.1f} → weight {_opp_weight:.0%} "
                                 f"(+{_conv_boost:.0%} alignment boost)"
                             )
+                        elif not _has_poss_data and _old_bp:
+                            # ── INDEPENDENT-SIGNAL BOOST ────────────────────────────
+                            # No possession projection exists for this fixture (common
+                            # for international friendlies vs minnows with sparse
+                            # pre-match data), so the convergence check above can never
+                            # fire. But the opponent-allowed-avg signal is itself real
+                            # and independently measured (recent games vs this opponent
+                            # at this position) — it shouldn't be strangled to an 8-15%
+                            # weight just because a SEPARATE data source is missing.
+                            # Only fires for a strong signal (≥30% relative gap, i.e.
+                            # "elite leak"/"elite suppressor" tier) with a decent sample,
+                            # and the boost is smaller than full convergence (cap 22%
+                            # vs 30%) since it isn't cross-confirmed by possession data.
+                            _opp_rel_pct = abs(_opp_diff) / max(abs(_old_bp), 1e-6)
+                            if _opp_rel_pct >= 0.30 and _opp_allowed_n >= 3:
+                                _indep_boost = min(_opp_rel_pct * 0.25, 0.10)
+                                _opp_weight = min(_opp_weight + _indep_boost, 0.22)
+                                print(
+                                    f"[OPP INDEPENDENT SIGNAL] {req.propType}: "
+                                    f"opp_diff={_opp_diff:+.1f} ({_opp_rel_pct:.0%} of prior, "
+                                    f"no possession data available) → weight {_opp_weight:.0%} "
+                                    f"(+{_indep_boost:.0%} boost, n={_opp_allowed_n})"
+                                )
 
                     bayesian_posterior = round(
                         _old_bp * (1 - _opp_weight) + _opp_allowed_avg * _opp_weight, 1
