@@ -47,16 +47,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const token = await storage.get('rp_token');
         if (email && token) {
           let explicitlyInvalid = false;
+          let freshAccessType: string | undefined;
           try {
             // Race the session check against a 4s timeout so a slow/unreachable
             // backend never hangs the app on a permanent black screen.
             const result = await Promise.race([
-              verifySession(email, token) as Promise<{ valid?: boolean }>,
-              new Promise<{ valid?: boolean }>(resolve =>
+              verifySession(email, token) as Promise<{ valid?: boolean; access_type?: string }>,
+              new Promise<{ valid?: boolean; access_type?: string }>(resolve =>
                 setTimeout(() => resolve({}), 4000)
               ),
             ]);
             if (result?.valid === false) explicitlyInvalid = true;
+            if (result?.valid === true && result.access_type) freshAccessType = result.access_type;
           } catch {
             // Network error — assume session still valid; backend will 401 if truly expired.
           }
@@ -65,7 +67,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             await storage.delete('rp_token');
             await storage.delete('rp_access_type');
           } else {
-            const accessType = await storage.get('rp_access_type') || undefined;
+            // Prefer the freshly re-verified access type from the backend over the
+            // stale cached value — otherwise a session that was fixed server-side
+            // (e.g. a delayed Apple/RevenueCat webhook that has now synced) would
+            // stay stuck showing the old "NoSubscription" status until logout/login.
+            const cachedAccessType = await storage.get('rp_access_type') || undefined;
+            const accessType = freshAccessType || cachedAccessType;
+            if (freshAccessType && freshAccessType !== cachedAccessType) {
+              await storage.set('rp_access_type', freshAccessType);
+            }
             setSession({ email, token, accessType });
           }
         }
