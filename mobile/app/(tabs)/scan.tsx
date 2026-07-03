@@ -58,8 +58,6 @@ const PROP_LABELS: Record<string, string> = {
   maps_1_3_headshots: 'Maps 1-3 Headshots',
 };
 
-const WC_HOST_NAMES = new Set(['mexico', 'united states', 'usa', 'canada']);
-
 const BAND_ACCENT: Record<string, string> = {
   aligned:  '#39FF14',
   aligned_warn: '#39FF14',
@@ -108,8 +106,10 @@ export default function ScanScreen() {
   // Scan-fill hint shown at top of manual form after a non-soccer scan
   const [scanFillHint, setScanFillHint] = useState<string | null>(null);
 
-  // User-controlled venue override
-  const [venueOverride, setVenueOverride] = useState<'home' | 'away' | 'neutral'>('home');
+  // User-controlled venue override — always resolves to home/away. "Neutral" isn't
+  // real: even at a neutral tournament site, one team effectively plays like the
+  // home side (bigger crowd support) and the other like the away side.
+  const [venueOverride, setVenueOverride] = useState<'home' | 'away'>('home');
   const [gameLogFilter, setGameLogFilter] = useState<'all' | 'home' | 'away' | 'opp'>('all');
   const [adjustedLine, setAdjustedLine] = useState<number | null>(null);
   const [deselectedLogIndices, setDeselectedLogIndices] = useState<Set<number>>(new Set());
@@ -935,8 +935,7 @@ export default function ScanScreen() {
                         const nm = await getTeamNextMatch(ctxs[0].teamId);
                         if (nm?.found) {
                           setAutoMatch(nm);
-                          const _isWcHost = WC_HOST_NAMES.has((ctxs[0].teamName || '').toLowerCase().trim());
-                          setVenueOverride(nm.leagueId === 1 && !_isWcHost ? 'neutral' : (nm.isHome ? 'home' : 'away'));
+                          setVenueOverride(nm.isHome ? 'home' : 'away');
                         }
                         if (nm?.leagueId) {
                           setLeagueId(nm.leagueId); setLeagueQuery(nm.leagueName || '');
@@ -1009,8 +1008,7 @@ export default function ScanScreen() {
                             const nm = await getTeamNextMatch(ctx.teamId);
                             if (nm?.found) {
                               setAutoMatch(nm);
-                              const _isWcHost = WC_HOST_NAMES.has((ctx.teamName || '').toLowerCase().trim());
-                              setVenueOverride(nm.leagueId === 1 && !_isWcHost ? 'neutral' : (nm.isHome ? 'home' : 'away'));
+                              setVenueOverride(nm.isHome ? 'home' : 'away');
                             }
                             // Set league from next-match result; fall back to MongoDB lookup by leagueId
                             if (nm?.leagueId) {
@@ -1136,13 +1134,6 @@ export default function ScanScreen() {
                 >
                   <Ionicons name="home-outline" size={13} color={venueOverride === 'home' ? Colors.primary : Colors.textSecondary} />
                   <Text style={[styles.venueOptionText, venueOverride === 'home' && styles.venueOptionTextActive]}>HOME</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.venueOption, venueOverride === 'neutral' && styles.venueOptionActive]}
-                  onPress={() => { setVenueOverride('neutral'); Haptics.selectionAsync(); }}
-                >
-                  <Ionicons name="earth-outline" size={13} color={venueOverride === 'neutral' ? Colors.primary : Colors.textSecondary} />
-                  <Text style={[styles.venueOptionText, venueOverride === 'neutral' && styles.venueOptionTextActive]}>NEUTRAL</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.venueOption, venueOverride === 'away' && styles.venueOptionActive]}
@@ -3573,8 +3564,8 @@ export default function ScanScreen() {
               const venueAllOver = venueOverCount === venueVals.length && venueVals.length >= 2;
               const venueAllUnder = venueUnderCount === venueVals.length && venueVals.length >= 2;
               const venueHitColor = venueAllOver ? Colors.success : venueAllUnder ? Colors.error : Colors.textSecondary;
-              const venueIcon = venueOverride === 'home' ? '🏠' : venueOverride === 'neutral' ? '🌐' : '✈️';
-              const venueLabel = venueOverride === 'home' ? 'HOME' : venueOverride === 'neutral' ? 'NEUTRAL' : 'AWAY';
+              const venueIcon = venueOverride === 'home' ? '🏠' : '✈️';
+              const venueLabel = venueOverride === 'home' ? 'HOME' : 'AWAY';
 
               return (
                 <View style={styles.h2hCard}>

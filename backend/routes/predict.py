@@ -14,6 +14,7 @@ from openai import OpenAI
 from config import (
     db, EMERGENT_LLM_KEY, XAI_API_KEY, CURRENT_SEASON,
     WOMENS_LEAGUE_IDS, STAT_FIELD_MAP, STAT_LAMBDA_MAP, GROK_MODEL,
+    INTERNATIONAL_LEAGUES,
 )
 from models import PredictionRequest
 from utils import api_football_request, get_recent_fixtures_fast, strip_accents, get_soccer_odds, decimal_to_american
@@ -1196,13 +1197,34 @@ async def predict(req: PredictionRequest):
         # =============================================
         # If player is HOME → team's HOME games + opponent's AWAY games
         # If player is AWAY → team's AWAY games + opponent's HOME games
-        player_venue = req.venue.lower()  # "home", "away", or "neutral"
+        player_venue = req.venue.lower()  # "home" or "away" (legacy clients may still send "neutral")
+        # "Neutral" venue is a fiction — even at a neutral tournament site, one team
+        # effectively plays like the home side (bigger following in the crowd, more
+        # expected support) and the other like the away side. There is no real
+        # in-between, so we always resolve a definite home/away here rather than
+        # letting "neutral" skip venue-aware logic downstream. Priority of signals:
+        #   1. Betting-market favorite (proxy for which team the world is backing)
+        #   2. The fixture's own home/away designation from API-Football
+        #   3. A deterministic team-ID tiebreaker (last resort, no data available)
+        if player_venue == "neutral":
+            _fav = (match_odds or {}).get("favorite")       # "home"/"away", relative to FIXTURE home/away
+            _pih = (match_odds or {}).get("playerIsHome")
+            if _fav is not None and _pih is not None:
+                _player_is_favorite = (_fav == "home") == bool(_pih)
+                player_venue = "home" if _player_is_favorite else "away"
+                _ev_source = "odds"
+            elif _pih is not None:
+                player_venue = "home" if _pih else "away"
+                _ev_source = "fixture"
+            else:
+                player_venue = "home" if (actual_team_id or 0) < (req.opponentId or 0) else "away"
+                _ev_source = "tiebreaker"
+            print(f"[EFFECTIVE VENUE] neutral→{player_venue} source={_ev_source} player={req.playerName}")
         # API-Football always designates one team as home (1) and one as away (2) for
         # every fixture — including World Cup matches. We trust that designation and the
-        # playerIsHome flag from get_match_odds(). Neutral is only set when the user
-        # explicitly passes venue="neutral" (rare edge case).
-        _is_neutral = player_venue == "neutral"
-        opponent_venue = "away" if player_venue == "home" else ("home" if not _is_neutral else "neutral")
+        # playerIsHome flag from get_match_odds().
+        _is_neutral = False  # normalized above — nothing downstream should treat a match as neutral anymore
+        opponent_venue = "away" if player_venue == "home" else "home"
         is_womens = req.leagueId in WOMENS_LEAGUE_IDS
         pronoun_note = "IMPORTANT: This is a WOMEN'S league. Use she/her/her pronouns for all players. Never use he/him/his." if is_womens else ""
 
@@ -2816,10 +2838,12 @@ async def predict(req: PredictionRequest):
 
             _VENUE_SPLIT_PROPS = {"pass_attempts", "passes", "saves", "goalie_saves"}
             _bayes_logs = player_game_logs
-            if _is_wc or _is_neutral:
-                # Neutral venue (WC or tournament): all games played at neutral ground —
-                # skip home/away split and use full club log pool as the prior.
-                print(f"[NEUTRAL VENUE] Skipping venue split — using all {len(player_game_logs)} club logs")
+            if league_id in INTERNATIONAL_LEAGUES:
+                # International tournament (WC, Euros, Copa America, qualifiers, etc.):
+                # player_game_logs are CLUB matches, unrelated to whether the player's
+                # NATIONAL team is the effective home/away side in this fixture — pool
+                # the full club log set as the prior instead of splitting by club venue.
+                print(f"[INTL PRIOR] Skipping club venue split — using all {len(player_game_logs)} club logs")
             elif req.propType in _VENUE_SPLIT_PROPS and player_venue:
                 _venue_logs = [g for g in player_game_logs if g.get("venue") == player_venue]
                 # GK saves are HIGHLY venue-dependent (away GKs face far more shots
