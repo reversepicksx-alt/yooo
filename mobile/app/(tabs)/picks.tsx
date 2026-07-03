@@ -394,6 +394,18 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete?: () => void }) {
         </View>
       )}
 
+      {/* Live pace-divergence warning — fires when the in-match trend is running
+          strongly against the pick's recommendation (e.g. opponent parks the bus
+          after an early goal and the subject's pass volume balloons past a
+          projected UNDER). Distinct from the quiet PACE/HIT inline numbers above —
+          this is an explicit, hard-to-miss alert. */}
+      {live && !won && !lost && pick.paceMismatch && pick.paceWarning && (
+        <View style={styles.paceWarningBanner}>
+          <Ionicons name="warning-outline" size={12} color={Colors.dnp} />
+          <Text style={styles.paceWarningText} numberOfLines={2}>{pick.paceWarning}</Text>
+        </View>
+      )}
+
       {/* Match ID — neon badge, impossible to miss */}
       {pick.fixtureId != null && (
         <View style={{ marginTop: 6, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -1423,6 +1435,25 @@ const styles = StyleSheet.create({
     paddingTop: 6,
     borderTopWidth: 1,
     borderTopColor: Colors.borderSubtle,
+  },
+  paceWarningBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: Colors.dnpDim,
+    borderWidth: 1,
+    borderColor: 'rgba(255,149,0,0.35)',
+  },
+  paceWarningText: {
+    flex: 1,
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.dnp,
+    letterSpacing: 0.1,
   },
   matchCtxLine: {
     fontSize: 11,

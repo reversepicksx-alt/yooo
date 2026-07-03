@@ -861,6 +861,8 @@ async def list_picks(req: GetPicksRequest):
                     p["matchScore"] = upd.get("matchScore")
                     p["fixtureId"] = upd.get("fixtureId")
                     p["minutesPlayed"] = upd.get("minutesPlayed")
+                    p["paceMismatch"] = upd.get("paceMismatch")
+                    p["paceWarning"] = upd.get("paceWarning")
                     if upd.get("homeTeam"):
                         p["homeTeam"] = upd.get("homeTeam")
                     if upd.get("awayTeam"):
@@ -2404,6 +2406,20 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
 
     hit_pct = _calc_hit_pct(current_value, line, recommendation, elapsed, 90, is_finished, pace)
 
+    # Live pace-divergence warning — surfaces when the in-match trend is
+    # running strongly against the pre-match recommendation (e.g. a fullback
+    # forced into a possession-dominant role after the opponent sits back on
+    # an early lead). hitPct already encodes "probability the recommendation
+    # still hits" adjusted for live pace; a low value here means the pre-match
+    # projection is on track to flip. Gated on elapsed>=15 to avoid noise from
+    # tiny early-game samples, and only fires while the pick is still live.
+    pace_mismatch = False
+    pace_warning = None
+    if is_live and not is_finished and elapsed >= 15 and hit_pct is not None and hit_pct <= 25:
+        opposite = "UNDER" if (recommendation or "").lower() == "over" else "OVER"
+        pace_mismatch = True
+        pace_warning = f"Pace trending {opposite} — on pace for {pace:.0f} ({hit_pct}% chance {(recommendation or '').upper()} still hits)"
+
     update = {
         "pickId": pick["pickId"],
         "matchStatus": "final" if is_finished else "live",
@@ -2414,6 +2430,8 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
         "minutesPlayed": minutes_played,
         "pace": pace,
         "hitPct": hit_pct,
+        "paceMismatch": pace_mismatch,
+        "paceWarning": pace_warning,
         "matchScore": match_score,
         "homeTeam": home_team_name,
         "awayTeam": away_team_name,

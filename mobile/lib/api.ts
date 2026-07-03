@@ -796,6 +796,8 @@ export interface Pick {
   currentValue?: number | null;
   pace?: number | null;
   hitPct?: number | null;
+  paceMismatch?: boolean | null;
+  paceWarning?: string | null;
   elapsed?: number | null;
   period?: string;
   matchStatus?: string;
@@ -853,6 +855,8 @@ export async function listPicks(email: string, token: string): Promise<Pick[]> {
     currentValue: (p.currentValue as number) ?? null,
     pace: (p.pace as number) ?? null,
     hitPct: (p.hitPct as number) ?? null,
+    paceMismatch: (p.paceMismatch as boolean) ?? null,
+    paceWarning: (p.paceWarning as string) ?? null,
     elapsed: (p.elapsed as number) ?? null,
     period: p.period as string,
     matchStatus: p.matchStatus as string,
