@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 import stripe as _stripe
+import httpx
 
 from config import db, OWNER_EMAILS, LIFETIME_SUB_EMAILS, BETA_TEST_EMAILS
 from models import (
@@ -93,6 +94,93 @@ async def _check_apple_access(email_lower: str) -> str | None:
                 except Exception:
                     pass
     return None
+
+_rc_project_id_cache: dict = {"id": None}
+
+async def _get_revenuecat_project_id(client: httpx.AsyncClient, key: str) -> str | None:
+    if _rc_project_id_cache["id"]:
+        return _rc_project_id_cache["id"]
+    resp = await client.get(
+        "https://api.revenuecat.com/v2/projects",
+        headers={"Authorization": f"Bearer {key}"},
+    )
+    resp.raise_for_status()
+    items = (resp.json() or {}).get("items") or []
+    if not items:
+        return None
+    project_id = items[0].get("id")
+    _rc_project_id_cache["id"] = project_id
+    return project_id
+
+async def _check_revenuecat_live(email_lower: str) -> str | None:
+    """Live fallback: ask RevenueCat's server API directly whether this
+    email (used as the app_user_id / customer_id) has an active Apple
+    entitlement.
+
+    This exists because the local `apple_iap_subscriptions` collection is
+    only populated by the RevenueCat webhook, which can be delayed, dropped,
+    or missed entirely — leaving a paying customer stuck as NoSubscription
+    until the next webhook retry. This check bypasses that dependency
+    entirely, mirroring the existing `_check_stripe_live` fallback.
+    """
+    key = os.environ.get("REVENUECAT_SECRET_API_KEY", "")
+    if not key or not email_lower:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            project_id = await _get_revenuecat_project_id(client, key)
+            if not project_id:
+                return None
+            resp = await client.get(
+                f"https://api.revenuecat.com/v2/projects/{project_id}/customers/{email_lower}",
+                headers={"Authorization": f"Bearer {key}"},
+            )
+            if resp.status_code == 404:
+                return None
+            resp.raise_for_status()
+            data = resp.json()
+        active_items = ((data.get("active_entitlements") or {}).get("items")) or []
+        if not active_items:
+            return None
+        # Pick the entitlement with the furthest-out (or no) expiration.
+        best = None
+        best_exp_ms = None
+        for ent in active_items:
+            exp_ms = ent.get("expires_at")
+            if exp_ms is None:
+                best = ent
+                best_exp_ms = None
+                break
+            if best_exp_ms is None or exp_ms > best_exp_ms:
+                best = ent
+                best_exp_ms = exp_ms
+        if not best:
+            return None
+        # Sync the DB so future checks hit the fast local path, and the
+        # webhook (whenever it does arrive) just confirms what we already know.
+        expires_iso = None
+        if best_exp_ms is not None:
+            try:
+                expires_iso = datetime.fromtimestamp(best_exp_ms / 1000, tz=timezone.utc).isoformat()
+            except Exception:
+                expires_iso = None
+        now_iso = datetime.now(timezone.utc).isoformat()
+        await db.apple_iap_subscriptions.update_one(
+            {"email": email_lower},
+            {"$set": {
+                "email":       email_lower,
+                "status":      "active",
+                "productId":   best.get("entitlement_id", ""),
+                "expiresAt":   expires_iso,
+                "updatedAt":   now_iso,
+                "source":      "revenuecat_live_fallback",
+            }},
+            upsert=True,
+        )
+        return "Premium (Apple)"
+    except Exception as e:
+        print(f"[REVENUECAT LIVE FALLBACK] Error for {email_lower}: {e}")
+        return None
 
 _ANIMALS = [
     "lion", "tiger", "wolf", "bear", "hawk", "eagle", "fox", "shark", "cobra",
@@ -319,11 +407,15 @@ async def check_access(email_lower: str) -> str | None:
     result = await _check_access_local(email_lower)
     if result:
         return result
-    # 2) Apple IAP (RevenueCat / App Store)
+    # 2) Apple IAP (RevenueCat / App Store) — local DB first
     apple = await _check_apple_access(email_lower)
     if apple:
         return apple
-    # 3) Live Stripe fallback
+    # 3) Live RevenueCat fallback (covers missed/delayed webhooks)
+    apple_live = await _check_revenuecat_live(email_lower)
+    if apple_live:
+        return apple_live
+    # 4) Live Stripe fallback
     return await _check_stripe_live(email_lower)
 
 
@@ -595,14 +687,21 @@ async def verify_session(req_or_email_token: Union[VerifySessionRequest, dict]) 
     if access_type == "Owner":
         return {"valid": True, "access_type": "Owner"}
 
-    # Apple IAP sessions — re-check Apple only
+    # Apple IAP sessions — re-check Apple (local DB, then live RevenueCat fallback)
     if "Apple" in access_type or access_type == "NoSubscription":
         current = await _check_apple_access(email_lower)
+        if not current:
+            current = await _check_revenuecat_live(email_lower)
         if not current:
             if access_type == "NoSubscription":
                 return {"valid": True, "access_type": "NoSubscription"}
             await db.sessions.delete_one({"email": email_lower, "session_token": token})
             return {"valid": False}
+        if current != access_type:
+            await db.sessions.update_one(
+                {"email": email_lower, "session_token": token},
+                {"$set": {"access_type": current, "last_active": datetime.now(timezone.utc).isoformat()}},
+            )
         return {"valid": True, "access_type": current}
 
     # Web sessions (Stripe / manual) — re-check web access
@@ -689,6 +788,8 @@ async def apple_auth(req: AppleAuthRequest):
 
     # 6. Check actual Apple IAP entitlement — do NOT blindly grant premium
     access_type = await _check_apple_access(email_lower)
+    if not access_type:
+        access_type = await _check_revenuecat_live(email_lower)
     if not access_type:
         # No active RevenueCat subscription — log them in as NoSubscription so app shows paywall
         token = await create_session(email_lower, "NoSubscription")
