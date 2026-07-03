@@ -386,6 +386,18 @@ def compute_bayesian_projection(
     # ═══════════════════════════════════════════
     covariate_adjustment = 0.0
 
+    # Props handled by the dedicated POSSESSION SQUEEZE step further below
+    # (multiplicative, directly on posterior_mean, position-aware floor).
+    # MUST be excluded from the 3b match-dominance covariate below to avoid
+    # applying the exact same expectedPoss/dom_mult signal twice — once
+    # diluted through the covariate-precision blend, and again as a direct
+    # multiplier — which compounds into a far larger total reduction than
+    # either mechanism intends on its own. (Root cause of a real incident:
+    # a fullback's pass-attempts projection was pulled down by both the ±20%
+    # covariate cap AND the squeeze floor, understating a player who ended up
+    # dominating possession once the opponent sat back.)
+    _SQUEEZE_HANDLED_PROPS = {"pass_attempts", "passes", "key_passes", "crosses", "dribbles"}
+
     # 3a. Venue split adjustment (normalised to per-90 to match all_vals)
     venue_vals = [
         v * 90.0 / max(g.get("minutes", 90), _MIN_MINUTES)
@@ -428,8 +440,13 @@ def compute_bayesian_projection(
                     _dom_cap = prior_mean * 0.15
                     dom_adj = max(-_dom_cap, min(0.0, dom_adj))  # Only allow reduction, cap at -15%
                     covariate_adjustment += dom_adj
-            elif not _is_gk:
-                # Outfield players: more possession = more passes/shots
+            elif not _is_gk and prop_type not in _SQUEEZE_HANDLED_PROPS:
+                # Outfield players: more possession = more passes/shots.
+                # (pass_attempts/passes/key_passes/crosses/dribbles are deliberately
+                # skipped here — see _SQUEEZE_HANDLED_PROPS above — they get the
+                # dedicated POSSESSION SQUEEZE multiplier below instead, so this
+                # covariate doesn't double-apply the same signal. shots/shots_on_target
+                # have no squeeze step, so they still get it here.)
                 dom_adj = prior_mean * (dom_mult - 1.0)
                 # Cap at ±20% of prior_mean — prevents possession signal from dominating
                 # when form/prior already point strongly in one direction.
@@ -657,7 +674,10 @@ def compute_bayesian_projection(
     # Multiplier: poss_ratio^1.3 — slightly convex so extremes hit harder
     # Floor: 0.60 — prevents overcorrection (max 40% reduction)
     # ═══════════════════════════════════════════
-    BALL_CONTROL_PROPS = {"pass_attempts", "passes", "key_passes", "crosses", "dribbles"}
+    # Kept identical to _SQUEEZE_HANDLED_PROPS (defined in LAYER 3 above) by
+    # construction — this IS that set, reused here to avoid the two lists
+    # ever drifting apart and reopening the double-counting bug.
+    BALL_CONTROL_PROPS = _SQUEEZE_HANDLED_PROPS
     _is_gk = (position or "").upper() in {"GK", "GOALKEEPER"}
 
     # ═══════════════════════════════════════════
