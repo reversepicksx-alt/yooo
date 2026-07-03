@@ -95,22 +95,7 @@ async def _check_apple_access(email_lower: str) -> str | None:
                     pass
     return None
 
-_rc_project_id_cache: dict = {"id": None}
-
-async def _get_revenuecat_project_id(client: httpx.AsyncClient, key: str) -> str | None:
-    if _rc_project_id_cache["id"]:
-        return _rc_project_id_cache["id"]
-    resp = await client.get(
-        "https://api.revenuecat.com/v2/projects",
-        headers={"Authorization": f"Bearer {key}"},
-    )
-    resp.raise_for_status()
-    items = (resp.json() or {}).get("items") or []
-    if not items:
-        return None
-    project_id = items[0].get("id")
-    _rc_project_id_cache["id"] = project_id
-    return project_id
+REVENUECAT_PROJECT_ID = os.environ.get("REVENUECAT_PROJECT_ID", "3a3fd517")
 
 async def _check_revenuecat_live(email_lower: str) -> str | None:
     """Live fallback: ask RevenueCat's server API directly whether this
@@ -128,11 +113,8 @@ async def _check_revenuecat_live(email_lower: str) -> str | None:
         return None
     try:
         async with httpx.AsyncClient(timeout=6.0) as client:
-            project_id = await _get_revenuecat_project_id(client, key)
-            if not project_id:
-                return None
             resp = await client.get(
-                f"https://api.revenuecat.com/v2/projects/{project_id}/customers/{email_lower}",
+                f"https://api.revenuecat.com/v2/projects/{REVENUECAT_PROJECT_ID}/customers/{email_lower}",
                 headers={"Authorization": f"Bearer {key}"},
             )
             if resp.status_code == 404:
