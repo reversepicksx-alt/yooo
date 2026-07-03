@@ -1595,10 +1595,11 @@ def compute_bayesian_projection(
     if (odds_tier_priors_result and isinstance(odds_tier_priors_result, dict)
             and odds_tier_priors_result.get("found")
             and odds_tier_priors_mode in {"shadow", "live"}):
+        from odds_tier_priors import _MAX_NUDGE as _OT_MAX_NUDGE
         ot_mult = float(odds_tier_priors_result.get("multiplier", 1.0))
-        if abs(ot_mult - 1.0) > _MAX_NUDGE:
+        if abs(ot_mult - 1.0) > _OT_MAX_NUDGE:
             _ot_sign = 1.0 if ot_mult > 1.0 else -1.0
-            ot_mult = round(1.0 + _ot_sign * _MAX_NUDGE, 4)
+            ot_mult = round(1.0 + _ot_sign * _OT_MAX_NUDGE, 4)
         odds_tier_priors_info["multiplier"] = round(ot_mult, 4)
         odds_tier_priors_info["bias"]      = odds_tier_priors_result.get("bias")
         odds_tier_priors_info["hit_rate"]  = odds_tier_priors_result.get("hit_rate")

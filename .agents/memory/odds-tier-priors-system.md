@@ -44,3 +44,13 @@ description: "Living" odds-tier empirical prior system that auto-learns from set
 ## Why this matters for accuracy
 
 The Bayesian engine's hyperprior + momentum + possession model is structurally conservative for favorites (it doesn't fully account for how dominant teams inflate certain stat types). The odds-tier layer is an empirical correction — it observes "when the model said X for heavy favorites, actual was X+6.66" and adjusts future projections in that direction. It does NOT trust the scouting report blindly; it trusts the DATA.
+
+## Status: LIVE (flipped 2026-07-03)
+
+`ODDS_TIER_PRIORS_MODE=live` is set. Confirmed via a real prediction that `bayesianMetrics.oddsTierPriors.applied=true` and the multiplier changes `posterior_mean`.
+
+Two bugs surfaced only once live traffic actually hit the possession fallback path (shadow mode never exposed them because a crash there just no-ops silently into "not found"):
+1. Possession-fallback tier resolver assumed `match_dominance["expectedPoss"]` was a `{"home":.., "away":..}` dict; it is actually a single float already remapped to the player's own team's perspective. Fix: pass `expectedPoss`/`oppExpectedPoss` straight through per player venue, don't call `.get()` on them.
+2. `bayesian_engine.py` referenced `_MAX_NUDGE` for the odds-tier nudge cap without importing it (it's module-local to `odds_tier_priors.py`/`league_priors.py`/`scenario_priors.py`, not shared). Any new nudge-cap-style layer that copies this pattern must import its own `_MAX_NUDGE`, never assume it's in scope.
+
+Lesson: shadow-mode "successfully" logging `found: false` for every real request is not proof the resolution logic works — it can mean every lookup is silently exception-swallowed. Verify shadow mode by checking for the resolution print/success log line (e.g. `[ODDS TIER] ... tier`), not just the absence of a crash.

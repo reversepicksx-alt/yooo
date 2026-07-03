@@ -3069,11 +3069,16 @@ async def predict(req: PredictionRequest):
                     if match_odds and match_odds.get("americanOdds"):
                         _odds_tier = _ot_from_ml(match_odds["americanOdds"], player_venue)
                     else:
-                        _odds_tier = _ot_from_poss(
-                            match_dominance.get("expectedPoss", {}).get("home"),
-                            match_dominance.get("expectedPoss", {}).get("away"),
-                            player_venue,
-                        )
+                        # match_dominance["expectedPoss"]/["oppExpectedPoss"] are already
+                        # remapped to the player's own team vs opponent (see remap logic
+                        # above) — NOT a {"home":.., "away":..} dict. Pass them straight
+                        # through as (team_poss, opp_poss) using the player's own venue.
+                        _team_poss = match_dominance.get("expectedPoss")
+                        _opp_poss = match_dominance.get("oppExpectedPoss")
+                        if player_venue == "home":
+                            _odds_tier = _ot_from_poss(_team_poss, _opp_poss, "home")
+                        else:
+                            _odds_tier = _ot_from_poss(_opp_poss, _team_poss, "away")
                     print(f"[ODDS TIER] {req.playerName} ({player_venue}): {_odds_tier} "
                           f"(from={'moneyline' if (match_odds and match_odds.get('americanOdds')) else 'projPoss'})")
                     # Look up BOTH sides; engine applies the one matching recommendation
