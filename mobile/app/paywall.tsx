@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   ActivityIndicator, Platform, Image, Alert, TextInput, KeyboardAvoidingView,
@@ -63,15 +63,6 @@ export default function PaywallScreen() {
   const [guestEmailError, setGuestEmailError] = useState('');
   const [guestEmailLoading, setGuestEmailLoading] = useState(false);
 
-  // If somehow a subscribed user lands here, push them into the app
-  useEffect(() => {
-    if (Platform.OS === 'web') return;
-    Purchases.getCustomerInfo().then(info => {
-      const hasEnt = info?.entitlements?.active?.[REVENUECAT_ENTITLEMENT_IDENTIFIER] !== undefined;
-      if (hasEnt) router.replace('/(tabs)/scan');
-    }).catch(() => {});
-  }, []);
-
   const syncBackendAndEnter = useCallback(async (productId: string, expiresAtMs?: number) => {
     if (!session?.email || !session?.token) return;
     try {
@@ -95,6 +86,31 @@ export default function PaywallScreen() {
       access_type: 'Premium (Apple)',
     });
   }, [session, loginWithResponse]);
+
+  // If somehow a subscribed user lands here (e.g. device has an active
+  // RevenueCat entitlement but the backend session is still 'NoSubscription'
+  // because the IAP webhook hasn't synced yet), sync the backend/local
+  // session BEFORE navigating away. Skipping the sync here previously caused
+  // an infinite redirect loop: (tabs)/_layout bounces 'NoSubscription'
+  // sessions to /paywall, this effect bounced straight back to /(tabs)/scan
+  // without updating accessType, and (tabs)/_layout would immediately bounce
+  // back to /paywall again — repeating forever and showing up to users as a
+  // rapid, nonstop "swiping" screen-transition glitch right after login.
+  const enteredFromEntitlementRef = useRef(false);
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    if (enteredFromEntitlementRef.current) return;
+    Purchases.getCustomerInfo().then(async info => {
+      const ent = info?.entitlements?.active?.[REVENUECAT_ENTITLEMENT_IDENTIFIER];
+      if (!ent) return;
+      enteredFromEntitlementRef.current = true;
+      if (session?.email && session?.token && session.accessType === 'NoSubscription') {
+        const expMs = ent.expirationDate ? new Date(ent.expirationDate).getTime() : undefined;
+        await syncBackendAndEnter(ent.productIdentifier, expMs);
+      }
+      router.replace('/(tabs)/scan');
+    }).catch(() => {});
+  }, [session, syncBackendAndEnter]);
 
   const handlePurchase = async (pkg: PurchasesPackage) => {
     if (Platform.OS === 'web') return;
