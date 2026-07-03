@@ -8,8 +8,7 @@ BUNDLE_ID    = "com.reversepicks.app"
 APP_ID       = "6781092173"
 
 PLANS = [
-    {"product_id": "reversepicks_weekly",  "name": "Weekly",  "duration": "ONE_WEEK",  "price": "12.99"},
-    {"product_id": "reversepicks_monthly", "name": "Monthly", "duration": "ONE_MONTH", "price": "49.99"},
+    {"product_id": "reversepicks_monthly", "name": "Monthly", "duration": "ONE_MONTH", "price": "36.99"},
 ]
 
 def make_token():
@@ -163,10 +162,12 @@ for plan in PLANS:
         continue
     print(f"  ✅ Found ${target_price} price point: {pp['id']}")
 
+    from datetime import date, timedelta
+    start_date = (date.today() + timedelta(days=3)).isoformat()
     status, resp = asc("POST", "/v1/subscriptionPrices", {
         "data": {
             "type": "subscriptionPrices",
-            "attributes": {"preserveCurrentPrice": False},
+            "attributes": {"preserveCurrentPrice": False, "startDate": start_date},
             "relationships": {
                 "subscription":           {"data": {"type": "subscriptions",           "id": sub_id}},
                 "subscriptionPricePoint": {"data": {"type": "subscriptionPricePoints", "id": pp["id"]}},
@@ -174,7 +175,7 @@ for plan in PLANS:
         }
     })
     if ok(status):
-        print(f"  ✅ {pid} → ${target_price}")
+        print(f"  ✅ {pid} → ${target_price} (effective {start_date})")
     else:
         print(f"  ❌ Price failed (HTTP {status}):", json.dumps(resp, indent=2))
 
