@@ -1,0 +1,73 @@
+Heavy Favorites (-300 or stronger)
+Example 1: England vs very weak opponent
+England is expected to completely dominate and usually holds 65-72% possession. Their central midfielders see extremely high passing volume as they constantly recycle and progress the ball. Wingers and strikers get significantly increased shooting opportunities due to sustained pressure and space. Fullbacks push high with elevated crossing and passing volume. England’s goalkeeper sees very low pass and save involvement. The opponent’s goalkeeper faces many shots and sees very high pass volume from constant back-passes under pressure. Their center-backs and fullbacks also post high passing numbers from resets, while their attacking players get almost no shooting opportunities.
+Example 2: Spain vs low-ranked team
+Spain controls the game for long periods with 63-70% possession. Their central midfielders dominate passing volume. Lamine Yamal and other wingers see high shooting and dribble attempts due to space. Fullbacks contribute heavily in attack with increased crossing. Spain’s goalkeeper sees almost no action. The opponent’s goalkeeper sees the highest involvement on their team, with high pass attempts from back-passes and more shots faced. Their center-backs stay heavily involved in build-up under pressure.
+Example 3: France vs much weaker side
+France dominates possession (62-68%) and creates sustained pressure. Their defensive and central midfielders see very high passing volume. Wingers and strikers get many shooting opportunities. Fullbacks push forward aggressively. France’s goalkeeper sees very low involvement. The underdog’s goalkeeper becomes heavily involved in distribution and faces more shots. Their center-backs and fullbacks post high passing volume from constant resets.
+Example 4: Top European team at home vs minnow
+The favorite controls 65%+ possession. Their central midfielders see extremely high passing volume. Their wingers and strikers get elevated shooting chances. Fullbacks push high with more crossing. The favorite’s goalkeeper sees almost nothing. The underdog’s goalkeeper sees very high pass volume from back-passes and faces the majority of shots. Their defenders stay heavily involved in build-up under pressure.
+Strong Favorites (-200 to -300)
+Example 5: Belgium vs mid-tier opponent
+Belgium usually holds 58-64% possession and controls the game without total dominance. Their central midfielders see high passing volume. Wingers get a good balance of passing and shooting. Fullbacks push forward with increased crossing. Belgium’s goalkeeper sees low-to-moderate action. The opponent’s goalkeeper sees elevated pass volume from resets under pressure and faces more shots than usual. Their center-backs stay involved in build-up.
+Example 6: Portugal vs weaker European side
+Portugal controls 57-63% possession. Their attacking midfielders and wingers see increased shooting volume. Central midfielders post high passing numbers. Fullbacks contribute in attack. Portugal’s goalkeeper sees low action. The opponent’s goalkeeper and center-backs see high involvement in distribution under pressure.
+Example 7: Germany vs lower-ranked team
+Germany dominates with 58-65% possession. Their fullbacks see higher crossing and passing volume as they push forward. Central midfielders dominate passing stats. Wingers and strikers get good shooting opportunities. Germany’s goalkeeper sees low involvement. The opponent’s goalkeeper sees high pass volume from resets and faces more shots.
+Example 8: Strong South American side at home
+The favorite controls 57-63% possession. Their defensive midfielders see high passing volume. Wingers and strikers get solid shooting opportunities. Fullbacks push forward. The favorite’s goalkeeper sees low-to-moderate action. The visitor’s goalkeeper sees increased involvement in build-up under pressure.
+Moderate Favorites (-130 to -200)
+Example 9: Mexico vs Ecuador
+Mexico usually holds 54-60% possession and controls the game but allows the opponent periods of the ball. Their central midfielders see solid passing volume. Wingers get decent shooting opportunities. Fullbacks contribute in attack. Mexico’s goalkeeper sees moderate action. Ecuador’s goalkeeper sees elevated pass volume from resets under pressure. Their center-backs stay heavily involved in build-up.
+Example 10: Italy vs similar-strength opponent
+Both teams end up with 48-55% possession in a competitive game. Midfielders on both sides see moderate-to-high passing volume. Wingers get balanced shooting opportunities. Fullbacks on both teams push forward. Goalkeepers on both sides face a decent number of shots.
+Example 11: Netherlands vs mid-tier team
+The Netherlands control 55-61% possession. Their wingers and attacking midfielders see increased shooting volume when they push forward. Central midfielders post high passing numbers. Fullbacks contribute in attack. The opponent’s goalkeeper sees regular back-passes and moderate shot volume.
+Example 12: Strong African side vs weaker opponent
+The favorite controls 54-60% possession. Their defensive midfielders see high passing volume. Strikers get moderate shooting opportunities. Fullbacks push forward. The underdog’s goalkeeper stays involved in build-up under pressure.
+Slight Favorites / Close Games (-110 to +110)
+Example 13: Evenly matched knockout games
+Both teams usually finish with 48-55% possession in a competitive match. Midfielders on both sides see moderate-to-high passing volume. Wingers get a balanced mix of passing and shooting. Fullbacks on both teams contribute more in attack. Goalkeepers on both sides face a decent number of shots.
+Example 14: Competitive international matches
+Possession is usually close to even. Central midfielders on both sides post solid passing numbers. Wingers see good shooting and dribble opportunities. Fullbacks push forward on both sides. Both goalkeepers stay involved without extreme volume.
+Example 15: Open attacking matches between similar teams
+Both teams’ midfielders see high passing volume. Wingers and strikers get increased shooting opportunities. Fullbacks on both sides contribute in attack. Goalkeepers on both sides face more shots than in one-sided games.
+Example 16: Even European ties
+Possession is relatively even. Fullbacks on both sides see increased crossing volume. Central midfielders control the tempo with high passing numbers. Goalkeepers see regular save involvement on both sides.
+Slight Underdogs (+110 to +150)
+Example 17: Austria vs stronger European side
+Austria expects 45-50% possession and plays reactively. Their goalkeeper sees high pass volume from resets under pressure. Their wingers and strikers get increased shooting opportunities on counters. Center-backs and fullbacks stay heavily involved in build-up. Austria’s goalkeeper faces more shots than the favorite’s goalkeeper.
+Example 18: Senegal against a top team
+Senegal sits deeper with 43-49% possession. Their goalkeeper becomes heavily involved in distribution. Defensive midfielders see moderate passing volume. Wingers and strikers get occasional shooting chances on the break. Their center-backs post high passing numbers from resets.
+Example 19: Ecuador in a tough away game
+Ecuador expects around 44-50% possession. Their goalkeeper and center-backs see high passing volume under pressure. Their wingers get limited but high-quality shooting opportunities on counters. Fullbacks help heavily in defense and build-up.
+Example 20: Mid-tier team facing a favorite
+The underdog plays reactively with 45-51% possession. Their goalkeeper sees elevated pass involvement. Their fullbacks and center-backs stay involved in resets. Their attacking players get occasional shooting opportunities on the break.
+Moderate Underdogs (+150 to +250)
+Example 21: Lower-ranked team vs strong favorite
+The underdog usually has 40-47% possession and sits deeper. Their goalkeeper sees very high pass involvement from constant back-passes. Center-backs and fullbacks post high passing volume from resets. Strikers get limited but high-quality shooting opportunities on counters. The goalkeeper also faces more shots than the favorite’s goalkeeper.
+Example 22: Ivory Coast or similar in tough knockout matches
+The underdog sits compact with 41-48% possession. Their goalkeeper becomes one of the most involved players in passing. Defensive midfielders see moderate passing volume. Wingers and strikers get occasional shooting spikes on the break. Center-backs stay heavily involved in build-up under pressure.
+Example 23: Underdog that sits in a low block
+The team expects 40-46% possession. Their goalkeeper and center-backs see the highest passing volume on their team due to frequent resets. Their wingers and strikers get limited shooting opportunities unless the game opens up late. The goalkeeper faces more shots than usual.
+Example 24: Physical underdog relying on long balls
+The underdog has 39-46% possession. Their goalkeeper sees lower passing volume because the team often bypasses build-up with long balls. Their strikers can have spikes in shooting attempts on counters. Center-backs and fullbacks see high clearance numbers.
+Heavy Underdogs (+250 and higher)
+Example 25: Very weak team vs top nation
+The underdog expects 35-42% possession or less. Their goalkeeper sees extremely high pass volume from constant resets and faces the majority of shots. Center-backs and fullbacks see high passing and clearance numbers but almost no shooting involvement. Their attacking players rarely exceed average shooting lines.
+Example 26: Minnow in World Cup match
+The underdog sits extremely deep. Their goalkeeper is often the most involved player on their team in both passing and saving. Their midfielders and defenders see low passing volume overall but high clearance involvement.
+Example 27: Very weak side at home against a giant
+The underdog has very low possession. Their goalkeeper still sees high involvement in distribution. Their wingers and strikers get very limited shooting opportunities. Center-backs and fullbacks focus heavily on defending and resetting.
+Example 28: Heavy underdog that parks the bus
+The team sits in a very deep block. Their goalkeeper and center-backs see the highest pass volume on their team due to frequent resets under constant pressure. Their attacking players get almost no shooting opportunities unless the game becomes chaotic late.
+Chasing Scripts (Favorite goes behind)
+Example 29: Spain concedes first against Austria
+Spain pushes more players forward after going behind. Their wingers and strikers see a big increase in shooting attempts. Central midfielders post higher progressive pass numbers. Spain’s goalkeeper faces more shots than usual. Austria can sit deeper and counter more effectively, increasing their goalkeeper’s pass involvement from resets.
+Example 30: England goes behind against a weaker side
+England’s attacking midfielders and wingers get more shooting opportunities as they chase. Their central midfielders see higher passing volume. England’s goalkeeper sees increased shots faced. The opponent’s goalkeeper sees less pressure than expected and can counter more.
+Blowout Scripts (Favorite leads by 2+ early)
+Example 31: Heavy favorite leads 2-0 early
+The favorite often sits slightly deeper after building a lead. Their central midfielders still maintain high passing volume. Their wingers see fewer shooting chances as the game becomes more controlled. The underdog’s goalkeeper remains heavily involved in resets. Their strikers get occasional shooting chances on the break as they push forward.
+Example 32: Spain leads by multiple goals
+Spain’s fullbacks can push even higher after taking a big lead, increasing crossing volume. Their central midfielders keep high passing numbers. The opponent’s goalkeeper stays heavily involved in distribution under reduced but still present pressure. Their attacking players get limited shooting opportunities.
