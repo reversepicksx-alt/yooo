@@ -1607,6 +1607,7 @@ def compute_bayesian_projection(
         odds_tier_priors_info["direction"] = odds_tier_priors_result.get("direction", "neutral")
         odds_tier_priors_info["found"]     = True
         odds_tier_priors_info["oddsTier"]   = odds_tier_priors_result.get("oddsTier", "")
+        odds_tier_priors_info["venueSplit"] = odds_tier_priors_result.get("venueSplit", False)
         if odds_tier_priors_mode == "live" and abs(ot_mult - 1.0) > 0.001:
             raw_before_ot = posterior_mean
             posterior_mean = round(posterior_mean * ot_mult, 1)

@@ -3081,13 +3081,18 @@ async def predict(req: PredictionRequest):
                             _odds_tier = _ot_from_poss(_opp_poss, _team_poss, "away")
                     print(f"[ODDS TIER] {req.playerName} ({player_venue}): {_odds_tier} "
                           f"(from={'moneyline' if (match_odds and match_odds.get('americanOdds')) else 'projPoss'})")
-                    # Look up BOTH sides; engine applies the one matching recommendation
+                    # Look up BOTH sides; engine applies the one matching recommendation.
+                    # Pass player_venue so the lookup can try the fine-grained
+                    # (tier x pos x prop x side x venue) bucket first and fall
+                    # back to the venue-agnostic bucket automatically.
                     _ot_over = _ot_lookup(_odds_tier, _bayes_position,
                                          req.propType, "over",
-                                         posterior_mean=req.line)
+                                         posterior_mean=req.line,
+                                         venue=player_venue)
                     _ot_under = _ot_lookup(_odds_tier, _bayes_position,
                                           req.propType, "under",
-                                          posterior_mean=req.line)
+                                          posterior_mean=req.line,
+                                          venue=player_venue)
                     _odds_tier_priors_result = (_ot_over if _ot_over.get("found")
                                                  else _ot_under)
                     if _odds_tier_priors_result and _odds_tier_priors_result.get("found"):

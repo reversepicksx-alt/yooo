@@ -54,3 +54,13 @@ Two bugs surfaced only once live traffic actually hit the possession fallback pa
 2. `bayesian_engine.py` referenced `_MAX_NUDGE` for the odds-tier nudge cap without importing it (it's module-local to `odds_tier_priors.py`/`league_priors.py`/`scenario_priors.py`, not shared). Any new nudge-cap-style layer that copies this pattern must import its own `_MAX_NUDGE`, never assume it's in scope.
 
 Lesson: shadow-mode "successfully" logging `found: false` for every real request is not proof the resolution logic works — it can mean every lookup is silently exception-swallowed. Verify shadow mode by checking for the resolution print/success log line (e.g. `[ODDS TIER] ... tier`), not just the absence of a crash.
+
+## Venue stratification (added 2026-07-03)
+
+Buckets were originally venue-agnostic — a "heavy favorite" bucket mixed home and away picks, even though home advantage stacks on top of favorite/underdog status (e.g. home dominant team's CDM recycles possession differently than an away dominant team's).
+
+Fix: `_refresh()` now builds TWO parallel bucket sets — coarse (original 4-key: tier×position×prop×side) and fine (5-key: + venue). `lookup_single(..., venue=...)` tries the fine bucket first and falls back to coarse when the venue-split sample is too thin (n<8). This is strictly additive — venue-splitting never loses coverage vs the original system, only adds precision when data supports it.
+
+Real-data check before implementing (worth repeating for any future stratification idea): simulate the bucket-count tradeoff first. Splitting existing settled-pick data by venue took passing (n>=8) buckets from 63→73 despite tripling the total combinatorial space — net positive, so implemented. If a proposed extra dimension had *shrunk* the passing-bucket count, it would not be worth adding.
+
+Response now includes `oddsTierPriors.venueSplit: true/false` so you can tell whether a given prediction actually pulled the fine-grained venue bucket or fell back to coarse.

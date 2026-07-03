@@ -42,6 +42,7 @@ POS_BUCKET = {
 _cache = {
     "ts": 0.0,
     "buckets": {},
+    "buckets_fine": {},
     "loaded": False,
 }
 
@@ -53,13 +54,20 @@ def _bucket_position(raw_pos):
     return POS_BUCKET.get(p, p)
 
 
-def _bucket_key(odds_tier, pos_bucket, prop_type, recommendation):
-    return (
+def _bucket_key(odds_tier, pos_bucket, prop_type, recommendation, venue=None):
+    """
+    5-tuple key when venue is given (fine-grained), 4-tuple when omitted
+    (coarse, venue-agnostic — used as the fallback bucket).
+    """
+    base = (
         (odds_tier or "").lower().strip(),
         (pos_bucket or "").upper().strip(),
         (prop_type or "").lower().strip(),
         (recommendation or "").lower().strip(),
     )
+    if venue:
+        return base + ((venue or "").lower().strip(),)
+    return base
 
 
 def odds_tier_from_moneyline(ml_dict, venue):
@@ -149,7 +157,14 @@ def odds_tier_from_possession(proj_home, proj_away, venue):
 
 
 async def _refresh(db) -> None:
-    """Recompute every oddsTier × pos × prop × side bucket from settled picks."""
+    """
+    Recompute two parallel bucket sets from settled picks:
+      - fine:   oddsTier × pos × prop × side × venue  (more precise, sparser)
+      - coarse: oddsTier × pos × prop × side           (current behavior, denser)
+    lookup_single() tries fine first and falls back to coarse when the
+    venue-split sample is too thin — strictly additive precision, never a
+    loss of coverage vs the pre-venue system.
+    """
     cursor = db.picks.find(
         {"result": {"$in": ["hit", "miss"]},
          "recommendation": {"$in": ["over", "under"]},
@@ -158,48 +173,68 @@ async def _refresh(db) -> None:
          "oddsTier": {"$exists": True, "$ne": None}},
         {"_id": 0, "oddsTier": 1, "position": 1, "propType": 1,
          "recommendation": 1, "result": 1, "actualValue": 1,
-         "projectedValue": 1},
+         "projectedValue": 1, "venue": 1},
     )
     rows = await cursor.to_list(length=20000)
 
-    agg = defaultdict(lambda: {"n": 0, "hits": 0, "errors": []})
+    agg_fine = defaultdict(lambda: {"n": 0, "hits": 0, "errors": []})
+    agg_coarse = defaultdict(lambda: {"n": 0, "hits": 0, "errors": []})
     for p in rows:
         pos_b = _bucket_position(p.get("position"))
         if not pos_b:
             continue
-        key = _bucket_key(p.get("oddsTier"), pos_b,
-                          p.get("propType"), p.get("recommendation"))
-        if not all(key):
+        coarse_key = _bucket_key(p.get("oddsTier"), pos_b,
+                                 p.get("propType"), p.get("recommendation"))
+        if not all(coarse_key):
             continue
         try:
             err = float(p["actualValue"]) - float(p["projectedValue"])
         except (TypeError, ValueError):
             continue
-        b = agg[key]
+
+        b = agg_coarse[coarse_key]
         b["n"] += 1
         if p.get("result") == "hit":
             b["hits"] += 1
         b["errors"].append(err)
 
-    buckets = {}
-    for key, b in agg.items():
-        n = b["n"]
-        if n < _MIN_SAMPLE:
-            continue
-        mean_err = sum(b["errors"]) / n
-        hit_rate = b["hits"] / n
-        shrink = n / (n + _SHRINK_K)
-        buckets[key] = {
-            "n":         n,
-            "hit_rate":  round(hit_rate, 3),
-            "mean_err":  round(mean_err, 2),
-            "shrink":    round(shrink, 3),
-        }
+        venue = p.get("venue")
+        if venue in ("home", "away"):
+            fine_key = _bucket_key(p.get("oddsTier"), pos_b,
+                                   p.get("propType"), p.get("recommendation"),
+                                   venue=venue)
+            fb = agg_fine[fine_key]
+            fb["n"] += 1
+            if p.get("result") == "hit":
+                fb["hits"] += 1
+            fb["errors"].append(err)
 
-    _cache["buckets"] = buckets
+    def _finalize(agg):
+        out = {}
+        for key, b in agg.items():
+            n = b["n"]
+            if n < _MIN_SAMPLE:
+                continue
+            mean_err = sum(b["errors"]) / n
+            hit_rate = b["hits"] / n
+            shrink = n / (n + _SHRINK_K)
+            out[key] = {
+                "n":         n,
+                "hit_rate":  round(hit_rate, 3),
+                "mean_err":  round(mean_err, 2),
+                "shrink":    round(shrink, 3),
+            }
+        return out
+
+    coarse_buckets = _finalize(agg_coarse)
+    fine_buckets = _finalize(agg_fine)
+
+    _cache["buckets"] = coarse_buckets
+    _cache["buckets_fine"] = fine_buckets
     _cache["ts"]      = time.time()
     _cache["loaded"]  = True
-    print(f"[ODDS-TIER PRIORS] refreshed: {len(buckets)} buckets from {len(rows)} settled picks")
+    print(f"[ODDS-TIER PRIORS] refreshed: {len(coarse_buckets)} coarse + "
+          f"{len(fine_buckets)} venue-split buckets from {len(rows)} settled picks")
 
 
 async def ensure_loaded(db) -> None:
@@ -211,20 +246,42 @@ async def ensure_loaded(db) -> None:
 
 
 def lookup_single(odds_tier, position, prop_type, recommendation,
-                  posterior_mean: float) -> dict:
-    """Single odds-tier lookup. Same return shape as league_priors/scenario_priors."""
+                  posterior_mean: float, venue=None) -> dict:
+    """
+    Single odds-tier lookup. Same return shape as league_priors/scenario_priors.
+
+    Tries the fine-grained (odds tier × position × prop × side × venue) bucket
+    first when `venue` is given — this is strictly more precise since home/away
+    can carry a systematic bias on top of favorite/underdog status (e.g. a home
+    heavy-favorite's CDM recycles possession differently than an away one).
+    Falls back to the coarse venue-agnostic bucket when the fine bucket doesn't
+    exist or hasn't reached the minimum sample size, so venue-splitting never
+    reduces coverage vs the original venue-agnostic system.
+    """
     inert = {"multiplier": 1.0, "bias": 0.0, "hit_rate": None,
              "n": 0, "direction": "neutral", "found": False,
-             "oddsTier": odds_tier}
+             "oddsTier": odds_tier, "venueSplit": False}
     if not _cache["loaded"] or posterior_mean is None or posterior_mean == 0:
         return inert
     pos_b = _bucket_position(position)
     if not pos_b:
         return inert
-    key = _bucket_key(odds_tier, pos_b, prop_type, recommendation)
-    b = _cache["buckets"].get(key)
+
+    b = None
+    venue_split = False
+    if venue in ("home", "away"):
+        fine_key = _bucket_key(odds_tier, pos_b, prop_type, recommendation, venue=venue)
+        b = _cache["buckets_fine"].get(fine_key)
+        if b:
+            venue_split = True
+
+    if not b:
+        key = _bucket_key(odds_tier, pos_b, prop_type, recommendation)
+        b = _cache["buckets"].get(key)
+
     if not b:
         return inert
+
     bias = b["mean_err"]
     rel_bias = bias / max(abs(posterior_mean), 1e-6)
     nudge = max(-_MAX_NUDGE, min(_MAX_NUDGE, rel_bias * b["shrink"]))
@@ -237,6 +294,7 @@ def lookup_single(odds_tier, position, prop_type, recommendation,
         "direction":  direction,
         "found":      True,
         "oddsTier":   odds_tier,
+        "venueSplit": venue_split,
     }
 
 
@@ -250,14 +308,31 @@ def stats() -> dict:
         by_prop[prop] += 1
         populated.append({
             "oddsTier": tier, "position": pos, "prop": prop, "side": side,
+            "venue": None,
             "n": v["n"], "hit_rate": v["hit_rate"], "mean_err": v["mean_err"],
         })
+
+    populated_fine = []
+    by_venue = defaultdict(int)
+    for key, v in _cache["buckets_fine"].items():
+        tier, pos, prop, side, venue = key
+        by_venue[venue] += 1
+        populated_fine.append({
+            "oddsTier": tier, "position": pos, "prop": prop, "side": side,
+            "venue": venue,
+            "n": v["n"], "hit_rate": v["hit_rate"], "mean_err": v["mean_err"],
+        })
+
     populated.sort(key=lambda r: (-r["n"], -(r["hit_rate"] or 0)))
+    populated_fine.sort(key=lambda r: (-r["n"], -(r["hit_rate"] or 0)))
     return {
-        "loaded":   _cache["loaded"],
-        "ts":       _cache["ts"],
-        "buckets":  len(_cache["buckets"]),
-        "by_tier":  dict(by_tier),
-        "by_prop":  dict(by_prop),
-        "populated": populated,
+        "loaded":        _cache["loaded"],
+        "ts":            _cache["ts"],
+        "buckets":       len(_cache["buckets"]),
+        "bucketsFine":   len(_cache["buckets_fine"]),
+        "by_tier":       dict(by_tier),
+        "by_prop":       dict(by_prop),
+        "by_venue":      dict(by_venue),
+        "populated":     populated,
+        "populatedFine": populated_fine,
     }
