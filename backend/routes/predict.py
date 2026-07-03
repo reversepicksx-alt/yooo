@@ -6617,6 +6617,41 @@ Analyze ALL data thoroughly. Return JSON only."""
                         f"[RISKY ADJ] {_er_prop} {_er_rec}: {_sup_conf}% → {_risky_adj}% "
                         f"(RISKY hist={_er_hit_rate:.1f}%)"
                     )
+
+            # ── LINE-DEVIATION HARD CAP ────────────────────────────────────────
+            # Independent of the prop-safety cache above (which is keyed on
+            # propType+direction across ALL deviation levels and can have no
+            # data for a specific combo, silently skipping the cap). The
+            # line-deviation band hit rate measures a different, always-
+            # available signal: how this exact "book strongly disagrees with
+            # our projection" scenario has historically resolved. Guard 5
+            # only applies a damped proportional nudge (e.g. 44% hit rate →
+            # ~-3 to -8 pts), which can leave confidence sitting in "High"
+            # territory (e.g. 72%) for a bet that has historically LOST more
+            # than it won. Never show High/Strong confidence on a sub-50%
+            # empirical hit rate — cap it the same way AVOID does above.
+            _dev_band_final = prediction.get("lineDeviationBand")
+            _dev_hit_final  = prediction.get("lineDeviationHitRate")
+            if _dev_band_final in ("elevated", "extreme") and _dev_hit_final is not None:
+                _post_conf = prediction.get("confidenceScore", 50)
+                if _dev_hit_final <= 44:
+                    _dev_cap = max(50, round(_dev_hit_final))
+                    if _post_conf > _dev_cap:
+                        prediction["confidenceScore"] = _dev_cap
+                        prediction["confidenceLevel"] = "Medium" if _dev_cap >= 55 else "Low"
+                        print(
+                            f"[DEV CAP] {_er_prop} {_er_rec}: {_post_conf}% → {_dev_cap}% "
+                            f"({_dev_band_final} band hist={_dev_hit_final}%)"
+                        )
+                elif _dev_hit_final < 50 and _post_conf > 65:
+                    _dev_adj = max(55, _post_conf - 5)
+                    if _dev_adj != _post_conf:
+                        prediction["confidenceScore"] = _dev_adj
+                        prediction["confidenceLevel"] = "High" if _dev_adj >= 70 else "Medium"
+                        print(
+                            f"[DEV ADJ] {_er_prop} {_er_rec}: {_post_conf}% → {_dev_adj}% "
+                            f"({_dev_band_final} band hist={_dev_hit_final}%)"
+                        )
         # ─────────────────────────────────────────────────────────────────────────────
 
         prediction.setdefault("probabilityCurve", [])
