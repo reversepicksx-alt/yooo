@@ -3049,6 +3049,49 @@ async def predict(req: PredictionRequest):
                 except Exception as _sp_err:
                     print(f"[SCENARIO PRIORS] lookup failed: {_sp_err}")
 
+            # ── ODDS-TIER PRIORS lookup ("alive" self-learning layer) ──────
+            # Mode controlled by env var ODDS_TIER_PRIORS_MODE: off|shadow|live
+            # Default = shadow (compute & log, do NOT change projection yet).
+            _odds_tier_priors_result = None
+            _ot_mode = os.environ.get("ODDS_TIER_PRIORS_MODE", "shadow").lower()
+            if _ot_mode not in {"off", "shadow", "live"}:
+                _ot_mode = "shadow"
+            _odds_tier = "unknown"
+            try:
+                if _ot_mode != "off":
+                    from odds_tier_priors import (lookup_single as _ot_lookup,
+                                                 odds_tier_from_moneyline as _ot_from_ml,
+                                                 odds_tier_from_possession as _ot_from_poss,
+                                                 ensure_loaded as _ensure_ot)
+                    await _ensure_ot(db)
+                    # Resolve odds tier deterministically: moneyline first, then
+                    # projected possession (already computed by match_dominance).
+                    if match_odds and match_odds.get("americanOdds"):
+                        _odds_tier = _ot_from_ml(match_odds["americanOdds"], player_venue)
+                    else:
+                        _odds_tier = _ot_from_poss(
+                            match_dominance.get("expectedPoss", {}).get("home"),
+                            match_dominance.get("expectedPoss", {}).get("away"),
+                            player_venue,
+                        )
+                    print(f"[ODDS TIER] {req.playerName} ({player_venue}): {_odds_tier} "
+                          f"(from={'moneyline' if (match_odds and match_odds.get('americanOdds')) else 'projPoss'})")
+                    # Look up BOTH sides; engine applies the one matching recommendation
+                    _ot_over = _ot_lookup(_odds_tier, _bayes_position,
+                                         req.propType, "over",
+                                         posterior_mean=req.line)
+                    _ot_under = _ot_lookup(_odds_tier, _bayes_position,
+                                          req.propType, "under",
+                                          posterior_mean=req.line)
+                    _odds_tier_priors_result = (_ot_over if _ot_over.get("found")
+                                                 else _ot_under)
+                    if _odds_tier_priors_result and _odds_tier_priors_result.get("found"):
+                        _odds_tier_priors_result["sideOver"]  = _ot_over
+                        _odds_tier_priors_result["sideUnder"] = _ot_under
+                        _odds_tier_priors_result["resolvedTier"] = _odds_tier
+            except Exception as _ot_err:
+                print(f"[ODDS-TIER PRIORS] lookup failed: {_ot_err}")
+
             # ── Ultra v4: compute 4 new Bayesian inputs ──────────────────────
             # 1. REST DAYS — days since player's team last played
             _rest_days_v4: int | None = None
@@ -3155,6 +3198,8 @@ async def predict(req: PredictionRequest):
                 game_script=_game_script,
                 scenario_priors_result=_scenario_priors_result,
                 scenario_priors_mode=_scen_mode,
+                odds_tier_priors_result=_odds_tier_priors_result,
+                odds_tier_priors_mode=_ot_mode,
                 role=locals().get("player_role", ""),
                 match_stakes={
                     **(game_situation.get("matchStakes") or {}),

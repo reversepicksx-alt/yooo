@@ -319,6 +319,25 @@ async def scenario_priors_refresh(req: _ScenarioPriorsRequest):
     return {"success": True, "stats": _scen_stats()}
 
 
+@router.post("/odds-tier-priors")
+async def odds_tier_priors_inspector(req: _ScenarioPriorsRequest):
+    """Inspect the odds-tier priors cache (owner only)."""
+    await verify_owner(req.email, req.token)
+    from odds_tier_priors import ensure_loaded as _ensure_ot, stats as _ot_stats
+    await _ensure_ot(db)
+    return {"mode": os.environ.get("ODDS_TIER_PRIORS_MODE", "shadow"),
+            **_ot_stats()}
+
+
+@router.post("/odds-tier-priors/refresh")
+async def odds_tier_priors_refresh(req: _ScenarioPriorsRequest):
+    """Force-refresh the odds-tier priors cache (owner only)."""
+    await verify_owner(req.email, req.token)
+    from odds_tier_priors import _refresh as _refresh_ot, stats as _ot_stats
+    await _refresh_ot(db)
+    return {"success": True, "stats": _ot_stats()}
+
+
 # ── Picks Audit ────────────────────────────────────────────────────────────────
 
 class _PicksAuditRequest(BaseModel):

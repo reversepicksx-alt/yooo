@@ -361,6 +361,7 @@ async def save_pick(req: SavePickRequest):
         "settledAt": None,
         "gameScript": pick.get("gameScript") or {},
         "moneyline": pick.get("moneyline") or None,
+        "oddsTier": pick.get("oddsTier") or pick.get("bayesianMetrics", {}).get("oddsTierPriors", {}).get("oddsTier") or None,
     }
 
     # Persist the model's projected ball-possession split so we can compare

@@ -233,6 +233,19 @@ async def _run_startup_tasks():
             await _a.sleep(6 * 60 * 60)
     asyncio.create_task(_prop_safety_loop())
 
+    # Odds-tier empirical priors: auto-learn from settled picks every 6h.
+    # Mirrors scenario_priors / league_priors cadence. Min sample n=8.
+    async def _odds_tier_loop():
+        from odds_tier_priors import ensure_loaded as _ensure_ot
+        import asyncio as _a
+        while True:
+            try:
+                await _ensure_ot(db)
+            except Exception as _e:
+                print(f"[ODDS-TIER PRIORS] refresh failed: {_e}")
+            await _a.sleep(6 * 60 * 60)
+    asyncio.create_task(_odds_tier_loop())
+
     # Self-updating cheat sheet — re-renders attached_assets/cheat_sheet_2_1.png
     # from settled picks every few hours so it never goes stale.
     asyncio.create_task(_cheat_sheet_loop())

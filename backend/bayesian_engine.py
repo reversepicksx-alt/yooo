@@ -167,6 +167,8 @@ def compute_bayesian_projection(
     game_script: dict = None,
     scenario_priors_result: dict = None,
     scenario_priors_mode: str = "off",
+    odds_tier_priors_result: dict = None,
+    odds_tier_priors_mode: str = "off",
     role: str = "",
     match_stakes: dict = None,
     league_id: int = None,
@@ -1581,6 +1583,42 @@ def compute_bayesian_projection(
                   f"n={scenario_priors_info['n']}, components={len(scenario_priors_info['components'])})")
 
     # ═══════════════════════════════════════════
+    # ODDS-TIER PRIORS ("alive" self-learning layer)
+    # ═══════════════════════════════════════════
+    # `odds_tier_priors_result` arrives pre-computed by the caller.
+    # Applies a multiplicative nudge based on the (oddsTier x position x prop x rec)
+    # bucket mined from every settled pick. Unlike scenario_priors, this is a
+    # deterministic single-bucket lookup (odds tier known pre-match), so the
+    # full +/-6% cap applies -- there is no scenario-uncertainty discount.
+    odds_tier_priors_info = {"applied": False, "multiplier": 1.0,
+                             "mode": odds_tier_priors_mode, "found": False}
+    if (odds_tier_priors_result and isinstance(odds_tier_priors_result, dict)
+            and odds_tier_priors_result.get("found")
+            and odds_tier_priors_mode in {"shadow", "live"}):
+        ot_mult = float(odds_tier_priors_result.get("multiplier", 1.0))
+        if abs(ot_mult - 1.0) > _MAX_NUDGE:
+            _ot_sign = 1.0 if ot_mult > 1.0 else -1.0
+            ot_mult = round(1.0 + _ot_sign * _MAX_NUDGE, 4)
+        odds_tier_priors_info["multiplier"] = round(ot_mult, 4)
+        odds_tier_priors_info["bias"]      = odds_tier_priors_result.get("bias")
+        odds_tier_priors_info["hit_rate"]  = odds_tier_priors_result.get("hit_rate")
+        odds_tier_priors_info["n"]         = odds_tier_priors_result.get("n", 0)
+        odds_tier_priors_info["direction"] = odds_tier_priors_result.get("direction", "neutral")
+        odds_tier_priors_info["found"]     = True
+        odds_tier_priors_info["oddsTier"]   = odds_tier_priors_result.get("oddsTier", "")
+        if odds_tier_priors_mode == "live" and abs(ot_mult - 1.0) > 0.001:
+            raw_before_ot = posterior_mean
+            posterior_mean = round(posterior_mean * ot_mult, 1)
+            odds_tier_priors_info["applied"] = True
+            print(f"[ODDS-TIER PRIORS LIVE] {prop_type} {position} {venue}: "
+                  f"mult={ot_mult:.4f} {raw_before_ot} -> {posterior_mean} "
+                  f"(n={odds_tier_priors_info['n']}, tier={odds_tier_priors_info['oddsTier']})")
+        else:
+            print(f"[ODDS-TIER PRIORS SHADOW] {prop_type} {position} {venue}: "
+                  f"would_mult={ot_mult:.4f} (n={odds_tier_priors_info['n']}, "
+                  f"tier={odds_tier_priors_info['oddsTier']})")
+
+    # ═══════════════════════════════════════════
     # REVERSAL FLAG — Mean Reversion Detection
     # ═══════════════════════════════════════════
     if prior_std > 0 and abs(momentum_mean - prior_mean) > 1.5 * prior_std:
@@ -1907,6 +1945,9 @@ def compute_bayesian_projection(
         # Always emitted so shadow-mode logs and admin inspector can see what
         # the layer would have / did do.
         "scenarioPriors": scenario_priors_info,
+
+        # Odds-tier empirical priors (self-learning, auto-refreshes every 6h)
+        "oddsTierPriors": odds_tier_priors_info,
 
         # CDM inverted-possession + pinned-back script boost (away CDM passes).
         # Always emitted; `mode` reports off|shadow|live and `applied` shows
