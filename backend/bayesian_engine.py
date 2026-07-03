@@ -675,8 +675,13 @@ def compute_bayesian_projection(
             # collapse proportionally with team possession — they still clear, recycle,
             # and switch the ball under any game state. Apply a more conservative floor.
             _pos_upper = (position or "").upper()
-            _is_cb  = _pos_upper in {"CB", "DC", "RCB", "LCB"}
-            _is_def = _pos_upper in {"DEF", "LB", "RB", "WB", "LWB", "RWB", "D"}
+            # Fullbacks/wing-backs are high-volume passers just like CBs — they keep
+            # recycling and overlapping regardless of team possession share (same
+            # precedent already used by the CB MANAGING-LEAD BOOST set below). Moving
+            # them out of the generic DEF bucket prevents over-suppressing their
+            # pass-attempt projections against strong opponents / low expected poss.
+            _is_cb  = _pos_upper in {"CB", "DC", "RCB", "LCB", "LB", "RB", "WB", "LWB", "RWB"}
+            _is_def = _pos_upper in {"DEF", "D"}
             # MID: deep midfielders (CDM/CM/CAM) stay involved regardless of possession.
             # Evidence: 60-pick CDM/Ball Winner sample shows avg_err=+9.6 (model under-projects).
             # Raise general mid floor 0.75→0.82 (max 18% cut).
