@@ -34,3 +34,15 @@ unrelated data source is missing.
 dict with a "safe default" value before searching for real data creates the
 same trap — always add a companion boolean/sample-count field so downstream
 tiering/classification logic can tell "confirmed neutral" apart from "unknown".
+
+**Correction:** this file's diagnosis for the Enzo Fernández/Cape Verde miss
+was made against the wrong league context (international friendly, league_id
+10) before the user corrected it to World Cup Round of 32 (league_id 1).
+Re-investigated under the correct league: the actual reason "all real data
+was missing" for that fixture was a separate, more fundamental bug — see
+[silent-asyncio-alias-bug.md](silent-asyncio-alias-bug.md). Once that was
+fixed, real odds/possession data (72%/28%, heavy favorite, knockout match)
+flowed through normally and `hasRealPossData` correctly went true. The
+`hasRealPossData` flag and opponent-independent-signal boost documented above
+are still valid, legitimate hardening for cases where data is genuinely
+absent — they just weren't the root cause of this particular case.
