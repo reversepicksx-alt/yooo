@@ -46,3 +46,25 @@ flowed through normally and `hasRealPossData` correctly went true. The
 `hasRealPossData` flag and opponent-independent-signal boost documented above
 are still valid, legitimate hardening for cases where data is genuinely
 absent — they just weren't the root cause of this particular case.
+
+**Second gap found later — `hasRealPossData` does NOT cover `teamSeasonAvg`:**
+`hasRealPossData` is `bool(notes)`, and the odds-only fallback branch (used
+whenever a team has no cached fixture stats/standings, e.g. national teams)
+itself appends a note, so `hasRealPossData` reads `True` for odds-only
+matches — but that same branch also hardcodes `teamSeasonAvg`/`oppSeasonAvg`
+to a flat `50.0`/`50.0` with zero real season-average signal behind it. Any
+downstream ratio calc of `expectedPoss / teamSeasonAvg` (e.g. GK "inverted
+possession" boost/penalty, outfield possession squeeze, CDM inversion) was
+comparing a real odds-derived expectedPoss against a fake denominator,
+producing large false-positive multipliers (Colombia GK Camilo Vargas:
+67% real expected poss vs fake 50% "season avg" → wrongly flagged as
+extreme dominance → -20% GK penalty → 20-pass under-projection vs his
+actual halftime pace). Fix: added a second, narrower flag
+`seasonAvgIsReal` (true only when teamSeasonAvg came from actual cached
+team fixture stats, not the odds-only branch) and gated all
+`teamSeasonAvg`-ratio multiplier logic in `bayesian_engine.py` on it — do
+not reuse `hasRealPossData` for this since it means something different
+("expectedPoss has some grounding") than "teamSeasonAvg is a real average".
+Also stopped exposing fake `teamSeasonAvg`/`oppSeasonAvg` to the API
+response when `seasonAvgIsReal` is false, since the mobile "OPP POSS"
+season-avg badge was rendering the fake 50% as if it were a real signal.

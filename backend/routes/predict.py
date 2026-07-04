@@ -1779,7 +1779,7 @@ async def predict(req: PredictionRequest):
             For is_neutral=True: uses overall averages for both teams and skips the
             home-venue possession boost (+1.5pp). Used for World Cup / tournament
             games where neither team has a real home-ground advantage."""
-            dom = {"expectedPoss": 50.0, "oppExpectedPoss": 50.0, "multiplier": 1.0, "notes": []}
+            dom = {"expectedPoss": 50.0, "oppExpectedPoss": 50.0, "multiplier": 1.0, "notes": [], "seasonAvgIsReal": False}
 
             def avg_poss(sl, venue_filter=None):
                 vals = []
@@ -2132,6 +2132,7 @@ async def predict(req: PredictionRequest):
 
                 dom["homePoss"] = home_poss
                 dom["awayPoss"] = away_poss
+                dom["seasonAvgIsReal"] = True
 
                 player_team_poss = dom["expectedPoss"]
                 poss_ratio = player_team_poss / team_avg if team_avg > 0 else 1.0
@@ -5145,12 +5146,18 @@ Analyze ALL data thoroughly. Return JSON only."""
         prediction["confidenceLevel"] = "Very High" if cs >= 80 else "High" if cs >= 70 else "Medium" if cs >= 55 else "Low"
 
         # Store dominance info — will be applied POST-FUSION to the final number
+        _dom_avg_is_real = bool(match_dominance.get("seasonAvgIsReal"))
         prediction["matchDominance"] = {
             "applied": match_dominance["multiplier"] != 1.0,
             "multiplier": match_dominance["multiplier"],
             "expectedPoss": match_dominance["expectedPoss"],
-            "teamSeasonAvg": match_dominance.get("teamSeasonAvg"),
-            "oppSeasonAvg": match_dominance.get("oppSeasonAvg"),
+            # Only expose teamSeasonAvg/oppSeasonAvg when they're real season
+            # averages — the odds-only fallback hardcodes 50.0/50.0 with zero
+            # real signal behind it, and showing that to the UI as a static
+            # "season avg" badge is misleading (see possession-fallback-unknown-tier.md).
+            "teamSeasonAvg": match_dominance.get("teamSeasonAvg") if _dom_avg_is_real else None,
+            "oppSeasonAvg": match_dominance.get("oppSeasonAvg") if _dom_avg_is_real else None,
+            "seasonAvgIsReal": _dom_avg_is_real,
             "notes": match_dominance["notes"],
         }
 

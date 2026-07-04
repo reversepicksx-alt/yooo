@@ -702,7 +702,7 @@ def compute_bayesian_projection(
     # OUTFIELD PLAYER POSSESSION SQUEEZE
     # GKs use an INVERTED model below — they are excluded here.
     # ═══════════════════════════════════════════
-    if match_dominance and prop_type in BALL_CONTROL_PROPS and not _is_gk:
+    if match_dominance and prop_type in BALL_CONTROL_PROPS and not _is_gk and match_dominance.get("seasonAvgIsReal"):
         expected_poss = match_dominance.get("expectedPoss")
         team_season_avg_poss = match_dominance.get("teamSeasonAvg")
         if expected_poss is not None and team_season_avg_poss and team_season_avg_poss > 0:
@@ -766,7 +766,7 @@ def compute_bayesian_projection(
     # deep on a 1-0 lead) is the worst-case: ultra-low team possession = maximum
     # back-pass recycling volume through the GK.
     # ═══════════════════════════════════════════
-    if match_dominance and prop_type in {"pass_attempts", "passes"} and _is_gk:
+    if match_dominance and prop_type in {"pass_attempts", "passes"} and _is_gk and match_dominance.get("seasonAvgIsReal"):
         expected_poss = match_dominance.get("expectedPoss")
         team_season_avg_poss = match_dominance.get("teamSeasonAvg")
         if expected_poss is not None and team_season_avg_poss and team_season_avg_poss > 0:
@@ -858,7 +858,8 @@ def compute_bayesian_projection(
     _pos_upper_for_cdm = (position or "").upper()
     if (_cdm_mode != "off" and match_dominance
             and prop_type in {"pass_attempts", "passes"}
-            and _pos_upper_for_cdm in _cdm_pos_set):
+            and _pos_upper_for_cdm in _cdm_pos_set
+            and match_dominance.get("seasonAvgIsReal")):
         expected_poss = match_dominance.get("expectedPoss")
         team_season_avg_poss = match_dominance.get("teamSeasonAvg")
         if (expected_poss is not None and team_season_avg_poss
