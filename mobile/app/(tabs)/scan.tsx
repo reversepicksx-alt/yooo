@@ -12,7 +12,7 @@ import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import NotificationBell from '@/components/NotificationBell';
 import { useQueryClient } from '@tanstack/react-query';
-import { scanProp, predict, cs2Predict, wtaPredict, savePick, pollAiNarrative, searchCs2Players, searchCs2Teams, searchWtaPlayers, PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, LEAGUES, PredictionResult, ScanResult, Cs2Player, Cs2Team, WtaPlayer, getPlayerContexts, getTeamNextMatch, getLeagueById, PlayerContext, NextMatchData } from '@/lib/api';
+import { scanProp, predict, cs2Predict, wtaPredict, savePick, pollAiNarrative, searchCs2Players, searchCs2Teams, searchWtaPlayers, PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, LEAGUES, PredictionResult, ScanResult, Cs2Player, Cs2Team, WtaPlayer, getPlayerContexts, getTeamNextMatch, getLeagueById, getMatchScript, PlayerContext, NextMatchData, MatchScriptData } from '@/lib/api';
 import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult, FuzzyLeagueResult, StaticItem } from '@/components/FuzzySearchInput';
 import LeaguePickerModal from '@/components/LeaguePickerModal';
 import { useAuth } from '@/contexts/AuthContext';
@@ -152,6 +152,8 @@ export default function ScanScreen() {
   const [contextsLoading, setContextsLoading] = useState(false);
   const [nextMatchLoading, setNextMatchLoading] = useState(false);
   const [autoMatch, setAutoMatch] = useState<NextMatchData | null>(null);
+  const [matchScript, setMatchScript] = useState<MatchScriptData | null>(null);
+  const [matchScriptLoading, setMatchScriptLoading] = useState(false);
   const [propType, setPropType] = useState(PROP_TYPES[0].value);
   const [line, setLine] = useState('');
   const [leagueId, setLeagueId] = useState(0);
@@ -197,6 +199,44 @@ export default function ScanScreen() {
     });
     setDeselectedLogIndices(toDeselect);
   }, [prediction?.player]);
+
+  // Match Script Type card — fires as soon as team + opponent + league are all
+  // resolved (i.e. right after a player/match is identified), well before the
+  // user enters a line. Never blocks the rest of the flow on failure.
+  useEffect(() => {
+    const activeContext = selectedContext || (resolvedPlayer ? { teamId: resolvedPlayer.teamId, teamName: resolvedPlayer.teamName, leagueId: resolvedPlayer.leagueId, isNational: false } : null);
+    const teamId = activeContext?.teamId || resolvedPlayer?.teamId || 0;
+    const teamName = activeContext?.teamName || resolvedPlayer?.teamName || '';
+    const opponentId = autoMatch?.opponent?.id || resolvedManualOpponent?.teamId || 0;
+    const opponentName = autoMatch?.opponent?.name || resolvedManualOpponent?.teamName || manualOpponentQuery.trim() || '';
+    const effLeagueId = autoMatch?.leagueId || activeContext?.leagueId || leagueId;
+
+    if (sport !== 'soccer' || !teamId || !opponentId || !teamName || !opponentName) {
+      setMatchScript(null);
+      return;
+    }
+
+    let cancelled = false;
+    setMatchScriptLoading(true);
+    setMatchScript(null);
+    getMatchScript({
+      teamId,
+      opponentId,
+      leagueId: effLeagueId,
+      isHome: venueOverride === 'home',
+      teamName,
+      opponentName,
+      leagueName: autoMatch?.leagueName || leagueQuery,
+    }).then((res) => {
+      if (!cancelled) setMatchScript(res);
+    }).catch(() => {
+      if (!cancelled) setMatchScript(null);
+    }).finally(() => {
+      if (!cancelled) setMatchScriptLoading(false);
+    });
+
+    return () => { cancelled = true; };
+  }, [sport, selectedContext, resolvedPlayer, autoMatch, resolvedManualOpponent, manualOpponentQuery, leagueId, venueOverride]);
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const analysisRef = useRef<any>(null);
@@ -1044,6 +1084,79 @@ export default function ScanScreen() {
             )}
             {contextsLoading && (
               <ActivityIndicator size="small" color={Colors.primary} style={{ alignSelf: 'flex-start', marginBottom: 8 }} />
+            )}
+
+            {/* ── Match Script Type card — appears as soon as team+opponent+league are known ── */}
+            {matchScriptLoading && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12, padding: 10, backgroundColor: '#111', borderRadius: 8, borderWidth: 1, borderColor: '#2a2a2a' }}>
+                <ActivityIndicator size="small" color={Colors.primary} />
+                <Text style={{ color: Colors.textSecondary, fontSize: 12 }}>Reading match script…</Text>
+              </View>
+            )}
+            {matchScript && !matchScript.available && !matchScriptLoading && (
+              <View style={{
+                marginBottom: 12, padding: 12, borderRadius: 10, borderWidth: 1,
+                backgroundColor: '#111', borderColor: '#2a2a2a',
+              }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                  <Ionicons name="analytics-outline" size={13} color={Colors.textSecondary} />
+                  <Text style={{ fontSize: 11, fontWeight: '700', letterSpacing: 0.5, color: Colors.textSecondary }}>
+                    MATCH SCRIPT
+                  </Text>
+                </View>
+                <Text style={{ color: Colors.textTertiary, fontSize: 12, lineHeight: 17 }}>
+                  {matchScript.explanation || 'No market data available yet for this fixture.'}
+                </Text>
+              </View>
+            )}
+            {matchScript?.available && !matchScriptLoading && (
+              <View style={{
+                marginBottom: 12, padding: 12, borderRadius: 10, borderWidth: 1,
+                backgroundColor: matchScript.noCleanScript ? 'rgba(240,165,0,0.06)' : (matchScript.isFavorable ? 'rgba(57,255,20,0.07)' : '#111'),
+                borderColor: matchScript.noCleanScript ? 'rgba(240,165,0,0.35)' : (matchScript.isFavorable ? 'rgba(57,255,20,0.3)' : '#2a2a2a'),
+              }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                  <Ionicons
+                    name={matchScript.noCleanScript ? 'warning-outline' : (matchScript.isFavorable ? 'checkmark-circle' : 'analytics-outline')}
+                    size={13}
+                    color={matchScript.noCleanScript ? '#f0a500' : (matchScript.isFavorable ? Colors.primary : Colors.textSecondary)}
+                  />
+                  <Text style={{
+                    fontSize: 11, fontWeight: '700', letterSpacing: 0.5,
+                    color: matchScript.noCleanScript ? '#f0a500' : (matchScript.isFavorable ? Colors.primary : Colors.textSecondary),
+                  }}>
+                    MATCH SCRIPT
+                  </Text>
+                  {matchScript.noCleanScript && (
+                    <View style={{ paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4, backgroundColor: 'rgba(240,165,0,0.15)' }}>
+                      <Text style={{ color: '#f0a500', fontSize: 9, fontWeight: '700' }}>NO CLEAN SCRIPT</Text>
+                    </View>
+                  )}
+                </View>
+                <Text style={{ color: Colors.text, fontSize: 14, fontWeight: '700', marginBottom: 3 }}>
+                  {matchScript.primaryScript}
+                </Text>
+                {!!matchScript.tacticalModifier && (
+                  <Text style={{ color: Colors.primary, fontSize: 11, fontWeight: '600', marginBottom: 5 }}>
+                    {matchScript.tacticalModifier}
+                  </Text>
+                )}
+                {!!matchScript.explanation && (
+                  <Text style={{ color: Colors.textSecondary, fontSize: 12, lineHeight: 17, marginBottom: 6 }}>
+                    {matchScript.explanation}
+                  </Text>
+                )}
+                {!!matchScript.expectedEffects?.length && (
+                  <View style={{ gap: 3 }}>
+                    {matchScript.expectedEffects.map((effect, idx) => (
+                      <View key={idx} style={{ flexDirection: 'row', gap: 6, alignItems: 'flex-start' }}>
+                        <Text style={{ color: Colors.textTertiary, fontSize: 11, lineHeight: 16 }}>•</Text>
+                        <Text style={{ color: Colors.textTertiary, fontSize: 11, lineHeight: 16, flex: 1 }}>{effect}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </View>
             )}
 
             {/* ── Auto-filled next match card ── */}

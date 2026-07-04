@@ -214,14 +214,15 @@ def decimal_to_american(decimal_odds: float) -> str:
 async def get_soccer_odds(team_id: int, opponent_id: int, league_id: int) -> dict:
     """Fetch moneyline odds for the next fixture between two teams."""
     try:
-        # Find the next fixture between these teams
-        fixtures = await api_football_request("fixtures", {
+        # Find the next fixture between these teams (h2h is only valid on
+        # fixtures/headtohead, not the plain fixtures endpoint)
+        fixtures = await api_football_request("fixtures/headtohead", {
             "h2h": f"{team_id}-{opponent_id}",
             "next": 1,
         })
         if not fixtures:
             # Try season-based search
-            fixtures = await api_football_request("fixtures", {
+            fixtures = await api_football_request("fixtures/headtohead", {
                 "h2h": f"{team_id}-{opponent_id}",
                 "season": "2025",
                 "status": "NS",

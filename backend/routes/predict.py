@@ -7782,3 +7782,29 @@ async def ai_poll(req: PredictionRequest):
         return {"ready": False, "failed": False, "data": None}
 # ─────────────────────────────────────────────────────────────────────────
 
+
+# ── Match Script endpoint ───────────────────────────────────────────────────
+# Fires right after a player/match is identified, BEFORE the user enters a
+# stat line. Fast, moneyline + odds-derived-possession classification — see
+# match_script.py for the tier table and cross-check logic.
+@router.get("/match-script")
+async def match_script(teamId: int, opponentId: int, leagueId: int, isHome: bool,
+                        teamName: str = "This team", opponentName: str = "Opponent",
+                        leagueName: str = ""):
+    from match_script import get_match_script
+    try:
+        if not teamId or not opponentId:
+            return {"available": False, "noCleanScript": True, "primaryScript": None,
+                    "isFavorable": False, "explanation": "Missing team data.",
+                    "tacticalModifier": None, "expectedEffects": []}
+        result = await get_match_script(
+            team_id=teamId, opponent_id=opponentId, league_id=leagueId, is_home=isHome,
+            team_name=teamName, opponent_name=opponentName, league_name=leagueName,
+        )
+        return result
+    except Exception as e:
+        print(f"[MATCH SCRIPT] error: {e}")
+        return {"available": False, "noCleanScript": True, "primaryScript": None,
+                "isFavorable": False, "explanation": "Could not classify this match right now.",
+                "tacticalModifier": None, "expectedEffects": []}
+

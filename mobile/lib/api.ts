@@ -1054,6 +1054,45 @@ export async function getLeagueById(id: number): Promise<{ id: number; name: str
   }
 }
 
+export interface MatchScriptData {
+  available: boolean;
+  noCleanScript?: boolean;
+  primaryScript?: string;
+  isFavorable?: boolean;
+  moneyline?: number;
+  expectedPossession?: number;
+  isFavoriteTeam?: boolean;
+  explanation?: string;
+  tacticalModifier?: string;
+  expectedEffects?: string[];
+  reason?: string;
+}
+
+export async function getMatchScript(params: {
+  teamId: number;
+  opponentId: number;
+  leagueId: number;
+  isHome: boolean;
+  teamName: string;
+  opponentName: string;
+  leagueName?: string;
+}): Promise<MatchScriptData> {
+  const qs = new URLSearchParams({
+    teamId: String(params.teamId),
+    opponentId: String(params.opponentId),
+    leagueId: String(params.leagueId),
+    isHome: String(params.isHome),
+    teamName: params.teamName,
+    opponentName: params.opponentName,
+    leagueName: params.leagueName || '',
+  });
+  try {
+    return await apiCall(`/api/match-script?${qs.toString()}`);
+  } catch {
+    return { available: false, reason: 'request_failed' };
+  }
+}
+
 
 export interface SubscriptionStatus {
   active: boolean;
