@@ -14,6 +14,7 @@ prop type to pick a squeeze multiplier). This card is a fast, pre-line signal;
 the full prediction still runs its own richer model when the user hits Analyze.
 """
 
+import asyncio
 from typing import Optional
 
 from utils import get_soccer_odds
@@ -213,9 +214,15 @@ async def get_match_script(
     # price, or a fixture where the odds book looks obviously stale/broken).
     no_clean_script = abs(team_ml) < 100 and abs(opp_ml) < 100 and team_poss == 50.0
 
+    # Hard-capped: this is a nice-to-have tactical tag, not core to the tier
+    # classification. The underlying AI call can legitimately take 15-30s+ on
+    # retries, which blew past this endpoint's client-side timeout and made a
+    # slow-but-successful request look like a "can't reach server" failure.
     press = None
     try:
-        press = await fetch_ai_press_intensity(opponent_name, league_name)
+        press = await asyncio.wait_for(
+            fetch_ai_press_intensity(opponent_name, league_name), timeout=6.0
+        )
     except Exception:
         press = None
 

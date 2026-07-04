@@ -13,7 +13,7 @@ const getApiBase = (): string => {
 
 // Endpoints that involve AI synthesis — give them a generous timeout
 const LONG_TIMEOUT_PATHS   = ['/api/predict', '/api/mlb/predict', '/api/wta/predict', '/api/scan-prop'];
-const MEDIUM_TIMEOUT_PATHS = ['/api/players/search', '/api/players/'];  // search can hit API-Football strategy fallbacks
+const MEDIUM_TIMEOUT_PATHS = ['/api/players/search', '/api/players/', '/api/match-script'];  // search can hit API-Football strategy fallbacks; match-script hits an AI press-intensity call
 const CS2_PREDICT_PATH     = '/api/cs2/predict';
 const LONG_TIMEOUT_MS      = 90_000;   // 90 s — soccer / MLB / scan
 const MEDIUM_TIMEOUT_MS    = 40_000;   // 40 s — player search (may fall through to API-Football strategies)
@@ -1089,7 +1089,16 @@ export async function getMatchScript(params: {
   try {
     return await apiCall(`/api/match-script?${qs.toString()}`);
   } catch {
-    return { available: false, reason: 'request_failed' };
+    return {
+      available: false,
+      noCleanScript: true,
+      primaryScript: null,
+      isFavorable: false,
+      explanation: 'Could not reach the server to load the match script. Pull to refresh or try again shortly.',
+      tacticalModifier: null,
+      expectedEffects: [],
+      reason: 'request_failed',
+    };
   }
 }
 
