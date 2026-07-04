@@ -5932,31 +5932,64 @@ Analyze ALL data thoroughly. Return JSON only."""
             prediction["lineupWarning"] = True
 
         # ── Risk signals (red-card/dismissal volatility) + fixture congestion ──
+        # NOTE: mobile/lib/api.ts#PredictionResult['riskSignals'] expects
+        # {yellowCardAvg, redCardRisk: 'low'|'elevated'|'high', opponentYellowCardAvg, note}
+        # — keep this mapping in sync with that interface, not the internal _risk_signals shape.
         try:
-            prediction["riskSignals"] = _risk_signals
-            if _risk_signals.get("note"):
-                prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [_risk_signals["note"]]
+            _rs = _risk_signals
+            _level_map = {"normal": "low", "moderate": "elevated", "elevated": "high"}
+            prediction["riskSignals"] = {
+                "yellowCardAvg": _rs.get("teamCardsAvg"),
+                "opponentYellowCardAvg": _rs.get("oppCardsAvg"),
+                "redCardRisk": _level_map.get(_rs.get("level"), "low"),
+                "note": _rs.get("note"),
+            }
+            if _rs.get("note"):
+                prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [_rs["note"]]
         except NameError:
-            prediction["riskSignals"] = {"level": "normal", "note": None}
+            prediction["riskSignals"] = {"yellowCardAvg": None, "opponentYellowCardAvg": None, "redCardRisk": "low", "note": None}
 
+        # NOTE: mobile/lib/api.ts#PredictionResult['congestion'] expects
+        # {teamRestDays, opponentRestDays, teamGamesIn14d, opponentGamesIn14d, fatigueFlag: 'low'|'moderate'|'high'}
         try:
             _fatigue_layer = (early_bayes or {}).get("fatigueLayer", {}) or {}
             _cong_games = _fatigue_layer.get("congestion_games", 0) or 0
+            _fatigue_flag = "high" if _cong_games >= 4 else ("moderate" if _cong_games >= 3 else "low")
             prediction["congestion"] = {
-                "gamesIn14d": _cong_games,
-                "restDays": _fatigue_layer.get("rest_days"),
-                "flag": _cong_games >= 4,
-                "note": (f"{_cong_games} games in the last 14 days — fixture pileup can dent output."
-                         if _cong_games >= 4 else None),
+                "teamRestDays": _fatigue_layer.get("rest_days"),
+                "opponentRestDays": _fatigue_layer.get("opponent_rest_days"),
+                "teamGamesIn14d": _cong_games,
+                "opponentGamesIn14d": _fatigue_layer.get("opponent_congestion_games"),
+                "fatigueFlag": _fatigue_flag,
             }
         except Exception:
-            prediction["congestion"] = {"gamesIn14d": 0, "restDays": None, "flag": False, "note": None}
+            prediction["congestion"] = {
+                "teamRestDays": None, "opponentRestDays": None,
+                "teamGamesIn14d": None, "opponentGamesIn14d": None, "fatigueFlag": "low",
+            }
 
         # ── Lineup pitch data (predicted or confirmed XI + formation) ──
-        prediction["lineup"] = locals().get("_pitch_lineup") or {
-            "status": "unavailable", "formation": None, "players": [],
-            "opponentFormation": None, "opponentPlayers": [],
+        # NOTE: mobile/components/PitchDiagram.tsx expects {status, home:{teamName,formation,coach,players[]}, away:{...}}
+        _raw_lineup = locals().get("_pitch_lineup") or {}
+        _is_player_home = (locals().get("player_venue") == "home")
+        _team_side = {
+            "teamName": req.teamName or None,
+            "formation": _raw_lineup.get("formation"),
+            "coach": _raw_lineup.get("coach"),
+            "players": _raw_lineup.get("players") or [],
         }
+        _opp_side = {
+            "teamName": req.opponentName or None,
+            "formation": _raw_lineup.get("opponentFormation"),
+            "coach": _raw_lineup.get("opponentCoach"),
+            "players": _raw_lineup.get("opponentPlayers") or [],
+        }
+        _has_lineup_data = bool(_team_side["players"] or _opp_side["players"])
+        prediction["lineup"] = {
+            "status": _raw_lineup.get("status") or "unavailable",
+            "home": _team_side if _is_player_home else _opp_side,
+            "away": _opp_side if _is_player_home else _team_side,
+        } if _has_lineup_data else None
 
         # =============================================
         # POST-CONSENSUS CONFIDENCE GUARDS
