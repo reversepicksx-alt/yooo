@@ -19,6 +19,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import LoadingScreen from '@/components/LoadingScreen';
 import PitchDiagram from '@/components/PitchDiagram';
 import Reanimated, { FadeInDown } from 'react-native-reanimated';
+import { LinearGradient } from 'expo-linear-gradient';
 
 
 const SCREEN_W = Dimensions.get('window').width;
@@ -1354,6 +1355,18 @@ export default function ScanScreen() {
             <Reanimated.View entering={Platform.OS !== 'web' ? FadeInDown.springify().damping(14).stiffness(100).delay(50) : undefined}>
             <View ref={analysisRef} collapsable={false} style={styles.captureContainer}>
             <View style={styles.analysisCard}>
+              <LinearGradient
+                colors={prediction.recommendation === 'OVER'
+                  ? ['rgba(57,255,20,0.14)', 'rgba(57,255,20,0.02)', 'rgba(0,0,0,0)']
+                  : ['rgba(255,59,48,0.14)', 'rgba(255,59,48,0.02)', 'rgba(0,0,0,0)']}
+                start={{ x: 0.15, y: 0 }}
+                end={{ x: 0.85, y: 0.7 }}
+                style={styles.glassSheenTop}
+                pointerEvents="none"
+              />
+              <View style={[styles.glassHairline, {
+                backgroundColor: prediction.recommendation === 'OVER' ? Colors.primary : Colors.error,
+              }]} pointerEvents="none" />
               {/* Top accent stripe — color signals OVER/UNDER at a glance */}
               <View style={[styles.analysisAccentStripe, {
                 backgroundColor: prediction.recommendation === 'OVER' ? Colors.primary : Colors.error,
@@ -1459,11 +1472,15 @@ export default function ScanScreen() {
                   )}
                 </View>
                 {prediction.recommendation && (
-                  <View style={[styles.recBadge, {
-                    backgroundColor: prediction.recommendation === 'OVER' ? Colors.successDim : Colors.errorDim
-                  }]}>
+                  <LinearGradient
+                    colors={prediction.recommendation === 'OVER'
+                      ? ['rgba(57,255,20,0.28)', 'rgba(57,255,20,0.08)']
+                      : ['rgba(255,59,48,0.28)', 'rgba(255,59,48,0.08)']}
+                    start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                    style={[styles.recBadge, { borderWidth: 1, borderColor: recColor + '55' }]}
+                  >
                     <Text style={[styles.recText, { color: recColor }]}>{prediction.recommendation}</Text>
-                  </View>
+                  </LinearGradient>
                 )}
               </View>
 
@@ -1596,10 +1613,14 @@ export default function ScanScreen() {
               {confPct != null && (
                 <View style={styles.confGaugeWrap}>
                   <View style={styles.confGaugeTrack}>
-                    <View style={[styles.confGaugeFill, {
-                      width: `${Math.min(100, Math.max(0, (confPct - 50) * 2))}%` as any,
-                      backgroundColor: recColor,
-                    }]} />
+                    <LinearGradient
+                      colors={[recColor + '55', recColor]}
+                      start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+                      style={[styles.confGaugeFill, {
+                        width: `${Math.min(100, Math.max(0, (confPct - 50) * 2))}%` as any,
+                        shadowColor: recColor,
+                      }]}
+                    />
                     <View style={styles.confGaugeMidMark} />
                   </View>
                   <View style={styles.confGaugeLabels}>
@@ -3272,43 +3293,53 @@ export default function ScanScreen() {
                 : cong?.fatigueFlag === 'moderate' ? '#FFB020'
                 : Colors.textSecondary;
               return (
-                <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
+                <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
                   {risk && (
-                    <View style={{ flex: 1, backgroundColor: '#0a0a0a', borderRadius: 12, padding: 12,
-                      borderWidth: 1, borderColor: riskColor + '33' }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-                        <Ionicons name="alert-circle-outline" size={13} color={riskColor} />
-                        <Text style={{ fontSize: 9, fontWeight: '800', color: riskColor, letterSpacing: 0.6 }}>
-                          DISMISSAL RISK
+                    <View style={{ flex: 1, borderRadius: 18, overflow: 'hidden', borderWidth: 1, borderColor: riskColor + '33' }}>
+                      <LinearGradient
+                        colors={[riskColor + '1A', 'rgba(10,10,10,0.6)']}
+                        start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                        style={{ padding: 14 }}
+                      >
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                          <Ionicons name="alert-circle-outline" size={13} color={riskColor} />
+                          <Text style={{ fontSize: 9, fontWeight: '800', color: riskColor, letterSpacing: 0.6 }}>
+                            DISMISSAL RISK
+                          </Text>
+                        </View>
+                        <Text style={{ fontSize: 17, fontWeight: '800', color: Colors.text, marginTop: 7 }}>
+                          {(risk.redCardRisk || 'low').toUpperCase()}
                         </Text>
-                      </View>
-                      <Text style={{ fontSize: 16, fontWeight: '800', color: Colors.text, marginTop: 6 }}>
-                        {(risk.redCardRisk || 'low').toUpperCase()}
-                      </Text>
-                      {risk.note ? (
-                        <Text style={{ fontSize: 10, color: Colors.textTertiary, marginTop: 4, lineHeight: 14 }}>
-                          {risk.note}
-                        </Text>
-                      ) : null}
+                        {risk.note ? (
+                          <Text style={{ fontSize: 10, color: Colors.textTertiary, marginTop: 4, lineHeight: 14 }}>
+                            {risk.note}
+                          </Text>
+                        ) : null}
+                      </LinearGradient>
                     </View>
                   )}
                   {cong && (
-                    <View style={{ flex: 1, backgroundColor: '#0a0a0a', borderRadius: 12, padding: 12,
-                      borderWidth: 1, borderColor: fatigueColor + '33' }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-                        <Ionicons name="time-outline" size={13} color={fatigueColor} />
-                        <Text style={{ fontSize: 9, fontWeight: '800', color: fatigueColor, letterSpacing: 0.6 }}>
-                          FIXTURE LOAD
+                    <View style={{ flex: 1, borderRadius: 18, overflow: 'hidden', borderWidth: 1, borderColor: fatigueColor + '33' }}>
+                      <LinearGradient
+                        colors={[fatigueColor + '1A', 'rgba(10,10,10,0.6)']}
+                        start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                        style={{ padding: 14 }}
+                      >
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                          <Ionicons name="time-outline" size={13} color={fatigueColor} />
+                          <Text style={{ fontSize: 9, fontWeight: '800', color: fatigueColor, letterSpacing: 0.6 }}>
+                            FIXTURE LOAD
+                          </Text>
+                        </View>
+                        <Text style={{ fontSize: 17, fontWeight: '800', color: Colors.text, marginTop: 7 }}>
+                          {cong.teamRestDays != null ? `${cong.teamRestDays}d rest` : '—'}
                         </Text>
-                      </View>
-                      <Text style={{ fontSize: 16, fontWeight: '800', color: Colors.text, marginTop: 6 }}>
-                        {cong.teamRestDays != null ? `${cong.teamRestDays}d rest` : '—'}
-                      </Text>
-                      {cong.teamGamesIn14d != null && (
-                        <Text style={{ fontSize: 10, color: Colors.textTertiary, marginTop: 4, lineHeight: 14 }}>
-                          {cong.teamGamesIn14d} games in last 14 days
-                        </Text>
-                      )}
+                        {cong.teamGamesIn14d != null && (
+                          <Text style={{ fontSize: 10, color: Colors.textTertiary, marginTop: 4, lineHeight: 14 }}>
+                            {cong.teamGamesIn14d} games in last 14 days
+                          </Text>
+                        )}
+                      </LinearGradient>
                     </View>
                   )}
                 </View>
@@ -4443,12 +4474,20 @@ const styles = StyleSheet.create({
   pickerOptionText: { color: Colors.textSecondary, fontSize: 15 },
   pickerOptionTextActive: { color: Colors.primary, fontWeight: '700' },
 
-  /* Analysis card */
+  /* Analysis card — glass panel treatment */
   analysisCard: {
-    backgroundColor: 'rgba(17,17,17,0.95)', borderRadius: Colors.radiusLg,
-    borderWidth: 1, borderColor: 'rgba(57,255,20,0.08)', overflow: 'hidden', marginBottom: 14,
-    shadowColor: Colors.primary, shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08, shadowRadius: 16,
+    backgroundColor: '#0A0B0D', borderRadius: 28,
+    borderWidth: 1, borderColor: 'rgba(57,255,20,0.14)', overflow: 'hidden', marginBottom: 16,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 14 },
+    shadowOpacity: 0.5, shadowRadius: 26, elevation: 8,
+    position: 'relative',
+  },
+  glassSheenTop: {
+    position: 'absolute', top: 0, left: 0, right: 0, height: 130, zIndex: 0,
+  },
+  glassHairline: {
+    position: 'absolute', top: 0, left: 24, right: 24, height: 1.5,
+    backgroundColor: 'rgba(57,255,20,0.5)', opacity: 0.6, zIndex: 1,
   },
   analysisHeader: {
     flexDirection: 'row', justifyContent: 'space-between',
@@ -4488,12 +4527,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16, paddingBottom: 8, paddingTop: 4, gap: 4,
   },
   confGaugeTrack: {
-    height: 6, backgroundColor: Colors.cardSecondary, borderRadius: 3,
+    height: 8, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 4,
     overflow: 'hidden', position: 'relative',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)',
   },
   confGaugeFill: {
-    height: '100%', borderRadius: 3,
-    shadowRadius: 6, shadowOpacity: 0.4,
+    height: '100%', borderRadius: 4,
+    shadowRadius: 8, shadowOpacity: 0.6, shadowOffset: { width: 0, height: 0 },
   },
   confGaugeMidMark: {
     position: 'absolute', left: '0%' as any, top: 0, bottom: 0,
@@ -4719,7 +4759,7 @@ const styles = StyleSheet.create({
   ftsNote: { fontSize: 8, color: Colors.textTertiary, fontStyle: 'italic' },
   moneylinePills: { flexDirection: 'row', gap: 6 },
   mlPill: {
-    flex: 1, backgroundColor: '#1a1a1a', borderRadius: 8, paddingVertical: 8,
+    flex: 1, backgroundColor: 'rgba(255,255,255,0.035)', borderRadius: 12, paddingVertical: 10,
     alignItems: 'center', borderWidth: 1, borderColor: Colors.borderSubtle,
   },
   mlPillTeam: { fontSize: 9, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 0.8, marginBottom: 2 },
@@ -4733,9 +4773,18 @@ const styles = StyleSheet.create({
   possRow: { paddingHorizontal: 16, paddingVertical: 12, gap: 6 },
   possHeader: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 2 },
   possLabel: { fontSize: 10, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 1.2 },
-  possBarWrap: { flexDirection: 'row', height: 8, borderRadius: 4, overflow: 'hidden' },
-  possBarHome: { backgroundColor: Colors.primary, borderTopLeftRadius: 4, borderBottomLeftRadius: 4 },
-  possBarAway: { backgroundColor: '#f43f5e', borderTopRightRadius: 4, borderBottomRightRadius: 4 },
+  possBarWrap: {
+    flexDirection: 'row', height: 10, borderRadius: 5, overflow: 'hidden',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)',
+  },
+  possBarHome: {
+    backgroundColor: Colors.primary, borderTopLeftRadius: 5, borderBottomLeftRadius: 5,
+    shadowColor: Colors.primary, shadowOpacity: 0.6, shadowRadius: 6, shadowOffset: { width: 0, height: 0 },
+  },
+  possBarAway: {
+    backgroundColor: '#f43f5e', borderTopRightRadius: 5, borderBottomRightRadius: 5,
+    shadowColor: '#f43f5e', shadowOpacity: 0.5, shadowRadius: 6, shadowOffset: { width: 0, height: 0 },
+  },
   possNumbers: { flexDirection: 'row', justifyContent: 'space-between' },
   possHomeText: { fontSize: 13, fontWeight: '800', color: Colors.primary, fontVariant: ['tabular-nums'] as any },
   possAwayText: { fontSize: 13, fontWeight: '800', color: '#f43f5e', fontVariant: ['tabular-nums'] as any },
@@ -4748,15 +4797,17 @@ const styles = StyleSheet.create({
   reasoningLabel: { fontSize: 10, color: Colors.primary, fontWeight: '700', letterSpacing: 1.5 },
   reasoningText: { fontSize: 13, color: Colors.textSecondary, lineHeight: 20 },
 
-  /* Scout Report card */
+  /* Scout Report card — glass panel treatment */
   scoutCard: {
-    backgroundColor: '#0E0E0E',
-    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.025)',
+    borderRadius: 18,
     borderWidth: 1,
     borderColor: '#1E1E1E',
-    padding: 11,
-    gap: 7,
-    marginBottom: 6,
+    padding: 14,
+    gap: 8,
+    marginBottom: 8,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.3, shadowRadius: 12,
   },
   scoutHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   scoutTitle: { fontSize: 10, fontWeight: '800', color: Colors.primary, letterSpacing: 1.8, flex: 1 },
@@ -5117,10 +5168,12 @@ const styles = StyleSheet.create({
   newBtn: { alignItems: 'center', paddingVertical: 14 },
   newBtnText: { color: Colors.textSecondary, fontSize: 14, fontWeight: '600' },
 
-  /* Pressure Dynamics */
+  /* Pressure Dynamics — glass panel treatment */
   pressureCard: {
-    backgroundColor: Colors.cardSecondary, borderRadius: Colors.radius,
-    borderWidth: 1, borderColor: Colors.borderSubtle, padding: 14, gap: 12,
+    backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: 20,
+    borderWidth: 1, borderColor: Colors.borderSubtle, padding: 16, gap: 12,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.3, shadowRadius: 12,
   },
   pressureHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   pressureTitle: { fontSize: 10, fontWeight: '800', color: Colors.primary, letterSpacing: 1.2 },
