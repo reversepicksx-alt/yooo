@@ -14,7 +14,7 @@ from openai import OpenAI
 from config import (
     db, EMERGENT_LLM_KEY, XAI_API_KEY, CURRENT_SEASON,
     WOMENS_LEAGUE_IDS, STAT_FIELD_MAP, STAT_LAMBDA_MAP, GROK_MODEL,
-    INTERNATIONAL_LEAGUES,
+    INTERNATIONAL_LEAGUES, NATIONAL_TEAM_TIER,
 )
 from models import PredictionRequest
 from utils import api_football_request, get_recent_fixtures_fast, strip_accents, get_soccer_odds, decimal_to_american
@@ -2630,20 +2630,32 @@ async def predict(req: PredictionRequest):
                         )
 
             # ── Quality flag + opponent tier per game log ──────────────────────
+            # Standings-based rank only covers opponents that share the SAME
+            # standings table as the current prediction's league_id. A
+            # national team's game log frequently spans multiple confederations/
+            # competitions (qualifying groups, playoffs, friendlies) that never
+            # share one table — so most historical opponents would otherwise
+            # get no tier at all. Fall back to the curated NATIONAL_TEAM_TIER
+            # map (by opponent name) whenever a real rank isn't available.
             for _gl in game_log_summary["games"]:
                 _mins = _gl.get("minutes", 0) or 0
                 _gl["quality"] = _mins >= 60
                 _opp_rank = _gl.get("oppRank")
-                if _opp_rank is None:
-                    _gl["oppTier"] = None
-                elif _opp_rank <= 6:
-                    _gl["oppTier"] = "ELITE"
-                elif _opp_rank <= 15:
-                    _gl["oppTier"] = "STRONG"
-                elif _opp_rank <= 30:
-                    _gl["oppTier"] = "MID"
+                if _opp_rank is not None:
+                    if _opp_rank <= 6:
+                        _gl["oppTier"] = "ELITE"
+                    elif _opp_rank <= 15:
+                        _gl["oppTier"] = "STRONG"
+                    elif _opp_rank <= 30:
+                        _gl["oppTier"] = "MID"
+                    else:
+                        _gl["oppTier"] = "WEAK"
                 else:
-                    _gl["oppTier"] = "WEAK"
+                    _opp_name = (_gl.get("opponent") or "").lower().strip()
+                    _gl["oppTier"] = NATIONAL_TEAM_TIER.get(_opp_name)
+                    if _gl["oppTier"] is None and _opp_name:
+                        _match = next((v for k, v in NATIONAL_TEAM_TIER.items() if _opp_name in k or k in _opp_name), None)
+                        _gl["oppTier"] = _match
 
             # ── Quality-filtered hit rates (≥60 min games only) ───────────────
             if req.line and "hitRates" in game_log_summary:
@@ -5096,7 +5108,14 @@ Analyze ALL data thoroughly. Return JSON only."""
         prediction["projectedValue"] = pv
         prediction["recommendation"] = "over" if pv > req.line else "under"
         prediction["sport"] = req.sport
-        # Expose current opponent quality tier so the frontend can display it
+        # Expose current opponent quality tier so the frontend can display it.
+        # Standings-based rank only exists when the CURRENT prediction's league_id
+        # has a domestic/qualifying-group table — this silently fails for
+        # friendlies, intercontinental playoffs, and any match without a table
+        # (the exact case that was hiding the "vs {opponent} [TIER]" badge).
+        # Fall back, in order: (1) curated national-team tier by name,
+        # (2) odds-implied opponent win probability — always available for any
+        # match with a betting market, regardless of competition.
         _cur_opp_rank = (standing_data or {}).get("oppRank")
         if _cur_opp_rank is not None:
             prediction["currentOppRank"] = _cur_opp_rank
@@ -5108,6 +5127,38 @@ Analyze ALL data thoroughly. Return JSON only."""
                 prediction["currentOppTier"] = "MID"
             else:
                 prediction["currentOppTier"] = "WEAK"
+        else:
+            _opp_name_l = (req.opponentName or "").lower().strip()
+            _nat_tier = NATIONAL_TEAM_TIER.get(_opp_name_l)
+            if _nat_tier is None and _opp_name_l:
+                _nat_tier = next(
+                    (v for k, v in NATIONAL_TEAM_TIER.items() if _opp_name_l in k or k in _opp_name_l), None
+                )
+            if _nat_tier is not None:
+                prediction["currentOppTier"] = _nat_tier
+                prediction["currentOppTierSource"] = "nationalTeamTable"
+            elif match_odds and match_odds.get("bookmakerOdds"):
+                try:
+                    _hw = float(match_odds["bookmakerOdds"].get("homeWin") or 0)
+                    _aw = float(match_odds["bookmakerOdds"].get("awayWin") or 0)
+                    if _hw > 1.0 and _aw > 1.0:
+                        _p_home = 1.0 / _hw
+                        _p_away = 1.0 / _aw
+                        _total = _p_home + _p_away
+                        _p_home_norm = _p_home / _total if _total > 0 else 0.5
+                        _player_is_home = match_odds.get("playerIsHome")
+                        _opp_win_prob = (1.0 - _p_home_norm) if _player_is_home else _p_home_norm
+                        if _opp_win_prob >= 0.55:
+                            prediction["currentOppTier"] = "ELITE"
+                        elif _opp_win_prob >= 0.40:
+                            prediction["currentOppTier"] = "STRONG"
+                        elif _opp_win_prob >= 0.25:
+                            prediction["currentOppTier"] = "MID"
+                        else:
+                            prediction["currentOppTier"] = "WEAK"
+                        prediction["currentOppTierSource"] = "oddsImplied"
+                except (TypeError, ValueError):
+                    pass
         # Tell frontend AI text is loading in background
         prediction["aiPending"] = _ai_task is not None and not _pred_cached
 

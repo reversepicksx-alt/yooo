@@ -332,6 +332,47 @@ NATION_TO_LEAGUES = {
     "tunisia": [61, 39],
 }
 
+# ── National-team strength tiers (fallback when no domestic/qualifying-group
+# standings table exists for the opponent — e.g. friendlies, intercontinental
+# playoffs, or when the historical game log spans multiple confederations
+# whose group tables don't include every opponent). Curated, approximate
+# FIFA-ranking-band buckets. Only listed teams get a tier this way; unlisted
+# teams simply fall through to "no dot" exactly as before, so this only ADDS
+# coverage — it never overrides a real standings-based rank.
+NATIONAL_TEAM_TIER = {
+    # ELITE (roughly top ~12)
+    "argentina": "ELITE", "france": "ELITE", "spain": "ELITE", "england": "ELITE",
+    "brazil": "ELITE", "portugal": "ELITE", "netherlands": "ELITE", "belgium": "ELITE",
+    "germany": "ELITE", "italy": "ELITE", "croatia": "ELITE", "uruguay": "ELITE",
+    "colombia": "ELITE",
+    # STRONG (roughly ~13-35)
+    "morocco": "STRONG", "usa": "STRONG", "united states": "STRONG", "mexico": "STRONG",
+    "switzerland": "STRONG", "japan": "STRONG", "denmark": "STRONG", "senegal": "STRONG",
+    "ecuador": "STRONG", "peru": "STRONG", "south korea": "STRONG", "iran": "STRONG",
+    "wales": "STRONG", "poland": "STRONG", "serbia": "STRONG", "ukraine": "STRONG",
+    "austria": "STRONG", "sweden": "STRONG", "tunisia": "STRONG", "ghana": "STRONG",
+    "canada": "STRONG", "australia": "STRONG", "norway": "STRONG", "egypt": "STRONG",
+    # MID (roughly ~36-70)
+    "costa rica": "MID", "panama": "MID", "jordan": "MID", "uzbekistan": "MID",
+    "paraguay": "MID", "bolivia": "MID", "venezuela": "MID", "chile": "MID",
+    "jamaica": "MID", "qatar": "MID", "saudi arabia": "MID", "iraq": "MID",
+    "uae": "MID", "united arab emirates": "MID", "algeria": "MID", "nigeria": "MID",
+    "cameroon": "MID", "south africa": "MID", "ivory coast": "MID", "turkey": "MID",
+    "greece": "MID", "scotland": "MID", "finland": "MID", "slovakia": "MID",
+    "romania": "MID", "czech republic": "MID", "czechia": "MID", "bosnia": "MID",
+    "bosnia & herzegovina": "MID", "iceland": "MID", "hungary": "MID", "china": "MID",
+    "new zealand": "MID", "honduras": "MID", "el salvador": "MID", "curacao": "MID",
+    "haiti": "MID", "guatemala": "MID",
+    # WEAK (long tail — small/lower-ranked footballing nations)
+    "cape verde": "WEAK", "gabon": "WEAK", "mali": "WEAK", "burkina faso": "WEAK",
+    "dr congo": "WEAK", "congo dr": "WEAK", "guinea": "WEAK", "benin": "WEAK",
+    "vietnam": "WEAK", "india": "WEAK", "thailand": "WEAK", "philippines": "WEAK",
+    "hong kong": "WEAK", "indonesia": "WEAK", "kyrgyzstan": "WEAK", "tajikistan": "WEAK",
+    "turkmenistan": "WEAK", "bahrain": "WEAK", "kuwait": "WEAK", "oman": "WEAK",
+    "yemen": "WEAK", "syria": "WEAK", "palestine": "WEAK", "bermuda": "WEAK",
+    "grenada": "WEAK", "guyana": "WEAK", "nicaragua": "WEAK", "cuba": "WEAK",
+}
+
 # ── Stat field maps (used in multiple places) ──
 STAT_FIELD_MAP = {
     "goals": "goals_total",
