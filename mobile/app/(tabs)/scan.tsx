@@ -2473,7 +2473,7 @@ export default function ScanScreen() {
                 if (!tier) return null;
                 if (tier === 'ELITE') return '#FF453A';
                 if (tier === 'STRONG') return '#FF9F0A';
-                if (tier === 'MID') return '#FFD60A';
+                if (tier === 'MID') return '#0A84FF';
                 return '#34C759';
               };
               const minsColor = (mins: number): string => {
@@ -2765,7 +2765,7 @@ export default function ScanScreen() {
                         {([
                           { color: '#FF453A', label: 'Elite' },
                           { color: '#FF9F0A', label: 'Strong' },
-                          { color: '#FFD60A', label: 'Mid' },
+                          { color: '#0A84FF', label: 'Mid' },
                           { color: '#34C759', label: 'Weak' },
                         ] as const).map(({ color, label }) => (
                           <View key={label} style={styles.glLegendItem}>
