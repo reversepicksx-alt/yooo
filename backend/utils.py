@@ -124,17 +124,20 @@ async def api_football_request(endpoint: str, params: dict = None):
                             return []
                         # Per-minute rate limit — wait and retry rather than killing the day
                         if "too many requests" in error_lower or "rate limit" in error_lower:
-                            if attempt < 2:
-                                await aio.sleep(3.0 * (attempt + 1))
+                            if attempt < 4:
+                                await aio.sleep(2.0 * (attempt + 1))
                                 continue
+                            print(f"[API-SPORTS] Rate limit persisted after retries for {endpoint} — returning empty, caller should fall back.")
                             return []
                         raise HTTPException(status_code=400, detail=f"API-Sports error: {error_msg}")
                     return data.get("response", [])
             except httpx.TimeoutException:
-                if attempt < 2:
+                if attempt < 4:
                     continue
-                raise HTTPException(status_code=504, detail="API-Sports timeout")
-        raise HTTPException(status_code=429, detail="API-Sports rate limit — try again in a few seconds")
+                print(f"[API-SPORTS] Timeout persisted after retries for {endpoint} — returning empty, caller should fall back.")
+                return []
+        print(f"[API-SPORTS] 429 persisted after retries for {endpoint} — returning empty, caller should fall back.")
+        return []
 
 
 def _parse_fixtures_to_results(fixtures: list, team_id: int, count: int) -> list:
