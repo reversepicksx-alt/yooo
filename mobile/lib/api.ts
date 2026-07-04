@@ -457,6 +457,35 @@ export interface PredictionResult {
    *  show a disambiguation banner so the user can verify the correct player was selected. */
   playerCandidates?: Array<{ playerId: number; playerName: string; teamName: string; position: string; leagueId?: number }>;
   error?: string;
+  isWorldCup?: boolean;
+  riskSignals?: {
+    yellowCardAvg?: number;
+    redCardRisk?: 'low' | 'elevated' | 'high';
+    opponentYellowCardAvg?: number;
+    note?: string;
+  };
+  congestion?: {
+    teamRestDays?: number;
+    opponentRestDays?: number;
+    teamGamesIn14d?: number;
+    opponentGamesIn14d?: number;
+    fatigueFlag?: 'low' | 'moderate' | 'high';
+  };
+  lineup?: {
+    status?: 'confirmed' | 'predicted';
+    home: {
+      teamName?: string;
+      formation?: string;
+      coach?: string;
+      players: Array<{ name: string; x: number; y: number; number?: number; position?: string }>;
+    };
+    away: {
+      teamName?: string;
+      formation?: string;
+      coach?: string;
+      players: Array<{ name: string; x: number; y: number; number?: number; position?: string }>;
+    };
+  };
 }
 
 interface RawPrediction {
@@ -474,6 +503,10 @@ interface RawPrediction {
   tacticalBreakdown?: string;
   sharpSummary?: string;
   tacticalAlerts?: string[];
+  isWorldCup?: boolean;
+  riskSignals?: PredictionResult['riskSignals'];
+  congestion?: PredictionResult['congestion'];
+  lineup?: PredictionResult['lineup'];
   blendNote?: string;
   aiProjection?: number;
   bayesianComponent?: number;
@@ -722,6 +755,10 @@ export async function predict(request: Record<string, unknown>, signal?: AbortSi
     playerRole: raw.player?.role || undefined,
     sport: raw.sport || (request.sport as string) || undefined,
     tacticalAlerts: raw.tacticalAlerts || undefined,
+    isWorldCup: (raw as any).isWorldCup || undefined,
+    riskSignals: (raw as any).riskSignals ?? undefined,
+    congestion: (raw as any).congestion ?? undefined,
+    lineup: (raw as any).lineup ?? undefined,
     sharpSummary: raw.sharpSummary || undefined,
     keyEvidence: raw.keyEvidence || undefined,
     gameFlowDynamics: raw.gameFlowDynamics || undefined,

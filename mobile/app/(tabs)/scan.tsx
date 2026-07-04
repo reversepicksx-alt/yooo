@@ -17,6 +17,7 @@ import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult, FuzzyLeagueResult
 import LeaguePickerModal from '@/components/LeaguePickerModal';
 import { useAuth } from '@/contexts/AuthContext';
 import LoadingScreen from '@/components/LoadingScreen';
+import PitchDiagram from '@/components/PitchDiagram';
 import Reanimated, { FadeInDown } from 'react-native-reanimated';
 
 
@@ -3251,6 +3252,79 @@ export default function ScanScreen() {
                   </View>
                 );
               })()
+            )}
+
+            {/* ─── LINEUP / TACTICAL PITCH ─── */}
+            {prediction.sport === 'soccer' && prediction.lineup && (
+              <View style={{ marginTop: 12 }}>
+                <PitchDiagram lineup={prediction.lineup} highlightPlayerName={prediction.playerName} />
+              </View>
+            )}
+
+            {/* ─── RISK & CONGESTION SIGNALS ─── */}
+            {prediction.sport === 'soccer' && (prediction.riskSignals || prediction.congestion) && (() => {
+              const risk = prediction.riskSignals;
+              const cong = prediction.congestion;
+              const riskColor = risk?.redCardRisk === 'high' ? '#FF6B35'
+                : risk?.redCardRisk === 'elevated' ? '#FFB020'
+                : Colors.textSecondary;
+              const fatigueColor = cong?.fatigueFlag === 'high' ? '#FF6B35'
+                : cong?.fatigueFlag === 'moderate' ? '#FFB020'
+                : Colors.textSecondary;
+              return (
+                <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
+                  {risk && (
+                    <View style={{ flex: 1, backgroundColor: '#0a0a0a', borderRadius: 12, padding: 12,
+                      borderWidth: 1, borderColor: riskColor + '33' }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                        <Ionicons name="alert-circle-outline" size={13} color={riskColor} />
+                        <Text style={{ fontSize: 9, fontWeight: '800', color: riskColor, letterSpacing: 0.6 }}>
+                          DISMISSAL RISK
+                        </Text>
+                      </View>
+                      <Text style={{ fontSize: 16, fontWeight: '800', color: Colors.text, marginTop: 6 }}>
+                        {(risk.redCardRisk || 'low').toUpperCase()}
+                      </Text>
+                      {risk.note ? (
+                        <Text style={{ fontSize: 10, color: Colors.textTertiary, marginTop: 4, lineHeight: 14 }}>
+                          {risk.note}
+                        </Text>
+                      ) : null}
+                    </View>
+                  )}
+                  {cong && (
+                    <View style={{ flex: 1, backgroundColor: '#0a0a0a', borderRadius: 12, padding: 12,
+                      borderWidth: 1, borderColor: fatigueColor + '33' }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                        <Ionicons name="time-outline" size={13} color={fatigueColor} />
+                        <Text style={{ fontSize: 9, fontWeight: '800', color: fatigueColor, letterSpacing: 0.6 }}>
+                          FIXTURE LOAD
+                        </Text>
+                      </View>
+                      <Text style={{ fontSize: 16, fontWeight: '800', color: Colors.text, marginTop: 6 }}>
+                        {cong.teamRestDays != null ? `${cong.teamRestDays}d rest` : '—'}
+                      </Text>
+                      {cong.teamGamesIn14d != null && (
+                        <Text style={{ fontSize: 10, color: Colors.textTertiary, marginTop: 4, lineHeight: 14 }}>
+                          {cong.teamGamesIn14d} games in last 14 days
+                        </Text>
+                      )}
+                    </View>
+                  )}
+                </View>
+              );
+            })()}
+
+            {/* ─── WORLD CUP CALIBRATION NOTICE ─── */}
+            {prediction.isWorldCup && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 10,
+                backgroundColor: '#60A5FA15', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7,
+                borderWidth: 1, borderColor: '#60A5FA30' }}>
+                <Ionicons name="trophy-outline" size={12} color="#60A5FA" />
+                <Text style={{ fontSize: 10, color: '#60A5FA', fontWeight: '600', flex: 1 }}>
+                  World Cup pick — confidence tracked separately with a conservative cap.
+                </Text>
+              </View>
             )}
 
             {/* ─── MARKET LINE (RENDERED ABOVE) ─── */}

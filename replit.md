@@ -55,6 +55,10 @@ The project is structured into `backend/` (FastAPI, MongoDB) and `mobile/` (Expo
 - **Player Team Resolution**: Prioritizes `statistics[-1].team.name` from API-Football for current team data.
 - **Caching**: Player search results and fixture player stats are cached in MongoDB (`fixture_player_cache` collection) to reduce API calls and improve performance for pre-fetched leagues like A-League.
 - **HTML Entity Decoding**: Player names with HTML entities are decoded before storing as `nameClean` in the cache.
+- **Red-Card / Dismissal Risk Signal**: `backend/routes/predict.py` computes `riskSignals` (yellow/red card averages for the player's team and opponent, rolled into a `low`/`elevated`/`high` `redCardRisk` label) and injects a volatility note into both `tacticalAlerts` and the AI prompt context so tactical analysis accounts for dismissal risk. Surfaced on the prediction response as `prediction.riskSignals`.
+- **Fixture Congestion Visibility**: `prediction.congestion` explicitly surfaces the existing `fatigueLayer` rest-days/games-in-14-days data (already computed in `bayesian_engine.py`) so the mobile client can render a fixture-load card without recomputing anything.
+- **Predicted → Confirmed Starting XI (Pitch Diagram)**: `backend/routes/predict.py` builds `prediction.lineup` — home/away formation, coach, and normalized (x,y) player coordinates — from `fixtures/lineups` when posted, else falls back to each team's most recent lineup (marked `status: "predicted"`). The AI tactical prompt also receives the formation matchup so its analysis is zone-specific rather than generic. Rendered on mobile via `mobile/components/PitchDiagram.tsx` (built on `react-native-svg`, added as a new dependency), embedded in the soccer analysis card in `mobile/app/(tabs)/scan.tsx`.
+- **World Cup Calibration Tracking**: Picks tied to `leagueId === 1` (World Cup) are tagged `isWorldCup: true` on save (`backend/routes/picks.py`) and on the live prediction response, and kept isolated from domestic-league calibration data since there's minimal settled World Cup history to trust. The predict route conservatively caps `confidenceScore` at 75 for WC picks and adds an explicit "confidence tracked separately" disclaimer, surfaced on mobile as a small notice on the analysis card.
 
 ### Feature Specifications
 - **Scan / Predict Screen**: Two modes: "Scan" (image OCR via AI) and "Manual" (player name input).
@@ -78,6 +82,7 @@ The project is structured into `backend/` (FastAPI, MongoDB) and `mobile/` (Expo
 - **Stripe API**: For subscription management and payment processing.
 - **RevenueCat**: For Apple In-App Purchase subscription management.
 - **Expo**: Framework for building the React Native mobile application.
+- **react-native-svg**: Used for the starting-XI pitch diagram (`mobile/components/PitchDiagram.tsx`).
 - **React Native Reanimated**: Animation library.
 - **Express.js**: Used in `mobile/proxy.js` for the reverse proxy.
 - **http-proxy-middleware**: Middleware for the Express proxy.

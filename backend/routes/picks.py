@@ -324,6 +324,10 @@ async def save_pick(req: SavePickRequest):
         "opponentId": pick.get("_request", {}).get("opponentId", 0),
         "opponentName": pick.get("opponent") or pick.get("opponentName", ""),
         "leagueId": pick.get("_request", {}).get("leagueId", 0),
+        # World Cup picks are tracked separately for calibration — the tournament only
+        # happens every 4 years so there's little settled-pick history to trust confidence
+        # scores against; keep them isolated until their own sample builds up.
+        "isWorldCup": pick.get("_request", {}).get("leagueId", 0) == 1,
         # Permanent fix: store the exact fixtureId so settlement never needs
         # fuzzy fixture matching again.  If the client didn't send one, the
         # live-tracking / settlement paths will still attempt to resolve it

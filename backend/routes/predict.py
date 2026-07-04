@@ -583,6 +583,8 @@ async def predict(req: PredictionRequest):
                         tkl_int    = 0
                         tkl_blocks = 0
                         fls_committed = 0
+                        cards_yellow = 0
+                        cards_red = 0
                         got_tkl = False
                         if player_data:
                             for team_block in player_data:
@@ -591,10 +593,13 @@ async def predict(req: PredictionRequest):
                                         st  = (p.get("statistics") or [{}])[0]
                                         tkl = st.get("tackles") or {}
                                         fls = st.get("fouls")   or {}
+                                        crd = st.get("cards")   or {}
                                         tkl_total     += (tkl.get("total")          or 0)
                                         tkl_int       += (tkl.get("interceptions")  or 0)
                                         tkl_blocks    += (tkl.get("blocks")         or 0)
                                         fls_committed += (fls.get("committed")      or 0)
+                                        cards_yellow  += (crd.get("yellow")         or 0)
+                                        cards_red     += (crd.get("red")            or 0)
                                     got_tkl = True
                                     break
                         # All four components of the PPDA denominator
@@ -603,11 +608,15 @@ async def predict(req: PredictionRequest):
                         result["tackles_interceptions"] = tkl_int       if got_tkl else None
                         result["tackles_blocks"]        = tkl_blocks    if got_tkl else None
                         result["fouls_committed_agg"]   = fls_committed if got_tkl else None
+                        result["cards_yellow_agg"]      = cards_yellow  if got_tkl else None
+                        result["cards_red_agg"]         = cards_red     if got_tkl else None
                     except Exception:
                         result["tackles_total"]         = None
                         result["tackles_interceptions"] = None
                         result["tackles_blocks"]        = None
                         result["fouls_committed_agg"]   = None
+                        result["cards_yellow_agg"]      = None
+                        result["cards_red_agg"]         = None
 
                     # Cache the enriched result
                     await db.fixture_player_cache.update_one(
@@ -3225,6 +3234,41 @@ async def predict(req: PredictionRequest):
                           f"(n={len(_foul_vals)})")
             except Exception as _fr_err:
                 print(f"[FOUL RATE] err: {_fr_err}")
+
+            # 5. DISMISSAL / RED-CARD RISK — combined card volatility for both teams.
+            # Not a stat prediction; a volatility flag so users know a 10-man scenario
+            # is a live possibility that can swing the whole match (and the prop).
+            _risk_signals: dict = {"level": "normal", "note": None, "teamCardsAvg": None, "oppCardsAvg": None}
+            try:
+                def _avg_cards(fixture_stats):
+                    yv = [s.get("cards_yellow_agg") for s in (fixture_stats or []) if s.get("cards_yellow_agg") is not None]
+                    rv = [s.get("cards_red_agg") for s in (fixture_stats or []) if s.get("cards_red_agg") is not None]
+                    if len(yv) < 2:
+                        return None, None
+                    y_avg = round(sum(yv) / len(yv), 2)
+                    r_avg = round(sum(rv) / len(rv), 2) if rv else 0.0
+                    return y_avg, r_avg
+
+                _team_y, _team_r = _avg_cards(team_fixture_stats)
+                _opp_y, _opp_r = _avg_cards(opponent_fixture_stats)
+                _risk_signals["teamCardsAvg"] = _team_y
+                _risk_signals["oppCardsAvg"] = _opp_y
+                _combined_y = (_team_y or 0) + (_opp_y or 0)
+                _combined_r = (_team_r or 0) + (_opp_r or 0)
+                if _team_y is not None and _opp_y is not None:
+                    if _combined_r >= 0.25 or _combined_y >= 5.0:
+                        _risk_signals["level"] = "elevated"
+                        _risk_signals["note"] = (
+                            f"Elevated dismissal risk — combined card rate {_combined_y:.1f} yellow"
+                            f"{f' / {_combined_r:.2f} red' if _combined_r else ''} per game across both sides. "
+                            "A red card can flip possession/tempo and swing this prop either way."
+                        )
+                        print(f"[RISK] elevated dismissal risk: team={_team_y}/{_team_r} opp={_opp_y}/{_opp_r}")
+                    elif _combined_y >= 3.8:
+                        _risk_signals["level"] = "moderate"
+                        _risk_signals["note"] = f"Moderate card volatility ({_combined_y:.1f} combined yellows/game)."
+            except Exception as _risk_err:
+                print(f"[RISK] err: {_risk_err}")
             # ─────────────────────────────────────────────────────────────────
 
             early_bayes = compute_bayesian_projection(
@@ -3443,6 +3487,48 @@ async def predict(req: PredictionRequest):
                                         if _pos_group(a.get("position", "")) == _subject_pos_group]),
                 }
 
+            # ── Pitch diagram data — grid "row:col" (API-Football) -> normalized x,y ──
+            def _grid_to_xy(grid: str, is_home: bool) -> tuple:
+                try:
+                    row, col = grid.split(":")
+                    row, col = int(row), int(col)
+                except Exception:
+                    return (0.5, 0.5)
+                # y: 0 = own goal line, 1 = opponent goal line. Home attacks "up" (y grows),
+                # away is mirrored so both teams render facing each other on one pitch.
+                y = min(0.92, 0.08 + (row - 1) * 0.20)
+                if not is_home:
+                    y = 1.0 - y
+                # x spread within the row (col starts at 1)
+                row_counts = {1: 1, 2: 5, 3: 5, 4: 5, 5: 3}
+                n = max(row_counts.get(row, 4), col)
+                x = (col) / (n + 1)
+                return (round(x, 3), round(y, 3))
+
+            def _build_pitch_team(team_lineup: dict, is_home: bool, target_id: int | None) -> dict:
+                players = []
+                for p in team_lineup.get("startXI", []):
+                    pl = p.get("player", {})
+                    x, y = _grid_to_xy(pl.get("grid") or "", is_home)
+                    players.append({
+                        "id": pl.get("id"),
+                        "name": pl.get("name"),
+                        "pos": pl.get("pos"),
+                        "number": pl.get("number"),
+                        "x": x, "y": y,
+                        "isTarget": bool(target_id) and pl.get("id") == target_id,
+                    })
+                return {
+                    "formation": team_lineup.get("formation"),
+                    "coach": (team_lineup.get("coach") or {}).get("name"),
+                    "players": players,
+                }
+
+            _pitch_lineup: dict = {
+                "status": "unavailable", "formation": None, "players": [],
+                "opponentFormation": None, "opponentPlayers": [], "coach": None, "opponentCoach": None,
+            }
+
             # ── T004: Lineup confirmation gate ───────────────────────────────
             # Fetch the confirmed starting XI for the upcoming fixture.
             # If available and the subject player is NOT in the XI → confidence floor.
@@ -3455,6 +3541,67 @@ async def predict(req: PredictionRequest):
                     _lineup_raw = await api_football_request("fixtures/lineups", {"fixture": _sit_fixture_id})
                     _lineup_responses = (_lineup_raw or {}).get("response", [])
                     _player_id_int = int(req.playerId) if str(req.playerId).isdigit() else None
+
+                    if _lineup_responses:
+                        # Build pitch data for both teams (confirmed)
+                        try:
+                            for _tl in _lineup_responses:
+                                _tl_id = (_tl.get("team") or {}).get("id")
+                                _is_home_tl = (_tl_id == _sit_home_id)
+                                _team_pitch = _build_pitch_team(_tl, _is_home_tl, _player_id_int)
+                                if _tl_id == actual_team_id or (actual_team_id is None and _tl_id != req.opponentId):
+                                    _pitch_lineup["formation"] = _team_pitch["formation"]
+                                    _pitch_lineup["players"] = _team_pitch["players"]
+                                    _pitch_lineup["coach"] = _team_pitch["coach"]
+                                else:
+                                    _pitch_lineup["opponentFormation"] = _team_pitch["formation"]
+                                    _pitch_lineup["opponentPlayers"] = _team_pitch["players"]
+                                    _pitch_lineup["opponentCoach"] = _team_pitch["coach"]
+                            if _pitch_lineup["players"] or _pitch_lineup["opponentPlayers"]:
+                                _pitch_lineup["status"] = "confirmed"
+                        except Exception as _pitch_err:
+                            print(f"[PITCH] build error: {_pitch_err}")
+                    else:
+                        # Not posted yet — build a "predicted" XI from each team's most
+                        # recent fixture lineup as a reasonable proxy (last-used shape/personnel).
+                        try:
+                            async def _last_lineup(team_id):
+                                if not team_id:
+                                    return None
+                                _lf = await api_football_request(
+                                    "fixtures", {"team": team_id, "last": 1}
+                                )
+                                _fx = (_lf or {}).get("response", [])
+                                if not _fx:
+                                    return None
+                                _fid = (_fx[0].get("fixture") or {}).get("id")
+                                if not _fid:
+                                    return None
+                                _lu = await api_football_request("fixtures/lineups", {"fixture": _fid})
+                                for _tl in (_lu or {}).get("response", []):
+                                    if (_tl.get("team") or {}).get("id") == team_id:
+                                        return _tl
+                                return None
+
+                            _own_last, _opp_last = await aio.gather(
+                                _last_lineup(actual_team_id), _last_lineup(req.opponentId),
+                                return_exceptions=True
+                            )
+                            if _own_last and not isinstance(_own_last, Exception):
+                                _tp = _build_pitch_team(_own_last, _sit_is_home, _player_id_int)
+                                _pitch_lineup["formation"] = _tp["formation"]
+                                _pitch_lineup["players"] = _tp["players"]
+                                _pitch_lineup["coach"] = _tp["coach"]
+                            if _opp_last and not isinstance(_opp_last, Exception):
+                                _tp = _build_pitch_team(_opp_last, not _sit_is_home, None)
+                                _pitch_lineup["opponentFormation"] = _tp["formation"]
+                                _pitch_lineup["opponentPlayers"] = _tp["players"]
+                                _pitch_lineup["opponentCoach"] = _tp["coach"]
+                            if _pitch_lineup["players"] or _pitch_lineup["opponentPlayers"]:
+                                _pitch_lineup["status"] = "predicted"
+                                print(f"[PITCH] predicted XI built from last-match lineups for {req.playerName}'s fixture")
+                        except Exception as _pred_pitch_err:
+                            print(f"[PITCH] predicted build error: {_pred_pitch_err}")
                     if _lineup_responses and _player_id_int:
                         # Determine which team the subject player belongs to by scanning both
                         for _team_lineup in _lineup_responses:
@@ -4786,6 +4933,24 @@ Expected possession for {req.opponentName}: {match_dominance['oppExpectedPoss']}
         if web_intel:
             match_context += f"\n\n[LIVE WEB INTELLIGENCE — Pre-match intel fetched in real-time]\n{web_intel}\n>>> Integrate this live intelligence into your analysis. Prioritize confirmed injuries and lineup changes. <<<" 
 
+        # ── LINEUP / FORMATION CONTEXT — feeds real formation matchup into the AI write-up ──
+        _pl = locals().get("_pitch_lineup") or {}
+        if _pl.get("formation") or _pl.get("opponentFormation"):
+            _pl_status_txt = "CONFIRMED" if _pl.get("status") == "confirmed" else "PROJECTED (based on last match, not yet officially confirmed)"
+            _own_coach_txt = f", coach {_pl.get('coach')}" if _pl.get("coach") else ""
+            _opp_coach_txt = f", coach {_pl.get('opponentCoach')}" if _pl.get("opponentCoach") else ""
+            match_context += (
+                f"\n\n[LINEUP — {_pl_status_txt}]\n"
+                f"{corrected_team_name or req.teamName}: {_pl.get('formation') or 'unknown'} formation{_own_coach_txt}\n"
+                f"{req.opponentName}: {_pl.get('opponentFormation') or 'unknown'} formation{_opp_coach_txt}\n"
+                ">>> Write ONE short paragraph of tactical analysis grounded in this exact formation matchup "
+                "(e.g. numerical overloads/underloads in specific zones, where the subject player's zone sits relative "
+                "to the opponent's shape, how the opponent's setup should specifically help or hurt this prop). "
+                "Do not give generic team-form commentary — reference the actual formations above. <<<"
+            )
+        if locals().get("_risk_signals", {}).get("note"):
+            match_context += f"\n\n[VOLATILITY] {_risk_signals['note']}"
+
         _pp_ctx_dict: dict = {}
 
         # Inject hit rate context into prompt
@@ -5765,6 +5930,33 @@ Analyze ALL data thoroughly. Return JSON only."""
             prediction["lineupConfirmed"] = True
         elif _lineup_status in ("substitute", "not_in_squad"):
             prediction["lineupWarning"] = True
+
+        # ── Risk signals (red-card/dismissal volatility) + fixture congestion ──
+        try:
+            prediction["riskSignals"] = _risk_signals
+            if _risk_signals.get("note"):
+                prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [_risk_signals["note"]]
+        except NameError:
+            prediction["riskSignals"] = {"level": "normal", "note": None}
+
+        try:
+            _fatigue_layer = (early_bayes or {}).get("fatigueLayer", {}) or {}
+            _cong_games = _fatigue_layer.get("congestion_games", 0) or 0
+            prediction["congestion"] = {
+                "gamesIn14d": _cong_games,
+                "restDays": _fatigue_layer.get("rest_days"),
+                "flag": _cong_games >= 4,
+                "note": (f"{_cong_games} games in the last 14 days — fixture pileup can dent output."
+                         if _cong_games >= 4 else None),
+            }
+        except Exception:
+            prediction["congestion"] = {"gamesIn14d": 0, "restDays": None, "flag": False, "note": None}
+
+        # ── Lineup pitch data (predicted or confirmed XI + formation) ──
+        prediction["lineup"] = locals().get("_pitch_lineup") or {
+            "status": "unavailable", "formation": None, "players": [],
+            "opponentFormation": None, "opponentPlayers": [],
+        }
 
         # =============================================
         # POST-CONSENSUS CONFIDENCE GUARDS
@@ -7486,6 +7678,26 @@ Analyze ALL data thoroughly. Return JSON only."""
                         )
         except Exception as _calib_err:
             print(f"[CONF CALIB] application failed: {_calib_err}")
+
+        # ── WORLD CUP CALIBRATION TRACKING ──────────────────────────────
+        # The World Cup happens once every 4 years, so there's almost no settled-pick
+        # history for "World Cup knockout" specifically — the calibration table above
+        # is trained overwhelmingly on domestic-league picks. Flag it honestly rather
+        # than let a WC pick display the same false precision as a league pick, and
+        # keep it isolated (isWorldCup on the saved doc) so its own sample can build.
+        try:
+            if (req.leagueId or 0) == 1:
+                prediction["isWorldCup"] = True
+                _wc_conf = prediction.get("confidenceScore")
+                if _wc_conf is not None and _wc_conf >= 75:
+                    prediction["confidenceScore"] = 75
+                    prediction["confidenceLevel"] = "High"
+                prediction["tacticalAlerts"] = prediction.get("tacticalAlerts", []) + [
+                    "World Cup pick: confidence is capped conservatively — there isn't enough "
+                    "settled World Cup history yet to fully trust the model's calibration here."
+                ]
+        except Exception as _wc_err:
+            print(f"[WC CALIB] err: {_wc_err}")
 
         prediction["_ts"] = datetime.now(timezone.utc)
         await db.predictions.insert_one(prediction)
