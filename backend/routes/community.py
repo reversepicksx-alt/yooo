@@ -162,7 +162,10 @@ async def send_message(req: SendMessageRequest):
                 projection={"createdAt": 1},
             )
             if _last and isinstance(_last.get("createdAt"), datetime):
-                _delta = (_now - _last["createdAt"]).total_seconds()
+                _last_created = _last["createdAt"]
+                if _last_created.tzinfo is None:
+                    _last_created = _last_created.replace(tzinfo=timezone.utc)
+                _delta = (_now - _last_created).total_seconds()
                 if _delta < 60:
                     _can_everyone = False
 

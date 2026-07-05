@@ -2940,6 +2940,13 @@ async def _settle_wta_pick(pick: dict) -> Optional[dict]:
     )
 
     try:
+        from routes.push import _send_pick_settled_push
+        import asyncio as _aio
+        _aio.create_task(_send_pick_settled_push(pick, result_str))
+    except Exception as _pe:
+        print(f"[WTA SETTLE] push error: {_pe}")
+
+    try:
         from routes.notifications import create_notification
         _emoji = "✅" if result_str == "hit" else ("❌" if result_str == "miss" else "↔️")
         _prop  = prop_type.replace("_", " ").title()
