@@ -533,7 +533,12 @@ export default function ScanScreen() {
     baseResult: PredictionResult,
     attempts = 0
   ) => {
-    if (attempts >= 24) {  // 24 * 3s = 72s max
+    // Backend can run TWO sequential Gemini calls (primary + fallback, 45s
+    // timeout each) plus DB writes before the narrative is ready, so give it
+    // comfortable headroom rather than giving up while it's still working —
+    // 60 * 3s = 180s max. The user would rather wait than see a permanently
+    // stuck "AI analysis loading..." placeholder.
+    if (attempts >= 60) {
       setAiNarrativeLoading(false);
       return;
     }

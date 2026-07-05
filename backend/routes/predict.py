@@ -39,6 +39,22 @@ import time as _time
 _match_dom_cache: dict = {}
 _MATCH_DOM_TTL = 3600 * 6  # 6 hours
 
+# ── Background AI synthesis task registry ─────────────────────────────────────
+# asyncio.create_task() does NOT keep a strong reference to the task by itself —
+# if the only reference (a local variable in the request handler) goes out of
+# scope once the HTTP response is returned, the event loop is free to garbage
+# collect the task mid-flight, silently killing the AI synthesis before it ever
+# writes to ai_response_cache/ai_pending_jobs. This was the root cause of
+# "AI analysis loading..." getting stuck forever on some picks. Keeping a
+# strong reference in this module-level set (with a done-callback to clean up)
+# guarantees every fired background synthesis task actually runs to completion.
+_bg_ai_tasks: set = set()
+
+def _track_bg_task(task):
+    _bg_ai_tasks.add(task)
+    task.add_done_callback(_bg_ai_tasks.discard)
+    return task
+
 
 @router.post("/predict")
 async def predict(req: PredictionRequest):
@@ -5234,7 +5250,7 @@ Analyze ALL data thoroughly. Return JSON only."""
                         )
                     except Exception:
                         pass
-            _ai_task = aio.create_task(_background_ai_synthesis())
+            _ai_task = _track_bg_task(aio.create_task(_background_ai_synthesis()))
             print(f"[AI-ASYNC] Background synthesis fired for {_soc_ck[:70]}")
 
         # If no cached AI and background task is running, seed with math-only result

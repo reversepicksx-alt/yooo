@@ -59,40 +59,59 @@ async def _ai_call(
     except Exception:
         pass
 
-    try:
-        from google import genai as _genai
-        from google.genai import types as _gtypes
-        _client = _gemini_client()
-        _cfg = _gtypes.GenerateContentConfig(
-            temperature=temperature,
-            max_output_tokens=max_tokens,
-            thinking_config=_gtypes.ThinkingConfig(thinking_budget=0),
-        )
-        if json_mode:
-            _cfg.response_mime_type = "application/json"
-        if system:
-            _cfg.system_instruction = system
+    from google import genai as _genai
+    from google.genai import types as _gtypes
+    _cfg = _gtypes.GenerateContentConfig(
+        temperature=temperature,
+        max_output_tokens=max_tokens,
+        thinking_config=_gtypes.ThinkingConfig(thinking_budget=0),
+    )
+    if json_mode:
+        _cfg.response_mime_type = "application/json"
+    if system:
+        _cfg.system_instruction = system
 
-        _resp = await asyncio.get_event_loop().run_in_executor(
-            None,
-            lambda: _client.models.generate_content(
-                model=_model, contents=prompt, config=_cfg,
-            ),
-        )
-        _result = (_resp.text or "").strip()
-        if _result:
-            try:
-                await db.ai_response_cache.replace_one(
-                    {"_k": _ck},
-                    {"_k": _ck, "v": _result, "ts": datetime.now(timezone.utc)},
-                    upsert=True,
-                )
-            except Exception:
-                pass
-        return _result
-    except Exception as e:
-        print(f"[AI] Call error: {type(e).__name__}: {e}")
-        return ""
+    # ── Retry loop ─────────────────────────────────────────────────────────
+    # Gemini calls occasionally fail transiently (rate limit blip, empty
+    # response, brief network hiccup). Without a retry, a single bad call
+    # permanently stranded the caller (e.g. the soccer AI tactical narrative
+    # would stay stuck on "AI analysis loading..." forever). Retry a couple
+    # times with backoff before giving up for real.
+    _attempts = 2
+    _last_err = None
+    for _attempt in range(1, _attempts + 1):
+        try:
+            _client = _gemini_client()
+            _resp = await asyncio.wait_for(
+                asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: _client.models.generate_content(
+                        model=_model, contents=prompt, config=_cfg,
+                    ),
+                ),
+                timeout=timeout,
+            )
+            _result = (_resp.text or "").strip()
+            if _result:
+                try:
+                    await db.ai_response_cache.replace_one(
+                        {"_k": _ck},
+                        {"_k": _ck, "v": _result, "ts": datetime.now(timezone.utc)},
+                        upsert=True,
+                    )
+                except Exception:
+                    pass
+                return _result
+            _last_err = "empty response"
+        except asyncio.TimeoutError:
+            _last_err = f"timeout after {timeout}s"
+        except Exception as e:
+            _last_err = f"{type(e).__name__}: {e}"
+        print(f"[AI] Call attempt {_attempt}/{_attempts} failed: {_last_err}")
+        if _attempt < _attempts:
+            await asyncio.sleep(1.5 * _attempt)
+    print(f"[AI] Call error after {_attempts} attempts: {_last_err}")
+    return ""
 
 
 async def _ai_search_call(
@@ -127,10 +146,6 @@ async def _gemini_search_call(
     model: str | None = None,
 ) -> str:
     return await _ai_call(prompt, max_tokens=max_tokens, timeout=timeout)
-
-
-async def _ai_call(prompt: str, system: str = "", temperature: float = 0, max_tokens: int = 2000, timeout: int = 35) -> str:
-    return await _ai_call(prompt, system=system, temperature=temperature, max_tokens=max_tokens, timeout=timeout)
 
 
 _web_intel_cache: dict = {}
