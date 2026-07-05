@@ -270,6 +270,8 @@ async def get_soccer_odds(team_id: int, opponent_id: int, league_id: int) -> dic
                     return {
                         "homeName": home_team.get("name", ""),
                         "awayName": away_team.get("name", ""),
+                        "homeId": home_team.get("id", 0),
+                        "awayId": away_team.get("id", 0),
                         "homeOdds": home_american,
                         "awayOdds": away_american,
                         "drawOdds": draw_american,

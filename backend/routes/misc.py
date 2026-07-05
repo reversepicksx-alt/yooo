@@ -5,7 +5,7 @@ from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 
-from config import db, EMERGENT_LLM_KEY, CURRENT_SEASON, GROK_MODEL
+from config import db, EMERGENT_LLM_KEY, CURRENT_SEASON, GROK_MODEL, INTERNATIONAL_LEAGUES
 from utils import api_football_request
 from cache import COL_PLAYERS, COL_NATIONAL
 
@@ -235,16 +235,56 @@ async def team_next_match(team_id: int):
         home_team = fx.get("teams", {}).get("home", {})
         away_team = fx.get("teams", {}).get("away", {})
         league    = fx.get("league", {})
-        is_home   = home_team.get("id") == team_id
-        opponent  = away_team if is_home else home_team
+        raw_is_home = home_team.get("id") == team_id
+        # `opponent` is always determined by the actual fixture pairing —
+        # unaffected by which side is the betting favorite.
+        opponent  = away_team if raw_is_home else home_team
+        league_id = league.get("id", 0)
+        fixture_id = fx.get("fixture", {}).get("id", 0)
+
+        # "Home"/"Away" here doesn't just label the fixture — it also drives
+        # which team's game logs get pulled for the actual prediction later
+        # (scan.tsx sends this straight through as `venue`). For international
+        # tournament fixtures API-Football's home/away designation is often
+        # arbitrary (there's no true home ground), so it can disagree with who
+        # the betting market actually treats as the favorite/home side (e.g. a
+        # World Cup favorite drawn as the "away" team). Resolve using the same
+        # betting-favorite-priority cascade used for legacy venue="neutral"
+        # requests in routes/predict.py, so the auto-filled venue is consistent
+        # with the rest of the app instead of trusting the raw fixture flag blindly.
+        effective_is_home = raw_is_home
+        if league_id in INTERNATIONAL_LEAGUES and fixture_id:
+            try:
+                odds_data = await api_football_request("odds", {"fixture": fixture_id})
+                favorite_side = None
+                if odds_data:
+                    for bk in odds_data[0].get("bookmakers", [])[:1]:
+                        for bet in bk.get("bets", []):
+                            if bet.get("name") == "Match Winner":
+                                vals = {v["value"]: v["odd"] for v in bet.get("values", [])}
+                                try:
+                                    home_dec = float(vals.get("Home") or 0)
+                                    away_dec = float(vals.get("Away") or 0)
+                                except (TypeError, ValueError):
+                                    home_dec = away_dec = 0
+                                if home_dec and away_dec:
+                                    favorite_side = "home" if home_dec < away_dec else "away"
+                                break
+                if favorite_side is not None:
+                    effective_is_home = (favorite_side == "home") == raw_is_home
+                    print(f"[NEXT-MATCH EFFECTIVE VENUE] team={team_id} league={league_id} "
+                          f"rawIsHome={raw_is_home} favorite={favorite_side} → effectiveIsHome={effective_is_home}")
+            except Exception:
+                pass  # fall back to raw fixture designation
+
         result = {
             "found":      True,
-            "isHome":     is_home,
+            "isHome":     effective_is_home,
             "opponent":   {"id": opponent.get("id", 0), "name": opponent.get("name", "")},
-            "leagueId":   league.get("id", 0),
+            "leagueId":   league_id,
             "leagueName": league.get("name", ""),
             "date":       fx.get("fixture", {}).get("date", ""),
-            "fixtureId":  fx.get("fixture", {}).get("id", 0),
+            "fixtureId":  fixture_id,
         }
 
     if result is None:

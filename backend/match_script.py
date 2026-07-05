@@ -191,9 +191,26 @@ async def get_match_script(
             "expectedEffects": [],
         }
 
-    # odds are always keyed home/away on the fixture, not player's team — map to this team.
-    team_ml = home_ml if is_home else away_ml
-    opp_ml = away_ml if is_home else home_ml
+    # odds are always keyed home/away on the fixture, not player's team — map to
+    # this team using the ACTUAL fixture home/away team IDs from this same odds
+    # lookup, not the caller's `is_home` flag. Callers (e.g. the auto-fill "next
+    # match" endpoint) may pass an "effective" home/away framing that accounts
+    # for who the betting market favors at a neutral tournament site — that's
+    # correct for driving which historical game logs to pull, but it is NOT the
+    # same thing as "which side of THIS odds line is this team on", so relying
+    # on it here would silently swap the two teams' moneylines whenever the
+    # fixture's raw home/away designation disagrees with the market favorite
+    # (the exact scenario that produced a favorite mislabeled as a "Heavy
+    # Underdog").
+    fixture_home_id = odds.get("homeId") if odds else None
+    fixture_away_id = odds.get("awayId") if odds else None
+    if fixture_home_id and fixture_away_id:
+        is_fixture_home = (fixture_home_id == team_id)
+    else:
+        is_fixture_home = is_home  # fallback: odds lookup didn't return team IDs
+
+    team_ml = home_ml if is_fixture_home else away_ml
+    opp_ml = away_ml if is_fixture_home else home_ml
 
     team_prob = _ml_to_prob(team_ml)
     opp_prob = _ml_to_prob(opp_ml)
