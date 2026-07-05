@@ -1104,7 +1104,7 @@ def compute_bayesian_projection(
     _VOLUME_FATIGUE_PROPS = {"pass_attempts", "passes", "key_passes", "crosses"}
     fatigue_info = {
         "applied": False, "mult": 1.0, "reason": "", "rest_days": rest_days,
-        "congestion_mult": 1.0, "congestion_games": 0,
+        "congestion_mult": 1.0, "congestion_games": None,
     }
     if rest_days is not None and rest_days >= 0:
         _is_phys_fat = prop_type in _PHYSICAL_FATIGUE_PROPS
@@ -1179,6 +1179,13 @@ def compute_bayesian_projection(
                     1 for d in _recent_dates
                     if _date_cls.fromisoformat(d) >= _window_start
                 )
+                # Always surface the real count on fatigue_info so the mobile
+                # "Fixture Load" card shows the true games-in-14d number, even
+                # when it's below the 4-game threshold that triggers a
+                # projection multiplier (e.g. 2-3 games is common and useful
+                # context, not "no data" — only truly-empty data should
+                # render as "—" on the client).
+                fatigue_info["congestion_games"] = _congestion_games
                 if _congestion_games >= 4:
                     if prop_type in _PHYSICAL_FATIGUE_PROPS:
                         _congestion_mult = round(max(0.92, 1.0 - (_congestion_games - 3) * 0.02), 3)
@@ -1188,7 +1195,6 @@ def compute_bayesian_projection(
                         _cong_before = posterior_mean
                         posterior_mean = round(posterior_mean * _congestion_mult, 1)
                         fatigue_info["congestion_mult"]  = _congestion_mult
-                        fatigue_info["congestion_games"] = _congestion_games
                         print(f"[CONGESTION] {prop_type}: {_congestion_games} games/14d "
                               f"×{_congestion_mult} {_cong_before} → {posterior_mean}")
         except Exception:

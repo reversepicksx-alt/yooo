@@ -5953,8 +5953,13 @@ Analyze ALL data thoroughly. Return JSON only."""
         # {teamRestDays, opponentRestDays, teamGamesIn14d, opponentGamesIn14d, fatigueFlag: 'low'|'moderate'|'high'}
         try:
             _fatigue_layer = (early_bayes or {}).get("fatigueLayer", {}) or {}
-            _cong_games = _fatigue_layer.get("congestion_games", 0) or 0
-            _fatigue_flag = "high" if _cong_games >= 4 else ("moderate" if _cong_games >= 3 else "low")
+            # NOTE: congestion_games is None when there wasn't enough dated
+            # game-log history to compute a real games-in-14d count (common
+            # for national-team/tournament contexts with sparse logs) — keep
+            # it None rather than coercing to 0, which would misleadingly
+            # read as "confirmed zero games" instead of "not enough data".
+            _cong_games = _fatigue_layer.get("congestion_games")
+            _fatigue_flag = "high" if (_cong_games or 0) >= 4 else ("moderate" if (_cong_games or 0) >= 3 else "low")
             prediction["congestion"] = {
                 "teamRestDays": _fatigue_layer.get("rest_days"),
                 "opponentRestDays": _fatigue_layer.get("opponent_rest_days"),
