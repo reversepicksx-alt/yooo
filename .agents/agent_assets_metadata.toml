@@ -443,3 +443,21 @@ id = "AaWXtur4LemlNBuIoMQmw"
 uri = "file://.local/preview/rp_icon_new_preview_rounded.png"
 type = "image"
 title = "New app icon preview — rounded squircle shape (not yet applied)"
+
+[[outputs]]
+id = "8AyJ99tslNiTY2xoLX3_i"
+uri = "file://app_store_screenshots.zip"
+type = "unspecified"
+title = "App Store Screenshots (both sizes, ready to upload)"
+
+[[outputs]]
+id = "lu_3MLL80nCnfvUeDdbd_"
+uri = "file://app_store_screenshots/6.5-inch (1242x2688)/03_reverse_formula.png"
+type = "image"
+title = "Preview: Reverse Formula Engine"
+
+[[outputs]]
+id = "aaK_9ZYY6uhCSO_AKnabW"
+uri = "file://app_store_screenshots/6.5-inch (1242x2688)/06_track_record.png"
+type = "image"
+title = "Preview: Track Your Record"
