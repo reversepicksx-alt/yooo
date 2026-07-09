@@ -1137,9 +1137,6 @@ def compute_cs2_projection(
     else:
         conf_level = "Low"
 
-    # Hard cap on displayed confidence — CS2 is volatile; empirical accuracy ~51%
-    conf_score = min(conf_score, 68.0)
-
     # ── LOW CONVICTION FILTER ─────────────────────────────────────────────────
     # When Bayesian max(P(OVER), P(UNDER)) < 60%, the model has weak signal.
     # Cap confidence at 54% so the card reflects genuine uncertainty.

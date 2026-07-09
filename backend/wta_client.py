@@ -282,9 +282,10 @@ async def get_player_recent_matches(player_id: int, limit: int = 25, seasons: Op
             return d
         raw.sort(key=_sort_key, reverse=True)
 
+        _IN_PROGRESS = {"in_progress", "live", "ongoing", "in progress", "playing", "started"}
         for m in raw:
             log_entry = _build_match_log(m, player_id)
-            if log_entry and log_entry.get("status", "").lower() in ("", "finished", "completed", "ended"):
+            if log_entry and log_entry.get("status", "").lower() not in _IN_PROGRESS:
                 matches.append(log_entry)
             if len(matches) >= limit:
                 break

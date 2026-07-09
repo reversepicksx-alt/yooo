@@ -6,12 +6,13 @@ import asyncio
 import json
 import re
 import logging
+import datetime as _dt
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from models import WtaPredictRequest
 
-from config import db, XAI_API_KEY
+from config import db
 import wta_client
 import wta_engine
 
@@ -249,6 +250,27 @@ async def wta_predict(req: WtaPredictRequest):
     # Surface inference: if not provided, use the last match's surface
     surface = req.surface or (match_logs[0].get("surface") if match_logs else None)
 
+    # ── Compute rest_days from last match date (feeds fatigue layer) ──────────
+    rest_days: Optional[int] = None
+    if match_logs:
+        last_date_str = match_logs[0].get("date")
+        if last_date_str:
+            try:
+                last_played = _dt.date.fromisoformat(str(last_date_str)[:10])
+                rest_days   = (_dt.date.today() - last_played).days
+            except Exception:
+                pass
+
+    # ── Tournament tier inference (feeds tournament multiplier) ───────────────
+    # Prefer explicit req.tournament text; fall back to category from last match.
+    tournament_tier: Optional[str] = None
+    if req.tournament:
+        tournament_tier = req.tournament
+    elif match_logs:
+        cat = (match_logs[0].get("category") or "").strip()
+        if cat:
+            tournament_tier = cat
+
     # Run engine
     result = wta_engine.compute_wta_projection(
         match_logs=match_logs,
@@ -260,6 +282,8 @@ async def wta_predict(req: WtaPredictRequest):
         subject_rank=subject_rank,
         h2h=h2h,
         subject_is_p1=subject_is_p1,
+        rest_days=rest_days,
+        tournament_tier=tournament_tier,
     )
 
     if result.get("error") == "insufficient_data":

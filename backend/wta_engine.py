@@ -384,13 +384,15 @@ def compute_wta_projection(
     # Standard deviation from historical series
     std = statistics.pstdev(series) if n >= 2 else 1.0
     std = max(std, 1.0)
-    # Per-set normalization also refines std
-    if prop_type in PER_SET_PROPS and len(per_set if 'per_set' in dir() else []) >= 3:
-        ps_std = statistics.pstdev(per_set) if len(per_set) >= 2 else 1.0
-        # Denormalize per-set std to match-level
-        std = max(ps_std * exp_sets, 1.0)
+    # Per-set normalization also refines std — use locals() not dir() which
+    # only returns module/class attributes, not function-local variables.
+    _per_set_local = locals().get("per_set", [])
+    if prop_type in PER_SET_PROPS and len(_per_set_local) >= 3:
+        ps_std     = statistics.pstdev(_per_set_local) if len(_per_set_local) >= 2 else 1.0
+        std        = max(ps_std * exp_sets, 1.0)
 
-    mc_variance   = std ** 2
+    mc_variance = std ** 2
+
     _po, _pu, _, _ = _baye_mc(
         mean=float(projection), std=std, line=line,
         n_sims=10_000, is_count_stat=is_count, variance=mc_variance,

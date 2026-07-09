@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, Query
 from models import Cs2PredictRequest
 from typing import Optional
 
-from config import db, XAI_API_KEY
+from config import db
 import cs2_client
 import cs2_engine
 
@@ -400,6 +400,21 @@ async def cs2_predict(req: Cs2PredictRequest):
             status_code=404,
             detail=f"Insufficient data for {nickname} on {prop_type}. Need at least 2 matches/maps.",
         )
+
+    # ── [BAYESIAN TRUTH] override ─────────────────────────────────────────────
+    # Pins recommendation and confidence to Bayesian probability — prevents
+    # badge/direction mismatch and overrides the engine's internal soft caps.
+    _p_over  = result.get("pOver", 50)
+    _p_under = result.get("pUnder", 50)
+    result["recommendation"]  = "over" if _p_over >= _p_under else "under"
+    result["confidenceScore"] = round(max(_p_over, _p_under))
+    _conf = result["confidenceScore"]
+    result["confidenceLevel"] = "High" if _conf >= 70 else "Medium" if _conf >= 60 else "Low"
+    # Flip projection to sit on the correct side of the line if direction changed
+    if result["recommendation"] == "under" and result.get("projection", 0) > req.line:
+        result["projection"] = round(req.line - 0.5, 1)
+    elif result["recommendation"] == "over" and result.get("projection", 999) < req.line:
+        result["projection"] = round(req.line + 0.5, 1)
 
     tactical_metrics = result.get("tacticalMetrics", {})
 
