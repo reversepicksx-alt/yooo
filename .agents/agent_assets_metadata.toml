@@ -478,46 +478,58 @@ title = "08 — AI Tactical Chat (FAKE - needs replacing)"
 id = "yGxU2aCZm_qGgjQIzrkx1"
 uri = "file://app_store_screenshots/09_win_loss_6.5in-1242x2688.png"
 type = "image"
-title = "09 — 259 Wins / 168 Losses"
+title = "09 · 259 WINS / 168 LOSSES"
 
 [[outputs]]
 id = "6BhJJpLX1MuQ9x-cTihD1"
 uri = "file://app_store_screenshots/10_every_league_6.5in-1242x2688.png"
 type = "image"
-title = "10 — Every League, One Model"
+title = "10 · EVERY LEAGUE, ONE MODEL"
 
 [[outputs]]
 id = "qUoHnG1ysv5-n8t2r3T1N"
 uri = "file://app_store_screenshots/01_predict_search_6.5in-1242x2688.png"
 type = "image"
-title = "01 — AI Player Prop Predictions"
+title = "01 · ANALYZE ANY PLAYER PROP"
 
 [[outputs]]
 id = "x31DVfGwebCM7D1jd1jLf"
 uri = "file://app_store_screenshots/02_predict_as_6.5in-1242x2688.png"
 type = "image"
-title = "02 — Predict As Any Team"
+title = "02 · PREDICT AS ANY TEAM"
 
 [[outputs]]
 id = "hCGG7Jc8MjYsxN3N4-vH4"
 uri = "file://app_store_screenshots/03_reverse_formula_6.5in-1242x2688.png"
 type = "image"
-title = "03 — The Reverse Formula Engine"
+title = "03 · THE REVERSE FORMULA ENGINE"
 
 [[outputs]]
 id = "IoHuhMwsdarFVS03mDCU0"
 uri = "file://app_store_screenshots/04_player_edge_6.5in-1242x2688.png"
 type = "image"
-title = "04 — Know Your Edge Before You Bet"
+title = "04 · KNOW YOUR EDGE"
 
 [[outputs]]
 id = "h5cxAnuLFTAhxKfXnMGZl"
 uri = "file://app_store_screenshots/05_game_log_6.5in-1242x2688.png"
 type = "image"
-title = "05 — 17 Games of Context"
+title = "05 · 17 GAMES OF CONTEXT"
 
 [[outputs]]
 id = "tBv4Uc_btnIAaT8cfOqyg"
 uri = "file://app_store_screenshots/06_track_record_6.5in-1242x2688.png"
 type = "image"
-title = "06 — Track Your Record"
+title = "06 · TRACK YOUR RECORD"
+
+[[outputs]]
+id = "Lslg4bGpQmYDLHZ_ijqyS"
+uri = "file://app_store_screenshots/07_reverse_chat_6.5in-1242x2688.png"
+type = "image"
+title = "07 · REVERSE CHAT"
+
+[[outputs]]
+id = "gH8hEM43GWWLJi3kI7Fbg"
+uri = "file://app_store_screenshots/08_multi_sport_6.5in-1242x2688.png"
+type = "image"
+title = "08 · MULTI-SPORT"
