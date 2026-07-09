@@ -448,7 +448,7 @@ title = "New app icon preview — rounded squircle shape (not yet applied)"
 id = "8AyJ99tslNiTY2xoLX3_i"
 uri = "file://app_store_screenshots.zip"
 type = "unspecified"
-title = "App Store Screenshots (both sizes, ready to upload)"
+title = "All 10 App Store Screenshots (both Apple sizes)"
 
 [[outputs]]
 id = "lu_3MLL80nCnfvUeDdbd_"
@@ -461,3 +461,27 @@ id = "aaK_9ZYY6uhCSO_AKnabW"
 uri = "file://app_store_screenshots/6.5-inch (1242x2688)/06_track_record.png"
 type = "image"
 title = "Preview: Track Your Record"
+
+[[outputs]]
+id = "bpVTLBKTnjn53W3agba4n"
+uri = "file://app_store_screenshots/07_scan_slip_6.5in-1242x2688.png"
+type = "image"
+title = "New: Scan Any Slip"
+
+[[outputs]]
+id = "NtGabuBWbwIZ75cMBZdbR"
+uri = "file://app_store_screenshots/08_ai_chat_6.5in-1242x2688.png"
+type = "image"
+title = "New: AI Tactical Chat"
+
+[[outputs]]
+id = "yGxU2aCZm_qGgjQIzrkx1"
+uri = "file://app_store_screenshots/09_win_loss_6.5in-1242x2688.png"
+type = "image"
+title = "New: 259 Wins · 168 Losses"
+
+[[outputs]]
+id = "6BhJJpLX1MuQ9x-cTihD1"
+uri = "file://app_store_screenshots/10_every_league_6.5in-1242x2688.png"
+type = "image"
+title = "New: Every League, One Model"
