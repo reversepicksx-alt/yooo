@@ -305,11 +305,14 @@ async def get_player_recent_map_stats(player_id: int, team_id: int, limit: int =
     Fetch recent per-map stats for a player (newest first).
     Uses cursor pagination + parallel per-map stat fetches.
     Scans up to 150 team matches to collect `limit` player map entries.
+    Serves stale cache on API error so predictions survive subscription lapses.
     """
     key = f"cs2_pmaps_{player_id}_{team_id}"
     doc = await _cache_get(key)
     if _fresh(doc, CACHE_TTL["player_maps"]) and doc.get("data") is not None:
         return doc["data"]
+
+    stale = doc.get("data") if doc and doc.get("data") is not None else None
 
     map_stats = []
     BATCH = 8   # process N matches concurrently
@@ -364,6 +367,9 @@ async def get_player_recent_map_stats(player_id: int, team_id: int, limit: int =
         log.info(f"[CS2] player {player_id} map stats: {len(map_stats)} maps fetched")
     except Exception as e:
         log.error(f"CS2 player map stats error: {e}")
+        if stale:
+            log.warning(f"[CS2] Serving {len(stale)} stale cached map stats for player {player_id}")
+            return stale
 
     return map_stats
 
@@ -394,11 +400,14 @@ async def get_player_recent_match_stats(player_id: int, team_id: int, limit: int
     Uses cursor pagination + parallel per-map stat fetches.
     Scans up to 150 team matches to collect `limit` matches where player appeared.
     For each match: sums kills/deaths/assists on map1+map2; averages ADR/rating/KAST.
+    Serves stale cache on API error so predictions survive subscription lapses.
     """
     key = f"cs2_pmatches_{player_id}_{team_id}"
     doc = await _cache_get(key)
     if _fresh(doc, CACHE_TTL["player_maps"]) and doc.get("data") is not None:
         return doc["data"]
+
+    stale = doc.get("data") if doc and doc.get("data") is not None else None
 
     match_stats = []
     BATCH = 8   # process N matches concurrently
@@ -507,6 +516,9 @@ async def get_player_recent_match_stats(player_id: int, team_id: int, limit: int
         log.info(f"[CS2] player {player_id} match stats: {len(match_stats)} matches fetched")
     except Exception as e:
         log.error(f"CS2 player match stats error: {e}")
+        if stale:
+            log.warning(f"[CS2] Serving {len(stale)} stale cached match stats for player {player_id}")
+            return stale
 
     return match_stats
 

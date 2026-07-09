@@ -252,11 +252,19 @@ def _build_match_log(match: dict, subject_id: int) -> Optional[dict]:
 
 
 async def get_player_recent_matches(player_id: int, limit: int = 25, seasons: Optional[list] = None) -> list:
-    """Fetch recent matches for a player (newest first)."""
+    """Fetch recent matches for a player (newest first).
+    
+    Serves stale cache data when the live API is unavailable (401/429/network),
+    so predictions still work even when the BDL subscription lapses or during
+    rate-limit windows.
+    """
     key = f"wta_pmatches_{player_id}_{limit}"
     doc = await _cache_get(key)
     if _fresh(doc, CACHE_TTL["player_matches"]) and doc.get("data") is not None:
         return doc["data"]
+
+    # Capture stale data BEFORE the live call — used as fallback on any API error.
+    stale = doc.get("data") if doc and doc.get("data") is not None else None
 
     matches = []
     try:
@@ -294,6 +302,9 @@ async def get_player_recent_matches(player_id: int, limit: int = 25, seasons: Op
         log.info(f"[WTA] player {player_id} matches fetched: {len(matches)}")
     except Exception as e:
         log.error(f"WTA player matches error: {e}")
+        if stale:
+            log.warning(f"[WTA] Serving {len(stale)} stale cached matches for player {player_id}")
+            return stale
     return matches
 
 
