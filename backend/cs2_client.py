@@ -527,6 +527,55 @@ async def get_rankings(limit: int = 30) -> list:
         return []
 
 
+async def get_player_next_match(player_id: int, team_id: Optional[int] = None) -> dict:
+    """Fetch the next upcoming match for a CS2 player (via their team_id)."""
+    cache_key = f"cs2_next_{team_id or player_id}"
+    doc = await _cache_get(cache_key)
+    if _fresh(doc, 900) and doc.get("data") is not None:   # 15-min cache
+        return doc["data"]
+
+    result: dict = {"found": False}
+    try:
+        if team_id:
+            r = await _get("/matches", {"team_ids[]": team_id, "status": "upcoming", "per_page": 10})
+        else:
+            r = await _get("/matches", {"player_ids[]": player_id, "status": "upcoming", "per_page": 10})
+
+        matches = r.get("data", [])
+        if matches:
+            m    = matches[0]
+            mt1  = m.get("team1") or {}
+            mt2  = m.get("team2") or {}
+
+            if team_id:
+                is_team1  = mt1.get("id") == team_id
+                opponent  = mt2 if is_team1 else mt1
+            else:
+                opponent  = mt2   # best guess when no team_id
+            
+            tour     = m.get("tournament") or {}
+            date_raw = m.get("scheduled_at") or m.get("begin_at") or ""
+            date_str = date_raw[:10] if date_raw else _parse_date_from_slug(m.get("slug", ""))
+
+            result = {
+                "found":      True,
+                "matchId":    m.get("id"),
+                "opponent":   {
+                    "id":   opponent.get("id"),
+                    "name": opponent.get("name") or "",
+                    "rank": opponent.get("current_video_game", {}).get("ranking") if opponent.get("current_video_game") else None,
+                },
+                "tournament": tour.get("name") or "",
+                "tier":       tour.get("tier") or "",
+                "date":       date_str,
+            }
+    except Exception as e:
+        log.warning(f"[CS2] next-match fetch error: {e}")
+
+    await _cache_set(cache_key, result)
+    return result
+
+
 async def get_cs2_completed_match_result(
     team_id: int,
     player_id: int,

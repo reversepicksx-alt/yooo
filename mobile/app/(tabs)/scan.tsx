@@ -12,7 +12,7 @@ import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import NotificationBell from '@/components/NotificationBell';
 import { useQueryClient } from '@tanstack/react-query';
-import { scanProp, predict, cs2Predict, wtaPredict, savePick, pollAiNarrative, searchCs2Players, searchCs2Teams, searchWtaPlayers, PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, LEAGUES, PredictionResult, ScanResult, Cs2Player, Cs2Team, WtaPlayer, getPlayerContexts, getTeamNextMatch, getLeagueById, getMatchScript, PlayerContext, NextMatchData, MatchScriptData } from '@/lib/api';
+import { scanProp, predict, cs2Predict, wtaPredict, savePick, pollAiNarrative, searchCs2Players, searchCs2Teams, searchWtaPlayers, PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, LEAGUES, PredictionResult, ScanResult, Cs2Player, Cs2Team, WtaPlayer, getPlayerContexts, getTeamNextMatch, getLeagueById, getMatchScript, PlayerContext, NextMatchData, MatchScriptData, getCs2NextMatch, getWtaNextMatch, Cs2NextMatch, WtaNextMatch } from '@/lib/api';
 import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult, FuzzyLeagueResult, StaticItem } from '@/components/FuzzySearchInput';
 import LeaguePickerModal from '@/components/LeaguePickerModal';
 import { useAuth } from '@/contexts/AuthContext';
@@ -183,6 +183,15 @@ export default function ScanScreen() {
   const [wtaRound, setWtaRound] = useState<string>('R32');
   const [wtaShowRoundPicker, setWtaShowRoundPicker] = useState(false);
 
+  // CS2 / WTA next-match auto-fill
+  const [cs2NextMatch, setCs2NextMatch] = useState<Cs2NextMatch | null>(null);
+  const [cs2NextMatchLoading, setCs2NextMatchLoading] = useState(false);
+  const [wtaNextMatch, setWtaNextMatch] = useState<WtaNextMatch | null>(null);
+  const [wtaNextMatchLoading, setWtaNextMatchLoading] = useState(false);
+
+  // Sport picker modal
+  const [showSportPicker, setShowSportPicker] = useState(false);
+
 
   // Auto-quality-filter whenever a new prediction loads:
   // sub-60-min games are excluded automatically so the hit rate is clean by default.
@@ -328,6 +337,8 @@ export default function ScanScreen() {
     setCs2ResolvedOpponent(null);
     setCs2MapName('');
     setCs2TeamStartsCt(null);
+    setCs2NextMatch(null);
+    setCs2NextMatchLoading(false);
     setWtaPlayerQuery('');
     setWtaResolvedPlayer(null);
     setWtaOpponentQuery('');
@@ -335,6 +346,8 @@ export default function ScanScreen() {
     setWtaPropType('total_games');
     setWtaSurface('Hard');
     setWtaRound('R32');
+    setWtaNextMatch(null);
+    setWtaNextMatchLoading(false);
   };
 
   const processImage = async (base64: string, uri: string) => {
@@ -866,15 +879,28 @@ export default function ScanScreen() {
             {/* Idle: cartoon sports image only */}
             {phase === 'idle' && (
               <>
-                {/* Sport indicator — Soccer only for iOS build */}
-                <View style={styles.sportSelectorBtn}>
+                {/* Sport selector — tap to switch sport */}
+                <TouchableOpacity
+                  style={styles.sportSelectorBtn}
+                  onPress={() => setShowSportPicker(true)}
+                  activeOpacity={0.8}
+                >
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                     <View style={styles.sportSelectorIcon}>
-                      <Ionicons name="football" size={16} color={Colors.primary} />
+                      <Ionicons
+                        name={sport === 'cs2' ? 'game-controller' : sport === 'wta' ? 'tennisball' : 'football'}
+                        size={16}
+                        color={Colors.primary}
+                      />
                     </View>
-                    <Text style={styles.sportSelectorText}>Soccer</Text>
+                    <Text style={styles.sportSelectorText}>
+                      {sport === 'cs2' ? 'CS2' : sport === 'wta' ? 'WTA Tennis' : 'Soccer'}
+                    </Text>
                   </View>
-                </View>
+                  <View style={styles.sportSelectorChangePill}>
+                    <Text style={styles.sportSelectorChange}>CHANGE</Text>
+                  </View>
+                </TouchableOpacity>
                 {analyzeError && (
                   <View style={styles.inlineError}>
                     <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />
@@ -1304,18 +1330,53 @@ export default function ScanScreen() {
             <FuzzySearchInput
               searchType="cs2_players"
               value={cs2PlayerQuery}
-              onChangeText={(t) => { setCs2PlayerQuery(t); if (!t) setCs2ResolvedPlayer(null); }}
+              onChangeText={(t) => { setCs2PlayerQuery(t); if (!t) { setCs2ResolvedPlayer(null); setCs2NextMatch(null); } }}
               placeholder="e.g. ZywOo, s1mple, NiKo"
               confirmed={!!cs2ResolvedPlayer}
               autoCapitalize="none"
-              onSelectCs2Player={(p) => {
+              onSelectCs2Player={async (p) => {
                 setCs2ResolvedPlayer(p);
                 setCs2PlayerQuery(p.nickname);
+                setCs2NextMatch(null);
                 Haptics.selectionAsync();
+                // Auto-fetch next match
+                const teamId = p.team?.id ?? null;
+                setCs2NextMatchLoading(true);
+                try {
+                  const nm = await getCs2NextMatch(p.id, teamId);
+                  setCs2NextMatch(nm);
+                  if (nm.found && nm.opponent?.name) {
+                    setCs2OpponentQuery(nm.opponent.name);
+                  }
+                } catch { /* silent */ } finally {
+                  setCs2NextMatchLoading(false);
+                }
               }}
             />
 
-            <Text style={styles.fieldLabel}>Opponent Team <Text style={styles.fieldLabelOpt}>(optional)</Text></Text>
+            {/* ── CS2 Next-match auto-fill banner ── */}
+            {cs2NextMatchLoading && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8 }}>
+                <ActivityIndicator size="small" color={Colors.primary} />
+                <Text style={{ color: Colors.textSecondary, fontSize: 12 }}>Fetching next match…</Text>
+              </View>
+            )}
+            {cs2NextMatch?.found && !cs2NextMatchLoading && (
+              <View style={[styles.autoFillBanner]}>
+                <Ionicons name="flash" size={12} color={Colors.primary} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: Colors.primary, fontSize: 11, fontWeight: '700', letterSpacing: 0.5 }}>NEXT MATCH AUTO-FILLED</Text>
+                  <Text style={{ color: Colors.text, fontSize: 13, fontWeight: '600', marginTop: 1 }}>
+                    vs {cs2NextMatch.opponent?.name}
+                  </Text>
+                  <Text style={{ color: Colors.textSecondary, fontSize: 11, marginTop: 1 }}>
+                    {cs2NextMatch.tournament}{cs2NextMatch.date ? ` · ${new Date(cs2NextMatch.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : ''}
+                  </Text>
+                </View>
+              </View>
+            )}
+
+            <Text style={styles.fieldLabel}>Opponent Team {cs2NextMatch?.found ? null : <Text style={styles.fieldLabelOpt}>(optional)</Text>}</Text>
             <FuzzySearchInput
               searchType="cs2_teams"
               value={cs2OpponentQuery}
@@ -1386,16 +1447,52 @@ export default function ScanScreen() {
             <FuzzySearchInput
               searchType="wta_players"
               value={wtaPlayerQuery}
-              onChangeText={(t) => { setWtaPlayerQuery(t); if (!t) setWtaResolvedPlayer(null); }}
+              onChangeText={(t) => { setWtaPlayerQuery(t); if (!t) { setWtaResolvedPlayer(null); setWtaNextMatch(null); } }}
               placeholder="e.g. Iga Swiatek"
               confirmed={!!wtaResolvedPlayer}
               autoCapitalize="words"
-              onSelectWtaPlayer={(p) => {
+              onSelectWtaPlayer={async (p) => {
                 setWtaResolvedPlayer(p);
                 setWtaPlayerQuery(p.fullName);
+                setWtaNextMatch(null);
                 Haptics.selectionAsync();
+                // Auto-fetch next match
+                setWtaNextMatchLoading(true);
+                try {
+                  const nm = await getWtaNextMatch(p.id);
+                  setWtaNextMatch(nm);
+                  if (nm.found) {
+                    if (nm.opponent?.name) setWtaOpponentQuery(nm.opponent.name);
+                    if (nm.surface && WTA_SURFACES.includes(nm.surface)) setWtaSurface(nm.surface);
+                    if (nm.round   && WTA_ROUNDS.includes(nm.round))     setWtaRound(nm.round);
+                  }
+                } catch { /* silent */ } finally {
+                  setWtaNextMatchLoading(false);
+                }
               }}
             />
+
+            {/* ── WTA Next-match auto-fill banner ── */}
+            {wtaNextMatchLoading && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8 }}>
+                <ActivityIndicator size="small" color={Colors.primary} />
+                <Text style={{ color: Colors.textSecondary, fontSize: 12 }}>Fetching next match…</Text>
+              </View>
+            )}
+            {wtaNextMatch?.found && !wtaNextMatchLoading && (
+              <View style={[styles.autoFillBanner]}>
+                <Ionicons name="flash" size={12} color={Colors.primary} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: Colors.primary, fontSize: 11, fontWeight: '700', letterSpacing: 0.5 }}>NEXT MATCH AUTO-FILLED</Text>
+                  <Text style={{ color: Colors.text, fontSize: 13, fontWeight: '600', marginTop: 1 }}>
+                    vs {wtaNextMatch.opponent?.name}
+                  </Text>
+                  <Text style={{ color: Colors.textSecondary, fontSize: 11, marginTop: 1 }}>
+                    {wtaNextMatch.tournament}{wtaNextMatch.surface ? ` · ${wtaNextMatch.surface}` : ''}{wtaNextMatch.round ? ` · ${wtaNextMatch.round}` : ''}{wtaNextMatch.date ? ` · ${new Date(wtaNextMatch.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : ''}
+                  </Text>
+                </View>
+              </View>
+            )}
 
             <Text style={styles.fieldLabel}>Opponent</Text>
             <FuzzySearchInput
@@ -3994,6 +4091,34 @@ export default function ScanScreen() {
         title="Correct League"
       />
 
+      {/* ── Sport Picker Modal ── */}
+      <Modal visible={showSportPicker} transparent animationType="fade">
+        <TouchableOpacity style={styles.modalOverlay} onPress={() => setShowSportPicker(false)} activeOpacity={1}>
+          <View style={[styles.modalSheet, { width: 300, gap: 0 }]}>
+            <Text style={[styles.modalTitle, { marginBottom: 16 }]}>Select Sport</Text>
+            {([
+              { key: 'soccer', label: 'Soccer', icon: 'football' },
+              { key: 'cs2',    label: 'CS2',    icon: 'game-controller' },
+              { key: 'wta',    label: 'WTA Tennis', icon: 'tennisball' },
+            ] as { key: Sport; label: string; icon: any }[]).map(s => (
+              <TouchableOpacity
+                key={s.key}
+                style={[styles.modalItem, sport === s.key && styles.modalItemActive, { flexDirection: 'row', alignItems: 'center', gap: 12 }]}
+                onPress={() => {
+                  setSport(s.key);
+                  setShowSportPicker(false);
+                  Haptics.selectionAsync();
+                }}
+              >
+                <Ionicons name={s.icon} size={18} color={sport === s.key ? Colors.primary : Colors.textSecondary} />
+                <Text style={[styles.modalItemText, sport === s.key && styles.modalItemTextActive, { fontSize: 15 }]}>{s.label}</Text>
+                {sport === s.key && <Ionicons name="checkmark" size={16} color={Colors.primary} style={{ marginLeft: 'auto' }} />}
+              </TouchableOpacity>
+            ))}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
       {/* CS2 Prop Picker Modal */}
       <Modal visible={cs2ShowPropPicker} transparent animationType="slide">
         <TouchableOpacity style={styles.modalOverlay} onPress={() => setCs2ShowPropPicker(false)}>
@@ -4557,6 +4682,12 @@ const styles = StyleSheet.create({
 
   /* Manual form */
   manualForm: { gap: 8 },
+  autoFillBanner: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 8,
+    marginBottom: 4, padding: 10,
+    backgroundColor: 'rgba(57,255,20,0.06)', borderRadius: 8,
+    borderWidth: 1, borderColor: 'rgba(57,255,20,0.25)',
+  },
   fieldLabel: {
     fontSize: 10, color: Colors.primary, fontWeight: '800',
     letterSpacing: 1.2, marginBottom: 4, marginTop: 10, textTransform: 'uppercase',

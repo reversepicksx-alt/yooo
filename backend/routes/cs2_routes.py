@@ -280,6 +280,21 @@ async def get_rankings():
         return []
 
 
+# ── Next match ────────────────────────────────────────────────────────────────
+
+@router.get("/next-match")
+async def cs2_next_match(playerId: Optional[int] = None, teamId: Optional[int] = None):
+    """Return the next upcoming match for a CS2 player/team."""
+    try:
+        return await cs2_client.get_player_next_match(
+            player_id=playerId or 0,
+            team_id=teamId,
+        )
+    except Exception as e:
+        log.error(f"CS2 next-match error: {e}")
+        return {"found": False}
+
+
 # ── Predict ───────────────────────────────────────────────────────────────────
 
 @router.post("/predict")

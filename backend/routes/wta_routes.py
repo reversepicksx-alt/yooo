@@ -153,6 +153,20 @@ async def head_to_head(p1: int, p2: int):
         return {"p1Wins": 0, "p2Wins": 0, "matches": []}
 
 
+# ── Next match ────────────────────────────────────────────────────────────────
+
+@router.get("/next-match")
+async def wta_next_match(playerId: Optional[int] = None):
+    """Return the next upcoming match for a WTA player."""
+    try:
+        if not playerId:
+            return {"found": False}
+        return await wta_client.get_player_next_match(player_id=playerId)
+    except Exception as e:
+        log.error(f"WTA next-match error: {e}")
+        return {"found": False}
+
+
 # ── Predict ───────────────────────────────────────────────────────────────────
 
 @router.post("/predict")

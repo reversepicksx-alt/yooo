@@ -1320,6 +1320,26 @@ export async function searchCs2Teams(query: string): Promise<Cs2Team[]> {
   return apiCall<Cs2Team[]>(`/api/cs2/teams/search?q=${encodeURIComponent(query)}`);
 }
 
+export interface Cs2NextMatch {
+  found: boolean;
+  matchId?: number | null;
+  opponent?: { id: number | null; name: string; rank?: number | null } | null;
+  tournament?: string;
+  tier?: string;
+  date?: string;
+}
+
+export async function getCs2NextMatch(playerId?: number | null, teamId?: number | null): Promise<Cs2NextMatch> {
+  try {
+    const params = new URLSearchParams();
+    if (playerId) params.set('playerId', String(playerId));
+    if (teamId)   params.set('teamId',   String(teamId));
+    return await apiCall<Cs2NextMatch>(`/api/cs2/next-match?${params}`);
+  } catch {
+    return { found: false };
+  }
+}
+
 // ─── WTA Tennis ─────────────────────────────────────────────────────────────
 
 export const WTA_PROP_TYPES = [
@@ -1350,6 +1370,25 @@ export interface WtaPlayer {
 export async function searchWtaPlayers(query: string): Promise<WtaPlayer[]> {
   if (!query || query.length < 2) return [];
   return apiCall<WtaPlayer[]>(`/api/wta/players/search?q=${encodeURIComponent(query)}`);
+}
+
+export interface WtaNextMatch {
+  found: boolean;
+  matchId?: number | null;
+  opponent?: { id: number | null; name: string; rank?: number | null } | null;
+  surface?: string;
+  round?: string;
+  tournament?: string;
+  tournamentId?: number | null;
+  date?: string;
+}
+
+export async function getWtaNextMatch(playerId: number): Promise<WtaNextMatch> {
+  try {
+    return await apiCall<WtaNextMatch>(`/api/wta/next-match?playerId=${playerId}`);
+  } catch {
+    return { found: false };
+  }
 }
 
 export async function wtaPredict(request: Record<string, unknown>, signal?: AbortSignal): Promise<PredictionResult> {

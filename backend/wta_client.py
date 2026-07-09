@@ -338,6 +338,71 @@ async def get_rankings(limit: int = 100) -> list:
         return []
 
 
+async def get_player_next_match(player_id: int) -> dict:
+    """Fetch the next upcoming/scheduled match for a WTA player."""
+    cache_key = f"wta_next_{player_id}"
+    doc = await _cache_get(cache_key)
+    if _fresh(doc, 900) and doc.get("data") is not None:   # 15-min cache
+        return doc["data"]
+
+    result: dict = {"found": False}
+    now_y = datetime.now(timezone.utc).year
+
+    for status in ("upcoming", "not_started", "scheduled"):
+        try:
+            r = await _get("/matches", {
+                "player_ids[]": player_id,
+                "status": status,
+                "seasons[]": [now_y, now_y + 1],
+                "per_page": 10,
+            })
+            matches = r.get("data", [])
+            if not matches:
+                continue
+
+            # Sort by soonest date
+            def _date_key(m):
+                for k in ("scheduled_time", "start_time", "date"):
+                    v = m.get(k)
+                    if v:
+                        return str(v)
+                return "9999"
+            matches.sort(key=_date_key)
+
+            m   = matches[0]
+            p1  = m.get("player1") or {}
+            p2  = m.get("player2") or {}
+            opp = p2 if p1.get("id") == player_id else p1
+
+            tour     = m.get("tournament") or {}
+            date_raw = m.get("scheduled_time") or m.get("start_time") or m.get("date") or ""
+            date_str = date_raw[:10] if date_raw else ""
+            surface  = tour.get("surface") or ""
+            round_raw = m.get("round") or m.get("round_name") or ""
+
+            result = {
+                "found":       True,
+                "matchId":     m.get("id"),
+                "opponent":    {
+                    "id":   opp.get("id"),
+                    "name": f"{opp.get('first_name', '')} {opp.get('last_name', '')}".strip(),
+                    "rank": opp.get("current_rank") or opp.get("rank"),
+                },
+                "surface":     surface,
+                "round":       round_raw,
+                "tournament":  tour.get("name") or "",
+                "tournamentId": tour.get("id"),
+                "date":        date_str,
+            }
+            break
+        except Exception as e:
+            log.warning(f"[WTA] next-match fetch ({status}) error: {e}")
+            continue
+
+    await _cache_set(cache_key, result)
+    return result
+
+
 # ── Tournaments ───────────────────────────────────────────────────────────────
 
 async def list_tournaments(season: Optional[int] = None) -> list:
