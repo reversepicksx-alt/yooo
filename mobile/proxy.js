@@ -254,6 +254,34 @@ const server = http.createServer((req, res) => {
     return proxyToBackend(req, res);
   }
 
+  // ── App Store Screenshots gallery ─────────────────────────────────────────
+  if (pathname === '/screenshots') {
+    const slides = [
+      ['01_predict_search_6.5in-1242x2688.png',   '01 · ANALYZE ANY PLAYER PROP'],
+      ['02_predict_as_6.5in-1242x2688.png',        '02 · PICK YOUR TEAM, SET THE SCRIPT'],
+      ['03_reverse_formula_6.5in-1242x2688.png',   '03 · THE REVERSE FORMULA ENGINE'],
+      ['04_player_edge_6.5in-1242x2688.png',       '04 · YOUR EDGE, QUANTIFIED'],
+      ['05_game_log_6.5in-1242x2688.png',          '05 · REAL CONTEXT, EVERY GAME'],
+      ['06_track_record_6.5in-1242x2688.png',      '06 · EVERY PICK, TRACKED LIVE'],
+      ['07_reverse_chat_6.5in-1242x2688.png',      '07 · REVERSE CHAT / THE COMMUNITY'],
+      ['08_multi_sport_6.5in-1242x2688.png',       '08 · SOCCER · CS2 & WTA TENNIS'],
+      ['09_win_loss_6.5in-1242x2688.png',          '09 · 259 WINS / 168 LOSSES'],
+      ['10_every_league_6.5in-1242x2688.png',      '10 · EVERY LEAGUE, ONE MODEL'],
+    ];
+    const imgs = slides.map(([f, label]) =>
+      `<div style="text-align:center;margin-bottom:40px">
+         <p style="color:#39FF14;font-family:sans-serif;font-weight:700;margin-bottom:8px;font-size:14px;letter-spacing:1px">${label}</p>
+         <img src="/${f}" style="max-width:100%;border:2px solid #39FF14;border-radius:12px;display:block;margin:0 auto" />
+       </div>`
+    ).join('');
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Reverse Picks — App Store Screenshots</title>
+<style>body{background:#050505;margin:0;padding:20px}h1{color:#39FF14;font-family:sans-serif;text-align:center;margin-bottom:32px;font-size:18px;letter-spacing:2px}</style>
+</head><body><h1>REVERSE PICKS · APP STORE SCREENSHOTS</h1>${imgs}</body></html>`;
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    return res.end(html);
+  }
+
   if (IS_PRODUCTION) {
     // Special routes
     if (pathname === '/manifest.json') {
