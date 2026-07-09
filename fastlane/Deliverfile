@@ -1,0 +1,11 @@
+app_identifier "com.reversepicks.app"
+app_version ENV["APP_VERSION"] || "1.01"
+
+screenshots_path "./fastlane/screenshots"
+overwrite_screenshots true
+
+skip_metadata true
+skip_binary_upload true
+skip_app_version_update true
+
+languages ["en-US"]

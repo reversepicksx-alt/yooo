@@ -1,0 +1,104 @@
+default_platform(:ios)
+
+# ---------------------------------------------------------------------------
+# Fastlane device-slot names expected by App Store Connect / deliver
+#   6.5-inch (1242x2688)  => iPhone65Inch   (iPhone 11 Pro Max / XS Max)
+#   6.7-inch (1284x2778)  => iPhone67Inch   (iPhone 14 Pro Max / 15 Pro Max)
+# ---------------------------------------------------------------------------
+SCREENSHOT_SLOTS = {
+  "6.5-inch (1242x2688)" => "iPhone65Inch",
+  "6.7-inch (1284x2778)" => "iPhone67Inch"
+}.freeze
+
+SCREENSHOTS_SRC  = File.expand_path("../app_store_screenshots", __dir__)
+SCREENSHOTS_DEST = File.expand_path("screenshots/en-US", __dir__)
+
+platform :ios do
+  # -------------------------------------------------------------------------
+  # upload_screenshots
+  #   Reads PNGs from app_store_screenshots/<size>/, stages them in the
+  #   fastlane metadata layout, then pushes to App Store Connect via deliver.
+  #
+  # Uses existing Replit secrets (same ones used by EAS build/submit):
+  #   ASC_KEY_ID      — App Store Connect API Key ID
+  #   ASC_ISSUER_ID   — App Store Connect API Issuer UUID
+  #   ASC_PRIVATE_KEY — .p8 private key body (spaces stored in place of newlines)
+  # -------------------------------------------------------------------------
+  desc "Upload screenshots to App Store Connect (both 6.5\" and 6.7\" slots)"
+  lane :upload_screenshots do
+    _stage_screenshots
+    _deliver_screenshots
+  end
+
+  # -------------------------------------------------------------------------
+  # stage_screenshots
+  #   Only copies files; does NOT call deliver. Useful for a dry-run check.
+  # -------------------------------------------------------------------------
+  desc "Stage screenshots locally without uploading (dry-run)"
+  lane :stage_screenshots do
+    _stage_screenshots
+    UI.success "Screenshots staged at fastlane/screenshots/. Review before uploading."
+  end
+
+  private_lane :_stage_screenshots do
+    SCREENSHOT_SLOTS.each do |src_name, dest_name|
+      src  = File.join(SCREENSHOTS_SRC, src_name)
+      dest = File.join(SCREENSHOTS_DEST, dest_name)
+
+      UI.message "Staging #{src_name} → screenshots/en-US/#{dest_name}/"
+      FileUtils.mkdir_p(dest)
+
+      pngs = Dir.glob(File.join(src, "*.png")).sort
+      UI.user_error!("No PNGs found in #{src}") if pngs.empty?
+
+      pngs.each_with_index do |file, idx|
+        dest_file = File.join(dest, format("%02d_%s", idx + 1, File.basename(file)))
+        FileUtils.cp(file, dest_file)
+      end
+
+      UI.success "  Staged #{pngs.length} screenshots → #{dest_name}"
+    end
+  end
+
+  private_lane :_deliver_screenshots do
+    # ASC_PRIVATE_KEY is stored with spaces instead of newlines in Replit secrets.
+    # Reconstruct a valid PEM by re-wrapping the base64 body at 64 chars/line.
+    raw_key = ENV.fetch("ASC_PRIVATE_KEY", "")
+    key_content = _rebuild_pem(raw_key)
+
+    api_key = app_store_connect_api_key(
+      key_id:                ENV.fetch("ASC_KEY_ID",     nil),
+      issuer_id:             ENV.fetch("ASC_ISSUER_ID",  nil),
+      key_content:           key_content,
+      is_key_content_base64: false
+    )
+
+    deliver(
+      api_key:                          api_key,
+      app_identifier:                   "com.reversepicks.app",
+      screenshots_path:                 File.expand_path("screenshots", __dir__),
+      overwrite_screenshots:            true,
+      skip_metadata:                    true,
+      skip_binary_upload:               true,
+      skip_app_version_update:          true,
+      precheck_include_in_app_purchases: false,
+      run_precheck_before_submit:       false
+    )
+
+    UI.success "Screenshots uploaded to App Store Connect successfully!"
+  end
+
+  # Re-wrap a PEM that has spaces where newlines should be.
+  # Handles both already-valid PEMs and the space-mangled variant.
+  def _rebuild_pem(raw)
+    return raw if raw.include?("\n")
+
+    header  = "-----BEGIN PRIVATE KEY-----"
+    footer  = "-----END PRIVATE KEY-----"
+    body    = raw
+                .gsub(header, "").gsub(footer, "")
+                .gsub(/\s+/, "")
+    wrapped = body.scan(/.{1,64}/).join("\n")
+    "#{header}\n#{wrapped}\n#{footer}"
+  end
+end

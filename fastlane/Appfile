@@ -1,0 +1,4 @@
+app_identifier("com.reversepicks.app")
+apple_dev_portal_id(ENV["APPLE_ID"])
+itc_team_id("6781092173")
+team_id("FDC3LJRAC7")
