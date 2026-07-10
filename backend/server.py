@@ -473,7 +473,7 @@ Return JSON array: [{{"name":"...","position":"XX","role":"..."}}]
 Only the JSON array, no markdown."""
 
                 try:
-                    raw = await _grok_pos(prompt, temperature=0, max_tokens=1000, timeout=25, json_mode=True)
+                    raw = await _gemini_pos(prompt, temperature=0, max_tokens=1000, timeout=25, json_mode=True)
                     if raw:
                         content = raw.strip()
                         if content.startswith("```"):
