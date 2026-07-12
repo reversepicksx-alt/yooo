@@ -126,6 +126,24 @@ uri = "file://attached_assets/app_store_screenshot_dembele.png"
 type = "image"
 title = "generated_image"
 
+[[generated]]
+id = "fIXQOEo8IElz74mRqyUW6"
+uri = "file://attached_assets/05_game_log_dembele.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "QAIW8fibQTOpiah-GeHDJ"
+uri = "file://attached_assets/02_predict_as_dembele.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "myBJp6tnaXRMyJJBkSRa7"
+uri = "file://attached_assets/03_reverse_formula_dembele.png"
+type = "image"
+title = "generated_image"
+
 [[outputs]]
 id = "IdBO4fXLAJGGVIzxE-3A1"
 uri = "file://attached_assets/cheat_sheet_2_1.png"
