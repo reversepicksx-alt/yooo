@@ -120,6 +120,12 @@ uri = "file://attached_assets/generated_images/key_to_type.png"
 type = "image"
 title = "P8 key typing reference"
 
+[[generated]]
+id = "YC3oE4YaTPcO82s3CjiWI"
+uri = "file://attached_assets/app_store_screenshot_dembele.png"
+type = "image"
+title = "generated_image"
+
 [[outputs]]
 id = "IdBO4fXLAJGGVIzxE-3A1"
 uri = "file://attached_assets/cheat_sheet_2_1.png"
