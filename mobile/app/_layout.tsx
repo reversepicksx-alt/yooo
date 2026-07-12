@@ -7,6 +7,7 @@ import { StatusBar } from 'expo-status-bar';
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 import Colors from '@/constants/colors';
 import * as Notifications from 'expo-notifications';
+import Constants from 'expo-constants';
 import { registerPushToken } from '@/lib/api';
 import LoadingScreen from '@/components/LoadingScreen';
 import { initializeRevenueCat, setRevenueCatUserId, SubscriptionProvider } from '@/lib/revenuecat';
@@ -53,7 +54,10 @@ function PushRegistrar() {
         }
         if (finalStatus !== 'granted') return;
 
-        const tokenData = await Notifications.getExpoPushTokenAsync();
+        const projectId =
+          Constants.expoConfig?.extra?.eas?.projectId ??
+          'cb70df32-f8c3-4bbd-9190-fb9cfd8b1599';
+        const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
         const token = tokenData.data;
         if (!token) return;
 
