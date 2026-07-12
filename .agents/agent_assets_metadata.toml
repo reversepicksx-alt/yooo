@@ -478,7 +478,7 @@ title = "App Store Screenshots v3 — 10 slides × 2 sizes (20 PNGs)"
 id = "lu_3MLL80nCnfvUeDdbd_"
 uri = "file://app_store_screenshots/6.5-inch (1242x2688)/03_reverse_formula.png"
 type = "image"
-title = "Preview: Reverse Formula Engine"
+title = "03 — Reverse Formula Engine (6.5\" 1242×2688)"
 
 [[outputs]]
 id = "aaK_9ZYY6uhCSO_AKnabW"
@@ -557,3 +557,45 @@ id = "gH8hEM43GWWLJi3kI7Fbg"
 uri = "file://app_store_screenshots/08_multi_sport_6.5in-1242x2688.png"
 type = "image"
 title = "08 · MULTI-SPORT"
+
+[[outputs]]
+id = "-_XFfxb3Er6VJ4toQK2z3"
+uri = "file://app_store_screenshots/6.5-inch (1242x2688)/02_predict_as.png"
+type = "image"
+title = "02 — Pick Your Team (6.5\" 1242×2688)"
+
+[[outputs]]
+id = "d1O3farkMe5N5gUH_E1Da"
+uri = "file://app_store_screenshots/6.5-inch (1242x2688)/04_player_edge.png"
+type = "image"
+title = "04 — Player Edge (6.5\" 1242×2688)"
+
+[[outputs]]
+id = "nQiogLuUeWWbdSEIHn_GQ"
+uri = "file://app_store_screenshots/6.5-inch (1242x2688)/05_game_log.png"
+type = "image"
+title = "05 — Game Log (6.5\" 1242×2688)"
+
+[[outputs]]
+id = "xxhcFSpY1A0NBJCwuoJzb"
+uri = "file://app_store_screenshots/6.7-inch (1284x2778)/02_predict_as.png"
+type = "image"
+title = "02 — Pick Your Team (6.7\" 1284×2778)"
+
+[[outputs]]
+id = "zuAha6Heq1rRo5ZG9BV4I"
+uri = "file://app_store_screenshots/6.7-inch (1284x2778)/03_reverse_formula.png"
+type = "image"
+title = "03 — Reverse Formula Engine (6.7\" 1284×2778)"
+
+[[outputs]]
+id = "i1gYJAU7uoaE7CJFtKCcP"
+uri = "file://app_store_screenshots/6.7-inch (1284x2778)/04_player_edge.png"
+type = "image"
+title = "04 — Player Edge (6.7\" 1284×2778)"
+
+[[outputs]]
+id = "ZnC1jRnK9pCvQcuT_ZnIH"
+uri = "file://app_store_screenshots/6.7-inch (1284x2778)/05_game_log.png"
+type = "image"
+title = "05 — Game Log (6.7\" 1284×2778)"
