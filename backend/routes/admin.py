@@ -674,3 +674,38 @@ async def admin_refresh_player(req: RefreshPlayerRequest):
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
     return {"success": True, **result}
+
+
+class ClearSportCacheRequest(BaseModel):
+    email: str
+    token: str
+    sport: str = "all"   # "wta" | "cs2" | "all"
+
+
+@router.post("/clear-sport-cache")
+async def admin_clear_sport_cache(req: ClearSportCacheRequest):
+    """
+    Drop all cached BDL API responses for WTA and/or CS2 so the next
+    prediction or search fetches fresh GOAT-tier data from BallDontLie.
+    Use after upgrading the BDL subscription plan.
+    """
+    await verify_owner(req.email, req.token)
+    sport = req.sport.lower().strip()
+    results = {}
+
+    if sport in ("wta", "all"):
+        r = await db.wta_cache.delete_many({})
+        results["wta_cache"] = r.deleted_count
+
+    if sport in ("cs2", "all"):
+        r = await db.cs2_cache.delete_many({})
+        results["cs2_cache"] = r.deleted_count
+
+    total = sum(results.values())
+    return {
+        "success": True,
+        "sport": sport,
+        "deleted": results,
+        "total": total,
+        "message": f"Cleared {total} cached docs — next request will fetch fresh GOAT-tier data.",
+    }

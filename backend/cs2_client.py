@@ -16,7 +16,9 @@ from config import db
 log = logging.getLogger("cs2_client")
 
 CS2_API_BASE = "https://api.balldontlie.io/cs/v1"
-CS2_API_KEY  = os.environ.get("MLB_BDL_API_KEY", "951b8b73-a036-4b30-924f-19f322766545")
+CS2_API_KEY  = os.environ.get("MLB_BDL_API_KEY", "")
+if not CS2_API_KEY:
+    print("[CS2] WARNING: MLB_BDL_API_KEY env var not set — CS2 API calls will fail")
 
 _rate_sem      = asyncio.Semaphore(6)   # paid tier: 600 req/min → 6 concurrent safe
 _last_req_time: float = 0.0

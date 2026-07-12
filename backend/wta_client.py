@@ -272,7 +272,7 @@ async def get_player_recent_matches(player_id: int, limit: int = 25, seasons: Op
         # off-season picks still get a full sample.
         if not seasons:
             now_y   = datetime.now(timezone.utc).year
-            seasons = [now_y, now_y - 1]
+            seasons = [now_y, now_y - 1, now_y - 2]
 
         params = {
             "player_ids[]": player_id,
