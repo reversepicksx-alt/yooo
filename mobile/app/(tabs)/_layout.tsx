@@ -3,7 +3,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { View, StyleSheet, Platform } from 'react-native';
 import Colors from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 
 function TabIcon({ name, focused }: { name: keyof typeof Ionicons.glyphMap; focused: boolean }) {
   return (
@@ -15,12 +15,20 @@ function TabIcon({ name, focused }: { name: keyof typeof Ionicons.glyphMap; focu
 
 export default function TabLayout() {
   const { session, isLoading } = useAuth();
+  // Guard: only redirect once per mount. Without this, a late-arriving
+  // verify-session response (after the 4 s race timeout) can update session,
+  // re-fire this effect, and kick an active subscriber to the paywall even
+  // though they were already happily using the app on another tab.
+  const redirectedRef = useRef(false);
 
   useEffect(() => {
+    if (redirectedRef.current) return;
     if (!isLoading && !session) {
+      redirectedRef.current = true;
       router.replace('/auth');
     }
     if (!isLoading && session && session.accessType === 'NoSubscription') {
+      redirectedRef.current = true;
       if (Platform.OS === 'web') {
         router.replace('/(tabs)/account');
       } else {

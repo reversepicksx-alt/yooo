@@ -97,28 +97,41 @@ async def _check_apple_access(email_lower: str) -> str | None:
 
 REVENUECAT_PROJECT_ID = os.environ.get("REVENUECAT_PROJECT_ID", "3a3fd517")
 
+# Sentinel returned by _check_revenuecat_live when the call failed due to a
+# network / server error (as opposed to "customer has no active entitlement").
+# verify_session uses this to distinguish the two cases so it never deletes a
+# paying subscriber's session just because RevenueCat was unreachable.
+_RC_NETWORK_ERROR = "__RC_NETWORK_ERROR__"
+
 async def _check_revenuecat_live(email_lower: str) -> str | None:
     """Live fallback: ask RevenueCat's server API directly whether this
     email (used as the app_user_id / customer_id) has an active Apple
     entitlement.
 
-    This exists because the local `apple_iap_subscriptions` collection is
-    only populated by the RevenueCat webhook, which can be delayed, dropped,
-    or missed entirely — leaving a paying customer stuck as NoSubscription
-    until the next webhook retry. This check bypasses that dependency
-    entirely, mirroring the existing `_check_stripe_live` fallback.
+    Returns:
+      "Premium (Apple)"   — active entitlement confirmed
+      None                — customer exists but no active entitlement (404 or empty)
+      _RC_NETWORK_ERROR   — API call failed (network/timeout); caller should
+                            NOT downgrade the user based on this result.
+
+    Timeout is intentionally kept to 2.5 s so the call completes within the
+    mobile client's 4 s verify-session race window (preventing stale cached
+    NoSubscription from winning the race on slow networks).
     """
     key = os.environ.get("REVENUECAT_SECRET_API_KEY", "")
     if not key or not email_lower:
         return None
     try:
-        async with httpx.AsyncClient(timeout=6.0) as client:
+        async with httpx.AsyncClient(timeout=2.5) as client:
             resp = await client.get(
                 f"https://api.revenuecat.com/v2/projects/{REVENUECAT_PROJECT_ID}/customers/{email_lower}",
                 headers={"Authorization": f"Bearer {key}"},
             )
             if resp.status_code == 404:
                 return None
+            if resp.status_code >= 500:
+                print(f"[REVENUECAT LIVE FALLBACK] RC server error {resp.status_code} for {email_lower}")
+                return _RC_NETWORK_ERROR
             resp.raise_for_status()
             data = resp.json()
         active_items = ((data.get("active_entitlements") or {}).get("items")) or []
@@ -161,8 +174,8 @@ async def _check_revenuecat_live(email_lower: str) -> str | None:
         )
         return "Premium (Apple)"
     except Exception as e:
-        print(f"[REVENUECAT LIVE FALLBACK] Error for {email_lower}: {e}")
-        return None
+        print(f"[REVENUECAT LIVE FALLBACK] Network/timeout error for {email_lower}: {e}")
+        return _RC_NETWORK_ERROR
 
 _ANIMALS = [
     "lion", "tiger", "wolf", "bear", "hawk", "eagle", "fox", "shark", "cobra",
@@ -674,11 +687,24 @@ async def verify_session(req_or_email_token: Union[VerifySessionRequest, dict]) 
         current = await _check_apple_access(email_lower)
         if not current:
             current = await _check_revenuecat_live(email_lower)
+        # _RC_NETWORK_ERROR means RevenueCat was unreachable / timed out.
+        # Never delete a paying subscriber's session because of a network hiccup
+        # — keep the existing access_type so the user stays logged in.
+        if current == _RC_NETWORK_ERROR:
+            print(f"[VERIFY SESSION] RC unreachable for {email_lower} — keeping current access_type={access_type}")
+            return {"valid": True, "access_type": access_type}
         if not current:
             if access_type == "NoSubscription":
                 return {"valid": True, "access_type": "NoSubscription"}
-            await db.sessions.delete_one({"email": email_lower, "session_token": token})
-            return {"valid": False}
+            # Apple user with definitively no entitlement (RC said 404/empty).
+            # Don't outright delete — downgrade to NoSubscription so the paywall
+            # can re-check on the device side (RC SDK) and recover automatically.
+            print(f"[VERIFY SESSION] Apple user {email_lower} — no RC entitlement found, downgrading to NoSubscription")
+            await db.sessions.update_one(
+                {"email": email_lower, "session_token": token},
+                {"$set": {"access_type": "NoSubscription", "last_active": datetime.now(timezone.utc).isoformat()}},
+            )
+            return {"valid": True, "access_type": "NoSubscription"}
         if current != access_type:
             await db.sessions.update_one(
                 {"email": email_lower, "session_token": token},
