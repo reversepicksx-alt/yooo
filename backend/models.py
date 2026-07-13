@@ -32,6 +32,14 @@ class PlayerSearchRequest(BaseModel):
     season: Optional[int] = None
 
 
+class PlayerRoleResolveRequest(BaseModel):
+    playerId: Optional[int] = None
+    playerName: str
+    teamName: Optional[str] = ""
+    genericPosition: Optional[str] = ""
+    stats: Optional[dict] = None
+
+
 class PredictionRequest(BaseModel):
     email: str
     token: str

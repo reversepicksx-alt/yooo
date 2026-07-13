@@ -5,7 +5,7 @@ import unicodedata
 from fastapi import APIRouter
 
 from config import CURRENT_SEASON, db
-from models import PlayerSearchRequest
+from models import PlayerSearchRequest, PlayerRoleResolveRequest
 from utils import api_football_request, is_quota_exhausted
 
 router = APIRouter(prefix="/api", tags=["players"])
@@ -752,3 +752,83 @@ async def get_player_stats(player_id: int, season: int = CURRENT_SEASON):
         except Exception:
             continue
     return {"stats": None}
+
+
+@router.post("/players/resolve-role")
+async def resolve_player_role_endpoint(req: PlayerRoleResolveRequest):
+    """Resolve and cache a player's specific position + tactical role.
+
+    Called from mobile immediately after a player is selected (before prediction).
+    Returns from the MongoDB cache when available and fresh; otherwise resolves
+    via Gemini knowledge + stat fingerprint and caches for 7 days.
+
+    Request body: { playerId?, playerName, teamName?, genericPosition?, stats? }
+    Response:     { position, role, source, cached }
+    """
+    try:
+        from ai_positions import resolve_player_role, _GENERIC_ROLES
+        from config import POSITION_PROMPT_VERSION
+        from datetime import datetime, timezone
+
+        ROLE_CACHE_TTL_DAYS = 7
+
+        # ── Cache check ──────────────────────────────────────────────────────
+        cached = None
+        if req.playerId:
+            cached = await db.player_positions.find_one(
+                {"playerId": req.playerId},
+                {"_id": 0, "specificPosition": 1, "role": 1, "updatedAt": 1,
+                 "promptVersion": 1, "source": 1}
+            )
+        if not cached and req.playerName:
+            cached = await db.player_positions.find_one(
+                {"playerName": req.playerName},
+                {"_id": 0, "specificPosition": 1, "role": 1, "updatedAt": 1,
+                 "promptVersion": 1, "source": 1}
+            )
+
+        if (cached
+                and cached.get("specificPosition")
+                and cached.get("role") not in _GENERIC_ROLES):
+            stored_ver = cached.get("promptVersion", 0)
+            if stored_ver >= POSITION_PROMPT_VERSION:
+                cached_at = cached.get("updatedAt", "")
+                cache_ok = False
+                if cached_at:
+                    try:
+                        age_days = (
+                            datetime.now(timezone.utc)
+                            - datetime.fromisoformat(cached_at.replace("Z", "+00:00"))
+                        ).days
+                        cache_ok = age_days < ROLE_CACHE_TTL_DAYS
+                    except Exception:
+                        cache_ok = True
+                else:
+                    cache_ok = True
+                if cache_ok:
+                    return {
+                        "position": cached["specificPosition"],
+                        "role": cached.get("role", ""),
+                        "source": cached.get("source", "cache"),
+                        "cached": True,
+                    }
+
+        # ── Fresh resolution ─────────────────────────────────────────────────
+        pos, role, source = await resolve_player_role(
+            player_name=req.playerName,
+            team_name=req.teamName or "",
+            generic_position=req.genericPosition or "",
+            player_id=req.playerId or 0,
+            stats=req.stats,
+        )
+
+        return {
+            "position": pos,
+            "role": role,
+            "source": source,
+            "cached": False,
+        }
+
+    except Exception as e:
+        print(f"[RESOLVE ROLE] Error for {getattr(req, 'playerName', '?')}: {e}")
+        return {"position": "", "role": "", "source": "error", "cached": False}

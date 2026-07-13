@@ -1,12 +1,312 @@
-"""AI-powered position resolution for players."""
+"""AI-powered position and tactical role resolution for players.
+
+Provides two resolution tiers:
+  1. resolve_player_role()   — comprehensive, web-search-grounded Gemini call with
+                               stat fingerprint cross-check. Used by the new
+                               /players/resolve-role endpoint so the role is known
+                               at player-selection time (before prediction runs).
+  2. resolve_position_ai()   — lightweight cache-first lookup; falls back to a
+                               Gemini knowledge call. Used by batch position lookups.
+
+Cache: MongoDB player_positions collection, keyed by playerId (primary) or
+playerName (fallback). TTL 30 days for standard, 7 days for resolve-role calls
+that want freshness.  POSITION_PROMPT_VERSION bump (config.py) forces re-resolution.
+"""
 import json
 from config import db, XAI_API_KEY
 
-GROK_POS_PROMPT_VERSION = 4
+GROK_POS_PROMPT_VERSION = 5
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Canonical vocabularies (kept in sync with predict.py POSITION_ROLE_MAP)
+# ─────────────────────────────────────────────────────────────────────────────
+_POS_LIST = "GK, CB, LB, RB, LWB, RWB, CDM, CM, CAM, LM, RM, LW, RW, CF, ST, SS"
+_ROLE_LIST = (
+    "Shot-Stopper, Sweeper Keeper, Ball-Playing CB, Stopper, Fullback, Wing-Back, "
+    "Inverted Fullback, Anchor, Box-to-Box, Deep-Lying Playmaker, Ball Winner, "
+    "Mezzala, Advanced Playmaker, Wide Playmaker, Traditional Winger, Inverted Winger, "
+    "Progressive Carrier, Inside Forward, Target Man, Poacher, False 9, Shadow Striker, "
+    "Complete Forward, Pressing Forward"
+)
+_POSITION_ROLE_MAP = {
+    "GK":  {"Shot-Stopper", "Sweeper Keeper"},
+    "CB":  {"Ball-Playing CB", "Stopper"},
+    "LB":  {"Fullback", "Wing-Back", "Inverted Fullback"},
+    "RB":  {"Fullback", "Wing-Back", "Inverted Fullback"},
+    "LWB": {"Wing-Back", "Fullback"},
+    "RWB": {"Wing-Back", "Fullback"},
+    "CDM": {"Anchor", "Ball Winner", "Deep-Lying Playmaker"},
+    "CM":  {"Box-to-Box", "Mezzala", "Deep-Lying Playmaker", "Ball Winner"},
+    "CAM": {"Advanced Playmaker", "Wide Playmaker", "Shadow Striker"},
+    "LM":  {"Wide Playmaker", "Traditional Winger"},
+    "RM":  {"Wide Playmaker", "Traditional Winger"},
+    "LW":  {"Traditional Winger", "Inverted Winger", "Inside Forward", "Progressive Carrier"},
+    "RW":  {"Traditional Winger", "Inverted Winger", "Inside Forward", "Progressive Carrier"},
+    "CF":  {"Complete Forward", "False 9", "Target Man", "Pressing Forward"},
+    "ST":  {"Poacher", "Target Man", "Complete Forward", "Pressing Forward"},
+    "SS":  {"Shadow Striker", "False 9"},
+}
+_GENERIC_TO_SPECIFIC = {
+    "Goalkeeper": {"GK"},
+    "Defender":   {"CB", "LB", "RB", "LWB", "RWB"},
+    "Midfielder": {"CDM", "CM", "CAM", "LM", "RM"},
+    "Attacker":   {"LW", "RW", "CF", "ST", "SS", "CAM"},
+}
+_VALID_POSITIONS = {
+    "GK","CB","LB","RB","LWB","RWB","CDM","CM","CAM",
+    "LM","RM","LW","RW","CF","ST","SS",
+}
+_GENERIC_ROLES = {
+    "", "Midfielder", "Defender", "Forward", "Attacker",
+    "Goalkeeper", "midfielder", "defender", "forward",
+}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stat fingerprint — fast per-game ratio classifier (no AI, ~0ms)
+# ─────────────────────────────────────────────────────────────────────────────
+def _stat_fingerprint_role(generic_position: str, stats: dict | None) -> str | None:
+    """Derive an approximate role from per-game stat ratios.
+
+    Returns a role label string, or None if stats are insufficient.
+    Used as a hint inside the Gemini prompt — never overrides AI output.
+    """
+    if not stats:
+        return None
+
+    apps = max(1, stats.get("appearances", 1) or 1)
+    passes_pg      = ((stats.get("passes_total") or 0) / apps)
+    key_passes_pg  = ((stats.get("key_passes")   or 0) / apps)
+    tackles_pg     = ((stats.get("tackles_total") or 0) / apps)
+    dribbles_pg    = ((stats.get("dribbles_attempts") or 0) / apps)
+    shots_pg       = ((stats.get("shots_total")   or 0) / apps)
+    clearances_pg  = ((stats.get("clearances")    or 0) / apps)
+    goals_pg       = ((stats.get("goals_total")   or 0) / apps)
+
+    gpos = (generic_position or "").strip().title()
+
+    if gpos == "Goalkeeper":
+        return None  # GK sub-role determined by team context, not stats
+
+    if gpos == "Midfielder":
+        if passes_pg >= 65 and tackles_pg < 3.5 and shots_pg < 1.5:
+            return "Deep-Lying Playmaker"
+        if tackles_pg >= 6.0:
+            return "Ball Winner"
+        if key_passes_pg >= 2.5 and shots_pg >= 1.5:
+            return "Advanced Playmaker"
+        if shots_pg >= 1.5 and dribbles_pg >= 1.5:
+            return "Box-to-Box"
+        if passes_pg >= 50 and tackles_pg < 4.0:
+            return "Deep-Lying Playmaker"
+        if tackles_pg >= 4.5:
+            return "Anchor"
+        return None
+
+    if gpos == "Defender":
+        if passes_pg >= 62:
+            return "Ball-Playing CB"
+        if clearances_pg >= 5.0:
+            return "Stopper"
+        if dribbles_pg >= 1.5 and shots_pg >= 0.5:
+            return "Inverted Fullback"
+        return None
+
+    if gpos in ("Attacker", "Forward"):
+        if dribbles_pg >= 3.0 and shots_pg >= 2.5:
+            return "Inverted Winger or Inside Forward"
+        if goals_pg >= 0.4 and shots_pg >= 2.5:
+            return "Poacher or Complete Forward"
+        if key_passes_pg >= 2.0 and shots_pg < 1.5:
+            return "False 9"
+        return None
+
+    return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Core AI resolver — Gemini knowledge call with rich stats-aware prompt
+# ─────────────────────────────────────────────────────────────────────────────
+async def resolve_player_role(
+    player_name: str,
+    team_name: str = "",
+    generic_position: str = "",
+    player_id: int = 0,
+    stats: dict | None = None,
+) -> tuple[str, str, str]:
+    """Comprehensive role resolution using Gemini knowledge + stat fingerprint.
+
+    Returns (specific_position, role, source).
+    source is one of: "cache" | "ai_knowledge" | "stat_fingerprint" | "fallback"
+
+    Caches result in db.player_positions keyed by playerId (if provided) or playerName.
+    """
+    from datetime import datetime, timezone
+    from config import POSITION_PROMPT_VERSION
+
+    ROLE_CACHE_TTL_DAYS = 7  # Fresher than the 30-day prediction-time TTL
+
+    # ── Cache check ──────────────────────────────────────────────────────────
+    cached = None
+    if player_id:
+        cached = await db.player_positions.find_one(
+            {"playerId": player_id},
+            {"_id": 0, "specificPosition": 1, "role": 1, "updatedAt": 1, "promptVersion": 1}
+        )
+    if not cached and player_name:
+        cached = await db.player_positions.find_one(
+            {"playerName": player_name},
+            {"_id": 0, "specificPosition": 1, "role": 1, "updatedAt": 1, "promptVersion": 1}
+        )
+
+    if cached and cached.get("specificPosition") and cached.get("role") not in _GENERIC_ROLES:
+        stored_ver = cached.get("promptVersion", 0)
+        if stored_ver >= POSITION_PROMPT_VERSION:
+            cached_at = cached.get("updatedAt", "")
+            try:
+                age_days = (
+                    datetime.now(timezone.utc)
+                    - datetime.fromisoformat(cached_at.replace("Z", "+00:00"))
+                ).days
+                if age_days < ROLE_CACHE_TTL_DAYS:
+                    return cached["specificPosition"], cached.get("role", ""), "cache"
+            except Exception:
+                return cached["specificPosition"], cached.get("role", ""), "cache"
+
+    # ── Stat fingerprint (instant hint, no AI) ───────────────────────────────
+    fingerprint_hint = _stat_fingerprint_role(generic_position, stats)
+
+    # ── Build stats evidence string ──────────────────────────────────────────
+    stats_evidence = ""
+    if stats:
+        apps = max(1, stats.get("appearances", 1) or 1)
+        passes_pg     = round((stats.get("passes_total")       or 0) / apps, 1)
+        key_pg        = round((stats.get("key_passes")         or 0) / apps, 1)
+        tackles_pg    = round((stats.get("tackles_total")      or 0) / apps, 1)
+        dribbles_pg   = round((stats.get("dribbles_attempts")  or 0) / apps, 1)
+        shots_pg      = round((stats.get("shots_total")        or 0) / apps, 1)
+        goals_pg      = round((stats.get("goals_total")        or 0) / apps, 1)
+        assists_pg    = round((stats.get("goals_assists")       or 0) / apps, 1)
+        clearances_pg = round((stats.get("clearances")         or 0) / apps, 1)
+        stats_evidence = (
+            f"\n\nSEASON STAT FINGERPRINT (per game over {apps} appearances):\n"
+            f"  Passes: {passes_pg}  Key passes: {key_pg}  Shots: {shots_pg}\n"
+            f"  Tackles: {tackles_pg}  Dribbles: {dribbles_pg}  Clearances: {clearances_pg}\n"
+            f"  Goals: {goals_pg}  Assists: {assists_pg}\n"
+            f"  → Stat-derived hint: {fingerprint_hint or 'insufficient data'}"
+        )
+
+    # ── Category hint ────────────────────────────────────────────────────────
+    category_hint = ""
+    if generic_position and generic_position not in ("", "Unknown"):
+        suggested = _GENERIC_TO_SPECIFIC.get(generic_position, set())
+        if suggested:
+            category_hint = (
+                f"\nAPI category: {generic_position} "
+                f"(likely specific positions: {', '.join(sorted(suggested))}). "
+                f"Stats and knowledge may override — use full position list."
+            )
+
+    # ── Gemini prompt ────────────────────────────────────────────────────────
+    team_ctx = f" at {team_name}" if team_name else ""
+    prompt = f"""You are a professional football/soccer tactical analyst. Identify the PRIMARY specific position and EXACT tactical role for:
+
+Player: {player_name}{team_ctx}
+{category_hint}{stats_evidence}
+
+ROLE IDENTIFICATION GUIDE:
+• Deep-Lying Playmaker / Regista (CDM or CM): sits deepest in midfield, HIGHEST pass volume on team (65+ per game), very high pass accuracy, orchestrates build-up, LOW shots, LOW dribbles. Examples: Rodri (Man City), Thiago (Bayern), Busquets, Kroos. This is NOT Box-to-Box.
+• Anchor / Ball Winner (CDM): HIGH tackles/interceptions (6+/game), lower pass volume than DLP, physical and positional. Examples: Kanté, Ndidi, Caicedo.
+• Box-to-Box (CM): balanced tackles + forward runs + key passes + moderate shots AND noticeable dribbles. Must have visible forward output. Examples: Milinkovic-Savic, De Bruyne (when deeper).
+• Inverted Winger (LW/RW): cuts inside to shoot, HIGH shots (2.5+/game), low crosses. Examples: Salah, Gnabry, Sané, Leroy Sané.
+• Ball-Playing CB: high passes (60+/game), comfortable in possession, often plays out from the back. Examples: Rúben Dias, Stones, Pavard.
+• Sweeper Keeper: actively comes off line, plays high, distributes quickly. Examples: Alisson, Ederson, ter Stegen.
+• False 9: drops deep, creates chances, low shots but high key passes and dribbles. Examples: Firmino (peak Liverpool), Messi (Barca).
+
+Position codes: {_POS_LIST}
+Role labels: {_ROLE_LIST}
+
+Reply with EXACTLY this format on ONE line (no explanation, no markdown):
+POSITION|ROLE"""
+
+    # ── AI call ──────────────────────────────────────────────────────────────
+    try:
+        from ai_engine import _ai_call
+        sys_msg = (
+            "You are a football/soccer tactical analyst. Reply in EXACTLY this format on one line:\n"
+            "POSITION|ROLE\nNothing else. No markdown, no explanation."
+        )
+        raw = await _ai_call(
+            prompt, system=sys_msg,
+            temperature=0, max_tokens=20, timeout=20,
+        )
+        if raw:
+            parts = raw.strip().split("|")
+            pos = parts[0].strip().upper().replace(".", "").replace(",", "").replace(" ", "") if parts else ""
+            role = parts[1].strip() if len(parts) > 1 else ""
+
+            # Validate position
+            if pos not in _VALID_POSITIONS:
+                # Try common synonyms
+                _SYN = {"GKP": "GK", "GOALKEEPER": "GK", "DEFENDER": "CB", "MIDFIELDER": "CM", "ATTACKER": "ST"}
+                pos = _SYN.get(pos, "")
+
+            if pos:
+                # Validate role for this position
+                valid_roles = _POSITION_ROLE_MAP.get(pos, set())
+                if role and valid_roles and role not in valid_roles:
+                    role = sorted(valid_roles)[0]
+                elif not role and valid_roles:
+                    role = sorted(valid_roles)[0]
+
+                # Cache result
+                from datetime import datetime, timezone
+                cache_doc = {
+                    "playerName": player_name,
+                    "specificPosition": pos,
+                    "role": role,
+                    "promptVersion": GROK_POS_PROMPT_VERSION,
+                    "source": "ai_knowledge",
+                    "updatedAt": datetime.now(timezone.utc).isoformat(),
+                }
+                if player_id:
+                    cache_doc["playerId"] = player_id
+                if team_name:
+                    cache_doc["team"] = team_name
+                if generic_position:
+                    cache_doc["genericPosition"] = generic_position
+
+                await db.player_positions.update_one(
+                    {"playerId": player_id} if player_id else {"playerName": player_name},
+                    {"$set": cache_doc},
+                    upsert=True,
+                )
+                print(f"[ROLE RESOLVE] {player_name} → {pos} | {role} (ai_knowledge, fingerprint={fingerprint_hint})")
+                return pos, role, "ai_knowledge"
+
+    except Exception as e:
+        print(f"[ROLE RESOLVE] AI failed for {player_name}: {e}")
+
+    # ── Stat fingerprint fallback ─────────────────────────────────────────────
+    if fingerprint_hint and generic_position:
+        suggested = sorted(_GENERIC_TO_SPECIFIC.get(generic_position, set()))
+        fallback_pos = suggested[0] if suggested else ""
+        if fallback_pos:
+            valid_roles = _POSITION_ROLE_MAP.get(fallback_pos, set())
+            fallback_role = fingerprint_hint if fingerprint_hint in valid_roles else (sorted(valid_roles)[0] if valid_roles else "")
+            print(f"[ROLE RESOLVE] {player_name} → {fallback_pos} | {fallback_role} (stat_fingerprint)")
+            return fallback_pos, fallback_role, "stat_fingerprint"
+
+    print(f"[ROLE RESOLVE] {player_name} → no resolution possible")
+    return "", "", "fallback"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Legacy API — kept for backward compatibility with batch position lookups
+# ─────────────────────────────────────────────────────────────────────────────
 async def resolve_position_ai(player_name: str, sport: str = "soccer") -> dict:
-    """Resolve a single player's position using cache first, then AI fallback.
+    """Lightweight cache-first lookup, then Gemini knowledge fallback.
     Returns {"position": "XX", "role": "..."} or empty strings if failed."""
 
     cached = await db.player_positions.find_one(
@@ -15,10 +315,10 @@ async def resolve_position_ai(player_name: str, sport: str = "soccer") -> dict:
     if cached and cached.get("specificPosition"):
         return {"position": cached["specificPosition"], "role": cached.get("role", "")}
 
-    if not XAI_API_KEY:
-        return {"position": "", "role": ""}
-
-    return await _grok_resolve_batch([{"playerName": player_name, "sport": sport}])
+    pos, role, _ = await resolve_player_role(player_name)
+    if pos:
+        return {"position": pos, "role": role}
+    return {"position": "", "role": ""}
 
 
 async def resolve_positions_ai_batch(players: list) -> dict:
@@ -43,93 +343,17 @@ async def resolve_positions_ai_batch(players: list) -> dict:
         else:
             unresolved.append(p)
 
-    if not unresolved or not XAI_API_KEY:
-        return results
-
-    grok_results = await _grok_resolve_batch(unresolved)
-    results.update(grok_results)
-    return results
-
-
-async def _grok_resolve_batch(players: list) -> dict:
-    """Call Gemini to resolve positions for a list of players.
-    Uses the same rich vocabulary as the main predict.py resolver so that
-    role strings flow directly into positional_baseline._role_variant().
-    """
-    if not players or not XAI_API_KEY:
-        return {}
-
-    results = {}
-    player_lines = []
-    for idx, pl in enumerate(players):
-        player_lines.append(f"{idx+1}. {pl['playerName']} ({pl.get('sport', 'soccer')})")
-
-    prompt = f"""You are a football/soccer tactical analyst. For each player below, return their primary specific position code and their exact tactical role label.
-
-Soccer position codes: GK, CB, LB, RB, LWB, RWB, CDM, CM, CAM, LM, RM, LW, RW, CF, ST
-
-Role labels — pick EXACTLY one from this list:
-  GK:  Shot-Stopper | Sweeper Keeper
-  CB:  Ball-Playing CB | Stopper
-  LB/RB: Fullback | Wing-Back | Inverted Fullback
-  LWB/RWB: Wing-Back | Fullback
-  CDM: Deep-Lying Playmaker | Anchor | Ball Winner
-  CM:  Box-to-Box | Mezzala | Advanced Playmaker | Deep-Lying Playmaker
-  CAM: Advanced Playmaker | Wide Playmaker | Shadow Striker
-  LM/RM: Wide Playmaker | Traditional Winger
-  LW/RW: Traditional Winger | Inverted Winger | Inside Forward | Progressive Carrier
-  CF:  Complete Forward | False 9 | Target Man | Pressing Forward
-  ST:  Poacher | Target Man | Complete Forward | Pressing Forward
-
-Key role guidance:
-  • CDM / Deep-Lying Playmaker (regista): highest pass volume on team, sits deepest, orchestrates build-up, LOW shots/dribbles. Examples: Vitinha (PSG), Rodri (Man City), Casemiro.
-  • CDM / Anchor or Ball Winner: high tackles/interceptions, lower pass volume than DLP.
-  • CM / Box-to-Box: balanced tackles + forward runs + key passes + moderate shots. Only when player visibly gets forward.
-  • CAM / Advanced Playmaker: high key passes, plays ahead of midfield, low tackles.
-  • LW/RW / Inverted Winger: cuts inside, high shots, low crosses. Examples: Salah, Gnabry, Sané.
-  • LW/RW / Traditional Winger or Progressive Carrier: runs channels, high crosses, low shots.
-
-Players:
-{chr(10).join(player_lines)}
-
-Return a JSON array — one object per player. Use EXACTLY the position codes and role labels from the lists above:
-[{{"name":"exact player name","position":"XX","role":"exact role label"}}]
-Only the JSON array, no markdown, no explanation."""
-
-    try:
-        from ai_engine import _ai_call
-        raw = await _ai_call(prompt, temperature=0, max_tokens=800, timeout=20, json_mode=True)
-        if not raw:
-            return {}
-        content = raw.strip()
-        if content.startswith("```"):
-            content = content.split("\n", 1)[1] if "\n" in content else content[3:]
-            content = content.rsplit("```", 1)[0]
-        resolved = json.loads(content.strip())
-        for r in resolved:
-            rname = r.get("name", "")
-            rpos = r.get("position", "")
-            rrole = r.get("role", "")
-            if rname and rpos:
-                results[rname] = {"position": rpos, "role": rrole}
-                matching = [p for p in players if p["playerName"] == rname]
-                pid = matching[0].get("playerId") if matching else None
-                from datetime import datetime, timezone
-                cache_doc = {
-                    "playerName": rname,
-                    "specificPosition": rpos,
-                    "role": rrole,
-                    "promptVersion": GROK_POS_PROMPT_VERSION,
-                    "updatedAt": datetime.now(timezone.utc).isoformat(),
-                }
-                if pid:
-                    cache_doc["playerId"] = pid
-                await db.player_positions.update_one(
-                    {"playerName": rname},
-                    {"$set": cache_doc},
-                    upsert=True
-                )
-    except Exception as e:
-        print(f"[GROK-POS] Error: {e}")
+    for p in unresolved:
+        name = p.get("playerName", "")
+        pos, role, _ = await resolve_player_role(
+            name,
+            player_id=p.get("playerId", 0),
+        )
+        if pos:
+            results[name] = {"position": pos, "role": role}
 
     return results
+
+
+# Backward-compat alias used by some import sites
+_grok_resolve_batch = resolve_positions_ai_batch

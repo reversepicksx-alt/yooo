@@ -12,7 +12,7 @@ import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import NotificationBell from '@/components/NotificationBell';
 import { useQueryClient } from '@tanstack/react-query';
-import { scanProp, predict, cs2Predict, wtaPredict, savePick, pollAiNarrative, searchCs2Players, searchCs2Teams, searchWtaPlayers, PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, LEAGUES, PredictionResult, ScanResult, Cs2Player, Cs2Team, WtaPlayer, getPlayerContexts, getTeamNextMatch, getLeagueById, getMatchScript, PlayerContext, NextMatchData, MatchScriptData, getCs2NextMatch, getWtaNextMatch, Cs2NextMatch, WtaNextMatch } from '@/lib/api';
+import { scanProp, predict, cs2Predict, wtaPredict, savePick, pollAiNarrative, searchCs2Players, searchCs2Teams, searchWtaPlayers, PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, LEAGUES, PredictionResult, ScanResult, Cs2Player, Cs2Team, WtaPlayer, getPlayerContexts, getTeamNextMatch, getLeagueById, getMatchScript, PlayerContext, NextMatchData, MatchScriptData, getCs2NextMatch, getWtaNextMatch, Cs2NextMatch, WtaNextMatch, resolvePlayerRole, PlayerRoleResult } from '@/lib/api';
 import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult, FuzzyLeagueResult, StaticItem } from '@/components/FuzzySearchInput';
 import LeaguePickerModal from '@/components/LeaguePickerModal';
 import { useAuth } from '@/contexts/AuthContext';
@@ -143,6 +143,8 @@ export default function ScanScreen() {
   // Manual mode fields
   const [playerQuery, setPlayerQuery] = useState('');
   const [resolvedPlayer, setResolvedPlayer] = useState<FuzzyPlayerResult | null>(null);
+  const [resolvedRole, setResolvedRole] = useState<PlayerRoleResult | null>(null);
+  const [roleLoading, setRoleLoading] = useState(false);
   const [manualOpponentQuery, setManualOpponentQuery] = useState('');
   const [resolvedManualOpponent, setResolvedManualOpponent] = useState<FuzzyTeamResult | null>(null);
 
@@ -314,6 +316,8 @@ export default function ScanScreen() {
     setShowAltPlayers(false);
     setPlayerQuery('');
     setResolvedPlayer(null);
+    setResolvedRole(null);
+    setRoleLoading(false);
     setManualOpponentQuery('');
     setResolvedManualOpponent(null);
     setLine('');
@@ -983,6 +987,7 @@ export default function ScanScreen() {
               onSelectPlayer={async (p) => {
                 setPlayerQuery(p.playerName);
                 setResolvedPlayer(p);
+                setResolvedRole(null);
                 setSelectedContext(null);
                 setAutoMatch(null);
                 setPlayerContexts([]);
@@ -993,6 +998,18 @@ export default function ScanScreen() {
                 setLeagueId(0);
                 setLeagueQuery('');
                 Haptics.selectionAsync();
+                // Fire role resolution in background — non-blocking, does not
+                // gate any other UI. Shows "Detecting role..." spinner then
+                // replaces with specific position + role once resolved.
+                setRoleLoading(true);
+                resolvePlayerRole(
+                  p.playerId || null,
+                  p.playerName,
+                  p.teamName,
+                  p.position || '',
+                ).then((result) => {
+                  if (result.position || result.role) setResolvedRole(result);
+                }).catch(() => {}).finally(() => setRoleLoading(false));
                 // Fetch all team contexts for this player (club + national team)
                 if (p.playerId) {
                   setContextsLoading(true);
@@ -1047,9 +1064,22 @@ export default function ScanScreen() {
               }}
             />
             {resolvedPlayer && (
-              <Text style={{ color: Colors.primary, fontSize: 11, marginBottom: 4, marginLeft: 2 }}>
-                ✓ {resolvedPlayer.teamName}{resolvedPlayer.position ? ` · ${resolvedPlayer.position}` : ''}
-              </Text>
+              <View style={{ marginBottom: 4, marginLeft: 2 }}>
+                <Text style={{ color: Colors.primary, fontSize: 11 }}>
+                  ✓ {resolvedPlayer.teamName}
+                  {resolvedRole?.position
+                    ? ` · ${resolvedRole.position}`
+                    : resolvedPlayer.position
+                      ? ` · ${resolvedPlayer.position}`
+                      : ''}
+                  {resolvedRole?.role ? `  ·  ${resolvedRole.role}` : ''}
+                </Text>
+                {roleLoading && (
+                  <Text style={{ color: '#666', fontSize: 10, marginTop: 2 }}>
+                    ⟳ Detecting tactical role...
+                  </Text>
+                )}
+              </View>
             )}
 
             {/* ── Team context picker: shown when player has club + national team ── */}

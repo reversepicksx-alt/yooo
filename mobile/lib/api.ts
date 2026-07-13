@@ -1042,6 +1042,35 @@ export async function getPlayerContexts(playerId: number): Promise<{ contexts: P
   return apiCall(`/api/players/${playerId}/contexts`);
 }
 
+export interface PlayerRoleResult {
+  position: string;
+  role: string;
+  source?: string;
+  cached?: boolean;
+}
+
+export async function resolvePlayerRole(
+  playerId: number | null,
+  playerName: string,
+  teamName?: string,
+  genericPosition?: string,
+): Promise<PlayerRoleResult> {
+  try {
+    return await apiCall<PlayerRoleResult>('/api/players/resolve-role', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        playerId: playerId || null,
+        playerName,
+        teamName: teamName || '',
+        genericPosition: genericPosition || '',
+      }),
+    });
+  } catch {
+    return { position: '', role: '', source: 'error', cached: false };
+  }
+}
+
 export async function getTeamNextMatch(teamId: number): Promise<NextMatchData> {
   return apiCall(`/api/teams/${teamId}/next-match`);
 }
