@@ -94,6 +94,9 @@ def _stat_fingerprint_role(generic_position: str, stats: dict | None) -> str | N
             return "Deep-Lying Playmaker"
         if tackles_pg >= 6.0:
             return "Ball Winner"
+        # Mezzala: cuts into half-space, notable shots + key passes, moderate dribbles
+        if shots_pg >= 1.2 and key_passes_pg >= 1.5 and dribbles_pg >= 1.2 and tackles_pg < 4.0:
+            return "Mezzala"
         if key_passes_pg >= 2.5 and shots_pg >= 1.5:
             return "Advanced Playmaker"
         if shots_pg >= 1.5 and dribbles_pg >= 1.5:
@@ -216,13 +219,44 @@ Player: {player_name}{team_ctx}
 {category_hint}{stats_evidence}
 
 ROLE IDENTIFICATION GUIDE:
-• Deep-Lying Playmaker / Regista (CDM or CM): sits deepest in midfield, HIGHEST pass volume on team (65+ per game), very high pass accuracy, orchestrates build-up, LOW shots, LOW dribbles. Examples: Rodri (Man City), Thiago (Bayern), Busquets, Kroos. This is NOT Box-to-Box.
-• Anchor / Ball Winner (CDM): HIGH tackles/interceptions (6+/game), lower pass volume than DLP, physical and positional. Examples: Kanté, Ndidi, Caicedo.
-• Box-to-Box (CM): balanced tackles + forward runs + key passes + moderate shots AND noticeable dribbles. Must have visible forward output. Examples: Milinkovic-Savic, De Bruyne (when deeper).
-• Inverted Winger (LW/RW): cuts inside to shoot, HIGH shots (2.5+/game), low crosses. Examples: Salah, Gnabry, Sané, Leroy Sané.
-• Ball-Playing CB: high passes (60+/game), comfortable in possession, often plays out from the back. Examples: Rúben Dias, Stones, Pavard.
-• Sweeper Keeper: actively comes off line, plays high, distributes quickly. Examples: Alisson, Ederson, ter Stegen.
-• False 9: drops deep, creates chances, low shots but high key passes and dribbles. Examples: Firmino (peak Liverpool), Messi (Barca).
+DEFENSIVE MID / CDM:
+• Deep-Lying Playmaker / Regista: sits DEEPEST, highest pass volume on team (65+/game), very high accuracy, orchestrates build-up, LOW shots, LOW tackles. Examples: Rodri, Busquets, Kroos, Thiago.
+• Anchor: positional destroyer, moderate passes, holds shape, fewer tackles than Ball Winner but disciplined. Examples: Casemiro (peak Real Madrid), Fabinho, Laimer.
+• Ball Winner: PHYSICAL tackler, highest tackle/interception count (5+/game), wins duels, low-to-moderate passing. Examples: Kanté, Ndidi, Caicedo, Soumaré.
+
+CENTRAL MID / CM:
+• Box-to-Box: engine role — balanced defensive work AND forward runs, moderate key passes, moderate shots, noticeable dribbles. Examples: Milinkovic-Savic, Vieira, Gerrard.
+• Mezzala: half-space runner — attacks from CM, higher shots + key passes than Box-to-Box, cuts into penalty area, moderate dribbles. Examples: Pedri, Gavi, Nainggolan, Müller.
+• Deep-Lying Playmaker (CM): same as CDM version but positioned slightly higher. Examples: Xavi (late career), Verratti, Modric (deep phases).
+
+ATTACKING MID / CAM:
+• Advanced Playmaker: primary creator, HIGH key passes (2.5+/game), assists, drops between lines to receive. Examples: Bruno Fernandes, De Bruyne, Özil.
+• Shadow Striker: goal-threat CAM, HIGH shots (2+/game), runs beyond the striker. Examples: Müller (as SS), Maddison.
+• Wide Playmaker: wide-positioned creator who combines rather than beats defenders. Examples: David Neres, Bernardo Silva (wide).
+
+WINGERS / LW / RW:
+• Inverted Winger: cuts INSIDE onto stronger foot to shoot, HIGH shots (2.5+/game), LOW crossing. Examples: Salah (RW→LW), Robben, Gnabry, Sané.
+• Inside Forward: cuts inside but also creates — mix of key passes + shots. Examples: Vinicius Jr, Son Heung-min, Díaz.
+• Traditional Winger: stays WIDE, HIGH crossing, beats defender on the outside. Examples: Trippier (wing), Willian.
+• Progressive Carrier: drives forward with ball, high progressive carries + dribbles, creates from movement rather than crosses. Examples: Leão, Mbappé (wide).
+
+STRIKERS / ST / CF:
+• Poacher: penalty-box finisher, highest goals/shot ratio, minimal build-up. Examples: Haaland, Inzaghi, Vardy.
+• Complete Forward: hold-up + goals + link play + pressing. Examples: Kane, Suárez, Lukaku.
+• Target Man: aerial threat, wins flick-ons, brings others into play. Examples: Giroud, Benteke, Drogba.
+• Pressing Forward: leads press from front, high press intensity, tracks back. Examples: Firmino (pressing phase), Rashford (Man Utd).
+• False 9: drops deep, creates chances, low shots but high key passes and dribbles. Examples: Messi (Barca 2009-12), Coutinho.
+
+DEFENDERS:
+• Ball-Playing CB: high passes (60+/game), comfortable on ball, plays out from back. Examples: Rúben Dias, Stones, Van Dijk.
+• Stopper: dominant aerial/duel defender, clears danger, fewer pass attempts. Examples: Virgil van Dijk (defensive mode), Kompany.
+• Inverted Fullback: fullback who tucks inside into midfield rather than overlapping. Examples: Trent Alexander-Arnold, Cancelo (left).
+• Wing-Back: fullback who advances constantly to provide width in attacking phases. Examples: Theo Hernandez, Reece James, Dest.
+• Fullback: traditional balanced fullback — defends + overlaps moderately. Examples: Jordi Alba, Robertson (standard phase).
+
+GOALKEEPER:
+• Sweeper Keeper: actively comes off line, plays high defensive line, distributes quickly. Examples: Alisson, Ederson, ter Stegen.
+• Shot-Stopper: traditional GK focused on shot prevention, stays on line. Examples: Courtois, Oblak.
 
 Position codes: {_POS_LIST}
 Role labels: {_ROLE_LIST}
@@ -256,9 +290,16 @@ POSITION|ROLE"""
                 # Validate role for this position
                 valid_roles = _POSITION_ROLE_MAP.get(pos, set())
                 if role and valid_roles and role not in valid_roles:
-                    role = sorted(valid_roles)[0]
+                    # prefer stat fingerprint hint if it fits, else alphabetical first
+                    if fingerprint_hint and fingerprint_hint in valid_roles:
+                        role = fingerprint_hint
+                    else:
+                        role = sorted(valid_roles)[0]
                 elif not role and valid_roles:
-                    role = sorted(valid_roles)[0]
+                    if fingerprint_hint and fingerprint_hint in valid_roles:
+                        role = fingerprint_hint
+                    else:
+                        role = sorted(valid_roles)[0]
 
                 # Cache result
                 from datetime import datetime, timezone
