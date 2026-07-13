@@ -833,6 +833,57 @@ def compute_bayesian_projection(
                 posterior_mean = _gk_floor
 
     # ═══════════════════════════════════════════
+    # CROSS-TEAM DOMINANT-POSSESSION GK BOOST  ("Rodri Effect")
+    # ═══════════════════════════════════════════
+    # When the OPPONENT has very high expected possession (≥62%) AND this GK's
+    # team is pinned deep (<40%), pass volume rises through TWO additive mechanisms
+    # that the existing GK inversion model does not fully capture:
+    #
+    #   1. Low-Block Pass-Back Loop: opponent's high-possession press compresses
+    #      the defensive shape deep. Every time the defending team wins the ball,
+    #      the quickest release under counter-press is a back-pass to the GK.
+    #      Each back-pass = a logged pass attempt.
+    #
+    #   2. Over-Hit Crosses / Goal Kicks: dominant possession drives more crossing
+    #      attempts. A substantial fraction overshoot into the GK's hands who must
+    #      immediately distribute (= pass attempt). Every goal kick counts too.
+    #
+    # The GK inversion model above handles the own-team-low-poss signal. This
+    # section adds the opponent-side correlation — it fires specifically in the
+    # "Rodri scenario": extreme opponent dominance, not just generic low possession.
+    #
+    # Cap: +20% at opp_poss ≥ 77% (severity scales linearly from 62%→77%).
+    # Stacks on top of the inversion model since mechanisms are independent.
+    # ═══════════════════════════════════════════
+    _gk_cross_team_info = {"applied": False, "multiplier": 1.0, "reason": ""}
+    if _is_gk and prop_type in {"pass_attempts", "passes"} and match_dominance:
+        _ct_opp_poss  = match_dominance.get("oppExpectedPoss")
+        _ct_team_poss = match_dominance.get("expectedPoss")
+        if (
+            _ct_opp_poss is not None and _ct_team_poss is not None
+            and _ct_opp_poss >= 62.0 and _ct_team_poss < 40.0
+        ):
+            # Severity: 0→1 as opp possession goes from 62% to 77%
+            _ct_severity = min(1.0, (_ct_opp_poss - 62.0) / 15.0)
+            _ct_mult = round(1.0 + _ct_severity * 0.20, 3)
+            _raw_before_ct = posterior_mean
+            posterior_mean = round(posterior_mean * _ct_mult, 1)
+            _gk_cross_team_info = {
+                "applied": True,
+                "multiplier": _ct_mult,
+                "reason": (
+                    f"cross-team dominant-possession boost: "
+                    f"opp_poss={_ct_opp_poss:.1f}% own_poss={_ct_team_poss:.1f}% "
+                    f"severity={_ct_severity:.2f} mult={_ct_mult}"
+                ),
+            }
+            print(
+                f"[GK CROSS-TEAM BOOST] {prop_type}: opp_poss={_ct_opp_poss:.1f}% "
+                f"own_poss={_ct_team_poss:.1f}% severity={_ct_severity:.2f} "
+                f"mult={_ct_mult} {_raw_before_ct} → {posterior_mean}"
+            )
+
+    # ═══════════════════════════════════════════
     # CDM INVERTED POSSESSION MODEL  (Layer A of CDM-inversion fix)
     # ═══════════════════════════════════════════
     # Mirror of the GK Inverted Possession Model above, but for deep midfielders.
@@ -1418,19 +1469,51 @@ def compute_bayesian_projection(
         # max: empirical data shows trailing teams generate 30-80% more passes
         # through their central mids when chasing — small multipliers were being
         # swamped by the base projection bias.
+        # Role-aware: ball-playing pivots (Rodri, Busquets, Kroos-type) are the
+        # PRIMARY routing hub in possession-dominant chase mode — every sequence
+        # funnels through them. Destroyers/press-CDMs are bypassed more in direct
+        # play, so their boost is dampened.
         if (prop_type in {"pass_attempts", "passes"} and _script_venue == "home"
                 and _pos_upper in {"CDM", "DM", "DMF", "CAM", "AM", "OM", "ACM"}
                 and expected_diff is not None and expected_diff < -0.5):
             chase_boost = min(0.20, abs(expected_diff) * 0.09)
+            _cdm_script_role = (role or "").lower()
+            _is_ball_pivot = any(r in _cdm_script_role for r in (
+                "ball-playing", "ball playing", "regista", "deep-lying playmaker",
+                "pivot", "playmaker", "half-back",
+            ))
+            _is_destroyer = any(r in _cdm_script_role for r in (
+                "destroyer", "anchor", "ball winner", "holding midfielder", "defensive midfielder",
+            ))
+            if _is_ball_pivot:
+                chase_boost = min(0.20, chase_boost * 1.30)
+                gs_reason.append("ball-playing pivot role amplifies chase-mode boost")
+            elif _is_destroyer:
+                chase_boost = chase_boost * 0.70
+                gs_reason.append("destroyer/anchor role dampens chase-mode pass boost")
             gs_mult *= (1.0 + chase_boost)
             gs_reason.append(f"home MID chase-mode boost +{chase_boost*100:.1f}% (diff={expected_diff:.1f})")
         # Away CDM/CAM OVER passes — symmetric pinned-back boost. Magnitude
         # increased from 6% to 18% max for same reason as above.
+        # Role-aware: same logic as home — ball-playing pivots amplified,
+        # destroyers/anchors dampened (direct play bypasses them when pinned).
         if (_cdm_mode != "off"
                 and prop_type in {"pass_attempts", "passes"} and _script_venue == "away"
                 and _pos_upper in {"CDM", "DM", "DMF", "CM", "MC", "CMF", "CAM", "AM", "OM", "ACM"}
                 and expected_diff is not None and expected_diff > 0.5):
             away_chase_boost = min(0.18, abs(expected_diff) * 0.08)
+            _away_cdm_script_role = (role or "").lower()
+            _away_is_ball_pivot = any(r in _away_cdm_script_role for r in (
+                "ball-playing", "ball playing", "regista", "deep-lying playmaker",
+                "pivot", "playmaker", "half-back",
+            ))
+            _away_is_destroyer = any(r in _away_cdm_script_role for r in (
+                "destroyer", "anchor", "ball winner", "holding midfielder", "defensive midfielder",
+            ))
+            if _away_is_ball_pivot:
+                away_chase_boost = min(0.18, away_chase_boost * 1.30)
+            elif _away_is_destroyer:
+                away_chase_boost = away_chase_boost * 0.70
             cdm_inversion_info["mode"] = _cdm_mode
             cdm_inversion_info["shadow_multiplier"] = round(
                 cdm_inversion_info.get("shadow_multiplier", 1.0) * (1.0 + away_chase_boost), 4)
@@ -1961,6 +2044,7 @@ def compute_bayesian_projection(
         # CDM inverted-possession + pinned-back script boost (away CDM passes).
         # Always emitted; `mode` reports off|shadow|live and `applied` shows
         # whether the projection was actually nudged this call.
+        "gkCrossTeam": _gk_cross_team_info,
         "cdmInversion": cdm_inversion_info,
 
         # Home CDM deep-block recycling hub boost.

@@ -4444,6 +4444,19 @@ MIDFIELDER (passes, key_passes, assists):
 - Ball-circulation midfielders: possession % is the primary driver. Every 5% more possession = roughly 8-12 more passes for the deepest midfielder. Key passes / assists: look at how many times the team reaches the final third AND how the striker presses — a high striker press creates more through-ball opportunities.
 - CRITICAL — HOME CDM DEEP-BLOCK RULE: When a dominant home team (60%+ expected possession) faces a deep-sitting weak opponent (opponent expected possession < 36%), the CDM/DM/DLP becomes a ball-RECYCLING HUB. The deep block creates endless short-cycle sequences that all funnel back through the deepest midfielder. In this scenario, the CDM's pass count EXCEEDS their historical season average — sometimes significantly. Do NOT apply a low-motivation or dead-rubber penalty to CDM pass counts when the dominant team is still retaining comfortable possession — the passes still happen, they are just slower-paced and more circular. A CDM averaging 55 passes/game can easily hit 75-85 in this scenario. This is the single biggest source of CDM pass prop errors.
 
+MIDFIELDER ROLE CLASSIFICATION (applies to all CDM/DM/CM pass props):
+Identify which role the player actually performs — the same position label covers wildly different volume profiles:
+  • BALL-PLAYING PIVOT / REGISTA / DLP (e.g. Rodri, Busquets, Kroos, Thiago): These players ARE the possession system. Every recycling sequence goes through them. In dominant-possession scenarios, they accumulate 90-130+ passes. In chase/underdog mode, they remain the first option out of pressure. Pass volume scales strongly with team possession AND with match intensity — both possession dominance AND trailing scripts push this role's count UP. This role is the primary driver of the cross-team GK correlation below.
+  • BOX-TO-BOX / MEZZALA (e.g. De Bruyne, Milinkovic-Savic, Kimmich): High volume but distributed — they move between areas. Still possession-sensitive but less extreme than the pivot.
+  • DESTROYER / ANCHOR / HOLDING MID (e.g. Kanté, Henderson, Elneny): Lower pass volume because direct play bypasses them under pressure. In chase/underdog mode, team often switches to long balls, REDUCING this role's pass count relative to normal. Do NOT apply possession-dominant CDM logic to destroyers.
+  • PRESS-FIRST CDM: Similar to destroyer. High energy, low distribution. Possession has less impact on their pass count.
+
+CROSS-TEAM SCRIPT EFFECTS — CORRELATED, NOT INVERSE (critical for all positions):
+  • When a ball-playing pivot (Rodri, Busquets) dominates possession for their team → the OPPONENT'S GOALKEEPER's pass attempts go UP simultaneously. They are CORRELATED, not inverse. The low-block pass-back loop, over-hit crosses, and goal kicks all create GK pass volume. Do NOT interpret a high-possession midfielder's volume as a negative signal for the opponent's GK.
+  • A dominant home CDM recycling 100+ passes → opponent GK averages 60+ pass attempts from clearances/distributions under press. Both rise together.
+  • Dominant fullback overlaps (many crosses) → opponent GK has more aerial collections → more distributions. Correlated UP.
+  • When this player's team is the DOMINANT possession side: CBs and CDMs on the DEFENDING side will have more tackles/clearances (inverse props rise for them). But pass volume for the defending side's CDM goes DOWN (direct play bypasses them).
+
 DEFENDER (passes, tackles, clearances):
 - Ball-playing CBs in 55%+ possession teams easily hit 70-90 passes. The key variable is HOW the team builds — short from back (inflates defender passes) vs long-ball (suppresses). Tackles/clearances invert with possession: low possession = more defensive actions.
 
@@ -4451,6 +4464,8 @@ CRITICAL ACCURACY RULES:
 - NEVER double-count minutes. A player averaging 43 passes in 26 minutes per game — the 43 IS their game output. Do NOT scale down.
 - Match context OVERRIDES raw averages for pass-dependent props in high-possession scenarios.
 - GOALKEEPER INVERTED RULE: Low possession = MORE GK passes. High possession = FEWER GK passes. An away GK holding a lead = maximum volume scenario.
+- CROSS-TEAM CORRELATION RULE: When the opponent's CDM/DM dominates possession (65%+), the defending GK's passes go UP (correlated). They do NOT go down. The mechanism is: low-block → back-passes to GK + over-hit crosses + goal kicks. Never penalise a GK's projection because the opponent's midfielders are generating high pass volume — that IS the mechanism causing this GK's volume to rise.
+- ROLE SENSITIVITY: Ball-playing pivots are 3× more sensitive to possession context than destroyers. Always identify the player's role before applying possession multipliers. Applying "CDM possession dominant" logic to a destroyer who plays direct-ball anchor is a common over-projection error.
 - NEVER say "Bayesian" — always say "Reverse Formula".
 - DIRECTION LOCK: Your analysis direction MUST match the [MATHEMATICAL ENGINE] verdict. If math says UNDER, write UNDER analysis. If math says OVER, write OVER analysis. This is non-negotiable.
 
@@ -4556,13 +4571,33 @@ JSON: {"confidenceScore":0,"confidenceLevel":"","aiProjection":0,"sharpSummary":
             except Exception:
                 pass
 
+            # Determine cross-team correlation note for dominant-possession opponent
+            _gk_cross_team_note = ""
+            if _gk_opp_poss >= 62.0 and _gk_exp_poss < 40.0:
+                _ct_severity_pct = round(min(100.0, (_gk_opp_poss - 62.0) / 15.0 * 100))
+                _gk_cross_team_note = (
+                    f"\n\n⚡ CROSS-TEAM CORRELATION ACTIVE — CORRELATED (NOT INVERSE):\n"
+                    f"Opponent expected possession: {_gk_opp_poss}% — this is the 'Rodri Effect' scenario.\n"
+                    f"When a dominant possession team (like Spain with Rodri) controls {_gk_opp_poss:.0f}% of the ball:\n"
+                    f"  1. LOW-BLOCK PASS-BACK LOOP: {req.teamName} defenders are compressed deep → every ball won "
+                    f"is recycled BACK to {req.playerName} under press (safe release = GK pass).\n"
+                    f"  2. OVER-HIT CROSSES: {req.opponentName}'s high crossing volume leads to GK collections "
+                    f"→ {req.playerName} must immediately distribute (= pass attempt).\n"
+                    f"  3. GOAL KICKS: More opponent possession sequences = more shots/crosses = more goal kicks "
+                    f"(each counts as a pass attempt).\n"
+                    f"CRITICAL: {req.playerName}'s and {req.opponentName}'s ball-playing midfielder's pass totals "
+                    f"RISE TOGETHER (correlated ↑↑), NOT inversely. Do not penalise {req.playerName}'s projection "
+                    f"just because the opponent's midfielders have high pass volumes — that IS the mechanism driving "
+                    f"this GK's volume up. Cross-team correlation severity: {_ct_severity_pct}%."
+                )
+
             gk_pass_context = f"""
 [GK PASS VOLUME CONTEXT — INVERTED POSSESSION MODEL]
 {req.playerName} is a GOALKEEPER. Pass volume rules are INVERTED vs outfield players.
 Venue: {_gk_venue_lbl} | Expected possession: {_gk_exp_poss}% (team season avg: {_gk_team_avg}%, gap: {_gk_poss_gap:+.1f}pp)
 Opponent expected possession: {_gk_opp_poss}%
 Scenario: {_gk_scenario}
-KEY PRINCIPLE: A GK defending deep = maximum back-pass recycling. A GK on a dominant team = barely touched. This is the single most important factor for GK pass props.{_gk_blowout_warning}"""
+KEY PRINCIPLE: A GK defending deep = maximum back-pass recycling. A GK on a dominant team = barely touched. This is the single most important factor for GK pass props.{_gk_cross_team_note}{_gk_blowout_warning}"""
 
         # SAVES-SPECIFIC: Elite GK Formula
         # Projected Saves = Opponent Avg SoT × GK Save% × Match Context Multiplier
@@ -4898,12 +4933,124 @@ Average {req.propType}: {comp_avg} | Per-90 avg: {comp_per90_avg} | Sample: {len
                 )
             final_data_parts.append(_fg_prompt_block)
 
+        # ── Script regime context block (all positions) ──────────────────────────
+        # Builds a match-script situation summary so the AI can reason about
+        # role-specific effects and cross-team correlations without having to
+        # derive them from raw possession numbers alone.
+        script_regime_context = ""
+        try:
+            _sr_own_poss = float(match_dominance.get("expectedPoss") or 50.0)
+            _sr_opp_poss = float(match_dominance.get("oppExpectedPoss") or 50.0)
+            _sr_pos_upper = (player_position or "").upper()
+            _sr_role_lower = (player_role or "").lower()
+            _sr_is_mid = _sr_pos_upper in {
+                "CDM", "DM", "DMF", "CM", "MC", "CMF", "CAM", "AM", "OM", "ACM",
+                "CM", "MIDFIELDER",
+            }
+            _sr_is_gk_pos = _sr_pos_upper in {"GK", "GKP", "GOALKEEPER", "KEEPER"}
+
+            # Identify regime
+            _dominant_team = None
+            _sr_regime = "balanced"
+            if _sr_own_poss >= 62.0 and _sr_opp_poss < 40.0:
+                _dominant_team = corrected_team_name
+                _sr_regime = "dominant"
+            elif _sr_opp_poss >= 62.0 and _sr_own_poss < 40.0:
+                _dominant_team = req.opponentName
+                _sr_regime = "pinned"
+            elif _sr_own_poss >= 57.0:
+                _sr_regime = "slight_control"
+            elif _sr_opp_poss >= 57.0:
+                _sr_regime = "slight_pressure"
+
+            # Role classification for midfielders
+            _sr_is_pivot = any(r in _sr_role_lower for r in (
+                "ball-playing", "ball playing", "regista", "deep-lying playmaker",
+                "pivot", "playmaker", "half-back",
+            ))
+            _sr_is_destroyer = any(r in _sr_role_lower for r in (
+                "destroyer", "anchor", "ball winner", "holding midfielder", "defensive midfielder",
+            ))
+
+            _sr_lines = []
+            if _sr_regime == "dominant":
+                _sr_lines.append(
+                    f"SCRIPT REGIME: DOMINANT ({corrected_team_name} {_sr_own_poss:.0f}% vs "
+                    f"{req.opponentName} {_sr_opp_poss:.0f}%)"
+                )
+                if _sr_is_mid:
+                    if _sr_is_pivot:
+                        _sr_lines.append(
+                            f"Role effect: {req.playerName} is a BALL-PLAYING PIVOT — the possession recycling hub. "
+                            f"Every sequence goes through them. Deep-block by {req.opponentName} creates endless "
+                            f"short-cycle triangles ALL routed through this player. Volume is maximised."
+                        )
+                    elif _sr_is_destroyer:
+                        _sr_lines.append(
+                            f"Role effect: {req.playerName} is a DESTROYER/ANCHOR — team dominates through ball-playing "
+                            f"CBs and wider midfielders. This player waits and breaks play up rather than circulating. "
+                            f"Their pass volume does NOT scale as strongly with possession dominance as a pivot would."
+                        )
+                    else:
+                        _sr_lines.append(
+                            f"Match script: dominant possession for {corrected_team_name}. Midfielders circulate "
+                            f"frequently. Volume scales positively with possession advantage."
+                        )
+                if _sr_is_gk_pos:
+                    _sr_lines.append(
+                        f"GK effect: Own team dominant ({_sr_own_poss:.0f}%) — GK is barely touched in build-up. "
+                        f"Volume SUPPRESSED. BUT: check cross-team note if opponent possession is very high — "
+                        f"in this dominant scenario opp poss is only {_sr_opp_poss:.0f}% (low) so suppression applies."
+                    )
+            elif _sr_regime == "pinned":
+                _sr_lines.append(
+                    f"SCRIPT REGIME: PINNED/LOW-BLOCK ({corrected_team_name} {_sr_own_poss:.0f}% vs "
+                    f"{req.opponentName} {_sr_opp_poss:.0f}% dominant)"
+                )
+                if _sr_is_mid:
+                    if _sr_is_pivot:
+                        _sr_lines.append(
+                            f"Role effect: {req.playerName} is a BALL-PLAYING PIVOT facing a dominant opponent. "
+                            f"Their team plays direct/reactive rather than building. Volume is REDUCED — even pivots "
+                            f"can't circulate much when the team is permanently pinned deep and playing long."
+                        )
+                    elif _sr_is_destroyer:
+                        _sr_lines.append(
+                            f"Role effect: {req.playerName} is a DESTROYER/ANCHOR. In pinned-back scripts, their "
+                            f"team plays direct — BYPASSING this player. Pass volume likely BELOW season average."
+                        )
+                if _sr_is_gk_pos:
+                    _sr_lines.append(
+                        f"⚡ GK CROSS-TEAM CORRELATION: {req.opponentName} controls {_sr_opp_poss:.0f}% possession. "
+                        f"{req.playerName}'s pass attempts go UP — low-block defence forces constant back-passes to GK, "
+                        f"over-hit crosses create collections, and frequent goal kicks all count as pass attempts. "
+                        f"The opponent's high-possession MID and this GK's pass volume are CORRELATED ↑↑, not inverse."
+                    )
+            elif _sr_regime in ("slight_control", "slight_pressure"):
+                _lbl = "SLIGHT POSSESSION CONTROL" if _sr_regime == "slight_control" else "SLIGHT POSSESSION PRESSURE"
+                _sr_lines.append(
+                    f"SCRIPT REGIME: {_lbl} ({corrected_team_name} {_sr_own_poss:.0f}% vs "
+                    f"{req.opponentName} {_sr_opp_poss:.0f}%)"
+                )
+                if _sr_is_mid:
+                    _sr_lines.append(
+                        "Mild possession edge — role classification matters most here. "
+                        "Ball-playing pivots still see meaningful volume boost; destroyers see minimal change."
+                    )
+
+            if _sr_lines:
+                script_regime_context = "[MATCH SCRIPT REGIME & CROSS-TEAM EFFECTS]\n" + "\n".join(_sr_lines)
+        except Exception as _sre:
+            print(f"[SCRIPT REGIME] context build error: {_sre}")
+
         if final_data_parts:
             final_data = "\n\n".join(final_data_parts)[:10000]
             if saves_context:
                 final_data += f"\n\n{saves_context}"
             if gk_pass_context:
                 final_data += f"\n\n{gk_pass_context}"
+            if script_regime_context:
+                final_data += f"\n\n{script_regime_context}"
             # NOTE: position_context is injected separately in the prompt (never truncated)
         else:
             final_data = json.dumps(historical_data, default=str)[:8000]
