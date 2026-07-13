@@ -1,0 +1,24 @@
+No, it is not a vice-versa (inverse) effect. It is actually a correlated (proportional) effect.
+When a team’s central midfielder (like Rodri) hoards passing, it usually increases the opposing goalkeeper's (Maignan's) pass attempts as well. They both go up together. [1] 
+Here is the quick breakdown of why high midfielder passes lead to high opposing goalkeeper passes:
+
+[High Midfielder Passes] 
+       ↓ 
+Pushes opponents deep into a low block
+       ↓ 
+Opponents clear ball / pass back to escape press
+       ↓
+[High Opposing GK Passes]
+
+## Why they rise together
+
+* The Long-Ball Reset: When Spain dominates the ball, France is forced to defend deep in their own box. When France finally intercepts a pass, they cannot play out cleanly. They are forced to pass back to Mike Maignan, who then has to hit a long ball or a clearance pass to find Kylian Mbappé. Each clearance or long ball counts as a pass attempt for the keeper.
+* Over-Hit Crosses: Rodri moving the ball side-to-side forces Spain to cross frequently. A high volume of these crosses will be over-hit and fly directly into Maignan’s hands. Once Maignan catches it, he must distribute it (a pass attempt).
+* Goal Kicks: High possession for Spain means more shots and attacking sequences. Even if those shots miss the target, they result in goal kicks for Maignan. A goal kick is statistically logged as a pass attempted.
+
+## When does the inverse (vice-versa) effect actually happen?
+The only time you see a true inverse effect (High Midfielder Passes = Low GK Passes) is if the team with the ball is winning and just passing the ball slowly in their own half to kill time, without ever attacking the opponent's box.
+Because Spain will be losing and aggressively attacking France's box, Rodri's high passing volume will naturally force Maignan into high action and high passing numbers.
+Would you like to see which types of passes (short goal kicks vs. long launches) Maignan utilizes most when facing a heavy possession team?
+
+[1] [https://marclamberts.substack.com](https://marclamberts.substack.com/p/introducing-the-goalkeeper-value)
