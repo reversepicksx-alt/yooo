@@ -85,17 +85,17 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="account"
-        options={{
-          title: 'Account',
-          tabBarIcon: ({ focused }) => <TabIcon name="person-circle" focused={focused} />,
-        }}
-      />
-      <Tabs.Screen
         name="chat"
         options={{
           title: 'Tactical AI',
           tabBarIcon: ({ focused }) => <TabIcon name="chatbubble-ellipses" focused={focused} />,
+        }}
+      />
+      <Tabs.Screen
+        name="account"
+        options={{
+          title: 'Account',
+          tabBarIcon: ({ focused }) => <TabIcon name="person-circle" focused={focused} />,
         }}
       />
       <Tabs.Screen name="notifications" options={{ href: null }} />
