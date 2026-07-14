@@ -28,12 +28,8 @@ export default function ChatScreen() {
   const flatRef = useRef<FlatList>(null);
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const bottomPad = Platform.OS === 'web' ? 34 : insets.bottom;
-  const isWeb = Platform.OS === 'web';
 
-  // All hooks must be declared before any conditional return (Rules of Hooks).
-  // Guard the effect body so it no-ops on native.
   useEffect(() => {
-    if (!isWeb) { setInitializing(false); return; }
     (async () => {
       try {
         const resp = await startChat();
@@ -44,6 +40,9 @@ export default function ChatScreen() {
           text: resp.message,
         }]);
       } catch {
+        // Backend lazily creates sessions for unknown IDs, so a client-generated
+        // ID keeps the chat usable even if /chat/start failed (flaky network).
+        setSessionId(`client-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
         setMessages([{
           id: '0',
           role: 'assistant',
@@ -53,7 +52,7 @@ export default function ChatScreen() {
         setInitializing(false);
       }
     })();
-  }, [isWeb]);
+  }, []);
 
   const send = async () => {
     const text = input.trim();
@@ -103,18 +102,6 @@ export default function ChatScreen() {
         <View style={styles.center}>
           <ActivityIndicator color={Colors.primary} />
         </View>
-      </View>
-    );
-  }
-
-  // Native fallback — placed AFTER all hooks to satisfy Rules of Hooks.
-  // The tab is hidden on native via href:null in _layout, but direct
-  // navigation (deep link, etc.) should never crash the app.
-  if (!isWeb) {
-    return (
-      <View style={{ flex: 1, backgroundColor: '#050505', alignItems: 'center', justifyContent: 'center' }}>
-        <Text style={{ color: '#39FF14', fontSize: 16, fontWeight: '700' }}>Tactical AI</Text>
-        <Text style={{ color: '#666', fontSize: 14, marginTop: 8 }}>Available on web</Text>
       </View>
     );
   }

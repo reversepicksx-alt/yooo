@@ -82,7 +82,6 @@ export default function TabLayout() {
         options={{
           title: 'Reverse Chat',
           tabBarIcon: ({ focused }) => <TabIcon name="people" focused={focused} />,
-          href: Platform.OS === 'web' ? null : undefined,
         }}
       />
       <Tabs.Screen
@@ -97,7 +96,6 @@ export default function TabLayout() {
         options={{
           title: 'Tactical AI',
           tabBarIcon: ({ focused }) => <TabIcon name="chatbubble-ellipses" focused={focused} />,
-          href: Platform.OS !== 'web' ? null : undefined,
         }}
       />
       <Tabs.Screen name="notifications" options={{ href: null }} />

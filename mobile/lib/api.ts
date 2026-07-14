@@ -12,7 +12,7 @@ const getApiBase = (): string => {
 };
 
 // Endpoints that involve AI synthesis — give them a generous timeout
-const LONG_TIMEOUT_PATHS   = ['/api/predict', '/api/mlb/predict', '/api/wta/predict', '/api/scan-prop'];
+const LONG_TIMEOUT_PATHS   = ['/api/predict', '/api/mlb/predict', '/api/wta/predict', '/api/scan-prop', '/api/chat/message'];
 const MEDIUM_TIMEOUT_PATHS = ['/api/players/search', '/api/players/', '/api/match-script'];  // search can hit API-Football strategy fallbacks; match-script hits an AI press-intensity call
 const CS2_PREDICT_PATH     = '/api/cs2/predict';
 const LONG_TIMEOUT_MS      = 90_000;   // 90 s — soccer / MLB / scan
