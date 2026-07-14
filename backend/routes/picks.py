@@ -2321,6 +2321,7 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
         )
     current_value = None
     minutes_played = 0
+    _player_found_in_api = False  # True only when this player appears in fixtures/players response
 
     if player_stats_data:
         player_id = pick.get("playerId")
@@ -2351,13 +2352,14 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
                 p_name = (p.get("player", {}).get("name") or "")
                 # Match by ID first, fallback to flexible name match
                 if p_id == player_id or (player_name and _player_name_matches(p_name)):
+                    _player_found_in_api = True
                     pstats = p.get("statistics", [{}])[0] if p.get("statistics") else {}
                     minutes_played = pstats.get("games", {}).get("minutes") or 0
                     getter = SOCCER_STAT_MAP.get(pick.get("propType", ""))
                     if getter:
                         current_value = getter(pstats)
                     break
-            if current_value is not None:
+            if _player_found_in_api:  # stop once we've located the player (even if stat is None)
                 break
 
     # Keep None distinct from 0: None = stat not in API response, 0 = valid zero value.
@@ -2439,6 +2441,14 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
         # DNP / early-sub void guard — industry standard: < 30 min = DNP
         _DNP_THRESHOLD = 30
         if minutes_played < _DNP_THRESHOLD:
+            # If the player wasn't found in fixtures/players at all, the API
+            # data isn't populated yet.  Defer to the background loop rather
+            # than incorrectly settling as DNP/push.
+            if not _player_found_in_api:
+                print(f"[SETTLE-DEFER] {pick.get('playerName','')} {pick.get('propType','')} "
+                      f"— not in fixtures/players response yet; deferring")
+                update["matchStatus"] = "final"
+                return update
             result_str = "dnp"
             update["voidReason"] = f"Player only played {minutes_played} min (min {_DNP_THRESHOLD} required)"
         else:
