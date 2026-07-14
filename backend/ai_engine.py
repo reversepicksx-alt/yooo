@@ -1994,9 +1994,13 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
             return False
 
         # Minimum minutes threshold — if player played < 30 min, void as push
-        # (benched, injured off, or DNP effectively — not enough data to fairly grade)
+        # (benched, injured off, or DNP effectively — not enough data to fairly grade).
+        # IMPORTANT: Some leagues (e.g. NWSL) return minutes=None/0 for players who
+        # played the full game.  The `or 0` above converts None → 0.  A non-zero
+        # actual_value is definitive proof of participation — skip DNP in that case.
         MIN_MINUTES = 30
-        if minutes_played is not None and minutes_played < MIN_MINUTES:
+        _has_stat_evidence_bg = actual_value is not None and actual_value > 0
+        if minutes_played is not None and minutes_played < MIN_MINUTES and not _has_stat_evidence_bg:
             home_goals = matched.get("goals", {}).get("home", 0) or 0
             away_goals = matched.get("goals", {}).get("away", 0) or 0
             _venue = (pick.get("venue") or "home").lower()

@@ -2449,8 +2449,17 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
                       f"— not in fixtures/players response yet; deferring")
                 update["matchStatus"] = "final"
                 return update
-            result_str = "dnp"
-            update["voidReason"] = f"Player only played {minutes_played} min (min {_DNP_THRESHOLD} required)"
+            # Some leagues (e.g. NWSL) return minutes=None for players who played
+            # the full game.  The `or 0` above converts that to 0, which would
+            # incorrectly trip this DNP guard.  A non-zero stat value is definitive
+            # proof the player participated — settle as hit/miss, not DNP.
+            if current_value > 0:
+                print(f"[SETTLE] {pick.get('playerName','')} {pick.get('propType','')} "
+                      f"— minutes={minutes_played} but stat={current_value} (API minutes unreliable); settling normally")
+                result_str = _settle_result(current_value, line, recommendation)
+            else:
+                result_str = "dnp"
+                update["voidReason"] = f"Player only played {minutes_played} min (min {_DNP_THRESHOLD} required)"
         else:
             result_str = _settle_result(current_value, line, recommendation)
         update["result"] = result_str

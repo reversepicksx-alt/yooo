@@ -682,6 +682,82 @@ class ClearSportCacheRequest(BaseModel):
     sport: str = "all"   # "wta" | "cs2" | "all"
 
 
+class RegradeDnpRequest(BaseModel):
+    email: str
+    token: str
+    dry_run: bool = True  # safe default: preview without writing
+
+
+@router.post("/regrade-dnp-picks")
+async def admin_regrade_dnp_picks(req: RegradeDnpRequest):
+    """Owner only: find picks that were incorrectly settled as DNP/push because
+    the API reported minutes=None/0 (common in NWSL and some other leagues) even
+    though the player clearly played (actualValue > 0).  Re-computes the correct
+    result from actualValue vs line and writes it back unless dry_run=True.
+
+    Safe to run multiple times — only touches picks with voidReason containing
+    'min (min' (our DNP pattern) AND actualValue > 0.
+    """
+    await verify_owner(req.email, req.token)
+    from datetime import datetime, timezone
+
+    def _settle_result(actual, line, rec):
+        rec = (rec or "").lower()
+        if actual == line:
+            return "push"
+        elif (actual > line and rec == "over") or (actual < line and rec == "under"):
+            return "hit"
+        else:
+            return "miss"
+
+    candidates = await db.picks.find(
+        {
+            "status": "settled",
+            "voidReason": {"$regex": "min \\(min"},  # matches our "X min (min 30 required)" pattern
+            "actualValue": {"$gt": 0},               # player had real stats
+        },
+        {"_id": 0}
+    ).to_list(500)
+
+    regraded = []
+    for pick in candidates:
+        actual   = pick.get("actualValue", 0)
+        line     = pick.get("line", 0)
+        rec      = pick.get("recommendation", "over")
+        result   = _settle_result(actual, line, rec)
+        hit_pct  = 100 if result == "hit" else (0 if result == "miss" else 50)
+        regraded.append({
+            "pickId":      pick.get("pickId"),
+            "playerName":  pick.get("playerName"),
+            "propType":    pick.get("propType"),
+            "line":        line,
+            "actual":      actual,
+            "rec":         rec,
+            "old_result":  pick.get("result"),
+            "new_result":  result,
+        })
+        if not req.dry_run:
+            await db.picks.update_one(
+                {"pickId": pick["pickId"]},
+                {"$set": {
+                    "result":    result,
+                    "hitPct":    hit_pct,
+                    "settledBy": "admin_regrade_dnp",
+                    "regradedAt": datetime.now(timezone.utc).isoformat(),
+                },
+                 "$unset": {"voidReason": ""}},
+            )
+
+    return {
+        "success":   True,
+        "dry_run":   req.dry_run,
+        "count":     len(regraded),
+        "regraded":  regraded,
+        "message":   ("DRY RUN — no changes written. Set dry_run=false to apply."
+                      if req.dry_run else f"Re-graded {len(regraded)} picks."),
+    }
+
+
 @router.post("/clear-sport-cache")
 async def admin_clear_sport_cache(req: ClearSportCacheRequest):
     """
