@@ -92,11 +92,18 @@ export default function TabLayout() {
           tabBarIcon: ({ focused }) => <TabIcon name="person-circle" focused={focused} />,
         }}
       />
+      <Tabs.Screen
+        name="chat"
+        options={{
+          title: 'Tactical AI',
+          tabBarIcon: ({ focused }) => <TabIcon name="chatbubble-ellipses" focused={focused} />,
+          href: Platform.OS !== 'web' ? null : undefined,
+        }}
+      />
       <Tabs.Screen name="notifications" options={{ href: null }} />
       <Tabs.Screen name="analytics"    options={{ href: null }} />
       <Tabs.Screen name="toptable"     options={{ href: null }} />
       <Tabs.Screen name="intel"        options={{ href: null }} />
-      <Tabs.Screen name="chat"         options={{ href: null }} />
     </Tabs>
   );
 }

@@ -604,7 +604,7 @@ export default function CommunityScreen() {
           style={styles.ownerBanner}
           activeOpacity={0.75}
           onPress={() => {
-            router.push(`/dm-thread?email=${encodeURIComponent('reversepicksx@gmail.com')}&name=Reverse%20Picks%20Support&image=`);
+            router.push(`/dm-thread?otherId=${encodeURIComponent('reversepicksx@gmail.com')}&name=Reverse%20Picks%20Support&image=`);
           }}
         >
           <Ionicons name="mail-outline" size={15} color={Colors.primary} />
