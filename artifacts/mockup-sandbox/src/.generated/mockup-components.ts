@@ -12,7 +12,7 @@ export const modules: ModuleMap = {
   "./components/mockups/picks-screen/PicksScreen.tsx": () => import("../components/mockups/picks-screen/PicksScreen.tsx"),
   "./components/mockups/scan-idle/ScanIdle.tsx": () => import("../components/mockups/scan-idle/ScanIdle.tsx"),
   "./components/mockups/scan-redesign/ScanRedesign.tsx": () => import("../components/mockups/scan-redesign/ScanRedesign.tsx"),
-  "./components/mockups/scan-result/ScanResult.tsx": () => import("../components/mockups/scan-result/ScanResult.tsx"),
   "./components/mockups/sport-selector/SportSelector.tsx": () => import("../components/mockups/sport-selector/SportSelector.tsx"),
+  "./components/mockups/scan-result/ScanResult.tsx": () => import("../components/mockups/scan-result/ScanResult.tsx"),
   "./components/mockups/terms-screen/TermsScreen.tsx": () => import("../components/mockups/terms-screen/TermsScreen.tsx")
 };

@@ -488,26 +488,97 @@ export default function ScanScreen() {
   };
 
   const fetchTacticalChat = async (
-    playerName: string,
-    propType: string,
-    line: number,
-    opponentName: string,
+    pred: PredictionResult,
     signal?: AbortSignal,
   ): Promise<string> => {
     try {
-      const propLabel = propType.replace(/_/g, ' ');
+      const propLabel = (pred.propType || '').replace(/_/g, ' ');
+      const proj = pred.bayesianProjection ?? pred.projection ?? pred.priorMean;
+      const pO = pred.pOver != null ? Math.round(pred.pOver) : null;
+      const pU = pred.pUnder != null ? Math.round(pred.pUnder) : null;
+      const rec = pred.recommendation ?? 'UNKNOWN';
+      const conf = pred.confidenceScore ?? pred.confidence;
+      const confLvl = pred.confidenceLevel ?? '';
+      const logs = (pred.gameLogs ?? []).slice(0, 10);
+
+      // Build a compact game-log summary: "M1:102 M2:88 M3:71 …"
+      const logSummary = logs.length
+        ? logs.map((g, i) => {
+            const val = g.stat ?? g.value ?? g.statValue;
+            return `M${i + 1}:${val != null ? Number(val).toFixed(1) : '?'}`;
+          }).join(' ')
+        : 'no logs';
+
+      // Bayesian mechanics summary
+      const bm = pred.bayesianMetrics as Record<string, unknown> | undefined;
+      const priorMean = pred.priorMean ?? bm?.prior_mean;
+      const momEffect = pred.momentumEffect ?? bm?.momentumEffect;
+      const covAdj = pred.covariateAdjustment ?? bm?.covariateAdjustment;
+      const momLabel = pred.momentumLabel ?? bm?.momentumLabel ?? '';
+
+      const bayesianSummary = [
+        priorMean != null ? `prior_mean=${Number(priorMean).toFixed(1)}` : null,
+        momEffect != null ? `momentum=${momEffect > 0 ? '+' : ''}${Number(momEffect).toFixed(1)} (${momLabel})` : null,
+        covAdj != null ? `covariate_adj=${covAdj > 0 ? '+' : ''}${Number(covAdj).toFixed(1)}` : null,
+      ].filter(Boolean).join(', ');
+
+      // Hit-rate context
+      const hr = pred.hitRates;
+      const hrSummary = hr
+        ? `historical hit rates: OVER ${hr.overPct}% (${hr.overHits}/${hr.total}), UNDER ${(100 - hr.overPct).toFixed(0)}%`
+        : '';
+
+      // Possession + game script
+      const expPoss = pred.expectedPossession;
+      const possSummary = expPoss
+        ? `expected possession: home ${expPoss.home}% / away ${expPoss.away}%`
+        : '';
+      const keyFinding = pred.gameScript?.key_finding ?? '';
+
+      // H2H vs this opponent
+      const h2hAvg = pred.h2hPlayerStats?.avgVsOpponent;
+      const h2hSummary = h2hAvg != null
+        ? `H2H vs ${pred.opponentName ?? pred.opponent}: avg ${Number(h2hAvg).toFixed(1)}`
+        : '';
+
+      // Venue averages
+      const venueAvg = pred.analysisSummary?.venueAverage;
+      const oppAllowed = pred.analysisSummary?.opponentAllowedAverage;
+      const venueSummary = [
+        venueAvg != null ? `venue avg ${Number(venueAvg).toFixed(1)}` : null,
+        oppAllowed != null ? `opponent allows avg ${Number(oppAllowed).toFixed(1)}` : null,
+      ].filter(Boolean).join(', ');
+
+      const prompt =
+        `THE BAYESIAN ENGINE HAS ALREADY RUN. DO NOT OVERRIDE ITS VERDICT.\n\n` +
+        `Player: ${pred.playerName ?? ''} | Role: ${pred.playerRole ?? pred.playerPosition ?? 'unknown'}\n` +
+        `Prop: ${propLabel} | Line: ${pred.line} | Opponent: ${pred.opponentName ?? pred.opponent ?? ''}\n\n` +
+        `ENGINE OUTPUT (accept these numbers as ground truth):\n` +
+        `• Projection: ${proj != null ? Number(proj).toFixed(1) : '?'} (${rec} ${pred.line})\n` +
+        `• P(OVER)=${pO ?? '?'}% / P(UNDER)=${pU ?? '?'}% | Confidence: ${conf ?? '?'}% ${confLvl}\n` +
+        `• Bayesian mechanics: ${bayesianSummary || 'n/a'}\n` +
+        `• Last ${logs.length} game logs: ${logSummary}\n` +
+        (hrSummary ? `• ${hrSummary}\n` : '') +
+        (venueSummary ? `• ${venueSummary}\n` : '') +
+        (h2hSummary ? `• ${h2hSummary}\n` : '') +
+        (possSummary ? `• ${possSummary}\n` : '') +
+        (keyFinding ? `• Game script: ${keyFinding}\n` : '') +
+        `\n` +
+        `YOUR TASK — apply the CORE REASONING FRAMEWORK to explain and validate these numbers:\n` +
+        `1) ROLE ANALYSIS: What is this player's exact tactical role and how does it mechanically produce this stat? ` +
+        `Quote their per-90 average across competitions and explain whether the projection aligns with it.\n` +
+        `2) MATCHUP INTELLIGENCE: How does ${pred.opponentName ?? pred.opponent ?? 'the opponent'}'s pressing intensity (PPDA), ` +
+        `defensive shape, and formation affect this specific stat for this role?\n` +
+        `3) SUBSTITUTION RISK: What is this player's typical minutes pattern? In which game states are they subbed early?\n` +
+        `4) GAME FLOW: Walk through the base/trailing/leading/cagey scenarios and how each shifts this stat ` +
+        `relative to the projection of ${proj != null ? Number(proj).toFixed(1) : '?'}.\n` +
+        `5) VERDICT: Confirm or challenge the engine's ${rec} call. Quote at least one specific number that ` +
+        `supports it and state ONE thing that would flip the call.\n\n` +
+        `Be precise. Reference the numbers above. Do not hedge. Do not re-state the question.`;
+
       const chatStart = await startChat();
       if (signal?.aborted) return '';
-      const resp = await sendChatMessage(
-        chatStart.session_id,
-        `Analyze ${playerName}'s ${line} ${propLabel} prop vs ${opponentName}. ` +
-        `Apply the full CORE REASONING FRAMEWORK: ` +
-        `1) Role-based analysis — identify their exact tactical role (DLP, box-to-box, inside forward, etc.) and how it drives their stat profile, with per-90 numbers from recent competitions. ` +
-        `2) Matchup intelligence — opponent pressing intensity (PPDA concept), formation, and defensive shape impact. ` +
-        `3) Substitution risk — minutes pattern, blowout scenarios. ` +
-        `4) Game flow dynamics — base/trailing/leading/cagey scenarios and how each affects this specific stat. ` +
-        `5) Evidence-based conclusion — quote specific averages, recommend OVER or UNDER, and state what would invalidate the call.`,
-      );
+      const resp = await sendChatMessage(chatStart.session_id, prompt);
       return resp.response || '';
     } catch {
       return '';
@@ -547,26 +618,12 @@ export default function ScanScreen() {
         sport: sport,
       };
 
-      // For soccer: run Bayesian prediction + deep tactical chat in parallel so
-      // the result screen is fully populated the moment it appears.
-      let result: Awaited<ReturnType<typeof predict>>;
+      // Run prediction first; then for soccer pass the FULL Bayesian output to
+      // the tactical chat so it reasons about the engine's numbers, not its own.
+      const result = await predict(req, sig);
       let tacText = '';
-      if (sport === 'soccer') {
-        const [predSettled, tacSettled] = await Promise.allSettled([
-          predict(req, sig),
-          fetchTacticalChat(
-            data.playerName,
-            (data.propType || propType) as string,
-            (data.line || 0) as number,
-            (data.opponentName || '') as string,
-            sig,
-          ),
-        ]);
-        if (predSettled.status === 'rejected') throw predSettled.reason;
-        result = predSettled.value;
-        tacText = tacSettled.status === 'fulfilled' ? (tacSettled.value || '') : '';
-      } else {
-        result = await predict(req, sig);
+      if (sport === 'soccer' && !result.error) {
+        tacText = await fetchTacticalChat(result, sig);
       }
 
       if (result.error) {
