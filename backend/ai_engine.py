@@ -1576,9 +1576,17 @@ async def _run_auto_settlement():
         _stale_candidates = await db.picks.find(
             {"status": {"$in": ["pending", "live"]},
              "sport": {"$nin": ["mlb"]},
-             "$or": [
-                 {"timestamp": {"$lt": _cutoff_4d}},
-                 {"createdAt":  {"$lt": _cutoff_4d}},
+             # staleMuteUntil lets individual picks opt out of early stale-void
+             # (used for leagues with delayed stat population, e.g. NWSL)
+             "$and": [
+                 {"$or": [
+                     {"timestamp": {"$lt": _cutoff_4d}},
+                     {"createdAt":  {"$lt": _cutoff_4d}},
+                 ]},
+                 {"$or": [
+                     {"staleMuteUntil": {"$exists": False}},
+                     {"staleMuteUntil": {"$lt": _now_sv.isoformat()}},
+                 ]},
              ]},
             {"_id": 0, "pickId": 1, "playerName": 1, "propType": 1,
              "sport": 1, "timestamp": 1, "createdAt": 1,
