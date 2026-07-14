@@ -3068,6 +3068,73 @@ async def predict(req: PredictionRequest):
             except Exception as _gs_err:
                 print(f"[GAME SCRIPT] extraction failed: {_gs_err}")
 
+            # ── CONDITIONAL POSSESSION ADJUSTMENT ────────────────────────────
+            # Adjusts expectedPoss for game-state-conditional team style before
+            # the Bayesian engine runs. France cedes possession when leading 1-0;
+            # Morocco's CDM pass volume follows that shift upward. Spain doesn't
+            # cede — their CDM numbers hold regardless of score.
+            # Controlled by COND_POSS_MODE env var: off | shadow | live (default: live)
+            _cond_poss_result = None
+            _cond_poss_mode = os.environ.get("COND_POSS_MODE", "live").lower()
+            try:
+                from game_state_possession import (
+                    PASS_ADJACENT_PROPS as _PASS_ADJ_PROPS,
+                    compute_conditional_possession as _compute_cond_poss,
+                )
+                _cond_poss_eligible = (
+                    _cond_poss_mode != "off"
+                    and sport == "soccer"
+                    and req.propType in _PASS_ADJ_PROPS
+                    and _game_script is not None
+                    and match_dominance.get("hasRealPossData", False)
+                )
+                if _cond_poss_eligible:
+                    _pih_cp = _game_script.get("player_is_home")
+                    if _pih_cp is None:
+                        _pih_cp = (player_venue == "home")
+                    # p_trail = probability player's team loses this match
+                    _cp_p_trail = (
+                        float(_game_script.get("implied_away", 0.30))
+                        if _pih_cp
+                        else float(_game_script.get("implied_home", 0.30))
+                    )
+                    # p_lead = probability player's team wins this match
+                    _cp_p_lead = (
+                        float(_game_script.get("implied_home", 0.35))
+                        if _pih_cp
+                        else float(_game_script.get("implied_away", 0.35))
+                    )
+                    _cond_poss_result = await _compute_cond_poss(
+                        base_poss=match_dominance["expectedPoss"],
+                        p_trail=_cp_p_trail,
+                        p_lead=_cp_p_lead,
+                        player_team_name=(
+                            locals().get("corrected_team_name") or req.teamName or ""
+                        ),
+                        opp_team_name=req.opponentName or "",
+                        db=db,
+                        team_fixture_stats=team_fixture_stats,
+                        opp_fixture_stats=opponent_fixture_stats,
+                    )
+                    if _cond_poss_result and _cond_poss_result.get("adjusted_poss"):
+                        if _cond_poss_mode == "live":
+                            _cp_old = match_dominance["expectedPoss"]
+                            match_dominance["expectedPoss"] = _cond_poss_result["adjusted_poss"]
+                            match_dominance["notes"].append(
+                                f"Conditional poss: {_cp_old:.0f}%→{_cond_poss_result['adjusted_poss']:.1f}% "
+                                f"(Δ{_cond_poss_result['delta_pp']:+.1f}pp, "
+                                f"p_trail={_cp_p_trail:.2f}, "
+                                f"opp_cede={_cond_poss_result['opp_style'].get('possession_cede_when_leading', 0):.2f})"
+                            )
+                        else:
+                            print(
+                                f"[COND POSS SHADOW] {req.playerName}: "
+                                f"would adjust {match_dominance['expectedPoss']:.0f}% → "
+                                f"{_cond_poss_result['adjusted_poss']:.1f}%"
+                            )
+            except Exception as _cp_err:
+                print(f"[COND POSS] Error: {_cp_err}")
+
             # ── SCENARIO PRIORS lookup (cheat-sheet conditional layer) ────
             # Mode controlled by env var SCENARIO_PRIORS_MODE: off|shadow|live
             # Default = shadow (compute & log, do NOT change projection).
@@ -5580,6 +5647,22 @@ Analyze ALL data thoroughly. Return JSON only."""
                 "matchStakes":   (real_bayes or {}).get("matchStakes"),
                 "cdmInversion":  (real_bayes or {}).get("cdmInversion"),
                 "homeCdmDeepBlock": (real_bayes or {}).get("homeCdmDeepBlock"),
+                "condPossAdj": locals().get("_cond_poss_result") and {
+                    "basePoss":      locals()["_cond_poss_result"].get("base_poss"),
+                    "adjustedPoss":  locals()["_cond_poss_result"].get("adjusted_poss"),
+                    "deltaPP":       locals()["_cond_poss_result"].get("delta_pp"),
+                    "trailScenario": locals()["_cond_poss_result"].get("trailing_scenario_poss"),
+                    "leadScenario":  locals()["_cond_poss_result"].get("leading_scenario_poss"),
+                    "pTrail":        locals()["_cond_poss_result"].get("p_trail"),
+                    "pLead":         locals()["_cond_poss_result"].get("p_lead"),
+                    "playerCede":    (locals()["_cond_poss_result"].get("player_style") or {}).get("possession_cede_when_leading"),
+                    "playerChase":   (locals()["_cond_poss_result"].get("player_style") or {}).get("possession_chase_when_trailing"),
+                    "oppCede":       (locals()["_cond_poss_result"].get("opp_style") or {}).get("possession_cede_when_leading"),
+                    "oppStyleNotes": (locals()["_cond_poss_result"].get("opp_style") or {}).get("style_notes"),
+                    "settledWinPoss": (locals()["_cond_poss_result"].get("player_settled") or {}).get("winning_poss"),
+                    "settledLosePoss": (locals()["_cond_poss_result"].get("player_settled") or {}).get("losing_poss"),
+                    "method":        locals()["_cond_poss_result"].get("method"),
+                } or None,
                 "leagueCalib":   (real_bayes or {}).get("leagueCalib"),
                 "scenarioPriors":(real_bayes or {}).get("scenarioPriors"),
                 "oppAllowedAvg": (real_bayes or {}).get("opponentAllowedAvg"),

@@ -563,6 +563,22 @@ export default function ScanScreen() {
         (h2hSummary ? `• ${h2hSummary}\n` : '') +
         (possSummary ? `• ${possSummary}\n` : '') +
         (keyFinding ? `• Game script: ${keyFinding}\n` : '') +
+        (() => {
+          const cp = (pred.bayesianMetrics as Record<string, unknown> | undefined)?.condPossAdj as Record<string, unknown> | null | undefined;
+          if (!cp) return '';
+          const delta = cp.deltaPP as number;
+          const base  = cp.basePoss as number;
+          const adj   = cp.adjustedPoss as number;
+          const oppCede = cp.oppCede as number;
+          const pTrail  = cp.pTrail as number;
+          return `• POSSESSION ADJUSTMENT (key context): The engine raised expected possession ` +
+            `from ${base?.toFixed(0)}% → ${adj?.toFixed(1)}% (${delta > 0 ? '+' : ''}${delta?.toFixed(1)}pp). ` +
+            `Reason: opponent ${pred.opponentName ?? ''} cede-score=${oppCede?.toFixed(2)} ` +
+            `(${oppCede >= 0.6 ? 'strongly cedes possession when leading' : oppCede >= 0.35 ? 'moderately cedes possession when leading' : 'maintains possession when leading'}), ` +
+            `P(player team trails)=${(pTrail * 100)?.toFixed(0)}%. ` +
+            `${cp.oppStyleNotes ? `Opponent style: ${cp.oppStyleNotes}. ` : ''}` +
+            `Your analysis MUST reference this possession shift explicitly.\n`;
+        })() +
         `\n` +
         `YOUR TASK — apply the CORE REASONING FRAMEWORK to explain and validate these numbers:\n` +
         `1) ROLE ANALYSIS: What is this player's exact tactical role and how does it mechanically produce this stat? ` +
