@@ -1368,6 +1368,8 @@ export default function ScanScreen() {
                 setCs2ResolvedPlayer(p);
                 setCs2PlayerQuery(p.nickname);
                 setCs2NextMatch(null);
+                setCs2OpponentQuery('');
+                setCs2ResolvedOpponent(null);
                 Haptics.selectionAsync();
                 // Auto-fetch next match
                 const teamId = p.team?.id ?? null;
@@ -1485,6 +1487,8 @@ export default function ScanScreen() {
                 setWtaResolvedPlayer(p);
                 setWtaPlayerQuery(p.fullName);
                 setWtaNextMatch(null);
+                setWtaOpponentQuery('');
+                setWtaResolvedOpponent(null);
                 Haptics.selectionAsync();
                 // Auto-fetch next match
                 setWtaNextMatchLoading(true);

@@ -402,7 +402,7 @@ async def save_pick(req: SavePickRequest):
         # default soccer resolver. CS2 has no tactical role of that kind —
         # we either store the engine's roleClassification (e.g. "entry_fragger")
         # or leave both fields blank.
-        engine_role = (tm or {}).get("roleClassification") if tm else None
+        engine_role = (pick.get("tacticalMetrics") or {}).get("roleClassification")
         if engine_role:
             doc["position"] = ""               # CS2 doesn't have a position label
             doc["role"]     = str(engine_role).replace("_", " ").title()
