@@ -12,7 +12,7 @@ import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import NotificationBell from '@/components/NotificationBell';
 import { useQueryClient } from '@tanstack/react-query';
-import { scanProp, predict, cs2Predict, wtaPredict, savePick, pollAiNarrative, searchCs2Players, searchCs2Teams, searchWtaPlayers, PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, LEAGUES, PredictionResult, ScanResult, Cs2Player, Cs2Team, WtaPlayer, getPlayerContexts, getTeamNextMatch, getLeagueById, getMatchScript, PlayerContext, NextMatchData, MatchScriptData, getCs2NextMatch, getWtaNextMatch, Cs2NextMatch, WtaNextMatch, resolvePlayerRole, PlayerRoleResult } from '@/lib/api';
+import { scanProp, predict, cs2Predict, wtaPredict, savePick, pollAiNarrative, searchCs2Players, searchCs2Teams, searchWtaPlayers, PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, LEAGUES, PredictionResult, ScanResult, Cs2Player, Cs2Team, WtaPlayer, getPlayerContexts, getTeamNextMatch, getLeagueById, getMatchScript, PlayerContext, NextMatchData, MatchScriptData, getCs2NextMatch, getWtaNextMatch, Cs2NextMatch, WtaNextMatch, resolvePlayerRole, PlayerRoleResult, startChat, sendChatMessage } from '@/lib/api';
 import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult, FuzzyLeagueResult, StaticItem } from '@/components/FuzzySearchInput';
 import LeaguePickerModal from '@/components/LeaguePickerModal';
 import { useAuth } from '@/contexts/AuthContext';
@@ -98,6 +98,7 @@ export default function ScanScreen() {
   const [prediction, setPrediction] = useState<PredictionResult | null>(null);
   const [predictionRequest, setPredictionRequest] = useState<Record<string, unknown> | null>(null);
   const [aiNarrativeLoading, setAiNarrativeLoading] = useState(false);
+  const [tacticalAnalysis, setTacticalAnalysis] = useState<string | null>(null);
   const [showAltPlayers, setShowAltPlayers] = useState(false);
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
   const [manualError, setManualError] = useState<string | null>(null);
@@ -306,6 +307,7 @@ export default function ScanScreen() {
     setPrediction(null);
     setPredictionRequest(null);
     setAiNarrativeLoading(false);
+    setTacticalAnalysis(null);
     setAnalyzeError(null);
     setManualError(null);
     setSaveError(null);
@@ -485,6 +487,33 @@ export default function ScanScreen() {
     await processImage(result.assets[0].base64, result.assets[0].uri);
   };
 
+  const fetchTacticalChat = async (
+    playerName: string,
+    propType: string,
+    line: number,
+    opponentName: string,
+    signal?: AbortSignal,
+  ): Promise<string> => {
+    try {
+      const propLabel = propType.replace(/_/g, ' ');
+      const chatStart = await startChat();
+      if (signal?.aborted) return '';
+      const resp = await sendChatMessage(
+        chatStart.session_id,
+        `Analyze ${playerName}'s ${line} ${propLabel} prop vs ${opponentName}. ` +
+        `Apply the full CORE REASONING FRAMEWORK: ` +
+        `1) Role-based analysis — identify their exact tactical role (DLP, box-to-box, inside forward, etc.) and how it drives their stat profile, with per-90 numbers from recent competitions. ` +
+        `2) Matchup intelligence — opponent pressing intensity (PPDA concept), formation, and defensive shape impact. ` +
+        `3) Substitution risk — minutes pattern, blowout scenarios. ` +
+        `4) Game flow dynamics — base/trailing/leading/cagey scenarios and how each affects this specific stat. ` +
+        `5) Evidence-based conclusion — quote specific averages, recommend OVER or UNDER, and state what would invalidate the call.`,
+      );
+      return resp.response || '';
+    } catch {
+      return '';
+    }
+  };
+
   const runPredict = async (data: ScanResult, inManual = false) => {
     if (!session?.email || !session?.token) {
       Alert.alert('Sign In Required', 'Please sign in to run predictions.');
@@ -497,8 +526,10 @@ export default function ScanScreen() {
     setPhase('analyzing');
     setAnalyzeError(null);
     setManualError(null);
+    setTacticalAnalysis(null);
     cancelAbortRef.current?.abort();
     cancelAbortRef.current = new AbortController();
+    const sig = cancelAbortRef.current.signal;
     try {
       const req = {
         email: session.email,
@@ -515,7 +546,29 @@ export default function ScanScreen() {
         line: data.line || 0,
         sport: sport,
       };
-      const result = await predict(req, cancelAbortRef.current.signal);
+
+      // For soccer: run Bayesian prediction + deep tactical chat in parallel so
+      // the result screen is fully populated the moment it appears.
+      let result: Awaited<ReturnType<typeof predict>>;
+      let tacText = '';
+      if (sport === 'soccer') {
+        const [predSettled, tacSettled] = await Promise.allSettled([
+          predict(req, sig),
+          fetchTacticalChat(
+            data.playerName,
+            (data.propType || propType) as string,
+            (data.line || 0) as number,
+            (data.opponentName || '') as string,
+            sig,
+          ),
+        ]);
+        if (predSettled.status === 'rejected') throw predSettled.reason;
+        result = predSettled.value;
+        tacText = tacSettled.status === 'fulfilled' ? (tacSettled.value || '') : '';
+      } else {
+        result = await predict(req, sig);
+      }
+
       if (result.error) {
         if (inManual) setManualError(result.error); else setAnalyzeError(result.error);
         setPhase(inManual ? 'idle' : 'detected');
@@ -523,11 +576,12 @@ export default function ScanScreen() {
       }
       setPrediction(result);
       setPredictionRequest(req);
+      setTacticalAnalysis(tacText || null);
       setShowAltPlayers(false);
       setPhase('result');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      // F5: if AI is still running in background, start polling for narrative
-      if (result.aiPending && sport === 'soccer') {
+      // Only poll for backend AI narrative if tactical chat also failed (fallback)
+      if (result.aiPending && sport === 'soccer' && !tacText) {
         setAiNarrativeLoading(true);
         pollForAiNarrative(req, result);
       }
@@ -3523,6 +3577,80 @@ export default function ScanScreen() {
                 );
               })()
             )}
+
+            {/* ─── TACTICAL AI DEEP ANALYSIS ─── */}
+            {prediction.sport === 'soccer' && tacticalAnalysis && (() => {
+              const isOver = prediction.recommendation === 'OVER';
+              const isUnder = prediction.recommendation === 'UNDER';
+              const recColor = isOver ? Colors.success : isUnder ? Colors.error : Colors.textSecondary;
+
+              // Render markdown-lite: bold (**text**), bullets, headers, paragraphs
+              const renderLine = (raw: string, key: number) => {
+                const trimmed = raw.trimEnd();
+                if (!trimmed) return null;
+
+                const isH = /^\*{2}[^*]/.test(trimmed) && trimmed.endsWith('**') && !trimmed.slice(2, -2).includes('**');
+                const isBullet = /^\s{0,3}[*\-]\s{1,3}/.test(trimmed) && !isH;
+                const isSubBullet = /^\s{4,}[*\-]\s/.test(trimmed);
+
+                const clean = trimmed
+                  .replace(/^\s{0,6}[*\-]\s+/, '')
+                  .replace(/^\*{2}(.*)\*{2}$/, '$1')
+                  .trim();
+
+                // Inline bold splitter
+                const parts = clean.split(/(\*\*[^*]+\*\*)/g);
+                const nodes = parts.map((p, i) =>
+                  p.startsWith('**') && p.endsWith('**')
+                    ? <Text key={i} style={{ fontWeight: '800', color: Colors.text }}>{p.slice(2, -2)}</Text>
+                    : <Text key={i}>{p}</Text>
+                );
+
+                if (isH) {
+                  return (
+                    <Text key={key} style={{ fontSize: 11.5, fontWeight: '800', color: recColor, letterSpacing: 0.6, marginTop: 12, marginBottom: 3 }}>
+                      {clean.toUpperCase()}
+                    </Text>
+                  );
+                }
+                if (isSubBullet) {
+                  return (
+                    <Text key={key} style={{ fontSize: 12, color: Colors.textSecondary, lineHeight: 18, marginLeft: 16, marginBottom: 1 }}>
+                      {'◦ '}{nodes}
+                    </Text>
+                  );
+                }
+                if (isBullet) {
+                  return (
+                    <Text key={key} style={{ fontSize: 12, color: Colors.textSecondary, lineHeight: 18, marginLeft: 8, marginBottom: 1 }}>
+                      {'• '}{nodes}
+                    </Text>
+                  );
+                }
+                return (
+                  <Text key={key} style={{ fontSize: 12, color: Colors.textSecondary, lineHeight: 18, marginBottom: 2 }}>
+                    {nodes}
+                  </Text>
+                );
+              };
+
+              const lines = tacticalAnalysis.split('\n');
+
+              return (
+                <View style={[styles.scoutCard, { borderColor: recColor + '33', marginTop: 10 }]}>
+                  <View style={styles.scoutHeader}>
+                    <Ionicons name="chatbubble-ellipses-outline" size={13} color={Colors.primary} />
+                    <Text style={styles.scoutTitle}>TACTICAL AI</Text>
+                    <Text style={{ fontSize: 9, color: Colors.textTertiary, marginLeft: 'auto', fontWeight: '600' }}>
+                      DEEP ANALYSIS
+                    </Text>
+                  </View>
+                  <View style={{ gap: 0, marginTop: 4 }}>
+                    {lines.map((line, i) => renderLine(line, i))}
+                  </View>
+                </View>
+              );
+            })()}
 
             {/* ─── LINEUP / TACTICAL PITCH ─── */}
             {prediction.sport === 'soccer' && prediction.lineup && (

@@ -1,0 +1,78 @@
+Let's break down Rodri's 90.5 passes prop for the France vs. Spain match.
+
+**CORE REASONING FRAMEWORK**
+
+**1. ROLE-BASED ANALYSIS: Deep-Lying Playmaker/Holding Midfielder**
+Rodri operates as a quintessential Deep-Lying Playmaker (DLP) and holding midfielder for both Manchester City and Spain. His primary role is to dictate the tempo of the game, maintain possession, break up opposition attacks, and distribute the ball safely and progressively from deep. This role inherently involves a very high volume of passing, as he is often the central pivot in build-up play and a safe passing option for defenders and other midfielders.
+
+*   **Evidence:** His per 90 pass numbers across various competitions are consistently high:
+    *   World Cup 2026: 106.93/90
+    *   Friendlies 2026: 116.56/90
+    *   FIFA Club World Cup 2025: 112.66/90
+    *   League Cup 2025: 101.17/90
+    *   FA Cup 2025: 112.14/90
+    *   Premier League 2025: 96.01/90
+    *   UEFA Champions League 2025: 107.64/90
+
+These numbers clearly demonstrate his statistical profile as a high-volume passer. Even his lowest full-match average from recent major competitions (Euro Championship 2024 at 75.32/90) is still significant, but we'll delve into that specific context.
+
+**2. MATCHUP INTELLIGENCE: France vs. Spain Dynamics**
+
+*   **Opponent Pressing Intensity (PPDA concept):** France, under Deschamps, can be tactically flexible, but they often employ a mid-to-low block, especially against top teams, and look to hit on the counter with their explosive forwards (Mbappe, Dembele/Coman). While they can press in moments, they are not typically known for a relentless, high-intensity press for 90 minutes like a Klopp or early Guardiola team.
+    *   **Impact:** A less aggressive, sustained press from France would allow Spain's central midfielders, particularly Rodri, more time on the ball to circulate possession and pick out passes. This favors higher pass numbers.
+*   **Formation Matchups:** Spain under De La Fuente typically plays a 4-3-3 or 4-2-3-1, prioritizing possession and midfield control. France often utilizes a 4-2-3-1 or 4-3-3.
+    *   **Impact:** This midfield battle will be crucial. Spain's philosophy dictates that they will aim to dominate possession. Rodri is the lynchpin of this approach. Even against a strong French midfield, Spain will attempt to control the ball, leading to many short, safe passes for Rodri to distribute.
+*   **Opponent Defensive Shape:** France's tendency to sit deeper and allow opponents to have the ball before exploding into counters could mean Spain has extended periods of possession in their own half and the middle third, where Rodri operates.
+    *   **Impact:** This scenario is ideal for a DLP to rack up passes, as he connects defensive lines to offensive lines, often involving sideways and backwards passes to retain possession and recycle play against a compact opponent.
+
+**3. SUBSTITUTION RISK: Moderate**
+
+*   **Blowout Scenario:** If Spain gets a comfortable lead, there's a risk Rodri could be subbed off to rest for future fixtures. However, this is a high-profile international fixture (potentially a major tournament knockout or important friendly), so managers often keep key players on longer unless the result is truly beyond doubt.
+*   **Recent Pattern:** Looking at the data, Rodri plays significant minutes in almost all his appearances. In the 2026 World Cup, he played 537 minutes across 6 apps, averaging 89.5 minutes per game. In the 2025 Premier League, he played 1513 minutes across 21 apps, averaging 72 minutes, but this includes potential early subs in league games where City might be dominating. For a big international fixture, a full 90 minutes is more likely.
+*   **Sensitivity:** If he's subbed at 70-75 minutes, reaching 90.5 passes would be challenging unless Spain is completely dominating possession from the start.
+
+**4. GAME FLOW DYNAMICS: Possession vs. Counter-Attack**
+
+*   **Base Case (Most Likely):** Spain will aim for possession dominance. France will be content to concede some possession and look to counter. This game flow plays directly into Rodri's hands for high pass volume, as Spain builds patiently through him.
+*   **Trailing Dynamics:** If Spain falls behind, they might push more aggressively, but their core philosophy will still involve trying to control the midfield, meaning Rodri remains central to breaking down France. They are unlikely to resort to long ball tactics that would bypass him.
+*   **First-to-score Impact:**
+    *   If Spain scores first, they might continue to control the game via possession, which still benefits Rodri.
+    *   If France scores first, Spain will redouble their efforts to dominate the ball to find an equalizer, again involving Rodri heavily.
+*   **Cagey Game:** Even in a tight, low-scoring affair, Rodri's role means he's constantly involved in circulating the ball, seeking openings against a compact defense. This would still likely lead to high pass numbers, albeit possibly with fewer progressive passes.
+
+**5. SCENARIO THINKING & EVIDENCE-BASED CONCLUSION**
+
+Rodri's role as a Deep-Lying Playmaker guarantees him a high volume of passes in almost any game scenario where his team has significant possession. Spain's tactical identity relies on this.
+
+Let's look at his per 90 averages in various recent competitions where he played full matches or was a consistent starter:
+
+*   World Cup 2026: **106.93 passes/90**
+*   Friendlies 2026: **116.56 passes/90** (even with limited minutes, his rate is extremely high)
+*   FIFA Club World Cup 2025: **112.66 passes/90**
+*   League Cup 2025: **101.17 passes/90**
+*   FA Cup 2025: **112.14 passes/90**
+*   Premier League 2025: **96.01 passes/90**
+*   UEFA Champions League 2025: **107.64 passes/90**
+*   Euro Championship 2024: **75.32 passes/90** (This is the outlier. The Euro 2024 matches might have been more open or against more aggressive pressing teams, or Spain faced early exits/lower possession games. This needs context, but it's important to acknowledge a lower past performance.)
+*   World Cup - Qualification Europe 2024: **136.0 passes/90** (albeit in very limited minutes)
+
+Except for the Euro 2024 average, Rodri consistently averages well above 90.5 passes per 90 minutes. His Premier League 2025 average of 96.01/90, even against top-tier opposition, is still above the line. His Champions League average is 107.64/90, showing he maintains this volume against elite opponents.
+
+**The primary risk is the Euro Championship 2024 average (75.32/90).** We need to consider why this was lower. International football can be more direct or involve less possession for dominant teams. However, Spain's overall possession-based strategy often thrives against teams willing to sit back, which France often does.
+
+**Conclusion:**
+
+Given Rodri's critical role as Spain's deep-lying playmaker, Spain's possession-based style, and France's typical approach of sitting deeper and counter-attacking, Rodri is almost guaranteed a high volume of touches and passes. The vast majority of his per-90 statistics across multiple high-level competitions are comfortably *above* the 90.5 line.
+
+The main concern is a potential early substitution or a highly chaotic, end-to-end game that completely breaks Spain's possession rhythm (which is less likely against France). The Euro 2024 data point is a slight yellow flag, but his other elite competition numbers are overwhelmingly in favor of the over.
+
+**Recommendation: Over 90.5 Passes for Rodri**
+
+**Sensitivity:**
+*   **Red Card for Spain:** Would hurt his numbers as Spain would defend more.
+*   **Early Red Card for Rodri:** Obviously kills the prop.
+*   **Early Goal for France and France parks the bus aggressively:** Spain would still have a lot of the ball trying to break them down, likely boosting Rodri's numbers.
+*   **Early Goal for Spain and Spain then sits deeper:** Less likely for Spain; they tend to maintain possession. This would still involve Rodri distributing.
+*   **Game turns into a chaotic run-and-gun:** This would be the biggest threat to the over, as it would reduce controlled possession for both sides. Less likely in a France-Spain fixture where tactical discipline is usually high.
+
+The base case suggests Spain will have significant possession, and Rodri will be at the heart of it. His consistent output over 100 passes/90 in many elite competitions strongly supports the over.
