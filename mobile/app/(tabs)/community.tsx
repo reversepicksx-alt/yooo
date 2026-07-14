@@ -7,7 +7,6 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { router } from 'expo-router';
-import * as ImagePicker from 'expo-image-picker';
 import NotificationBell from '@/components/NotificationBell';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
@@ -23,6 +22,46 @@ import {
   searchUsers,
   apiCall,
 } from '@/lib/api';
+
+// ─── Error Boundary ────────────────────────────────────────────────────────────
+// Wraps the entire screen so that any JS render error shows a recovery UI
+// instead of propagating to a native iOS crash (unhandled JS exception on
+// Hermes + New Architecture terminates the process if it escapes the bridge).
+type EBState = { hasError: boolean; errorMsg: string };
+class CommunityErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  EBState
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, errorMsg: '' };
+  }
+  static getDerivedStateFromError(err: unknown): EBState {
+    return { hasError: true, errorMsg: String(err) };
+  }
+  componentDidCatch(err: unknown, info: React.ErrorInfo) {
+    console.error('[Community] render error:', err, info?.componentStack);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <View style={{ flex: 1, backgroundColor: '#050505', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+          <Text style={{ color: '#39FF14', fontSize: 18, fontWeight: '700', marginBottom: 8 }}>Chat unavailable</Text>
+          <Text style={{ color: '#888', fontSize: 14, textAlign: 'center', marginBottom: 24 }}>
+            Something went wrong loading the community feed. Tap below to reload.
+          </Text>
+          <TouchableOpacity
+            onPress={() => this.setState({ hasError: false, errorMsg: '' })}
+            style={{ backgroundColor: '#39FF14', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 8 }}
+          >
+            <Text style={{ color: '#000', fontWeight: '700', fontSize: 15 }}>Try Again</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 const { width: SW } = Dimensions.get('window');
 const POLL_MS = 4000;
@@ -87,11 +126,14 @@ function groupMessages(msgs: CommunityMessage[]): MessageGroup[] {
   const groups: MessageGroup[] = [];
   for (const msg of msgs) {
     const last = groups[groups.length - 1];
-    const lastMsg = last?.messages[last.messages.length - 1];
+    const lastMsg = last?.messages?.length ? last.messages[last.messages.length - 1] : undefined;
     const sameUser = last && last.senderId === msg.senderId;
-    const sameDay = last && getDayLabel(lastMsg.createdAt) === getDayLabel(msg.createdAt);
-    const within5min = last &&
-      new Date(msg.createdAt).getTime() - new Date(lastMsg.createdAt).getTime() < 5 * 60 * 1000;
+    const sameDay = last && lastMsg?.createdAt && msg.createdAt
+      ? getDayLabel(lastMsg.createdAt) === getDayLabel(msg.createdAt)
+      : false;
+    const within5min = last && lastMsg?.createdAt && msg.createdAt
+      ? new Date(msg.createdAt).getTime() - new Date(lastMsg.createdAt).getTime() < 5 * 60 * 1000
+      : false;
     if (sameUser && sameDay && within5min) {
       last.messages.push(msg);
     } else {
@@ -161,7 +203,7 @@ const ReactionBar = memo(({
   myEmail: string;
   onReact: (emoji: string) => void;
 }) => {
-  const entries = Object.entries(reactions).filter(([, v]) => v.length > 0);
+  const entries = Object.entries(reactions ?? {}).filter(([, v]) => Array.isArray(v) && v.length > 0);
   if (!entries.length) return null;
   return (
     <View style={styles.reactionRow}>
@@ -255,7 +297,7 @@ const DateDivider = memo(({ label }: { label: string }) => (
 
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
-export default function CommunityScreen() {
+function CommunityScreen() {
   const insets = useSafeAreaInsets();
   const { session } = useAuth();
   const myEmail = session?.email ?? '';
@@ -427,26 +469,35 @@ export default function CommunityScreen() {
   // ── Image pick ────────────────────────────────────────────────────────────
 
   const handlePickImage = useCallback(async () => {
-    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) {
-      Alert.alert('Permission needed', 'Allow photo access to share images.');
-      return;
+    try {
+      // Lazy-import expo-image-picker inside the handler so the native module
+      // is only initialized on demand (avoids New Architecture startup crash
+      // when the module is loaded before Fabric is fully bootstrapped).
+      const ImagePicker = await import('expo-image-picker');
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert('Permission needed', 'Allow photo access to share images.');
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'] as any,
+        allowsEditing: false,
+        quality: 0.15,
+        base64: true,
+        exif: false,
+      });
+      if (result.canceled || !result.assets?.[0]?.base64) return;
+      const b64 = result.assets[0].base64!;
+      if (b64.length > 3_500_000) {
+        Alert.alert('Image too large', 'Please choose a smaller photo or screenshot.');
+        return;
+      }
+      setPendingImage(b64);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch (err) {
+      console.warn('[Community] image pick error:', err);
+      Alert.alert('Error', 'Could not open photo picker. Please try again.');
     }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'] as any,
-      allowsEditing: false,
-      quality: 0.15,
-      base64: true,
-      exif: false,
-    });
-    if (result.canceled || !result.assets[0]?.base64) return;
-    const b64 = result.assets[0].base64;
-    if (b64.length > 3_500_000) {
-      Alert.alert('Image too large', 'Please choose a smaller photo or screenshot.');
-      return;
-    }
-    setPendingImage(b64);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   }, []);
 
   // ── React ─────────────────────────────────────────────────────────────────
@@ -890,6 +941,16 @@ export default function CommunityScreen() {
         </TouchableOpacity>
       </Modal>
     </View>
+  );
+}
+
+// ─── Guarded export: ErrorBoundary wraps the screen so any JS render error
+// shows a recovery UI instead of crashing the iOS app process.
+export default function CommunityScreenSafe() {
+  return (
+    <CommunityErrorBoundary>
+      <CommunityScreen />
+    </CommunityErrorBoundary>
   );
 }
 

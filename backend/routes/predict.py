@@ -5085,7 +5085,19 @@ Expected possession for {req.opponentName}: {match_dominance['oppExpectedPoss']}
                 if match_date:
                     match_context += f" | Date: {match_date[:10]}"
                 if is_knockout:
-                    match_context += "\n** KNOCKOUT/ELIMINATION MATCH — Higher stakes, tactical conservatism likely, possible extra time. Account for this in projections.**"
+                    match_context += (
+                        "\n** KNOCKOUT/ELIMINATION MATCH — The mathematical engine has already "
+                        "applied a ×1.10 extra-time probability uplift to all count-stat projections "
+                        "(pass_attempts, shots, saves, etc.) because ~30% of knockout games go to "
+                        "extra time (+30 min). Do NOT separately penalise count stats for 'caution' — "
+                        "the ET adjustment is already baked in. Focus your tactical analysis on: "
+                        "(1) which team is the effective favourite and how that shapes possession "
+                        "dominance; (2) whether the player's role (ball-winner vs recycler) means "
+                        "their volume rises or falls specifically in a knockout defensive setup; "
+                        "(3) any confirmed lineup/injury intel that changes the base outlook. "
+                        "If the match can still end in a draw after 90 min → ET → penalties, "
+                        "surface that uncertainty in your uncertaintyNote.**"
+                    )
 
         # ── SITUATION ENGINE CONTEXT BLOCK ─────────────────────────────────────
         _sit_context_block = game_situation.get("contextBlock", "")
@@ -5865,6 +5877,48 @@ Analyze ALL data thoroughly. Return JSON only."""
                 print(f"[SITUATION MULT] Bayesian {_old_bp:.1f} × {_sit_bayes_mult:.3f} = {bayesian_posterior:.1f} ({req.propType})")
                 real_bayes["posteriorMean"] = bayesian_posterior
                 real_bayes["situationalMultiplier"] = _sit_bayes_mult
+            # ─────────────────────────────────────────────────────────────────────
+
+            # ── KNOCKOUT EXTRA-TIME (ET) ADJUSTMENT ──────────────────────────────
+            # Knockout games go to ET (2×15 additional minutes) ~30% of the time.
+            # Count stats (pass_attempts, shots, saves…) scale linearly with
+            # minutes played. Without this adjustment the engine chronically
+            # under-projects for UNDER bets → actual >>> projected when ET fires.
+            # Settled WC knockout data: 50% hit rate vs 64% group stage.
+            # Multiplier = 1 + P(ET) × (30 extra min / 90 base min) ≈ 1.100
+            #
+            # DESIGN: applied BEFORE P-REFRESH so the normal-distribution CDF
+            # that recomputes p_over/p_under already sees the ET-inflated mean.
+            # Consequently UNDER edges shrink (correct) and OVER edges grow.
+            # Separate confidence penalty blocks UNDER confidence further.
+            # ──────────────────────────────────────────────────────────────────────
+            _KO_COUNT_PROPS = {
+                "pass_attempts", "passes", "shots", "shots_on_target",
+                "saves", "key_passes", "crosses", "dribbles", "tackles", "clearances",
+            }
+            # Resolve is_knockout: prefer situation engine flag (always defined),
+            # fall back to the match_context local var which is only set when
+            # match_odds is present.
+            _final_is_knockout = game_situation.get("isKnockout", False)
+            if not _final_is_knockout:
+                _ko_kws = ("final", "quarter", "semi", "round of", "knockout", "elimination", "playoff")
+                _raw_round_ko = (match_odds or {}).get("matchRound", "") if match_odds else ""
+                if _raw_round_ko:
+                    _final_is_knockout = any(kw in _raw_round_ko.lower() for kw in _ko_kws)
+
+            if _final_is_knockout and req.propType in _KO_COUNT_PROPS:
+                _KO_ET_PROB  = 0.30           # 30 % of knockout games go to ET historically
+                _KO_ET_MULT  = round(1.0 + _KO_ET_PROB * (30.0 / 90.0), 4)  # ≈ 1.1000
+                _ko_old_bp   = bayesian_posterior
+                bayesian_posterior = round(bayesian_posterior * _KO_ET_MULT, 1)
+                real_bayes["posteriorMean"]    = bayesian_posterior
+                real_bayes["koExtraTimeAdj"]   = _KO_ET_MULT
+                real_bayes["koExtraTimeProb"]  = _KO_ET_PROB
+                print(
+                    f"[KNOCKOUT ET ADJ] {req.playerName}/{req.propType}: "
+                    f"{_ko_old_bp:.1f} × {_KO_ET_MULT:.4f} → {bayesian_posterior:.1f} "
+                    f"(P(ET)={_KO_ET_PROB:.0%})"
+                )
             # ─────────────────────────────────────────────────────────────────────
 
             # ── RECOMPUTE P(over)/P(under) AFTER OPP-PROFILE + SITUATION MULT ──
@@ -6803,6 +6857,28 @@ Analyze ALL data thoroughly. Return JSON only."""
                     prediction["projectedValue"] = round((req.line - 0.5) * 2) / 2
                 elif _bt_dir == "over" and _bt_proj < req.line:
                     prediction["projectedValue"] = round((req.line + 0.5) * 2) / 2
+
+            # ── KNOCKOUT UNDER CONFIDENCE PENALTY ────────────────────────────
+            # Even after the ET projection uplift, UNDER bets in knockout games
+            # carry residual extra-time risk that the normal distribution doesn't
+            # fully capture (the distribution is symmetric; ET is asymmetric —
+            # it only ADDS minutes, never subtracts).  Settled data: WC knockout
+            # UNDER 50% hit rate.  Apply a -8pt confidence cap for UNDER bets
+            # on count stats in knockout games, floor 52 so we never suppress to
+            # noise levels when the edge is genuinely strong.
+            if _final_is_knockout and req.propType in _KO_COUNT_PROPS and _bt_dir == "under":
+                _ko_under_pre = prediction["confidenceScore"]
+                _ko_under_cap = max(52, _ko_under_pre - 8)
+                if _ko_under_cap < _ko_under_pre:
+                    prediction["confidenceScore"] = _ko_under_cap
+                    prediction["rawConfidence"]   = _ko_under_cap
+                    if _ko_under_cap < 70:
+                        prediction["confidenceLevel"] = "High" if _ko_under_cap >= 65 else "Medium" if _ko_under_cap >= 55 else "Low"
+                    print(
+                        f"[KNOCKOUT UNDER PENALTY] {req.playerName}/{req.propType}: "
+                        f"conf {_ko_under_pre}% → {_ko_under_cap}% (ET risk on UNDER bets)"
+                    )
+            # ─────────────────────────────────────────────────────────────────
 
             print(
                 f"[BAYESIAN TRUTH] {req.playerName}/{req.propType}: "

@@ -59,3 +59,4 @@
 - [Settlement push notification paths](settlement-push-notification-paths.md) — pushes must be wired into EVERY settlement write site (live-polling AND background auto-settle bot, all sports); grep for every terminal status write, not just the one path being edited.
 - [NWSL settlement — no player stats from API](nwsl-settlement-no-stats.md) — API-Football fixtures/players returns 0 teams for NWSL (leagueId=254); can't auto-settle. NWSL also uses season=2026, not CURRENT_SEASON=2025. Void as push.
 - [DNP settlement false-positive — minutes=None](dnp-false-positive-minutes-none.md) — minutes=None or 0 from API triggers DNP guard even when player played. Fix: check current_value/stat>0 first; stat evidence beats minutes field.
+- [Knockout ET adjustment](knockout-et-adjustment.md) — WC knockout 50% hit rate (vs 64% group stage); root cause = ET probability ×1.10 never applied. Fix: KO_ET_MULT before P-REFRESH + -8pt UNDER penalty + corrected AI prompt.
