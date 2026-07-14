@@ -3083,27 +3083,50 @@ async def predict(req: PredictionRequest):
                 )
                 _cond_poss_eligible = (
                     _cond_poss_mode != "off"
-                    and sport == "soccer"
+                    and req.sport == "soccer"
                     and req.propType in _PASS_ADJ_PROPS
-                    and _game_script is not None
-                    and match_dominance.get("hasRealPossData", False)
+                    and match_dominance.get("seasonAvgIsReal", False)
                 )
                 if _cond_poss_eligible:
-                    _pih_cp = _game_script.get("player_is_home")
-                    if _pih_cp is None:
-                        _pih_cp = (player_venue == "home")
-                    # p_trail = probability player's team loses this match
-                    _cp_p_trail = (
-                        float(_game_script.get("implied_away", 0.30))
-                        if _pih_cp
-                        else float(_game_script.get("implied_home", 0.30))
-                    )
-                    # p_lead = probability player's team wins this match
-                    _cp_p_lead = (
-                        float(_game_script.get("implied_home", 0.35))
-                        if _pih_cp
-                        else float(_game_script.get("implied_away", 0.35))
-                    )
+                    # Determine player_is_home: prefer game_script (fixture-derived),
+                    # fall back to req.venue
+                    _pih_cp = (player_venue == "home")
+                    if _game_script is not None:
+                        _gs_pih = _game_script.get("player_is_home")
+                        if _gs_pih is not None:
+                            _pih_cp = _gs_pih
+
+                    # Derive implied win/loss probs: game_script > req.odds > balanced default
+                    if _game_script is not None and _game_script.get("implied_home") is not None:
+                        # p_trail = probability player's team loses this match
+                        _cp_p_trail = (
+                            float(_game_script["implied_away"]) if _pih_cp
+                            else float(_game_script["implied_home"])
+                        )
+                        _cp_p_lead = (
+                            float(_game_script["implied_home"]) if _pih_cp
+                            else float(_game_script["implied_away"])
+                        )
+                    elif req.odds:
+                        # Convert req.odds American lines → implied probs
+                        _ro = req.odds if isinstance(req.odds, dict) else (req.odds.dict() if hasattr(req.odds, "dict") else {})
+                        _h_ml = _ro.get("home") or _ro.get("homeOdds") or _ro.get("americanHome")
+                        _a_ml = _ro.get("away") or _ro.get("awayOdds") or _ro.get("americanAway")
+                        def _ml_to_prob(ml):
+                            if ml is None: return 0.5
+                            ml = float(ml)
+                            return abs(ml) / (abs(ml) + 100) if ml < 0 else 100 / (ml + 100)
+                        _h_raw = _ml_to_prob(_h_ml)
+                        _a_raw = _ml_to_prob(_a_ml)
+                        _tot_raw = _h_raw + _a_raw
+                        _h_imp = _h_raw / _tot_raw if _tot_raw > 0 else 0.50
+                        _a_imp = _a_raw / _tot_raw if _tot_raw > 0 else 0.50
+                        _cp_p_trail = _a_imp if _pih_cp else _h_imp
+                        _cp_p_lead  = _h_imp if _pih_cp else _a_imp
+                    else:
+                        # No odds signal — use balanced defaults (style still fires if opp_cede is strong)
+                        _cp_p_trail = 0.33
+                        _cp_p_lead  = 0.33
                     _cond_poss_result = await _compute_cond_poss(
                         base_poss=match_dominance["expectedPoss"],
                         p_trail=_cp_p_trail,
@@ -5679,6 +5702,28 @@ Analyze ALL data thoroughly. Return JSON only."""
                 "expectedMinutes": round(locals().get("_exp_mins", 90.0), 1),
             },
         }
+
+        # Mirror condPossAdj into bayesianMetrics so the mobile tactical-AI
+        # prompt can find it at pred.bayesianMetrics.condPossAdj
+        _cp_res = locals().get("_cond_poss_result")
+        if _cp_res and prediction.get("bayesianMetrics") is not None:
+            prediction["bayesianMetrics"]["condPossAdj"] = {
+                "basePoss":      _cp_res.get("base_poss"),
+                "adjustedPoss":  _cp_res.get("adjusted_poss"),
+                "deltaPP":       _cp_res.get("delta_pp"),
+                "trailingPoss":  _cp_res.get("trailing_scenario_poss"),
+                "leadingPoss":   _cp_res.get("leading_scenario_poss"),
+                "pTrail":        _cp_res.get("p_trail"),
+                "pLead":         _cp_res.get("p_lead"),
+                "playerCede":    (_cp_res.get("player_style") or {}).get("possession_cede_when_leading"),
+                "playerChase":   (_cp_res.get("player_style") or {}).get("possession_chase_when_trailing"),
+                "oppCede":       (_cp_res.get("opp_style") or {}).get("possession_cede_when_leading"),
+                "oppCedeSrc":    _cp_res.get("method"),
+                "oppStyleNotes": (_cp_res.get("opp_style") or {}).get("style_notes"),
+                "signals":       _cp_res.get("signals"),
+                "settledWinPoss":  (_cp_res.get("player_settled") or {}).get("winning_poss"),
+                "settledLosePoss": (_cp_res.get("player_settled") or {}).get("losing_poss"),
+            }
 
         # =============================================
         # =============================================
