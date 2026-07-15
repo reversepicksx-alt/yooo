@@ -9,7 +9,7 @@ direction is correct.
 
 How: bucket settled picks by (propType, direction, predicted-confidence-bucket),
 compute actual hit rate per bucket, expose a lookup that the predict
-endpoint applies *only when the bucket has enough samples* (n>=20).
+endpoint applies *only when the bucket has enough samples* (n>=50).
 Below that threshold we pass the raw confidence through unchanged so a
 small underpopulated bucket can't move the model in a noisy direction.
 
@@ -20,7 +20,17 @@ and UNDER (70% hit) would average to ~45%, giving no useful correction.
 Line-specific (v3): additionally bucket by line band (Low/Mid/High) per
 propType. OVER 55.5 passes and OVER 79.5 passes have very different hit
 rates; mixing them hides the signal. Falls back to direction-only when
-the line-band bucket is too thin (n<20).
+the line-band bucket is too thin (n<50).
+
+Blended (v4): instead of a hard override (return empirical rate wholesale),
+use James-Stein shrinkage to blend raw score with empirical rate.
+    shrink  = n / (n + BLEND_K)   where BLEND_K = 50
+    output  = raw * (1 - shrink) + empirical * shrink
+At n=50:  50% weight on empirical — avoids slamming the score from a thin bucket.
+At n=200: 80% weight on empirical.
+At n=500: 91% weight on empirical — near-full trust at high volume.
+This prevents the "36-point haircut on Rodri from 20 picks" failure mode while
+still allowing large, well-populated buckets to dominate.
 
 Buckets are 10pp wide starting at 50: [50-60), [60-70), [70-80), [80-90), [90-100].
 """
@@ -29,7 +39,8 @@ from typing import Optional, Dict
 import asyncio
 
 
-_MIN_BUCKET_N = 20  # minimum samples per bucket for reliable calibration
+_MIN_BUCKET_N = 50  # minimum samples per bucket before calibration fires (raised from 20)
+_BLEND_K      = 50  # James-Stein shrinkage constant: shrink = n/(n+_BLEND_K)
 _BUCKET_BOUNDARIES = [0, 50, 60, 70, 80, 90, 101]
 _BUCKET_LABELS = ["<50", "50-59", "60-69", "70-79", "80-89", "90+"]
 
@@ -218,6 +229,18 @@ async def refresh_calibration(db) -> dict:
     }
 
 
+def _blend(raw_score: float, empirical: float, n: int) -> float:
+    """
+    James-Stein blend of raw engine score and empirical hit rate.
+    shrink = n / (n + _BLEND_K)
+    output = raw*(1-shrink) + empirical*shrink
+    Clamped to [50, 100].
+    """
+    shrink = n / (n + _BLEND_K)
+    blended = raw_score * (1.0 - shrink) + empirical * shrink
+    return round(max(50.0, min(100.0, blended)), 1)
+
+
 def calibrate(
     prop_type: str,
     raw_score: float,
@@ -227,12 +250,15 @@ def calibrate(
     """
     Returns calibrated confidence (0-100) for a (propType, direction, raw_score).
 
-    Lookup priority (v3):
-      1. propType|DIRECTION|line_band  — most specific, needs n>=20
-      2. propType|DIRECTION            — direction-only fallback
+    Lookup priority (v4 — blended):
+      1. propType|DIRECTION|line_band  — most specific, needs n>=50
+      2. propType|DIRECTION            — direction-only fallback, needs n>=50
       3. None                          — pass raw score through unchanged
 
-    Returns None if no reliable bucket exists — caller should pass through raw.
+    Unlike the previous hard-override (return empirical rate wholesale), this
+    blends raw + empirical via James-Stein shrinkage so thin buckets only nudge
+    the score rather than slamming it. Returns None when no qualified bucket
+    exists so the caller passes raw confidence through unchanged.
     """
     if raw_score is None or raw_score <= 0:
         return None
@@ -246,19 +272,22 @@ def calibrate(
             line_buckets = _CALIBRATION_CACHE.get(line_key)
             if line_buckets:
                 cell = line_buckets.get(bucket)
-                if cell and cell.get("n", 0) >= _MIN_BUCKET_N:
+                n = cell.get("n", 0) if cell else 0
+                if n >= _MIN_BUCKET_N:
                     actual = cell.get("actualRate")
                     if actual is not None:
-                        return float(actual)
+                        return _blend(raw_score, actual, n)
 
         # 2. Fall back to direction-only bucket
         dir_key = _cache_key(prop_type, direction)
         prop_buckets = _CALIBRATION_CACHE.get(dir_key)
         if prop_buckets:
             cell = prop_buckets.get(bucket)
-            if cell and cell.get("n", 0) >= _MIN_BUCKET_N:
+            n = cell.get("n", 0) if cell else 0
+            if n >= _MIN_BUCKET_N:
                 actual = cell.get("actualRate")
-                return float(actual) if actual is not None else None
+                if actual is not None:
+                    return _blend(raw_score, actual, n)
 
     return None
 

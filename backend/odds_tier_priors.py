@@ -25,7 +25,7 @@ import time
 from collections import defaultdict
 
 _REFRESH_SECS = 6 * 3600
-_MIN_SAMPLE   = 8
+_MIN_SAMPLE   = 30   # raised from 8 — at k=30 shrinkage, n<30 means <50% trust; not worth firing
 _SHRINK_K     = 30
 _MAX_NUDGE    = 0.06
 
