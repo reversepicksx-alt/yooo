@@ -111,6 +111,7 @@ def _monte_carlo_probability(
     is_count_stat: bool = False,
     variance: float = None,
     market_correction: float = 0.015,
+    covariate_sigma_frac: float = 0.0,
 ) -> tuple:
     """
     Monte Carlo simulation for P(over) / P(under) and 80% CI.
@@ -125,6 +126,15 @@ def _monte_carlo_probability(
     inflation corrects for this structural bookmaker bias without overriding
     genuine model signals. CI uses the original line for display accuracy.
 
+    covariate_sigma_frac: additional fractional uncertainty from adjustment layers
+    (possession estimate, press intensity, opponent model etc.). Each active
+    covariate contributes its own estimation error — e.g. possession predictions
+    carry ±5pp uncertainty, AI press scores ±0.15. Stacking these without
+    propagating their uncertainty causes the engine to be overconfident above 70%.
+    Added in quadrature for Gaussian; variance-scaled for negative-binomial.
+      eff_std = sqrt(std² + (mean × frac)²)   [Gaussian]
+      eff_var = var × (1 + frac)²              [NegBin]
+
     Returns: (p_over, p_under, ci_low_80, ci_high_80)
     """
     if std <= 0 or mean <= 0:
@@ -133,9 +143,15 @@ def _monte_carlo_probability(
 
     if is_count_stat:
         var = variance if variance and variance > 0 else std ** 2
+        if covariate_sigma_frac > 0:
+            var = var * ((1.0 + covariate_sigma_frac) ** 2)
         samples = _sample_negative_binomial(mean, var, n_sims)
     else:
-        samples = [random.gauss(mean, std) for _ in range(n_sims)]
+        if covariate_sigma_frac > 0:
+            eff_std = math.sqrt(std ** 2 + (mean * covariate_sigma_frac) ** 2)
+        else:
+            eff_std = std
+        samples = [random.gauss(mean, eff_std) for _ in range(n_sims)]
 
     # Apply market correction: compare against slightly-inflated effective line
     effective_line = line * (1.0 + market_correction) if (line and line > 0) else line
@@ -698,6 +714,14 @@ def compute_bayesian_projection(
         if _gs_pih is not None:
             _effective_venue = "home" if _gs_pih else "away"
 
+    # ── COVARIATE UNCERTAINTY ACCUMULATOR ─────────────────────────────────────
+    # Each adjustment layer below carries its own estimation error.  We track the
+    # combined fractional uncertainty and pass it to Monte Carlo so the sampled
+    # distribution is wider when many uncertain covariates fired — preventing the
+    # overconfidence seen above 70% raw confidence.
+    # Baseline 4%: inherent uncertainty present in every projection.
+    _cov_sigma: float = 0.04
+
     # ═══════════════════════════════════════════
     # OUTFIELD PLAYER POSSESSION SQUEEZE
     # GKs use an INVERTED model below — they are excluded here.
@@ -740,6 +764,7 @@ def compute_bayesian_projection(
             )
             if poss_ratio < 0.95:
                 squeeze_mult = round(max(squeeze_floor, poss_ratio ** 1.5), 3)
+                _cov_sigma += 0.03  # possession estimate ±5pp → ~3% mean uncertainty
                 # HOT-STREAK DAMPENING: A player on an upward momentum trend may
                 # retain volume even when team possession dips — tactical discipline,
                 # manager trust, and personal form maintain their involvement.
@@ -789,6 +814,7 @@ def compute_bayesian_projection(
                 boost_mult = round(min(1.10, inverse_ratio ** 0.30), 3)
                 raw_before_gk = posterior_mean
                 posterior_mean = round(posterior_mean * boost_mult, 1)
+                _cov_sigma += 0.02  # inverted possession model carries ±2% extra uncertainty
                 print(f"[GK POSS BOOST] {prop_type}: team_avg={team_season_avg_poss:.1f}% "
                       f"expected={expected_poss:.1f}% ratio={poss_ratio:.2f} "
                       f"inv_mult={boost_mult} {raw_before_gk} → {posterior_mean}")
@@ -932,6 +958,7 @@ def compute_bayesian_projection(
                 if _cdm_mode == "live":
                     raw_before_cdm = posterior_mean
                     posterior_mean = round(posterior_mean * cdm_boost_mult, 1)
+                    _cov_sigma += 0.02  # CDM outlet model depends on possession estimate
                     cdm_inversion_info["applied"] = True
                     cdm_inversion_info["multiplier"] = cdm_boost_mult
                     print(f"[CDM POSS BOOST live] {prop_type} pos={_pos_upper_for_cdm} "
@@ -990,6 +1017,7 @@ def compute_bayesian_projection(
             if _hcdb_mult > 1.005 and _cdm_mode == "live":
                 _raw_before_hcdb = posterior_mean
                 posterior_mean   = round(posterior_mean * _hcdb_mult, 1)
+                _cov_sigma += 0.02  # deep-block model depends on dual possession estimates
                 home_cdm_deep_block_info["applied"]    = True
                 home_cdm_deep_block_info["multiplier"] = _hcdb_mult
                 home_cdm_deep_block_info["reason"] = (
@@ -1293,6 +1321,7 @@ def compute_bayesian_projection(
         if abs(_cs_mult - 1.0) > 0.005:
             _cs_before = posterior_mean
             posterior_mean = round(posterior_mean * _cs_mult, 1)
+            _cov_sigma += 0.02  # clean-sheet rate is a noisy estimator for shot suppression
             clean_sheet_info.update({
                 "applied": True, "mult": _cs_mult, "label": _cs_lbl,
             })
@@ -1424,6 +1453,7 @@ def compute_bayesian_projection(
             press_intensity_info["multiplier"] = applied_mult
             raw_before = posterior_mean
             posterior_mean = round(posterior_mean * applied_mult, 1)
+            _cov_sigma += 0.04  # AI press estimate is highest-uncertainty covariate (±0.15 score)
             tag = "BOOST" if adj > 0 else "SUPPRESS"
             print(f"[PRESS {tag}] {prop_type} pos={_pos_group} venue={venue} "
                   f"opp={press_label}(score={press_score}, signal={press_intensity_info['signal_used']}) "
@@ -1933,6 +1963,30 @@ def compute_bayesian_projection(
     print(f"[PER90] {prop_type}: posterior={posterior_mean:.1f}/90 → {_posterior_mean_raw:.1f} raw "
           f"(exp_min={_exp_min:.0f}, denorm={_denorm:.3f})")
 
+    # ── MARKET-MODEL FUSION ───────────────────────────────────────────────────
+    # The sportsbook line encodes what sharp money thinks the true mean is.
+    # We pull the Bayesian projection 20% toward the line — keeping the model's
+    # directional edge intact while acknowledging independent market information.
+    # The gap fraction also widens the covariate sigma so that large model↔market
+    # disagreements produce realistic (wider) P(OVER)/P(UNDER) rather than false
+    # high-confidence picks where the market knows something the model doesn't.
+    #
+    # Calibration: from settled picks, line is off by +0.43 passes on average vs
+    # actual; Bayesian is off by +0.56. Both have similar precision at small gaps.
+    # At larger gaps (>10%) the market has historically been closer to the truth,
+    # so the 20% pull reduces that systematic error without inverting the signal.
+    _MARKET_WEIGHT = 0.20
+    if line and line > 0 and _posterior_mean_raw > 0:
+        _mf_gap  = line - _posterior_mean_raw
+        _mf_frac = abs(_mf_gap) / _posterior_mean_raw
+        _cov_sigma += min(0.08, _mf_frac * 0.30)  # gap widens uncertainty budget
+        _mf_fused  = _posterior_mean_raw + _MARKET_WEIGHT * _mf_gap
+        if abs(_mf_gap) >= 0.5:
+            print(f"[MARKET FUSION] {prop_type}: bayes={_posterior_mean_raw:.1f} "
+                  f"line={line} gap={_mf_gap:+.1f} ({_mf_frac*100:.0f}%) "
+                  f"→ fused={_mf_fused:.1f}  cov_sigma={_cov_sigma:.3f}")
+        _posterior_mean_raw = round(_mf_fused, 1)
+
     # ── MONTE CARLO SIMULATION ───────────────────────────────────────────────
     # Count stats (shots, goals, saves etc.) use the negative binomial
     # distribution via gamma-Poisson mixture — naturally discrete and right-skewed.
@@ -1944,7 +1998,10 @@ def compute_bayesian_projection(
         n_sims=5000,
         is_count_stat=is_count_stat,
         variance=_prior_variance_raw,
+        covariate_sigma_frac=min(0.20, _cov_sigma),
     )
+    print(f"[COV SIGMA] {prop_type}: _cov_sigma={_cov_sigma:.3f} "
+          f"(capped={min(0.20, _cov_sigma):.3f}) → p_over={p_over*100:.1f}% p_under={p_under*100:.1f}%")
 
     # Edge = how far DENORMALISED posterior is from line as % of denormalised std
     edge_z = round(abs(_posterior_mean_raw - line) / _effective_std_raw, 2) if _effective_std_raw > 0 else 0
