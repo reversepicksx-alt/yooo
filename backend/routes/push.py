@@ -97,19 +97,27 @@ async def _fire(tokens: List[str], title: str, body: str, data: Optional[dict] =
     ]
     async with httpx.AsyncClient(timeout=10) as client:
         for i in range(0, len(messages), 100):
-            batch = messages[i:i + 100]
+            batch        = messages[i:i + 100]
+            batch_tokens = unique[i:i + 100]
             try:
                 resp = await client.post(EXPO_PUSH_URL, json=batch, headers={
                     "Accept": "application/json",
                     "Content-Type": "application/json",
                 })
-                result = resp.json()
-                errors = [
-                    r for r in result.get("data", [])
-                    if r.get("status") == "error"
-                ]
+                result_data = resp.json().get("data", [])
+                errors = []
+                stale_tokens: List[str] = []
+                for j, r in enumerate(result_data):
+                    if r.get("status") == "error":
+                        errors.append(r)
+                        if r.get("details", {}).get("error") == "DeviceNotRegistered":
+                            if j < len(batch_tokens):
+                                stale_tokens.append(batch_tokens[j])
                 if errors:
                     print(f"[PUSH] {len(errors)} delivery error(s): {errors[:3]}")
+                if stale_tokens:
+                    await db.push_tokens.delete_many({"token": {"$in": stale_tokens}})
+                    print(f"[PUSH] Removed {len(stale_tokens)} stale/unregistered token(s)")
             except Exception as e:
                 print(f"[PUSH] send error: {e}")
 
@@ -170,3 +178,70 @@ async def _send_pick_settled_push(pick: dict, result: str):
         body=body,
         data={"screen": "picks", "pickId": pick.get("pickId", "")},
     ))
+
+
+async def _notify_pick_settled(pick: dict, result: str) -> None:
+    """Fire BOTH an Expo device push AND write an in-app inbox notification.
+
+    Use this instead of bare asyncio.create_task(_send_pick_settled_push(...))
+    everywhere in the auto-settlement background bot so the notification bell
+    badge also increments, not just the OS-level push alert.
+
+    pick  — the full pick dict from MongoDB (must have email field).
+    result — 'hit' | 'miss' | 'push' | 'dnp'
+    """
+    import asyncio as _aio
+
+    email  = pick.get("email", "").lower().strip()
+    player = pick.get("playerName", "Player")
+    prop   = pick.get("propType", "Prop").replace("_", " ").title()
+    line   = pick.get("line", "")
+    rec    = (pick.get("recommendation") or "over").upper()
+
+    if result == "hit":
+        title = "✅ Pick HIT!"
+        emoji = "✅"
+        label = "HIT"
+    elif result == "miss":
+        title = "❌ Pick Miss"
+        emoji = "❌"
+        label = "MISS"
+    elif result == "dnp":
+        title = "🔔 Pick DNP/Void"
+        emoji = "🔔"
+        label = "DNP"
+    else:
+        title = "↔️ Pick Push"
+        emoji = "↔️"
+        label = "PUSH"
+
+    body = f"{player} · {prop} {rec} {line}"
+
+    # 1. Expo device push (fire-and-forget)
+    if email:
+        _aio.create_task(send_notifications(
+            emails=[email],
+            title=title,
+            body=f"{body} — {label}",
+            data={"screen": "picks", "pickId": pick.get("pickId", "")},
+        ))
+
+    # 2. In-app inbox notification (awaited — fast MongoDB insert)
+    if email:
+        try:
+            from routes.notifications import create_notification
+            await create_notification(
+                email=email,
+                ntype="pick_settled",
+                title=f"{emoji} {player} {prop} — {label}",
+                body=f"{rec} {line} · Result: {label}",
+                data={
+                    "screen":     "picks",
+                    "pickId":     pick.get("pickId", ""),
+                    "result":     result,
+                    "propType":   pick.get("propType", ""),
+                    "playerName": player,
+                },
+            )
+        except Exception as _ne:
+            print(f"[PUSH] in-app notif error for {player}: {_ne}")

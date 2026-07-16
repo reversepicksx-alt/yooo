@@ -792,8 +792,8 @@ async def _try_settle_mlb(pick: dict) -> bool:
                         }},
                     )
                     try:
-                        from routes.push import _send_pick_settled_push
-                        asyncio.create_task(_send_pick_settled_push(pick, "dnp"))
+                        from routes.push import _notify_pick_settled
+                        await _notify_pick_settled(pick, "dnp")
                     except Exception as _pe:
                         print(f"[MLB SETTLE] push error: {_pe}")
                     return True
@@ -820,8 +820,8 @@ async def _try_settle_mlb(pick: dict) -> bool:
         }},
     )
     try:
-        from routes.push import _send_pick_settled_push
-        asyncio.create_task(_send_pick_settled_push(pick, result))
+        from routes.push import _notify_pick_settled
+        await _notify_pick_settled(pick, result)
     except Exception as _pe:
         print(f"[MLB SETTLE] push error: {_pe}")
     print(f"[MLB SETTLE] ✓ {pick.get('playerName')} {prop_type} actual={actual:.2f} line={line_f} rec={rec} → {result}")
@@ -957,8 +957,8 @@ async def _try_settle_bdl(pick: dict, sport: str) -> bool:
         }},
     )
     try:
-        from routes.push import _send_pick_settled_push
-        asyncio.create_task(_send_pick_settled_push(pick, result))
+        from routes.push import _notify_pick_settled
+        await _notify_pick_settled(pick, result)
     except Exception as _pe:
         print(f"[{sport.upper()} SETTLE] push error: {_pe}")
     print(f"[{sport.upper()} SETTLE] ✓ {pick.get('playerName')} {prop_type} actual={actual:.2f} line={line_f} rec={rec} → {result}")
@@ -1152,8 +1152,8 @@ async def _run_auto_settlement():
                             )
                             settled_count += 1
                             try:
-                                from routes.push import _send_pick_settled_push
-                                asyncio.create_task(_send_pick_settled_push(pick, "push"))
+                                from routes.push import _notify_pick_settled
+                                await _notify_pick_settled(pick, "push")
                             except Exception as _pe:
                                 print(f"[ORPHAN-VOID] push error: {_pe}")
                             print(f"[ORPHAN-VOID] soccer {pick.get('playerName','?')} {pick.get('propType','?')} (no opponent)")
@@ -1290,8 +1290,8 @@ async def _run_auto_settlement():
                     )
                     settled_count += 1
                     try:
-                        from routes.push import _send_pick_settled_push
-                        asyncio.create_task(_send_pick_settled_push(pick, "dnp"))
+                        from routes.push import _notify_pick_settled
+                        await _notify_pick_settled(pick, "dnp")
                     except Exception as _pe:
                         print(f"[CS2 AUTO-SETTLE] push error: {_pe}")
                     print(f"[CS2 AUTO-SETTLE] DNP push: {pname} — {void_reason}")
@@ -1309,8 +1309,8 @@ async def _run_auto_settlement():
                     )
                     settled_count += 1
                     try:
-                        from routes.push import _send_pick_settled_push
-                        asyncio.create_task(_send_pick_settled_push(pick, "dnp"))
+                        from routes.push import _notify_pick_settled
+                        await _notify_pick_settled(pick, "dnp")
                     except Exception as _pe:
                         print(f"[CS2 AUTO-SETTLE] push error: {_pe}")
                     print(f"[CS2 AUTO-SETTLE] No-map3 push: {pname} — {void_reason}")
@@ -1326,8 +1326,8 @@ async def _run_auto_settlement():
                     )
                     settled_count += 1
                     try:
-                        from routes.push import _send_pick_settled_push
-                        asyncio.create_task(_send_pick_settled_push(pick, "dnp"))
+                        from routes.push import _notify_pick_settled
+                        await _notify_pick_settled(pick, "dnp")
                     except Exception as _pe:
                         print(f"[CS2 AUTO-SETTLE] push error: {_pe}")
                     print(f"[CS2 AUTO-SETTLE] Stale-void push: {pname} (7d+ no data)")
@@ -1443,8 +1443,8 @@ async def _run_auto_settlement():
                     )
                     settled_count += 1
                     try:
-                        from routes.push import _send_pick_settled_push
-                        asyncio.create_task(_send_pick_settled_push(pick, "push"))
+                        from routes.push import _notify_pick_settled
+                        await _notify_pick_settled(pick, "push")
                     except Exception as _pe:
                         print(f"[WTA ORPHAN-VOID] push error: {_pe}")
                     print(f"[WTA ORPHAN-VOID] {pick.get('playerName','?')} — no opponent info")
@@ -1498,8 +1498,8 @@ async def _run_auto_settlement():
                     )
                     settled_count += 1
                     try:
-                        from routes.push import _send_pick_settled_push
-                        asyncio.create_task(_send_pick_settled_push(pick, "push"))
+                        from routes.push import _notify_pick_settled
+                        await _notify_pick_settled(pick, "push")
                     except Exception as _pe:
                         print(f"[WTA AUTO-SETTLE] push error: {_pe}")
                     print(f"[WTA AUTO-SETTLE] Stale-void push: {pick.get('playerName','?')} (14d+ no data)")
@@ -1617,8 +1617,8 @@ async def _run_auto_settlement():
                 )
                 _sv_count += 1
                 try:
-                    from routes.push import _send_pick_settled_push
-                    asyncio.create_task(_send_pick_settled_push(_sp, "push"))
+                    from routes.push import _notify_pick_settled
+                    await _notify_pick_settled(_sp, "push")
                 except Exception as _pe:
                     print(f"[STALE-VOID] push error: {_pe}")
                 print(f"[STALE-VOID] {_sp.get('playerName','?')} {_sp.get('propType','?')} ({_sport}) → push")
@@ -2059,8 +2059,8 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
                 {"$set": _push_set}
             )
             try:
-                from routes.push import _send_pick_settled_push
-                asyncio.create_task(_send_pick_settled_push(pick, "push"))
+                from routes.push import _notify_pick_settled
+                await _notify_pick_settled(pick, "push")
             except Exception as _pe:
                 print(f"[AUTO-SETTLE] push error: {_pe}")
             print(f"[AUTO-SETTLE] {pick.get('playerName','')} {prop_type} → VOID/PUSH (only {minutes_played} min played)")
@@ -2119,8 +2119,8 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
             {"$set": _settle_set}
         )
         try:
-            from routes.push import _send_pick_settled_push
-            asyncio.create_task(_send_pick_settled_push(pick, result))
+            from routes.push import _notify_pick_settled
+            await _notify_pick_settled(pick, result)
         except Exception as _pe:
             print(f"[AUTO-SETTLE] push error: {_pe}")
         print(f"[AUTO-SETTLE] {pick.get('playerName','')} {prop_type} {line} → actual {actual_value} ({minutes_played}min) = {result}")
