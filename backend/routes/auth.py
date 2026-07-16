@@ -21,6 +21,10 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 # ── Owner passphrase (stored as secret, never in code) ────────────────────────
 OWNER_CODE = os.environ.get("OWNER_ACCESS_CODE", "").strip()
 OWNER_PIN  = os.environ.get("OWNER_PIN", "").strip()
+# Gate code: prefer OWNER_PIN; fall back to OWNER_ACCESS_CODE.
+# Either secret being set is enough to activate the owner sign-in gate.
+_OWNER_GATE_CODE = OWNER_PIN or OWNER_CODE
+print(f"[AUTH BOOT] OWNER_PIN set={bool(OWNER_PIN)} OWNER_CODE set={bool(OWNER_CODE)} gate_active={bool(_OWNER_GATE_CODE)}")
 
 # ── OTP helpers ───────────────────────────────────────────────────────────────
 def _gen_code() -> str:
@@ -431,11 +435,13 @@ async def verify_access(req: VerifyAccessRequest):
     email_lower = req.email.lower().strip()
 
     # ── Owner PIN gate ────────────────────────────────────────────────────────
-    # When OWNER_PIN is configured, the owner email requires the correct code.
-    # All other emails bypass this block entirely.
-    if OWNER_PIN and email_lower in OWNER_EMAILS:
+    # Always gate the owner email when any owner secret is configured.
+    # Uses OWNER_PIN first; falls back to OWNER_ACCESS_CODE.
+    # If neither is set, skips gate so the owner is never permanently locked out.
+    if _OWNER_GATE_CODE and email_lower in OWNER_EMAILS:
         supplied = (req.pin or "").strip()
-        if supplied != OWNER_PIN:
+        print(f"[AUTH] owner gate check email={email_lower} supplied_len={len(supplied)} match={supplied == _OWNER_GATE_CODE}")
+        if supplied != _OWNER_GATE_CODE:
             return {
                 "verified": False,
                 "owner_pin_required": True,
