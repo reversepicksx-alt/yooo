@@ -345,6 +345,93 @@ export default function AuthScreen() {
     }
   };
 
+  // ── Owner PIN confirm ─────────────────────────────────────────────────────────
+  const handleConfirmOwnerPin = async () => {
+    const trimmedPin = ownerPin.trim();
+    if (!trimmedPin) { setError('Enter your access code.'); return; }
+    setLoading(true);
+    setError('');
+    try {
+      const result = await apiCall<any>('/api/auth/verify-access', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim().toLowerCase(), pin: trimmedPin }),
+      });
+      if (result.verified) {
+        await loginWithResponse({
+          email:         result.email,
+          session_token: result.session_token,
+          access_type:   result.access_type,
+        });
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        router.replace('/(tabs)/scan');
+      } else {
+        setError('Incorrect code. Try again.');
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      }
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Verification failed. Check your connection.');
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // ── OWNER PIN STEP ──────────────────────────────────────────────────────────
+  if (step === 'owner_pin') {
+    return (
+      <KeyboardAvoidingView style={styles.root} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <ScrollView contentContainerStyle={{ flexGrow: 1 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+          <View style={[styles.inner, { paddingTop: insets.top + 8, paddingBottom: insets.bottom + 20 }]}>
+            <TouchableOpacity onPress={goToEmail} style={styles.backRow}>
+              <Ionicons name="arrow-back" size={18} color={Colors.textSecondary} />
+              <Text style={styles.backRowText}>Back</Text>
+            </TouchableOpacity>
+            <View style={styles.card}>
+              <View style={styles.codeHeader}>
+                <View style={styles.codeIconWrap}>
+                  <Ionicons name="lock-closed" size={28} color={Colors.primary} />
+                </View>
+                <Text style={styles.codeTitle}>Enter access code</Text>
+                <Text style={styles.codeSub}>
+                  <Text style={styles.codeEmail}>{email}</Text>
+                </Text>
+              </View>
+              <View style={styles.inputRow}>
+                <Ionicons name="keypad-outline" size={17} color={Colors.textSecondary} style={styles.icon} />
+                <TextInput
+                  style={[styles.input, styles.codeInput]}
+                  placeholder="Your code"
+                  placeholderTextColor={Colors.textTertiary}
+                  value={ownerPin}
+                  onChangeText={v => { setOwnerPin(v); setError(''); }}
+                  keyboardType="number-pad"
+                  secureTextEntry
+                  autoFocus
+                  onSubmitEditing={handleConfirmOwnerPin}
+                  returnKeyType="done"
+                />
+              </View>
+              {!!error && <ErrorBox message={error} />}
+              <TouchableOpacity
+                style={[styles.verifyBtn, loading && styles.verifyBtnDisabled]}
+                onPress={handleConfirmOwnerPin}
+                disabled={loading}
+                activeOpacity={0.85}
+              >
+                {loading
+                  ? <ActivityIndicator color="#000" size="small" />
+                  : <Text style={styles.verifyBtnText}>CONFIRM</Text>
+                }
+              </TouchableOpacity>
+            </View>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    );
+  }
+
   // ════════════════════════════════════════════════════════════════════════════
   // ── CODE STEP ───────────────────────────────────────────────────────────────
   if (step === 'code') {
