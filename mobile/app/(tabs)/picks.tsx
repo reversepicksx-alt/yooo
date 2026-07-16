@@ -665,20 +665,25 @@ export default function PicksScreen() {
         const msg = e instanceof Error ? e.message : String(e);
         // Only treat as SESSION_INVALID when the backend explicitly rejects the token
         // (actual HTTP 401 → api.ts throws 'Your session expired. Please sign in again.')
-        // Network timeouts / server errors are NOT session failures — just return stale data
         const isAuthFailure = msg.includes('Your session expired') || msg.includes('Invalid session');
         if (isAuthFailure) {
           sessionErrCount.current += 1;
           // Need 3 consecutive auth failures before showing session-expired UI
           // (avoids false positives from a single network blip)
           if (sessionErrCount.current >= 3) throw new Error('SESSION_INVALID');
-          return []; // silent on first 2 failures
+          // For first 2 auth failures: throw so React Query keeps stale cache
+          // visible instead of replacing it with an empty array
+          throw e;
         }
-        // Server/network errors — return empty silently; don't alarm the user
-        return [];
+        // Server/network errors: throw so React Query preserves the last
+        // successfully-fetched picks while it silently retries in the background.
+        // Previously returning [] here would overwrite the cache with an empty
+        // array, causing the "No picks" empty state to flash intermittently.
+        throw e;
       }
     },
     enabled: !!session,
+    staleTime: 10000,
     refetchInterval: 15000,
     refetchIntervalInBackground: false,
     retry: 1,
