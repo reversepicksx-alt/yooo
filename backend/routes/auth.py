@@ -546,6 +546,14 @@ async def send_code(req: SendCodeRequest):
     if not email_lower or "@" not in email_lower:
         raise HTTPException(status_code=400, detail="Invalid email address.")
 
+    # Owner email must use the access-code PIN gate, never OTP.
+    if _OWNER_GATE_CODE and email_lower in OWNER_EMAILS:
+        return {
+            "sent": False,
+            "owner_pin_required": True,
+            "message": "Owner sign-in requires the access code, not email OTP. Please update the app.",
+        }
+
     code = _gen_code()
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
 
