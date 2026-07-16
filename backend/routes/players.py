@@ -537,7 +537,7 @@ async def search_players(req: PlayerSearchRequest):
                     except Exception:
                         continue
 
-    # Strategy 2: major domestic leagues + Copa Lib/Sud + all SA leagues
+    # Strategy 2: major domestic leagues + Copa Lib/Sud + all SA leagues + women's leagues
     if not all_players and not quota_gone:
         major_leagues = [
             39, 140, 135, 78, 61,   # EPL, La Liga, Serie A, Bundesliga, Ligue 1
@@ -545,6 +545,7 @@ async def search_players(req: PlayerSearchRequest):
             13, 11,                  # Copa Libertadores, Copa Sudamericana
             128, 242, 239, 265,      # Argentina, Ecuador, Colombia, Chile
             270, 281, 299, 250, 21,  # Uruguay, Peru, Venezuela, Paraguay, Bolivia
+            254, 172, 189,           # NWSL, WSL (England Women), A-League Women
         ]
         async def try_league(lid):
             for s in [season + 1, season]:

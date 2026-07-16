@@ -5196,7 +5196,16 @@ Expected possession for {req.opponentName}: {match_dominance['oppExpectedPoss']}
 
         # ── WEB INTELLIGENCE ────────────────────────────────────────────────────
         if web_intel:
-            match_context += f"\n\n[LIVE WEB INTELLIGENCE — Pre-match intel fetched in real-time]\n{web_intel}\n>>> Integrate this live intelligence into your analysis. Prioritize confirmed injuries and lineup changes. <<<" 
+            match_context += (
+                f"\n\n[LIVE WEB INTELLIGENCE — Pre-match intel fetched in real-time TODAY]\n{web_intel}\n"
+                f">>> CRITICAL INSTRUCTION: The web intelligence above is authoritative real-time data. "
+                f"(1) Manager/coach names MUST come ONLY from this web intel or the LINEUP section — "
+                f"DO NOT reference any coach or manager by name from your training data, as coaching staff "
+                f"changes frequently and your training knowledge IS OUTDATED. "
+                f"(2) If the web intel does not confirm the current manager's name, describe the team's "
+                f"tactical approach WITHOUT naming the coach. "
+                f"(3) Lineup, formation, and injury information from this section overrides all training knowledge. <<<"
+            ) 
 
         # ── LINEUP / FORMATION CONTEXT — feeds real formation matchup into the AI write-up ──
         _pl = locals().get("_pitch_lineup") or {}
