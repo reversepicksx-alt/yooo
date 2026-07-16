@@ -5530,6 +5530,32 @@ Analyze ALL data thoroughly. Return JSON only."""
                         )
                     except Exception:
                         pass
+                    # Write-back real AI text to the saved pick document(s) so the
+                    # analysis modal always shows the full breakdown, not a stale placeholder.
+                    try:
+                        _ai_pick_fields = {}
+                        for _f in ("reasoning", "tacticalBreakdown", "sharpSummary",
+                                   "tacticalAlerts", "keyFactors", "scenarioAnalysis",
+                                   "gameFlowDynamics"):
+                            _fv = _r.get(_f)
+                            if _fv:
+                                _ai_pick_fields[_f] = _fv
+                        if _ai_pick_fields:
+                            _today_start = datetime.now(timezone.utc).replace(
+                                hour=0, minute=0, second=0, microsecond=0)
+                            await db.picks.update_many(
+                                {
+                                    "playerName": req.playerName,
+                                    "propType": req.propType,
+                                    "line": req.line,
+                                    "sport": "soccer",
+                                    "savedAt": {"$gte": _today_start},
+                                },
+                                {"$set": _ai_pick_fields},
+                            )
+                            print(f"[AI-BG] Wrote AI text back to pick(s): {req.playerName} {req.propType}")
+                    except Exception as _ue:
+                        print(f"[AI-BG] Pick write-back error: {_ue}")
                 else:
                     # Mark as failed so frontend stops polling
                     try:
@@ -5561,7 +5587,7 @@ Analyze ALL data thoroughly. Return JSON only."""
                     "projectedValue": pv,
                     "recommendation": early_bayes.get("recommendation", "over"),
                     "confidenceScore": _capped_conf,
-                    "reasoning": "AI analysis loading... Refresh for full tactical breakdown.",
+                    "reasoning": "",
                     "_source": "bayesian_async_pending",
                 }
                 print(f"[AI-ASYNC] Math-only seed while AI runs in background: {pv}")
@@ -5571,7 +5597,7 @@ Analyze ALL data thoroughly. Return JSON only."""
                     "projectedValue": pv,
                     "recommendation": "over",
                     "confidenceScore": 50,
-                    "reasoning": "AI analysis loading...",
+                    "reasoning": "",
                     "_source": "fallback_async_pending",
                 }
                 print(f"[AI-ASYNC] Fallback seed while AI runs: {pv}")

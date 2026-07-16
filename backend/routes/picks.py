@@ -1008,6 +1008,33 @@ async def get_pick_analysis(email: str, token: str, pickId: str):
     prediction = None
     collection = db.predictions
 
+    # Strategy 0: Check ai_pending_jobs for same-day cached AI result.
+    # This handles picks saved while AI was still pending — the job finishes
+    # after the pick is saved, so the pick doc has no AI text yet.
+    try:
+        from datetime import timezone as _tz
+        _today = datetime.now(_tz.utc).strftime("%Y-%m-%d")
+        _pid_or_name = pick.get("playerId") or pick.get("playerName", "")
+        _line_val = pick.get("line", "")
+        _opp_name = pick.get("opponentName", "")
+        _job_ck = f"soc|{_pid_or_name}|{prop_type}|{_line_val}|{_opp_name}|{_today}"
+        _job_hit = await db.ai_pending_jobs.find_one(
+            {"_k": _job_ck, "done": True, "failed": {"$ne": True}},
+            {"_id": 0, "v": 1}
+        )
+        if _job_hit and _job_hit.get("v"):
+            _ai_v = _job_hit["v"]
+            if _ai_v.get("tacticalBreakdown") or _ai_v.get("sharpSummary") or _ai_v.get("reasoning"):
+                _merged = {**_ai_v}
+                for _mf in ("projectedValue", "bayesianMetrics", "gameScript", "moneyline",
+                            "tacticalAlerts", "pOver", "pUnder", "confidenceScore", "confidenceLevel"):
+                    _mv = pick.get(_mf)
+                    if _mv is not None and not _merged.get(_mf):
+                        _merged[_mf] = _mv
+                return {"found": True, "analysis": _merged}
+    except Exception:
+        pass
+
     # Strategy 1: Match by player ID + prop type (most recent)
     if player_id and player_id != 0:
         prediction = await collection.find_one(
