@@ -4,6 +4,7 @@ from typing import Optional
 
 class VerifyAccessRequest(BaseModel):
     email: str
+    pin: str = ""
 
 
 class LoginRequest(BaseModel):

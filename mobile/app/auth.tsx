@@ -13,7 +13,7 @@ import {
   verifyAccess, setPassword as apiSetPassword, authLogin, createCheckout, linkPayment, contactSupport,
 } from '@/lib/api';
 
-type Step = 'email' | 'pricing';
+type Step = 'email' | 'pin' | 'pricing';
 
 const INPUT_STYLE = Platform.OS === 'web' ? { outlineWidth: 0, outlineStyle: 'none' } : {};
 
@@ -37,6 +37,7 @@ export default function AuthScreen() {
   const [info, setInfo] = useState('');
   const [showPaymentEmail, setShowPaymentEmail] = useState(false);
   const [paymentEmail, setPaymentEmail] = useState('');
+  const [ownerPin, setOwnerPin] = useState('');
   const [showSupport, setShowSupport] = useState(false);
   const [supportName, setSupportName] = useState('');
   const [supportMessage, setSupportMessage] = useState('');
@@ -107,7 +108,10 @@ export default function AuthScreen() {
     setInfo('');
     try {
       const result = await verifyAccess(trimmed);
-      if (result.denied && result.denial_reason) {
+      if (result.owner_pin_required) {
+        setStep('pin');
+        setOwnerPin('');
+      } else if (result.denied && result.denial_reason) {
         setError(result.denial_reason);
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       } else if (result.verified && result.session_token && result.email) {
@@ -254,11 +258,103 @@ export default function AuthScreen() {
     }
   };
 
+  const handleConfirmPin = async () => {
+    const trimmedEmail = email.trim().toLowerCase();
+    const trimmedPin = ownerPin.trim();
+    if (!trimmedPin) { setError('Enter your access code.'); return; }
+    setLoading(true);
+    setError('');
+    try {
+      const result = await verifyAccess(trimmedEmail, trimmedPin);
+      if (result.verified && result.session_token && result.email) {
+        await loginWithResponse({
+          email: result.email,
+          session_token: result.session_token,
+          access_type: result.access_type,
+        });
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        router.replace('/(tabs)/scan');
+      } else if (result.owner_pin_required) {
+        setError('Incorrect code. Try again.');
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      } else {
+        setError(result.message || 'Verification failed.');
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      }
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to verify. Check your connection.');
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const goBack = () => {
     setStep('email');
+    setOwnerPin('');
     setError('');
     setInfo('');
   };
+
+  if (step === 'pin') {
+    return (
+      <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom + 20 }]}>
+        <View style={styles.inner}>
+          <View style={styles.hero}>
+            <Image source={require('../assets/logo.png')} style={styles.logo} resizeMode="contain" />
+            <Text style={styles.appName}>REVERSEPICKS</Text>
+            <Text style={styles.tagline}>ELITE PROP INTELLIGENCE</Text>
+          </View>
+          <View style={styles.formArea}>
+            <View style={styles.card}>
+              <View style={{ alignItems: 'center', marginBottom: 14 }}>
+                <Ionicons name="lock-closed" size={26} color={Colors.primary} />
+                <Text style={{ color: Colors.text, fontSize: 15, fontWeight: '600', marginTop: 8, letterSpacing: 0.4 }}>
+                  Enter your access code
+                </Text>
+              </View>
+              <View style={styles.inputRow}>
+                <Ionicons name="keypad-outline" size={17} color={Colors.textSecondary} style={styles.icon} />
+                <TextInput
+                  style={[styles.input, INPUT_STYLE]}
+                  placeholder="Access code"
+                  placeholderTextColor={Colors.textTertiary}
+                  value={ownerPin}
+                  onChangeText={v => { setOwnerPin(v); setError(''); }}
+                  keyboardType="number-pad"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  secureTextEntry
+                  onSubmitEditing={handleConfirmPin}
+                  returnKeyType="done"
+                />
+              </View>
+              {!!error && <ErrorBox message={error} />}
+              <TouchableOpacity
+                style={[styles.btn, loading && styles.btnDisabled]}
+                onPress={handleConfirmPin}
+                disabled={loading}
+                activeOpacity={0.85}
+              >
+                {loading
+                  ? <ActivityIndicator color="#000" size="small" />
+                  : (
+                    <View style={styles.btnInner}>
+                      <Ionicons name="checkmark-circle" size={16} color="#000" />
+                      <Text style={styles.btnText}>CONFIRM</Text>
+                    </View>
+                  )
+                }
+              </TouchableOpacity>
+              <TouchableOpacity onPress={goBack} style={styles.alreadyPaidRow} activeOpacity={0.7}>
+                <Text style={styles.alreadyPaid}>← Back</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </View>
+    );
+  }
 
   if (step === 'pricing') {
     return (

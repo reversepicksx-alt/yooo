@@ -98,12 +98,13 @@ export interface AccessCheckResponse {
   message?: string;
   denied?: boolean;
   denial_reason?: string;
+  owner_pin_required?: boolean;
 }
 
-export async function verifyAccess(email: string): Promise<AccessCheckResponse> {
+export async function verifyAccess(email: string, pin?: string): Promise<AccessCheckResponse> {
   return apiCall<AccessCheckResponse>('/api/auth/verify-access', {
     method: 'POST',
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ email, ...(pin ? { pin } : {}) }),
   });
 }
 

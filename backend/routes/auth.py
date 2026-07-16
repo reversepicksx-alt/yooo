@@ -20,6 +20,7 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 # ── Owner passphrase (stored as secret, never in code) ────────────────────────
 OWNER_CODE = os.environ.get("OWNER_ACCESS_CODE", "").strip()
+OWNER_PIN  = os.environ.get("OWNER_PIN", "").strip()
 
 # ── OTP helpers ───────────────────────────────────────────────────────────────
 def _gen_code() -> str:
@@ -428,6 +429,20 @@ async def check_web_access(email_lower: str):
 @router.post("/verify-whop")
 async def verify_access(req: VerifyAccessRequest):
     email_lower = req.email.lower().strip()
+
+    # ── Owner PIN gate ────────────────────────────────────────────────────────
+    # When OWNER_PIN is configured, the owner email requires the correct code.
+    # All other emails bypass this block entirely.
+    if OWNER_PIN and email_lower in OWNER_EMAILS:
+        supplied = (req.pin or "").strip()
+        if supplied != OWNER_PIN:
+            return {
+                "verified": False,
+                "owner_pin_required": True,
+                "email": email_lower,
+                "message": "Incorrect code. Try again." if supplied else "Enter your access code.",
+            }
+
     access_type = await check_access(email_lower)
     if not access_type:
         return {"verified": False, "email": email_lower, "message": "No active membership found."}
