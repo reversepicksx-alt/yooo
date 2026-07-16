@@ -4312,10 +4312,14 @@ If recommending OVER on passes, account for potential 2nd-half tempo drop."""
                         fls = latest.get("fouls", {})
                         cards = latest.get("cards", {})
                         games = latest.get("games", {})
+                        clr_total = tck.get("clearances", 0) or 0
+                        apps_total = max(1, games.get("appearances", 1) or 1)
+                        clr_pg = round(clr_total / apps_total, 1)
                         stats_evidence = f"""
 ACTUAL SEASON STATS (use these to determine position — stats don't lie):
 - Appearances: {games.get('appearances', '?')}, Minutes: {games.get('minutes', '?')}, Rating: {games.get('rating', '?')}
 - Tackles: {tck.get('total', 0)}, Interceptions: {tck.get('interceptions', 0)}, Blocks: {tck.get('blocks', 0)}
+- Clearances (season total): {clr_total} → {clr_pg}/game  ← KEY CB SIGNAL (≥2.0/game = almost certainly CB; <1.0/game with forward runs = fullback)
 - Duels won: {duels.get('won', 0)}/{duels.get('total', 0)}
 - Passes total: {pss.get('total', 0)}, Key passes: {pss.get('key', 0)}, Accuracy: {pss.get('accuracy', '?')}%
 - Dribbles: {drb.get('attempts', 0)} attempts, {drb.get('success', 0)} successful
@@ -4324,7 +4328,8 @@ ACTUAL SEASON STATS (use these to determine position — stats don't lie):
 - Fouls drawn: {fls.get('drawn', 0)}, Committed: {fls.get('committed', 0)}
 - Yellow cards: {cards.get('yellow', 0)}, Red: {cards.get('red', 0)}
 POSITION CLUES — distinguish DEEP vs ADVANCED roles:
-- CB: very high tackles/blocks, low key passes, low dribbles
+- CB (Centre-Back): CENTRAL defender — stays in the middle/back line, does NOT overlap forward. CB is the correct code for ALL central defenders regardless of whether they play on the left or right side of a back-4. A right-sided CB is STILL CB, NEVER RB. Key stats: clearances ≥2/game (strongest CB signal), high aerial duels, low dribbles (<0.8/game), low shots (<0.4/game). Examples: Van Dijk, Kompany, Dias, Stones, Akanji, Botman, Finn Surman.
+- RB / LB (Fullback): WIDE defenders who overlap forward. Low clearances (<1.5/game), higher dribbles/crosses. NEVER assign RB/LB to a player who is primarily a central defender.
 - CDM / deep-lying playmaker (regista): the team's tempo-setter and build-up hub. HIGHEST pass volume on the team (touches the ball most when in possession), VERY HIGH pass accuracy, sits DEEPEST in midfield, LOW shots, LOW dribbles. Interceptions can be moderate (a regista is a passer first, not a destroyer). Role = "Deep-Lying Playmaker". Vitinha at PSG = CDM / Deep-Lying Playmaker (regista) — he is the metronome who orchestrates from deep and leads the team in touches/passes. He is NOT a Box-to-Box runner and NOT a CAM.
 - CDM (ball-winning pivot): HIGH interceptions/tackles, high pass accuracy, LOW key passes, LOW shots. Role = "Ball Winner" or "Anchor".
 - CM (box-to-box): balanced tackles + passes + key passes, MODERATE shots AND noticeable dribbles/forward runs, contributes goals/assists. Role = "Box-to-Box". Only pick this when the player visibly gets forward (shots + key passes + dribbles all moderate-to-high), NOT for a deep metronome.

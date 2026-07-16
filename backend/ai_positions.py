@@ -15,7 +15,7 @@ that want freshness.  POSITION_PROMPT_VERSION bump (config.py) forces re-resolut
 import json
 from config import db, XAI_API_KEY
 
-GROK_POS_PROMPT_VERSION = 5
+GROK_POS_PROMPT_VERSION = 6
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -108,12 +108,21 @@ def _stat_fingerprint_role(generic_position: str, stats: dict | None) -> str | N
         return None
 
     if gpos == "Defender":
+        # Clearances are the strongest CB signal — fullbacks rarely clear 3+/game
+        if clearances_pg >= 3.0:
+            return "Ball-Playing CB" if passes_pg >= 50 else "Stopper"
         if passes_pg >= 62:
             return "Ball-Playing CB"
-        if clearances_pg >= 5.0:
+        if clearances_pg >= 2.0:
+            return "Stopper"
+        # Clearly a CB: very low dribbles/shots and at least some clearances
+        if dribbles_pg < 0.8 and shots_pg < 0.4 and clearances_pg >= 1.0:
             return "Stopper"
         if dribbles_pg >= 1.5 and shots_pg >= 0.5:
             return "Inverted Fullback"
+        # Low clearances with forward output = fullback
+        if clearances_pg < 1.0 and (dribbles_pg >= 0.8 or shots_pg >= 0.3):
+            return "Fullback"
         return None
 
     if gpos in ("Attacker", "Forward"):
@@ -192,11 +201,13 @@ async def resolve_player_role(
         goals_pg      = round((stats.get("goals_total")        or 0) / apps, 1)
         assists_pg    = round((stats.get("goals_assists")       or 0) / apps, 1)
         clearances_pg = round((stats.get("clearances")         or 0) / apps, 1)
+        interceptions_pg = round((stats.get("tackles_interceptions") or 0) / apps, 1)
         stats_evidence = (
             f"\n\nSEASON STAT FINGERPRINT (per game over {apps} appearances):\n"
             f"  Passes: {passes_pg}  Key passes: {key_pg}  Shots: {shots_pg}\n"
-            f"  Tackles: {tackles_pg}  Dribbles: {dribbles_pg}  Clearances: {clearances_pg}\n"
-            f"  Goals: {goals_pg}  Assists: {assists_pg}\n"
+            f"  Tackles: {tackles_pg}  Interceptions: {interceptions_pg}  Dribbles: {dribbles_pg}\n"
+            f"  Clearances: {clearances_pg}  Goals: {goals_pg}  Assists: {assists_pg}\n"
+            f"  → Clearances/game: {clearances_pg} (≥2.0 = strong CB indicator; <1.0 with forward output = fullback)\n"
             f"  → Stat-derived hint: {fingerprint_hint or 'insufficient data'}"
         )
 
@@ -247,12 +258,17 @@ STRIKERS / ST / CF:
 • Pressing Forward: leads press from front, high press intensity, tracks back. Examples: Firmino (pressing phase), Rashford (Man Utd).
 • False 9: drops deep, creates chances, low shots but high key passes and dribbles. Examples: Messi (Barca 2009-12), Coutinho.
 
-DEFENDERS:
-• Ball-Playing CB: high passes (60+/game), comfortable on ball, plays out from back. Examples: Rúben Dias, Stones, Van Dijk.
-• Stopper: dominant aerial/duel defender, clears danger, fewer pass attempts. Examples: Virgil van Dijk (defensive mode), Kompany.
-• Inverted Fullback: fullback who tucks inside into midfield rather than overlapping. Examples: Trent Alexander-Arnold, Cancelo (left).
-• Wing-Back: fullback who advances constantly to provide width in attacking phases. Examples: Theo Hernandez, Reece James, Dest.
-• Fullback: traditional balanced fullback — defends + overlaps moderately. Examples: Jordi Alba, Robertson (standard phase).
+DEFENDERS — CRITICAL DISTINCTION (CB vs fullback):
+CB (Centre-Back) is the code for ALL central defenders regardless of which side of the back-4 they occupy.
+A CB who plays "right-sided" in a back-4 is STILL a CB, NEVER an RB.
+RB and LB are WIDE defenders (fullbacks) whose primary job is to overlap forward and provide width.
+KEY SIGNAL: Clearances/game ≥2 = almost certainly CB. Low clearances + forward runs = fullback/wing-back.
+
+• Ball-Playing CB (position=CB): high passes (60+/game) + high clearances, comfortable on ball, plays out from back. Examples: Rúben Dias, John Stones, Van Dijk.
+• Stopper (position=CB): dominant aerial/duel CB, clears danger constantly (3+/game clearances), fewer passes. Examples: Kompany, Botman, Akanji, Finn Surman (Portland Timbers).
+• Inverted Fullback (position=RB or LB): fullback who tucks INSIDE into midfield rather than overlapping. Low clearances. Examples: Trent Alexander-Arnold, Cancelo (left).
+• Wing-Back (position=RWB or LWB): wide defender who advances CONSTANTLY up the flank. Low clearances. Examples: Theo Hernandez, Reece James, Dest.
+• Fullback (position=RB or LB): traditional balanced fullback — defends + overlaps moderately. Low clearances (<1.5/game). Examples: Jordi Alba, Robertson (standard phase).
 
 GOALKEEPER:
 • Sweeper Keeper: actively comes off line, plays high defensive line, distributes quickly. Examples: Alisson, Ederson, ter Stegen.

@@ -179,7 +179,7 @@ TOP_5_LEAGUES = [39, 140, 135, 78, 61]
 
 # ── Position prompt version — increment when the resolution prompt/logic changes
 # to force re-resolution of any cached positions on next predict call ──
-POSITION_PROMPT_VERSION = 5
+POSITION_PROMPT_VERSION = 6
 
 # ── Rate limiter ──
 api_semaphore = aio.Semaphore(10)
