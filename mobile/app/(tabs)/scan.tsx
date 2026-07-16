@@ -653,8 +653,9 @@ export default function ScanScreen() {
       setShowAltPlayers(false);
       setPhase('result');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      // Only poll for backend AI narrative if tactical chat also failed (fallback)
-      if (result.aiPending && sport === 'soccer' && !tacText) {
+      // Always poll for backend AI narrative when pending (populates sharpSummary/tacticalBreakdown)
+      // even if fetchTacticalChat already returned text for the TACTICAL AI card
+      if (result.aiPending && sport === 'soccer') {
         setAiNarrativeLoading(true);
         pollForAiNarrative(req, result);
       }
