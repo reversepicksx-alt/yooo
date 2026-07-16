@@ -730,6 +730,9 @@ async def predict(req: PredictionRequest):
                         if len(parts) >= 3:
                             fid_map[parts[1]] = entry
 
+                    # Track which fixture IDs come from Stage 0 so Stage 1 can dedup
+                    _stage0_fids: set = set(fid_map.keys())
+
                     # Batch-fetch fixture metadata (home/away team IDs) stored by prefetch
                     fxm_docs: dict = {}
                     if fid_map:
@@ -779,6 +782,8 @@ async def predict(req: PredictionRequest):
                         raw_val = gl.get(target_field) if target_field else None
                         if raw_val is not None and minutes > 0:
                             gl["targetStatPer90"] = round((raw_val / minutes) * 90, 2)
+                        # Mark with fixture ID so Stage 1 can dedup
+                        gl["_fid"] = fid_str
                         collected.append(gl)
 
                     # Only short-circuit if we have enough games with venue data.
@@ -818,7 +823,7 @@ async def predict(req: PredictionRequest):
 
                 # ── On-demand cache: check team_fixture_history before calling API ──
                 team_fixtures_raw = None
-                _tfh_cache_ttl = 24 * 3600  # 24 hours
+                _tfh_cache_ttl = 6 * 3600  # 6 hours — refresh often for accurate rest-day calculation
                 try:
                     _tfh_doc = await db.team_fixture_history.find_one(
                         {"teamId": actual_team_id}, {"_id": 0, "fixtures": 1, "_ts": 1}
@@ -954,6 +959,7 @@ async def predict(req: PredictionRequest):
                                     raw_val = gl.get(stat_field_map.get(req.propType, ""), None)
                                     if raw_val is not None and minutes > 0:
                                         gl["targetStatPer90"] = round((raw_val / minutes) * 90, 2)
+                                    gl["_fid"] = str(fid)
                                     gl = await _enrich_possession(gl)
                                     return gl
                                 # Fall through to live API fetch for saves
@@ -1041,6 +1047,7 @@ async def predict(req: PredictionRequest):
                         raw_val = gl.get(stat_field_map.get(req.propType, ""), None)
                         if raw_val is not None and minutes > 0:
                             gl["targetStatPer90"] = round((raw_val / minutes) * 90, 2)
+                        gl["_fid"] = str(fid)
                         gl = await _enrich_possession(gl)
                         return gl
                     except Exception:
@@ -1063,6 +1070,34 @@ async def predict(req: PredictionRequest):
                 print(f"[API-DIRECT] {req.playerName}/{req.propType}: {len(collected)} real game logs from {len(team_fixtures_raw)} fixtures")
             except Exception as _e:
                 print(f"[API-DIRECT] Error: {_e}")
+
+            # ── Dedup by fixture ID ────────────────────────────────────────────
+            # Stage 0 (MongoDB cache) and Stage 1 (team fixture loop) both read
+            # from fixture_player_cache for the same fixture IDs — the same game
+            # can appear twice: once without date/score (Stage 0) and once with
+            # date/score/possession (Stage 1). Keep Stage 1's richer entry.
+            if collected:
+                _fid_index: dict = {}   # fid_str -> index in _deduped
+                _deduped: list = []
+                for _g in collected:
+                    _g_fid = _g.get("_fid")
+                    if not _g_fid:
+                        _deduped.append(_g)
+                    elif _g_fid not in _fid_index:
+                        _fid_index[_g_fid] = len(_deduped)
+                        _deduped.append(_g)
+                    else:
+                        # If the new entry has a real date and the existing one doesn't,
+                        # replace — Stage 1 (with date) beats Stage 0 (empty date).
+                        _existing = _deduped[_fid_index[_g_fid]]
+                        if _g.get("date") and not _existing.get("date"):
+                            _deduped[_fid_index[_g_fid]] = _g
+                if len(_deduped) < len(collected):
+                    print(f"[DEDUP] {req.playerName}: removed {len(collected) - len(_deduped)} duplicate fixture(s)")
+                collected = _deduped
+                # Strip internal marker before handing off
+                for _g in collected:
+                    _g.pop("_fid", None)
 
             return collected
 

@@ -1,3 +1,4 @@
+- [LLM error string poison](llm-error-string-poison.md) — Replit Gemini integration returns "[LLM Error: ...]" as TEXT on 429; must filter in _ai_call before caching or it poisons tacticalBreakdown.
 - [Replit Gemini proxy](replit-gemini-proxy.md) — Must set `api_version: ''` in http_options; proxy rejects /v1beta/ paths. Python packages in .pythonlibs/python3.12 — use full path.
 - [AI narrative stuck on loading](ai-narrative-stuck-loading.md) — async AI polling jobs need retry+timeout inside the called function itself, not just the poller; check for shadowed duplicate fn defs; use PYTHONUNBUFFERED=1 when debugging.
 - [PrizePicks PerimeterX bypass](prizepicks-perimeterx-bypass.md) — curl --http2 iOS Safari UA via asyncio subprocess; Python HTTP clients return 403 (TLS fingerprint); soccer league IDs listed.

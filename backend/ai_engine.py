@@ -92,7 +92,13 @@ async def _ai_call(
                 timeout=timeout,
             )
             _result = (_resp.text or "").strip()
-            if _result:
+            # Filter out LLM error strings returned by the integration library
+            # (e.g. "[LLM Error: 429 RESOURCE_EXHAUSTED ...]") — treat as a
+            # failed attempt so the retry loop fires instead of caching poison.
+            if _result and _result.startswith("[LLM Error:"):
+                _last_err = _result[:120]
+                print(f"[AI] Integration returned error string (attempt {_attempt}): {_last_err}")
+            elif _result:
                 try:
                     await db.ai_response_cache.replace_one(
                         {"_k": _ck},
@@ -102,7 +108,8 @@ async def _ai_call(
                 except Exception:
                     pass
                 return _result
-            _last_err = "empty response"
+            else:
+                _last_err = "empty response"
         except asyncio.TimeoutError:
             _last_err = f"timeout after {timeout}s"
         except Exception as e:
