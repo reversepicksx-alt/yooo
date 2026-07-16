@@ -44,6 +44,10 @@ appleTeamId: FDC3LJRAC7
 ## Build history (successful)
 - Build 128 (2bd82434): first clean build after apple-auth removal → FINISHED, submitted to TestFlight
 - Build 129 (0ca0662d): all 7 auth polish improvements (Terms links, slide animations, Welcome back, Face ID, social proof, skeleton loaders, owner link behind 5 logo taps)
+- Build 182 (7e0a1c80): v1.2 — PIN gate, AI narrative polling fix, placeholder text filter → FINISHED, submitted to TestFlight (submission eb1f7a60)
+
+## Version bump rule
+Apple rejects `eas submit` with `SUBMISSION_SERVICE_IOS_OLD_APP_VERSION` if the CFBundleShortVersionString (= `version` in app.config.js) was already accepted for this app. Always increment `version` in `app.config.js` before building for a new submission. Build number auto-increments via `appVersionSource: "remote"` but version string does NOT.
 
 ## app.config.js silently overrides app.json — version/build number source of truth
 `mobile/app.config.js` (dynamic config) exists alongside `mobile/app.json` (static config). When both exist, Expo/EAS resolves config from `app.config.js` only — it does NOT merge with or fall back to `app.json` fields (this app.config.js is a fully independent object literal, not an import of app.json). Editing `app.json`'s `version` field has **zero effect** on builds; always edit the hardcoded `version` string inside `app.config.js` (or unify the files).
