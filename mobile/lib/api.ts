@@ -102,9 +102,15 @@ export interface AccessCheckResponse {
 }
 
 export async function verifyAccess(email: string, pin?: string): Promise<AccessCheckResponse> {
+  // Web always sends `pin` (even as "") so the backend can distinguish web vs native.
+  // Native old binary omits the pin field entirely → backend gets pin=None → auto-login bypass.
+  const { Platform } = require('react-native');
+  const body = Platform.OS === 'web'
+    ? JSON.stringify({ email, pin: pin ?? '' })
+    : JSON.stringify({ email, ...(pin !== undefined ? { pin } : {}) });
   return apiCall<AccessCheckResponse>('/api/auth/verify-access', {
     method: 'POST',
-    body: JSON.stringify({ email, ...(pin ? { pin } : {}) }),
+    body,
   });
 }
 

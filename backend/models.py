@@ -4,7 +4,7 @@ from typing import Optional
 
 class VerifyAccessRequest(BaseModel):
     email: str
-    pin: str = ""
+    pin: Optional[str] = None  # None = native (no pin field sent); "" = web with empty pin
 
 
 class LoginRequest(BaseModel):

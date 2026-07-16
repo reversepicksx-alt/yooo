@@ -434,13 +434,15 @@ async def check_web_access(email_lower: str):
 async def verify_access(req: VerifyAccessRequest):
     email_lower = req.email.lower().strip()
 
-    # ── Owner PIN gate ────────────────────────────────────────────────────────
-    # Always gate the owner email when any owner secret is configured.
-    # Uses OWNER_PIN first; falls back to OWNER_ACCESS_CODE.
-    # If neither is set, skips gate so the owner is never permanently locked out.
-    if _OWNER_GATE_CODE and email_lower in OWNER_EMAILS:
-        supplied = (req.pin or "").strip()
-        print(f"[AUTH] owner gate check email={email_lower} supplied_len={len(supplied)} match={supplied == _OWNER_GATE_CODE}")
+    # ── Owner PIN gate (web only) ─────────────────────────────────────────────
+    # The pin field is Optional[str]:
+    #   - None  → request came from the native app (old binary sends no pin field) → bypass gate, auto-login
+    #   - ""    → web app opened PIN screen but user hasn't typed yet → demand code
+    #   - "..." → web app submitted a code → validate it
+    # This lets the current App Store build auto-login while the web always requires the code.
+    if _OWNER_GATE_CODE and email_lower in OWNER_EMAILS and req.pin is not None:
+        supplied = req.pin.strip()
+        print(f"[AUTH] owner gate (web) email={email_lower} supplied_len={len(supplied)} match={supplied == _OWNER_GATE_CODE}")
         if supplied != _OWNER_GATE_CODE:
             return {
                 "verified": False,
@@ -545,14 +547,6 @@ async def send_code(req: SendCodeRequest):
     email_lower = req.email.lower().strip()
     if not email_lower or "@" not in email_lower:
         raise HTTPException(status_code=400, detail="Invalid email address.")
-
-    # Owner email must use the access-code PIN gate, never OTP.
-    if _OWNER_GATE_CODE and email_lower in OWNER_EMAILS:
-        return {
-            "sent": False,
-            "owner_pin_required": True,
-            "message": "Owner sign-in requires the access code, not email OTP. Please update the app.",
-        }
 
     code = _gen_code()
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
