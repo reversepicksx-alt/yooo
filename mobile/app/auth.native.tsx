@@ -184,7 +184,7 @@ export default function AuthScreen() {
         const result = await apiCall<any>('/api/auth/verify-access', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: trimmed }),
+          body: JSON.stringify({ email: trimmed, pin: '' }),
         });
         if (result.verified) {
           // PIN not configured server-side — instant login (backward compat)
