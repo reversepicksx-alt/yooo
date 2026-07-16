@@ -18,7 +18,7 @@ import Purchases from 'react-native-purchases';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
-type Step = 'landing' | 'email' | 'code';
+type Step = 'landing' | 'email' | 'owner_pin' | 'code';
 
 function getErrorMessage(e: unknown): string {
   if (e instanceof Error) return e.message;
@@ -57,6 +57,7 @@ export default function AuthScreen() {
   const [info, setInfo]       = useState('');
   const [resendTimer, setResendTimer] = useState(0);
   const resendRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [ownerPin, setOwnerPin] = useState('');
 
   // Owner mode — hidden behind 5 taps on logo
   const [logoTaps, setLogoTaps]       = useState(0);
@@ -177,7 +178,7 @@ export default function AuthScreen() {
     setError('');
     setInfo('');
 
-    // Owner email — instant login, no code
+    // Owner email — requires PIN (no OTP email sent to owner)
     if (trimmed === 'reversepicksx@gmail.com') {
       try {
         const result = await apiCall<any>('/api/auth/verify-access', {
@@ -186,6 +187,7 @@ export default function AuthScreen() {
           body: JSON.stringify({ email: trimmed }),
         });
         if (result.verified) {
+          // PIN not configured server-side — instant login (backward compat)
           await loginWithResponse({
             email:         result.email,
             session_token: result.session_token,
@@ -196,9 +198,18 @@ export default function AuthScreen() {
           setBioLoading(false);
           router.replace('/(tabs)/scan');
           return;
+        } else if (result.owner_pin_required) {
+          // Server requires PIN — show dedicated PIN screen (no OTP email)
+          setEmail(trimmed);
+          setOwnerPin('');
+          setError('');
+          setStep('owner_pin');
+          setLoading(false);
+          setBioLoading(false);
+          return;
         }
       } catch {
-        // fall through to normal OTP
+        // fall through to normal OTP on unexpected error
       }
     }
 
