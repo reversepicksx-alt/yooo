@@ -78,8 +78,8 @@ localPort = 23636
 externalPort = 3000
 
   [deployment]
-deploymentTarget = "vm"
-run = ["bash", "-c", "mkdir -p /home/runner/.reversepicks_db && (mongod --dbpath /home/runner/.reversepicks_db --logpath /home/runner/.reversepicks_mongo.log --fork --quiet 2>/dev/null || true) && sleep 5 && cd backend && PYTHONUNBUFFERED=1 /home/runner/workspace/.pythonlibs/bin/python3.12 -m uvicorn server:app --host 0.0.0.0 --port 8000"]
+deploymentTarget = "autoscale"
+run = ["bash", "-c", "(while true; do cd /home/runner/workspace/backend && PYTHONUNBUFFERED=1 /home/runner/workspace/.pythonlibs/bin/python3.12 -m uvicorn server:app --host 0.0.0.0 --port 8000; sleep 3; done) & cd /home/runner/workspace/mobile && PRODUCTION=true node proxy.js"]
 build = ["bash", "-c", "cd mobile && npx expo export -p web --output-dir dist 2>&1 | tail -5 && echo 'Build done'"]
 
   [postMerge]
