@@ -1,9 +1,11 @@
 import { Platform } from 'react-native';
 
 const getApiBase = (): string => {
-  // On web: call production API directly (same as iOS app) — never the dev backend
+  // On web: use relative URLs — proxy.js handles /api/* → localhost:8000 in both
+  // dev (picard.replit.dev) and production VM (reversepicks.com). Both environments
+  // connect to the same Atlas MongoDB so data is identical.
   if (Platform.OS === 'web' && typeof window !== 'undefined') {
-    return 'https://reversepicks.com';
+    return '';
   }
   // For native app builds: use EXPO_PUBLIC_API_URL or localhost fallback
   const env = process.env.EXPO_PUBLIC_API_URL;

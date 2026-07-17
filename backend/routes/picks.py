@@ -864,7 +864,9 @@ async def list_picks(req: GetPicksRequest):
                     p["period"] = upd.get("period")
                     p["matchStatus"] = upd.get("matchStatus")
                     p["matchScore"] = upd.get("matchScore")
-                    p["fixtureId"] = upd.get("fixtureId")
+                    _old_fid = p.get("fixtureId")
+                    new_fid = upd.get("fixtureId")
+                    p["fixtureId"] = new_fid
                     p["minutesPlayed"] = upd.get("minutesPlayed")
                     p["paceMismatch"] = upd.get("paceMismatch")
                     p["paceWarning"] = upd.get("paceWarning")
@@ -884,6 +886,16 @@ async def list_picks(req: GetPicksRequest):
                         p["status"] = "settled"
                         p["result"] = upd["result"]
                         p["actualValue"] = upd.get("actualValue")
+                    # Persist fixtureId to DB so future calls can use T0 lookup
+                    # (direct by ID) instead of T1/T2/T3, reducing rate-limit risk.
+                    if new_fid and not _old_fid:
+                        try:
+                            await db.picks.update_one(
+                                {"pickId": p["pickId"], "email": req.email.lower()},
+                                {"$set": {"fixtureId": new_fid}}
+                            )
+                        except Exception:
+                            pass
         except Exception:
             traceback.print_exc()
 
@@ -1894,10 +1906,20 @@ async def _process_api_football_live(picks: list, email: str) -> list:
     """
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-    # ── Pre-fetch shared caches so parallel picks for the same league/team
-    #    share a single API call. ─────────────────────────────────────────
-    unique_team_ids   = {p.get("teamId") or 0 for p in picks} - {0}
-    unique_league_ids = {p.get("leagueId") or 0 for p in picks} - {0}
+    # ── T0: direct lookup by stored fixtureId (most targeted, avoids T1/T2/T3) ──
+    # Picks that already have a fixtureId skip team/league/all-live searches
+    # entirely — one `fixtures?id=X` call per unique fixture is enough.
+    picks_with_fid = [p for p in picks if p.get("fixtureId")]
+    picks_no_fid   = [p for p in picks if not p.get("fixtureId")]
+    known_fids     = list({p["fixtureId"] for p in picks_with_fid})
+
+    async def _by_fid(fid: int) -> dict | None:
+        res = await api_football_request("fixtures", {"id": fid}) or []
+        return res[0] if res else None
+
+    # ── Pre-fetch shared caches for picks WITHOUT a stored fixtureId ─────
+    unique_team_ids   = {p.get("teamId") or 0 for p in picks_no_fid} - {0}
+    unique_league_ids = {p.get("leagueId") or 0 for p in picks_no_fid} - {0}
 
     async def _by_team(tid: int) -> list:
         live = await api_football_request("fixtures", {"team": tid, "live": "all"}) or []
@@ -1942,14 +1964,20 @@ async def _process_api_football_live(picks: list, email: str) -> list:
     async def _all_live() -> list:
         return await api_football_request("fixtures", {"live": "all"}) or []
 
-    # Fetch in parallel
-    team_lists, league_lists, all_live_fixtures = await aio.gather(
-        aio.gather(*[_by_team(tid) for tid in unique_team_ids]),
-        aio.gather(*[_by_league(lid) for lid in unique_league_ids]),
-        _all_live(),
+    async def _empty_list() -> list:
+        return []
+
+    # Fetch T0 (by known fid) in parallel with T1/T2/T3 (only for no-fid picks).
+    # T3 (all-live) fires only when there are picks without a stored fixtureId.
+    fid_fixtures_list, team_lists, league_lists, all_live_fixtures = await aio.gather(
+        aio.gather(*[_by_fid(fid) for fid in known_fids]) if known_fids else _empty_list(),
+        aio.gather(*[_by_team(tid) for tid in unique_team_ids]) if unique_team_ids else _empty_list(),
+        aio.gather(*[_by_league(lid) for lid in unique_league_ids]) if unique_league_ids else _empty_list(),
+        _all_live() if picks_no_fid else _empty_list(),
     )
-    team_fix_map:   dict[int, list] = dict(zip(unique_team_ids, team_lists))
-    league_fix_map: dict[int, list] = dict(zip(unique_league_ids, league_lists))
+    fid_fix_map:    dict[int, dict | None] = dict(zip(known_fids, fid_fixtures_list or []))
+    team_fix_map:   dict[int, list] = dict(zip(unique_team_ids, team_lists or []))
+    league_fix_map: dict[int, list] = dict(zip(unique_league_ids, league_lists or []))
 
     def _team_name_in_fixture(fixture: dict, team_name: str) -> bool:
         """True if the pick's team name matches either side of the fixture."""
@@ -1971,8 +1999,13 @@ async def _process_api_football_live(picks: list, email: str) -> list:
 
         fixture = None
 
+        # T0: stored fixtureId → single direct fixture lookup (fastest, no team/league search)
+        stored_fid = pick.get("fixtureId")
+        if stored_fid and stored_fid in fid_fix_map:
+            fixture = fid_fix_map.get(stored_fid)
+
         # T1: teamId → direct team lookup (most specific)
-        if team_id and team_id in team_fix_map:
+        if not fixture and team_id and team_id in team_fix_map:
             fixture = _match_soccer_fixture(team_fix_map[team_id], opp_name, pick_ts)
 
         # T2: leagueId → league-wide lookup filtered by team name
