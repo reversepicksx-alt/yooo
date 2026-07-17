@@ -96,7 +96,7 @@ LIFETIME_SUB_EMAILS = [
     "joseharo197@gmail.com", "rijulgauchan1@gmail.com", "gordo0210@icloud.com",
     "brianavina23@gmail.com", "andrewfitz97@yahoo.com",
     "letwins04@gmail.com",
-    "quon.qg@gmail.com", "jesselopezj@hotmail.com",
+    "jesselopezj@hotmail.com",
     "michael1069_6910@yahoo.com",
     "cristiang5815@gmail.com",
     "its2famous@gmail.com",
@@ -107,7 +107,6 @@ LIFETIME_SUB_EMAILS = [
     "adriano.velasquez10@gmail.com",
     "keduran2006@gmail.com",
     "roshensenha24@gmail.com",
-    "therealmkjorge@gmail.com",
     "alicia.thibadeau@gmail.com",
     "esol123@live.com",
 ]
