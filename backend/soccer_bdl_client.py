@@ -32,7 +32,8 @@ LEAGUE_TO_BDL: dict[int, str] = {
     61:  "/ligue1/v1",           # Ligue 1
     2:   "/ucl/v1",              # UEFA Champions League
     3:   "/ucl/v1",              # Europa League — route to UCL client (similar)
-    253: "/mls/v1",              # MLS
+    # NOTE: MLS (253) intentionally NOT routed through BDL — /mls/v1 returns 401.
+    # MLS live tracking uses API-Football instead (fixtures?team=&live=all).
     # NOTE: World Cup (leagueId=1) intentionally NOT routed through BDL.
     # BDL's /fifa/worldcup/v1 returns Tier-2 stats (passes_total, etc.) as None/0,
     # causing incorrect zero-settlements. API-Football's fixtures/players endpoint
