@@ -234,10 +234,25 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete?: () => void }) {
 
   return (
     <View style={[styles.card, won && styles.cardWon, lost && styles.cardLost]}>
-      {/* Row 1: player name left | badge right */}
+      {/* Row 1: player name left | [trash] [badge] right — all inline */}
       <View style={styles.cardTopRow}>
         <Text style={styles.cardPlayer} numberOfLines={1}>{pick.playerName}</Text>
         <View style={styles.cardRight}>
+          {/* WEB-ONLY trash — inline with badge so it adds ZERO extra rows */}
+          {Platform.OS === 'web' && onDelete && (
+            // @ts-ignore raw DOM button intentional for reliable click
+            <button
+              type="button"
+              onClick={(e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); onDelete(); }}
+              onPointerDown={(e: React.PointerEvent) => e.stopPropagation()}
+              onMouseDown={(e: React.MouseEvent) => e.stopPropagation()}
+              onTouchStart={(e: React.TouchEvent) => e.stopPropagation()}
+              style={{ all: 'unset', cursor: 'pointer', padding: '3px 5px', borderRadius: 5, display: 'inline-flex', alignItems: 'center' }}
+              aria-label="Delete pick"
+            >
+              <Ionicons name="trash-outline" size={12} color={Colors.error} />
+            </button>
+          )}
           {live && !won && !lost && hasLiveData && (
             <Reanimated.View entering={Platform.OS !== 'web' ? FadeInDown.duration(300) : undefined} style={styles.liveBadge}>
               <PulsingDot />
@@ -411,45 +426,6 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete?: () => void }) {
       )}
 
 
-      {/* WEB-ONLY trash bin in the bottom-right corner. We render a real
-          HTML <button> so the click is handled by the browser directly —
-          no react-native-web Pressable, no gesture handler, no synthetic
-          event system. stopPropagation prevents the card's outer Pressable
-          (analysis modal) from firing on the same click. */}
-      {Platform.OS === 'web' && onDelete && (
-        <View style={styles.cardFooterWeb}>
-          {/* @ts-ignore raw DOM button is intentional for click reliability */}
-          <button
-            type="button"
-            onClick={(e: React.MouseEvent) => {
-              e.preventDefault();
-              e.stopPropagation();
-              onDelete();
-            }}
-            // Stop pointer/mouse/touch events at the start as well, so the
-            // parent Pressable (for the analysis modal) never starts a press
-            // sequence on this trash button. Without these, react-native-web's
-            // Pressable can still fire onPress because it uses pointer events
-            // which fire before click.
-            onPointerDown={(e: React.PointerEvent) => e.stopPropagation()}
-            onMouseDown={(e: React.MouseEvent) => e.stopPropagation()}
-            onTouchStart={(e: React.TouchEvent) => e.stopPropagation()}
-            style={{
-              all: 'unset',
-              cursor: 'pointer',
-              padding: '6px 8px',
-              borderRadius: 6,
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 4,
-            }}
-            aria-label="Delete pick"
-            title="Delete pick"
-          >
-            <Ionicons name="trash-outline" size={14} color={Colors.error} />
-          </button>
-        </View>
-      )}
     </View>
   );
 }
@@ -1330,14 +1306,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20, paddingVertical: 11, marginTop: 6,
   },
   emptyActionText: { color: '#000', fontWeight: '800', fontSize: 14 },
-  list: { paddingHorizontal: 14, paddingBottom: 40, gap: 7 },
+  list: { paddingHorizontal: 12, paddingBottom: 40, gap: 6 },
 
   card: {
-    backgroundColor: Colors.card, borderRadius: 14,
-    paddingHorizontal: 13, paddingVertical: 9,
-    borderWidth: 1, borderColor: Colors.borderSubtle, gap: 4,
+    backgroundColor: Colors.card, borderRadius: 12,
+    paddingHorizontal: 12, paddingVertical: 7,
+    borderWidth: 1, borderColor: Colors.borderSubtle, gap: 3,
     shadowColor: '#000', shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.14, shadowRadius: 4, elevation: 2,
+    shadowOpacity: 0.12, shadowRadius: 3, elevation: 2,
   },
   cardWon: { borderColor: 'rgba(57,255,20,0.35)', shadowColor: 'rgba(57,255,20,0.15)' },
   cardLost: { borderColor: 'rgba(255,59,48,0.3)' },
@@ -1347,8 +1323,8 @@ const styles = StyleSheet.create({
   cardPlayer: { fontSize: 13, fontWeight: '800', color: Colors.text, flex: 1, letterSpacing: 0.1 },
   cardMeta: { fontSize: 10, color: Colors.textTertiary, letterSpacing: 0.1, marginBottom: 1 },
 
-  cardRow2: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
-  cardRow2Left: { flex: 1, gap: 4 },
+  cardRow2: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6 },
+  cardRow2Left: { flex: 1, gap: 2 },
   inlineStats: { flexDirection: 'row', alignItems: 'center', gap: 10, flexShrink: 0 },
   inlineStat: { alignItems: 'center', gap: 1, minWidth: 28 },
   inlineVal: { fontSize: 15, fontWeight: '800', color: Colors.text },
@@ -1437,8 +1413,8 @@ const styles = StyleSheet.create({
   },
 
   matchCtxBlock: {
-    marginTop: 2,
-    paddingTop: 4,
+    marginTop: 1,
+    paddingTop: 3,
     borderTopWidth: 1,
     borderTopColor: Colors.borderSubtle,
   },
