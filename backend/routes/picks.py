@@ -2022,6 +2022,55 @@ async def _process_api_football_live(picks: list, email: str) -> list:
 
         pick_fixtures.append((pick, fixture))
 
+    # ── Pass 1.5: NS pre-store ─────────────────────────────────────────────
+    # For picks whose match hasn't started yet (status=NS), persist the
+    # fixtureId now so T0 fires the instant the match goes live, and the
+    # MATCH badge appears on the card immediately.
+    _ns_statuses = {"NS", "TBD"}
+
+    async def _persist_ns_fid(pick: dict, fid: int) -> None:
+        try:
+            await db.picks.update_one(
+                {"pickId": pick["pickId"], "email": email.lower()},
+                {"$set": {"fixtureId": fid}}
+            )
+            pick["fixtureId"] = fid  # reflect in-memory for MATCH badge
+            print(f"[NS-PRESTORE] pickId={pick.get('pickId')} fid={fid}")
+        except Exception:
+            pass
+
+    _ns_tasks: list[tuple[dict, int]] = []
+    for _pick, _fix in pick_fixtures:
+        if _fix is not None or _pick.get("fixtureId"):
+            continue
+        _tid   = _pick.get("teamId") or 0
+        _lid   = _pick.get("leagueId") or 0
+        _tname = (_pick.get("teamName") or "").lower().strip()
+        _opp   = (_pick.get("opponentName") or "").lower().strip()
+
+        # Try team_fix_map first (most specific), then league_fix_map filtered by team
+        _candidates = list(team_fix_map.get(_tid, []))
+        if not _candidates and _lid:
+            _candidates = [f for f in league_fix_map.get(_lid, [])
+                           if _team_name_in_fixture(f, _tname)]
+
+        for _cand in _candidates:
+            _ss = _cand.get("fixture", {}).get("status", {}).get("short", "")
+            if _ss not in _ns_statuses:
+                continue
+            if _opp and _opp not in ("unknown", "tbd"):
+                _h = (_cand.get("teams", {}).get("home", {}).get("name") or "").lower()
+                _a = (_cand.get("teams", {}).get("away", {}).get("name") or "").lower()
+                if not (_opp in _h or _h in _opp or _opp in _a or _a in _opp):
+                    continue
+            _fid = _cand.get("fixture", {}).get("id")
+            if _fid:
+                _ns_tasks.append((_pick, _fid))
+                break  # one fixture per pick
+
+    if _ns_tasks:
+        await aio.gather(*[_persist_ns_fid(p, fid) for p, fid in _ns_tasks])
+
     # ── Pre-fetch fixtures/players once per unique fixture ID ─────────────
     # This avoids N separate API calls (one per pick) for the same match
     # when multiple picks (e.g. C. Arcus + Robertson in Haiti vs Scotland)

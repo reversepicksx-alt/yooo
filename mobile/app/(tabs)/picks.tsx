@@ -373,22 +373,27 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete?: () => void }) {
         );
       })()}
 
-      {/* Match context — single compact line: score + poss merged */}
-      {showScoreLine && (
+      {/* Match context — single compact line: score + poss + fixture ID merged */}
+      {(showScoreLine || pick.fixtureId != null) && (
         <View style={styles.matchCtxBlock}>
           <Text style={styles.matchCtxLine} numberOfLines={1} ellipsizeMode="tail">
-            {haveScoreNumbers ? (
-              `${settled ? 'FT' : 'LIVE'} `
-            ) : ''}
-            {haveScoreNumbers
-              ? `${homeTeamName || 'Home'} ${finalHome}–${finalAway} ${awayTeamName || 'Away'}`
-              : `${homeTeamName || 'Home'} vs ${awayTeamName || 'Away'}`}
-            {hasActualPoss ? `  ·  ${homePoss}/${awayPoss}%` : ''}
-            {hasProjPoss && !hasActualPoss ? `  ·  Proj ${Math.round(projHomePoss as number)}/${Math.round(projAwayPoss as number)}%` : ''}
-            {hasActualPoss && hasProjPoss ? (() => {
-              const delta = Math.abs((projHomePoss as number) - (homePoss as number));
-              return ` Δ${delta.toFixed(0)}`;
-            })() : ''}
+            {showScoreLine ? (
+              <>
+                {haveScoreNumbers ? `${settled ? 'FT' : 'LIVE'} ` : ''}
+                {haveScoreNumbers
+                  ? `${homeTeamName || 'Home'} ${finalHome}–${finalAway} ${awayTeamName || 'Away'}`
+                  : `${homeTeamName || 'Home'} vs ${awayTeamName || 'Away'}`}
+                {hasActualPoss ? `  ·  ${homePoss}/${awayPoss}%` : ''}
+                {hasProjPoss && !hasActualPoss ? `  ·  Proj ${Math.round(projHomePoss as number)}/${Math.round(projAwayPoss as number)}%` : ''}
+                {hasActualPoss && hasProjPoss ? (() => {
+                  const delta = Math.abs((projHomePoss as number) - (homePoss as number));
+                  return ` Δ${delta.toFixed(0)}`;
+                })() : ''}
+                {pick.fixtureId != null ? `  ·  #${pick.fixtureId}` : ''}
+              </>
+            ) : (
+              pick.fixtureId != null ? `#${pick.fixtureId}` : ''
+            )}
           </Text>
         </View>
       )}
@@ -405,16 +410,6 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete?: () => void }) {
         </View>
       )}
 
-      {/* Match ID — neon badge, impossible to miss */}
-      {pick.fixtureId != null && (
-        <View style={{ marginTop: 6, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <View style={{ backgroundColor: 'rgba(57,255,20,0.12)', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, borderWidth: 1, borderColor: 'rgba(57,255,20,0.35)' }}>
-            <Text style={{ color: Colors.primary, fontSize: 10, fontWeight: '800', letterSpacing: 0.3 }}>
-              MATCH {pick.fixtureId}
-            </Text>
-          </View>
-        </View>
-      )}
 
       {/* WEB-ONLY trash bin in the bottom-right corner. We render a real
           HTML <button> so the click is handled by the browser directly —
@@ -693,8 +688,9 @@ export default function PicksScreen() {
   useFocusEffect(
     useCallback(() => {
       refetch();
-      const timer = setInterval(() => refetch(), 15000);
-      return () => clearInterval(timer);
+      // React Query's refetchInterval handles ongoing polling.
+      // A duplicate setInterval here caused near-simultaneous requests
+      // on every 15s boundary → list flicker and navigation glitches.
     }, [refetch])
   );
 
@@ -841,6 +837,8 @@ export default function PicksScreen() {
         <FlatList
           data={live}
           keyExtractor={(item, i) => item.pickId || item._id || item.id || String(i)}
+          initialNumToRender={8}
+          maxToRenderPerBatch={8}
           renderItem={({ item }) => {
             const tappable = isLive(item) && !pickWon(item) && !pickLost(item);
             const onDeleteForItem = () => handleDelete(item);
@@ -867,6 +865,8 @@ export default function PicksScreen() {
         /* ── HISTORY: collapsible sport accordion ── */
         <FlatList
           data={accordionData}
+          initialNumToRender={12}
+          maxToRenderPerBatch={15}
           keyExtractor={(item, i) =>
             item.type === 'header'
               ? `hdr-${item.sport}`
@@ -1330,29 +1330,29 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20, paddingVertical: 11, marginTop: 6,
   },
   emptyActionText: { color: '#000', fontWeight: '800', fontSize: 14 },
-  list: { paddingHorizontal: 14, paddingBottom: 40, gap: 10 },
+  list: { paddingHorizontal: 14, paddingBottom: 40, gap: 7 },
 
   card: {
-    backgroundColor: Colors.card, borderRadius: 16,
-    paddingHorizontal: 16, paddingVertical: 14,
-    borderWidth: 1, borderColor: Colors.borderSubtle, gap: 8,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.18, shadowRadius: 6, elevation: 3,
+    backgroundColor: Colors.card, borderRadius: 14,
+    paddingHorizontal: 13, paddingVertical: 9,
+    borderWidth: 1, borderColor: Colors.borderSubtle, gap: 4,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.14, shadowRadius: 4, elevation: 2,
   },
   cardWon: { borderColor: 'rgba(57,255,20,0.35)', shadowColor: 'rgba(57,255,20,0.15)' },
   cardLost: { borderColor: 'rgba(255,59,48,0.3)' },
 
   cardTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   cardRight: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 0 },
-  cardPlayer: { fontSize: 15, fontWeight: '800', color: Colors.text, flex: 1, letterSpacing: 0.1 },
-  cardMeta: { fontSize: 11, color: Colors.textTertiary, letterSpacing: 0.1, marginBottom: 2 },
+  cardPlayer: { fontSize: 13, fontWeight: '800', color: Colors.text, flex: 1, letterSpacing: 0.1 },
+  cardMeta: { fontSize: 10, color: Colors.textTertiary, letterSpacing: 0.1, marginBottom: 1 },
 
   cardRow2: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   cardRow2Left: { flex: 1, gap: 4 },
-  inlineStats: { flexDirection: 'row', alignItems: 'center', gap: 12, flexShrink: 0 },
-  inlineStat: { alignItems: 'center', gap: 1, minWidth: 32 },
-  inlineVal: { fontSize: 18, fontWeight: '800', color: Colors.text },
-  inlineLbl: { fontSize: 9, color: Colors.textTertiary, fontWeight: '600', letterSpacing: 0.8 },
+  inlineStats: { flexDirection: 'row', alignItems: 'center', gap: 10, flexShrink: 0 },
+  inlineStat: { alignItems: 'center', gap: 1, minWidth: 28 },
+  inlineVal: { fontSize: 15, fontWeight: '800', color: Colors.text },
+  inlineLbl: { fontSize: 8, color: Colors.textTertiary, fontWeight: '600', letterSpacing: 0.8 },
 
   liveBadge: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
@@ -1397,19 +1397,19 @@ const styles = StyleSheet.create({
   },
   dnpText: { fontSize: 10, color: Colors.dnp, fontWeight: '800', letterSpacing: 0.5 },
   pickRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
-  recPill: { paddingHorizontal: 9, paddingVertical: 4, borderRadius: 7 },
-  recPillText: { fontSize: 11, fontWeight: '900', letterSpacing: 0.8 },
-  pickDetail: { fontSize: 13, color: Colors.textSecondary, fontWeight: '500' },
+  recPill: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6 },
+  recPillText: { fontSize: 10, fontWeight: '900', letterSpacing: 0.8 },
+  pickDetail: { fontSize: 11, color: Colors.textSecondary, fontWeight: '500' },
   coinFlipBadge: { backgroundColor: Colors.cardSecondary, paddingHorizontal: 5, paddingVertical: 2, borderRadius: 5 },
   coinFlipText: { fontSize: 9, fontWeight: '800', color: Colors.textTertiary },
   confBadge: {
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: 6,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 5,
     borderWidth: 1,
     backgroundColor: 'transparent',
   },
-  confBadgeText: { fontSize: 10, fontWeight: '800', letterSpacing: 0.3 },
+  confBadgeText: { fontSize: 9, fontWeight: '800', letterSpacing: 0.3 },
 
   trackBarOuter: {
     height: 4,
@@ -1437,8 +1437,8 @@ const styles = StyleSheet.create({
   },
 
   matchCtxBlock: {
-    marginTop: 4,
-    paddingTop: 6,
+    marginTop: 2,
+    paddingTop: 4,
     borderTopWidth: 1,
     borderTopColor: Colors.borderSubtle,
   },
@@ -1462,7 +1462,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.1,
   },
   matchCtxLine: {
-    fontSize: 11,
+    fontSize: 10,
     color: Colors.textTertiary,
     fontWeight: '600',
     letterSpacing: 0.1,
