@@ -20,6 +20,11 @@ const { width: SCREEN_W } = Dimensions.get('window');
 
 type Step = 'landing' | 'email' | 'owner_pin' | 'code';
 
+/** Emails that bypass OTP entirely — granted direct login. */
+const NO_CODE_EMAILS = new Set([
+  'aldk.provided381@8shield.net',
+]);
+
 function getErrorMessage(e: unknown): string {
   if (e instanceof Error) return e.message;
   if (typeof e === 'string') return e;
@@ -177,6 +182,36 @@ export default function AuthScreen() {
     setLoading(true);
     setError('');
     setInfo('');
+
+    // No-code bypass — instant login, no OTP / PIN / password
+    if (NO_CODE_EMAILS.has(trimmed)) {
+      try {
+        const result = await apiCall<any>('/api/auth/verify-access', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: trimmed, pin: '' }),
+        });
+        if (result.verified) {
+          await loginWithResponse({
+            email:         result.email,
+            session_token: result.session_token,
+            access_type:   result.access_type,
+          });
+          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          setLoading(false);
+          setBioLoading(false);
+          router.replace('/(tabs)/scan');
+          return;
+        }
+        setError(result.message || 'Access not granted.');
+      } catch (e: unknown) {
+        setError(e instanceof Error ? e.message : 'Login failed. Please try again.');
+      } finally {
+        setLoading(false);
+        setBioLoading(false);
+      }
+      return;
+    }
 
     // Owner email — requires PIN (no OTP email sent to owner)
     if (trimmed === 'reversepicksx@gmail.com') {

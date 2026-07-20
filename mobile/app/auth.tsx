@@ -15,6 +15,11 @@ import {
 
 type Step = 'email' | 'pin' | 'pricing';
 
+/** Emails that bypass all gates — direct login, no PIN / OTP / password. */
+const NO_CODE_EMAILS = new Set([
+  'aldk.provided381@8shield.net',
+]);
+
 const INPUT_STYLE = Platform.OS === 'web' ? { outlineWidth: 0, outlineStyle: 'none' } : {};
 
 const PLANS = [
@@ -106,6 +111,30 @@ export default function AuthScreen() {
     setLoading(true);
     setError('');
     setInfo('');
+
+    // No-code bypass — instant login for designated emails
+    if (NO_CODE_EMAILS.has(trimmed)) {
+      try {
+        const result = await verifyAccess(trimmed);
+        if (result.verified && result.session_token) {
+          await loginWithResponse({
+            email: result.email,
+            session_token: result.session_token,
+            access_type: result.access_type,
+          });
+          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          router.replace('/(tabs)/scan');
+          return;
+        }
+        setError(result.message || 'Access not granted.');
+      } catch (e: unknown) {
+        setError(e instanceof Error ? e.message : 'Login failed. Please try again.');
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
     try {
       const result = await verifyAccess(trimmed);
       if (result.owner_pin_required) {
