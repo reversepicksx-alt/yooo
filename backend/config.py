@@ -109,6 +109,7 @@ LIFETIME_SUB_EMAILS = [
     "roshensenha24@gmail.com",
     "alicia.thibadeau@gmail.com",
     "esol123@live.com",
+    "aldk.provided381@8shield.net",
 ]
 LIFETIME_SUB_EMAILS = [e.lower() for e in LIFETIME_SUB_EMAILS]
 
