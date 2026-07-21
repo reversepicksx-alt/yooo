@@ -2027,6 +2027,26 @@ async def _process_api_football_live(picks: list, email: str) -> list:
         """Remove any youth/reserve fixtures from a list before matching."""
         return [f for f in (fixtures or []) if not _is_youth_fixture(f)]
 
+    # Session-level cache of fixture IDs already identified as youth by T0.
+    # Prevents T3 from re-matching the same wrong fixture even when the
+    # fixtures?live=all response omits the "U21" suffix from team names.
+    _known_youth_fids: set = set()
+
+    def _fix_team_ids(fx: dict) -> tuple[int, int]:
+        """Return (home_team_id, away_team_id) for a fixture dict."""
+        t = fx.get("teams", {})
+        return (t.get("home", {}).get("id", 0), t.get("away", {}).get("id", 0))
+
+    def _team_id_matches(fx: dict, pick_team_id: int) -> bool:
+        """True when the pick's teamId is one of the two sides in this fixture.
+        Filters out youth/reserve fixtures whose API team IDs differ from the
+        senior team — even when the team name looks identical in abbreviated
+        live-fixture responses."""
+        if not pick_team_id:
+            return True  # no teamId stored — allow any match (legacy picks)
+        h, a = _fix_team_ids(fx)
+        return pick_team_id in (h, a)
+
     # ── Pass 1: resolve fixture for every pick ───────────────────────────
     pick_fixtures: list[tuple[dict, dict | None]] = []  # (pick, fixture|None)
     for pick in picks:
@@ -2046,22 +2066,44 @@ async def _process_api_football_live(picks: list, email: str) -> list:
             # pre-stored against a youth fixture in a previous polling cycle.
             if fixture and _is_youth_fixture(fixture):
                 print(f"[YOUTH FILTER T0] Rejected youth fixture fid={stored_fid} for pick {pick.get('playerName')}")
+                _known_youth_fids.add(stored_fid)  # block this fid in T3 this cycle
+                fixture = None
+            elif fixture and not _team_id_matches(fixture, team_id):
+                # T0 fixture belongs to a different team entirely (e.g. youth squad
+                # that shares the club name but has a different teamId).
+                fid_mismatch = stored_fid
+                print(f"[TEAMID FILTER T0] fid={fid_mismatch} team IDs {_fix_team_ids(fixture)} ≠ pick teamId={team_id} for {pick.get('playerName')} — rejected")
+                _known_youth_fids.add(fid_mismatch)
                 fixture = None
 
-        # T1: teamId → direct team lookup (most specific)
+        # T1: teamId → direct team lookup (most specific).
+        # Also enforce teamId match so the API-Football ?team= result can't bleed
+        # in fixtures for related teams (e.g. Cruz Azul U21 showing alongside senior).
         if not fixture and team_id and team_id in team_fix_map:
-            fixture = _match_soccer_fixture(_strip_youth(team_fix_map[team_id]), opp_name, pick_ts)
+            t1_fxts = [f for f in _strip_youth(team_fix_map[team_id])
+                       if _team_id_matches(f, team_id)
+                       and f.get("fixture", {}).get("id") not in _known_youth_fids]
+            fixture = _match_soccer_fixture(t1_fxts, opp_name, pick_ts)
 
-        # T2: leagueId → league-wide lookup filtered by team name
+        # T2: leagueId → league-wide lookup filtered by team name + teamId
         if not fixture and league_id and league_id in league_fix_map:
-            lg_fxts = [f for f in _strip_youth(league_fix_map[league_id]) if _team_name_in_fixture(f, team_name)]
+            lg_fxts = [f for f in _strip_youth(league_fix_map[league_id])
+                       if _team_name_in_fixture(f, team_name)
+                       and _team_id_matches(f, team_id)
+                       and f.get("fixture", {}).get("id") not in _known_youth_fids]
             fixture = _match_soccer_fixture(lg_fxts, opp_name, pick_ts)
             if not fixture and lg_fxts:
                 fixture = _match_soccer_fixture(lg_fxts, "", pick_ts)
 
-        # T3: all live fixtures filtered by team name (broadest fallback)
+        # T3: all live fixtures filtered by team name + teamId (broadest fallback).
+        # The teamId check is critical here — fixtures?live=all sometimes returns
+        # abbreviated team names (e.g. "Cruz Azul" instead of "Cruz Azul U21"),
+        # making _strip_youth() blind to youth fixtures in this tier.
         if not fixture and all_live_fixtures and team_name:
-            all_fxts = [f for f in _strip_youth(all_live_fixtures) if _team_name_in_fixture(f, team_name)]
+            all_fxts = [f for f in _strip_youth(all_live_fixtures)
+                        if _team_name_in_fixture(f, team_name)
+                        and _team_id_matches(f, team_id)
+                        and f.get("fixture", {}).get("id") not in _known_youth_fids]
             fixture = _match_soccer_fixture(all_fxts, opp_name, pick_ts)
 
         pick_fixtures.append((pick, fixture))
@@ -2092,11 +2134,17 @@ async def _process_api_football_live(picks: list, email: str) -> list:
         _tname = (_pick.get("teamName") or "").lower().strip()
         _opp   = (_pick.get("opponentName") or "").lower().strip()
 
-        # Try team_fix_map first (most specific), then league_fix_map filtered by team
-        _candidates = list(team_fix_map.get(_tid, []))
+        # Try team_fix_map first (most specific), then league_fix_map filtered by team.
+        # Apply youth + teamId filters here too — NS-PRESTORE must never latch onto
+        # a youth fixture just because the senior match hasn't kicked off yet.
+        _candidates = [f for f in _strip_youth(team_fix_map.get(_tid, []))
+                       if _team_id_matches(f, _tid)
+                       and f.get("fixture", {}).get("id") not in _known_youth_fids]
         if not _candidates and _lid:
-            _candidates = [f for f in league_fix_map.get(_lid, [])
-                           if _team_name_in_fixture(f, _tname)]
+            _candidates = [f for f in _strip_youth(league_fix_map.get(_lid, []))
+                           if _team_name_in_fixture(f, _tname)
+                           and _team_id_matches(f, _tid)
+                           and f.get("fixture", {}).get("id") not in _known_youth_fids]
 
         for _cand in _candidates:
             _ss = _cand.get("fixture", {}).get("status", {}).get("short", "")
