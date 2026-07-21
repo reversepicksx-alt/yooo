@@ -5204,10 +5204,36 @@ Average {req.propType}: {comp_avg} | Per-90 avg: {comp_per90_avg} | Sample: {len
         dom_context = ""
         if match_dominance.get("expectedPoss", 50) != 50 or match_dominance.get("notes"):
             dom_notes = "\n".join(f"  - {n}" for n in match_dominance.get("notes", []))
-            dom_context = f"""
+            _ep = match_dominance['expectedPoss']
+            _op = match_dominance['oppExpectedPoss']
+            if _is_gk_for_passes:
+                # ── GK pass prop: inverted possession logic ──────────────────────────
+                # The generic DLP/CM/CAM outfield instruction MUST NOT appear here;
+                # it causes the AI to flip possession numbers to reconcile UNDER with
+                # high-possession scenarios ("team must have 35% because it's UNDER").
+                _gk_dom_note = (
+                    f">>> ⚠️  GOALKEEPER PASS PROP — INVERTED POSSESSION RULE — READ CAREFULLY:\n"
+                    f">>> {corrected_team_name} have {_ep}% expected possession. {req.opponentName} have {_op}%.\n"
+                    f">>> DO NOT FLIP THESE NUMBERS. {corrected_team_name} = {_ep}%. {req.opponentName} = {_op}%.\n"
+                    f">>> For a GK, HIGH team possession ({_ep}%) = FEWER passes. The team recycles through\n"
+                    f">>>   midfield, rarely needing to go back to the keeper.\n"
+                    f">>> The UNDER is predicted BECAUSE {corrected_team_name} dominates — NOT because they struggle.\n"
+                    f">>> CORRECT narrative: '{corrected_team_name} control {_ep}% possession, keeping the ball\n"
+                    f">>>   through midfield and rarely needing back-passes to the GK — suppressing his volume.'\n"
+                    f">>> FORBIDDEN: Do NOT say '{corrected_team_name} struggle/fight for possession' or assign\n"
+                    f">>>   {_op}% to {corrected_team_name}. That number belongs to {req.opponentName}. <<<"
+                )
+                dom_context = f"""
 [MATCH DOMINANCE ANALYSIS — DO NOT IGNORE]
-Expected possession for {corrected_team_name}: {match_dominance['expectedPoss']}% (season avg: {match_dominance.get('teamSeasonAvg', '?')}%)
-Expected possession for {req.opponentName}: {match_dominance['oppExpectedPoss']}% (season avg: {match_dominance.get('oppSeasonAvg', '?')}%)
+Expected possession for {corrected_team_name}: {_ep}% (season avg: {match_dominance.get('teamSeasonAvg', '?')}%)
+Expected possession for {req.opponentName}: {_op}% (season avg: {match_dominance.get('oppSeasonAvg', '?')}%)
+{dom_notes}
+{_gk_dom_note}"""
+            else:
+                dom_context = f"""
+[MATCH DOMINANCE ANALYSIS — DO NOT IGNORE]
+Expected possession for {corrected_team_name}: {_ep}% (season avg: {match_dominance.get('teamSeasonAvg', '?')}%)
+Expected possession for {req.opponentName}: {_op}% (season avg: {match_dominance.get('oppSeasonAvg', '?')}%)
 {dom_notes}
 >>> CRITICAL: If expected possession is HIGHER than season average, pass-dependent players (DLP, CM, CAM) WILL exceed their historical averages.
 >>> A deep-lying playmaker on a team expected at 65%+ possession will have significantly MORE pass attempts than their season average suggests.

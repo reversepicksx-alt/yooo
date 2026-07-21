@@ -2331,18 +2331,23 @@ def compute_press_intensity_score(opp_fixture_stats: list) -> dict:
             label = "High"
         else:
             label = "Elite"
+        # Compute approximate PPDA = avg_passes / avg_da
+        # totalPasses is stored in opp_fixture_stats by fetch_fixture_team_stats
+        _ppda_pass_list = [s.get("totalPasses") for s in opp_fixture_stats if s.get("totalPasses") is not None]
+        _ppda_avg_passes = sum(_ppda_pass_list) / len(_ppda_pass_list) if len(_ppda_pass_list) >= 2 else None
+        approx_ppda = round(_ppda_avg_passes / max(avg_da, 1), 1) if _ppda_avg_passes else None
         return {
             "score":                 score,
             "multiplier":            multiplier,
             "label":                 label,
             "signal_used":           "tackles",
-            "ppda":                  None,
+            "ppda":                  approx_ppda,
             "reasoning":             "",
             "avg_defensive_actions": round(avg_da, 1),
             "avg_tackles":           round(avg_tkl, 1),
             "avg_interceptions":     round(avg_int, 1),
             "avg_poss":              None,
-            "avg_passes":            None,
+            "avg_passes":            round(_ppda_avg_passes, 1) if _ppda_avg_passes else None,
         }
 
     # ── FALLBACK: possession % + total passes ───────────────────────────────
@@ -2392,12 +2397,15 @@ def compute_press_intensity_score(opp_fixture_stats: list) -> dict:
     else:
         label = "Elite"
 
+    # Approximate PPDA from possession-path: estimate da from score (score=0→22 da, score=1→42 da)
+    _est_da_poss = 22 + score * 20
+    approx_ppda_poss = round(avg_passes / max(_est_da_poss, 1), 1) if avg_passes else None
     return {
         "score":                 score,
         "multiplier":            multiplier,
         "label":                 label,
         "signal_used":           "possession",
-        "ppda":                  None,
+        "ppda":                  approx_ppda_poss,
         "reasoning":             "",
         "avg_defensive_actions": None,
         "avg_tackles":           None,
