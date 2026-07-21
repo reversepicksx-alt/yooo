@@ -1548,7 +1548,7 @@ export default function ScanScreen() {
               </View>
             )}
 
-            {!cs2NextMatch?.found && !cs2NextMatchLoading && (
+            {cs2ResolvedPlayer && !cs2NextMatch?.found && !cs2NextMatchLoading && (
               <>
                 <Text style={styles.fieldLabel}>Opponent Team <Text style={styles.fieldLabelOpt}>(optional)</Text></Text>
                 <FuzzySearchInput
@@ -1672,7 +1672,7 @@ export default function ScanScreen() {
               </View>
             )}
 
-            {!wtaNextMatch?.found && !wtaNextMatchLoading && (
+            {wtaResolvedPlayer && !wtaNextMatch?.found && !wtaNextMatchLoading && (
               <>
                 <Text style={styles.fieldLabel}>Opponent</Text>
                 <FuzzySearchInput
@@ -1688,20 +1688,20 @@ export default function ScanScreen() {
                     Haptics.selectionAsync();
                   }}
                 />
+
+                <Text style={styles.fieldLabel}>Surface</Text>
+                <TouchableOpacity style={styles.pickerBtn} onPress={() => setWtaShowSurfacePicker(true)}>
+                  <Text style={styles.pickerBtnText}>{wtaSurface}</Text>
+                  <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
+                </TouchableOpacity>
+
+                <Text style={styles.fieldLabel}>Round</Text>
+                <TouchableOpacity style={styles.pickerBtn} onPress={() => setWtaShowRoundPicker(true)}>
+                  <Text style={styles.pickerBtnText}>{wtaRound}</Text>
+                  <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
+                </TouchableOpacity>
               </>
             )}
-
-            <Text style={styles.fieldLabel}>Surface</Text>
-            <TouchableOpacity style={styles.pickerBtn} onPress={() => setWtaShowSurfacePicker(true)}>
-              <Text style={styles.pickerBtnText}>{wtaSurface}</Text>
-              <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
-            </TouchableOpacity>
-
-            <Text style={styles.fieldLabel}>Round</Text>
-            <TouchableOpacity style={styles.pickerBtn} onPress={() => setWtaShowRoundPicker(true)}>
-              <Text style={styles.pickerBtnText}>{wtaRound}</Text>
-              <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
-            </TouchableOpacity>
 
             <Text style={styles.fieldLabel}>Prop Type</Text>
             <TouchableOpacity style={styles.pickerBtn} onPress={() => setWtaShowPropPicker(true)}>
