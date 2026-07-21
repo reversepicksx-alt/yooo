@@ -1105,6 +1105,7 @@ export default function ScanScreen() {
                 <Text style={[styles.scanFillHintText, !scanFillHint.startsWith('✓') && { color: '#f0a500' }]}>{scanFillHint}</Text>
               </View>
             )}
+            <Text style={styles.fieldLabel}>PLAYER</Text>
             <FuzzySearchInput
               value={playerQuery}
               onChangeText={(t) => { setPlayerQuery(t); if (!t) setResolvedPlayer(null); }}
@@ -1374,15 +1375,25 @@ export default function ScanScreen() {
               </View>
             )}
 
-            {/* ── League + Opponent — only shown when auto-match hasn't set them ── */}
-            {!autoMatch?.found && (
-              <>
+            {/* ── League + Opponent — only shown when player is selected but auto-match didn't find a fixture ── */}
+            {resolvedPlayer && !autoMatch?.found && !nextMatchLoading && (
+              <View style={{
+                marginTop: 4, padding: 12, borderRadius: 12,
+                backgroundColor: 'rgba(255,255,255,0.03)',
+                borderWidth: 1, borderColor: 'rgba(57,255,20,0.1)',
+              }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+                  <Ionicons name="search-outline" size={11} color={Colors.textTertiary} />
+                  <Text style={{ fontSize: 10, color: Colors.textTertiary, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase' }}>
+                    Set Match Manually
+                  </Text>
+                </View>
                 <FuzzySearchInput
                   value={leagueQuery}
                   onChangeText={(t) => setLeagueQuery(t)}
                   searchType="leagues"
                   placeholder="Search league…"
-                  style={{ marginBottom: 2 }}
+                  style={{ marginBottom: 8 }}
                   confirmed={!!leagueId}
                   onSelectLeague={(l: FuzzyLeagueResult) => {
                     setLeagueId(l.id);
@@ -1411,11 +1422,11 @@ export default function ScanScreen() {
                     setResolvedManualOpponent(null);
                     Haptics.selectionAsync();
                   }}
-                  style={{ marginBottom: 2 }}
                 />
-              </>
+              </View>
             )}
 
+            <Text style={styles.fieldLabel}>BET</Text>
             <View style={{ flexDirection: 'row', gap: 8 }}>
               <TouchableOpacity style={[styles.pickerBtn, { flex: 3 }]} onPress={() => setShowPropPicker(true)}>
                 <Text style={styles.pickerBtnText}>{PROP_TYPES.find(p => p.value === propType)?.label || 'Prop Type'}</Text>
@@ -1431,6 +1442,7 @@ export default function ScanScreen() {
               />
             </View>
 
+            <Text style={styles.fieldLabel}>VENUE</Text>
             <View style={styles.venueToggle}>
                 <TouchableOpacity
                   style={[styles.venueOption, venueOverride === 'home' && styles.venueOptionActive]}
