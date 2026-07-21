@@ -6182,6 +6182,10 @@ Analyze ALL data thoroughly. Return JSON only."""
             # Consequently UNDER edges shrink (correct) and OVER edges grow.
             # Separate confidence penalty blocks UNDER confidence further.
             # ──────────────────────────────────────────────────────────────────────
+            # Safe defaults — must be initialized here so async code paths
+            # that skip the main bayesian block still have these defined when
+            # the KNOCKOUT UNDER CONFIDENCE PENALTY check fires at line ~7159.
+            _final_is_knockout = False
             _KO_COUNT_PROPS = {
                 "pass_attempts", "passes", "shots", "shots_on_target",
                 "saves", "key_passes", "crosses", "dribbles", "tackles", "clearances",
@@ -7105,6 +7109,20 @@ Analyze ALL data thoroughly. Return JSON only."""
         # This block runs AFTER all upstream adjustments and BEFORE the MATH
         # LOCK + calibration so that downstream consumers (lock text, calibrator,
         # mobile UI) all see the corrected values.
+        #
+        # Safe-defaults for knockout variables: must be at this outer 8-space
+        # scope so ALL code paths (including the async/no-logs path that skips
+        # the inner `if real_bayes:` block above) reach the KNOCKOUT UNDER
+        # CONFIDENCE PENALTY check below with these variables defined.
+        # The inner `if real_bayes:` block may later override _final_is_knockout
+        # to the correct game_situation value; these are just safe fallbacks.
+        if "_final_is_knockout" not in locals():
+            _final_is_knockout = False
+        if "_KO_COUNT_PROPS" not in locals():
+            _KO_COUNT_PROPS = {
+                "pass_attempts", "passes", "shots", "shots_on_target",
+                "saves", "key_passes", "crosses", "dribbles", "tackles", "clearances",
+            }
         _bt_src = real_bayes if isinstance(real_bayes, dict) else (early_bayes if isinstance(early_bayes, dict) else None)
         if prediction.get("recommendation", "").upper() != "PASS" and _bt_src is not None and "pOver" in _bt_src and "pUnder" in _bt_src:
             _bt_p_over  = _bt_src["pOver"]
