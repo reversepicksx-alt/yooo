@@ -1286,6 +1286,19 @@ async def predict(req: PredictionRequest):
         # every fixture — including World Cup matches. We trust that designation and the
         # playerIsHome flag from get_match_odds().
         _is_neutral = False  # normalized above — nothing downstream should treat a match as neutral anymore
+        # ── VENUE ALIGNMENT: override user-selected venue with fixture reality ──
+        # If the user typed a venue that contradicts the actual fixture assignment
+        # (e.g. selected HOME for a team API-Football designated as AWAY), the entire
+        # pipeline — game log filtering, possession calculation, and AI prompt — must
+        # use a SINGLE consistent venue. We trust the fixture data because it determines
+        # the actual match context (home/away possession, opponent venue, etc.).
+        _pih_after_odds = match_odds.get("playerIsHome") if match_odds else None
+        if _pih_after_odds is not None:
+            _fixture_venue = "home" if _pih_after_odds else "away"
+            if player_venue != _fixture_venue:
+                print(f"[VENUE ALIGN] user={player_venue} → fixture={_fixture_venue} "
+                      f"player={req.playerName} team={corrected_team_name}")
+                player_venue = _fixture_venue
         opponent_venue = "away" if player_venue == "home" else "home"
         is_womens = req.leagueId in WOMENS_LEAGUE_IDS
         pronoun_note = "IMPORTANT: This is a WOMEN'S league. Use she/her/her pronouns for all players. Never use he/him/his." if is_womens else ""
