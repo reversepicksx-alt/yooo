@@ -5270,8 +5270,9 @@ Expected possession for {req.opponentName}: {_op}% (season avg: {match_dominance
 [MATCH DOMINANCE ANALYSIS — DO NOT IGNORE]
 Expected possession for {corrected_team_name}: {_ep}% (season avg: {match_dominance.get('teamSeasonAvg', '?')}%)
 Expected possession for {req.opponentName}: {_op}% (season avg: {match_dominance.get('oppSeasonAvg', '?')}%)
-{dom_notes}
->>> CRITICAL: If expected possession is HIGHER than season average, pass-dependent players (DLP, CM, CAM) WILL exceed their historical averages.
+>>> CRITICAL: The two possession numbers above are FINAL. Do NOT derive team names from any game-log opponent abbreviations (e.g. TOR, CIN, PHI) — those are historical matches, not this fixture.
+>>> {corrected_team_name} = {_ep}% | {req.opponentName} = {_op}%. These labels are authoritative. Never swap or reassign them.
+>>> If expected possession is HIGHER than season average, pass-dependent players (DLP, CM, CAM) WILL exceed their historical averages.
 >>> A deep-lying playmaker on a team expected at 65%+ possession will have significantly MORE pass attempts than their season average suggests.
 >>> Conversely, defenders on low-possession teams will have MORE tackles/interceptions than average.
 >>> DO NOT just project from historical averages when match context predicts a clear possession advantage or disadvantage.
