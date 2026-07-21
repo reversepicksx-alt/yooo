@@ -4742,6 +4742,43 @@ Opponent expected possession: {_gk_opp_poss}%
 Scenario: {_gk_scenario}
 KEY PRINCIPLE: A GK defending deep = maximum back-pass recycling. A GK on a dominant team = barely touched. This is the single most important factor for GK pass props.{_gk_cross_team_note}{_gk_blowout_warning}"""
 
+            # ── Inject GK possession logic DIRECTLY into bayesian_prompt_anchor ──
+            # The anchor sits immediately before the main prompt and is the AI's
+            # primary reference for WHY the direction is what it is. Without this,
+            # the AI applies outfield logic (high poss → more passes) to GK props.
+            if bayesian_prompt_anchor:
+                _gk_anchor_team = corrected_team_name or req.teamName
+                if _gk_exp_poss > 55:
+                    _gk_anchor_reason = (
+                        f"{_gk_anchor_team} are the DOMINANT team at {_gk_exp_poss:.0f}% possession. "
+                        f"BECAUSE they dominate, {req.playerName} barely receives back-passes — "
+                        f"teammates circulate through midfield, rarely returning to the keeper. "
+                        f"HIGH team possession = SUPPRESSED GK pass volume. This is why the verdict is UNDER."
+                    )
+                    _gk_forbidden = f"Do NOT say {_gk_anchor_team} struggle/fight for possession — they control {_gk_exp_poss:.0f}%."
+                elif _gk_exp_poss < 45:
+                    _gk_anchor_reason = (
+                        f"{_gk_anchor_team} have only {_gk_exp_poss:.0f}% possession — they sit deep and defend. "
+                        f"LOW team possession = constant back-pass recycling to the GK under pressure. "
+                        f"Defenders use the keeper as a safe release repeatedly. "
+                        f"LOW team possession = RAISED GK pass volume. This is why the verdict is OVER."
+                    )
+                    _gk_forbidden = f"Do NOT say {_gk_anchor_team} dominate — they have only {_gk_exp_poss:.0f}% possession."
+                else:
+                    _gk_anchor_reason = (
+                        f"{_gk_anchor_team} have {_gk_exp_poss:.0f}% possession — balanced match. "
+                        f"GK inverted rule: moderate volume, close to season average expected."
+                    )
+                    _gk_forbidden = f"Do not exaggerate possession imbalance."
+                bayesian_prompt_anchor += f"""
+[GK PASS PROP — POSSESSION NARRATIVE RULE — MANDATORY — READ BEFORE WRITING]
+GOALKEEPER PROP. Standard possession → pass-volume logic is INVERTED for keepers.
+Possession: {_gk_anchor_team} = {_gk_exp_poss:.0f}% | {req.opponentName} = {_gk_opp_poss:.0f}%
+{_gk_anchor_reason}
+⛔ {_gk_forbidden}
+⛔ Do NOT apply outfield logic ("high possession = more passes") to this GK prop.
+⛔ Do NOT flip or swap the possession numbers. {_gk_anchor_team} = {_gk_exp_poss:.0f}%. {req.opponentName} = {_gk_opp_poss:.0f}%. <<<"""
+
         # SAVES-SPECIFIC: Elite GK Formula
         # Projected Saves = Opponent Avg SoT × GK Save% × Match Context Multiplier
         saves_context = ""
@@ -5227,7 +5264,6 @@ Average {req.propType}: {comp_avg} | Per-90 avg: {comp_per90_avg} | Sample: {len
 [MATCH DOMINANCE ANALYSIS — DO NOT IGNORE]
 Expected possession for {corrected_team_name}: {_ep}% (season avg: {match_dominance.get('teamSeasonAvg', '?')}%)
 Expected possession for {req.opponentName}: {_op}% (season avg: {match_dominance.get('oppSeasonAvg', '?')}%)
-{dom_notes}
 {_gk_dom_note}"""
             else:
                 dom_context = f"""
