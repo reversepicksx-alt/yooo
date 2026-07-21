@@ -179,10 +179,12 @@ async def _search_players_cache(query: str, league_id: int = None, relaxed: bool
     def _doc_rank(d: dict) -> int:
         lg = d.get("leagueId", 0)
         if lg in _LEAGUE_RANK:
-            return _LEAGUE_RANK[lg]       # top-5 clubs: 0-4
+            return _LEAGUE_RANK[lg]       # top-5 clubs: 0–4
+        if lg in _INTL_LEAGUES:
+            return 98                      # national/intl leagues: near-last (club must win)
         if lg == 667 or lg == 0:
             return 99                      # friendlies / unknown: last
-        return 50                          # any other real league
+        return 50                          # any other real club league
 
     deduped: dict[int, dict] = {}
     for d in docs:
@@ -440,10 +442,20 @@ async def search_players(req: PlayerSearchRequest):
         cache_results = await _search_players_cache(req.query, req.league_id, relaxed=quota_gone)
         if cache_results:
             sorted_results = _apply_sort_and_quality(cache_results)
-            # NOTE: intentionally skipping _resolve_club_for_intl_player here.
-            # Enrichment makes sequential API calls (up to 3 per player) which can
-            # push total search time past the frontend's 15s timeout → "Search unavailable".
-            # Team/league info is resolved properly via getPlayerContexts after selection.
+            # Background enrichment: if any top result still shows a national/intl
+            # league entry (meaning no club entry won the dedup), fire club resolution
+            # off the hot path — this request still returns quickly, but the NEXT
+            # search for this player will show the correct club (permanent fix).
+            if not quota_gone:
+                intl_hits = [p for p in sorted_results[:5] if p.get("leagueId") in _INTL_LEAGUES]
+                if intl_hits:
+                    async def _bg_enrich(players: list):
+                        for p in players:
+                            try:
+                                await _resolve_club_for_intl_player(p)
+                            except Exception as _e:
+                                print(f"[BG-ENRICH] pid={p.get('id')} err={_e}")
+                    aio.ensure_future(_bg_enrich(intl_hits))
             return {"players": sorted_results}
     except Exception:
         pass
