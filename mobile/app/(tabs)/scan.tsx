@@ -1548,20 +1548,24 @@ export default function ScanScreen() {
               </View>
             )}
 
-            <Text style={styles.fieldLabel}>Opponent Team {cs2NextMatch?.found ? null : <Text style={styles.fieldLabelOpt}>(optional)</Text>}</Text>
-            <FuzzySearchInput
-              searchType="cs2_teams"
-              value={cs2OpponentQuery}
-              onChangeText={(t) => { setCs2OpponentQuery(t); if (!t) setCs2ResolvedOpponent(null); }}
-              placeholder="e.g. NAVI, FaZe, Vitality…"
-              confirmed={!!cs2ResolvedOpponent}
-              autoCapitalize="none"
-              onSelectCs2Team={(t) => {
-                setCs2ResolvedOpponent(t);
-                setCs2OpponentQuery(t.name);
-                Haptics.selectionAsync();
-              }}
-            />
+            {!cs2NextMatch?.found && !cs2NextMatchLoading && (
+              <>
+                <Text style={styles.fieldLabel}>Opponent Team <Text style={styles.fieldLabelOpt}>(optional)</Text></Text>
+                <FuzzySearchInput
+                  searchType="cs2_teams"
+                  value={cs2OpponentQuery}
+                  onChangeText={(t) => { setCs2OpponentQuery(t); if (!t) setCs2ResolvedOpponent(null); }}
+                  placeholder="e.g. NAVI, FaZe, Vitality…"
+                  confirmed={!!cs2ResolvedOpponent}
+                  autoCapitalize="none"
+                  onSelectCs2Team={(t) => {
+                    setCs2ResolvedOpponent(t);
+                    setCs2OpponentQuery(t.name);
+                    Haptics.selectionAsync();
+                  }}
+                />
+              </>
+            )}
 
             <Text style={styles.fieldLabel}>Prop Type</Text>
             <TouchableOpacity style={styles.pickerBtn} onPress={() => setCs2ShowPropPicker(true)}>
@@ -1668,20 +1672,24 @@ export default function ScanScreen() {
               </View>
             )}
 
-            <Text style={styles.fieldLabel}>Opponent</Text>
-            <FuzzySearchInput
-              searchType="wta_players"
-              value={wtaOpponentQuery}
-              onChangeText={(t) => { setWtaOpponentQuery(t); if (!t) setWtaResolvedOpponent(null); }}
-              placeholder="e.g. Aryna Sabalenka"
-              confirmed={!!wtaResolvedOpponent}
-              autoCapitalize="words"
-              onSelectWtaPlayer={(p) => {
-                setWtaResolvedOpponent(p);
-                setWtaOpponentQuery(p.fullName);
-                Haptics.selectionAsync();
-              }}
-            />
+            {!wtaNextMatch?.found && !wtaNextMatchLoading && (
+              <>
+                <Text style={styles.fieldLabel}>Opponent</Text>
+                <FuzzySearchInput
+                  searchType="wta_players"
+                  value={wtaOpponentQuery}
+                  onChangeText={(t) => { setWtaOpponentQuery(t); if (!t) setWtaResolvedOpponent(null); }}
+                  placeholder="e.g. Aryna Sabalenka"
+                  confirmed={!!wtaResolvedOpponent}
+                  autoCapitalize="words"
+                  onSelectWtaPlayer={(p) => {
+                    setWtaResolvedOpponent(p);
+                    setWtaOpponentQuery(p.fullName);
+                    Haptics.selectionAsync();
+                  }}
+                />
+              </>
+            )}
 
             <Text style={styles.fieldLabel}>Surface</Text>
             <TouchableOpacity style={styles.pickerBtn} onPress={() => setWtaShowSurfacePicker(true)}>
