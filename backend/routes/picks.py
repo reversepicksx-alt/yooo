@@ -1979,14 +1979,53 @@ async def _process_api_football_live(picks: list, email: str) -> list:
     team_fix_map:   dict[int, list] = dict(zip(unique_team_ids, team_lists or []))
     league_fix_map: dict[int, list] = dict(zip(unique_league_ids, league_lists or []))
 
+    # Youth/reserve league and team-name markers — used to reject youth fixtures
+    # when the pick is for a senior player.
+    _YOUTH_LEAGUE_MARKERS = {
+        "u21", "u20", "u19", "u18", "u17", "u16", "u15",
+        "sub-21", "sub-20", "sub-19", "sub-18",
+        "youth", "reserve", "reserves", "b team", "segunda b",
+        "under-21", "under-20", "under-19", "under-18",
+        "under 21", "under 20", "under 19", "under 18",
+        "juvenile", "juvenil",
+    }
+    _YOUTH_TEAM_SUFFIXES = {
+        "u21", "u20", "u19", "u18", "u17", "u16",
+        "sub 21", "sub 20", "sub 19", "sub 18",
+        "sub-21", "sub-20", "sub-19", "sub-18",
+        "reserve", "reserves", "youth", "b",
+        "under 21", "under-21",
+    }
+
+    def _is_youth_fixture(fixture: dict) -> bool:
+        """Return True if this fixture belongs to a youth/reserve competition.
+        Checks both the league name and both team names for youth markers."""
+        league_name = (fixture.get("league", {}).get("name") or "").lower()
+        if any(m in league_name for m in _YOUTH_LEAGUE_MARKERS):
+            return True
+        for side in ("home", "away"):
+            tname = (fixture.get("teams", {}).get(side, {}).get("name") or "").lower().strip()
+            # Check if the team name ENDS with a youth suffix (e.g. "Cruz Azul U21")
+            for suffix in _YOUTH_TEAM_SUFFIXES:
+                if tname.endswith(" " + suffix) or tname == suffix:
+                    return True
+        return False
+
     def _team_name_in_fixture(fixture: dict, team_name: str) -> bool:
-        """True if the pick's team name matches either side of the fixture."""
+        """True if the pick's (senior) team name matches either side of the fixture.
+        Rejects youth/reserve fixtures — a senior player can never play in a U21 match."""
+        if _is_youth_fixture(fixture):
+            return False
         tn = (team_name or "").lower().strip()
         if not tn:
             return False
         home = (fixture.get("teams", {}).get("home", {}).get("name") or "").lower()
         away = (fixture.get("teams", {}).get("away", {}).get("name") or "").lower()
         return tn in home or home in tn or tn in away or away in tn
+
+    def _strip_youth(fixtures: list) -> list:
+        """Remove any youth/reserve fixtures from a list before matching."""
+        return [f for f in (fixtures or []) if not _is_youth_fixture(f)]
 
     # ── Pass 1: resolve fixture for every pick ───────────────────────────
     pick_fixtures: list[tuple[dict, dict | None]] = []  # (pick, fixture|None)
@@ -2003,21 +2042,26 @@ async def _process_api_football_live(picks: list, email: str) -> list:
         stored_fid = pick.get("fixtureId")
         if stored_fid and stored_fid in fid_fix_map:
             fixture = fid_fix_map.get(stored_fid)
+            # Even T0 must be youth-clean — the stored fixtureId could have been
+            # pre-stored against a youth fixture in a previous polling cycle.
+            if fixture and _is_youth_fixture(fixture):
+                print(f"[YOUTH FILTER T0] Rejected youth fixture fid={stored_fid} for pick {pick.get('playerName')}")
+                fixture = None
 
         # T1: teamId → direct team lookup (most specific)
         if not fixture and team_id and team_id in team_fix_map:
-            fixture = _match_soccer_fixture(team_fix_map[team_id], opp_name, pick_ts)
+            fixture = _match_soccer_fixture(_strip_youth(team_fix_map[team_id]), opp_name, pick_ts)
 
         # T2: leagueId → league-wide lookup filtered by team name
         if not fixture and league_id and league_id in league_fix_map:
-            lg_fxts = [f for f in league_fix_map[league_id] if _team_name_in_fixture(f, team_name)]
+            lg_fxts = [f for f in _strip_youth(league_fix_map[league_id]) if _team_name_in_fixture(f, team_name)]
             fixture = _match_soccer_fixture(lg_fxts, opp_name, pick_ts)
             if not fixture and lg_fxts:
                 fixture = _match_soccer_fixture(lg_fxts, "", pick_ts)
 
         # T3: all live fixtures filtered by team name (broadest fallback)
         if not fixture and all_live_fixtures and team_name:
-            all_fxts = [f for f in all_live_fixtures if _team_name_in_fixture(f, team_name)]
+            all_fxts = [f for f in _strip_youth(all_live_fixtures) if _team_name_in_fixture(f, team_name)]
             fixture = _match_soccer_fixture(all_fxts, opp_name, pick_ts)
 
         pick_fixtures.append((pick, fixture))
