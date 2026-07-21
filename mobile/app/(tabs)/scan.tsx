@@ -1222,8 +1222,8 @@ export default function ScanScreen() {
               </View>
             )}
 
-            {/* ── Team context picker: shown when player has club + national team ── */}
-            {resolvedPlayer && playerContexts.length > 1 && (
+            {/* ── Team context picker: only shown when player has a national team option ── */}
+            {resolvedPlayer && playerContexts.length > 1 && playerContexts.some(c => c.isNational) && (
               <View style={{ marginBottom: 12 }}>
                 <Text style={styles.fieldLabel}>PREDICT AS</Text>
                 <View style={{ flexDirection: 'row', gap: 8 }}>
