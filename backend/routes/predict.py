@@ -5359,7 +5359,8 @@ Expected possession for {req.opponentName}: {_op}% (season avg: {match_dominance
             "la galaxy": "LA Galaxy (Los Angeles Galaxy) — NOT LAFC. These are two completely separate MLS clubs. Do NOT mention LAFC.",
             "los angeles galaxy": "LA Galaxy (Los Angeles Galaxy) — NOT LAFC. These are two completely separate MLS clubs. Do NOT mention LAFC.",
             "new york city fc": "New York City FC (NYCFC) — NOT New York Red Bulls. Do NOT mention Red Bulls.",
-            "new york red bulls": "New York Red Bulls — NOT NYCFC. Do NOT mention New York City FC.",
+            "new york red bulls": "New York Red Bulls — NOT NYCFC, NOT Toronto FC. This player's CURRENT club is New York Red Bulls. If you know this player from a previous club (e.g. Toronto FC), that is OUTDATED. They NOW play for New York Red Bulls. Do NOT mention Toronto FC, NYCFC, or any other club.",
+            "toronto fc": "Toronto FC — Do NOT confuse players who formerly played here with current Toronto FC players. If this player is listed as playing for Toronto FC, that is their CURRENT club.",
         }
         _team_disambig = _TEAM_DISAMBIGUATION.get((corrected_team_name or "").lower().strip(), "")
         _disambig_note = f"\nTEAM DISAMBIGUATION: {_team_disambig}" if _team_disambig else ""
@@ -5396,6 +5397,7 @@ Expected possession for {req.opponentName}: {_op}% (season avg: {match_dominance
             _gl_sample   = _gl_data.get("sampleSize", len(_fmt_games))
             _recent_log_str = f"""
 [PLAYER RECENT GAME LOG — {req.propType.upper()} — LAST {len(_fmt_games)} GAMES]
+⚠️ These are {corrected_team_name}'s matches. All opponent names below are teams {corrected_team_name} played AGAINST — they are NOT this player's team.
 {" | ".join(_fmt_games)}
 Season avg: {_gl_raw_avg} | Home avg: {_gl_home_avg} | Away avg: {_gl_away_avg} | Sample: {_gl_sample} games
 >>> CRITICAL INSTRUCTION: In your Analysis section you MUST reference each of these games by opponent name and exact number. For every high result AND every low result, explain the specific tactical reason WHY that number happened (opponent style, defensive shape, game state, possession context). Then identify which past game above is most tactically similar to today's opponent ({req.opponentName}) and explicitly name it as your anchor. <<<"""
@@ -5437,7 +5439,16 @@ Amplification factors to explore: opponent defensive passivity, possession domin
 
         _prop_display = req.propType
 
-        prompt = f"""{req.playerName} ({display_position}) — plays for {corrected_team_name} ({player_venue.upper()}) | OPPONENT: {req.opponentName} | {_prop_display} line {req.line}
+        prompt = f"""⛔⛔⛔ PLAYER IDENTITY — READ THIS FIRST — MANDATORY ⛔⛔⛔
+Player name: {req.playerName}. Current team: {corrected_team_name}. Opponent today: {req.opponentName}.
+RULES:
+1. This player's team is {corrected_team_name}. Use ONLY this team name. Never say they play for Toronto FC, NYCFC, or any other club.
+2. If your training data associates "{req.playerName}" with a different club, that information is OUTDATED. They NOW play for {corrected_team_name}.
+3. Do NOT add, change, or combine the player's name. The name is exactly: {req.playerName}. Do NOT append another player's name to it.
+4. Opponent abbreviations and names in game logs (e.g. TOR, CIN, PHI) are teams {corrected_team_name} played AGAINST — they are NOT this player's club.
+⛔⛔⛔ END IDENTITY LOCK ⛔⛔⛔
+
+{req.playerName} ({display_position}) — plays for {corrected_team_name} ({player_venue.upper()}) | OPPONENT: {req.opponentName} | {_prop_display} line {req.line}
 IMPORTANT: This player's current CLUB is {corrected_team_name}. Do NOT reference any national team or previous club in your analysis — use only "{corrected_team_name}" when referring to this player's team.{_disambig_note}
 Odds: {json.dumps(match_odds.get('bookmakerOdds',{}), default=str) if match_odds else 'N/A'}{match_context}
 {pronoun_note}

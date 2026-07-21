@@ -1,6 +1,6 @@
 ---
-name: GK possession narrative fix
-description: Root cause of repeated GK AI narrative possession flip — dom_notes and missing bayesian_prompt_anchor injection
+name: AI prediction narrative bugs — possession and player identity
+description: Root causes of GK possession flip AND player identity/team hallucination — dom_notes, missing anchor injection, game log label, identity lock
 ---
 
 ## Rule
