@@ -364,10 +364,14 @@ export default function FuzzySearchInput({
             nestedScrollEnabled
           >
             {searchError ? (
-              <View style={styles.emptyRow}>
-                <Ionicons name="wifi-outline" size={13} color="#f0a500" style={{ marginRight: 6 }} />
-                <Text style={[styles.emptyText, { color: '#f0a500' }]}>Search unavailable — try again</Text>
-              </View>
+              <TouchableOpacity
+                style={[styles.emptyRow, { paddingVertical: 12 }]}
+                onPress={() => doSearch(value)}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="refresh-outline" size={14} color="#f0a500" style={{ marginRight: 6 }} />
+                <Text style={[styles.emptyText, { color: '#f0a500' }]}>Search unavailable — tap to retry</Text>
+              </TouchableOpacity>
             ) : showEmpty ? (
               <View style={styles.emptyRow}>
                 <Ionicons name="search-outline" size={13} color="#555" style={{ marginRight: 6 }} />
