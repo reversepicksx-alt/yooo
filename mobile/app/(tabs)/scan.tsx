@@ -1108,7 +1108,18 @@ export default function ScanScreen() {
             <Text style={styles.fieldLabel}>PLAYER</Text>
             <FuzzySearchInput
               value={playerQuery}
-              onChangeText={(t) => { setPlayerQuery(t); if (!t) setResolvedPlayer(null); }}
+              onChangeText={(t) => {
+                setPlayerQuery(t);
+                setMatchScript(null);
+                setMatchScriptLoading(false);
+                if (!t) {
+                  setResolvedPlayer(null);
+                  setAutoMatch(null);
+                  setSelectedContext(null);
+                  setPlayerContexts([]);
+                  setNextMatchLoading(false);
+                }
+              }}
               searchType="players"
               placeholder="e.g. Kevin De Bruyne"
               style={{ marginBottom: 2 }}
@@ -1427,38 +1438,52 @@ export default function ScanScreen() {
             )}
 
             <Text style={styles.fieldLabel}>BET</Text>
-            <View style={{ flexDirection: 'row', gap: 8 }}>
-              <TouchableOpacity style={[styles.pickerBtn, { flex: 3 }]} onPress={() => setShowPropPicker(true)}>
-                <Text style={styles.pickerBtnText}>{PROP_TYPES.find(p => p.value === propType)?.label || 'Prop Type'}</Text>
-                <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
+            {/* ── Compact BET card: Prop / Line / Venue in one block ── */}
+            <View style={{ borderRadius: 14, borderWidth: 1, borderColor: 'rgba(57,255,20,0.15)', overflow: 'hidden', marginTop: 4 }}>
+              {/* Row 1 — Prop Type */}
+              <TouchableOpacity
+                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14, height: 52, borderBottomWidth: 1, borderBottomColor: 'rgba(57,255,20,0.08)' }}
+                onPress={() => setShowPropPicker(true)}
+              >
+                <Text style={{ color: Colors.textSecondary, fontSize: 10, fontWeight: '800', letterSpacing: 1.2 }}>PROP TYPE</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Text style={{ color: Colors.text, fontSize: 15, fontWeight: '600' }}>{PROP_TYPES.find(p => p.value === propType)?.label || 'Select'}</Text>
+                  <Ionicons name="chevron-down" size={14} color={Colors.primary} />
+                </View>
               </TouchableOpacity>
-              <TextInput
-                style={[styles.textInput, INPUT_STYLE, { flex: 2 }]}
-                placeholder="Line"
-                placeholderTextColor={Colors.textTertiary}
-                value={line}
-                onChangeText={setLine}
-                keyboardType="decimal-pad"
-              />
-            </View>
 
-            <Text style={styles.fieldLabel}>VENUE</Text>
-            <View style={styles.venueToggle}>
+              {/* Row 2 — Line (left) + Venue (right) */}
+              <View style={{ flexDirection: 'row', height: 52 }}>
+                {/* Line input */}
+                <View style={{ flex: 1, paddingHorizontal: 14, justifyContent: 'center', borderRightWidth: 1, borderRightColor: 'rgba(57,255,20,0.08)' }}>
+                  <Text style={{ color: Colors.textSecondary, fontSize: 10, fontWeight: '800', letterSpacing: 1.2, marginBottom: 2 }}>LINE</Text>
+                  <TextInput
+                    style={{ color: Colors.text, fontSize: 16, fontWeight: '700', padding: 0 }}
+                    placeholder="e.g. 50.5"
+                    placeholderTextColor="rgba(255,255,255,0.18)"
+                    value={line}
+                    onChangeText={setLine}
+                    keyboardType="decimal-pad"
+                  />
+                </View>
+
+                {/* Venue toggle */}
                 <TouchableOpacity
-                  style={[styles.venueOption, venueOverride === 'home' && styles.venueOptionActive]}
+                  style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, borderRightWidth: 1, borderRightColor: 'rgba(57,255,20,0.08)', backgroundColor: venueOverride === 'home' ? 'rgba(57,255,20,0.1)' : 'transparent' }}
                   onPress={() => { setVenueOverride('home'); Haptics.selectionAsync(); }}
                 >
-                  <Ionicons name="home-outline" size={13} color={venueOverride === 'home' ? Colors.primary : Colors.textSecondary} />
-                  <Text style={[styles.venueOptionText, venueOverride === 'home' && styles.venueOptionTextActive]}>HOME</Text>
+                  <Ionicons name="home-outline" size={14} color={venueOverride === 'home' ? Colors.primary : Colors.textSecondary} />
+                  <Text style={{ color: venueOverride === 'home' ? Colors.primary : Colors.textSecondary, fontSize: 11, fontWeight: '800', letterSpacing: 0.8 }}>HOME</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.venueOption, venueOverride === 'away' && styles.venueOptionActive]}
+                  style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, backgroundColor: venueOverride === 'away' ? 'rgba(57,255,20,0.1)' : 'transparent' }}
                   onPress={() => { setVenueOverride('away'); Haptics.selectionAsync(); }}
                 >
-                  <Ionicons name="airplane-outline" size={13} color={venueOverride === 'away' ? Colors.primary : Colors.textSecondary} />
-                  <Text style={[styles.venueOptionText, venueOverride === 'away' && styles.venueOptionTextActive]}>AWAY</Text>
+                  <Ionicons name="airplane-outline" size={14} color={venueOverride === 'away' ? Colors.primary : Colors.textSecondary} />
+                  <Text style={{ color: venueOverride === 'away' ? Colors.primary : Colors.textSecondary, fontSize: 11, fontWeight: '800', letterSpacing: 0.8 }}>AWAY</Text>
                 </TouchableOpacity>
               </View>
+            </View>
 
             {manualError && (
               <View style={styles.inlineError}>
