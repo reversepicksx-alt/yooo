@@ -1222,67 +1222,75 @@ export default function ScanScreen() {
               </View>
             )}
 
-            {/* ── Team context picker: only shown when player has a national team option ── */}
-            {resolvedPlayer && playerContexts.length > 1 && playerContexts.some(c => c.isNational) && (
-              <View style={{ marginBottom: 12 }}>
-                <Text style={styles.fieldLabel}>PREDICT AS</Text>
-                <View style={{ flexDirection: 'row', gap: 8 }}>
-                  {playerContexts.map((ctx) => {
-                    const active = selectedContext?.teamId === ctx.teamId;
-                    return (
-                      <TouchableOpacity
-                        key={ctx.teamId}
-                        style={[{
-                          flex: 1, paddingVertical: 10, paddingHorizontal: 8,
-                          borderRadius: 8, borderWidth: 1,
-                          borderColor: active ? Colors.primary : '#2a2a2a',
-                          backgroundColor: active ? 'rgba(57,255,20,0.08)' : '#111',
-                          alignItems: 'center',
-                        }]}
-                        onPress={async () => {
-                          if (selectedContext?.teamId === ctx.teamId) return;
-                          setSelectedContext(ctx);
-                          setAutoMatch(null);
-                          setManualOpponentQuery('');
-                          setResolvedManualOpponent(null);
-                          setNextMatchLoading(true);
-                          Haptics.selectionAsync();
-                          try {
-                            const nm = await getTeamNextMatch(ctx.teamId);
-                            if (nm?.found) {
-                              setAutoMatch(nm);
-                              setVenueOverride(nm.isHome ? 'home' : 'away');
-                            }
-                            // Set league from next-match result; fall back to MongoDB lookup by leagueId
-                            if (nm?.leagueId) {
-                              setLeagueId(nm.leagueId); setLeagueQuery(nm.leagueName || '');
-                            } else {
-                              const fallbackId = ctx.leagueId || 0;
-                              if (fallbackId && fallbackId !== 667) {
-                                const lgInfo = await getLeagueById(fallbackId);
-                                setLeagueId(fallbackId);
-                                setLeagueQuery(lgInfo?.name || '');
+            {/* ── Team context picker: current team + national teams only ── */}
+            {resolvedPlayer && (() => {
+              // Filter to: current club + any national team entries only
+              // This eliminates historical old-club entries (e.g. River Plate for a Cruz Azul player)
+              const displayCtxs = playerContexts.filter(
+                c => c.isNational || c.teamId === resolvedPlayer.teamId
+              );
+              // Only show picker when there's an actual national team alternative
+              if (displayCtxs.length <= 1 || !displayCtxs.some(c => c.isNational)) return null;
+              return (
+                <View style={{ marginBottom: 12 }}>
+                  <Text style={styles.fieldLabel}>PREDICT AS</Text>
+                  <View style={{ flexDirection: 'row', gap: 8 }}>
+                    {displayCtxs.map((ctx) => {
+                      const active = selectedContext?.teamId === ctx.teamId;
+                      return (
+                        <TouchableOpacity
+                          key={ctx.teamId}
+                          style={[{
+                            flex: 1, paddingVertical: 10, paddingHorizontal: 8,
+                            borderRadius: 8, borderWidth: 1,
+                            borderColor: active ? Colors.primary : '#2a2a2a',
+                            backgroundColor: active ? 'rgba(57,255,20,0.08)' : '#111',
+                            alignItems: 'center',
+                          }]}
+                          onPress={async () => {
+                            if (selectedContext?.teamId === ctx.teamId) return;
+                            setSelectedContext(ctx);
+                            setAutoMatch(null);
+                            setManualOpponentQuery('');
+                            setResolvedManualOpponent(null);
+                            setNextMatchLoading(true);
+                            Haptics.selectionAsync();
+                            try {
+                              const nm = await getTeamNextMatch(ctx.teamId);
+                              if (nm?.found) {
+                                setAutoMatch(nm);
+                                setVenueOverride(nm.isHome ? 'home' : 'away');
                               }
-                            }
-                          } catch {}
-                          setNextMatchLoading(false);
-                        }}
-                        activeOpacity={0.75}
-                      >
-                        <Ionicons
-                          name={ctx.isNational ? 'flag-outline' : 'shirt-outline'}
-                          size={14}
-                          color={active ? Colors.primary : Colors.textSecondary}
-                        />
-                        <Text style={{ color: active ? Colors.primary : Colors.textSecondary, fontSize: 12, fontWeight: active ? '700' : '400', marginTop: 3, textAlign: 'center' }}>
-                          {ctx.teamName}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
+                              if (nm?.leagueId) {
+                                setLeagueId(nm.leagueId); setLeagueQuery(nm.leagueName || '');
+                              } else {
+                                const fallbackId = ctx.leagueId || 0;
+                                if (fallbackId && fallbackId !== 667) {
+                                  const lgInfo = await getLeagueById(fallbackId);
+                                  setLeagueId(fallbackId);
+                                  setLeagueQuery(lgInfo?.name || '');
+                                }
+                              }
+                            } catch {}
+                            setNextMatchLoading(false);
+                          }}
+                          activeOpacity={0.75}
+                        >
+                          <Ionicons
+                            name={ctx.isNational ? 'flag-outline' : 'shirt-outline'}
+                            size={14}
+                            color={active ? Colors.primary : Colors.textSecondary}
+                          />
+                          <Text style={{ color: active ? Colors.primary : Colors.textSecondary, fontSize: 12, fontWeight: active ? '700' : '400', marginTop: 3, textAlign: 'center' }}>
+                            {ctx.teamName}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
                 </View>
-              </View>
-            )}
+              );
+            })()}
             {contextsLoading && (
               <ActivityIndicator size="small" color={Colors.primary} style={{ alignSelf: 'flex-start', marginBottom: 8 }} />
             )}
