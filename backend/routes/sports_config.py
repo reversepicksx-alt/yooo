@@ -20,14 +20,14 @@ ADMIN_SECRET = os.environ.get("ADMIN_SECRET", "")
 
 # Canonical default configuration — seeded on first access
 _DEFAULTS = [
-    {"sport": "soccer", "displayName": "Soccer",     "icon": "football",        "label": None,          "available": True},
-    {"sport": "cs2",    "displayName": "CS2",         "icon": "game-controller", "label": None,          "available": True},
-    {"sport": "wta",    "displayName": "WTA Tennis",  "icon": "tennisball",      "label": None,          "available": True},
-    {"sport": "nba",    "displayName": "NBA",         "icon": "basketball",      "label": "Unavailable", "available": False},
-    {"sport": "nhl",    "displayName": "NHL",         "icon": "snow",            "label": "Unavailable", "available": False},
-    {"sport": "mlb",    "displayName": "MLB",         "icon": "baseball",        "label": "Unavailable", "available": False},
+    {"sport": "soccer", "displayName": "Soccer",     "icon": "football",        "label": None, "available": True},
+    {"sport": "mlb",    "displayName": "MLB",         "icon": "baseball",        "label": None, "available": False},
+    {"sport": "cs2",    "displayName": "CS2",         "icon": "game-controller", "label": None, "available": True},
+    {"sport": "wta",    "displayName": "WTA Tennis",  "icon": "tennisball",      "label": None, "available": True},
+    {"sport": "nba",    "displayName": "NBA",         "icon": "basketball",      "label": None, "available": False},
+    {"sport": "nhl",    "displayName": "NHL",         "icon": "snow",            "label": None, "available": False},
 ]
-_SPORT_ORDER = ["soccer", "cs2", "wta", "nba", "nhl", "mlb"]
+_SPORT_ORDER = ["soccer", "mlb", "cs2", "wta", "nba", "nhl"]
 
 
 async def _ensure_seeded() -> None:
