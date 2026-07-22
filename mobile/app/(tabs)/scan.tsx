@@ -226,12 +226,12 @@ export default function ScanScreen() {
   // Sport picker modal + server-side sport config
   const [showSportPicker, setShowSportPicker] = useState(false);
   const [sportsConfig, setSportsConfig] = useState<SportConfig[]>([
-    { sport: 'soccer', displayName: 'Soccer',     icon: 'football',        label: null, available: true  },
-    { sport: 'mlb',    displayName: 'MLB',         icon: 'baseball',        label: null, available: false },
-    { sport: 'cs2',    displayName: 'CS2',         icon: 'game-controller', label: null, available: true  },
-    { sport: 'wta',    displayName: 'WTA Tennis',  icon: 'tennisball',      label: null, available: true  },
-    { sport: 'nba',    displayName: 'NBA',         icon: 'basketball',      label: null, available: false },
-    { sport: 'nhl',    displayName: 'NHL',         icon: 'snow',            label: null, available: false },
+    { sport: 'soccer', displayName: 'Soccer',     icon: 'football',        label: null, available: true },
+    { sport: 'mlb',    displayName: 'MLB',         icon: 'baseball',        label: null, available: true },
+    { sport: 'cs2',    displayName: 'CS2',         icon: 'game-controller', label: null, available: true },
+    { sport: 'wta',    displayName: 'WTA Tennis',  icon: 'tennisball',      label: null, available: true },
+    { sport: 'nba',    displayName: 'NBA',         icon: 'basketball',      label: null, available: true },
+    { sport: 'nhl',    displayName: 'NHL',         icon: 'snow',            label: null, available: true },
   ]);
 
 
@@ -1240,12 +1240,15 @@ export default function ScanScreen() {
                       />
                     </View>
                     <View>
-                      <Text style={styles.sportSelectorText}>
-                        {sportsConfig.find(s => s.sport === sport)?.displayName || sport.toUpperCase()}
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Text style={styles.sportSelectorText}>
+                          {sportsConfig.find(s => s.sport === sport)?.displayName || sport.toUpperCase()}
+                        </Text>
+                        <View style={{ width: 7, height: 7, borderRadius: 3.5, backgroundColor: sportsConfig.find(s => s.sport === sport)?.available ? '#39FF14' : '#ff3b3b' }} />
+                      </View>
+                      <Text style={[styles.sportSelectorSub, { color: sportsConfig.find(s => s.sport === sport)?.available ? Colors.primary : '#ff3b3b' }]}>
+                        {sportsConfig.find(s => s.sport === sport)?.available ? 'Predict' : 'Unavailable'}
                       </Text>
-                      {sportsConfig.find(s => s.sport === sport)?.available === false && (
-                        <Text style={styles.sportSelectorSub}>Unavailable for now</Text>
-                      )}
                     </View>
                   </View>
                   <View style={styles.sportSelectorChangePill}>
@@ -4955,7 +4958,8 @@ export default function ScanScreen() {
               >
                 <Ionicons name={s.icon as any} size={18} color={sport === s.sport ? Colors.primary : Colors.textSecondary} />
                 <Text style={[styles.modalItemText, sport === s.sport && styles.modalItemTextActive, { fontSize: 15, flex: 1 }]}>{s.displayName}</Text>
-                {sport === s.sport && <Ionicons name="checkmark" size={16} color={Colors.primary} style={{ marginLeft: 'auto' }} />}
+                <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: s.available ? '#39FF14' : '#ff3b3b', marginLeft: 4 }} />
+                {sport === s.sport && <Ionicons name="checkmark" size={16} color={Colors.primary} style={{ marginLeft: 6 }} />}
               </TouchableOpacity>
             ))}
           </View>

@@ -883,6 +883,15 @@ async def get_player_next_match(player_id: int, season: int = 2026) -> dict:
     if not team_id:
         return {"found": False}
 
+    # Stats API player IDs (>= 100k) return Stats API team IDs which BDL doesn't understand.
+    # Translate to BDL team ID before calling the BDL games endpoint.
+    if player_id >= _STATSAPI_ID_THRESHOLD:
+        bdl_team_id = await get_bdl_team_id_for_statsapi(team_id, season)
+        if not bdl_team_id:
+            log.warning(f"[MLB NEXT MATCH] could not translate statsapi team_id={team_id} to BDL")
+            return {"found": False}
+        team_id = bdl_team_id
+
     try:
         data = await _get("/games", {
             "team_ids[]": team_id,

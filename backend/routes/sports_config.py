@@ -21,23 +21,33 @@ ADMIN_SECRET = os.environ.get("ADMIN_SECRET", "")
 # Canonical default configuration — seeded on first access
 _DEFAULTS = [
     {"sport": "soccer", "displayName": "Soccer",     "icon": "football",        "label": None, "available": True},
-    {"sport": "mlb",    "displayName": "MLB",         "icon": "baseball",        "label": None, "available": False},
+    {"sport": "mlb",    "displayName": "MLB",         "icon": "baseball",        "label": None, "available": True},
     {"sport": "cs2",    "displayName": "CS2",         "icon": "game-controller", "label": None, "available": True},
     {"sport": "wta",    "displayName": "WTA Tennis",  "icon": "tennisball",      "label": None, "available": True},
-    {"sport": "nba",    "displayName": "NBA",         "icon": "basketball",      "label": None, "available": False},
-    {"sport": "nhl",    "displayName": "NHL",         "icon": "snow",            "label": None, "available": False},
+    {"sport": "nba",    "displayName": "NBA",         "icon": "basketball",      "label": None, "available": True},
+    {"sport": "nhl",    "displayName": "NHL",         "icon": "snow",            "label": None, "available": True},
 ]
 _SPORT_ORDER = ["soccer", "mlb", "cs2", "wta", "nba", "nhl"]
 
 
 async def _ensure_seeded() -> None:
-    """Insert defaults for any sport not yet in the collection."""
+    """Insert defaults for any sport not yet in the collection.
+    Also force-updates the `available` flag so backend changes propagate
+    without needing a DB wipe."""
     try:
         now = datetime.now(timezone.utc).isoformat()
         for cfg in _DEFAULTS:
             await db.sports_config.update_one(
                 {"sport": cfg["sport"]},
-                {"$setOnInsert": {**cfg, "updatedAt": now}},
+                {
+                    "$set": {
+                        "available": cfg["available"],
+                        "updatedAt": now,
+                        # Clear stale "Unavailable" labels when a sport becomes available
+                        "label": cfg["label"],
+                    },
+                    "$setOnInsert": {k: v for k, v in cfg.items() if k not in ("available", "label")},
+                },
                 upsert=True,
             )
     except Exception as e:
