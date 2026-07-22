@@ -23,6 +23,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 
 
 const SCREEN_W = Dimensions.get('window').width;
+const SCREEN_H = Dimensions.get('window').height;
 const INPUT_STYLE = Platform.OS === 'web' ? { outlineWidth: 0 } as object : {};
 
 // Static list of FIFA international nations for World Cup opponent fuzzy search
@@ -1198,9 +1199,9 @@ export default function ScanScreen() {
         <View
           pointerEvents={isNoSub ? 'none' : 'auto'}
           style={[
-            { flex: 1 },
+            { minHeight: SCREEN_H - 200 },
             mode === 'manual' && phase === 'idle' && !prediction
-              ? { justifyContent: 'center', paddingBottom: 48 }
+              ? { justifyContent: 'center', paddingBottom: 60 }
               : {},
           ]}
         >
@@ -1987,16 +1988,7 @@ export default function ScanScreen() {
         {/* ─── NBA MANUAL FORM ─── */}
         {sport === 'nba' && phase !== 'result' && phase !== 'saved' && (
           <View style={styles.manualForm}>
-            {sportsConfig.find(s => s.sport === 'nba')?.available === false ? (
-              <View style={{ alignItems: 'center', paddingVertical: 32, gap: 12 }}>
-                <Ionicons name="basketball-outline" size={40} color={Colors.textSecondary} />
-                <Text style={{ color: Colors.text, fontSize: 16, fontWeight: '700' }}>NBA Coming Soon</Text>
-                <Text style={{ color: Colors.textSecondary, fontSize: 13, textAlign: 'center', lineHeight: 19 }}>
-                  NBA predictions are being calibrated and will be available in a future update.
-                </Text>
-              </View>
-            ) : (
-              <>
+            <>
                 <Text style={styles.fieldLabel}>Player</Text>
                 <FuzzySearchInput
                   searchType="nba_players"
@@ -2093,23 +2085,13 @@ export default function ScanScreen() {
                   </>
                 )}
               </>
-            )}
           </View>
         )}
 
         {/* ─── NHL MANUAL FORM ─── */}
         {sport === 'nhl' && phase !== 'result' && phase !== 'saved' && (
           <View style={styles.manualForm}>
-            {sportsConfig.find(s => s.sport === 'nhl')?.available === false ? (
-              <View style={{ alignItems: 'center', paddingVertical: 32, gap: 12 }}>
-                <Ionicons name="snow-outline" size={40} color={Colors.textSecondary} />
-                <Text style={{ color: Colors.text, fontSize: 16, fontWeight: '700' }}>NHL Coming Soon</Text>
-                <Text style={{ color: Colors.textSecondary, fontSize: 13, textAlign: 'center', lineHeight: 19 }}>
-                  NHL predictions are being calibrated and will be available in a future update.
-                </Text>
-              </View>
-            ) : (
-              <>
+            <>
                 <Text style={styles.fieldLabel}>Player</Text>
                 <FuzzySearchInput
                   searchType="nhl_players"
@@ -2206,23 +2188,13 @@ export default function ScanScreen() {
                   </>
                 )}
               </>
-            )}
           </View>
         )}
 
         {/* ─── MLB MANUAL FORM ─── */}
         {sport === 'mlb' && phase !== 'result' && phase !== 'saved' && (
           <View style={styles.manualForm}>
-            {sportsConfig.find(s => s.sport === 'mlb')?.available === false ? (
-              <View style={{ alignItems: 'center', paddingVertical: 32, gap: 12 }}>
-                <Ionicons name="baseball-outline" size={40} color={Colors.textSecondary} />
-                <Text style={{ color: Colors.text, fontSize: 16, fontWeight: '700' }}>MLB Coming Soon</Text>
-                <Text style={{ color: Colors.textSecondary, fontSize: 13, textAlign: 'center', lineHeight: 19 }}>
-                  MLB predictions are being calibrated and will be available in a future update.
-                </Text>
-              </View>
-            ) : (
-              <>
+            <>
                 <Text style={styles.fieldLabel}>Player</Text>
                 <FuzzySearchInput
                   searchType="mlb_players"
@@ -2319,7 +2291,6 @@ export default function ScanScreen() {
                   </>
                 )}
               </>
-            )}
           </View>
         )}
 
