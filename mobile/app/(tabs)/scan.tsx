@@ -1195,10 +1195,22 @@ export default function ScanScreen() {
         )}
 
         {/* ─── SCAN SECTION ─── */}
-        <View pointerEvents={isNoSub ? 'none' : 'auto'}>
+        <View
+          pointerEvents={isNoSub ? 'none' : 'auto'}
+          style={[
+            { flex: 1 },
+            mode === 'manual' && phase === 'idle' && !prediction
+              ? { justifyContent: 'center', paddingBottom: 48 }
+              : {},
+          ]}
+        >
             {/* Idle: cartoon sports image only */}
             {phase === 'idle' && (
               <>
+                {/* Eyebrow label — gives the centered form a visual anchor */}
+                {mode === 'manual' && (
+                  <Text style={styles.formEyebrow}>Analyze a Prop</Text>
+                )}
                 {/* Sport selector — tap to switch sport */}
                 <TouchableOpacity
                   style={styles.sportSelectorBtn}
@@ -5238,10 +5250,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#111111',
     borderRadius: 14,
     paddingHorizontal: 16,
-    paddingVertical: 13,
-    marginBottom: 12,
+    paddingVertical: 14,
+    marginBottom: 4,
     borderWidth: 1,
-    borderColor: '#1e1e1e',
+    borderColor: 'rgba(57,255,20,0.18)',
   },
   sportSelectorIcon: {
     width: 30,
@@ -5329,7 +5341,7 @@ const styles = StyleSheet.create({
   },
   sportListLabel: { fontSize: 14, fontWeight: '600', color: '#ccc', flex: 1 },
   sportListLabelActive: { color: Colors.primary, fontWeight: '700' },
-  body: { paddingHorizontal: 20, paddingBottom: 40 },
+  body: { paddingHorizontal: 20, paddingBottom: 40, flexGrow: 1 },
 
   /* Upload box */
   uploadBox: {
@@ -5561,7 +5573,12 @@ const styles = StyleSheet.create({
   cancelBtnText: { color: Colors.error, fontSize: 12, fontWeight: '700' },
 
   /* Manual form */
-  manualForm: { gap: 8 },
+  manualForm: { gap: 10 },
+  formEyebrow: {
+    fontSize: 11, color: Colors.textTertiary, fontWeight: '700',
+    letterSpacing: 2.5, textAlign: 'center', marginBottom: 14,
+    textTransform: 'uppercase',
+  },
   autoFillBanner: {
     flexDirection: 'row', alignItems: 'flex-start', gap: 8,
     marginBottom: 4, padding: 10,
