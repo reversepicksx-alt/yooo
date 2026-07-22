@@ -544,9 +544,16 @@ async def get_rankings(limit: int = 30) -> list:
 async def get_player_next_match(player_id: int, team_id: Optional[int] = None) -> dict:
     """Fetch the next upcoming match for a CS2 player (via their team_id)."""
     cache_key = f"cs2_next_{team_id or player_id}"
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     doc = await _cache_get(cache_key)
     if _fresh(doc, 900) and doc.get("data") is not None:   # 15-min cache
-        return doc["data"]
+        cached = doc["data"]
+        # Extra guard: bypass cache if the stored match date is already past.
+        # BDL's "upcoming" status filter is unreliable — old matches can linger.
+        cached_date = cached.get("date", "")
+        if not cached_date or cached_date >= today_str:
+            return cached
+        log.info(f"[CS2] cache bypass — stale match date {cached_date} < {today_str}")
 
     result: dict = {"found": False}
     try:
@@ -556,8 +563,23 @@ async def get_player_next_match(player_id: int, team_id: Optional[int] = None) -
             r = await _get("/matches", {"player_ids[]": player_id, "status": "upcoming", "per_page": 10})
 
         matches = r.get("data", [])
-        if matches:
-            m    = matches[0]
+
+        # Sort by scheduled date so we always consider the soonest match first.
+        def _cs2_date_key(m):
+            for k in ("scheduled_at", "begin_at"):
+                v = m.get(k)
+                if v:
+                    return str(v)
+            slug_date = _parse_date_from_slug(m.get("slug", ""))
+            return slug_date or "9999"
+
+        matches.sort(key=_cs2_date_key)
+
+        # Drop past matches — BDL can return completed rounds as "upcoming".
+        future = [m for m in matches if _cs2_date_key(m)[:10] >= today_str]
+
+        if future:
+            m    = future[0]
             mt1  = m.get("team1") or {}
             mt2  = m.get("team2") or {}
 
@@ -566,7 +588,7 @@ async def get_player_next_match(player_id: int, team_id: Optional[int] = None) -
                 opponent  = mt2 if is_team1 else mt1
             else:
                 opponent  = mt2   # best guess when no team_id
-            
+
             tour     = m.get("tournament") or {}
             date_raw = m.get("scheduled_at") or m.get("begin_at") or ""
             date_str = date_raw[:10] if date_raw else _parse_date_from_slug(m.get("slug", ""))
@@ -583,6 +605,8 @@ async def get_player_next_match(player_id: int, team_id: Optional[int] = None) -
                 "tier":       tour.get("tier") or "",
                 "date":       date_str,
             }
+        else:
+            log.info(f"[CS2] next-match: {len(matches)} match(es) returned, all in past — no future match found")
     except Exception as e:
         log.warning(f"[CS2] next-match fetch error: {e}")
 

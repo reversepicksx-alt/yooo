@@ -353,9 +353,17 @@ async def get_rankings(limit: int = 100) -> list:
 async def get_player_next_match(player_id: int) -> dict:
     """Fetch the next upcoming/scheduled match for a WTA player."""
     cache_key = f"wta_next_{player_id}"
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     doc = await _cache_get(cache_key)
     if _fresh(doc, 900) and doc.get("data") is not None:   # 15-min cache
-        return doc["data"]
+        cached = doc["data"]
+        # Extra guard: don't serve a cached result whose match date is in the past.
+        # BDL sometimes leaves old "upcoming" entries that never flip to finished,
+        # so we'd keep showing a Feb-28 opponent forever without this check.
+        cached_date = cached.get("date", "")
+        if not cached_date or cached_date >= today_str:
+            return cached
+        log.info(f"[WTA] cache bypass — stale match date {cached_date} < {today_str} for player {player_id}")
 
     result: dict = {"found": False}
     now_y = datetime.now(timezone.utc).year
@@ -381,7 +389,14 @@ async def get_player_next_match(player_id: int) -> dict:
                 return "9999"
             matches.sort(key=_date_key)
 
-            m   = matches[0]
+            # Drop any match whose date is already in the past — BDL's status
+            # filter is unreliable and can return completed matches as "upcoming".
+            future = [m for m in matches if _date_key(m)[:10] >= today_str]
+            if not future:
+                log.info(f"[WTA] status={status}: {len(matches)} match(es) all in past, skipping")
+                continue
+
+            m   = future[0]
             p1  = m.get("player1") or {}
             p2  = m.get("player2") or {}
             opp = p2 if p1.get("id") == player_id else p1
