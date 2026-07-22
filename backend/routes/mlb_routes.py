@@ -249,6 +249,17 @@ async def search_players(q: str = Query(..., min_length=2)):
 
 # ── Teams ─────────────────────────────────────────────────────────────────────
 
+@router.get("/next-match")
+async def mlb_next_match(player_id: int = Query(...)):
+    """Return the next upcoming MLB game for a player's team (for auto-fill)."""
+    try:
+        result = await mlb_client.get_player_next_match(player_id)
+        return result
+    except Exception as e:
+        log.warning(f"[MLB NEXT MATCH ROUTE] player_id={player_id}: {e}")
+        return {"found": False}
+
+
 @router.get("/teams")
 async def get_teams():
     try:

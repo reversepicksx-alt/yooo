@@ -291,3 +291,73 @@ async def get_season_averages(player_id: int, season: int = CURRENT_NBA_SEASON) 
     except Exception as e:
         log.warning(f"[NBA SEASON AVG] {e}")
         return {}
+
+
+async def get_player_next_match(player_id: int, season: int = CURRENT_NBA_SEASON) -> dict:
+    """Get the next upcoming NBA game for a player's team.
+    Returns {found, gameId, date, venue, opponent} or {found: False}.
+    Cache is bypassed if the stored match date is before today (stale past game).
+    """
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    cache_key = f"nba_next:{player_id}"
+    cached = await _cache_get(cache_key)
+    if cached:
+        stored = cached.get("data", {})
+        if stored.get("found") and (stored.get("date", "") or "") >= today_str:
+            return stored
+        if not stored.get("found") and cached.get("ts", ""):
+            # Re-fetch if stale (cache may be old "not found")
+            age = (datetime.now(timezone.utc) - datetime.fromisoformat(str(cached["ts"])).replace(tzinfo=timezone.utc)).total_seconds()
+            if age < 900:
+                return stored
+
+    player = await get_player(player_id)
+    if not player:
+        return {"found": False}
+    team = player.get("team") or {}
+    team_id = team.get("id")
+    if not team_id:
+        return {"found": False}
+
+    try:
+        data = await _get("/games", {
+            "team_ids[]": team_id,
+            "seasons[]":  season,
+            "start_date": today_str,
+            "per_page":   5,
+        })
+    except Exception as e:
+        log.warning(f"[NBA NEXT MATCH] player={player_id}: {e}")
+        return {"found": False}
+
+    games = data.get("data", [])
+    future = [g for g in games
+              if (g.get("date") or "")[:10] >= today_str
+              and (g.get("status") or "").upper() != "FINAL"]
+    future.sort(key=lambda g: g.get("date", ""))
+
+    if not future:
+        result = {"found": False}
+        await _cache_set(cache_key, result)
+        return result
+
+    g = future[0]
+    home_team    = g.get("home_team") or {}
+    visitor_team = g.get("visitor_team") or {}
+    is_home      = home_team.get("id") == team_id
+    opp          = visitor_team if is_home else home_team
+
+    result = {
+        "found":    True,
+        "gameId":   g.get("id"),
+        "date":     (g.get("date") or "")[:10],
+        "venue":    "home" if is_home else "away",
+        "opponent": {
+            "id":           opp.get("id"),
+            "name":         opp.get("full_name") or opp.get("name") or "",
+            "abbreviation": opp.get("abbreviation") or "",
+        },
+    }
+    log.info(f"[NBA NEXT MATCH] player={player_id} → {result['date']} vs {result['opponent']['name']} ({result['venue']})")
+    await _cache_set(cache_key, result)
+    return result

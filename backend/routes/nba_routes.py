@@ -100,6 +100,17 @@ async def search_nba_players(q: str = Query("", min_length=2), limit: int = Quer
 
 # ── Teams ─────────────────────────────────────────────────────────────────────
 
+@router.get("/next-match")
+async def nba_next_match(player_id: int = Query(...)):
+    """Return the next upcoming NBA game for a player's team (for auto-fill)."""
+    try:
+        result = await nba_client.get_player_next_match(player_id)
+        return result
+    except Exception as e:
+        log.warning(f"[NBA NEXT MATCH ROUTE] player_id={player_id}: {e}")
+        return {"found": False}
+
+
 @router.get("/teams")
 async def get_nba_teams():
     try:

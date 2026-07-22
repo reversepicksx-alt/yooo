@@ -383,3 +383,75 @@ async def get_player_game_logs(player_id: int, season: int = CURRENT_NHL_SEASON)
     if logs:
         await _cache_set(cache_key, logs)
     return logs
+
+
+async def get_player_next_match(player_id: int, season: int = CURRENT_NHL_SEASON) -> dict:
+    """Get the next upcoming NHL game for a player's team.
+    Returns {found, gameId, date, venue, opponent} or {found: False}.
+    Cache is bypassed if the stored date is before today.
+    """
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    cache_key = f"nhl_next:{player_id}"
+    cached = await _cache_get(cache_key)
+    if cached:
+        stored = cached.get("data", {})
+        if stored.get("found") and (stored.get("date", "") or "") >= today_str:
+            return stored
+        if not stored.get("found") and cached.get("ts", ""):
+            age = (datetime.now(timezone.utc) - datetime.fromisoformat(str(cached["ts"])).replace(tzinfo=timezone.utc)).total_seconds()
+            if age < 900:
+                return stored
+
+    player = await get_player(player_id)
+    if not player:
+        return {"found": False}
+    teams = player.get("teams") or []
+    if not teams:
+        return {"found": False}
+    teams_sorted = sorted(teams, key=lambda t: t.get("season", 0), reverse=True)
+    team_id = teams_sorted[0].get("id")
+    if not team_id:
+        return {"found": False}
+
+    try:
+        data = await _get("/games", [
+            ("team_ids[]", team_id),
+            ("seasons[]",  season),
+            ("per_page",   100),
+        ])
+    except Exception as e:
+        log.warning(f"[NHL NEXT MATCH] player={player_id}: {e}")
+        return {"found": False}
+
+    all_games = data.get("data", [])
+    # BDL NHL: game_state "OFF" = Final; "Pre-Game"/"Scheduled"/"Live" = not finished
+    future = [g for g in all_games
+              if (g.get("game_date") or "")[:10] >= today_str
+              and g.get("game_state") not in ("OFF", "Final", "F")]
+    future.sort(key=lambda g: g.get("game_date", ""))
+
+    if not future:
+        result = {"found": False}
+        await _cache_set(cache_key, result)
+        return result
+
+    g        = future[0]
+    home_t   = g.get("home_team") or {}
+    away_t   = g.get("away_team") or {}
+    is_home  = home_t.get("id") == team_id
+    opp      = away_t if is_home else home_t
+
+    result = {
+        "found":    True,
+        "gameId":   g.get("id"),
+        "date":     (g.get("game_date") or "")[:10],
+        "venue":    "home" if is_home else "away",
+        "opponent": {
+            "id":           opp.get("id"),
+            "name":         opp.get("full_name") or opp.get("name") or "",
+            "abbreviation": opp.get("abbreviation") or "",
+        },
+    }
+    log.info(f"[NHL NEXT MATCH] player={player_id} → {result['date']} vs {result['opponent']['name']} ({result['venue']})")
+    await _cache_set(cache_key, result)
+    return result

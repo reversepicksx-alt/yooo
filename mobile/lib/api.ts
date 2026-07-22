@@ -1560,6 +1560,369 @@ export async function cs2Predict(request: Record<string, unknown>, signal?: Abor
   } as unknown as PredictionResult;
 }
 
+// ─── NBA ────────────────────────────────────────────────────────────────────
+
+export const NBA_PROP_TYPES = [
+  { value: 'pts',           label: 'Points' },
+  { value: 'reb',           label: 'Rebounds' },
+  { value: 'ast',           label: 'Assists' },
+  { value: 'stl',           label: 'Steals' },
+  { value: 'blk',           label: 'Blocks' },
+  { value: 'fg3m',          label: '3-Pointers Made' },
+  { value: 'tov',           label: 'Turnovers' },
+  { value: 'pts_reb_ast',   label: 'Pts + Reb + Ast' },
+  { value: 'pts_reb',       label: 'Pts + Reb' },
+  { value: 'pts_ast',       label: 'Pts + Ast' },
+  { value: 'reb_ast',       label: 'Reb + Ast' },
+  { value: 'stl_blk',       label: 'Stl + Blk' },
+  { value: 'fantasy_pts',   label: 'Fantasy Points' },
+];
+
+export interface NbaPlayer {
+  id:         number;
+  firstName:  string;
+  lastName:   string;
+  fullName?:  string;
+  position:   string;
+  team?:      { id: number; full_name: string; abbreviation: string } | null;
+}
+
+export async function searchNbaPlayers(query: string): Promise<NbaPlayer[]> {
+  if (!query || query.length < 2) return [];
+  const raw = await apiCall<any>(`/api/nba/players/search?q=${encodeURIComponent(query)}`);
+  const rows: any[] = Array.isArray(raw) ? raw : (raw?.players || raw?.results || []);
+  return rows.map((p: any) => ({
+    id:        p.id ?? p.player_id ?? 0,
+    firstName: p.first_name ?? '',
+    lastName:  p.last_name  ?? '',
+    fullName:  p.full_name  ?? `${p.first_name ?? ''} ${p.last_name ?? ''}`.trim(),
+    position:  p.position   ?? '',
+    team:      p.team       ?? null,
+  }));
+}
+
+export interface NbaNextMatch {
+  found:     boolean;
+  gameId?:   number | null;
+  date?:     string;
+  venue?:    'home' | 'away';
+  opponent?: { id: number | null; name: string; abbreviation?: string } | null;
+}
+
+export async function getNbaNextMatch(playerId: number): Promise<NbaNextMatch> {
+  try {
+    return await apiCall<NbaNextMatch>(`/api/nba/next-match?player_id=${playerId}`);
+  } catch {
+    return { found: false };
+  }
+}
+
+export async function nbaPredict(request: Record<string, unknown>, signal?: AbortSignal): Promise<PredictionResult> {
+  const raw = await apiCall<any>('/api/nba/predict', {
+    method: 'POST',
+    body:   JSON.stringify(request),
+    signal,
+  });
+  if (raw.error) return { error: raw.error } as PredictionResult;
+  const bm  = raw.bayesianMetrics || {};
+  const rec = (raw.recommendation || '').toUpperCase() as 'OVER' | 'UNDER' | 'PASS';
+
+  const gameLogs = (raw.gameLogs || []).map((g: any) => ({
+    date:       g.date     ?? '',
+    opponent:   g.opponent ?? '',
+    venue:      g.venue    ?? '',
+    value:      g[raw.propType] ?? g.value ?? null,
+    minutes:    g.min ?? g.minutes ?? 0,
+    sport:      'nba',
+    pts:        g.pts    ?? null,
+    reb:        g.reb    ?? null,
+    ast:        g.ast    ?? null,
+    stl:        g.stl    ?? null,
+    blk:        g.blk    ?? null,
+    fg3m:       g.fg3m   ?? null,
+    tov:        g.tov    ?? null,
+    won:        g.won    ?? null,
+  }));
+
+  return {
+    sport:              'nba',
+    playerName:         raw.playerName   || '',
+    playerId:           raw.playerId,
+    teamName:           raw.teamName     || '',
+    opponentName:       raw.opponentName || '',
+    propType:           raw.propType     || '',
+    line:               raw.line         ?? 0,
+    projection:         raw.projection,
+    bayesianProjection: raw.projection,
+    confidence:         raw.confidenceScore != null ? raw.confidenceScore / 100 : null,
+    rawConfidence:      raw.rawConfidence ?? raw.confidenceScore,
+    confidenceScore:    raw.confidenceScore,
+    confidenceLevel:    raw.confidenceLevel,
+    recommendation:     rec,
+    pOver:              raw.pOver  ?? bm.pOver,
+    pUnder:             raw.pUnder ?? bm.pUnder,
+    sharpSummary:       raw.sharpSummary       || undefined,
+    reasoning:          raw.reasoning          || undefined,
+    tacticalBreakdown:  raw.tacticalBreakdown  || undefined,
+    streakFlag:         raw.streakFlag         ?? '',
+    gameLogs,
+    bayesianMetrics: {
+      priorMean:    bm.priorMean    ?? raw.priorMean,
+      momentumMean: bm.momentumMean ?? raw.momentum,
+      sampleSize:   bm.sampleSize   ?? raw.sampleSize,
+    },
+  } as unknown as PredictionResult;
+}
+
+// ─── NHL ────────────────────────────────────────────────────────────────────
+
+export const NHL_PROP_TYPES = [
+  { value: 'goals',         label: 'Goals' },
+  { value: 'assists',       label: 'Assists' },
+  { value: 'points',        label: 'Points (G+A)' },
+  { value: 'shots',         label: 'Shots on Goal' },
+  { value: 'blocked_shots', label: 'Blocked Shots' },
+  { value: 'hits',          label: 'Hits' },
+  { value: 'saves',         label: 'Saves (Goalie)' },
+  { value: 'toi',           label: 'Time on Ice (min)' },
+];
+
+export interface NhlPlayer {
+  id:         number;
+  firstName:  string;
+  lastName:   string;
+  fullName?:  string;
+  position:   string;
+  team?:      { id: number; full_name: string; abbreviation: string } | null;
+}
+
+export async function searchNhlPlayers(query: string): Promise<NhlPlayer[]> {
+  if (!query || query.length < 2) return [];
+  const raw = await apiCall<any>(`/api/nhl/players/search?q=${encodeURIComponent(query)}`);
+  const rows: any[] = Array.isArray(raw) ? raw : (raw?.players || raw?.results || []);
+  return rows.map((p: any) => ({
+    id:        p.id         ?? p.player_id ?? 0,
+    firstName: p.first_name ?? '',
+    lastName:  p.last_name  ?? '',
+    fullName:  p.full_name  ?? `${p.first_name ?? ''} ${p.last_name ?? ''}`.trim(),
+    position:  p.position   ?? '',
+    team:      p.team       ?? null,
+  }));
+}
+
+export interface NhlNextMatch {
+  found:     boolean;
+  gameId?:   number | null;
+  date?:     string;
+  venue?:    'home' | 'away';
+  opponent?: { id: number | null; name: string; abbreviation?: string } | null;
+}
+
+export async function getNhlNextMatch(playerId: number): Promise<NhlNextMatch> {
+  try {
+    return await apiCall<NhlNextMatch>(`/api/nhl/next-match?player_id=${playerId}`);
+  } catch {
+    return { found: false };
+  }
+}
+
+export async function nhlPredict(request: Record<string, unknown>, signal?: AbortSignal): Promise<PredictionResult> {
+  const raw = await apiCall<any>('/api/nhl/predict', {
+    method: 'POST',
+    body:   JSON.stringify(request),
+    signal,
+  });
+  if (raw.error) return { error: raw.error } as PredictionResult;
+  const bm  = raw.bayesianMetrics || {};
+  const rec = (raw.recommendation || '').toUpperCase() as 'OVER' | 'UNDER' | 'PASS';
+
+  const gameLogs = (raw.gameLogs || []).map((g: any) => ({
+    date:          g.date     ?? '',
+    opponent:      g.opponent ?? '',
+    venue:         g.venue    ?? '',
+    value:         g[raw.propType] ?? g.value ?? null,
+    minutes:       g.toi ?? 0,
+    sport:         'nhl',
+    goals:         g.goals         ?? null,
+    assists:       g.assists       ?? null,
+    points:        g.points        ?? null,
+    shots:         g.shots         ?? null,
+    blockedShots:  g.blocked_shots ?? null,
+    hits:          g.hits          ?? null,
+    saves:         g.saves         ?? null,
+    won:           g.won           ?? null,
+  }));
+
+  return {
+    sport:              'nhl',
+    playerName:         raw.playerName   || '',
+    playerId:           raw.playerId,
+    teamName:           raw.teamName     || '',
+    opponentName:       raw.opponentName || '',
+    propType:           raw.propType     || '',
+    line:               raw.line         ?? 0,
+    projection:         raw.projection,
+    bayesianProjection: raw.projection,
+    confidence:         raw.confidenceScore != null ? raw.confidenceScore / 100 : null,
+    rawConfidence:      raw.rawConfidence ?? raw.confidenceScore,
+    confidenceScore:    raw.confidenceScore,
+    confidenceLevel:    raw.confidenceLevel,
+    recommendation:     rec,
+    pOver:              raw.pOver  ?? bm.pOver,
+    pUnder:             raw.pUnder ?? bm.pUnder,
+    sharpSummary:       raw.sharpSummary      || undefined,
+    reasoning:          raw.reasoning         || undefined,
+    tacticalBreakdown:  raw.tacticalBreakdown || undefined,
+    streakFlag:         raw.streakFlag        ?? '',
+    gameLogs,
+    bayesianMetrics: {
+      priorMean:    bm.priorMean    ?? raw.priorMean,
+      momentumMean: bm.momentumMean ?? raw.momentum,
+      sampleSize:   bm.sampleSize   ?? raw.sampleSize,
+    },
+  } as unknown as PredictionResult;
+}
+
+// ─── MLB ────────────────────────────────────────────────────────────────────
+
+export const MLB_PROP_TYPES = [
+  { value: 'hits',                  label: 'Hits' },
+  { value: 'runs',                  label: 'Runs Scored' },
+  { value: 'rbi',                   label: 'RBIs' },
+  { value: 'home_runs',             label: 'Home Runs' },
+  { value: 'total_bases',           label: 'Total Bases' },
+  { value: 'strikeouts',            label: 'Strikeouts (Batter)' },
+  { value: 'walks',                 label: 'Walks' },
+  { value: 'hits_runs_rbis',        label: 'H + R + RBI' },
+  { value: 'hitter_fantasy_points', label: 'Fantasy Pts (Hitter)' },
+  { value: 'pitcher_strikeouts',    label: 'Strikeouts (Pitcher)' },
+  { value: 'pitches_thrown',        label: 'Pitches Thrown' },
+  { value: 'innings_pitched',       label: 'Innings Pitched' },
+  { value: 'earned_runs',           label: 'Earned Runs' },
+  { value: 'hits_allowed',          label: 'Hits Allowed' },
+  { value: 'walks_allowed',         label: 'Walks Allowed' },
+  { value: 'pitcher_fantasy_score', label: 'Fantasy Pts (Pitcher)' },
+];
+
+export interface MlbPlayer {
+  id:         number;
+  firstName:  string;
+  lastName:   string;
+  fullName?:  string;
+  position:   string;
+  team?:      { id: number; full_name: string; abbreviation: string } | null;
+}
+
+export async function searchMlbPlayers(query: string): Promise<MlbPlayer[]> {
+  if (!query || query.length < 2) return [];
+  const raw = await apiCall<any>(`/api/mlb/players/search?q=${encodeURIComponent(query)}`);
+  const rows: any[] = Array.isArray(raw) ? raw : (raw?.players || raw?.results || []);
+  return rows.map((p: any) => ({
+    id:        p.id         ?? p.player_id ?? 0,
+    firstName: p.first_name ?? '',
+    lastName:  p.last_name  ?? '',
+    fullName:  p.full_name  ?? `${p.first_name ?? ''} ${p.last_name ?? ''}`.trim(),
+    position:  p.position   ?? '',
+    team:      p.team       ?? null,
+  }));
+}
+
+export interface MlbNextMatch {
+  found:     boolean;
+  gameId?:   number | null;
+  date?:     string;
+  venue?:    'home' | 'away';
+  opponent?: { id: number | null; name: string; abbreviation?: string } | null;
+}
+
+export async function getMlbNextMatch(playerId: number): Promise<MlbNextMatch> {
+  try {
+    return await apiCall<MlbNextMatch>(`/api/mlb/next-match?player_id=${playerId}`);
+  } catch {
+    return { found: false };
+  }
+}
+
+export async function mlbPredict(request: Record<string, unknown>, signal?: AbortSignal): Promise<PredictionResult> {
+  const raw = await apiCall<any>('/api/mlb/predict', {
+    method: 'POST',
+    body:   JSON.stringify(request),
+    signal,
+  });
+  if (raw.error) return { error: raw.error } as PredictionResult;
+  const bm  = raw.bayesianMetrics || {};
+  const rec = (raw.recommendation || '').toUpperCase() as 'OVER' | 'UNDER' | 'PASS';
+
+  const gameLogs = (raw.gameLogs || []).map((g: any) => ({
+    date:          g.date     ?? '',
+    opponent:      g.opponent ?? '',
+    venue:         g.venue    ?? '',
+    value:         g[raw.propType] ?? g.value ?? null,
+    minutes:       0,
+    sport:         'mlb',
+    hits:          g.hits      ?? null,
+    runs:          g.runs      ?? null,
+    rbi:           g.rbi       ?? null,
+    homeRuns:      g.home_runs ?? null,
+    totalBases:    g.total_bases ?? null,
+    won:           g.won       ?? null,
+  }));
+
+  return {
+    sport:              'mlb',
+    playerName:         raw.playerName   || '',
+    playerId:           raw.playerId,
+    teamName:           raw.teamName     || '',
+    opponentName:       raw.opponentName || '',
+    propType:           raw.propType     || '',
+    line:               raw.line         ?? 0,
+    projection:         raw.projection,
+    bayesianProjection: raw.projection,
+    confidence:         raw.confidenceScore != null ? raw.confidenceScore / 100 : null,
+    rawConfidence:      raw.rawConfidence ?? raw.confidenceScore,
+    confidenceScore:    raw.confidenceScore,
+    confidenceLevel:    raw.confidenceLevel,
+    recommendation:     rec,
+    pOver:              raw.pOver  ?? bm.pOver,
+    pUnder:             raw.pUnder ?? bm.pUnder,
+    sharpSummary:       raw.sharpSummary      || undefined,
+    reasoning:          raw.reasoning         || undefined,
+    tacticalBreakdown:  raw.tacticalBreakdown || undefined,
+    streakFlag:         raw.streakFlag        ?? '',
+    gameLogs,
+    bayesianMetrics: {
+      priorMean:    bm.priorMean    ?? raw.priorMean,
+      momentumMean: bm.momentumMean ?? raw.momentum,
+      sampleSize:   bm.sampleSize   ?? raw.sampleSize,
+    },
+  } as unknown as PredictionResult;
+}
+
+// ─── Sports Config ────────────────────────────────────────────────────────────
+
+export interface SportConfig {
+  sport:       string;
+  displayName: string;
+  icon:        string;
+  label:       string | null;
+  available:   boolean;
+}
+
+export async function getSportsConfig(): Promise<SportConfig[]> {
+  try {
+    return await apiCall<SportConfig[]>('/api/sports/config');
+  } catch {
+    return [
+      { sport: 'soccer', displayName: 'Soccer',    icon: 'football',        label: null,          available: true  },
+      { sport: 'cs2',    displayName: 'CS2',        icon: 'game-controller', label: null,          available: true  },
+      { sport: 'wta',    displayName: 'WTA Tennis', icon: 'tennisball',      label: null,          available: true  },
+      { sport: 'nba',    displayName: 'NBA',        icon: 'basketball',      label: 'Unavailable', available: false },
+      { sport: 'nhl',    displayName: 'NHL',        icon: 'snow',            label: 'Unavailable', available: false },
+      { sport: 'mlb',    displayName: 'MLB',        icon: 'baseball',        label: 'Unavailable', available: false },
+    ];
+  }
+}
+
 export const LEAGUES = [
   { id: 39, name: 'Premier League' },
   { id: 140, name: 'La Liga' },
