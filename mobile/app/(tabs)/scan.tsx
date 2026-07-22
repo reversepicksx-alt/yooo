@@ -1225,9 +1225,14 @@ export default function ScanScreen() {
                         color={Colors.primary}
                       />
                     </View>
-                    <Text style={styles.sportSelectorText}>
-                      {sportsConfig.find(s => s.sport === sport)?.displayName || sport.toUpperCase()}
-                    </Text>
+                    <View>
+                      <Text style={styles.sportSelectorText}>
+                        {sportsConfig.find(s => s.sport === sport)?.displayName || sport.toUpperCase()}
+                      </Text>
+                      {sportsConfig.find(s => s.sport === sport)?.available === false && (
+                        <Text style={styles.sportSelectorSub}>Unavailable for now</Text>
+                      )}
+                    </View>
                   </View>
                   <View style={styles.sportSelectorChangePill}>
                     <Text style={styles.sportSelectorChange}>CHANGE</Text>
@@ -4936,12 +4941,7 @@ export default function ScanScreen() {
               >
                 <Ionicons name={s.icon as any} size={18} color={sport === s.sport ? Colors.primary : Colors.textSecondary} />
                 <Text style={[styles.modalItemText, sport === s.sport && styles.modalItemTextActive, { fontSize: 15, flex: 1 }]}>{s.displayName}</Text>
-                {s.label ? (
-                  <View style={{ backgroundColor: '#1a1a1a', borderRadius: 4, paddingHorizontal: 7, paddingVertical: 3, borderWidth: 1, borderColor: '#333' }}>
-                    <Text style={{ color: Colors.textSecondary, fontSize: 9, fontWeight: '700', letterSpacing: 0.8 }}>{s.label.toUpperCase()}</Text>
-                  </View>
-                ) : null}
-                {sport === s.sport && !s.label && <Ionicons name="checkmark" size={16} color={Colors.primary} style={{ marginLeft: 'auto' }} />}
+                {sport === s.sport && <Ionicons name="checkmark" size={16} color={Colors.primary} style={{ marginLeft: 'auto' }} />}
               </TouchableOpacity>
             ))}
           </View>
@@ -5266,6 +5266,7 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(57,255,20,0.15)',
   },
   sportSelectorText: { fontSize: 14, fontWeight: '700', color: Colors.text, letterSpacing: 0.3 },
+  sportSelectorSub: { fontSize: 10, color: Colors.textTertiary, fontWeight: '500', marginTop: 2 },
   sportSelectorChangePill: {
     backgroundColor: 'rgba(57,255,20,0.08)',
     borderRadius: 8,
