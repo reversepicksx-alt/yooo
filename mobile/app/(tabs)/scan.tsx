@@ -4945,7 +4945,7 @@ export default function ScanScreen() {
         <TouchableOpacity style={styles.modalOverlay} onPress={() => setShowSportPicker(false)} activeOpacity={1}>
           <View style={[styles.modalSheet, { width: 300, gap: 0 }]}>
             <Text style={[styles.modalTitle, { marginBottom: 16 }]}>Select Sport</Text>
-            {sportsConfig.map(s => (
+            {sportsConfig.filter(s => !['mlb', 'cs2', 'wta'].includes(s.sport)).map(s => (
               <TouchableOpacity
                 key={s.sport}
                 style={[styles.modalItem, sport === s.sport && styles.modalItemActive, { flexDirection: 'row', alignItems: 'center', gap: 12 }]}
