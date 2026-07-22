@@ -1752,7 +1752,7 @@ export default function ScanScreen() {
             <FuzzySearchInput
               searchType="cs2_players"
               value={cs2PlayerQuery}
-              onChangeText={(t) => { setCs2PlayerQuery(t); if (!t) { setCs2ResolvedPlayer(null); setCs2NextMatch(null); } }}
+              onChangeText={(t) => { setCs2PlayerQuery(t); if (!t) { setCs2ResolvedPlayer(null); setCs2NextMatch(null); setCs2OpponentQuery(''); setCs2ResolvedOpponent(null); } }}
               placeholder="e.g. ZywOo, s1mple, NiKo"
               confirmed={!!cs2ResolvedPlayer}
               autoCapitalize="none"
@@ -1777,6 +1777,12 @@ export default function ScanScreen() {
                 }
               }}
             />
+            {cs2ResolvedPlayer && (
+              <TouchableOpacity onPress={() => { setCs2PlayerQuery(''); setCs2ResolvedPlayer(null); setCs2NextMatch(null); setCs2OpponentQuery(''); setCs2ResolvedOpponent(null); Haptics.selectionAsync(); }} style={styles.changePlayerBtn}>
+                <Ionicons name="arrow-undo-outline" size={12} color={Colors.primary} />
+                <Text style={styles.changePlayerBtnText}>Change player</Text>
+              </TouchableOpacity>
+            )}
 
             {/* ── CS2 Next-match auto-fill banner ── */}
             {cs2NextMatchLoading && (
@@ -1875,7 +1881,7 @@ export default function ScanScreen() {
             <FuzzySearchInput
               searchType="wta_players"
               value={wtaPlayerQuery}
-              onChangeText={(t) => { setWtaPlayerQuery(t); if (!t) { setWtaResolvedPlayer(null); setWtaNextMatch(null); } }}
+              onChangeText={(t) => { setWtaPlayerQuery(t); if (!t) { setWtaResolvedPlayer(null); setWtaNextMatch(null); setWtaOpponentQuery(''); setWtaResolvedOpponent(null); } }}
               placeholder="e.g. Iga Swiatek"
               confirmed={!!wtaResolvedPlayer}
               autoCapitalize="words"
@@ -1901,6 +1907,12 @@ export default function ScanScreen() {
                 }
               }}
             />
+            {wtaResolvedPlayer && (
+              <TouchableOpacity onPress={() => { setWtaPlayerQuery(''); setWtaResolvedPlayer(null); setWtaNextMatch(null); setWtaOpponentQuery(''); setWtaResolvedOpponent(null); Haptics.selectionAsync(); }} style={styles.changePlayerBtn}>
+                <Ionicons name="arrow-undo-outline" size={12} color={Colors.primary} />
+                <Text style={styles.changePlayerBtnText}>Change player</Text>
+              </TouchableOpacity>
+            )}
 
             {/* ── WTA Next-match auto-fill banner ── */}
             {wtaNextMatchLoading && (
@@ -2006,7 +2018,7 @@ export default function ScanScreen() {
                 <FuzzySearchInput
                   searchType="nba_players"
                   value={nbaPlayerQuery}
-                  onChangeText={(t) => { setNbaPlayerQuery(t); if (!t) { setNbaResolvedPlayer(null); setNbaNextMatch(null); } }}
+                  onChangeText={(t) => { setNbaPlayerQuery(t); if (!t) { setNbaResolvedPlayer(null); setNbaNextMatch(null); setNbaOpponentQuery(''); setNbaVenue('home'); } }}
                   placeholder="e.g. LeBron James, Stephen Curry"
                   confirmed={!!nbaResolvedPlayer}
                   autoCapitalize="words"
@@ -2029,6 +2041,12 @@ export default function ScanScreen() {
                     }
                   }}
                 />
+                {nbaResolvedPlayer && (
+                  <TouchableOpacity onPress={() => { setNbaPlayerQuery(''); setNbaResolvedPlayer(null); setNbaNextMatch(null); setNbaOpponentQuery(''); setNbaVenue('home'); Haptics.selectionAsync(); }} style={styles.changePlayerBtn}>
+                    <Ionicons name="arrow-undo-outline" size={12} color={Colors.primary} />
+                    <Text style={styles.changePlayerBtnText}>Change player</Text>
+                  </TouchableOpacity>
+                )}
                 {nbaNextMatchLoading && (
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8 }}>
                     <ActivityIndicator size="small" color={Colors.primary} />
@@ -2109,7 +2127,7 @@ export default function ScanScreen() {
                 <FuzzySearchInput
                   searchType="nhl_players"
                   value={nhlPlayerQuery}
-                  onChangeText={(t) => { setNhlPlayerQuery(t); if (!t) { setNhlResolvedPlayer(null); setNhlNextMatch(null); } }}
+                  onChangeText={(t) => { setNhlPlayerQuery(t); if (!t) { setNhlResolvedPlayer(null); setNhlNextMatch(null); setNhlOpponentQuery(''); setNhlVenue('home'); } }}
                   placeholder="e.g. Connor McDavid, Nathan MacKinnon"
                   confirmed={!!nhlResolvedPlayer}
                   autoCapitalize="words"
@@ -2132,6 +2150,12 @@ export default function ScanScreen() {
                     }
                   }}
                 />
+                {nhlResolvedPlayer && (
+                  <TouchableOpacity onPress={() => { setNhlPlayerQuery(''); setNhlResolvedPlayer(null); setNhlNextMatch(null); setNhlOpponentQuery(''); setNhlVenue('home'); Haptics.selectionAsync(); }} style={styles.changePlayerBtn}>
+                    <Ionicons name="arrow-undo-outline" size={12} color={Colors.primary} />
+                    <Text style={styles.changePlayerBtnText}>Change player</Text>
+                  </TouchableOpacity>
+                )}
                 {nhlNextMatchLoading && (
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8 }}>
                     <ActivityIndicator size="small" color={Colors.primary} />
@@ -2212,7 +2236,7 @@ export default function ScanScreen() {
                 <FuzzySearchInput
                   searchType="mlb_players"
                   value={mlbPlayerQuery}
-                  onChangeText={(t) => { setMlbPlayerQuery(t); if (!t) { setMlbResolvedPlayer(null); setMlbNextMatch(null); } }}
+                  onChangeText={(t) => { setMlbPlayerQuery(t); if (!t) { setMlbResolvedPlayer(null); setMlbNextMatch(null); setMlbOpponentQuery(''); setMlbVenue('home'); } }}
                   placeholder="e.g. Shohei Ohtani, Juan Soto"
                   confirmed={!!mlbResolvedPlayer}
                   autoCapitalize="words"
@@ -2235,6 +2259,12 @@ export default function ScanScreen() {
                     }
                   }}
                 />
+                {mlbResolvedPlayer && (
+                  <TouchableOpacity onPress={() => { setMlbPlayerQuery(''); setMlbResolvedPlayer(null); setMlbNextMatch(null); setMlbOpponentQuery(''); setMlbVenue('home'); Haptics.selectionAsync(); }} style={styles.changePlayerBtn}>
+                    <Ionicons name="arrow-undo-outline" size={12} color={Colors.primary} />
+                    <Text style={styles.changePlayerBtnText}>Change player</Text>
+                  </TouchableOpacity>
+                )}
                 {mlbNextMatchLoading && (
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8 }}>
                     <ActivityIndicator size="small" color={Colors.primary} />
@@ -5602,6 +5632,16 @@ const styles = StyleSheet.create({
     marginBottom: 4, padding: 10,
     backgroundColor: 'rgba(57,255,20,0.06)', borderRadius: 8,
     borderWidth: 1, borderColor: 'rgba(57,255,20,0.25)',
+  },
+  changePlayerBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    alignSelf: 'flex-start', paddingVertical: 5, paddingHorizontal: 10,
+    marginTop: 6, borderRadius: 20,
+    borderWidth: 1, borderColor: 'rgba(57,255,20,0.3)',
+    backgroundColor: 'rgba(57,255,20,0.06)',
+  },
+  changePlayerBtnText: {
+    color: Colors.primary, fontSize: 11, fontFamily: 'Inter_500Medium', letterSpacing: 0.3,
   },
   fieldLabel: {
     fontSize: 10, color: Colors.primary, fontWeight: '800',
