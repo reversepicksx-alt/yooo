@@ -1154,6 +1154,19 @@ export default function ScanScreen() {
       keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
     >
     <View style={[styles.root, { paddingTop: topPad }]}>
+
+      {/* ─── Background watermark ─── */}
+      <View style={styles.bgWatermark} pointerEvents="none">
+        <View style={styles.bgRing3} />
+        <View style={styles.bgRing2} />
+        <View style={styles.bgRing1} />
+        <Image
+          source={require('../../assets/logo.png')}
+          style={styles.bgLogo}
+          resizeMode="contain"
+        />
+      </View>
+
       {/* ─── Branded header ─── */}
       <View style={styles.scanHeader}>
         <View style={styles.scanHeaderBrand}>
@@ -5106,6 +5119,39 @@ export default function ScanScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.background },
+  bgWatermark: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  bgLogo: {
+    width: SCREEN_W * 0.72,
+    height: SCREEN_W * 0.72,
+    opacity: 0.04,
+  },
+  bgRing1: {
+    position: 'absolute',
+    width: SCREEN_W * 0.78,
+    height: SCREEN_W * 0.78,
+    borderRadius: SCREEN_W * 0.39,
+    borderWidth: 1,
+    borderColor: 'rgba(57,255,20,0.07)',
+  },
+  bgRing2: {
+    position: 'absolute',
+    width: SCREEN_W * 1.0,
+    height: SCREEN_W * 1.0,
+    borderRadius: SCREEN_W * 0.5,
+    borderWidth: 1,
+    borderColor: 'rgba(57,255,20,0.04)',
+  },
+  bgRing3: {
+    position: 'absolute',
+    width: SCREEN_W * 1.22,
+    height: SCREEN_W * 1.22,
+    borderRadius: SCREEN_W * 0.61,
+    borderWidth: 1,
+    borderColor: 'rgba(57,255,20,0.025)',
+  },
   header: { paddingHorizontal: 20, paddingBottom: 14, alignItems: 'center' },
   logoRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   logoImg: { width: 54, height: 54, marginBottom: 8 },
