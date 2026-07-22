@@ -24,8 +24,8 @@ _DEFAULTS = [
     {"sport": "mlb",    "displayName": "MLB",         "icon": "baseball",        "label": None, "available": True},
     {"sport": "cs2",    "displayName": "CS2",         "icon": "game-controller", "label": None, "available": True},
     {"sport": "wta",    "displayName": "WTA Tennis",  "icon": "tennisball",      "label": None, "available": True},
-    {"sport": "nba",    "displayName": "NBA",         "icon": "basketball",      "label": None, "available": True},
-    {"sport": "nhl",    "displayName": "NHL",         "icon": "snow",            "label": None, "available": True},
+    {"sport": "nba",    "displayName": "NBA",         "icon": "basketball",      "label": "Off Season", "available": False},
+    {"sport": "nhl",    "displayName": "NHL",         "icon": "snow",            "label": "Off Season", "available": False},
 ]
 _SPORT_ORDER = ["soccer", "mlb", "cs2", "wta", "nba", "nhl"]
 

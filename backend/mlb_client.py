@@ -8,7 +8,7 @@ import asyncio
 import time
 import os
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from typing import Optional
 
 import httpx
@@ -855,6 +855,43 @@ async def get_game_context(
     return result
 
 
+async def _statsapi_schedule_next_game(team_id: int, today_str: str) -> dict:
+    """Use the MLB Stats API schedule to find the next upcoming regular-season game
+    for a Stats API team.  Called instead of BDL /games for Stats API players because
+    BDL returns old/wrong season data for those players."""
+    from datetime import timedelta
+    end_str = (date.today() + timedelta(days=30)).isoformat()
+    data = await _statsapi_get("/schedule", {
+        "sportId":   1,
+        "teamId":    team_id,
+        "startDate": today_str,
+        "endDate":   end_str,
+        "gameType":  "R",
+    })
+    for date_entry in data.get("dates", []):
+        for game in date_entry.get("games", []):
+            state = (game.get("status") or {}).get("abstractGameState", "")
+            if state == "Final":
+                continue
+            teams = game.get("teams") or {}
+            home_team = teams.get("home", {}).get("team", {})
+            away_team = teams.get("away", {}).get("team", {})
+            is_home = home_team.get("id") == team_id
+            opp = away_team if is_home else home_team
+            return {
+                "found":  True,
+                "gameId": game.get("gamePk"),
+                "date":   date_entry.get("date"),
+                "venue":  "home" if is_home else "away",
+                "opponent": {
+                    "id":           opp.get("id"),
+                    "name":         opp.get("name") or "",
+                    "abbreviation": opp.get("abbreviation") or "",
+                },
+            }
+    return {"found": False}
+
+
 async def get_player_next_match(player_id: int, season: int = 2026) -> dict:
     """Get the next upcoming MLB game for a player's team.
     Returns {found, gameId, date, venue, opponent} or {found: False}.
@@ -883,14 +920,13 @@ async def get_player_next_match(player_id: int, season: int = 2026) -> dict:
     if not team_id:
         return {"found": False}
 
-    # Stats API player IDs (>= 100k) return Stats API team IDs which BDL doesn't understand.
-    # Translate to BDL team ID before calling the BDL games endpoint.
+    # Stats API player IDs (>= 100k): BDL's /games endpoint returns stale/wrong
+    # season data for these players.  Use the MLB Stats API schedule instead.
     if player_id >= _STATSAPI_ID_THRESHOLD:
-        bdl_team_id = await get_bdl_team_id_for_statsapi(team_id, season)
-        if not bdl_team_id:
-            log.warning(f"[MLB NEXT MATCH] could not translate statsapi team_id={team_id} to BDL")
-            return {"found": False}
-        team_id = bdl_team_id
+        result = await _statsapi_schedule_next_game(team_id, today_str)
+        log.info(f"[MLB NEXT MATCH] statsapi player={player_id} → {result}")
+        await _cache_set(cache_key, result)
+        return result
 
     try:
         data = await _get("/games", {

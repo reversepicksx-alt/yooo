@@ -230,8 +230,8 @@ export default function ScanScreen() {
     { sport: 'mlb',    displayName: 'MLB',         icon: 'baseball',        label: null, available: true },
     { sport: 'cs2',    displayName: 'CS2',         icon: 'game-controller', label: null, available: true },
     { sport: 'wta',    displayName: 'WTA Tennis',  icon: 'tennisball',      label: null, available: true },
-    { sport: 'nba',    displayName: 'NBA',         icon: 'basketball',      label: null, available: true },
-    { sport: 'nhl',    displayName: 'NHL',         icon: 'snow',            label: null, available: true },
+    { sport: 'nba',    displayName: 'NBA',         icon: 'basketball',      label: 'Off Season', available: false },
+    { sport: 'nhl',    displayName: 'NHL',         icon: 'snow',            label: 'Off Season', available: false },
   ]);
 
 
@@ -1247,7 +1247,9 @@ export default function ScanScreen() {
                         <View style={{ width: 7, height: 7, borderRadius: 3.5, backgroundColor: sportsConfig.find(s => s.sport === sport)?.available ? '#39FF14' : '#ff3b3b' }} />
                       </View>
                       <Text style={[styles.sportSelectorSub, { color: sportsConfig.find(s => s.sport === sport)?.available ? Colors.primary : '#ff3b3b' }]}>
-                        {sportsConfig.find(s => s.sport === sport)?.available ? 'Predict' : 'Unavailable'}
+                        {sportsConfig.find(s => s.sport === sport)?.available
+                          ? 'Predict'
+                          : (sportsConfig.find(s => s.sport === sport)?.label || 'Unavailable')}
                       </Text>
                     </View>
                   </View>
@@ -4957,7 +4959,12 @@ export default function ScanScreen() {
                 }}
               >
                 <Ionicons name={s.icon as any} size={18} color={sport === s.sport ? Colors.primary : Colors.textSecondary} />
-                <Text style={[styles.modalItemText, sport === s.sport && styles.modalItemTextActive, { fontSize: 15, flex: 1 }]}>{s.displayName}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.modalItemText, sport === s.sport && styles.modalItemTextActive, { fontSize: 15 }]}>{s.displayName}</Text>
+                  {!s.available && s.label && (
+                    <Text style={{ color: '#ff3b3b', fontSize: 10, fontWeight: '600', letterSpacing: 0.3, marginTop: 1 }}>{s.label.toUpperCase()}</Text>
+                  )}
+                </View>
                 <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: s.available ? '#39FF14' : '#ff3b3b', marginLeft: 4 }} />
                 {sport === s.sport && <Ionicons name="checkmark" size={16} color={Colors.primary} style={{ marginLeft: 6 }} />}
               </TouchableOpacity>

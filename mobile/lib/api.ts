@@ -1917,8 +1917,8 @@ export async function getSportsConfig(): Promise<SportConfig[]> {
       { sport: 'mlb',    displayName: 'MLB',         icon: 'baseball',        label: null, available: true },
       { sport: 'cs2',    displayName: 'CS2',         icon: 'game-controller', label: null, available: true },
       { sport: 'wta',    displayName: 'WTA Tennis',  icon: 'tennisball',      label: null, available: true },
-      { sport: 'nba',    displayName: 'NBA',         icon: 'basketball',      label: null, available: true },
-      { sport: 'nhl',    displayName: 'NHL',         icon: 'snow',            label: null, available: true },
+      { sport: 'nba',    displayName: 'NBA',         icon: 'basketball',      label: 'Off Season', available: false },
+      { sport: 'nhl',    displayName: 'NHL',         icon: 'snow',            label: 'Off Season', available: false },
     ];
   }
 }
