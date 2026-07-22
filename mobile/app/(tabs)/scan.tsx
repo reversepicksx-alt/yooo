@@ -1155,17 +1155,6 @@ export default function ScanScreen() {
     >
     <View style={[styles.root, { paddingTop: topPad }]}>
 
-      {/* ─── Background watermark ─── */}
-      <View style={styles.bgWatermark} pointerEvents="none">
-        <View style={styles.bgRing3} />
-        <View style={styles.bgRing2} />
-        <View style={styles.bgRing1} />
-        <Image
-          source={require('../../assets/logo.png')}
-          style={styles.bgLogo}
-          resizeMode="contain"
-        />
-      </View>
 
       {/* ─── Branded header ─── */}
       <View style={styles.scanHeader}>
@@ -1830,46 +1819,50 @@ export default function ScanScreen() {
               </>
             )}
 
-            <Text style={styles.fieldLabel}>Prop Type</Text>
-            <TouchableOpacity style={styles.pickerBtn} onPress={() => setCs2ShowPropPicker(true)}>
-              <Text style={styles.pickerBtnText}>{CS2_PROP_TYPES.find(p => p.value === cs2PropType)?.label || 'Select'}</Text>
-              <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
-            </TouchableOpacity>
+            {cs2ResolvedPlayer && (
+              <>
+                <Text style={styles.fieldLabel}>Prop Type</Text>
+                <TouchableOpacity style={styles.pickerBtn} onPress={() => setCs2ShowPropPicker(true)}>
+                  <Text style={styles.pickerBtnText}>{CS2_PROP_TYPES.find(p => p.value === cs2PropType)?.label || 'Select'}</Text>
+                  <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
+                </TouchableOpacity>
 
-            <Text style={styles.fieldLabel}>Line Value</Text>
-            <TextInput
-              style={[styles.textInput, INPUT_STYLE]}
-              placeholder="e.g. 21.5"
-              placeholderTextColor={Colors.textTertiary}
-              value={line}
-              onChangeText={setLine}
-              keyboardType="decimal-pad"
-            />
+                <Text style={styles.fieldLabel}>Line Value</Text>
+                <TextInput
+                  style={[styles.textInput, INPUT_STYLE]}
+                  placeholder="e.g. 21.5"
+                  placeholderTextColor={Colors.textTertiary}
+                  value={line}
+                  onChangeText={setLine}
+                  keyboardType="decimal-pad"
+                />
 
-            {manualError && (
-              <View style={styles.inlineError}>
-                <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />
-                <Text style={styles.inlineErrorText}>{manualError}</Text>
-              </View>
+                {manualError && (
+                  <View style={styles.inlineError}>
+                    <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />
+                    <Text style={styles.inlineErrorText}>{manualError}</Text>
+                  </View>
+                )}
+
+                <TouchableOpacity
+                  style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnCancel]}
+                  onPress={phase === 'analyzing' ? reset : handleCs2Analyze}
+                  activeOpacity={0.85}
+                >
+                  {phase === 'analyzing' ? (
+                    <>
+                      <Ionicons name="close-circle-outline" size={16} color="#fff" />
+                      <Text style={[styles.predictBtnText, { color: '#fff' }]}>Cancel</Text>
+                    </>
+                  ) : (
+                    <>
+                      <Ionicons name="analytics-outline" size={16} color="#000" />
+                      <Text style={styles.predictBtnText}>Analyze</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              </>
             )}
-
-            <TouchableOpacity
-              style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnCancel]}
-              onPress={phase === 'analyzing' ? reset : handleCs2Analyze}
-              activeOpacity={0.85}
-            >
-              {phase === 'analyzing' ? (
-                <>
-                  <Ionicons name="close-circle-outline" size={16} color="#fff" />
-                  <Text style={[styles.predictBtnText, { color: '#fff' }]}>Cancel</Text>
-                </>
-              ) : (
-                <>
-                  <Ionicons name="analytics-outline" size={16} color="#000" />
-                  <Text style={styles.predictBtnText}>Analyze</Text>
-                </>
-              )}
-            </TouchableOpacity>
           </View>
         )}
 
@@ -1972,46 +1965,50 @@ export default function ScanScreen() {
               </>
             )}
 
-            <Text style={styles.fieldLabel}>Prop Type</Text>
-            <TouchableOpacity style={styles.pickerBtn} onPress={() => setWtaShowPropPicker(true)}>
-              <Text style={styles.pickerBtnText}>{WTA_PROP_TYPES.find(p => p.value === wtaPropType)?.label || 'Select'}</Text>
-              <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
-            </TouchableOpacity>
+            {wtaResolvedPlayer && (
+              <>
+                <Text style={styles.fieldLabel}>Prop Type</Text>
+                <TouchableOpacity style={styles.pickerBtn} onPress={() => setWtaShowPropPicker(true)}>
+                  <Text style={styles.pickerBtnText}>{WTA_PROP_TYPES.find(p => p.value === wtaPropType)?.label || 'Select'}</Text>
+                  <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
+                </TouchableOpacity>
 
-            <Text style={styles.fieldLabel}>Line Value</Text>
-            <TextInput
-              style={[styles.textInput, INPUT_STYLE]}
-              placeholder="e.g. 22.5"
-              placeholderTextColor={Colors.textTertiary}
-              value={line}
-              onChangeText={setLine}
-              keyboardType="decimal-pad"
-            />
+                <Text style={styles.fieldLabel}>Line Value</Text>
+                <TextInput
+                  style={[styles.textInput, INPUT_STYLE]}
+                  placeholder="e.g. 22.5"
+                  placeholderTextColor={Colors.textTertiary}
+                  value={line}
+                  onChangeText={setLine}
+                  keyboardType="decimal-pad"
+                />
 
-            {manualError && (
-              <View style={styles.inlineError}>
-                <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />
-                <Text style={styles.inlineErrorText}>{manualError}</Text>
-              </View>
+                {manualError && (
+                  <View style={styles.inlineError}>
+                    <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />
+                    <Text style={styles.inlineErrorText}>{manualError}</Text>
+                  </View>
+                )}
+
+                <TouchableOpacity
+                  style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnCancel]}
+                  onPress={phase === 'analyzing' ? reset : handleWtaAnalyze}
+                  activeOpacity={0.85}
+                >
+                  {phase === 'analyzing' ? (
+                    <>
+                      <Ionicons name="close-circle-outline" size={16} color="#fff" />
+                      <Text style={[styles.predictBtnText, { color: '#fff' }]}>Cancel</Text>
+                    </>
+                  ) : (
+                    <>
+                      <Ionicons name="analytics-outline" size={16} color="#000" />
+                      <Text style={styles.predictBtnText}>Analyze</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              </>
             )}
-
-            <TouchableOpacity
-              style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnCancel]}
-              onPress={phase === 'analyzing' ? reset : handleWtaAnalyze}
-              activeOpacity={0.85}
-            >
-              {phase === 'analyzing' ? (
-                <>
-                  <Ionicons name="close-circle-outline" size={16} color="#fff" />
-                  <Text style={[styles.predictBtnText, { color: '#fff' }]}>Cancel</Text>
-                </>
-              ) : (
-                <>
-                  <Ionicons name="analytics-outline" size={16} color="#000" />
-                  <Text style={styles.predictBtnText}>Analyze</Text>
-                </>
-              )}
-            </TouchableOpacity>
           </View>
         )}
 
