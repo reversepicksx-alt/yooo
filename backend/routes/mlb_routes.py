@@ -228,21 +228,37 @@ async def search_players(q: str = Query(..., min_length=2)):
             return (full_match, is_active, has_team, full)
         players.sort(key=_rank)
 
-        return [
+        def _team(p):
+            t = p.get("team") or {}
+            # BDL MLB team uses display_name, not full_name — normalise both keys
+            if t and "full_name" not in t:
+                t["full_name"] = (t.get("display_name") or
+                                  f"{t.get('location','')} {t.get('name','')}".strip())
+            return t
+
+        def _full_name(p):
+            fn = p.get("full_name") or ""
+            if not fn.strip():
+                fn = f"{p.get('first_name','') or ''} {p.get('last_name','') or ''}".strip()
+            return fn or None  # None so we can filter these out below
+
+        result_list = [
             {
                 "id":        p.get("id"),
-                "fullName":  p.get("full_name"),
+                "fullName":  _full_name(p),
                 "firstName": p.get("first_name"),
                 "lastName":  p.get("last_name"),
                 "position":  p.get("position", ""),
-                "team":      p.get("team") or {},
+                "team":      _team(p),
                 "active":    p.get("active", True),
                 "jersey":    p.get("jersey"),
                 "batsThrows":p.get("bats_throws"),
                 "age":       p.get("age"),
             }
             for p in players
+            if _full_name(p)  # drop nameless records
         ]
+        return result_list
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"MLB player search failed: {e}")
 

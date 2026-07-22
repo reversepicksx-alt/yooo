@@ -77,17 +77,31 @@ Write a sharp 2-3 sentence analysis of the {rec_label}. Focus on form, matchup, 
 async def search_nhl_players(q: str = Query("", min_length=2), limit: int = Query(15)):
     try:
         players = await nhl_client.search_players(q, limit=limit)
+        def _nhl_full(p):
+            n = (p.get("full_name") or "").strip()
+            if not n:
+                n = f"{p.get('first_name','') or ''} {p.get('last_name','') or ''}".strip()
+            return n or None
+
+        def _nhl_team(p):
+            t = p.get("team") or {}
+            if t and "full_name" not in t:
+                t["full_name"] = (t.get("display_name") or
+                                  f"{t.get('city','') or ''} {t.get('name','') or ''}".strip())
+            return t
+
         return [
             {
-                "id":        p.get("id"),
-                "fullName":  f"{p.get('first_name','')} {p.get('last_name','')}".strip(),
-                "firstName": p.get("first_name"),
-                "lastName":  p.get("last_name"),
-                "position":  p.get("position", ""),
-                "team":      p.get("team") or {},
+                "id":          p.get("id"),
+                "fullName":    _nhl_full(p),
+                "firstName":   p.get("first_name"),
+                "lastName":    p.get("last_name"),
+                "position":    p.get("position", ""),
+                "team":        _nhl_team(p),
                 "nationality": p.get("nationality"),
             }
             for p in players
+            if _nhl_full(p)
         ]
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"NHL player search failed: {e}")

@@ -125,24 +125,42 @@ async def _cache_set(key: str, data) -> None:
 async def _get_all_current_players(season: int = CURRENT_NHL_SEASON) -> list:
     """Fetch all NHL players for a given season and cache them.
     BDL NHL ignores the search= param so we cache the full roster and search locally.
-    Uses cursor pagination; ~8-10 pages for a full NHL season roster.
+    Uses cursor pagination; typically ~8-10 pages for a full NHL season roster.
+    Adds inter-page sleep to avoid rate-limit cascades on fresh cache loads.
     """
     cache_key = f"all_players:{season}"
     cached = await _cache_get(cache_key)
     if _cache_fresh(cached, 7 * 86400):  # 7-day TTL
-        return cached["data"]
+        data = cached["data"]
+        if data:  # only return if the cached value is actually non-empty
+            return data
 
     all_players: list = []
     cursor = None
-    for _ in range(20):  # safety cap — 20 × 100 = 2000 players max
+    consecutive_errors = 0
+    for page_num in range(30):  # safety cap — 30 × 100 = 3000 players max
         params: list = [("seasons[]", season), ("per_page", 100)]
         if cursor:
             params.append(("cursor", cursor))
+        # Polite inter-page delay to avoid rate-limit cascades
+        if page_num > 0:
+            await asyncio.sleep(1.0)
         try:
             data = await _get("/players", params)
+            consecutive_errors = 0
         except Exception as e:
-            log.warning(f"[NHL ALL PLAYERS] page fetch failed: {e}")
-            break
+            consecutive_errors += 1
+            log.warning(f"[NHL ALL PLAYERS] page {page_num} failed (attempt {consecutive_errors}): {e}")
+            if consecutive_errors >= 2:
+                log.warning("[NHL ALL PLAYERS] stopping after 2 consecutive errors")
+                break
+            await asyncio.sleep(15)  # wait longer before retry
+            try:
+                data = await _get("/players", params)
+                consecutive_errors = 0
+            except Exception as e2:
+                log.warning(f"[NHL ALL PLAYERS] retry also failed: {e2}")
+                break
         rows = data.get("data", [])
         for p in rows:
             if "full_name" not in p:
@@ -151,6 +169,9 @@ async def _get_all_current_players(season: int = CURRENT_NHL_SEASON) -> list:
         cursor = data.get("meta", {}).get("next_cursor")
         if not cursor:
             break
+        # Save progress after each page (in case later pages fail, don't lose data)
+        if len(all_players) % 500 == 0 and all_players:
+            await _cache_set(cache_key, all_players)
 
     if all_players:
         log.info(f"[NHL ALL PLAYERS] cached {len(all_players)} players for season {season}")
@@ -162,16 +183,34 @@ async def search_players(query: str, limit: int = 15) -> list:
     """Local fuzzy search from cached full-season player list.
     BDL NHL /players?search= silently ignores the query and returns all players
     sorted by ID — so we fetch the full current-season roster once, cache it,
-    and do token-overlap scoring locally.
+    and do token-overlap scoring locally. Tries multiple seasons as fallback
+    so off-season periods still return results.
     """
     cache_key = f"nhl_search:{query.lower()}"
     cached = await _cache_get(cache_key)
     if _cache_fresh(cached, CACHE_TTL["player_search"]):
         return cached["data"][:limit]
 
-    all_players = await _get_all_current_players()
+    # Try current season, then walk back up to 3 years until we find players
+    all_players: list = []
+    for season_offset in range(4):
+        season = CURRENT_NHL_SEASON - season_offset
+        all_players = await _get_all_current_players(season)
+        if all_players:
+            log.info(f"[NHL SEARCH] Using season {season} ({len(all_players)} players)")
+            break
+
     if not all_players:
-        all_players = await _get_all_current_players(CURRENT_NHL_SEASON - 1)
+        # Last resort: fetch raw BDL paginated dump (ignores search= but gives us names)
+        try:
+            data = await _get("/players", [("per_page", 100)])
+            rows = data.get("data", [])
+            for p in rows:
+                if "full_name" not in p:
+                    p["full_name"] = f"{p.get('first_name','')} {p.get('last_name','')}".strip()
+            all_players = rows
+        except Exception as e:
+            log.warning(f"[NHL SEARCH] raw dump also failed: {e}")
 
     q_tokens = query.lower().split()
 

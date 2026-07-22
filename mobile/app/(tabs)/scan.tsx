@@ -1970,291 +1970,339 @@ export default function ScanScreen() {
         {/* ─── NBA MANUAL FORM ─── */}
         {sport === 'nba' && phase !== 'result' && phase !== 'saved' && (
           <View style={styles.manualForm}>
-            <Text style={styles.fieldLabel}>Player</Text>
-            <FuzzySearchInput
-              searchType="nba_players"
-              value={nbaPlayerQuery}
-              onChangeText={(t) => { setNbaPlayerQuery(t); if (!t) { setNbaResolvedPlayer(null); setNbaNextMatch(null); } }}
-              placeholder="e.g. LeBron James, Stephen Curry"
-              confirmed={!!nbaResolvedPlayer}
-              autoCapitalize="words"
-              onSelectNbaPlayer={async (p) => {
-                setNbaResolvedPlayer(p);
-                setNbaPlayerQuery(p.fullName || `${p.firstName} ${p.lastName}`.trim());
-                setNbaNextMatch(null);
-                setNbaOpponentQuery('');
-                Haptics.selectionAsync();
-                if (p.id) {
-                  setNbaNextMatchLoading(true);
-                  try {
-                    const nm = await getNbaNextMatch(p.id);
-                    setNbaNextMatch(nm);
-                    if (nm.found) {
-                      if (nm.opponent?.name) setNbaOpponentQuery(nm.opponent.name);
-                      if (nm.venue) setNbaVenue(nm.venue);
-                    }
-                  } catch { /* silent */ } finally { setNbaNextMatchLoading(false); }
-                }
-              }}
-            />
-            {nbaNextMatchLoading && (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8 }}>
-                <ActivityIndicator size="small" color={Colors.primary} />
-                <Text style={{ color: Colors.textSecondary, fontSize: 12 }}>Fetching next game…</Text>
+            {sportsConfig.find(s => s.sport === 'nba')?.available === false ? (
+              <View style={{ alignItems: 'center', paddingVertical: 32, gap: 12 }}>
+                <Ionicons name="basketball-outline" size={40} color={Colors.textSecondary} />
+                <Text style={{ color: Colors.text, fontSize: 16, fontWeight: '700' }}>NBA Coming Soon</Text>
+                <Text style={{ color: Colors.textSecondary, fontSize: 13, textAlign: 'center', lineHeight: 19 }}>
+                  NBA predictions are being calibrated and will be available in a future update.
+                </Text>
               </View>
-            )}
-            {nbaNextMatch?.found && !nbaNextMatchLoading && (
-              <View style={styles.autoFillBanner}>
-                <Ionicons name="flash" size={12} color={Colors.primary} />
-                <View style={{ flex: 1 }}>
-                  <Text style={{ color: Colors.primary, fontSize: 11, fontWeight: '700', letterSpacing: 0.5 }}>NEXT GAME AUTO-FILLED</Text>
-                  <Text style={{ color: Colors.text, fontSize: 13, fontWeight: '600', marginTop: 1 }}>vs {nbaNextMatch.opponent?.name}</Text>
-                  <Text style={{ color: Colors.textSecondary, fontSize: 11, marginTop: 1 }}>{nbaNextMatch.venue?.toUpperCase()}{nbaNextMatch.date ? ` · ${new Date(nbaNextMatch.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : ''}</Text>
-                </View>
-              </View>
-            )}
-            {nbaResolvedPlayer && !nbaNextMatch?.found && !nbaNextMatchLoading && (
+            ) : (
               <>
-                <Text style={styles.fieldLabel}>Opponent <Text style={styles.fieldLabelOpt}>(optional)</Text></Text>
-                <TextInput
-                  style={[styles.textInput, INPUT_STYLE]}
-                  placeholder="e.g. Los Angeles Lakers"
-                  placeholderTextColor={Colors.textTertiary}
-                  value={nbaOpponentQuery}
-                  onChangeText={setNbaOpponentQuery}
+                <Text style={styles.fieldLabel}>Player</Text>
+                <FuzzySearchInput
+                  searchType="nba_players"
+                  value={nbaPlayerQuery}
+                  onChangeText={(t) => { setNbaPlayerQuery(t); if (!t) { setNbaResolvedPlayer(null); setNbaNextMatch(null); } }}
+                  placeholder="e.g. LeBron James, Stephen Curry"
+                  confirmed={!!nbaResolvedPlayer}
                   autoCapitalize="words"
+                  onSelectNbaPlayer={async (p) => {
+                    setNbaResolvedPlayer(p);
+                    setNbaPlayerQuery(p.fullName || `${p.firstName || ''} ${p.lastName || ''}`.trim());
+                    setNbaNextMatch(null);
+                    setNbaOpponentQuery('');
+                    Haptics.selectionAsync();
+                    if (p.id) {
+                      setNbaNextMatchLoading(true);
+                      try {
+                        const nm = await getNbaNextMatch(p.id);
+                        setNbaNextMatch(nm);
+                        if (nm.found) {
+                          if (nm.opponent?.name) setNbaOpponentQuery(nm.opponent.name);
+                          if (nm.venue) setNbaVenue(nm.venue);
+                        }
+                      } catch { /* silent */ } finally { setNbaNextMatchLoading(false); }
+                    }
+                  }}
                 />
-                <Text style={styles.fieldLabel}>Venue</Text>
-                <View style={{ flexDirection: 'row', gap: 10 }}>
-                  {(['home', 'away'] as const).map(v => (
-                    <TouchableOpacity key={v} style={[styles.pickerBtn, { flex: 1, justifyContent: 'center' }, nbaVenue === v && { borderColor: Colors.primary }]} onPress={() => { setNbaVenue(v); Haptics.selectionAsync(); }}>
-                      <Text style={[styles.pickerBtnText, nbaVenue === v && { color: Colors.primary }]}>{v.toUpperCase()}</Text>
+                {nbaNextMatchLoading && (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8 }}>
+                    <ActivityIndicator size="small" color={Colors.primary} />
+                    <Text style={{ color: Colors.textSecondary, fontSize: 12 }}>Fetching next game…</Text>
+                  </View>
+                )}
+                {nbaNextMatch?.found && !nbaNextMatchLoading && (
+                  <View style={styles.autoFillBanner}>
+                    <Ionicons name="flash" size={12} color={Colors.primary} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: Colors.primary, fontSize: 11, fontWeight: '700', letterSpacing: 0.5 }}>NEXT GAME AUTO-FILLED</Text>
+                      <Text style={{ color: Colors.text, fontSize: 13, fontWeight: '600', marginTop: 1 }}>vs {nbaNextMatch.opponent?.name}</Text>
+                      <Text style={{ color: Colors.textSecondary, fontSize: 11, marginTop: 1 }}>{nbaNextMatch.venue?.toUpperCase()}{nbaNextMatch.date ? ` · ${new Date(nbaNextMatch.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : ''}</Text>
+                    </View>
+                  </View>
+                )}
+                {nbaResolvedPlayer && !nbaNextMatch?.found && !nbaNextMatchLoading && (
+                  <>
+                    <Text style={styles.fieldLabel}>Opponent <Text style={styles.fieldLabelOpt}>(optional)</Text></Text>
+                    <TextInput
+                      style={[styles.textInput, INPUT_STYLE]}
+                      placeholder="e.g. Los Angeles Lakers"
+                      placeholderTextColor={Colors.textTertiary}
+                      value={nbaOpponentQuery}
+                      onChangeText={setNbaOpponentQuery}
+                      autoCapitalize="words"
+                    />
+                    <Text style={styles.fieldLabel}>Venue</Text>
+                    <View style={{ flexDirection: 'row', gap: 10 }}>
+                      {(['home', 'away'] as const).map(v => (
+                        <TouchableOpacity key={v} style={[styles.pickerBtn, { flex: 1, justifyContent: 'center' }, nbaVenue === v && { borderColor: Colors.primary }]} onPress={() => { setNbaVenue(v); Haptics.selectionAsync(); }}>
+                          <Text style={[styles.pickerBtnText, nbaVenue === v && { color: Colors.primary }]}>{v.toUpperCase()}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </>
+                )}
+                {nbaResolvedPlayer && (
+                  <>
+                    <Text style={styles.fieldLabel}>Prop Type</Text>
+                    <TouchableOpacity style={styles.pickerBtn} onPress={() => setNbaShowPropPicker(true)}>
+                      <Text style={styles.pickerBtnText}>{NBA_PROP_TYPES.find(p => p.value === nbaPropType)?.label || 'Select'}</Text>
+                      <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
                     </TouchableOpacity>
-                  ))}
-                </View>
+                    <Text style={styles.fieldLabel}>Line Value</Text>
+                    <TextInput
+                      style={[styles.textInput, INPUT_STYLE]}
+                      placeholder="e.g. 24.5"
+                      placeholderTextColor={Colors.textTertiary}
+                      value={line}
+                      onChangeText={setLine}
+                      keyboardType="decimal-pad"
+                    />
+                    {manualError && (
+                      <View style={styles.inlineError}>
+                        <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />
+                        <Text style={styles.inlineErrorText}>{manualError}</Text>
+                      </View>
+                    )}
+                    <TouchableOpacity style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnCancel]} onPress={phase === 'analyzing' ? reset : handleNbaAnalyze} activeOpacity={0.85}>
+                      {phase === 'analyzing' ? (
+                        <><Ionicons name="close-circle-outline" size={16} color="#fff" /><Text style={[styles.predictBtnText, { color: '#fff' }]}>Cancel</Text></>
+                      ) : (
+                        <><Ionicons name="analytics-outline" size={16} color="#000" /><Text style={styles.predictBtnText}>Analyze</Text></>
+                      )}
+                    </TouchableOpacity>
+                  </>
+                )}
               </>
             )}
-            <Text style={styles.fieldLabel}>Prop Type</Text>
-            <TouchableOpacity style={styles.pickerBtn} onPress={() => setNbaShowPropPicker(true)}>
-              <Text style={styles.pickerBtnText}>{NBA_PROP_TYPES.find(p => p.value === nbaPropType)?.label || 'Select'}</Text>
-              <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
-            </TouchableOpacity>
-            <Text style={styles.fieldLabel}>Line Value</Text>
-            <TextInput
-              style={[styles.textInput, INPUT_STYLE]}
-              placeholder="e.g. 24.5"
-              placeholderTextColor={Colors.textTertiary}
-              value={line}
-              onChangeText={setLine}
-              keyboardType="decimal-pad"
-            />
-            {manualError && (
-              <View style={styles.inlineError}>
-                <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />
-                <Text style={styles.inlineErrorText}>{manualError}</Text>
-              </View>
-            )}
-            <TouchableOpacity style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnCancel]} onPress={phase === 'analyzing' ? reset : handleNbaAnalyze} activeOpacity={0.85}>
-              {phase === 'analyzing' ? (
-                <><Ionicons name="close-circle-outline" size={16} color="#fff" /><Text style={[styles.predictBtnText, { color: '#fff' }]}>Cancel</Text></>
-              ) : (
-                <><Ionicons name="analytics-outline" size={16} color="#000" /><Text style={styles.predictBtnText}>Analyze</Text></>
-              )}
-            </TouchableOpacity>
           </View>
         )}
 
         {/* ─── NHL MANUAL FORM ─── */}
         {sport === 'nhl' && phase !== 'result' && phase !== 'saved' && (
           <View style={styles.manualForm}>
-            <Text style={styles.fieldLabel}>Player</Text>
-            <FuzzySearchInput
-              searchType="nhl_players"
-              value={nhlPlayerQuery}
-              onChangeText={(t) => { setNhlPlayerQuery(t); if (!t) { setNhlResolvedPlayer(null); setNhlNextMatch(null); } }}
-              placeholder="e.g. Connor McDavid, Nathan MacKinnon"
-              confirmed={!!nhlResolvedPlayer}
-              autoCapitalize="words"
-              onSelectNhlPlayer={async (p) => {
-                setNhlResolvedPlayer(p);
-                setNhlPlayerQuery(p.fullName || `${p.firstName} ${p.lastName}`.trim());
-                setNhlNextMatch(null);
-                setNhlOpponentQuery('');
-                Haptics.selectionAsync();
-                if (p.id) {
-                  setNhlNextMatchLoading(true);
-                  try {
-                    const nm = await getNhlNextMatch(p.id);
-                    setNhlNextMatch(nm);
-                    if (nm.found) {
-                      if (nm.opponent?.name) setNhlOpponentQuery(nm.opponent.name);
-                      if (nm.venue) setNhlVenue(nm.venue);
-                    }
-                  } catch { /* silent */ } finally { setNhlNextMatchLoading(false); }
-                }
-              }}
-            />
-            {nhlNextMatchLoading && (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8 }}>
-                <ActivityIndicator size="small" color={Colors.primary} />
-                <Text style={{ color: Colors.textSecondary, fontSize: 12 }}>Fetching next game…</Text>
+            {sportsConfig.find(s => s.sport === 'nhl')?.available === false ? (
+              <View style={{ alignItems: 'center', paddingVertical: 32, gap: 12 }}>
+                <Ionicons name="snow-outline" size={40} color={Colors.textSecondary} />
+                <Text style={{ color: Colors.text, fontSize: 16, fontWeight: '700' }}>NHL Coming Soon</Text>
+                <Text style={{ color: Colors.textSecondary, fontSize: 13, textAlign: 'center', lineHeight: 19 }}>
+                  NHL predictions are being calibrated and will be available in a future update.
+                </Text>
               </View>
-            )}
-            {nhlNextMatch?.found && !nhlNextMatchLoading && (
-              <View style={styles.autoFillBanner}>
-                <Ionicons name="flash" size={12} color={Colors.primary} />
-                <View style={{ flex: 1 }}>
-                  <Text style={{ color: Colors.primary, fontSize: 11, fontWeight: '700', letterSpacing: 0.5 }}>NEXT GAME AUTO-FILLED</Text>
-                  <Text style={{ color: Colors.text, fontSize: 13, fontWeight: '600', marginTop: 1 }}>vs {nhlNextMatch.opponent?.name}</Text>
-                  <Text style={{ color: Colors.textSecondary, fontSize: 11, marginTop: 1 }}>{nhlNextMatch.venue?.toUpperCase()}{nhlNextMatch.date ? ` · ${new Date(nhlNextMatch.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : ''}</Text>
-                </View>
-              </View>
-            )}
-            {nhlResolvedPlayer && !nhlNextMatch?.found && !nhlNextMatchLoading && (
+            ) : (
               <>
-                <Text style={styles.fieldLabel}>Opponent <Text style={styles.fieldLabelOpt}>(optional)</Text></Text>
-                <TextInput
-                  style={[styles.textInput, INPUT_STYLE]}
-                  placeholder="e.g. Toronto Maple Leafs"
-                  placeholderTextColor={Colors.textTertiary}
-                  value={nhlOpponentQuery}
-                  onChangeText={setNhlOpponentQuery}
+                <Text style={styles.fieldLabel}>Player</Text>
+                <FuzzySearchInput
+                  searchType="nhl_players"
+                  value={nhlPlayerQuery}
+                  onChangeText={(t) => { setNhlPlayerQuery(t); if (!t) { setNhlResolvedPlayer(null); setNhlNextMatch(null); } }}
+                  placeholder="e.g. Connor McDavid, Nathan MacKinnon"
+                  confirmed={!!nhlResolvedPlayer}
                   autoCapitalize="words"
+                  onSelectNhlPlayer={async (p) => {
+                    setNhlResolvedPlayer(p);
+                    setNhlPlayerQuery(p.fullName || `${p.firstName || ''} ${p.lastName || ''}`.trim());
+                    setNhlNextMatch(null);
+                    setNhlOpponentQuery('');
+                    Haptics.selectionAsync();
+                    if (p.id) {
+                      setNhlNextMatchLoading(true);
+                      try {
+                        const nm = await getNhlNextMatch(p.id);
+                        setNhlNextMatch(nm);
+                        if (nm.found) {
+                          if (nm.opponent?.name) setNhlOpponentQuery(nm.opponent.name);
+                          if (nm.venue) setNhlVenue(nm.venue);
+                        }
+                      } catch { /* silent */ } finally { setNhlNextMatchLoading(false); }
+                    }
+                  }}
                 />
-                <Text style={styles.fieldLabel}>Venue</Text>
-                <View style={{ flexDirection: 'row', gap: 10 }}>
-                  {(['home', 'away'] as const).map(v => (
-                    <TouchableOpacity key={v} style={[styles.pickerBtn, { flex: 1, justifyContent: 'center' }, nhlVenue === v && { borderColor: Colors.primary }]} onPress={() => { setNhlVenue(v); Haptics.selectionAsync(); }}>
-                      <Text style={[styles.pickerBtnText, nhlVenue === v && { color: Colors.primary }]}>{v.toUpperCase()}</Text>
+                {nhlNextMatchLoading && (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8 }}>
+                    <ActivityIndicator size="small" color={Colors.primary} />
+                    <Text style={{ color: Colors.textSecondary, fontSize: 12 }}>Fetching next game…</Text>
+                  </View>
+                )}
+                {nhlNextMatch?.found && !nhlNextMatchLoading && (
+                  <View style={styles.autoFillBanner}>
+                    <Ionicons name="flash" size={12} color={Colors.primary} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: Colors.primary, fontSize: 11, fontWeight: '700', letterSpacing: 0.5 }}>NEXT GAME AUTO-FILLED</Text>
+                      <Text style={{ color: Colors.text, fontSize: 13, fontWeight: '600', marginTop: 1 }}>vs {nhlNextMatch.opponent?.name}</Text>
+                      <Text style={{ color: Colors.textSecondary, fontSize: 11, marginTop: 1 }}>{nhlNextMatch.venue?.toUpperCase()}{nhlNextMatch.date ? ` · ${new Date(nhlNextMatch.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : ''}</Text>
+                    </View>
+                  </View>
+                )}
+                {nhlResolvedPlayer && !nhlNextMatch?.found && !nhlNextMatchLoading && (
+                  <>
+                    <Text style={styles.fieldLabel}>Opponent <Text style={styles.fieldLabelOpt}>(optional)</Text></Text>
+                    <TextInput
+                      style={[styles.textInput, INPUT_STYLE]}
+                      placeholder="e.g. Toronto Maple Leafs"
+                      placeholderTextColor={Colors.textTertiary}
+                      value={nhlOpponentQuery}
+                      onChangeText={setNhlOpponentQuery}
+                      autoCapitalize="words"
+                    />
+                    <Text style={styles.fieldLabel}>Venue</Text>
+                    <View style={{ flexDirection: 'row', gap: 10 }}>
+                      {(['home', 'away'] as const).map(v => (
+                        <TouchableOpacity key={v} style={[styles.pickerBtn, { flex: 1, justifyContent: 'center' }, nhlVenue === v && { borderColor: Colors.primary }]} onPress={() => { setNhlVenue(v); Haptics.selectionAsync(); }}>
+                          <Text style={[styles.pickerBtnText, nhlVenue === v && { color: Colors.primary }]}>{v.toUpperCase()}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </>
+                )}
+                {nhlResolvedPlayer && (
+                  <>
+                    <Text style={styles.fieldLabel}>Prop Type</Text>
+                    <TouchableOpacity style={styles.pickerBtn} onPress={() => setNhlShowPropPicker(true)}>
+                      <Text style={styles.pickerBtnText}>{NHL_PROP_TYPES.find(p => p.value === nhlPropType)?.label || 'Select'}</Text>
+                      <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
                     </TouchableOpacity>
-                  ))}
-                </View>
+                    <Text style={styles.fieldLabel}>Line Value</Text>
+                    <TextInput
+                      style={[styles.textInput, INPUT_STYLE]}
+                      placeholder="e.g. 0.5"
+                      placeholderTextColor={Colors.textTertiary}
+                      value={line}
+                      onChangeText={setLine}
+                      keyboardType="decimal-pad"
+                    />
+                    {manualError && (
+                      <View style={styles.inlineError}>
+                        <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />
+                        <Text style={styles.inlineErrorText}>{manualError}</Text>
+                      </View>
+                    )}
+                    <TouchableOpacity style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnCancel]} onPress={phase === 'analyzing' ? reset : handleNhlAnalyze} activeOpacity={0.85}>
+                      {phase === 'analyzing' ? (
+                        <><Ionicons name="close-circle-outline" size={16} color="#fff" /><Text style={[styles.predictBtnText, { color: '#fff' }]}>Cancel</Text></>
+                      ) : (
+                        <><Ionicons name="analytics-outline" size={16} color="#000" /><Text style={styles.predictBtnText}>Analyze</Text></>
+                      )}
+                    </TouchableOpacity>
+                  </>
+                )}
               </>
             )}
-            <Text style={styles.fieldLabel}>Prop Type</Text>
-            <TouchableOpacity style={styles.pickerBtn} onPress={() => setNhlShowPropPicker(true)}>
-              <Text style={styles.pickerBtnText}>{NHL_PROP_TYPES.find(p => p.value === nhlPropType)?.label || 'Select'}</Text>
-              <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
-            </TouchableOpacity>
-            <Text style={styles.fieldLabel}>Line Value</Text>
-            <TextInput
-              style={[styles.textInput, INPUT_STYLE]}
-              placeholder="e.g. 0.5"
-              placeholderTextColor={Colors.textTertiary}
-              value={line}
-              onChangeText={setLine}
-              keyboardType="decimal-pad"
-            />
-            {manualError && (
-              <View style={styles.inlineError}>
-                <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />
-                <Text style={styles.inlineErrorText}>{manualError}</Text>
-              </View>
-            )}
-            <TouchableOpacity style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnCancel]} onPress={phase === 'analyzing' ? reset : handleNhlAnalyze} activeOpacity={0.85}>
-              {phase === 'analyzing' ? (
-                <><Ionicons name="close-circle-outline" size={16} color="#fff" /><Text style={[styles.predictBtnText, { color: '#fff' }]}>Cancel</Text></>
-              ) : (
-                <><Ionicons name="analytics-outline" size={16} color="#000" /><Text style={styles.predictBtnText}>Analyze</Text></>
-              )}
-            </TouchableOpacity>
           </View>
         )}
 
         {/* ─── MLB MANUAL FORM ─── */}
         {sport === 'mlb' && phase !== 'result' && phase !== 'saved' && (
           <View style={styles.manualForm}>
-            <Text style={styles.fieldLabel}>Player</Text>
-            <FuzzySearchInput
-              searchType="mlb_players"
-              value={mlbPlayerQuery}
-              onChangeText={(t) => { setMlbPlayerQuery(t); if (!t) { setMlbResolvedPlayer(null); setMlbNextMatch(null); } }}
-              placeholder="e.g. Shohei Ohtani, Juan Soto"
-              confirmed={!!mlbResolvedPlayer}
-              autoCapitalize="words"
-              onSelectMlbPlayer={async (p) => {
-                setMlbResolvedPlayer(p);
-                setMlbPlayerQuery(p.fullName || `${p.firstName} ${p.lastName}`.trim());
-                setMlbNextMatch(null);
-                setMlbOpponentQuery('');
-                Haptics.selectionAsync();
-                if (p.id) {
-                  setMlbNextMatchLoading(true);
-                  try {
-                    const nm = await getMlbNextMatch(p.id);
-                    setMlbNextMatch(nm);
-                    if (nm.found) {
-                      if (nm.opponent?.name) setMlbOpponentQuery(nm.opponent.name);
-                      if (nm.venue) setMlbVenue(nm.venue);
-                    }
-                  } catch { /* silent */ } finally { setMlbNextMatchLoading(false); }
-                }
-              }}
-            />
-            {mlbNextMatchLoading && (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8 }}>
-                <ActivityIndicator size="small" color={Colors.primary} />
-                <Text style={{ color: Colors.textSecondary, fontSize: 12 }}>Fetching next game…</Text>
+            {sportsConfig.find(s => s.sport === 'mlb')?.available === false ? (
+              <View style={{ alignItems: 'center', paddingVertical: 32, gap: 12 }}>
+                <Ionicons name="baseball-outline" size={40} color={Colors.textSecondary} />
+                <Text style={{ color: Colors.text, fontSize: 16, fontWeight: '700' }}>MLB Coming Soon</Text>
+                <Text style={{ color: Colors.textSecondary, fontSize: 13, textAlign: 'center', lineHeight: 19 }}>
+                  MLB predictions are being calibrated and will be available in a future update.
+                </Text>
               </View>
-            )}
-            {mlbNextMatch?.found && !mlbNextMatchLoading && (
-              <View style={styles.autoFillBanner}>
-                <Ionicons name="flash" size={12} color={Colors.primary} />
-                <View style={{ flex: 1 }}>
-                  <Text style={{ color: Colors.primary, fontSize: 11, fontWeight: '700', letterSpacing: 0.5 }}>NEXT GAME AUTO-FILLED</Text>
-                  <Text style={{ color: Colors.text, fontSize: 13, fontWeight: '600', marginTop: 1 }}>vs {mlbNextMatch.opponent?.name}</Text>
-                  <Text style={{ color: Colors.textSecondary, fontSize: 11, marginTop: 1 }}>{mlbNextMatch.venue?.toUpperCase()}{mlbNextMatch.date ? ` · ${new Date(mlbNextMatch.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : ''}</Text>
-                </View>
-              </View>
-            )}
-            {mlbResolvedPlayer && !mlbNextMatch?.found && !mlbNextMatchLoading && (
+            ) : (
               <>
-                <Text style={styles.fieldLabel}>Opponent <Text style={styles.fieldLabelOpt}>(optional)</Text></Text>
-                <TextInput
-                  style={[styles.textInput, INPUT_STYLE]}
-                  placeholder="e.g. New York Yankees"
-                  placeholderTextColor={Colors.textTertiary}
-                  value={mlbOpponentQuery}
-                  onChangeText={setMlbOpponentQuery}
+                <Text style={styles.fieldLabel}>Player</Text>
+                <FuzzySearchInput
+                  searchType="mlb_players"
+                  value={mlbPlayerQuery}
+                  onChangeText={(t) => { setMlbPlayerQuery(t); if (!t) { setMlbResolvedPlayer(null); setMlbNextMatch(null); } }}
+                  placeholder="e.g. Shohei Ohtani, Juan Soto"
+                  confirmed={!!mlbResolvedPlayer}
                   autoCapitalize="words"
+                  onSelectMlbPlayer={async (p) => {
+                    setMlbResolvedPlayer(p);
+                    setMlbPlayerQuery(p.fullName || `${p.firstName || ''} ${p.lastName || ''}`.trim());
+                    setMlbNextMatch(null);
+                    setMlbOpponentQuery('');
+                    Haptics.selectionAsync();
+                    if (p.id) {
+                      setMlbNextMatchLoading(true);
+                      try {
+                        const nm = await getMlbNextMatch(p.id);
+                        setMlbNextMatch(nm);
+                        if (nm.found) {
+                          if (nm.opponent?.name) setMlbOpponentQuery(nm.opponent.name);
+                          if (nm.venue) setMlbVenue(nm.venue);
+                        }
+                      } catch { /* silent */ } finally { setMlbNextMatchLoading(false); }
+                    }
+                  }}
                 />
-                <Text style={styles.fieldLabel}>Venue</Text>
-                <View style={{ flexDirection: 'row', gap: 10 }}>
-                  {(['home', 'away'] as const).map(v => (
-                    <TouchableOpacity key={v} style={[styles.pickerBtn, { flex: 1, justifyContent: 'center' }, mlbVenue === v && { borderColor: Colors.primary }]} onPress={() => { setMlbVenue(v); Haptics.selectionAsync(); }}>
-                      <Text style={[styles.pickerBtnText, mlbVenue === v && { color: Colors.primary }]}>{v.toUpperCase()}</Text>
+                {mlbNextMatchLoading && (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8 }}>
+                    <ActivityIndicator size="small" color={Colors.primary} />
+                    <Text style={{ color: Colors.textSecondary, fontSize: 12 }}>Fetching next game…</Text>
+                  </View>
+                )}
+                {mlbNextMatch?.found && !mlbNextMatchLoading && (
+                  <View style={styles.autoFillBanner}>
+                    <Ionicons name="flash" size={12} color={Colors.primary} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: Colors.primary, fontSize: 11, fontWeight: '700', letterSpacing: 0.5 }}>NEXT GAME AUTO-FILLED</Text>
+                      <Text style={{ color: Colors.text, fontSize: 13, fontWeight: '600', marginTop: 1 }}>vs {mlbNextMatch.opponent?.name}</Text>
+                      <Text style={{ color: Colors.textSecondary, fontSize: 11, marginTop: 1 }}>{mlbNextMatch.venue?.toUpperCase()}{mlbNextMatch.date ? ` · ${new Date(mlbNextMatch.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : ''}</Text>
+                    </View>
+                  </View>
+                )}
+                {mlbResolvedPlayer && !mlbNextMatch?.found && !mlbNextMatchLoading && (
+                  <>
+                    <Text style={styles.fieldLabel}>Opponent <Text style={styles.fieldLabelOpt}>(optional)</Text></Text>
+                    <TextInput
+                      style={[styles.textInput, INPUT_STYLE]}
+                      placeholder="e.g. New York Yankees"
+                      placeholderTextColor={Colors.textTertiary}
+                      value={mlbOpponentQuery}
+                      onChangeText={setMlbOpponentQuery}
+                      autoCapitalize="words"
+                    />
+                    <Text style={styles.fieldLabel}>Venue</Text>
+                    <View style={{ flexDirection: 'row', gap: 10 }}>
+                      {(['home', 'away'] as const).map(v => (
+                        <TouchableOpacity key={v} style={[styles.pickerBtn, { flex: 1, justifyContent: 'center' }, mlbVenue === v && { borderColor: Colors.primary }]} onPress={() => { setMlbVenue(v); Haptics.selectionAsync(); }}>
+                          <Text style={[styles.pickerBtnText, mlbVenue === v && { color: Colors.primary }]}>{v.toUpperCase()}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </>
+                )}
+                {mlbResolvedPlayer && (
+                  <>
+                    <Text style={styles.fieldLabel}>Prop Type</Text>
+                    <TouchableOpacity style={styles.pickerBtn} onPress={() => setMlbShowPropPicker(true)}>
+                      <Text style={styles.pickerBtnText}>{MLB_PROP_TYPES.find(p => p.value === mlbPropType)?.label || 'Select'}</Text>
+                      <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
                     </TouchableOpacity>
-                  ))}
-                </View>
+                    <Text style={styles.fieldLabel}>Line Value</Text>
+                    <TextInput
+                      style={[styles.textInput, INPUT_STYLE]}
+                      placeholder="e.g. 1.5"
+                      placeholderTextColor={Colors.textTertiary}
+                      value={line}
+                      onChangeText={setLine}
+                      keyboardType="decimal-pad"
+                    />
+                    {manualError && (
+                      <View style={styles.inlineError}>
+                        <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />
+                        <Text style={styles.inlineErrorText}>{manualError}</Text>
+                      </View>
+                    )}
+                    <TouchableOpacity style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnCancel]} onPress={phase === 'analyzing' ? reset : handleMlbAnalyze} activeOpacity={0.85}>
+                      {phase === 'analyzing' ? (
+                        <><Ionicons name="close-circle-outline" size={16} color="#fff" /><Text style={[styles.predictBtnText, { color: '#fff' }]}>Cancel</Text></>
+                      ) : (
+                        <><Ionicons name="analytics-outline" size={16} color="#000" /><Text style={styles.predictBtnText}>Analyze</Text></>
+                      )}
+                    </TouchableOpacity>
+                  </>
+                )}
               </>
             )}
-            <Text style={styles.fieldLabel}>Prop Type</Text>
-            <TouchableOpacity style={styles.pickerBtn} onPress={() => setMlbShowPropPicker(true)}>
-              <Text style={styles.pickerBtnText}>{MLB_PROP_TYPES.find(p => p.value === mlbPropType)?.label || 'Select'}</Text>
-              <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
-            </TouchableOpacity>
-            <Text style={styles.fieldLabel}>Line Value</Text>
-            <TextInput
-              style={[styles.textInput, INPUT_STYLE]}
-              placeholder="e.g. 1.5"
-              placeholderTextColor={Colors.textTertiary}
-              value={line}
-              onChangeText={setLine}
-              keyboardType="decimal-pad"
-            />
-            {manualError && (
-              <View style={styles.inlineError}>
-                <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />
-                <Text style={styles.inlineErrorText}>{manualError}</Text>
-              </View>
-            )}
-            <TouchableOpacity style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnCancel]} onPress={phase === 'analyzing' ? reset : handleMlbAnalyze} activeOpacity={0.85}>
-              {phase === 'analyzing' ? (
-                <><Ionicons name="close-circle-outline" size={16} color="#fff" /><Text style={[styles.predictBtnText, { color: '#fff' }]}>Cancel</Text></>
-              ) : (
-                <><Ionicons name="analytics-outline" size={16} color="#000" /><Text style={styles.predictBtnText}>Analyze</Text></>
-              )}
-            </TouchableOpacity>
           </View>
         )}
 
