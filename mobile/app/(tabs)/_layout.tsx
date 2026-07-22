@@ -86,10 +86,7 @@ export default function TabLayout() {
       />
       <Tabs.Screen
         name="chat"
-        options={{
-          title: 'Tactical AI',
-          tabBarIcon: ({ focused }) => <TabIcon name="chatbubble-ellipses" focused={focused} />,
-        }}
+        options={{ href: null }}
       />
       <Tabs.Screen
         name="account"
