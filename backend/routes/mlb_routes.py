@@ -762,14 +762,25 @@ def _enrich_game_logs(display_logs: list, team_games: list, player_team_name: st
 
     # Build date → game lookup (prefer exact match; handle doubleheaders by keeping first)
     games_by_date: dict = {}
+    games_by_id: dict = {}
     for game in team_games:
         d = (game.get("date") or "")[:10]
         if d and d not in games_by_date:
             games_by_date[d] = game
+        gid = game.get("id")
+        if gid:
+            games_by_id[gid] = game
 
     def _enrich_one(log: dict) -> dict:
         log_date = (log.get("date") or log.get("gameDate") or "")[:10]
         game = games_by_date.get(log_date)
+        # BDL /stats logs have no date — fall back to game_id lookup
+        if not game:
+            gid = log.get("game_id")
+            if gid:
+                game = games_by_id.get(gid)
+                if game:
+                    log_date = (game.get("date") or "")[:10]
         if not game:
             return log
 

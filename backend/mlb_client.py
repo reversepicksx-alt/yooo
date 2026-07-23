@@ -131,38 +131,48 @@ _STATSAPI_ID_THRESHOLD = 100_000  # IDs above this are MLB Stats API
 def _transform_bdl_log(raw: dict) -> dict:
     """Normalise a raw BDL /stats entry to the same field schema as _statsapi_game_logs.
 
-    BDL stores the game date under raw["game"]["date"] and uses field names like
-    "strikeouts", "hits", "walks" that differ from the Stats-API names ("p_k",
-    "p_hits", "p_bb").  After this transform, _try_settle_mlb and the live loop
-    can use a single code path for both player-ID spaces.
+    The BDL /stats endpoint returns stats directly on the object (not nested
+    under a "game" sub-dict).  Field names are:
+      Pitcher: p_k, p_hits, p_bb, er, ip, pitch_count, batters_faced
+      Batter:  hits, hr, rbi, bb, k, runs, total_bases, stolen_bases, doubles, plate_appearances
 
-    Note: "strikeouts" is ambiguous — it means pitcher Ks for pitchers and batter
-    Ks for batters.  We copy it to BOTH slots (p_k and k) so whichever prop type
-    is being settled will find the right value.  Same for hits/walks.
+    date is NOT in the /stats response — it's resolved later in _enrich_game_logs
+    by matching game_id against the team-schedule cache.
     """
-    game     = raw.get("game") or {}
-    date_str = (game.get("date") or "")[:10]
-    ks       = raw.get("strikeouts")
-    h        = raw.get("hits")
-    bb       = raw.get("walks")
-    pitches  = raw.get("pitches") or raw.get("number_of_pitches")
+    # Pitcher fields — actual BDL field names
+    pk    = raw.get("p_k")           # pitcher strikeouts
+    p_h   = raw.get("p_hits")        # hits allowed
+    p_bb_ = raw.get("p_bb")          # walks allowed
+    er    = raw.get("er") or raw.get("earned_runs")
+    ip    = raw.get("ip")
+    pc    = raw.get("pitch_count") or raw.get("pitches") or raw.get("number_of_pitches")
+
+    # Batter fields
+    h     = raw.get("hits")          # null for pitchers
+    bb    = raw.get("bb")            # null for pitchers
+    ks_b  = raw.get("k")             # batter strikeouts (null for pitchers)
+
+    # date: BDL /stats does not include it directly; game_id lets _enrich resolve it
+    date_str = (raw.get("date") or "")[:10]
+    game_id  = raw.get("game_id")
+
     return {
         "date":              date_str,
-        "game_id":           game.get("id"),
+        "game_id":           game_id,
         # pitcher Stats-API-shaped fields
-        "p_k":               ks,
-        "ip":                raw.get("innings_pitched"),   # kept as string "6.2"
-        "p_hits":            h,
-        "er":                raw.get("earned_runs"),
-        "p_bb":              bb,
-        "pitch_count":       pitches,
+        "p_k":               pk,
+        "ip":                ip,
+        "p_hits":            p_h,
+        "er":                er,
+        "p_bb":              p_bb_,
+        "pitch_count":       pc,
         "batters_faced":     raw.get("batters_faced"),
         # batter Stats-API-shaped fields
         "hits":              h,
-        "hr":                raw.get("home_runs"),
+        "hr":                raw.get("hr") or raw.get("home_runs"),
         "rbi":               raw.get("rbi"),
         "bb":                bb,
-        "k":                 ks,
+        "k":                 ks_b,
         "runs":              raw.get("runs"),
         "total_bases":       raw.get("total_bases"),
         "stolen_bases":      raw.get("stolen_bases"),
@@ -554,7 +564,7 @@ async def get_player_game_logs(player_id: int, season: int = 2026, limit: int = 
             logs = await _statsapi_game_logs(player_id, season, group="pitching")
         return logs[:limit]
 
-    key = f"mlb_gl2:{player_id}:{season}"
+    key = f"mlb_gl3:{player_id}:{season}"
     doc = await _cache_get(key)
     if _cache_fresh(doc, CACHE_TTL["stats"]) and doc.get("data") is not None:
         return doc["data"]

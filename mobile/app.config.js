@@ -2,7 +2,7 @@ export default {
   expo: {
     name: "Reverse Picks",
     slug: "reversepicks",
-    version: "1.9",
+    version: "1.10",
     orientation: "portrait",
     icon: "./assets/rp-icon.png",
     userInterfaceStyle: "dark",
