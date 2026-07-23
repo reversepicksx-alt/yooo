@@ -684,14 +684,16 @@ async def generate_match_review(pick_id: str) -> bool:
                     stats  = await api_football_request("fixtures/statistics", {"fixture": fid})
                     # Extract key events that shaped the game
                     if events:
-                        reds = [e for e in events if e.get("type") == "Card" and e.get("detail") == "Red Card"]
+                        # Red Card includes straight reds AND second yellows (Yellow Red Card)
+                        reds = [e for e in events if e.get("type") == "Card" and e.get("detail") in ("Red Card", "Yellow Red Card")]
                         pens = [e for e in events if e.get("type") == "Goal" and e.get("detail") == "Penalty"]
                         subs = [e for e in events if e.get("type") == "subst"]
-                        for red in reds[:2]:
+                        for red in reds[:3]:
                             t = red.get("team", {}).get("name", "")
                             p = red.get("player", {}).get("name", "")
                             ts = red.get("time", {}).get("elapsed", "")
-                            match_data_lines.append(f"RED CARD: {p} ({t}) at {ts}' — this changes game flow dramatically.")
+                            detail = red.get("detail", "Red Card")
+                            match_data_lines.append(f"RED CARD ({detail}): {p} ({t}) at {ts}' — MOST IMPACTFUL SINGLE EVENT. Team played with 10 men from this point.")
                         if pens:
                             t = pens[0].get("team", {}).get("name", "")
                             match_data_lines.append(f"PENALTY goal by {t} — shifted momentum.")
@@ -721,18 +723,28 @@ async def generate_match_review(pick_id: str) -> bool:
         else:
             _all_ctx += "\n\nNo real-time match event data available (fixture may not have been cached)."
 
+        # Build red-card-priority instruction if any reds occurred
+        _red_events = [l for l in match_data_lines if "RED CARD" in l]
+        _red_instruction = (
+            "CRITICAL: A red card occurred in this match (listed in match events above). "
+            "A dismissal is the single most impactful event in soccer — it MUST be your primary "
+            "explanatory factor. State which team went to 10 men, at what minute, and how that "
+            "directly altered the stat in question. Do not bury the red card in a secondary clause. "
+        ) if _red_events else ""
+
         prompt = (
             f"You are a sharp {_sport_role} betting analyst reviewing one of your own settled player-prop picks.\n"
             + _all_ctx + "\n\n"
-            "Write a concise 3-4 sentence post-match review explaining WHY this pick "
+            + _red_instruction
+            + "Write a sharp 4-5 sentence post-match review explaining WHY this pick "
             f"{'HIT' if result == 'hit' else 'MISSED'}. "
-            "If it missed, identify the GAME-STATE factor the model most plausibly got wrong: "
-            "(possession swing, scoreline chase/park-the-bus, early substitution, red card, "
-            "blowout, opponent formation, tactical role change, or the player's own form drop). "
+            "Identify the key GAME-STATE factors — ranked by impact — that explain the outcome: "
+            "(red card / dismissal, possession swing, scoreline chase, park-the-bus, early substitution, "
+            "blowout, formation mismatch, tactical role change, or the player's own form drop). "
+            "If multiple factors stacked (e.g. red card THEN chasing the game), explain how they compounded. "
             "If it hit, name the SIGNAL that proved correct and why the line was set wrong. "
-            "Ground every claim in the NUMBERS above. If match event data is present, reference "
-            "specific incidents. Be sharp and direct — no hedging, no filler, no restating the line. "
-            "Plain text only. One paragraph."
+            "Ground every claim in the NUMBERS above — cite the exact minute, team, player, or stat value. "
+            "No hedging, no filler. Plain text only. One paragraph."
         )
         review = await _ai_call(prompt, temperature=0.3, max_tokens=400, timeout=35)
         review = (review or "").strip()

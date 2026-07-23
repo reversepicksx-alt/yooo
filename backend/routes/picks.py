@@ -5,7 +5,7 @@ import asyncio as aio
 import traceback
 from datetime import datetime, timezone, timedelta
 from typing import Optional
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from config import db, CURRENT_SEASON, STAT_LAMBDA_MAP
 from models import (
@@ -3241,6 +3241,36 @@ async def on_demand_match_review(pick_id: str):
     updated = await db.picks.find_one({"pickId": pick_id}, {"matchReview": 1})
     return {
         "ok": bool(updated and updated.get("matchReview")),
+        "matchReview": updated.get("matchReview") if updated else None,
+    }
+
+
+@router.post("/picks/{pick_id}/review/regenerate")
+async def force_regenerate_match_review(pick_id: str, request: Request):
+    """Force-regenerate post-match AI review — clears any stale/incomplete
+    review (e.g. generated before red card data was available) and rebuilds
+    from scratch using the latest fixture events from API-Football.
+    Admin-only endpoint."""
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    if body.get("adminSecret") != _os.environ.get("ADMIN_SECRET", ""):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    from ai_engine import generate_match_review
+    pick = await db.picks.find_one({"pickId": pick_id})
+    if not pick:
+        raise HTTPException(status_code=404, detail="Pick not found")
+    # Clear existing review so generate_match_review can claim it
+    await db.picks.update_one(
+        {"pickId": pick_id},
+        {"$unset": {"matchReview": "", "matchReviewStatus": "", "matchReviewAt": ""}},
+    )
+    ok = await generate_match_review(pick_id)
+    updated = await db.picks.find_one({"pickId": pick_id}, {"matchReview": 1})
+    return {
+        "ok": ok,
         "matchReview": updated.get("matchReview") if updated else None,
     }
 

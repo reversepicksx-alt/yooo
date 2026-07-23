@@ -1086,39 +1086,50 @@ export default function PicksScreen() {
 
           {/* Body */}
           <ScrollView style={mStyles.modalScroll} contentContainerStyle={mStyles.modalScrollContent} showsVerticalScrollIndicator={false}>
+
+            {/* ── POST-MATCH BREAKDOWN (settled picks only, shown FIRST and PROMINENT) ── */}
             {(() => {
               const pick = analysisModal?.pick as any;
               const isSettled = pick?.status === 'settled' && (pick?.result === 'hit' || pick?.result === 'miss');
+              if (!isSettled) return null;
               const review = pick?.matchReview as string | undefined;
               const res = (pick?.result || '').toLowerCase();
-              const accent = res === 'hit' ? Colors.primary : res === 'miss' ? '#FF6B35' : '#60A5FA';
-              if (!isSettled) return null;
+              const isHit = res === 'hit';
+              const accent = isHit ? Colors.primary : '#FF6B35';
+              const bgColor = isHit ? 'rgba(57,255,20,0.05)' : 'rgba(255,107,53,0.05)';
               return (
                 <View style={{
-                  borderLeftWidth: 3, borderLeftColor: accent,
-                  backgroundColor: '#0A0A0A', borderRadius: 8,
-                  paddingVertical: 10, paddingHorizontal: 12, marginBottom: 12,
-                  borderTopWidth: 1, borderTopColor: '#1A1A1A',
-                  borderBottomWidth: 1, borderBottomColor: '#1A1A1A',
-                  borderRightWidth: 1, borderRightColor: '#1A1A1A',
+                  borderWidth: 1, borderColor: accent + '55',
+                  borderLeftWidth: 4, borderLeftColor: accent,
+                  backgroundColor: bgColor, borderRadius: 10,
+                  paddingVertical: 14, paddingHorizontal: 14, marginBottom: 18,
                 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 6 }}>
-                    <Ionicons name={res === 'hit' ? 'checkmark-circle' : res === 'miss' ? 'close-circle' : 'help-circle'} size={12} color={accent} />
-                    <Text style={{ fontSize: 10, fontWeight: '700', color: accent, letterSpacing: 1.2 }}>
-                      {res === 'hit' ? 'VERDICT: HIT' : res === 'miss' ? 'VERDICT: MISS' : 'POST-MATCH'}
+                  {/* Header row */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+                    <Ionicons
+                      name={isHit ? 'checkmark-circle' : 'close-circle'}
+                      size={16} color={accent}
+                    />
+                    <Text style={{ fontSize: 11, fontWeight: '800', color: accent, letterSpacing: 1.4 }}>
+                      {isHit ? 'VERDICT: HIT' : 'VERDICT: MISS'}
                     </Text>
-                    <Text style={{ fontSize: 10, color: Colors.textTertiary, marginLeft: 'auto' }}>
-                      AI Breakdown
-                    </Text>
+                    <View style={{
+                      marginLeft: 'auto', backgroundColor: accent + '22',
+                      borderRadius: 4, paddingHorizontal: 7, paddingVertical: 2,
+                    }}>
+                      <Text style={{ fontSize: 9, fontWeight: '700', color: accent, letterSpacing: 0.8 }}>
+                        POST-MATCH AI
+                      </Text>
+                    </View>
                   </View>
                   {review ? (
-                    <Text style={{ fontSize: 12.5, color: Colors.text, lineHeight: 18, letterSpacing: 0.1 }}>
+                    <Text style={{ fontSize: 14, color: Colors.text, lineHeight: 22, letterSpacing: 0.1 }}>
                       {review}
                     </Text>
                   ) : (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                       <ActivityIndicator size="small" color={accent} />
-                      <Text style={{ fontSize: 12, color: Colors.textTertiary }}>
+                      <Text style={{ fontSize: 13, color: Colors.textSecondary }}>
                         Generating match breakdown…
                       </Text>
                     </View>
@@ -1126,34 +1137,70 @@ export default function PicksScreen() {
                 </View>
               );
             })()}
+
+            {/* ── PRE-MATCH INTEL section label (settled picks show it as secondary) ── */}
+            {(() => {
+              const pick = analysisModal?.pick as any;
+              const isSettled = pick?.status === 'settled' && (pick?.result === 'hit' || pick?.result === 'miss');
+              if (!isSettled || !modalText) return null;
+              return (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                  <View style={{ flex: 1, height: 1, backgroundColor: Colors.borderSubtle }} />
+                  <Text style={{ fontSize: 9, fontWeight: '700', color: Colors.textTertiary, letterSpacing: 1.2 }}>
+                    PRE-MATCH INTEL
+                  </Text>
+                  <View style={{ flex: 1, height: 1, backgroundColor: Colors.borderSubtle }} />
+                </View>
+              );
+            })()}
+
+            {/* ── Analysis body (pre-match) ── */}
             {analysisModal?.loading ? (
               <View style={mStyles.modalLoading}>
                 <ActivityIndicator color={Colors.primary} />
                 <Text style={mStyles.modalLoadingText}>Loading analysis…</Text>
               </View>
             ) : !modalText ? (
-              <View style={mStyles.modalLoading}>
-                <Ionicons name="analytics-outline" size={32} color={Colors.textTertiary} />
-                <Text style={mStyles.modalLoadingText}>No analysis found for this pick yet.</Text>
-              </View>
+              (() => {
+                const pick = analysisModal?.pick as any;
+                const isSettled = pick?.status === 'settled' && (pick?.result === 'hit' || pick?.result === 'miss');
+                if (isSettled) return null;
+                return (
+                  <View style={mStyles.modalLoading}>
+                    <Ionicons name="analytics-outline" size={32} color={Colors.textTertiary} />
+                    <Text style={mStyles.modalLoadingText}>No analysis found for this pick yet.</Text>
+                  </View>
+                );
+              })()
             ) : (
               <View style={mStyles.aiBlocks}>
                 {renderAnalysisBlocks(modalText, modalRec)}
+
+                {/* ── SIGNAL ALERTS — full-width readable cards, NOT cut-off pills ── */}
                 {modalAlerts.length > 0 && (
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 12 }}>
-                    {modalAlerts.slice(0, 4).map((alert, i) => {
+                  <View style={{ gap: 8, marginTop: 4 }}>
+                    {modalAlerts.slice(0, 5).map((alert, i) => {
                       const lower = alert.toLowerCase();
-                      const isRisk = lower.includes('risk') || lower.includes('invalid') || lower.includes('flip') || lower.includes('void');
+                      const isLineDeviation = lower.includes('line deviation') || lower.includes('edgegap') || lower.includes('deviation');
+                      const isRisk = lower.includes('risk') || lower.includes('dismissal') || lower.includes('invalid') || lower.includes('flip') || lower.includes('void') || lower.includes('red card');
                       const isBoost = lower.includes('boost') || lower.includes('infl') || lower.includes('rise') || lower.includes('high');
-                      const alertColor = isRisk ? '#FF6B35' : isBoost ? Colors.primary : '#60A5FA';
+                      const alertColor = isRisk ? '#FF6B35' : isLineDeviation ? '#60A5FA' : isBoost ? Colors.primary : '#60A5FA';
+                      const iconName: any = isRisk ? 'warning' : isLineDeviation ? 'stats-chart' : isBoost ? 'trending-up' : 'information-circle';
+                      const label = isLineDeviation ? 'LINE INTEL' : isRisk ? 'RISK SIGNAL' : 'SIGNAL';
                       return (
                         <View key={i} style={{
-                          flexDirection: 'row', alignItems: 'center', gap: 4,
-                          backgroundColor: alertColor + '11', borderRadius: 6, paddingHorizontal: 7, paddingVertical: 3,
+                          backgroundColor: alertColor + '0D',
+                          borderRadius: 8, padding: 10,
                           borderWidth: 1, borderColor: alertColor + '33',
+                          borderLeftWidth: 3, borderLeftColor: alertColor,
                         }}>
-                          <Ionicons name={isRisk ? 'warning' : isBoost ? 'trending-up' : 'information-circle'} size={10} color={alertColor} />
-                          <Text style={{ fontSize: 10, color: alertColor, fontWeight: '700' }}>{alert}</Text>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 4 }}>
+                            <Ionicons name={iconName} size={11} color={alertColor} />
+                            <Text style={{ fontSize: 9, fontWeight: '800', color: alertColor, letterSpacing: 1.1 }}>
+                              {label}
+                            </Text>
+                          </View>
+                          <Text style={{ fontSize: 12.5, color: Colors.text, lineHeight: 18 }}>{alert}</Text>
                         </View>
                       );
                     })}
