@@ -3886,38 +3886,76 @@ export default function ScanScreen() {
                         return (
                           <>
                             {filteredWithIdx.map(({ log: g, origIdx }, i) => {
-                              const isMlb = g.sport === 'mlb';
+                              const sport = g.sport || 'soccer';
+                              const isSoccer = sport === 'soccer';
                               const isOver = g.value != null && effectiveLine != null && g.value > effectiveLine;
                               const isDeselected = deselectedLogIndices.has(origIdx);
-                              const mins = isMlb ? 0 : (g.minutes || 0);
-                              const isLowMin = !isMlb && mins > 0 && mins < 60;
+                              // Soccer uses real minutes; NBA/NHL store TOI in minutes; all others = 0
+                              const mins = isSoccer ? (g.minutes || 0) : (sport === 'nba' || sport === 'nhl') ? (g.minutes || 0) : 0;
+                              const isLowMin = isSoccer && mins > 0 && mins < 60;
                               const tc = tierColor(g.oppTier);
                               const mc = minsColor(mins);
 
-                              // Soccer strips club prefixes; MLB opponent is already an abbreviation
-                              const oppRaw = g.opponent || (isMlb ? '' : '?');
-                              const oppShort = isMlb
-                                ? (oppRaw ? oppRaw.toUpperCase().slice(0, 3) : '—')
-                                : oppRaw.replace(/^(al-?|fc |cf |rc |sc |cd |ud |sd |rcd |as |ss |ac |us |ac |sp |ca |cp |ue |ue |ce |cm |se |sk )/i, '').slice(0, 3).toUpperCase();
+                              // Soccer strips club prefixes; all other sports use abbreviations/short names
+                              const oppRaw = g.opponent || '';
+                              const oppShort = isSoccer
+                                ? (oppRaw || '?').replace(/^(al-?|fc |cf |rc |sc |cd |ud |sd |rcd |as |ss |ac |us |ac |sp |ca |cp |ue |ue |ce |cm |se |sk )/i, '').slice(0, 3).toUpperCase()
+                                : (oppRaw ? oppRaw.toUpperCase().slice(0, 3) : '—');
 
                               const scoreStr = g.score || '';
 
-                              // MLB: W/L prefix + score, e.g. "W 5-3" or "L 2-4"
-                              const mlbScoreLabel = (() => {
-                                if (!isMlb) return null;
-                                const wl = g.won != null ? (g.won ? 'W' : 'L') : null;
-                                if (wl && scoreStr) return `${wl} ${scoreStr}`;
-                                if (wl) return wl;
-                                return scoreStr || null;
-                              })();
+                              // Non-soccer: build a middle line showing W/L + context
+                              const nonSoccerMid: { text: string; color: string } | null = (() => {
+                                if (isSoccer) return null;
+                                const rawWon = (g as any).won ?? (g as any).wonMatch ?? (g as any).wonMap ?? null;
+                                const wl = rawWon === true ? 'W' : rawWon === false ? 'L' : null;
+                                const wlColor = isDeselected ? Colors.textTertiary
+                                  : rawWon === true ? Colors.success
+                                  : rawWon === false ? Colors.error
+                                  : Colors.textSecondary;
+                                // Short date fallback
+                                const dateStr = g.date ? (() => {
+                                  const d = new Date((g.date as string).slice(0, 10) + 'T12:00:00');
+                                  return isNaN(d.getTime()) ? '' : `${d.getMonth() + 1}/${d.getDate()}`;
+                                })() : '';
 
-                              // MLB: short date for tile when no other context
-                              const mlbDateShort = isMlb && g.date
-                                ? (() => {
-                                    const d = new Date((g.date as string).slice(0, 10) + 'T12:00:00');
-                                    return isNaN(d.getTime()) ? '' : `${d.getMonth() + 1}/${d.getDate()}`;
-                                  })()
-                                : null;
+                                // MLB: "W 5-3" / "L 2-4"
+                                if (sport === 'mlb') {
+                                  if (wl && scoreStr) return { text: `${wl} ${scoreStr}`, color: wlColor };
+                                  if (wl) return { text: wl + (dateStr ? ` ${dateStr}` : ''), color: wlColor };
+                                  return { text: scoreStr || dateStr || '—', color: Colors.textSecondary };
+                                }
+                                // NBA / NHL: "W" / "L" + minutes
+                                if (sport === 'nba' || sport === 'nhl') {
+                                  const minLabel = sport === 'nhl' ? `${mins}m` : `${mins}`;
+                                  if (wl && mins > 0) return { text: `${wl}  ${minLabel}`, color: wlColor };
+                                  if (wl) return { text: wl, color: wlColor };
+                                  return { text: mins > 0 ? minLabel : (dateStr || '—'), color: Colors.textSecondary };
+                                }
+                                // WTA: "W" / "L" + match score
+                                if (sport === 'wta') {
+                                  const wtaScore = (g as any).score;
+                                  const shortScore = wtaScore ? String(wtaScore).slice(0, 9) : '';
+                                  if (wl && shortScore) return { text: `${wl} ${shortScore}`, color: wlColor };
+                                  if (wl) return { text: wl, color: wlColor };
+                                  return { text: shortScore || dateStr || '—', color: Colors.textSecondary };
+                                }
+                                // CS2: "W" / "L" (map result)
+                                if (sport === 'cs2') {
+                                  if (wl) return { text: wl + (dateStr ? ` ${dateStr}` : ''), color: wlColor };
+                                  return { text: dateStr || '—', color: Colors.textSecondary };
+                                }
+                                // NFL: "WK14" + W/L
+                                if (sport === 'nfl') {
+                                  const week = (g as any).week;
+                                  const wkStr = week != null ? `WK${week}` : '';
+                                  if (wl && wkStr) return { text: `${wl} ${wkStr}`, color: wlColor };
+                                  if (wl) return { text: wl, color: wlColor };
+                                  return { text: wkStr || dateStr || '—', color: Colors.textSecondary };
+                                }
+                                // Generic fallback
+                                return { text: wl || dateStr || '—', color: wlColor };
+                              })();
 
                               const defSecondary: { val: number | null; label: string } | null =
                                 propT === 'blocks' ? { val: g.blocks ?? null, label: 'BLK' }
@@ -3925,6 +3963,9 @@ export default function ScanScreen() {
                                 : propT === 'tackles' ? { val: g.tackles ?? null, label: 'TKL' }
                                 : propT === 'clearances' ? { val: g.clearances ?? null, label: 'CLR' }
                                 : null;
+
+                              const venueLabel = g.venue === 'home' ? 'H' : g.venue === 'away' ? 'A' : '—';
+
                               return (
                                 <TouchableOpacity
                                   key={i}
@@ -3946,38 +3987,17 @@ export default function ScanScreen() {
                                 >
                                   {tc && <View style={[styles.glTierDot, { backgroundColor: tc }]} />}
                                   {isLowMin && !isDeselected && <View style={styles.glLowMinDot} />}
+
+                                  {/* ── Stat value ── */}
                                   <Text style={[styles.glTileVal, {
                                     color: isDeselected ? Colors.textTertiary : isOver ? Colors.success : Colors.error,
                                   }]}>
                                     {g.value != null ? String(g.value) : '—'}
                                   </Text>
 
-                                  {isMlb ? (
+                                  {isSoccer ? (
                                     <>
-                                      {mlbScoreLabel ? (
-                                        <Text style={[styles.glTileScore, {
-                                          color: isDeselected ? Colors.textTertiary
-                                            : g.won === true ? Colors.success
-                                            : g.won === false ? Colors.error
-                                            : Colors.textSecondary,
-                                          fontSize: 8,
-                                        }]}>{mlbScoreLabel}</Text>
-                                      ) : mlbDateShort ? (
-                                        <Text style={styles.glTileMins}>{mlbDateShort}</Text>
-                                      ) : (
-                                        <Text style={styles.glTileMins}>—</Text>
-                                      )}
-                                      <View style={styles.glOppRow}>
-                                        <View style={styles.glVenueBadge}>
-                                          <Text style={styles.glVenueText}>
-                                            {g.venue === 'home' ? 'H' : g.venue === 'away' ? 'A' : '—'}
-                                          </Text>
-                                        </View>
-                                        <Text style={styles.glTileOpp} numberOfLines={1}>{oppShort}</Text>
-                                      </View>
-                                    </>
-                                  ) : (
-                                    <>
+                                      {/* Soccer: score or minutes */}
                                       {scoreStr ? (
                                         <Text style={styles.glTileScore}>{scoreStr}</Text>
                                       ) : (
@@ -3986,11 +4006,7 @@ export default function ScanScreen() {
                                         </Text>
                                       )}
                                       <View style={styles.glOppRow}>
-                                        <View style={styles.glVenueBadge}>
-                                          <Text style={styles.glVenueText}>
-                                            {g.venue === 'home' ? 'H' : g.venue === 'away' ? 'A' : '—'}
-                                          </Text>
-                                        </View>
+                                        <View style={styles.glVenueBadge}><Text style={styles.glVenueText}>{venueLabel}</Text></View>
                                         <Text style={styles.glTileOpp} numberOfLines={1}>{oppShort}</Text>
                                       </View>
                                       {(g.teamPossession != null || g.opponentPossession != null) && (() => {
@@ -3998,11 +4014,7 @@ export default function ScanScreen() {
                                         const op = g.opponentPossession ?? (g.teamPossession != null ? 100 - g.teamPossession : null);
                                         if (tp == null) return null;
                                         const pc = tp >= 55 ? Colors.success : tp < 45 ? Colors.error : Colors.textSecondary;
-                                        return (
-                                          <Text style={[styles.glTilePoss, { color: pc }]}>
-                                            {tp}%{op != null ? `–${op}%` : ''}
-                                          </Text>
-                                        );
+                                        return <Text style={[styles.glTilePoss, { color: pc }]}>{tp}%{op != null ? `–${op}%` : ''}</Text>;
                                       })()}
                                       {defSecondary && defSecondary.val != null && (
                                         <Text style={styles.glTileSecStat}>{defSecondary.label} {defSecondary.val}</Text>
@@ -4015,6 +4027,20 @@ export default function ScanScreen() {
                                           }]} />
                                         </View>
                                       )}
+                                    </>
+                                  ) : (
+                                    <>
+                                      {/* All other sports: W/L + context line */}
+                                      {nonSoccerMid && (
+                                        <Text style={[styles.glTileScore, { color: nonSoccerMid.color, fontSize: 8 }]}
+                                          numberOfLines={1}>
+                                          {nonSoccerMid.text}
+                                        </Text>
+                                      )}
+                                      <View style={styles.glOppRow}>
+                                        <View style={styles.glVenueBadge}><Text style={styles.glVenueText}>{venueLabel}</Text></View>
+                                        <Text style={styles.glTileOpp} numberOfLines={1}>{oppShort}</Text>
+                                      </View>
                                     </>
                                   )}
                                 </TouchableOpacity>
