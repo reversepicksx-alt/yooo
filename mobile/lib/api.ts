@@ -1783,6 +1783,120 @@ export async function nhlPredict(request: Record<string, unknown>, signal?: Abor
   } as unknown as PredictionResult;
 }
 
+// ─── NFL ────────────────────────────────────────────────────────────────────
+
+export const NFL_PROP_TYPES = [
+  { value: 'passing_yards',         label: 'Passing Yards' },
+  { value: 'passing_tds',           label: 'Passing TDs' },
+  { value: 'completions',           label: 'Completions' },
+  { value: 'pass_attempts',         label: 'Pass Attempts' },
+  { value: 'interceptions',         label: 'Interceptions Thrown' },
+  { value: 'passing_rushing_yards', label: 'Pass + Rush Yards' },
+  { value: 'rushing_yards',         label: 'Rushing Yards' },
+  { value: 'rushing_tds',           label: 'Rushing TDs' },
+  { value: 'carries',               label: 'Carries' },
+  { value: 'receiving_yards',       label: 'Receiving Yards' },
+  { value: 'receiving_tds',         label: 'Receiving TDs' },
+  { value: 'receptions',            label: 'Receptions' },
+  { value: 'targets',               label: 'Targets' },
+  { value: 'fantasy_points',        label: 'Fantasy Points' },
+  { value: 'anytime_td',            label: 'Anytime TD Scorer' },
+];
+
+export interface NflPlayer {
+  id:        number;
+  firstName: string;
+  lastName:  string;
+  fullName?: string;
+  position:  string;
+  team?:     { id: number; full_name: string; abbreviation: string } | null;
+  jersey?:   string | null;
+  college?:  string | null;
+}
+
+export async function searchNflPlayers(query: string): Promise<NflPlayer[]> {
+  if (!query || query.length < 2) return [];
+  const raw = await apiCall<any>(`/api/nfl/players/search?q=${encodeURIComponent(query)}`);
+  const rows: any[] = Array.isArray(raw) ? raw : (raw?.players || raw?.results || []);
+  return rows.map((p: any) => ({
+    id:        p.id        ?? 0,
+    firstName: p.firstName ?? p.first_name  ?? '',
+    lastName:  p.lastName  ?? p.last_name   ?? '',
+    fullName:  p.fullName  ?? `${p.firstName ?? p.first_name ?? ''} ${p.lastName ?? p.last_name ?? ''}`.trim(),
+    position:  p.position  ?? '',
+    team:      p.team      ?? null,
+    jersey:    p.jersey    ?? null,
+    college:   p.college   ?? null,
+  }));
+}
+
+export interface NflNextMatch {
+  found:     boolean;
+  gameId?:   number | null;
+  date?:     string;
+  venue?:    'home' | 'away';
+  opponent?: { id: number | null; name: string; abbreviation?: string } | null;
+}
+
+export async function getNflNextMatch(playerId: number): Promise<NflNextMatch> {
+  try {
+    return await apiCall<NflNextMatch>(`/api/nfl/next-match?player_id=${playerId}`);
+  } catch {
+    return { found: false };
+  }
+}
+
+export async function nflPredict(request: Record<string, unknown>, signal?: AbortSignal): Promise<PredictionResult> {
+  const raw = await apiCall<any>('/api/nfl/predict', {
+    method: 'POST',
+    body:   JSON.stringify(request),
+    signal,
+  });
+  if (raw.error) return { error: raw.error } as PredictionResult;
+  const bm  = raw.bayesianMetrics || {};
+  const rec = (raw.recommendation || '').toUpperCase() as 'OVER' | 'UNDER' | 'PASS';
+  const gameLogs = (raw.gameLogs || []).map((g: any) => ({
+    date:            g.date            ?? '',
+    opponent:        g.opponent        ?? '',
+    venue:           g.venue           ?? '',
+    value:           g.value           ?? null,
+    week:            g.week            ?? null,
+    sport:           'nfl',
+    passing_yards:   g.passing_yards   ?? null,
+    rushing_yards:   g.rushing_yards   ?? null,
+    receiving_yards: g.receiving_yards ?? null,
+    receptions:      g.receptions      ?? null,
+  }));
+  return {
+    sport:              'nfl',
+    playerName:         raw.playerName   || '',
+    playerId:           raw.playerId,
+    teamName:           raw.teamName     || '',
+    opponentName:       raw.opponentName || '',
+    propType:           raw.propType     || '',
+    line:               raw.line         ?? 0,
+    projection:         raw.projection,
+    bayesianProjection: raw.projection,
+    confidence:         raw.confidenceScore != null ? raw.confidenceScore / 100 : null,
+    rawConfidence:      raw.rawConfidence ?? raw.confidenceScore,
+    confidenceScore:    raw.confidenceScore,
+    confidenceLevel:    raw.confidenceLevel,
+    recommendation:     rec,
+    pOver:              raw.pOver  ?? bm.pOver,
+    pUnder:             raw.pUnder ?? bm.pUnder,
+    sharpSummary:       raw.sharpSummary      || undefined,
+    reasoning:          raw.reasoning         || undefined,
+    tacticalBreakdown:  raw.tacticalBreakdown || undefined,
+    streakFlag:         raw.streakFlag        ?? '',
+    gameLogs,
+    bayesianMetrics: {
+      priorMean:    bm.priorMean    ?? raw.priorMean,
+      momentumMean: bm.momentumMean ?? raw.momentum,
+      sampleSize:   bm.sampleSize   ?? raw.sampleSize,
+    },
+  } as unknown as PredictionResult;
+}
+
 // ─── MLB ────────────────────────────────────────────────────────────────────
 
 export const MLB_PROP_TYPES = [

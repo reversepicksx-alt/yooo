@@ -257,6 +257,58 @@ def _transform_nfl_log(row: dict) -> dict:
     }
 
 
+async def get_next_match(player_id: int) -> dict:
+    """Find the next scheduled game for a given NFL player."""
+    player = await get_player(player_id)
+    if not player:
+        return {"found": False}
+
+    team = player.get("team") or {}
+    team_id = team.get("id")
+    if not team_id:
+        return {"found": False}
+
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    try:
+        data = await _get("/games", {
+            "team_ids[]": team_id,
+            "seasons[]":  CURRENT_NFL_SEASON,
+            "per_page":   100,
+        })
+        games = data.get("data", [])
+    except Exception as e:
+        log.warning(f"[NFL NEXT MATCH] {e}")
+        return {"found": False}
+
+    future = [
+        g for g in games
+        if (g.get("date") or "")[:10] >= today
+        and g.get("status") not in ("Final", "completed", "closed", "complete")
+    ]
+    future.sort(key=lambda g: g.get("date", ""))
+
+    if not future:
+        return {"found": False}
+
+    ng = future[0]
+    home_team = ng.get("home_team") or {}
+    away_team = ng.get("visitor_team") or {}
+    is_home   = (home_team.get("id") == team_id)
+    opp       = away_team if is_home else home_team
+
+    return {
+        "found":    True,
+        "gameId":   ng.get("id"),
+        "date":     (ng.get("date") or "")[:10],
+        "venue":    "home" if is_home else "away",
+        "opponent": {
+            "id":           opp.get("id"),
+            "name":         opp.get("full_name") or f"{opp.get('location', '')} {opp.get('name', '')}".strip(),
+            "abbreviation": opp.get("abbreviation"),
+        },
+    }
+
+
 async def get_player_game_logs(player_id: int, season: int = CURRENT_NFL_SEASON) -> list:
     """Fetch per-game stats for a player, newest-first."""
     cache_key = f"stats:{player_id}:{season}"

@@ -20,14 +20,15 @@ ADMIN_SECRET = os.environ.get("ADMIN_SECRET", "")
 
 # Canonical default configuration — seeded on first access
 _DEFAULTS = [
-    {"sport": "soccer", "displayName": "Soccer",     "icon": "football",        "label": None, "available": True},
-    {"sport": "mlb",    "displayName": "MLB",         "icon": "baseball",        "label": None, "available": True},
-    {"sport": "cs2",    "displayName": "CS2",         "icon": "game-controller", "label": None, "available": True},
-    {"sport": "wta",    "displayName": "WTA Tennis",  "icon": "tennisball",      "label": None, "available": True},
-    {"sport": "nba",    "displayName": "NBA",         "icon": "basketball",      "label": "Off Season", "available": False},
-    {"sport": "nhl",    "displayName": "NHL",         "icon": "snow",            "label": "Off Season", "available": False},
+    {"sport": "soccer", "displayName": "Soccer",     "icon": "football",          "label": None,         "available": True},
+    {"sport": "mlb",    "displayName": "MLB",         "icon": "baseball",          "label": None,         "available": True},
+    {"sport": "nfl",    "displayName": "NFL",         "icon": "american-football", "label": "Off Season", "available": False},
+    {"sport": "nba",    "displayName": "NBA",         "icon": "basketball",        "label": "Off Season", "available": False},
+    {"sport": "nhl",    "displayName": "NHL",         "icon": "snow",              "label": "Off Season", "available": False},
+    {"sport": "cs2",    "displayName": "CS2",         "icon": "game-controller",   "label": None,         "available": True},
+    {"sport": "wta",    "displayName": "WTA Tennis",  "icon": "tennisball",        "label": None,         "available": True},
 ]
-_SPORT_ORDER = ["soccer", "mlb", "cs2", "wta", "nba", "nhl"]
+_SPORT_ORDER = ["soccer", "mlb", "nfl", "nba", "nhl", "cs2", "wta"]
 
 
 async def _ensure_seeded() -> None:

@@ -8,15 +8,15 @@ import Colors from '@/constants/colors';
 import {
   searchTeams, searchPlayersQuick, searchLeagues,
   searchCs2Players, searchCs2Teams, searchWtaPlayers,
-  searchNbaPlayers, searchNhlPlayers, searchMlbPlayers,
+  searchNbaPlayers, searchNhlPlayers, searchMlbPlayers, searchNflPlayers,
   TeamSearchResult, PlayerSearchResult, LeagueSearchResult, LEAGUES,
-  Cs2Player, Cs2Team, WtaPlayer, NbaPlayer, NhlPlayer, MlbPlayer,
+  Cs2Player, Cs2Team, WtaPlayer, NbaPlayer, NhlPlayer, MlbPlayer, NflPlayer,
 } from '@/lib/api';
 
 export type SearchType =
   | 'teams' | 'players' | 'leagues'
   | 'cs2_players' | 'cs2_teams' | 'wta_players'
-  | 'nba_players' | 'nhl_players' | 'mlb_players';
+  | 'nba_players' | 'nhl_players' | 'mlb_players' | 'nfl_players';
 
 export interface FuzzyTeamResult {
   teamId: number;
@@ -70,6 +70,7 @@ interface FuzzySearchInputProps {
   onSelectNbaPlayer?: (p: NbaPlayer) => void;
   onSelectNhlPlayer?: (p: NhlPlayer) => void;
   onSelectMlbPlayer?: (p: MlbPlayer) => void;
+  onSelectNflPlayer?: (p: NflPlayer) => void;
   onSelectStaticItem?: (raw: any, primary: string) => void;
 }
 
@@ -183,6 +184,8 @@ export default function FuzzySearchInput({
         r = await searchNhlPlayers(q);
       } else if (searchType === 'mlb_players') {
         r = await searchMlbPlayers(q);
+      } else if (searchType === 'nfl_players') {
+        r = await searchNflPlayers(q);
       }
       if (searchIdRef.current !== myId) return;
       setResults(r);
@@ -252,6 +255,10 @@ export default function FuzzySearchInput({
   const handleSelectMlbPlayer = (p: MlbPlayer) => {
     onChangeText(p.fullName || `${p.firstName} ${p.lastName}`.trim()); dismiss(); setResults([]);
     onSelectMlbPlayer?.(p);
+  };
+  const handleSelectNflPlayer = (p: NflPlayer) => {
+    onChangeText(p.fullName || `${p.firstName || ''} ${p.lastName || ''}`.trim()); dismiss(); setResults([]);
+    onSelectNflPlayer?.(p);
   };
   const handleSelectStatic = (item: StaticItem) => {
     onChangeText(item.primary); dismiss(); setResults([]);
@@ -376,6 +383,19 @@ export default function FuzzySearchInput({
       return (
         <TouchableOpacity key={index} style={styles.dropdownItem} onPress={() => handleSelectMlbPlayer(item)} activeOpacity={0.7}>
           <Ionicons name="baseball-outline" size={13} color={Colors.primary} style={styles.dropdownIcon} />
+          <View style={styles.dropdownTextWrap}>
+            <Text style={styles.dropdownMain} numberOfLines={1}>{name}</Text>
+            {sub ? <Text style={styles.dropdownSub} numberOfLines={1}>{sub}</Text> : null}
+          </View>
+        </TouchableOpacity>
+      );
+    }
+    if (searchType === 'nfl_players') {
+      const name = item.fullName || `${item.firstName || ''} ${item.lastName || ''}`.trim();
+      const sub  = [item.team?.full_name, item.position].filter(Boolean).join(' · ');
+      return (
+        <TouchableOpacity key={index} style={styles.dropdownItem} onPress={() => handleSelectNflPlayer(item)} activeOpacity={0.7}>
+          <Ionicons name="american-football-outline" size={13} color={Colors.primary} style={styles.dropdownIcon} />
           <View style={styles.dropdownTextWrap}>
             <Text style={styles.dropdownMain} numberOfLines={1}>{name}</Text>
             {sub ? <Text style={styles.dropdownSub} numberOfLines={1}>{sub}</Text> : null}

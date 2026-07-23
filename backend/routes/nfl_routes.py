@@ -118,6 +118,18 @@ async def get_nfl_teams():
         raise HTTPException(status_code=502, detail=f"NFL teams failed: {e}")
 
 
+# ── Next match ────────────────────────────────────────────────────────────────
+
+@router.get("/next-match")
+async def nfl_next_match(player_id: int = Query(...)):
+    try:
+        result = await nfl_client.get_next_match(player_id)
+        return result
+    except Exception as e:
+        log.warning(f"[NFL NEXT MATCH] {e}")
+        return {"found": False}
+
+
 # ── Predict ───────────────────────────────────────────────────────────────────
 
 class NflPredictRequest(BaseModel):

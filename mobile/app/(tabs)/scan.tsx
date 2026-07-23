@@ -12,7 +12,7 @@ import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import NotificationBell from '@/components/NotificationBell';
 import { useQueryClient } from '@tanstack/react-query';
-import { scanProp, predict, cs2Predict, wtaPredict, nbaPredict, nhlPredict, mlbPredict, savePick, pollAiNarrative, searchCs2Players, searchCs2Teams, searchWtaPlayers, PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, NBA_PROP_TYPES, NHL_PROP_TYPES, MLB_PROP_TYPES, LEAGUES, PredictionResult, ScanResult, Cs2Player, Cs2Team, WtaPlayer, NbaPlayer, NhlPlayer, MlbPlayer, getPlayerContexts, getTeamNextMatch, getLeagueById, getMatchScript, PlayerContext, NextMatchData, MatchScriptData, getCs2NextMatch, getWtaNextMatch, getNbaNextMatch, getNhlNextMatch, getMlbNextMatch, Cs2NextMatch, WtaNextMatch, NbaNextMatch, NhlNextMatch, MlbNextMatch, resolvePlayerRole, PlayerRoleResult, startChat, sendChatMessage, getSportsConfig, SportConfig } from '@/lib/api';
+import { scanProp, predict, cs2Predict, wtaPredict, nbaPredict, nhlPredict, mlbPredict, nflPredict, savePick, pollAiNarrative, searchCs2Players, searchCs2Teams, searchWtaPlayers, PROP_TYPES, CS2_PROP_TYPES, WTA_PROP_TYPES, WTA_SURFACES, WTA_ROUNDS, NBA_PROP_TYPES, NHL_PROP_TYPES, MLB_PROP_TYPES, NFL_PROP_TYPES, LEAGUES, PredictionResult, ScanResult, Cs2Player, Cs2Team, WtaPlayer, NbaPlayer, NhlPlayer, MlbPlayer, NflPlayer, getPlayerContexts, getTeamNextMatch, getLeagueById, getMatchScript, PlayerContext, NextMatchData, MatchScriptData, getCs2NextMatch, getWtaNextMatch, getNbaNextMatch, getNhlNextMatch, getMlbNextMatch, getNflNextMatch, Cs2NextMatch, WtaNextMatch, NbaNextMatch, NhlNextMatch, MlbNextMatch, NflNextMatch, resolvePlayerRole, PlayerRoleResult, startChat, sendChatMessage, getSportsConfig, SportConfig } from '@/lib/api';
 import FuzzySearchInput, { FuzzyTeamResult, FuzzyPlayerResult, FuzzyLeagueResult, StaticItem } from '@/components/FuzzySearchInput';
 import LeaguePickerModal from '@/components/LeaguePickerModal';
 import { useAuth } from '@/contexts/AuthContext';
@@ -80,7 +80,7 @@ const BAND_LABEL: Record<string, string> = {
 
 type Mode = 'scan' | 'manual';
 type Phase = 'idle' | 'scanning' | 'detected' | 'analyzing' | 'result' | 'saved';
-type Sport = 'soccer' | 'cs2' | 'wta' | 'nba' | 'nhl' | 'mlb';
+type Sport = 'soccer' | 'cs2' | 'wta' | 'nba' | 'nhl' | 'mlb' | 'nfl';
 
 export default function ScanScreen() {
   const insets = useSafeAreaInsets();
@@ -212,6 +212,16 @@ export default function ScanScreen() {
   const [nhlVenue, setNhlVenue] = useState<'home' | 'away'>('home');
   const [nhlNextMatch, setNhlNextMatch] = useState<NhlNextMatch | null>(null);
   const [nhlNextMatchLoading, setNhlNextMatchLoading] = useState(false);
+
+  // NFL manual mode fields
+  const [nflPlayerQuery, setNflPlayerQuery] = useState('');
+  const [nflResolvedPlayer, setNflResolvedPlayer] = useState<NflPlayer | null>(null);
+  const [nflOpponentQuery, setNflOpponentQuery] = useState('');
+  const [nflPropType, setNflPropType] = useState('passing_yards');
+  const [nflShowPropPicker, setNflShowPropPicker] = useState(false);
+  const [nflVenue, setNflVenue] = useState<'home' | 'away'>('home');
+  const [nflNextMatch, setNflNextMatch] = useState<NflNextMatch | null>(null);
+  const [nflNextMatchLoading, setNflNextMatchLoading] = useState(false);
 
   // MLB manual mode fields
   const [mlbPlayerQuery, setMlbPlayerQuery] = useState('');
@@ -986,6 +996,43 @@ export default function ScanScreen() {
     } catch (e: unknown) {
       if (e instanceof Error && e.message === '__CANCELLED__') return;
       setManualError(e instanceof Error ? e.message : 'NHL analysis failed — try again');
+      setPhase('idle');
+    } finally { cancelAbortRef.current = null; }
+  };
+
+  // ── NFL handlers ─────────────────────────────────────────────────────────
+  const handleNflAnalyze = async () => {
+    if (!session?.email || !session?.token) { Alert.alert('Sign In Required', 'Please sign in to run predictions.'); return; }
+    if (isNoSub) { if (Platform.OS === 'web') { router.push('/(tabs)/account'); } else { router.push('/paywall'); } return; }
+    if (!nflPlayerQuery.trim()) { setManualError('Enter a player name.'); return; }
+    if (!line.trim() || isNaN(parseFloat(line))) { setManualError('Enter a valid line value (e.g. 24.5).'); return; }
+    setManualError(null);
+    setPhase('analyzing');
+    cancelAbortRef.current?.abort();
+    cancelAbortRef.current = new AbortController();
+    try {
+      const playerName = nflPlayerQuery.trim();
+      const result = await nflPredict({
+        email:        session.email,
+        token:        session.token,
+        playerName,
+        playerId:     nflResolvedPlayer?.id || null,
+        teamName:     nflResolvedPlayer?.team?.full_name || '',
+        teamId:       nflResolvedPlayer?.team?.id || null,
+        propType:     nflPropType,
+        line:         parseFloat(line),
+        venue:        nflNextMatch?.venue || nflVenue,
+        opponentName: nflNextMatch?.opponent?.name || nflOpponentQuery.trim() || '',
+        opponentId:   nflNextMatch?.opponent?.id || null,
+      }, cancelAbortRef.current.signal);
+      if ((result as any).error) { setManualError((result as any).error); setPhase('idle'); return; }
+      setScanResult({ playerName, propType: nflPropType, line: parseFloat(line), teamName: result.teamName || '', opponentName: nflNextMatch?.opponent?.name || nflOpponentQuery.trim() || '', leagueId: 0 });
+      setPrediction(result);
+      setPhase('result');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e: unknown) {
+      if (e instanceof Error && e.message === '__CANCELLED__') return;
+      setManualError(e instanceof Error ? e.message : 'NFL analysis failed — try again');
       setPhase('idle');
     } finally { cancelAbortRef.current = null; }
   };
@@ -2218,6 +2265,115 @@ export default function ScanScreen() {
                       </View>
                     )}
                     <TouchableOpacity style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnCancel]} onPress={phase === 'analyzing' ? reset : handleNhlAnalyze} activeOpacity={0.85}>
+                      {phase === 'analyzing' ? (
+                        <><Ionicons name="close-circle-outline" size={16} color="#fff" /><Text style={[styles.predictBtnText, { color: '#fff' }]}>Cancel</Text></>
+                      ) : (
+                        <><Ionicons name="analytics-outline" size={16} color="#000" /><Text style={styles.predictBtnText}>Analyze</Text></>
+                      )}
+                    </TouchableOpacity>
+                  </>
+                )}
+              </>
+          </View>
+        )}
+
+        {/* ─── NFL MANUAL FORM ─── */}
+        {sport === 'nfl' && phase !== 'result' && phase !== 'saved' && (
+          <View style={styles.manualForm}>
+            <>
+                <Text style={styles.fieldLabel}>Player</Text>
+                <FuzzySearchInput
+                  searchType="nfl_players"
+                  value={nflPlayerQuery}
+                  onChangeText={(t) => { setNflPlayerQuery(t); if (!t) { setNflResolvedPlayer(null); setNflNextMatch(null); setNflOpponentQuery(''); setNflVenue('home'); } }}
+                  placeholder="e.g. Patrick Mahomes, Justin Jefferson"
+                  confirmed={!!nflResolvedPlayer}
+                  autoCapitalize="words"
+                  onSelectNflPlayer={async (p) => {
+                    setNflResolvedPlayer(p);
+                    setNflPlayerQuery(p.fullName || `${p.firstName || ''} ${p.lastName || ''}`.trim());
+                    setNflNextMatch(null);
+                    setNflOpponentQuery('');
+                    Haptics.selectionAsync();
+                    if (p.id) {
+                      setNflNextMatchLoading(true);
+                      try {
+                        const nm = await getNflNextMatch(p.id);
+                        setNflNextMatch(nm);
+                        if (nm.found) {
+                          if (nm.opponent?.name) setNflOpponentQuery(nm.opponent.name);
+                          if (nm.venue) setNflVenue(nm.venue);
+                        }
+                      } catch { /* silent */ } finally { setNflNextMatchLoading(false); }
+                    }
+                  }}
+                />
+                {nflResolvedPlayer && (
+                  <TouchableOpacity onPress={() => { setNflPlayerQuery(''); setNflResolvedPlayer(null); setNflNextMatch(null); setNflOpponentQuery(''); setNflVenue('home'); Haptics.selectionAsync(); }} style={styles.changePlayerBtn}>
+                    <Ionicons name="arrow-undo-outline" size={12} color={Colors.primary} />
+                    <Text style={styles.changePlayerBtnText}>Change player</Text>
+                  </TouchableOpacity>
+                )}
+                {nflNextMatchLoading && (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8 }}>
+                    <ActivityIndicator size="small" color={Colors.primary} />
+                    <Text style={{ color: Colors.textSecondary, fontSize: 12 }}>Fetching next game…</Text>
+                  </View>
+                )}
+                {nflNextMatch?.found && !nflNextMatchLoading && (
+                  <View style={styles.autoFillBanner}>
+                    <Ionicons name="flash" size={12} color={Colors.primary} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: Colors.primary, fontSize: 11, fontWeight: '700', letterSpacing: 0.5 }}>NEXT GAME AUTO-FILLED</Text>
+                      <Text style={{ color: Colors.text, fontSize: 13, fontWeight: '600', marginTop: 1 }}>vs {nflNextMatch.opponent?.name}</Text>
+                      <Text style={{ color: Colors.textSecondary, fontSize: 11, marginTop: 1 }}>{nflNextMatch.venue?.toUpperCase()}{nflNextMatch.date ? ` · ${new Date(nflNextMatch.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : ''}</Text>
+                    </View>
+                  </View>
+                )}
+                {nflResolvedPlayer && !nflNextMatch?.found && !nflNextMatchLoading && (
+                  <>
+                    <Text style={styles.fieldLabel}>Opponent <Text style={styles.fieldLabelOpt}>(optional)</Text></Text>
+                    <TextInput
+                      style={[styles.textInput, INPUT_STYLE]}
+                      placeholder="e.g. Kansas City Chiefs"
+                      placeholderTextColor={Colors.textTertiary}
+                      value={nflOpponentQuery}
+                      onChangeText={setNflOpponentQuery}
+                      autoCapitalize="words"
+                    />
+                    <Text style={styles.fieldLabel}>Venue</Text>
+                    <View style={{ flexDirection: 'row', gap: 10 }}>
+                      {(['home', 'away'] as const).map(v => (
+                        <TouchableOpacity key={v} style={[styles.pickerBtn, { flex: 1, justifyContent: 'center' }, nflVenue === v && { borderColor: Colors.primary }]} onPress={() => { setNflVenue(v); Haptics.selectionAsync(); }}>
+                          <Text style={[styles.pickerBtnText, nflVenue === v && { color: Colors.primary }]}>{v.toUpperCase()}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </>
+                )}
+                {nflResolvedPlayer && (
+                  <>
+                    <Text style={styles.fieldLabel}>Prop Type</Text>
+                    <TouchableOpacity style={styles.pickerBtn} onPress={() => setNflShowPropPicker(true)}>
+                      <Text style={styles.pickerBtnText}>{NFL_PROP_TYPES.find(p => p.value === nflPropType)?.label || 'Select'}</Text>
+                      <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
+                    </TouchableOpacity>
+                    <Text style={styles.fieldLabel}>Line Value</Text>
+                    <TextInput
+                      style={[styles.textInput, INPUT_STYLE]}
+                      placeholder="e.g. 249.5"
+                      placeholderTextColor={Colors.textTertiary}
+                      value={line}
+                      onChangeText={setLine}
+                      keyboardType="decimal-pad"
+                    />
+                    {manualError && (
+                      <View style={styles.inlineError}>
+                        <Ionicons name="alert-circle-outline" size={14} color={Colors.error} />
+                        <Text style={styles.inlineErrorText}>{manualError}</Text>
+                      </View>
+                    )}
+                    <TouchableOpacity style={[styles.predictBtn, phase === 'analyzing' && styles.predictBtnCancel]} onPress={phase === 'analyzing' ? reset : handleNflAnalyze} activeOpacity={0.85}>
                       {phase === 'analyzing' ? (
                         <><Ionicons name="close-circle-outline" size={16} color="#fff" /><Text style={[styles.predictBtnText, { color: '#fff' }]}>Cancel</Text></>
                       ) : (
@@ -4945,7 +5101,7 @@ export default function ScanScreen() {
         <TouchableOpacity style={styles.modalOverlay} onPress={() => setShowSportPicker(false)} activeOpacity={1}>
           <View style={[styles.modalSheet, { width: 300, gap: 0 }]}>
             <Text style={[styles.modalTitle, { marginBottom: 16 }]}>Select Sport</Text>
-            {sportsConfig.filter(s => !['mlb', 'cs2', 'wta'].includes(s.sport)).map(s => (
+            {sportsConfig.filter(s => !['cs2', 'wta', 'nhl'].includes(s.sport)).map(s => (
               <TouchableOpacity
                 key={s.sport}
                 style={[styles.modalItem, sport === s.sport && styles.modalItemActive, { flexDirection: 'row', alignItems: 'center', gap: 12 }]}
@@ -5068,6 +5224,27 @@ export default function ScanScreen() {
                 >
                   <Text style={[styles.modalItemText, p.value === nbaPropType && styles.modalItemTextActive]}>{p.label}</Text>
                   {p.value === nbaPropType && <Ionicons name="checkmark" size={16} color={Colors.primary} />}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* NFL Prop Picker Modal */}
+      <Modal visible={nflShowPropPicker} transparent animationType="slide">
+        <TouchableOpacity style={styles.modalOverlay} onPress={() => setNflShowPropPicker(false)}>
+          <View style={styles.modalSheet}>
+            <Text style={styles.modalTitle}>NFL Prop Type</Text>
+            <ScrollView>
+              {NFL_PROP_TYPES.map(p => (
+                <TouchableOpacity
+                  key={p.value}
+                  style={[styles.modalItem, p.value === nflPropType && styles.modalItemActive]}
+                  onPress={() => { setNflPropType(p.value); setNflShowPropPicker(false); Haptics.selectionAsync(); }}
+                >
+                  <Text style={[styles.modalItemText, p.value === nflPropType && styles.modalItemTextActive]}>{p.label}</Text>
+                  {p.value === nflPropType && <Ionicons name="checkmark" size={16} color={Colors.primary} />}
                 </TouchableOpacity>
               ))}
             </ScrollView>
