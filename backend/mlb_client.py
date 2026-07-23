@@ -1002,6 +1002,36 @@ async def get_player_next_match(player_id: int, season: int = 2026) -> dict:
     future.sort(key=lambda g: g.get("date", ""))
 
     if not future:
+        # BDL schedule data is stale for some teams (returns year-2000 dates etc.).
+        # Fall back: look up team via MLB Stats API teams list, then fetch schedule.
+        team_obj   = player.get("team") or {}
+        team_name  = (team_obj.get("display_name") or team_obj.get("full_name")
+                      or team_obj.get("name") or "")
+        player_name = (player.get("full_name")
+                       or f"{player.get('first_name') or ''} {player.get('last_name') or ''}".strip())
+        sa_team_id: Optional[int] = None
+        try:
+            if team_name:
+                # Resolve StatsAPI team ID from team display name
+                sa_teams_data = await _statsapi_get("/teams", {"sportId": 1, "season": 2026})
+                for t in sa_teams_data.get("teams", []):
+                    full = f"{t.get('locationName','')} {t.get('teamName','')}".strip()
+                    if team_name.lower() in full.lower() or full.lower() in team_name.lower():
+                        sa_team_id = t.get("id")
+                        break
+            if not sa_team_id and player_name:
+                # Fallback: search by player name to get their StatsAPI team ID
+                sa_players = await _statsapi_search_players(player_name, limit=3)
+                if sa_players:
+                    sa_team_id = (sa_players[0].get("team") or {}).get("id")
+            if sa_team_id:
+                result = await _statsapi_schedule_next_game(sa_team_id, today_str)
+                if result.get("found"):
+                    log.info(f"[MLB NEXT MATCH] StatsAPI fallback team={team_name!r} id={sa_team_id} → {result}")
+                    await _cache_set(cache_key, result)
+                    return result
+        except Exception as _fe:
+            log.warning(f"[MLB NEXT MATCH] StatsAPI fallback failed ({team_name!r}): {_fe}")
         result = {"found": False}
         await _cache_set(cache_key, result)
         return result
