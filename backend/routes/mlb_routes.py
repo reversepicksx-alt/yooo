@@ -503,6 +503,26 @@ async def mlb_predict(req: MlbPredictRequest):
     # home game → player's own team park; away game → opponent's park
     park_team = team_name if venue == "home" else (req.opponentName or "")
 
+    # ── Auto game total from BDL /odds when the user didn't supply one ────────
+    # Median total across vendors (fanduel/draftkings/caesars/...) for today's
+    # game. Best-effort: any failure leaves game_total as None (neutral factor).
+    effective_game_total = req.gameTotal
+    game_total_source    = "user" if req.gameTotal is not None else None
+    if effective_game_total is None and team_id:
+        try:
+            todays = await mlb_client.get_today_and_live_games(team_id, req.season)
+            gid = todays[0].get("id") if todays else None
+            if gid:
+                odds = await mlb_client.get_game_odds(gid)
+                if odds and odds.get("gameTotal") is not None:
+                    effective_game_total = float(odds["gameTotal"])
+                    game_total_source    = "odds"
+                    log.info(f"[MLB PREDICT] Auto game total from odds: "
+                             f"O/U {effective_game_total} (game {gid}, "
+                             f"{odds.get('vendorCount', 0)} vendors)")
+        except Exception as e:
+            log.warning(f"[MLB PREDICT] Auto game-total fetch failed (non-fatal): {e}")
+
     # ── Normalize v2 handedness params ────────────────────────────────────────
     pitcher_hand = (req.pitcherHandedness or "").upper().strip() or None
     batter_hand  = (req.batterHandedness  or "").upper().strip() or None
@@ -524,7 +544,7 @@ async def mlb_predict(req: MlbPredictRequest):
         pitcher_handedness  = pitcher_hand,
         batter_handedness   = batter_hand,
         pitcher_era         = req.pitcherEra,
-        game_total          = req.gameTotal,
+        game_total          = effective_game_total,
         lineup_spot         = req.lineupSpot,
     )
 
@@ -561,7 +581,7 @@ async def mlb_predict(req: MlbPredictRequest):
         pitcher_handedness = pitcher_hand or "",
         batter_handedness  = batter_hand  or "",
         pitcher_era        = req.pitcherEra,
-        game_total         = req.gameTotal,
+        game_total         = effective_game_total,
         lineup_spot        = req.lineupSpot,
         platoon_mult       = bm.get("platoonSplitMult", 1.0),
         era_mult           = bm.get("eraFactor", 1.0),
@@ -589,6 +609,8 @@ async def mlb_predict(req: MlbPredictRequest):
         "leagueName":     "MLB",
         "season":         req.season,
         "sport":          "mlb",
+        "gameTotalUsed":  effective_game_total,
+        "gameTotalSource": game_total_source,
         "generatedAt":    datetime.now(timezone.utc).isoformat(),
     }
 

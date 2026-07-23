@@ -20,13 +20,15 @@ ADMIN_SECRET = os.environ.get("ADMIN_SECRET", "")
 
 # Canonical default configuration — seeded on first access
 _DEFAULTS = [
-    {"sport": "soccer", "displayName": "Soccer",     "icon": "football",          "label": None,         "available": True},
-    {"sport": "mlb",    "displayName": "MLB",         "icon": "baseball",          "label": None,         "available": True},
-    {"sport": "nfl",    "displayName": "NFL",         "icon": "american-football", "label": "Off Season", "available": False},
-    {"sport": "nba",    "displayName": "NBA",         "icon": "basketball",        "label": "Off Season", "available": False},
-    {"sport": "nhl",    "displayName": "NHL",         "icon": "snow",              "label": "Off Season", "available": False},
-    {"sport": "cs2",    "displayName": "CS2",         "icon": "game-controller",   "label": None,         "available": True},
-    {"sport": "wta",    "displayName": "WTA Tennis",  "icon": "tennisball",        "label": None,         "available": True},
+    {"sport": "soccer", "displayName": "Soccer",     "icon": "football",          "label": None,         "available": True,  "hidden": False},
+    {"sport": "mlb",    "displayName": "MLB",         "icon": "baseball",          "label": None,         "available": True,  "hidden": False},
+    {"sport": "nfl",    "displayName": "NFL",         "icon": "american-football", "label": "Off Season", "available": False, "hidden": False},
+    {"sport": "nba",    "displayName": "NBA",         "icon": "basketball",        "label": "Off Season", "available": False, "hidden": False},
+    {"sport": "nhl",    "displayName": "NHL",         "icon": "snow",              "label": "Off Season", "available": False, "hidden": False},
+    # CS2 hidden entirely from the sport picker — engine data source (BDL /cs/v1)
+    # lost its map-stats endpoints, so predictions can't be graded reliably.
+    {"sport": "cs2",    "displayName": "CS2",         "icon": "game-controller",   "label": None,         "available": False, "hidden": True},
+    {"sport": "wta",    "displayName": "WTA Tennis",  "icon": "tennisball",        "label": None,         "available": True,  "hidden": False},
 ]
 _SPORT_ORDER = ["soccer", "mlb", "nfl", "nba", "nhl", "cs2", "wta"]
 
@@ -46,8 +48,9 @@ async def _ensure_seeded() -> None:
                         "updatedAt": now,
                         # Clear stale "Unavailable" labels when a sport becomes available
                         "label": cfg["label"],
+                        "hidden": cfg.get("hidden", False),
                     },
-                    "$setOnInsert": {k: v for k, v in cfg.items() if k not in ("available", "label")},
+                    "$setOnInsert": {k: v for k, v in cfg.items() if k not in ("available", "label", "hidden")},
                 },
                 upsert=True,
             )
@@ -66,11 +69,13 @@ async def get_sports_config():
         for cfg in _DEFAULTS:
             if cfg["sport"] not in present:
                 merged.append(cfg)
+        # Hidden sports are removed entirely — mobile never sees them.
+        merged = [d for d in merged if not d.get("hidden")]
         merged.sort(key=lambda d: _SPORT_ORDER.index(d["sport"]) if d["sport"] in _SPORT_ORDER else 99)
         return merged
     except Exception as e:
         log.error(f"[SPORTS CONFIG] get failed: {e}")
-        return _DEFAULTS
+        return [d for d in _DEFAULTS if not d.get("hidden")]
 
 
 class SportConfigUpdate(BaseModel):

@@ -603,6 +603,149 @@ Be direct. No hedging. Use numbers, not words like "good" or "bad"."""
 
 
 # ═══════════════════════════════════════════════════════════════
+# POST-SETTLEMENT AI MATCH REVIEW
+# After a pick settles hit/miss, Gemini writes a 2-3 sentence review
+# explaining WHY it likely hit or missed (score, possession, projection
+# vs actual). Stored as pick.matchReview — shown on the pick card.
+# ═══════════════════════════════════════════════════════════════
+
+async def generate_match_review(pick_id: str) -> bool:
+    """Generate and store a post-settlement AI review for one settled pick.
+
+    Idempotent + race-safe: atomically claims the pick via matchReviewStatus
+    before calling the AI, so concurrent callers (immediate hook + sweeper,
+    or two server instances) never double-generate.
+    Returns True if a review was written.
+    """
+    try:
+        # Atomic claim — only proceed if nobody else generated/claimed.
+        _claim = await db.picks.update_one(
+            {
+                "pickId": pick_id,
+                "status": "settled",
+                "result": {"$in": ["hit", "miss"]},
+                "matchReview": {"$exists": False},
+                "matchReviewStatus": {"$ne": "generating"},
+            },
+            {"$set": {"matchReviewStatus": "generating"}},
+        )
+        if _claim.modified_count == 0:
+            return False
+        pick = await db.picks.find_one({"pickId": pick_id})
+        if not pick:
+            return False
+
+        player   = pick.get("playerName", "the player")
+        prop     = (pick.get("propType") or "").replace("_", " ")
+        line     = pick.get("line")
+        rec      = (pick.get("recommendation") or "").upper()
+        proj     = pick.get("projectedValue") or pick.get("projection")
+        actual   = pick.get("actualValue")
+        result   = pick.get("result")
+        mins     = pick.get("minutesPlayed")
+        team     = pick.get("teamName") or ""
+        opp      = pick.get("opponent") or pick.get("opponentName") or ""
+        venue    = pick.get("venue") or ""
+        h_team   = pick.get("homeTeam"); a_team = pick.get("awayTeam")
+        h_goals  = pick.get("finalHomeGoals"); a_goals = pick.get("finalAwayGoals")
+        h_poss   = pick.get("homePoss"); a_poss = pick.get("awayPoss")
+        pj_h     = pick.get("projHomePoss"); pj_a = pick.get("projAwayPoss")
+        conf     = pick.get("confidenceScore") or pick.get("confidence")
+
+        ctx_lines = [
+            f"Pick: {player} ({team}{' , ' + venue.upper() if venue in ('home','away') else ''}) — {rec} {line} {prop}.",
+            f"Model projection: {proj}. Actual: {actual}" + (f" in {mins} minutes." if mins else "."),
+            f"Outcome: {str(result).upper()}." + (f" Model confidence was {conf}%." if conf else ""),
+        ]
+        if h_team and a_team and h_goals is not None and a_goals is not None:
+            ctx_lines.append(f"Final score: {h_team} {h_goals} - {a_goals} {a_team}.")
+        if h_poss is not None and a_poss is not None:
+            _p = f"Actual possession: {h_poss}% - {a_poss}%."
+            if pj_h is not None and pj_a is not None:
+                _p += f" Model's pre-match possession projection: {pj_h}% - {pj_a}%."
+            ctx_lines.append(_p)
+        if opp:
+            ctx_lines.append(f"Opponent: {opp}.")
+
+        prompt = (
+            "You are a sharp soccer betting analyst reviewing one of your own settled player-prop picks.\n"
+            + "\n".join(ctx_lines) + "\n\n"
+            "Write a 2-3 sentence post-match review explaining WHY this pick likely "
+            f"{'hit' if result == 'hit' else 'missed'}. "
+            "If it missed, identify the game-state factor the model most plausibly got wrong "
+            "(possession swing, scoreline chase/park-the-bus effect, early sub, blowout, red card, tactical role). "
+            "If it hit, name the signal that proved correct. "
+            "Ground every claim in the numbers above — do not invent events you cannot infer from them. "
+            "No hedging filler, no restating the pick line verbatim. Plain text only."
+        )
+        review = await _ai_call(prompt, temperature=0.4, max_tokens=350, timeout=35)
+        review = (review or "").strip()
+        if not review:
+            # Release the claim so the sweeper can retry later.
+            await db.picks.update_one(
+                {"pickId": pick_id}, {"$unset": {"matchReviewStatus": ""}}
+            )
+            return False
+        await db.picks.update_one(
+            {"pickId": pick_id},
+            {"$set": {
+                "matchReview": review,
+                "matchReviewStatus": "done",
+                "matchReviewAt": datetime.now(timezone.utc).isoformat(),
+            }},
+        )
+        print(f"[MATCH REVIEW] {player} {prop} {line} ({result}) — review stored ({len(review)} chars)")
+        return True
+    except Exception as e:
+        print(f"[MATCH REVIEW] error for {pick_id}: {e}")
+        try:
+            await db.picks.update_one(
+                {"pickId": pick_id, "matchReviewStatus": "generating"},
+                {"$unset": {"matchReviewStatus": ""}},
+            )
+        except Exception:
+            pass
+        return False
+
+
+async def match_review_sweeper_loop():
+    """Background loop: catch settled soccer picks missing a match review.
+
+    This is the safety net that covers EVERY settlement write site (live
+    polling paths in routes/picks.py, the auto-settle bot, manual/admin
+    settles) without having to wire the generator into each one.
+    Same single-instance gating as the settle bot — the prod deployment is
+    the canonical generator (ENABLE_MATCH_REVIEW=1 overrides for dev tests).
+    """
+    _is_deployment = bool(_os.environ.get("REPLIT_DEPLOYMENT"))
+    if not _is_deployment and _os.environ.get("ENABLE_MATCH_REVIEW") != "1":
+        print("[MATCH REVIEW] Sweeper DISABLED (dev workspace — set ENABLE_MATCH_REVIEW=1 to override)")
+        return
+    await asyncio.sleep(90)
+    print("[MATCH REVIEW] Sweeper started (10 min interval)")
+    while True:
+        try:
+            _cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+            candidates = await db.picks.find(
+                {
+                    "status": "settled",
+                    "result": {"$in": ["hit", "miss"]},
+                    "matchReview": {"$exists": False},
+                    "matchReviewStatus": {"$ne": "generating"},
+                    "settledAt": {"$gte": _cutoff},
+                    "$or": [{"sport": "soccer"}, {"sport": {"$exists": False}}, {"sport": None}],
+                },
+                {"pickId": 1, "_id": 0},
+            ).sort("settledAt", -1).to_list(8)
+            for c in candidates:
+                await generate_match_review(c["pickId"])
+                await asyncio.sleep(2)  # gentle pacing on Gemini
+        except Exception as e:
+            print(f"[MATCH REVIEW] sweeper error: {e}")
+        await asyncio.sleep(600)
+
+
+# ═══════════════════════════════════════════════════════════════
 # PHASE 2: AUTO-SETTLEMENT BOT
 # Background task that checks live scores and auto-settles picks
 # ═══════════════════════════════════════════════════════════════
@@ -612,6 +755,17 @@ async def auto_settlement_loop():
     Each run fires 6+ API calls per unique team in pending picks, so frequent
     runs burn quota fast. 15 min is plenty since picks resolve after the match.
     """
+    # RACE GUARD: only ONE settlement bot may run against the shared Atlas DB.
+    # The deployed production server is the canonical settler. The dev
+    # workspace backend connects to the SAME Atlas database — if its bot also
+    # runs, two bots (possibly on different code versions) race to settle the
+    # same picks, which caused the Thiago-Martins wrong-settlement (one bot on
+    # stale code matched a 10-week-old fixture). Set ENABLE_SETTLE_BOT=1 to
+    # force-enable in development for testing.
+    _is_deployment = bool(_os.environ.get("REPLIT_DEPLOYMENT"))
+    if not _is_deployment and _os.environ.get("ENABLE_SETTLE_BOT") != "1":
+        print("[AI ENGINE] Auto-settlement bot DISABLED (dev workspace — prod deployment is the canonical settler; set ENABLE_SETTLE_BOT=1 to override)")
+        return
     await asyncio.sleep(5)   # Short delay then run immediately on startup
     print("[AI ENGINE] Auto-settlement bot started (15 min interval)")
 
@@ -1836,15 +1990,37 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
     _stored_fid = pick.get("fixtureId")
     matched = None
     if _stored_fid:
+        try:
+            _stored_fid_int = int(_stored_fid)
+        except (TypeError, ValueError):
+            _stored_fid_int = None
         for f in fixtures:
-            if f.get("fixture", {}).get("id") == _stored_fid:
+            _f_id = f.get("fixture", {}).get("id")
+            if _f_id == _stored_fid or (_stored_fid_int is not None and _f_id == _stored_fid_int):
                 matched = f
                 print(f"[AUTO-SETTLE] {pick.get('playerName','')} matched by stored fixtureId={_stored_fid}")
                 break
-        if not matched:
+        if not matched and _stored_fid_int is not None:
             # Stored fixtureId not in the fetched batch (e.g. different season
-            # window) — fall through to fuzzy matching as safety net.
-            pass
+            # window) — fetch the exact fixture directly by ID. NEVER fall
+            # through to fuzzy matching when the pick knows its fixture: fuzzy
+            # matching against a months-old H2H fixture is how the
+            # Thiago-Martins wrong-settlement bug happened (settled against a
+            # 10-week-old NYCFC 3-0 Columbus match instead of the real one).
+            try:
+                _direct = await api_football_request(
+                    "fixtures", {"id": _stored_fid_int}
+                )
+                if _direct:
+                    matched = _direct[0]
+                    print(f"[AUTO-SETTLE] {pick.get('playerName','')} fetched fixture {_stored_fid_int} directly by ID")
+            except Exception as _dfe:
+                print(f"[AUTO-SETTLE] direct fixture fetch failed for {_stored_fid_int}: {_dfe}")
+            if not matched:
+                # Fixture ID is known but unfetchable right now — defer to the
+                # next bot run rather than risking a fuzzy mismatch.
+                print(f"[AUTO-SETTLE] {pick.get('playerName','')} fixtureId={_stored_fid_int} unavailable — deferring (no fuzzy fallback)")
+                return False
 
     if not matched:
         for f in fixtures:
@@ -2054,10 +2230,13 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
                 _push_set["homePoss"] = home_poss
             if away_poss is not None:
                 _push_set["awayPoss"] = away_poss
-            await db.picks.update_one(
-                {"pickId": pick["pickId"]},
+            _upd = await db.picks.update_one(
+                {"pickId": pick["pickId"], "status": {"$ne": "settled"}},
                 {"$set": _push_set}
             )
+            if _upd.modified_count == 0:
+                print(f"[AUTO-SETTLE] {pick.get('playerName','')} already settled by another process — skipping duplicate void/push write")
+                return True
             try:
                 from routes.push import _notify_pick_settled
                 await _notify_pick_settled(pick, "push")
@@ -2114,15 +2293,22 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
             _settle_set["homePoss"] = home_poss
         if away_poss is not None:
             _settle_set["awayPoss"] = away_poss
-        await db.picks.update_one(
-            {"pickId": pick["pickId"]},
+        _upd = await db.picks.update_one(
+            {"pickId": pick["pickId"], "status": {"$ne": "settled"}},
             {"$set": _settle_set}
         )
+        if _upd.modified_count == 0:
+            print(f"[AUTO-SETTLE] {pick.get('playerName','')} already settled by another process — skipping duplicate settle write")
+            return True
         try:
             from routes.push import _notify_pick_settled
             await _notify_pick_settled(pick, result)
         except Exception as _pe:
             print(f"[AUTO-SETTLE] push error: {_pe}")
+        try:
+            await generate_match_review(pick["pickId"])
+        except Exception as _mre:
+            print(f"[AUTO-SETTLE] match review error: {_mre}")
         print(f"[AUTO-SETTLE] {pick.get('playerName','')} {prop_type} {line} → actual {actual_value} ({minutes_played}min) = {result}")
         return True
     except Exception as e:

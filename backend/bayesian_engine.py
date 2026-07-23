@@ -1038,6 +1038,64 @@ def compute_bayesian_projection(
                       f"would_mult={_hcdb_mult} (NOT APPLIED)")
 
     # ═══════════════════════════════════════════
+    # DOMINANT-POSSESSION CM VOLUME BOOST  (venue-agnostic)
+    # ═══════════════════════════════════════════
+    # Canonical miss: N. Caliskan (Box-to-Box CM, Real Salt Lake AWAY at
+    # LA Galaxy, 71% expected possession) — engine projected 50 pass attempts,
+    # he recorded 102. The HOME CDM deep-block boost above never fired because
+    # it is gated on venue == home; the possession squeeze only CUTS. There was
+    # no layer that BOOSTS a central midfielder when his team is expected to
+    # dominate the ball, regardless of venue.
+    #
+    # Mechanism: at 63%+ expected possession every possession sequence cycles
+    # through the central midfield. Pass volume for CM/Box-to-Box roles rises
+    # super-linearly with team possession share (each extra possession minute
+    # adds several short recycling passes through the pivot).
+    #
+    # Scaling: severity 0→1 as expected poss rises 63%→73%.
+    # Cap: +20% for high-volume roles (box-to-box, mezzala, DLP, regista,
+    # playmaker), +14% for generic CM/CDM. Deliberately conservative vs the
+    # observed miss (2× projection) — this stacks with covariates already
+    # pushing the same direction.
+    # Skipped when the home deep-block boost already fired (same signal —
+    # avoid double-counting, mirroring the shared-prop-set precedent).
+    # ═══════════════════════════════════════════
+    dominant_cm_info = {"applied": False, "multiplier": 1.0, "reason": ""}
+    _dom_cm_pos_set = {"CM", "MC", "CMF", "CDM", "DM", "DMF", "MF"}
+    if (match_dominance and prop_type in {"pass_attempts", "passes"}
+            and _pos_upper_for_cdm in _dom_cm_pos_set
+            and not _is_gk
+            and not home_cdm_deep_block_info["applied"]):
+        _dcm_poss = match_dominance.get("expectedPoss")
+        if _dcm_poss is not None and _dcm_poss > 63.0:
+            _dcm_sev = min(1.0, (_dcm_poss - 63.0) / 10.0)
+            _dcm_role = (role or "").lower()
+            _dcm_high_vol = any(r in _dcm_role for r in (
+                "box-to-box", "box to box", "mezzala", "deep-lying", "regista",
+                "advanced playmaker", "playmaker", "pivot",
+            ))
+            _dcm_cap = 0.20 if _dcm_high_vol else 0.14
+            _dcm_mult = round(1.0 + _dcm_sev * _dcm_cap, 3)
+            if _dcm_mult > 1.005:
+                _raw_before_dcm = posterior_mean
+                posterior_mean = round(posterior_mean * _dcm_mult, 1)
+                _cov_sigma += 0.02  # depends on possession estimate
+                dominant_cm_info = {
+                    "applied": True,
+                    "multiplier": _dcm_mult,
+                    "reason": (
+                        f"dominant-possession CM boost: expected_poss={_dcm_poss:.1f}% "
+                        f"severity={_dcm_sev:.2f} "
+                        f"{'high-volume role' if _dcm_high_vol else 'generic CM'} "
+                        f"mult={_dcm_mult}"
+                    ),
+                }
+                print(f"[DOMINANT CM BOOST] {prop_type} pos={_pos_upper_for_cdm} "
+                      f"venue={venue} poss={_dcm_poss:.1f}% sev={_dcm_sev:.2f} "
+                      f"high_vol={_dcm_high_vol} mult={_dcm_mult} "
+                      f"{_raw_before_dcm} → {posterior_mean}")
+
+    # ═══════════════════════════════════════════
     # MATCH STAKES LAYER
     # ═══════════════════════════════════════════
     # League table context that pure stats can never capture:
@@ -1597,6 +1655,48 @@ def compute_bayesian_projection(
                 cb_lead_boost = min(0.15, (abs(expected_diff) - 0.3) * 0.07)
                 gs_mult *= (1.0 + cb_lead_boost)
                 gs_reason.append(f"away CB lead-manage boost +{cb_lead_boost*100:.1f}% (diff={expected_diff:.1f})")
+        # UNDERDOG LOW-POSSESSION CB/FB CUT — symmetric complement to the
+        # managing-lead boost above. Canonical miss: J. Glesnes (ball-playing
+        # CB, LA Galaxy home underdog vs St. Louis, 47% poss, lost 1-3):
+        # projected 79 pass attempts, recorded 48. When a defender's team is
+        # BOTH the betting underdog AND expected to lose the possession battle,
+        # the ball doesn't cycle back through the defense — CBs clear under
+        # pressure instead of recycling. The possession squeeze (season-norm
+        # relative) under-fires for teams whose season average is already low.
+        # Severity blends bookmaker deficit (0→1 over 0.5→2.0 goals) and
+        # possession deficit (0→1 over 48%→38%). Cap -18%.
+        if (prop_type in {"pass_attempts", "passes"}
+                and _pos_upper in _cb_set
+                and expected_diff is not None):
+            _ud_poss = (match_dominance or {}).get("expectedPoss")
+            _is_underdog = ((_script_venue == "home" and expected_diff < -0.5)
+                            or (_script_venue == "away" and expected_diff > 0.5))
+            if _is_underdog and _ud_poss is not None and _ud_poss < 48.0:
+                _ud_sev_diff = min(1.0, (abs(expected_diff) - 0.5) / 1.5)
+                _ud_sev_poss = min(1.0, (48.0 - _ud_poss) / 10.0)
+                cb_underdog_cut = min(0.18, 0.06 + 0.12 * (0.5 * _ud_sev_diff + 0.5 * _ud_sev_poss))
+                gs_mult *= (1.0 - cb_underdog_cut)
+                gs_reason.append(
+                    f"underdog low-poss CB/FB cut -{cb_underdog_cut*100:.1f}% "
+                    f"(diff={expected_diff:.1f}, poss={_ud_poss:.1f}%)")
+        # FAVOURED CAM VOLUME NUDGE — attacking mids on the favoured side with
+        # at least even possession get a small upward nudge. Canonical near-miss:
+        # M. Hartel (CAM, St. Louis, won 3-1 with 53% poss) — UNDER 42.5 pick
+        # missed at 44 actual vs 37 projected. Winning CAMs with the ball keep
+        # receiving between the lines; the engine was conservative. Small cap
+        # (+6%) — informative, never dominant.
+        if (prop_type in {"pass_attempts", "passes", "key_passes"}
+                and _pos_upper in {"CAM", "AM", "OM", "ACM", "OMF"}
+                and expected_diff is not None):
+            _cam_poss = (match_dominance or {}).get("expectedPoss")
+            _is_cam_fav = ((_script_venue == "home" and expected_diff > 0.3)
+                           or (_script_venue == "away" and expected_diff < -0.3))
+            if _is_cam_fav and _cam_poss is not None and _cam_poss >= 50.0:
+                cam_win_boost = min(0.06, 0.03 + (abs(expected_diff) - 0.3) * 0.02)
+                gs_mult *= (1.0 + cam_win_boost)
+                gs_reason.append(
+                    f"favoured CAM volume nudge +{cam_win_boost*100:.1f}% "
+                    f"(diff={expected_diff:.1f}, poss={_cam_poss:.1f}%)")
         if gs_mult != 1.0:
             raw_before_gs = posterior_mean
             posterior_mean = round(posterior_mean * gs_mult, 1)
@@ -2108,6 +2208,9 @@ def compute_bayesian_projection(
         # Fires when dominant home team (>62% poss) faces a deep-sitting weak
         # opponent (<36% poss) — CDM becomes the pass-recycling pivot.
         "homeCdmDeepBlock": home_cdm_deep_block_info,
+
+        # Venue-agnostic dominant-possession CM boost (63%+ expected poss).
+        "dominantCmBoost": dominant_cm_info,
 
         # Match stakes layer — league table situation (relegation/title/dead rubber).
         "matchStakes": match_stakes_info,

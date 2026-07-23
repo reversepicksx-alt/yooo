@@ -247,6 +247,28 @@ async def wta_predict(req: WtaPredictRequest):
         except Exception:
             h2h = None
 
+    # ── Serve/return profiles from /match_stats (best-effort covariate) ───────
+    subject_serve_profile = None
+    opp_serve_profile     = None
+    try:
+        subj_mids = [m.get("matchId") for m in match_logs[:12] if m.get("matchId")]
+        _prof_tasks = [wta_client.get_player_serve_profile(player_id, subj_mids)]
+        opp_logs = None
+        if opponent_id:
+            opp_logs = await wta_client.get_player_recent_matches(opponent_id, limit=12)
+            opp_mids = [m.get("matchId") for m in (opp_logs or [])[:12] if m.get("matchId")]
+            if opp_mids:
+                _prof_tasks.append(wta_client.get_player_serve_profile(opponent_id, opp_mids))
+        _profs = await asyncio.gather(*_prof_tasks, return_exceptions=True)
+        if _profs and not isinstance(_profs[0], Exception):
+            subject_serve_profile = _profs[0]
+        if len(_profs) > 1 and not isinstance(_profs[1], Exception):
+            opp_serve_profile = _profs[1]
+        log.info(f"[WTA PREDICT] serve profiles: subj={'yes' if subject_serve_profile else 'no'} "
+                 f"opp={'yes' if opp_serve_profile else 'no'}")
+    except Exception as e:
+        log.warning(f"[WTA PREDICT] serve profile fetch failed (non-fatal): {e}")
+
     # Surface inference: if not provided, use the last match's surface
     surface = req.surface or (match_logs[0].get("surface") if match_logs else None)
 
@@ -284,6 +306,8 @@ async def wta_predict(req: WtaPredictRequest):
         subject_is_p1=subject_is_p1,
         rest_days=rest_days,
         tournament_tier=tournament_tier,
+        subject_serve_profile=subject_serve_profile,
+        opp_serve_profile=opp_serve_profile,
     )
 
     if result.get("error") == "insufficient_data":

@@ -682,6 +682,62 @@ async def get_today_and_live_games(team_id: int, season: int = 2026) -> list:
     return relevant
 
 
+async def get_game_odds(game_id: int) -> Optional[dict]:
+    """Fetch betting odds for a game from BDL /odds and aggregate across vendors.
+
+    Returns {gameTotal, moneylineHome, moneylineAway, spreadHome, vendorCount}
+    using the median across vendors (fanduel/draftkings/caesars/betmgm/...)
+    so a single stale book can't skew the number. None when no odds posted.
+    Cached 30 minutes — totals move slowly pre-game.
+    """
+    if not game_id:
+        return None
+    key = f"mlb_odds:{game_id}"
+    doc = await _cache_get(key)
+    if _cache_fresh(doc, 1800):
+        return doc.get("data")
+
+    try:
+        r = await _get("/odds", {"game_ids[]": game_id, "per_page": 50})
+        rows = r.get("data") or []
+    except Exception as e:
+        log.warning(f"[MLB CLIENT] get_game_odds({game_id}) failed: {e}")
+        return doc.get("data") if doc else None
+
+    def _median(vals: list) -> Optional[float]:
+        vals = sorted(v for v in vals if v is not None)
+        if not vals:
+            return None
+        mid = len(vals) // 2
+        return float(vals[mid]) if len(vals) % 2 else (vals[mid - 1] + vals[mid]) / 2.0
+
+    def _num(v):
+        try:
+            return float(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    totals     = [_num(row.get("total_value")) for row in rows]
+    ml_home    = [_num(row.get("moneyline_home_odds")) for row in rows]
+    ml_away    = [_num(row.get("moneyline_away_odds")) for row in rows]
+    spread_h   = [_num(row.get("spread_home_value")) for row in rows]
+
+    out = None
+    total_med = _median(totals)
+    if total_med is not None or _median(ml_home) is not None:
+        out = {
+            "gameTotal":     total_med,
+            "moneylineHome": _median(ml_home),
+            "moneylineAway": _median(ml_away),
+            "spreadHome":    _median(spread_h),
+            "vendorCount":   sum(1 for t in totals if t is not None),
+        }
+        log.info(f"[MLB CLIENT] odds game {game_id}: total={total_med} "
+                 f"({out['vendorCount']} vendors)")
+    await _cache_set(key, out)
+    return out
+
+
 async def get_game_player_stats(player_id: int, game_id: int, season: int = 2026,
                                 live: bool = False) -> Optional[dict]:
     """Fetch a player's stats for a specific game.

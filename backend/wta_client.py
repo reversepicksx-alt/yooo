@@ -4,6 +4,7 @@ Base URL: https://api.balldontlie.io/wta/v1
 Surface-aware match history is the primary data source for prop prediction.
 """
 import asyncio
+import hashlib
 import time
 import os
 import logging
@@ -306,6 +307,65 @@ async def get_player_recent_matches(player_id: int, limit: int = 25, seasons: Op
             log.warning(f"[WTA] Serving {len(stale)} stale cached matches for player {player_id}")
             return stale
     return matches
+
+
+# ── Match stats / serve profile ───────────────────────────────────────────────
+
+async def get_player_serve_profile(player_id: int, match_ids: Optional[list] = None) -> Optional[dict]:
+    """Aggregate a player's recent serve/return profile from /match_stats.
+
+    Fetches full-match stat rows (set_number == 0) for the given recent match
+    ids (preferred — guarantees recency) and averages the serve/return metrics.
+    Returns None when no stats are available (older tournaments often have none).
+    """
+    ids = sorted(int(m) for m in (match_ids or []) if m)[:15]
+    key = f"wta_serveprof_{player_id}_" + hashlib.md5(
+        ",".join(str(i) for i in ids).encode()
+    ).hexdigest()[:12]
+    doc = await _cache_get(key)
+    if _fresh(doc, CACHE_TTL["player_matches"]):
+        return doc.get("data")
+
+    profile = None
+    try:
+        params = {"player_ids[]": player_id, "per_page": 100}
+        if ids:
+            params["match_ids[]"] = ids
+        r = await _get("/match_stats", params)
+        rows = [
+            row for row in (r.get("data") or [])
+            if (row.get("player") or {}).get("id") == player_id
+            and (row.get("set_number") or 0) == 0
+        ]
+        _FIELDS = {
+            "aces":                         "avgAces",
+            "double_faults":                "avgDoubleFaults",
+            "first_serve_pct":              "avgFirstServePct",
+            "first_serve_points_won_pct":   "avgFirstServeWonPct",
+            "second_serve_points_won_pct":  "avgSecondServeWonPct",
+            "break_points_saved_pct":       "avgBpSavedPct",
+            "break_points_converted_pct":   "avgBpConvertedPct",
+            "total_service_points_won_pct": "avgServePointsWonPct",
+            "total_return_points_won_pct":  "avgReturnPointsWonPct",
+            "total_points_won_pct":         "avgTotalPointsWonPct",
+            "serve_rating":                 "avgServeRating",
+            "return_rating":                "avgReturnRating",
+        }
+        if rows:
+            profile = {"sampleSize": len(rows)}
+            for src, dst in _FIELDS.items():
+                vals = [float(row[src]) for row in rows
+                        if row.get(src) is not None]
+                profile[dst] = round(sum(vals) / len(vals), 2) if vals else None
+        await _cache_set(key, profile)
+        if profile:
+            log.info(f"[WTA] serve profile for {player_id}: n={profile['sampleSize']} "
+                     f"srvWon={profile.get('avgServePointsWonPct')} retWon={profile.get('avgReturnPointsWonPct')}")
+    except Exception as e:
+        log.warning(f"[WTA] serve profile error for {player_id}: {e}")
+        if doc and doc.get("data") is not None:
+            return doc["data"]
+    return profile
 
 
 # ── Head-to-head ──────────────────────────────────────────────────────────────

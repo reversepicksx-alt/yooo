@@ -177,8 +177,9 @@ async def _run_startup_tasks():
     # Fix MLB picks saved with sport='soccer' before the sport-detection fix
     asyncio.create_task(_backfill_mlb_sport())
     # AI Engine background tasks
-    from ai_engine import auto_settlement_loop, auto_scout_loop, pattern_mining_loop, mlb_live_loop
+    from ai_engine import auto_settlement_loop, auto_scout_loop, pattern_mining_loop, mlb_live_loop, match_review_sweeper_loop
     asyncio.create_task(auto_settlement_loop())
+    asyncio.create_task(match_review_sweeper_loop())
     asyncio.create_task(auto_scout_loop())
     asyncio.create_task(pattern_mining_loop())
     asyncio.create_task(mlb_live_loop())

@@ -195,6 +195,83 @@ def _h2h_mult(h2h: Optional[dict], subject_is_p1: bool, prop_type: str) -> float
     return 0.92 + win_rate * 0.16
 
 
+def _serve_profile_signals(
+    subject_profile: Optional[dict],
+    opp_profile: Optional[dict],
+) -> dict:
+    """Derive serve/return dominance signals from /match_stats profiles.
+
+    Returns {available, subjDom, oppDom, edge, combinedHold} where:
+      * subjDom/oppDom — (serve pts won + return pts won)/2 - 50, i.e. how far
+        above break-even the player performs on total points (pct points).
+      * edge — subjDom - oppDom (positive = subject stronger).
+      * combinedHold — mean of both players' service-points-won pct; high
+        combined hold → fewer breaks → sets go deeper → MORE total games.
+    A profile only counts with sampleSize >= 3 (single-match noise otherwise).
+    """
+    out = {"available": False, "subjDom": None, "oppDom": None,
+           "edge": None, "combinedHold": None}
+
+    def _dom(p: Optional[dict]) -> Optional[float]:
+        if not p or (p.get("sampleSize") or 0) < 3:
+            return None
+        srv = p.get("avgServePointsWonPct")
+        ret = p.get("avgReturnPointsWonPct")
+        tot = p.get("avgTotalPointsWonPct")
+        if tot is not None:
+            return float(tot) - 50.0
+        if srv is not None and ret is not None:
+            return (float(srv) + float(ret)) / 2.0 - 50.0
+        return None
+
+    s_dom, o_dom = _dom(subject_profile), _dom(opp_profile)
+    if s_dom is None and o_dom is None:
+        return out
+    out["available"] = True
+    out["subjDom"] = round(s_dom, 2) if s_dom is not None else None
+    out["oppDom"]  = round(o_dom, 2) if o_dom is not None else None
+    if s_dom is not None:
+        out["edge"] = round(s_dom - (o_dom or 0.0), 2)
+    srv_s = (subject_profile or {}).get("avgServePointsWonPct")
+    srv_o = (opp_profile or {}).get("avgServePointsWonPct")
+    if srv_s is not None and srv_o is not None:
+        out["combinedHold"] = round((float(srv_s) + float(srv_o)) / 2.0, 2)
+    return out
+
+
+def _serve_profile_mult(prop_type: str, signals: dict) -> float:
+    """Convert serve/return signals into a small projection multiplier.
+
+    Caps ±6% — informative covariate, never the dominant signal.
+      * total_games / set_1_total_games: high combined hold (both women serve
+        well) → fewer breaks → longer sets → more games. WTA baseline ~55%
+        service points won.
+      * player_games_won / player_sets_won: dominance edge → more games won.
+      * opponent_games_won: inverse of the edge.
+    """
+    if not signals.get("available"):
+        return 1.0
+    edge = signals.get("edge")
+    hold = signals.get("combinedHold")
+    if prop_type in {"total_games", "set_1_total_games"}:
+        if hold is None:
+            return 1.0
+        return 1.0 + max(-0.05, min(0.05, (hold - 55.0) * 0.008))
+    if prop_type in {"player_games_won", "player_sets_won"}:
+        if edge is None:
+            return 1.0
+        return 1.0 + max(-0.06, min(0.06, edge * 0.010))
+    if prop_type == "set_1_player_games":
+        if edge is None:
+            return 1.0
+        return 1.0 + max(-0.03, min(0.03, edge * 0.005))
+    if prop_type == "opponent_games_won":
+        if edge is None:
+            return 1.0
+        return 1.0 + max(-0.06, min(0.06, -edge * 0.010))
+    return 1.0
+
+
 def _fatigue_mult(rest_days: Optional[int], prop_type: str) -> float:
     """
     Days since player's last match → performance multiplier.
@@ -262,6 +339,8 @@ def compute_wta_projection(
     rest_days: Optional[int]      = None,
     tournament_tier: Optional[str] = None,
     expected_sets: Optional[float] = None,
+    subject_serve_profile: Optional[dict] = None,
+    opp_serve_profile: Optional[dict]     = None,
 ) -> dict:
     if prop_type not in WTA_PROPS:
         return {"error": "unknown_prop"}
@@ -283,6 +362,9 @@ def compute_wta_projection(
 
     n = len(series)
 
+    # Serve/return dominance signals from /match_stats (best-effort covariate)
+    serve_signals = _serve_profile_signals(subject_serve_profile, opp_serve_profile)
+
     # ── Binary props: hit-rate based ──────────────────────────────────────────
     if prop_type in BINARY_PROPS:
         hits     = sum(1 for v in series if v >= 0.5)
@@ -291,6 +373,10 @@ def compute_wta_projection(
         win_rate = (hits + prior * prior_n) / (n + prior_n)
         win_rate *= _opp_rank_mult(opp_rank, subject_rank, prop_type)
         win_rate *= _h2h_mult(h2h, subject_is_p1, prop_type)
+        # Serve/return edge nudge: each pct-point of total-points dominance
+        # edge is worth ~0.8 win-probability points, capped at ±5 points.
+        if serve_signals.get("available") and serve_signals.get("edge") is not None:
+            win_rate += max(-0.05, min(0.05, serve_signals["edge"] * 0.008))
         win_rate  = max(0.05, min(0.95, win_rate))
         p_over    = round(win_rate * 100, 1)
         p_under   = round((1 - win_rate) * 100, 1)
@@ -316,6 +402,7 @@ def compute_wta_projection(
                 "roundMult":    1.0,
                 "fatigueMult":  1.0,
                 "tournamentMult": 1.0,
+                "serveSignals": serve_signals,
             },
         }
 
@@ -363,7 +450,8 @@ def compute_wta_projection(
     round_mult_v  = _round_mult(round_name or "")
     opp_mult      = _opp_rank_mult(opp_rank, subject_rank, prop_type)
     h2h_mult      = _h2h_mult(h2h, subject_is_p1, prop_type)
-    projection   *= surface_mult * round_mult_v * opp_mult * h2h_mult
+    serve_prof_mult = _serve_profile_mult(prop_type, serve_signals)
+    projection   *= surface_mult * round_mult_v * opp_mult * h2h_mult * serve_prof_mult
 
     # ── LAYER 5: FATIGUE ─────────────────────────────────────────────────────
     fatigue_mult  = _fatigue_mult(rest_days, prop_type)
@@ -436,6 +524,8 @@ def compute_wta_projection(
             "roundMult":      round(round_mult_v, 3),
             "oppRankMult":    round(opp_mult, 3),
             "h2hMult":        round(h2h_mult, 3),
+            "serveProfileMult": round(serve_prof_mult, 3),
+            "serveSignals":   serve_signals,
             "fatigueMult":    round(fatigue_mult, 3),
             "tournamentMult": round(tournament_mult, 3),
             "surface":        surface,

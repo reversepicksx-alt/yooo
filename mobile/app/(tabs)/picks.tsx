@@ -1074,6 +1074,26 @@ export default function PicksScreen() {
 
           {/* Body */}
           <ScrollView style={mStyles.modalScroll} contentContainerStyle={mStyles.modalScrollContent} showsVerticalScrollIndicator={false}>
+            {(() => {
+              const review = (analysisModal?.pick as any)?.matchReview as string | undefined;
+              if (!review) return null;
+              const res = ((analysisModal?.pick as any)?.result || '').toLowerCase();
+              const accent = res === 'hit' ? Colors.primary : res === 'miss' ? '#FF6B35' : '#60A5FA';
+              return (
+                <View style={{
+                  backgroundColor: accent + '0D', borderRadius: 10, padding: 12, marginBottom: 14,
+                  borderWidth: 1, borderColor: accent + '33',
+                }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                    <Ionicons name={res === 'hit' ? 'checkmark-circle' : 'search-circle'} size={14} color={accent} />
+                    <Text style={{ fontSize: 11, fontWeight: '800', color: accent, letterSpacing: 1 }}>
+                      POST-MATCH REVIEW
+                    </Text>
+                  </View>
+                  <Text style={{ fontSize: 13, color: Colors.text, lineHeight: 19 }}>{review}</Text>
+                </View>
+              );
+            })()}
             {analysisModal?.loading ? (
               <View style={mStyles.modalLoading}>
                 <ActivityIndicator color={Colors.primary} />
