@@ -1087,22 +1087,42 @@ export default function PicksScreen() {
           {/* Body */}
           <ScrollView style={mStyles.modalScroll} contentContainerStyle={mStyles.modalScrollContent} showsVerticalScrollIndicator={false}>
             {(() => {
-              const review = (analysisModal?.pick as any)?.matchReview as string | undefined;
-              if (!review) return null;
-              const res = ((analysisModal?.pick as any)?.result || '').toLowerCase();
+              const pick = analysisModal?.pick as any;
+              const isSettled = pick?.status === 'settled' && (pick?.result === 'hit' || pick?.result === 'miss');
+              const review = pick?.matchReview as string | undefined;
+              const res = (pick?.result || '').toLowerCase();
               const accent = res === 'hit' ? Colors.primary : res === 'miss' ? '#FF6B35' : '#60A5FA';
+              if (!isSettled) return null;
               return (
                 <View style={{
-                  backgroundColor: accent + '0D', borderRadius: 10, padding: 12, marginBottom: 14,
-                  borderWidth: 1, borderColor: accent + '33',
+                  borderLeftWidth: 3, borderLeftColor: accent,
+                  backgroundColor: '#0A0A0A', borderRadius: 8,
+                  paddingVertical: 10, paddingHorizontal: 12, marginBottom: 12,
+                  borderTopWidth: 1, borderTopColor: '#1A1A1A',
+                  borderBottomWidth: 1, borderBottomColor: '#1A1A1A',
+                  borderRightWidth: 1, borderRightColor: '#1A1A1A',
                 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-                    <Ionicons name={res === 'hit' ? 'checkmark-circle' : 'search-circle'} size={14} color={accent} />
-                    <Text style={{ fontSize: 11, fontWeight: '800', color: accent, letterSpacing: 1 }}>
-                      POST-MATCH REVIEW
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 6 }}>
+                    <Ionicons name={res === 'hit' ? 'checkmark-circle' : res === 'miss' ? 'close-circle' : 'help-circle'} size={12} color={accent} />
+                    <Text style={{ fontSize: 10, fontWeight: '700', color: accent, letterSpacing: 1.2 }}>
+                      {res === 'hit' ? 'VERDICT: HIT' : res === 'miss' ? 'VERDICT: MISS' : 'POST-MATCH'}
+                    </Text>
+                    <Text style={{ fontSize: 10, color: Colors.textTertiary, marginLeft: 'auto' }}>
+                      AI Breakdown
                     </Text>
                   </View>
-                  <Text style={{ fontSize: 13, color: Colors.text, lineHeight: 19 }}>{review}</Text>
+                  {review ? (
+                    <Text style={{ fontSize: 12.5, color: Colors.text, lineHeight: 18, letterSpacing: 0.1 }}>
+                      {review}
+                    </Text>
+                  ) : (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <ActivityIndicator size="small" color={accent} />
+                      <Text style={{ fontSize: 12, color: Colors.textTertiary }}>
+                        Generating match breakdown…
+                      </Text>
+                    </View>
+                  )}
                 </View>
               );
             })()}

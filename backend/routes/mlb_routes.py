@@ -510,6 +510,7 @@ async def mlb_predict(req: MlbPredictRequest):
     # game. Best-effort: any failure leaves game_total as None (neutral factor).
     effective_game_total = req.gameTotal
     game_total_source    = "user" if req.gameTotal is not None else None
+    odds = None
     if effective_game_total is None and team_id:
         try:
             todays = await mlb_client.get_today_and_live_games(team_id, req.season)
