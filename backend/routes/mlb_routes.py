@@ -792,15 +792,28 @@ def _enrich_game_logs(display_logs: list, team_games: list, player_team_name: st
             if home_runs is not None and away_runs is not None
             else None
         )
+        # Determine win/loss for the player's team
+        won = None
+        if home_runs is not None and away_runs is not None:
+            won = (home_runs > away_runs) if is_home else (away_runs > home_runs)
+
+        # Get opponent name/abbreviation — prefer abbreviation, fall back to name
+        opp_abbr = (
+            opp_obj.get("abbreviation") or
+            opp_obj.get("full_name") or
+            opp_obj.get("display_name") or
+            None
+        )
         return {
             **log,
             "gameDate":  log_date or None,
-            "opponent":  opp_obj.get("abbreviation") or None,
+            "opponent":  opp_abbr,
             "isHome":    is_home,
             "venue":     "home" if is_home else "away",
             "score":     score_str,
             "homeScore": home_runs,
             "awayScore": away_runs,
+            "won":       won,
         }
 
     return [_enrich_one(log) for log in display_logs]

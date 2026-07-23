@@ -3886,15 +3886,39 @@ export default function ScanScreen() {
                         return (
                           <>
                             {filteredWithIdx.map(({ log: g, origIdx }, i) => {
+                              const isMlb = g.sport === 'mlb';
                               const isOver = g.value != null && effectiveLine != null && g.value > effectiveLine;
                               const isDeselected = deselectedLogIndices.has(origIdx);
-                              const mins = g.minutes || 0;
-                              const isLowMin = mins > 0 && mins < 60;
+                              const mins = isMlb ? 0 : (g.minutes || 0);
+                              const isLowMin = !isMlb && mins > 0 && mins < 60;
                               const tc = tierColor(g.oppTier);
                               const mc = minsColor(mins);
-                              const oppRaw = g.opponent || '?';
-                              const oppShort = oppRaw.replace(/^(al-?|fc |cf |rc |sc |cd |ud |sd |rcd |as |ss |ac |us |ac |sp |ca |cp |ue |ue |ce |cm |se |sk )/i, '').slice(0, 3).toUpperCase();
+
+                              // Soccer strips club prefixes; MLB opponent is already an abbreviation
+                              const oppRaw = g.opponent || (isMlb ? '' : '?');
+                              const oppShort = isMlb
+                                ? (oppRaw ? oppRaw.toUpperCase().slice(0, 3) : '—')
+                                : oppRaw.replace(/^(al-?|fc |cf |rc |sc |cd |ud |sd |rcd |as |ss |ac |us |ac |sp |ca |cp |ue |ue |ce |cm |se |sk )/i, '').slice(0, 3).toUpperCase();
+
                               const scoreStr = g.score || '';
+
+                              // MLB: W/L prefix + score, e.g. "W 5-3" or "L 2-4"
+                              const mlbScoreLabel = (() => {
+                                if (!isMlb) return null;
+                                const wl = g.won != null ? (g.won ? 'W' : 'L') : null;
+                                if (wl && scoreStr) return `${wl} ${scoreStr}`;
+                                if (wl) return wl;
+                                return scoreStr || null;
+                              })();
+
+                              // MLB: short date for tile when no other context
+                              const mlbDateShort = isMlb && g.date
+                                ? (() => {
+                                    const d = new Date((g.date as string).slice(0, 10) + 'T12:00:00');
+                                    return isNaN(d.getTime()) ? '' : `${d.getMonth() + 1}/${d.getDate()}`;
+                                  })()
+                                : null;
+
                               const defSecondary: { val: number | null; label: string } | null =
                                 propT === 'blocks' ? { val: g.blocks ?? null, label: 'BLK' }
                                 : propT === 'interceptions' ? { val: g.interceptions ?? null, label: 'INT' }
@@ -3927,42 +3951,71 @@ export default function ScanScreen() {
                                   }]}>
                                     {g.value != null ? String(g.value) : '—'}
                                   </Text>
-                                  {scoreStr ? (
-                                    <Text style={styles.glTileScore}>{scoreStr}</Text>
+
+                                  {isMlb ? (
+                                    <>
+                                      {mlbScoreLabel ? (
+                                        <Text style={[styles.glTileScore, {
+                                          color: isDeselected ? Colors.textTertiary
+                                            : g.won === true ? Colors.success
+                                            : g.won === false ? Colors.error
+                                            : Colors.textSecondary,
+                                          fontSize: 8,
+                                        }]}>{mlbScoreLabel}</Text>
+                                      ) : mlbDateShort ? (
+                                        <Text style={styles.glTileMins}>{mlbDateShort}</Text>
+                                      ) : (
+                                        <Text style={styles.glTileMins}>—</Text>
+                                      )}
+                                      <View style={styles.glOppRow}>
+                                        <View style={styles.glVenueBadge}>
+                                          <Text style={styles.glVenueText}>
+                                            {g.venue === 'home' ? 'H' : g.venue === 'away' ? 'A' : '—'}
+                                          </Text>
+                                        </View>
+                                        <Text style={styles.glTileOpp} numberOfLines={1}>{oppShort}</Text>
+                                      </View>
+                                    </>
                                   ) : (
-                                    <Text style={[styles.glTileMins, isLowMin && !isDeselected && { color: '#FF8C00' }]}>
-                                      {mins > 0 ? `${mins}'` : '—'}
-                                    </Text>
-                                  )}
-                                  <View style={styles.glOppRow}>
-                                    <View style={styles.glVenueBadge}>
-                                      <Text style={styles.glVenueText}>
-                                        {g.venue === 'home' ? 'H' : g.venue === 'away' ? 'A' : '—'}
-                                      </Text>
-                                    </View>
-                                    <Text style={styles.glTileOpp} numberOfLines={1}>{oppShort}</Text>
-                                  </View>
-                                  {(g.teamPossession != null || g.opponentPossession != null) && (() => {
-                                    const tp = g.teamPossession ?? (g.opponentPossession != null ? 100 - g.opponentPossession : null);
-                                    const op = g.opponentPossession ?? (g.teamPossession != null ? 100 - g.teamPossession : null);
-                                    if (tp == null) return null;
-                                    const pc = tp >= 55 ? Colors.success : tp < 45 ? Colors.error : Colors.textSecondary;
-                                    return (
-                                      <Text style={[styles.glTilePoss, { color: pc }]}>
-                                        {tp}%{op != null ? `–${op}%` : ''}
-                                      </Text>
-                                    );
-                                  })()}
-                                  {defSecondary && defSecondary.val != null && (
-                                    <Text style={styles.glTileSecStat}>{defSecondary.label} {defSecondary.val}</Text>
-                                  )}
-                                  {mins > 0 && (
-                                    <View style={styles.glMinsBarWrap}>
-                                      <View style={[styles.glMinsBarFill, {
-                                        width: `${Math.min(100, (mins / 90) * 100)}%` as any,
-                                        backgroundColor: isDeselected ? '#222' : mc,
-                                      }]} />
-                                    </View>
+                                    <>
+                                      {scoreStr ? (
+                                        <Text style={styles.glTileScore}>{scoreStr}</Text>
+                                      ) : (
+                                        <Text style={[styles.glTileMins, isLowMin && !isDeselected && { color: '#FF8C00' }]}>
+                                          {mins > 0 ? `${mins}'` : '—'}
+                                        </Text>
+                                      )}
+                                      <View style={styles.glOppRow}>
+                                        <View style={styles.glVenueBadge}>
+                                          <Text style={styles.glVenueText}>
+                                            {g.venue === 'home' ? 'H' : g.venue === 'away' ? 'A' : '—'}
+                                          </Text>
+                                        </View>
+                                        <Text style={styles.glTileOpp} numberOfLines={1}>{oppShort}</Text>
+                                      </View>
+                                      {(g.teamPossession != null || g.opponentPossession != null) && (() => {
+                                        const tp = g.teamPossession ?? (g.opponentPossession != null ? 100 - g.opponentPossession : null);
+                                        const op = g.opponentPossession ?? (g.teamPossession != null ? 100 - g.teamPossession : null);
+                                        if (tp == null) return null;
+                                        const pc = tp >= 55 ? Colors.success : tp < 45 ? Colors.error : Colors.textSecondary;
+                                        return (
+                                          <Text style={[styles.glTilePoss, { color: pc }]}>
+                                            {tp}%{op != null ? `–${op}%` : ''}
+                                          </Text>
+                                        );
+                                      })()}
+                                      {defSecondary && defSecondary.val != null && (
+                                        <Text style={styles.glTileSecStat}>{defSecondary.label} {defSecondary.val}</Text>
+                                      )}
+                                      {mins > 0 && (
+                                        <View style={styles.glMinsBarWrap}>
+                                          <View style={[styles.glMinsBarFill, {
+                                            width: `${Math.min(100, (mins / 90) * 100)}%` as any,
+                                            backgroundColor: isDeselected ? '#222' : mc,
+                                          }]} />
+                                        </View>
+                                      )}
+                                    </>
                                   )}
                                 </TouchableOpacity>
                               );

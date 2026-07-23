@@ -292,6 +292,7 @@ export interface GameLog {
   isHome?: boolean | null;
   homeScore?: number | null;
   awayScore?: number | null;
+  won?: boolean | null;
   propType?: string;
 }
 
@@ -1995,6 +1996,7 @@ export async function mlbPredict(request: Record<string, unknown>, signal?: Abor
     date:          g.date     ?? '',
     opponent:      g.opponent ?? '',
     venue:         g.venue    ?? '',
+    score:         g.score    ?? null,
     value:         g[raw.propType] ?? g.value ?? null,
     minutes:       0,
     sport:         'mlb',
@@ -2004,6 +2006,9 @@ export async function mlbPredict(request: Record<string, unknown>, signal?: Abor
     homeRuns:      g.home_runs ?? null,
     totalBases:    g.total_bases ?? null,
     won:           g.won       ?? null,
+    isHome:        g.isHome    ?? null,
+    homeScore:     g.homeScore ?? null,
+    awayScore:     g.awayScore ?? null,
   }));
 
   return {
