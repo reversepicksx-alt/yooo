@@ -51,14 +51,29 @@ const WC_NATIONS: StaticItem[] = [
 ].map(name => ({ id: name, primary: name }));
 
 const PROP_LABELS: Record<string, string> = {
+  // Soccer
   pass_attempts: 'Pass Attempts', shots: 'Shots', shots_on_target: 'Shots on Target',
   goals: 'Goals', assists: 'Assists', key_passes: 'Key Passes',
   tackles: 'Tackles', saves: 'Saves', dribbles: 'Dribbles', crosses: 'Crosses',
   interceptions: 'Interceptions', blocks: 'Blocks', fouls_drawn: 'Fouls Drawn',
   fouls_committed: 'Fouls', clearances: 'Clearances', yellow_cards: 'Yellow Cards',
   shots_assisted: 'Shot Assists', duels_won: 'Duels Won', passes: 'Passes',
-  maps_1_3_kills: 'Maps 1-3 Kills',
-  maps_1_3_headshots: 'Maps 1-3 Headshots',
+  // MLB — hitter
+  hits: 'Hits', home_runs: 'Home Runs', rbi: 'RBI', runs: 'Runs',
+  walks: 'Walks', strikeouts: 'Strikeouts', total_bases: 'Total Bases',
+  stolen_bases: 'Stolen Bases', doubles: 'Doubles', plate_appearances: 'Plate Appearances',
+  hits_runs_rbis: 'H+R+RBI', hitter_fantasy_points: 'Fantasy Pts (Hit)',
+  // MLB — pitcher
+  pitcher_strikeouts: 'Pitcher Ks', innings_pitched: 'Innings Pitched',
+  hits_allowed: 'Hits Allowed', earned_runs: 'Earned Runs',
+  walks_allowed: 'Walks Allowed', pitches_thrown: 'Pitches Thrown',
+  batters_faced: 'Batters Faced', pitcher_fantasy_score: 'Fantasy Pts (Pitch)',
+  pitching_outs: 'Pitching Outs',
+  // CS2
+  maps_1_3_kills: 'Maps 1-3 Kills', maps_1_3_headshots: 'Maps 1-3 Headshots',
+  // WTA
+  games: 'Games', sets: 'Sets', aces: 'Aces', double_faults: 'Double Faults',
+  service_games_won: 'Service Games Won', total_games: 'Total Games',
 };
 
 const BAND_ACCENT: Record<string, string> = {
