@@ -253,7 +253,7 @@ export default function ScanScreen() {
   const [sportsConfig, setSportsConfig] = useState<SportConfig[]>([
     { sport: 'soccer', displayName: 'Soccer',     icon: 'football',        label: null,         available: true  },
     { sport: 'mlb',    displayName: 'MLB',         icon: 'baseball',        label: null,         available: true  },
-    { sport: 'wta',    displayName: 'WTA Tennis',  icon: 'tennisball',      label: null,         available: true  },
+    { sport: 'wta',    displayName: 'WTA Tennis',  icon: 'tennisball',      label: null,         available: false },
     { sport: 'nfl',    displayName: 'NFL',         icon: 'american-football', label: 'Off Season', available: false },
     { sport: 'nba',    displayName: 'NBA',         icon: 'basketball',      label: 'Off Season', available: false },
     { sport: 'nhl',    displayName: 'NHL',         icon: 'snow',            label: 'Off Season', available: false },
@@ -4443,6 +4443,165 @@ export default function ScanScreen() {
                     <Text style={{ fontSize:10, color:Colors.textTertiary, marginTop:6, fontFamily:'JetBrainsMono_400Regular' }}>
                       Streak momentum adj: {streakAdj2>0?'+':''}{streakAdj2}% p_over
                     </Text>
+                  )}
+                </View>
+              );
+            })()}
+
+            {/* ─── MLB ENGINE CARD ─── */}
+            {prediction.sport === 'mlb' && (() => {
+              const bmlb = (prediction as any).bayesianMetrics || {};
+              const pO = (prediction as any).pOver  as number | undefined;
+              const pU = (prediction as any).pUnder as number | undefined;
+              const n  = bmlb.priorSamples ?? (prediction as any).priorSamples as number | undefined;
+              const priorMean = bmlb.priorMean ?? (prediction as any).priorMean as number | undefined;
+              const parkPct   = bmlb.parkFactorPct as number | undefined;
+              const platoon   = bmlb.platoonSplitMult as number | undefined;
+              const era       = bmlb.eraFactor as number | undefined;
+              const babip     = bmlb.babipMult as number | undefined;
+              const krate     = bmlb.kRateMult as number | undefined;
+              const gameTotal = bmlb.gameTotalFactor as number | undefined;
+              const lineup    = bmlb.lineupPositionMult as number | undefined;
+              const sf        = (prediction as any).streakFlag as string | undefined;
+              const isO = prediction.recommendation === 'OVER';
+              const borderC = isO ? Colors.primary : '#FF6B35';
+
+              type MetRow = { label: string; val: string; color?: string };
+              const rows: MetRow[] = [];
+
+              if (parkPct != null)
+                rows.push({ label: 'PARK', val: `${parkPct >= 0 ? '+' : ''}${parkPct.toFixed(1)}%`, color: parkPct >= 0 ? Colors.primary : Colors.error });
+              if (platoon != null && Math.abs(platoon - 1) > 0.005)
+                rows.push({ label: 'PLATOON', val: `×${platoon.toFixed(2)}`, color: platoon > 1 ? Colors.primary : Colors.error });
+              if (era != null && Math.abs(era - 1) > 0.005)
+                rows.push({ label: 'ERA', val: `×${era.toFixed(2)}`, color: era > 1 ? Colors.primary : Colors.error });
+              if (babip != null && Math.abs(babip - 1) > 0.005)
+                rows.push({ label: 'BABIP', val: `×${babip.toFixed(2)}`, color: babip > 1 ? Colors.primary : Colors.error });
+              if (krate != null && Math.abs(krate - 1) > 0.005)
+                rows.push({ label: 'K-RATE', val: `×${krate.toFixed(2)}`, color: krate > 1 ? Colors.primary : Colors.error });
+              if (gameTotal != null && Math.abs(gameTotal - 1) > 0.005)
+                rows.push({ label: 'O/U', val: `×${gameTotal.toFixed(2)}`, color: gameTotal > 1 ? Colors.primary : Colors.error });
+              if (lineup != null && Math.abs(lineup - 1) > 0.005)
+                rows.push({ label: 'LINEUP', val: `×${lineup.toFixed(2)}`, color: lineup > 1 ? Colors.primary : Colors.error });
+
+              return (
+                <View style={[styles.scoutCard, { borderColor: borderC + '44' }]}>
+                  <View style={styles.scoutHeader}>
+                    <Ionicons name="analytics" size={13} color={Colors.primary} />
+                    <Text style={styles.scoutTitle}>MLB ENGINE</Text>
+                    {n != null && (
+                      <View style={[styles.mfSamplesBadge, { marginLeft: 'auto' }]}>
+                        <Text style={styles.mfSamplesText}>{n} GAMES</Text>
+                      </View>
+                    )}
+                  </View>
+
+                  {/* P(OVER) / P(UNDER) bar */}
+                  {pO != null && pU != null && (
+                    <View style={[styles.mfProbSection, { marginTop: 6 }]}>
+                      <View style={styles.mfProbBar}>
+                        <View style={[styles.mfProbFillOver,  { flex: pO / 100 }]} />
+                        <View style={[styles.mfProbFillUnder, { flex: pU / 100 }]} />
+                      </View>
+                      <View style={styles.mfProbLabels}>
+                        <Text style={[styles.mfProbLabel, { color: Colors.primary }]}>OVER {pO.toFixed(1)}%</Text>
+                        <Text style={[styles.mfProbLabel, { color: Colors.error,   textAlign: 'right' }]}>UNDER {pU.toFixed(1)}%</Text>
+                      </View>
+                    </View>
+                  )}
+
+                  {/* Season baseline */}
+                  {priorMean != null && (
+                    <Text style={{ fontSize: 11, color: Colors.textSecondary, marginTop: 6, fontFamily: 'JetBrainsMono_400Regular' }}>
+                      Season baseline: {priorMean.toFixed(2)}
+                    </Text>
+                  )}
+
+                  {/* Multiplier rows */}
+                  {rows.length > 0 && (
+                    <View style={{ marginTop: 8, gap: 4 }}>
+                      {rows.map((r, i) => (
+                        <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 2, borderBottomWidth: i < rows.length - 1 ? 1 : 0, borderBottomColor: '#1A1A1A' }}>
+                          <Text style={{ fontSize: 10, color: Colors.textSecondary, fontFamily: 'JetBrainsMono_400Regular', letterSpacing: 0.5 }}>{r.label}</Text>
+                          <Text style={{ fontSize: 11, fontWeight: '700', color: r.color ?? Colors.text, fontFamily: 'JetBrainsMono_400Regular' }}>{r.val}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+
+                  {/* Streak flag */}
+                  {sf && sf !== 'NONE' && (
+                    <Text style={{ fontSize: 10, color: sf === 'OVER_STREAK' ? Colors.primary : '#60A5FA', marginTop: 6, fontFamily: 'JetBrainsMono_400Regular' }}>
+                      {sf === 'OVER_STREAK' ? '🔥 OVER streak last 4+ games' : '❄️ UNDER streak last 4+ games'}
+                    </Text>
+                  )}
+                </View>
+              );
+            })()}
+
+            {/* ─── NBA / NHL / NFL ENGINE CARD ─── */}
+            {['nba', 'nhl', 'nfl'].includes(prediction.sport) && (() => {
+              const bx   = (prediction as any).bayesianMetrics || {};
+              const pO   = (prediction as any).pOver  as number | undefined;
+              const pU   = (prediction as any).pUnder as number | undefined;
+              const n    = bx.sampleSize ?? (prediction as any).priorSamples as number | undefined;
+              const pm   = bx.priorMean  ?? (prediction as any).priorMean   as number | undefined;
+              const sf   = (prediction as any).streakFlag as string | undefined;
+              const kf   = ((prediction as any).keyFactors ?? []) as string[];
+              const isO  = prediction.recommendation === 'OVER';
+              const borderC = isO ? Colors.primary : '#FF6B35';
+              const sportLabel = prediction.sport === 'nba' ? 'NBA' : prediction.sport === 'nhl' ? 'NHL' : 'NFL';
+
+              return (
+                <View style={[styles.scoutCard, { borderColor: borderC + '44' }]}>
+                  <View style={styles.scoutHeader}>
+                    <Ionicons name="analytics" size={13} color={Colors.primary} />
+                    <Text style={styles.scoutTitle}>{sportLabel} ENGINE</Text>
+                    {n != null && (
+                      <View style={[styles.mfSamplesBadge, { marginLeft: 'auto' }]}>
+                        <Text style={styles.mfSamplesText}>{n} GAMES</Text>
+                      </View>
+                    )}
+                  </View>
+
+                  {/* P(OVER) / P(UNDER) bar */}
+                  {pO != null && pU != null && (
+                    <View style={[styles.mfProbSection, { marginTop: 6 }]}>
+                      <View style={styles.mfProbBar}>
+                        <View style={[styles.mfProbFillOver,  { flex: pO / 100 }]} />
+                        <View style={[styles.mfProbFillUnder, { flex: pU / 100 }]} />
+                      </View>
+                      <View style={styles.mfProbLabels}>
+                        <Text style={[styles.mfProbLabel, { color: Colors.primary }]}>OVER {pO.toFixed(1)}%</Text>
+                        <Text style={[styles.mfProbLabel, { color: Colors.error,   textAlign: 'right' }]}>UNDER {pU.toFixed(1)}%</Text>
+                      </View>
+                    </View>
+                  )}
+
+                  {/* Season baseline */}
+                  {pm != null && (
+                    <Text style={{ fontSize: 11, color: Colors.textSecondary, marginTop: 6, fontFamily: 'JetBrainsMono_400Regular' }}>
+                      Season baseline: {pm.toFixed(1)}
+                    </Text>
+                  )}
+
+                  {/* Streak flag */}
+                  {sf && sf !== 'NONE' && (
+                    <Text style={{ fontSize: 10, color: sf === 'OVER_STREAK' ? Colors.primary : '#60A5FA', marginTop: 6, fontFamily: 'JetBrainsMono_400Regular' }}>
+                      {sf === 'OVER_STREAK' ? '🔥 OVER streak last 4+ games' : '❄️ UNDER streak last 4+ games'}
+                    </Text>
+                  )}
+
+                  {/* AI key factors */}
+                  {kf.length > 0 && (
+                    <View style={{ marginTop: 8, gap: 5 }}>
+                      {kf.slice(0, 4).map((factor, i) => (
+                        <View key={i} style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6 }}>
+                          <Text style={{ fontSize: 10, color: Colors.primary, marginTop: 1 }}>▸</Text>
+                          <Text style={{ flex: 1, fontSize: 11, color: Colors.text, lineHeight: 15 }}>{factor}</Text>
+                        </View>
+                      ))}
+                    </View>
                   )}
                 </View>
               );

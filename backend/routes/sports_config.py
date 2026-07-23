@@ -28,9 +28,9 @@ _DEFAULTS = [
     # CS2 hidden entirely from the sport picker — engine data source (BDL /cs/v1)
     # lost its map-stats endpoints, so predictions can't be graded reliably.
     {"sport": "cs2",    "displayName": "CS2",         "icon": "game-controller",   "label": None,         "available": False, "hidden": True},
-    {"sport": "wta",    "displayName": "WTA Tennis",  "icon": "tennisball",        "label": None,         "available": True,  "hidden": False},
+    {"sport": "wta",    "displayName": "WTA Tennis",  "icon": "tennisball",        "label": None,         "available": False, "hidden": True},
 ]
-_SPORT_ORDER = ["soccer", "mlb", "wta", "nfl", "nba", "nhl", "cs2"]
+_SPORT_ORDER = ["soccer", "mlb", "nfl", "nba", "nhl", "cs2"]
 
 
 async def _ensure_seeded() -> None:

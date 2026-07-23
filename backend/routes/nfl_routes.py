@@ -26,6 +26,7 @@ async def _get_nfl_ai_analysis(
     game_logs: list, prior_mean: float, streak_flag: str,
     game_total: Optional[float] = None,
 ) -> dict:
+    import json as _json
     try:
         from ai_engine import _ai_call
 
@@ -38,7 +39,9 @@ async def _get_nfl_ai_analysis(
             val  = g.get(field, "?")
             date = g.get("date", "")
             wk   = g.get("week", "")
-            ctx_lines.append(f"  Wk{wk} ({date}): {val} {prop_label}")
+            opp  = g.get("opponent", "")
+            wl   = "W" if g.get("won") is True else "L" if g.get("won") is False else ""
+            ctx_lines.append(f"  Wk{wk} ({date}{' ' + wl if wl else ''}): {val} {prop_label}" + (f" vs {opp}" if opp else ""))
         game_ctx = "\n".join(ctx_lines) or "  (no recent data)"
 
         streak_text = ""
@@ -47,29 +50,40 @@ async def _get_nfl_ai_analysis(
         elif streak_flag == "UNDER_STREAK":
             streak_text = " UNDER streak across last 4+ games."
 
-        prompt = f"""You are a sharp NFL prop betting analyst. Analyze this pick concisely.
+        prompt = f"""You are a sharp NFL prop betting analyst. Analyze this pick.
 
 PLAYER: {player_name} ({position or "NFL"})
 PROP: {prop_label} | LINE: {line} | VENUE: {venue.upper()} vs {opponent or "opponent"}
-PROJECTION: {projection} | P(OVER): {p_over}% | P(UNDER): {p_under}%
+PROJECTION: {projection:.1f} | P(OVER): {p_over:.1f}% | P(UNDER): {p_under:.1f}%
 RECOMMENDATION: {rec_label} ({conf}% confidence)
-PRIOR MEAN: {prior_mean}{streak_text}
+SEASON BASELINE: {prior_mean:.1f}{streak_text}
 {"GAME O/U: " + str(game_total) if game_total else ""}
 
 RECENT GAME LOG:
 {game_ctx}
 
-Write a sharp 2-3 sentence analysis of the {rec_label}. Focus on matchup, usage, and game script. Be direct."""
+Return ONLY valid JSON (no markdown fences):
+{{
+  "sharpSummary": "<1 sharp decisive sentence under 22 words naming the single biggest factor>",
+  "keyFactors": ["<factor with specific number>", "<factor 2>", "<factor 3>"],
+  "reasoning": "<2-3 sharp sentences covering matchup, usage trend, and game script — cite exact numbers>",
+  "tacticalBreakdown": "<4-5 sentences: season baseline context, recent form vs line, opponent defence quality, game-script risk (pace/spread), and why the model picked {rec_label}>"
+}}"""
 
-        text = (await _ai_call(prompt, temperature=0.7, max_tokens=1500, timeout=30) or "").strip()
-        return {
-            "sharpSummary":      text[:600] if text else "",
-            "tacticalBreakdown": text,
-            "reasoning":         f"Bayesian projection: {projection} | P(OVER)={p_over}% P(UNDER)={p_under}%",
-        }
+        text = (await _ai_call(prompt, json_mode=True, temperature=0.6, max_tokens=800, timeout=30) or "").strip()
+        try:
+            data = _json.loads(text)
+            return {
+                "sharpSummary":      data.get("sharpSummary", ""),
+                "keyFactors":        data.get("keyFactors", []),
+                "reasoning":         data.get("reasoning", ""),
+                "tacticalBreakdown": data.get("tacticalBreakdown", ""),
+            }
+        except Exception:
+            return {"sharpSummary": text[:300] if text else "", "keyFactors": [], "tacticalBreakdown": text, "reasoning": ""}
     except Exception as e:
         log.warning(f"[NFL AI] {e}")
-        return {"sharpSummary": "", "tacticalBreakdown": "", "reasoning": ""}
+        return {"sharpSummary": "", "tacticalBreakdown": "", "reasoning": "", "keyFactors": []}
 
 
 # ── Player search ─────────────────────────────────────────────────────────────
@@ -302,8 +316,9 @@ async def nfl_predict(req: NflPredictRequest):
         "streakFlag":       result["streakFlag"],
         "gameLogs":         game_log_tiles,
         "recentValues":     result.get("recentValues", []),
-        "sharpSummary":     ai_result.get("sharpSummary", ""),
+        "sharpSummary":      ai_result.get("sharpSummary", ""),
         "tacticalBreakdown": ai_result.get("tacticalBreakdown", ""),
-        "reasoning":        ai_result.get("reasoning", ""),
-        "rawConfidence":    result["confidenceScore"],
+        "reasoning":         ai_result.get("reasoning", ""),
+        "keyFactors":        ai_result.get("keyFactors", []),
+        "rawConfidence":     result["confidenceScore"],
     }

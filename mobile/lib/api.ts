@@ -1689,7 +1689,11 @@ export async function nbaPredict(request: Record<string, unknown>, signal?: Abor
     sharpSummary:       raw.sharpSummary       || undefined,
     reasoning:          raw.reasoning          || undefined,
     tacticalBreakdown:  raw.tacticalBreakdown  || undefined,
+    keyFactors:         raw.keyFactors         ?? [],
     streakFlag:         raw.streakFlag         ?? '',
+    priorSamples:       raw.sampleSize         ?? bm.sampleSize,
+    priorMean:          raw.priorMean          ?? bm.priorMean,
+    momentumMean:       raw.momentum           ?? bm.momentumMean,
     gameLogs,
     bayesianMetrics: {
       priorMean:    bm.priorMean    ?? raw.priorMean,
@@ -1798,7 +1802,11 @@ export async function nhlPredict(request: Record<string, unknown>, signal?: Abor
     sharpSummary:       raw.sharpSummary      || undefined,
     reasoning:          raw.reasoning         || undefined,
     tacticalBreakdown:  raw.tacticalBreakdown || undefined,
+    keyFactors:         raw.keyFactors        ?? [],
     streakFlag:         raw.streakFlag        ?? '',
+    priorSamples:       raw.sampleSize        ?? bm.sampleSize,
+    priorMean:          raw.priorMean         ?? bm.priorMean,
+    momentumMean:       raw.momentum          ?? bm.momentumMean,
     gameLogs,
     bayesianMetrics: {
       priorMean:    bm.priorMean    ?? raw.priorMean,
@@ -1912,7 +1920,11 @@ export async function nflPredict(request: Record<string, unknown>, signal?: Abor
     sharpSummary:       raw.sharpSummary      || undefined,
     reasoning:          raw.reasoning         || undefined,
     tacticalBreakdown:  raw.tacticalBreakdown || undefined,
+    keyFactors:         raw.keyFactors        ?? [],
     streakFlag:         raw.streakFlag        ?? '',
+    priorSamples:       raw.sampleSize        ?? bm.sampleSize,
+    priorMean:          raw.priorMean         ?? bm.priorMean,
+    momentumMean:       raw.momentum          ?? bm.momentumMean,
     gameLogs,
     bayesianMetrics: {
       priorMean:    bm.priorMean    ?? raw.priorMean,
@@ -2031,7 +2043,11 @@ export async function mlbPredict(request: Record<string, unknown>, signal?: Abor
     sharpSummary:       raw.sharpSummary      || undefined,
     reasoning:          raw.reasoning         || undefined,
     tacticalBreakdown:  raw.tacticalBreakdown || undefined,
+    keyFactors:         raw.keyFactors        ?? [],
     streakFlag:         raw.streakFlag        ?? '',
+    priorSamples:       raw.priorSamples      ?? bm.sampleSize,
+    priorMean:          raw.priorMean         ?? bm.priorMean,
+    momentumMean:       raw.momentum          ?? bm.momentumMean,
     gameLogs,
     matchupOverview: raw.matchupOverview ? {
       homeTeam:         raw.matchupOverview.homeTeam,
@@ -2041,7 +2057,7 @@ export async function mlbPredict(request: Record<string, unknown>, signal?: Abor
       keyMatchupFactor: raw.matchupOverview.keyMatchupFactor,
       moneyline:        raw.matchupOverview.moneyline ?? raw.moneyline,
     } : (raw.moneyline ? { homeTeam: raw.teamName || '', awayTeam: raw.opponentName || '', playerIsHome: true, moneyline: raw.moneyline } : undefined),
-    bayesianMetrics: {
+    bayesianMetrics: raw.bayesianMetrics ?? {
       priorMean:    bm.priorMean    ?? raw.priorMean,
       momentumMean: bm.momentumMean ?? raw.momentum,
       sampleSize:   bm.sampleSize   ?? raw.sampleSize,
@@ -2067,7 +2083,7 @@ export async function getSportsConfig(): Promise<SportConfig[]> {
       { sport: 'soccer', displayName: 'Soccer',     icon: 'football',        label: null, available: true },
       { sport: 'mlb',    displayName: 'MLB',         icon: 'baseball',        label: null, available: true },
       { sport: 'cs2',    displayName: 'CS2',         icon: 'game-controller', label: null, available: true },
-      { sport: 'wta',    displayName: 'WTA Tennis',  icon: 'tennisball',      label: null, available: true },
+      { sport: 'wta',    displayName: 'WTA Tennis',  icon: 'tennisball',      label: null, available: false },
       { sport: 'nba',    displayName: 'NBA',         icon: 'basketball',      label: 'Off Season', available: false },
       { sport: 'nhl',    displayName: 'NHL',         icon: 'snow',            label: 'Off Season', available: false },
     ];
