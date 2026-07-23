@@ -171,14 +171,14 @@ Return JSON ONLY (no markdown outside the JSON values):
 {{
   "sharpSummary": "<1 decisive sentence under 22 words committing to {recommendation} — state the single biggest factor>",
   "reasoning": "<2-4 sharp sentences covering platoon split, ERA tier, game environment, BABIP/contact quality, and park — only mention factors that are actually provided above>",
-  "tacticalBreakdown": "## Model Verdict\\n**{recommendation} {projection:.1f}** vs {line} line — P(OVER)={p_over}%, P(UNDER)={p_under}%\\n\\n## Pitching Environment\\n<2-3 sentences: ERA tier, handedness matchup, park factor — use the numbers provided above>\\n\\n## Batter / Pitcher Context\\n<2-3 sentences: platoon advantage, lineup spot, BABIP regression signal, K-rate trend, pitch count trajectory — cite specific multipliers>\\n\\n## Recent Form\\n<2 sentences: summarise last 4-5 game log values with specific numbers to support the direction>\\n\\n## Key Risk\\n<1-2 sentences: the single factor most likely to invalidate this pick, and why the model still favours the stated direction>"
+  "tacticalBreakdown": "**Matchup**\\n{recommendation} {projection:.1f} vs {line} line (P(OVER)={p_over}%, P(UNDER)={p_under}%). <2-3 sentences: ERA tier, handedness matchup, park factor — use the numbers provided above>\\n\\n**Situation**\\n<2-3 sentences: platoon advantage, lineup spot, BABIP regression signal, K-rate trend, pitch count trajectory — cite specific multipliers>\\n\\n**Analysis**\\n<2 sentences: summarise last 4-5 game log values with specific numbers to support the direction>\\n\\n**Risk**\\n<1-2 sentences: the single factor most likely to invalidate this pick, and why the model still favours the stated direction>\\n\\n**TL;DR**\\n<1 sentence: decisive verdict in plain English>"
 }}"""
 
     # Gemini AI synthesis
     try:
         import json, re
         from ai_engine import _ai_call as _mlb_ai
-        raw = await _mlb_ai(prompt, temperature=0.4, max_tokens=1400, timeout=12, json_mode=True)
+        raw = await _mlb_ai(prompt, temperature=0.4, max_tokens=1400, timeout=25)
         if raw:
             m = re.search(r'\{[\s\S]*\}', raw)
             if m:
@@ -425,8 +425,7 @@ async def mlb_predict(req: MlbPredictRequest):
     # When data is empty for such a player, search MLB Stats API by name to find
     # the real statsapi ID (e.g. 691725) and retry data fetching.
     _STATSAPI_THRESHOLD = mlb_client._STATSAPI_ID_THRESHOLD
-    if (not game_logs and not season_stats and not prev_season_stats
-            and player_id >= _STATSAPI_THRESHOLD and req.playerName):
+    if (not game_logs and player_id >= _STATSAPI_THRESHOLD and req.playerName):
         try:
             statsapi_candidates = await mlb_client._statsapi_search_players(
                 req.playerName, limit=5
@@ -622,16 +621,19 @@ async def mlb_predict(req: MlbPredictRequest):
     }
 
     # Attach moneyline when we fetched odds
-    if odds and (odds.get("moneylineHome") is not None or odds.get("moneylineAway") is not None):
-        response["moneyline"] = {
-            "home": odds.get("moneylineHome"),
-            "away": odds.get("moneylineAway"),
-        }
+    ml_h = odds.get("moneylineHome") if odds else None
+    ml_a = odds.get("moneylineAway") if odds else None
+    # Sanity check: real MLB moneylines live between -2000 and +2000.
+    # BDL sometimes returns garbage (e.g. -10000 / +1625) when data is bad.
+    if ml_h is not None and ml_a is not None and abs(ml_h) <= 2000 and abs(ml_a) <= 2000:
+        response["moneyline"] = {"home": ml_h, "away": ml_a}
+    elif ml_h is not None or ml_a is not None:
+        log.warning(f"[MLB PREDICT] Rejected out-of-range moneyline home={ml_h} away={ml_a}")
 
     # Await AI result and merge into response — hard 12 s cap so a slow AI
     # never blocks the full predict response from reaching the user.
     try:
-        ai_data = await asyncio.wait_for(asyncio.shield(ai_task), timeout=12)
+        ai_data = await asyncio.wait_for(asyncio.shield(ai_task), timeout=28)
         if ai_data:
             response["sharpSummary"]      = ai_data.get("sharpSummary", "")
             response["reasoning"]         = ai_data.get("reasoning", "")

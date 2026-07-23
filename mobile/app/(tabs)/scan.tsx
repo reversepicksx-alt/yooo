@@ -4455,7 +4455,7 @@ export default function ScanScreen() {
               const bmlb = (prediction as any).bayesianMetrics || {};
               const pO = (prediction as any).pOver  as number | undefined;
               const pU = (prediction as any).pUnder as number | undefined;
-              const n  = bmlb.priorSamples ?? (prediction as any).priorSamples as number | undefined;
+              const n  = (bmlb.priorSamples ?? (prediction as any).priorSamples) as number | undefined;
               const priorMean = bmlb.priorMean ?? (prediction as any).priorMean as number | undefined;
               const parkPct   = bmlb.parkFactorPct as number | undefined;
               const platoon   = bmlb.platoonSplitMult as number | undefined;
@@ -4491,7 +4491,7 @@ export default function ScanScreen() {
                   <View style={styles.scoutHeader}>
                     <Ionicons name="analytics" size={13} color={Colors.primary} />
                     <Text style={styles.scoutTitle}>MLB ENGINE</Text>
-                    {n != null && (
+                    {n != null && n > 0 && (
                       <View style={[styles.mfSamplesBadge, { marginLeft: 'auto' }]}>
                         <Text style={styles.mfSamplesText}>{n} GAMES</Text>
                       </View>
@@ -4559,7 +4559,7 @@ export default function ScanScreen() {
                   <View style={styles.scoutHeader}>
                     <Ionicons name="analytics" size={13} color={Colors.primary} />
                     <Text style={styles.scoutTitle}>{sportLabel} ENGINE</Text>
-                    {n != null && (
+                    {n != null && n > 0 && (
                       <View style={[styles.mfSamplesBadge, { marginLeft: 'auto' }]}>
                         <Text style={styles.mfSamplesText}>{n} GAMES</Text>
                       </View>
