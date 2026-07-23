@@ -2191,8 +2191,14 @@ async def _process_api_football_live(picks: list, email: str) -> list:
     results = []
     for pick, fixture in pick_fixtures:
         pick_id = pick.get("pickId", "")
+        _db_status = pick.get("status", "pending")
+        # When the fixture lookup fails (transient API error/rate-limit), preserve
+        # the pick's existing "live" state rather than reverting to "scheduled".
+        # A "live" pick that momentarily can't be reached by the API is still live —
+        # showing PENDING on a live card confuses the user and defeats tracking.
+        _live_fallback = "live" if _db_status == "live" else "scheduled"
         if not fixture:
-            results.append({"pickId": pick_id, "matchStatus": "scheduled"})
+            results.append({"pickId": pick_id, "matchStatus": _live_fallback})
             continue
 
         fid = fixture.get("fixture", {}).get("id")
@@ -2203,7 +2209,7 @@ async def _process_api_football_live(picks: list, email: str) -> list:
             results.append(update)
         except Exception:
             traceback.print_exc()
-            results.append({"pickId": pick_id, "matchStatus": "scheduled"})
+            results.append({"pickId": pick_id, "matchStatus": _live_fallback})
 
     return results
 
@@ -2227,16 +2233,19 @@ async def _process_soccer_bdl_live(picks: list, email: str) -> list:
             matches = []
 
         for pick in picks_for_league:
+            _pick_id = pick.get("pickId", "")
+            _db_status = pick.get("status", "pending")
+            _live_fallback = "live" if _db_status == "live" else "scheduled"
             try:
                 match = _sbc.find_match_for_pick(matches, pick)
                 if not match:
-                    results.append({"pickId": pick.get("pickId", ""), "matchStatus": "scheduled"})
+                    results.append({"pickId": _pick_id, "matchStatus": _live_fallback})
                     continue
                 update = await _build_bdl_soccer_update(pick, match, email, league_id)
                 results.append(update)
             except Exception:
                 traceback.print_exc()
-                results.append({"pickId": pick.get("pickId", ""), "matchStatus": "scheduled"})
+                results.append({"pickId": _pick_id, "matchStatus": _live_fallback})
     return results
 
 
@@ -2565,16 +2574,21 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
 
     # Keep None distinct from 0: None = stat not in API response, 0 = valid zero value.
     # If stat is truly unavailable, don't settle now — the background loop will retry.
+    # Do NOT force None→0 here: the frontend uses null to suppress the "NOW: 0" display
+    # (which would be misleading when the stat simply isn't available in this polling cycle).
+    # Pace and hitPct are only computed when we have a real number.
     _stat_available = current_value is not None
-    current_value = current_value if current_value is not None else 0
     line = pick.get("line", 0)
     recommendation = pick.get("recommendation", "over")
 
-    # Pace (extrapolate to 90 min)
+    # Pace (extrapolate to 90 min) — only meaningful when we have a real stat value
     effective_elapsed = max(elapsed, 1)
-    pace = round((current_value / effective_elapsed) * 90, 1) if effective_elapsed > 0 else 0
-
-    hit_pct = _calc_hit_pct(current_value, line, recommendation, elapsed, 90, is_finished, pace)
+    if current_value is not None:
+        pace = round((current_value / effective_elapsed) * 90, 1) if effective_elapsed > 0 else 0
+        hit_pct = _calc_hit_pct(current_value, line, recommendation, elapsed, 90, is_finished, pace)
+    else:
+        pace = None
+        hit_pct = None
 
     # Live pace-divergence warning — surfaces when the in-match trend is
     # running strongly against the pre-match recommendation (e.g. a fullback
@@ -2654,7 +2668,7 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
             # the full game.  The `or 0` above converts that to 0, which would
             # incorrectly trip this DNP guard.  A non-zero stat value is definitive
             # proof the player participated — settle as hit/miss, not DNP.
-            if current_value > 0:
+            if current_value is not None and current_value > 0:
                 print(f"[SETTLE] {pick.get('playerName','')} {pick.get('propType','')} "
                       f"— minutes={minutes_played} but stat={current_value} (API minutes unreliable); settling normally")
                 result_str = _settle_result(current_value, line, recommendation)
@@ -2662,6 +2676,12 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
                 result_str = "dnp"
                 update["voidReason"] = f"Player only played {minutes_played} min (min {_DNP_THRESHOLD} required)"
         else:
+            if current_value is None:
+                # Stat not available yet — defer to the background auto-settle loop
+                print(f"[SETTLE-DEFER] {pick.get('playerName','')} {pick.get('propType','')} "
+                      f"— stat=None at FT; deferring to background loop")
+                update["matchStatus"] = "final"
+                return update
             result_str = _settle_result(current_value, line, recommendation)
         update["result"] = result_str
         update["actualValue"] = current_value
