@@ -211,10 +211,24 @@ async def get_player_game_logs(player_id: int, season: int = CURRENT_NBA_SEASON)
     for row in all_stats:
         game = row.get("game") or {}
         date_str = (game.get("date") or "")[:10]
-        home_team_id = (game.get("home_team") or {}).get("id")
-        visitor_team_id = (game.get("visitor_team") or {}).get("id")
-        player_team_id = (row.get("team") or {}).get("id")
-        venue = "home" if player_team_id == home_team_id else "away"
+        home_team   = game.get("home_team") or {}
+        visitor_team = game.get("visitor_team") or {}
+        home_team_id    = home_team.get("id")
+        visitor_team_id = visitor_team.get("id")
+        player_team_id  = (row.get("team") or {}).get("id")
+        is_home = player_team_id == home_team_id
+        venue   = "home" if is_home else "away"
+
+        # Opponent abbreviation / name
+        opp_team  = visitor_team if is_home else home_team
+        opp_abbr  = opp_team.get("abbreviation") or opp_team.get("name") or None
+
+        # W/L from game scores
+        home_sc = game.get("home_team_score")
+        vis_sc  = game.get("visitor_team_score")
+        won = None
+        if home_sc is not None and vis_sc is not None:
+            won = (home_sc > vis_sc) if is_home else (vis_sc > home_sc)
 
         # Minutes played: "37:24" → float
         min_str = row.get("min") or "0"
@@ -243,6 +257,8 @@ async def get_player_game_logs(player_id: int, season: int = CURRENT_NBA_SEASON)
             "date":            date_str,
             "game_id":         game.get("id"),
             "venue":           venue,
+            "opponent":        opp_abbr,
+            "won":             won,
             "minutes":         round(minutes, 1),
             # Core counting stats
             "pts":             pts,

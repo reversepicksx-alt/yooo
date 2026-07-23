@@ -272,14 +272,16 @@ async def nhl_predict(req: NhlPredictRequest):
     game_log_tiles = []
     for g in game_logs[:10]:
         game_log_tiles.append({
-            "date":    g.get("date", ""),
-            "value":   g.get(field),
-            "venue":   g.get("venue", ""),
-            "goals":   g.get("goals"),
-            "assists": g.get("assists"),
-            "shots":   g.get("shots"),
-            "toi":     g.get("toi"),
-            "saves":   g.get("saves"),
+            "date":     g.get("date", ""),
+            "value":    g.get(field),
+            "venue":    g.get("venue", ""),
+            "opponent": g.get("opponent"),
+            "won":      g.get("won"),
+            "goals":    g.get("goals"),
+            "assists":  g.get("assists"),
+            "shots":    g.get("shots"),
+            "toi":      g.get("toi"),
+            "saves":    g.get("saves"),
         })
 
     try:

@@ -267,6 +267,8 @@ async def nfl_predict(req: NflPredictRequest):
             "value":            g.get(field),
             "week":             g.get("week"),
             "venue":            g.get("venue", ""),
+            "opponent":         g.get("opponent"),
+            "won":              g.get("won"),
             "passing_yards":    g.get("passing_yards"),
             "rushing_yards":    g.get("rushing_yards"),
             "receiving_yards":  g.get("receiving_yards"),

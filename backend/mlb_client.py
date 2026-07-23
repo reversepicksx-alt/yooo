@@ -256,7 +256,11 @@ async def _statsapi_get_player(player_id: int) -> Optional[dict]:
 
 
 async def _statsapi_game_logs(player_id: int, season: int, group: str = "hitting") -> list:
-    """Fetch per-game stats from MLB Stats API and normalise to BDL field names."""
+    """Fetch per-game stats from MLB Stats API and normalise to BDL field names.
+
+    The Stats API gameLog split already contains isHome, isWin, and opponent —
+    we extract them here so tiles don't need a separate team-schedule enrichment pass.
+    """
     data = await _statsapi_get(
         f"/people/{player_id}/stats",
         {"stats": "gameLog", "group": group, "season": season, "sportId": 1},
@@ -271,6 +275,26 @@ async def _statsapi_game_logs(player_id: int, season: int, group: str = "hitting
         game_info = split.get("game", {})
         game_id = game_info.get("gamePk", 0)
 
+        # ── Game context — present in basic gameLog response, no hydration needed ──
+        is_home: bool | None = split.get("isHome")          # True/False/None
+        is_win:  bool | None = split.get("isWin")           # True/False/None
+        opp_obj  = split.get("opponent") or {}
+        opp_abbr = (
+            opp_obj.get("abbreviation") or
+            opp_obj.get("teamCode") or
+            opp_obj.get("shortName") or
+            opp_obj.get("name") or
+            None
+        )
+        venue = ("home" if is_home else "away") if is_home is not None else None
+
+        ctx = {
+            "opponent": opp_abbr,
+            "isHome":   is_home,
+            "venue":    venue,
+            "won":      is_win,
+        }
+
         if group == "hitting":
             entry = {
                 "game_id":          game_id,
@@ -279,15 +303,15 @@ async def _statsapi_game_logs(player_id: int, season: int, group: str = "hitting
                 "rbi":              st.get("rbi"),
                 "hr":               st.get("homeRuns"),
                 "bb":               st.get("baseOnBalls"),
-                "k":                st.get("strikeOuts"),     # batting strikeouts (unused as prop but kept)
+                "k":                st.get("strikeOuts"),
                 "total_bases":      st.get("totalBases"),
                 "stolen_bases":     st.get("stolenBases"),
                 "doubles":          st.get("doubles"),
                 "plate_appearances":st.get("plateAppearances"),
                 "at_bats":          st.get("atBats"),
                 "avg":              st.get("avg"),
-                # Date / context
                 "date":             split.get("date", ""),
+                **ctx,
             }
         else:  # pitching
             ip_str = st.get("inningsPitched", "")
@@ -306,6 +330,7 @@ async def _statsapi_game_logs(player_id: int, season: int, group: str = "hitting
                 "batters_faced":st.get("battersFaced"),
                 "era":          st.get("era"),
                 "date":         split.get("date", ""),
+                **ctx,
             }
         logs.append(entry)
 

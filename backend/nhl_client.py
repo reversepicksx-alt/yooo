@@ -284,10 +284,24 @@ async def get_player_season_stats(player_id: int, season: int = CURRENT_NHL_SEAS
 def _transform_nhl_log(row: dict) -> dict:
     """Transform a BDL NHL box_score row into unified schema."""
     game = row.get("game") or {}
-    date_str = (game.get("game_date") or "")[:10]
-    home_team_id = (game.get("home_team") or {}).get("id")
+    date_str = (game.get("game_date") or game.get("date") or "")[:10]
+    home_team    = game.get("home_team") or {}
+    visitor_team = game.get("visitor_team") or {}
+    home_team_id   = home_team.get("id")
     player_team_id = (row.get("team") or {}).get("id")
-    venue = "home" if player_team_id == home_team_id else "away"
+    is_home = player_team_id == home_team_id
+    venue   = "home" if is_home else "away"
+
+    # Opponent abbreviation / name
+    opp_team = visitor_team if is_home else home_team
+    opp_abbr = opp_team.get("abbreviation") or opp_team.get("name") or None
+
+    # W/L from game scores
+    home_sc = game.get("home_team_score")
+    vis_sc  = game.get("visitor_team_score")
+    won = None
+    if home_sc is not None and vis_sc is not None:
+        won = (home_sc > vis_sc) if is_home else (vis_sc > home_sc)
 
     goals   = (row.get("goals") or 0)
     assists = (row.get("assists") or 0)
@@ -314,6 +328,8 @@ def _transform_nhl_log(row: dict) -> dict:
         "date":          date_str,
         "game_id":       game.get("id"),
         "venue":         venue,
+        "opponent":      opp_abbr,
+        "won":           won,
         "goals":         goals,
         "assists":       assists,
         "points":        goals + assists,

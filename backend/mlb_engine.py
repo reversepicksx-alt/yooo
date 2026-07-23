@@ -1367,12 +1367,28 @@ def compute_mlb_projection(
             display_val = int(round(val))
         else:
             display_val = round(val, 1)
+
+        # Tile context — opponent/venue/won come from _statsapi_game_logs or _enrich_game_logs
+        g_opponent = g.get("opponent") or None
+        g_venue    = g.get("venue") or None
+        g_won      = g.get("won")
+        g_is_home  = g.get("isHome")
+        g_date     = g.get("date") or g.get("gameDate") or None
+        g_score    = g.get("score") or None   # "5-3" added by schedule enrichment
+
         log_entry = {
             "gameId":     g.get("game_id"),
             "gameNumber": idx + 1,
             "value":      display_val,
             "propType":   prop_type,
             "sport":      "mlb",
+            # Context fields for tile rendering
+            "date":       g_date,
+            "opponent":   g_opponent,
+            "venue":      g_venue,
+            "isHome":     g_is_home,
+            "won":        g_won,
+            "score":      g_score,
         }
         if prop_type in BATTER_PROPS:
             log_entry["atBats"] = g.get("at_bats")

@@ -280,6 +280,7 @@ async def nba_predict(req: NbaPredictRequest):
             "ast":      g.get("ast"),
             "venue":    g.get("venue", ""),
             "opponent": g.get("opponent", ""),
+            "won":      g.get("won"),
         })
 
     # Await AI (up to 25s)
