@@ -262,7 +262,9 @@ export default function ScanScreen() {
 
   // Fetch sport labels from server on mount so admin can update without an App Store release
   useEffect(() => {
-    getSportsConfig().then(cfg => { if (cfg?.length) setSportsConfig(cfg); }).catch(() => {});
+    getSportsConfig().then(cfg => {
+      if (cfg?.length) setSportsConfig(cfg.filter(s => s.sport !== 'wta' && s.sport !== 'cs2'));
+    }).catch(() => {});
   }, []);
 
   // Auto-quality-filter whenever a new prediction loads:
