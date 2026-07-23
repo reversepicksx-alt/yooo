@@ -4055,8 +4055,8 @@ export default function ScanScreen() {
                     </View>
                   )}
 
-                  {/* ── Dot Legend ── */}
-                  {!allSynthetic && (
+                  {/* ── Dot Legend — soccer only (OPP STRENGTH / MINUTES BAR / TILE STATE) ── */}
+                  {prediction.sport === 'soccer' && !allSynthetic && (
                     <View style={styles.glLegendRow}>
                       <View style={styles.glLegendGroup}>
                         <Text style={styles.glLegendTitle}>OPP STRENGTH</Text>
