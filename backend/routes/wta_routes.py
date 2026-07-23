@@ -388,8 +388,28 @@ async def wta_predict(req: WtaPredictRequest):
         "sharpSummary":      ai.get("sharpSummary", ""),
         "reasoning":         ai.get("reasoning", ""),
         "tacticalBreakdown": ai.get("tacticalBreakdown", ""),
+        "matchupOverview": {
+            "homeTeam":         player_name,
+            "awayTeam":         opponent_name,
+            "playerIsHome":     True,
+            "surface":          surface,
+            "expectedGameType": f"{(surface or 'Hard').title()} court" + (f" — {req.round}" if req.round else ""),
+            "keyMatchupFactor": (
+                f"H2H {h2h.get('p1Wins', 0)}–{h2h.get('p2Wins', 0)}"
+                + (f" | #{subject_rank} vs #{opp_rank}" if subject_rank and opp_rank else "")
+            ),
+        },
         "matchLogs":       match_logs[:15],
-        "gameLogs":        match_logs[:15],   # alias for shared mobile renderer
+        "gameLogs":        [
+            {
+                **m,
+                "venue":    "neutral",
+                "score":    m.get("matchScore") or m.get("score"),
+                "opponent": m.get("opponent") or m.get("opponentName"),
+                "value":    m.get("value"),
+            }
+            for m in match_logs[:15]
+        ],
         "bayesianMetrics": {
             "priorMean":       result["priorMean"],
             "momentumMean":    result["momentumMean"],

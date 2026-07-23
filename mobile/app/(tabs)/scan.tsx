@@ -724,7 +724,7 @@ export default function ScanScreen() {
       }
       setPrediction(result);
       setPredictionRequest(req);
-      setTacticalAnalysis(tacText || null);
+      setTacticalAnalysis(tacText || result.tacticalBreakdown || null);
       setShowAltPlayers(false);
       setPhase('result');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -3588,6 +3588,57 @@ export default function ScanScreen() {
               })()}
             </View>
 
+            {/* ─── MATCHUP OVERVIEW (non-soccer sports) ─── */}
+            {prediction.matchupOverview && prediction.sport !== 'soccer' && (() => {
+              const mo = prediction.matchupOverview!;
+              const homeTeam = mo.homeTeam || '';
+              const awayTeam = mo.awayTeam || '';
+              const ml = mo.moneyline as { home?: number; away?: number } | undefined;
+              return (
+                <View style={{ backgroundColor: '#111', borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: '#222' }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+                    <Ionicons name="stats-chart-outline" size={11} color={Colors.primary} />
+                    <Text style={{ fontSize: 10, fontWeight: '800', color: Colors.textSecondary, letterSpacing: 1 }}>MATCHUP</Text>
+                    {mo.expectedGameType ? (
+                      <View style={{ marginLeft: 'auto', backgroundColor: Colors.primary + '18', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, borderWidth: 1, borderColor: Colors.primary + '33' }}>
+                        <Text style={{ fontSize: 9, color: Colors.primary, fontWeight: '700', letterSpacing: 0.4 }}>
+                          {(mo.expectedGameType as string).toUpperCase()}
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <View style={{ alignItems: 'center', flex: 1 }}>
+                      <Text style={{ fontSize: 13, fontWeight: '800', color: Colors.primary }} numberOfLines={1}>{homeTeam}</Text>
+                      <Text style={{ fontSize: 9, color: Colors.textTertiary, marginTop: 2 }}>HOME</Text>
+                      {ml?.home != null && (
+                        <Text style={{ fontSize: 11, color: (ml.home as number) < 0 ? Colors.success : Colors.textSecondary, fontWeight: '700', marginTop: 2 }}>
+                          {(ml.home as number) > 0 ? `+${ml.home}` : ml.home}
+                        </Text>
+                      )}
+                    </View>
+                    <View style={{ alignItems: 'center', paddingHorizontal: 8 }}>
+                      <Text style={{ fontSize: 12, color: Colors.textTertiary, fontWeight: '700' }}>VS</Text>
+                    </View>
+                    <View style={{ alignItems: 'center', flex: 1 }}>
+                      <Text style={{ fontSize: 13, fontWeight: '800', color: Colors.text }} numberOfLines={1}>{awayTeam}</Text>
+                      <Text style={{ fontSize: 9, color: Colors.textTertiary, marginTop: 2 }}>AWAY</Text>
+                      {ml?.away != null && (
+                        <Text style={{ fontSize: 11, color: (ml.away as number) < 0 ? Colors.success : Colors.textSecondary, fontWeight: '700', marginTop: 2 }}>
+                          {(ml.away as number) > 0 ? `+${ml.away}` : ml.away}
+                        </Text>
+                      )}
+                    </View>
+                  </View>
+                  {mo.keyMatchupFactor ? (
+                    <View style={{ marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#222' }}>
+                      <Text style={{ fontSize: 11, color: Colors.textSecondary, lineHeight: 16 }}>{mo.keyMatchupFactor as string}</Text>
+                    </View>
+                  ) : null}
+                </View>
+              );
+            })()}
+
             {/* ─── GAME LOG GRID ─── */}
             {prediction.gameLogs && prediction.gameLogs.length > 0 && (() => {
               const realLogs = prediction.gameLogs!.filter(g => !g.synthetic);
@@ -4303,9 +4354,8 @@ export default function ScanScreen() {
               );
             })()}
 
-            {/* ─── SOCCER AI ANALYSIS CARD ─── */}
-            {prediction.sport === 'soccer' && (
-              (prediction.sharpSummary || prediction.reasoning || prediction.tacticalBreakdown || (prediction.tacticalAlerts && prediction.tacticalAlerts.length > 0)) && (() => {
+            {/* ─── AI ANALYSIS CARD ─── */}
+            {(prediction.sharpSummary || prediction.reasoning || prediction.tacticalBreakdown || (prediction.tacticalAlerts && prediction.tacticalAlerts.length > 0)) && (() => {
                 const isOver = prediction.recommendation === 'OVER';
                 const isUnder = prediction.recommendation === 'UNDER';
                 const recColor = isOver ? Colors.success : isUnder ? Colors.error : Colors.textSecondary;
@@ -4425,11 +4475,10 @@ export default function ScanScreen() {
                     )}
                   </View>
                 );
-              })()
-            )}
+              })()}
 
             {/* ─── TACTICAL AI DEEP ANALYSIS ─── */}
-            {prediction.sport === 'soccer' && tacticalAnalysis && (() => {
+            {tacticalAnalysis && (() => {
               const isOver = prediction.recommendation === 'OVER';
               const isUnder = prediction.recommendation === 'UNDER';
               const recColor = isOver ? Colors.success : isUnder ? Colors.error : Colors.textSecondary;
@@ -4510,7 +4559,7 @@ export default function ScanScreen() {
             )}
 
             {/* ─── RISK & CONGESTION SIGNALS ─── */}
-            {prediction.sport === 'soccer' && (prediction.riskSignals || prediction.congestion) && (() => {
+            {(prediction.riskSignals || prediction.congestion) && (() => {
               const risk = prediction.riskSignals;
               const cong = prediction.congestion;
               const riskColor = risk?.redCardRisk === 'high' ? '#FF6B35'

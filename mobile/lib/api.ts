@@ -583,10 +583,12 @@ interface RawPrediction {
     expectedPossession?: { home: number; away: number };
     homeTeam?: string;
     awayTeam?: string;
-    moneyline?: { home: string; draw: string; away: string };
+    playerIsHome?: boolean;
+    moneyline?: { home: number | string; draw?: number | string; away: number | string };
     favorite?: string;
     expectedGameType?: string;
     keyMatchupFactor?: string;
+    surface?: string;
   };
   positionComparison?: Record<string, unknown>;
   keyEvidence?: string;
@@ -1450,9 +1452,10 @@ export async function wtaPredict(request: Record<string, unknown>, signal?: Abor
 
   const gameLogs = (raw.matchLogs || raw.gameLogs || []).map((g: any) => ({
     date:     g.date ?? '',
-    opponent: g.opponent ?? '',
-    venue:    g.wonMatch === true ? 'home' : g.wonMatch === false ? 'away' : '',
-    value:    g.totalGames ?? g.playerGamesWon ?? null,
+    opponent: g.opponent ?? g.opponentName ?? '',
+    venue:    g.venue ?? 'neutral',
+    value:    g.value ?? g.totalGames ?? g.playerGamesWon ?? null,
+    score:    g.score ?? g.matchScore ?? undefined,
     minutes:  0,
     sport:    'wta',
     surface:  g.surface ?? '',
@@ -1484,8 +1487,9 @@ export async function wtaPredict(request: Record<string, unknown>, signal?: Abor
     recommendation:      rec,
     pOver:               raw.pOver,
     pUnder:              raw.pUnder,
-    sharpSummary:        raw.sharpSummary,
-    reasoning:           raw.reasoning,
+    sharpSummary:        raw.sharpSummary      || undefined,
+    reasoning:           raw.reasoning         || undefined,
+    tacticalBreakdown:   raw.tacticalBreakdown || undefined,
     surface:             raw.surface,
     round:               raw.round,
     tournament:          raw.tournament,
@@ -1493,6 +1497,14 @@ export async function wtaPredict(request: Record<string, unknown>, signal?: Abor
     opponentRank:        raw.opponentRank,
     h2h:                 raw.h2h,
     gameLogs,
+    matchupOverview: raw.matchupOverview ? {
+      homeTeam:         raw.matchupOverview.homeTeam,
+      awayTeam:         raw.matchupOverview.awayTeam,
+      playerIsHome:     raw.matchupOverview.playerIsHome,
+      surface:          raw.matchupOverview.surface,
+      expectedGameType: raw.matchupOverview.expectedGameType,
+      keyMatchupFactor: raw.matchupOverview.keyMatchupFactor,
+    } : undefined,
     bayesianMetrics: {
       priorMean:       bm.priorMean,
       momentumMean:    bm.momentumMean,
@@ -2016,6 +2028,14 @@ export async function mlbPredict(request: Record<string, unknown>, signal?: Abor
     tacticalBreakdown:  raw.tacticalBreakdown || undefined,
     streakFlag:         raw.streakFlag        ?? '',
     gameLogs,
+    matchupOverview: raw.matchupOverview ? {
+      homeTeam:         raw.matchupOverview.homeTeam,
+      awayTeam:         raw.matchupOverview.awayTeam,
+      playerIsHome:     raw.matchupOverview.playerIsHome,
+      expectedGameType: raw.matchupOverview.expectedGameType,
+      keyMatchupFactor: raw.matchupOverview.keyMatchupFactor,
+      moneyline:        raw.matchupOverview.moneyline ?? raw.moneyline,
+    } : (raw.moneyline ? { homeTeam: raw.teamName || '', awayTeam: raw.opponentName || '', playerIsHome: true, moneyline: raw.moneyline } : undefined),
     bayesianMetrics: {
       priorMean:    bm.priorMean    ?? raw.priorMean,
       momentumMean: bm.momentumMean ?? raw.momentum,

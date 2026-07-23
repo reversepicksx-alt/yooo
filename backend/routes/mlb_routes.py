@@ -643,6 +643,37 @@ async def mlb_predict(req: MlbPredictRequest):
         response.setdefault("reasoning", "")
         response.setdefault("tacticalBreakdown", "")
 
+    # ── Standard matchupOverview (unified UI — works for all sports) ─────────
+    _home_team = team_name if venue == "home" else (req.opponentName or "Opponent")
+    _away_team = (req.opponentName or "Opponent") if venue == "home" else team_name
+    _gt = effective_game_total
+    if _gt is not None and _gt >= 10:
+        _game_type = "High-scoring game"
+    elif _gt is not None and _gt <= 7:
+        _game_type = "Pitcher's duel"
+    else:
+        _game_type = "Balanced matchup"
+    _bm = response.get("bayesianMetrics", {})
+    _factors = []
+    _park = _bm.get("parkFactorPct", 0.0) or 0.0
+    if abs(_park) >= 2:
+        _factors.append(f"Park {'+' if _park >= 0 else ''}{_park:.1f}%")
+    _era = _bm.get("eraFactor", 1.0) or 1.0
+    if abs(_era - 1.0) > 0.05:
+        _factors.append("ERA favors " + ("batter" if _era > 1.0 else "pitcher"))
+    _plat = _bm.get("platoonSplitMult", 1.0) or 1.0
+    if abs(_plat - 1.0) > 0.03:
+        _factors.append(f"Platoon {'+' if _plat >= 1.0 else ''}{(_plat - 1) * 100:.0f}%")
+    response["matchupOverview"] = {
+        "homeTeam":         _home_team,
+        "awayTeam":         _away_team,
+        "playerIsHome":     venue == "home",
+        "expectedGameType": _game_type,
+        "keyMatchupFactor": " | ".join(_factors) if _factors else None,
+    }
+    if response.get("moneyline"):
+        response["matchupOverview"]["moneyline"] = response["moneyline"]
+
     # Cache prediction in MongoDB for analytics (upsert by player+prop+line+date)
     today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     try:
@@ -756,11 +787,18 @@ def _enrich_game_logs(display_logs: list, team_games: list, player_team_name: st
         home_runs = (game.get("home_team_data") or {}).get("runs")
         away_runs = (game.get("away_team_data") or {}).get("runs")
 
+        score_str = (
+            f"{home_runs}-{away_runs}"
+            if home_runs is not None and away_runs is not None
+            else None
+        )
         return {
             **log,
             "gameDate":  log_date or None,
             "opponent":  opp_obj.get("abbreviation") or None,
             "isHome":    is_home,
+            "venue":     "home" if is_home else "away",
+            "score":     score_str,
             "homeScore": home_runs,
             "awayScore": away_runs,
         }
