@@ -959,9 +959,11 @@ async def _statsapi_schedule_next_game(team_id: int, today_str: str) -> dict:
         "gameType":  "R",
     })
     for date_entry in data.get("dates", []):
+        if (date_entry.get("date") or "") < today_str:
+            continue  # skip any past-date entries the API may return
         for game in date_entry.get("games", []):
             state = (game.get("status") or {}).get("abstractGameState", "")
-            if state == "Final":
+            if state in ("Final", "Game Over"):
                 continue
             teams = game.get("teams") or {}
             home_team = teams.get("home", {}).get("team", {})
