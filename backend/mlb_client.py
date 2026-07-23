@@ -397,6 +397,156 @@ async def _statsapi_season_stats(player_id: int, season: int, group: str = "hitt
         }
 
 
+# ── MLB Stats API team lookup cache ──────────────────────────────────────────
+_MLB_TEAMS_CACHE: dict = {}       # teamId → team object
+_MLB_TEAMS_CACHE_TIME: float = 0.0
+_MLB_TEAMS_TTL: float = 86400.0   # 24h — team rosters change slowly
+
+
+async def _get_mlb_teams() -> list:
+    """Fetch (and memory-cache for 24 h) the full MLB team list from Stats API."""
+    global _MLB_TEAMS_CACHE, _MLB_TEAMS_CACHE_TIME
+    if _MLB_TEAMS_CACHE and (time.time() - _MLB_TEAMS_CACHE_TIME) < _MLB_TEAMS_TTL:
+        return list(_MLB_TEAMS_CACHE.values())
+    data = await _statsapi_get("/teams", {"sportId": 1})
+    teams = data.get("teams", [])
+    _MLB_TEAMS_CACHE = {t["id"]: t for t in teams}
+    _MLB_TEAMS_CACHE_TIME = time.time()
+    return teams
+
+
+async def _resolve_opp_team_id(opp_name: str) -> int:
+    """Fuzzy-match an opponent name / abbreviation to an MLB Stats API team ID.
+
+    Checks (in order): abbreviation exact-match, full name contains, location
+    name contains, shortName contains, or the token is a substring of any field.
+    Returns 0 when no match is found.
+    """
+    if not opp_name:
+        return 0
+    q = opp_name.strip().lower()
+    teams = await _get_mlb_teams()
+    # Exact abbreviation match first (fastest / most precise)
+    for t in teams:
+        if t.get("abbreviation", "").lower() == q:
+            return t["id"]
+    # Broader fuzzy pass
+    for t in teams:
+        name  = t.get("name", "").lower()
+        loc   = t.get("locationName", "").lower()
+        short = t.get("shortName", "").lower()
+        if q in name or q in loc or q in short or loc in q or short in q:
+            return t["id"]
+    return 0
+
+
+async def get_player_h2h_stats(
+    player_name: str,
+    opp_name: str,
+    season: int,
+    group: str = "pitching",
+    player_statsapi_id: int = 0,
+) -> Optional[dict]:
+    """Fetch a player's head-to-head aggregate stats vs a specific opposing team.
+
+    Tries the current season first (more recent signal); falls back to
+    career-cumulative when the seasonal sample is too small (< 2 games).
+
+    Returns a dict with:
+        gamesPlayed  — how many games in the H2H sample
+        source       — "season" | "career"
+        rawStat      — the raw stat dict from StatsAPI (keys = StatsAPI field names)
+        oppTeamId    — resolved MLB Stats API team ID
+    Returns None when the opponent cannot be resolved or no H2H data exists.
+    """
+    if not opp_name or not (player_name or player_statsapi_id):
+        return None
+
+    # Resolve opposing team ID
+    opp_team_id = await _resolve_opp_team_id(opp_name)
+    if not opp_team_id:
+        log.debug(f"[H2H] Could not resolve team ID for opponent '{opp_name}'")
+        return None
+
+    # Resolve player's StatsAPI ID (skip search when caller already knows it)
+    sa_id = player_statsapi_id
+    if not sa_id and player_name:
+        candidates = await _statsapi_search_players(player_name, limit=3)
+        if not candidates:
+            log.debug(f"[H2H] StatsAPI player not found: {player_name}")
+            return None
+        sa_id = candidates[0]["id"]
+
+    async def _fetch_split(stats_type: str, with_season: bool) -> Optional[dict]:
+        """Fetch one vsTeam* split and return (gp, source, rawStat) or None."""
+        params: dict = {"stats": stats_type, "group": group, "opposingTeamId": opp_team_id}
+        if with_season:
+            params["season"] = season
+        try:
+            data = await _statsapi_get(f"/people/{sa_id}/stats", params)
+        except Exception:
+            return None
+        splits: list = []
+        for sb in data.get("stats", []):
+            splits.extend(sb.get("splits", []))
+        if not splits:
+            return None
+        st = splits[0].get("stat", {})
+        gp = int(st.get("gamesPlayed") or st.get("gamesPitched") or 0)
+        if gp < 1:
+            return None
+        return {"gamesPlayed": gp,
+                "source": "season" if with_season else "career",
+                "rawStat": st}
+
+    # Fetch overall + venue splits concurrently (current season first, career fallback)
+    import asyncio as _aio
+    (overall_s, home_s, away_s,
+     overall_c, home_c, away_c) = await _aio.gather(
+        _fetch_split("vsTeam",     True),
+        _fetch_split("vsTeamHome", True),
+        _fetch_split("vsTeamAway", True),
+        _fetch_split("vsTeam",     False),
+        _fetch_split("vsTeamHome", False),
+        _fetch_split("vsTeamAway", False),
+        return_exceptions=True,
+    )
+    def _safe(x): return x if isinstance(x, dict) else None
+
+    # Best overall: season if usable (≥1 gp), else career
+    best_overall = _safe(overall_s) if (_safe(overall_s) or {}).get("gamesPlayed", 0) >= 1 \
+                   else _safe(overall_c)
+    if not best_overall:
+        log.debug(f"[H2H] No data for {player_name} vs {opp_name}")
+        return None
+
+    # Best venue splits (prefer season, fall back to career)
+    def _best_split(season_split, career_split, label):
+        s = _safe(season_split)
+        c = _safe(career_split)
+        chosen = s if (s or {}).get("gamesPlayed", 0) >= 1 else c
+        if chosen:
+            log.info(f"[H2H] {player_name} vs {opp_name} {label} ({chosen['source']}): "
+                     f"{chosen['gamesPlayed']} games, teamId={opp_team_id}, sa_id={sa_id}")
+        return chosen
+
+    home_split = _best_split(home_s, home_c, "HOME")
+    away_split = _best_split(away_s, away_c, "AWAY")
+
+    gp = best_overall["gamesPlayed"]
+    log.info(f"[H2H] {player_name} vs {opp_name} overall ({best_overall['source']}): "
+             f"{gp} games, teamId={opp_team_id}, sa_id={sa_id}")
+
+    return {
+        "gamesPlayed": gp,
+        "source":      best_overall["source"],
+        "rawStat":     best_overall["rawStat"],
+        "oppTeamId":   opp_team_id,
+        "homeSplit":   home_split,   # player's stats vs this team when at HOME
+        "awaySplit":   away_split,   # player's stats vs this team when AWAY
+    }
+
+
 async def search_players(query: str, limit: int = 15) -> list:
     """Search BDL for players by name.
 

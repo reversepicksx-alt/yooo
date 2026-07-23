@@ -49,6 +49,8 @@ async def _get_mlb_ai_analysis(
     rolling_k_rate: Optional[float] = None,
     pitcher_role: str = "",
     pitch_traj_mult: float = 1.0,
+    # v4 H2H
+    h2h_stats: Optional[dict] = None,
 ) -> dict:
     """Gemini AI: MLB sharp verdict + reasoning — v2 Ultra with all 9 model layers."""
     is_pitcher = prop_type in mlb_engine.PITCHER_PROPS
@@ -155,12 +157,45 @@ async def _get_mlb_ai_analysis(
             f"Model has discounted OVER probability accordingly."
         )
 
+    # H2H context for AI prompt
+    h2h_text = ""
+    if h2h_stats and h2h_stats.get("gamesPlayed", 0) >= 2:
+        _h2h_gp   = h2h_stats["gamesPlayed"]
+        _h2h_avg  = h2h_stats.get("avgStat")   # may not be set here — bayesianMetrics has it
+        _h2h_src  = h2h_stats.get("source", "")
+        _h2h_raw  = h2h_stats.get("rawStat", {})
+        _h2h_wt   = h2h_stats.get("weight", 0.0)
+        # Build human-readable snippet from rawStat
+        _h2h_parts = []
+        if is_pitcher:
+            k  = _h2h_raw.get("strikeOuts")
+            ip = _h2h_raw.get("inningsPitched")
+            er = _h2h_raw.get("earnedRuns")
+            era = _h2h_raw.get("era")
+            if k is not None:  _h2h_parts.append(f"{k} K total ({round(float(k)/_h2h_gp,1)}/start)")
+            if ip is not None: _h2h_parts.append(f"{ip} IP total")
+            if era is not None and float(era or 0): _h2h_parts.append(f"ERA {era}")
+        else:
+            h   = _h2h_raw.get("hits")
+            hr  = _h2h_raw.get("homeRuns")
+            avg = _h2h_raw.get("avg")
+            bb  = _h2h_raw.get("baseOnBalls")
+            if avg:  _h2h_parts.append(f".{str(float(avg)).replace('0.','').replace('.','')[:3]} AVG")
+            if hr is not None: _h2h_parts.append(f"{hr} HR")
+            if h  is not None: _h2h_parts.append(f"{h} H total")
+            if bb is not None: _h2h_parts.append(f"{bb} BB")
+        _h2h_detail = ", ".join(_h2h_parts) if _h2h_parts else "limited data"
+        h2h_text = (
+            f"\nHead-to-head vs {opponent} ({_h2h_gp} {_h2h_src} games): "
+            f"{_h2h_detail}. H2H applied {round((_h2h_wt or 0)*100)}% weight to projection."
+        )
+
     prompt = f"""MLB Props sharp analysis (for experienced sports bettors) — v2 Ultra:
 
 Player: {player_name} ({position})
 Prop: {prop_label} | Line: {line} | Venue: {venue.upper()} vs {opponent or 'TBD'}
 Season avg: {prior_mean:.1f} | Recent form: {momentum_label}
-Model projection: {projection:.1f} → {recommendation} (P(OVER)={p_over}%, P(UNDER)={p_under}%){streak_text}{park_text}{pitcher_text}{platoon_text}{era_text}{total_text}{lineup_text}{babip_text}{krate_text}{role_text}{risk_text}
+Model projection: {projection:.1f} → {recommendation} (P(OVER)={p_over}%, P(UNDER)={p_under}%){streak_text}{park_text}{pitcher_text}{platoon_text}{era_text}{total_text}{lineup_text}{babip_text}{krate_text}{role_text}{risk_text}{h2h_text}
 
 Recent game log (G1 = most recent):
 {game_ctx}
@@ -537,6 +572,31 @@ async def mlb_predict(req: MlbPredictRequest):
     if batter_hand and batter_hand not in ("L", "R", "S"):
         batter_hand = None
 
+    # ── H2H: fetch head-to-head stats vs the opponent team ────────────────────
+    # For BDL players (id < 100k): StatsAPI name search → vsTeam aggregate.
+    # For StatsAPI players (id >= 100k): use player_id directly as the SA ID.
+    # Non-fatal: any error leaves h2h_stats = None (neutral / no adjustment).
+    h2h_stats = None
+    if req.opponentName and req.playerName:
+        _PITCHER_POSITIONS_SET = {"SP", "RP", "P", "CL", "SU", "MR", "LR"}
+        _h2h_group = "pitching" if (position or "").upper() in _PITCHER_POSITIONS_SET else "hitting"
+        try:
+            _h2h_sa_id = player_id if player_id >= _STATSAPI_THRESHOLD else 0
+            h2h_stats = await mlb_client.get_player_h2h_stats(
+                player_name        = req.playerName,
+                opp_name           = req.opponentName,
+                season             = req.season,
+                group              = _h2h_group,
+                player_statsapi_id = _h2h_sa_id,
+            )
+            if h2h_stats:
+                log.info(
+                    f"[MLB PREDICT] H2H {req.playerName} vs {req.opponentName}: "
+                    f"gp={h2h_stats['gamesPlayed']} ({h2h_stats['source']})"
+                )
+        except Exception as _h2h_err:
+            log.warning(f"[MLB PREDICT] H2H fetch non-fatal: {_h2h_err}")
+
     # ── Run engine v2 ─────────────────────────────────────────────────────────
     result = mlb_engine.compute_mlb_projection(
         game_logs           = game_logs,
@@ -552,12 +612,21 @@ async def mlb_predict(req: MlbPredictRequest):
         pitcher_era         = req.pitcherEra,
         game_total          = effective_game_total,
         lineup_spot         = req.lineupSpot,
+        h2h_stats           = h2h_stats,
     )
 
     # ── Enrich game log tiles with opponent/date/venue from team schedule ──────
     if team_games and result.get("gameLogs"):
         result["gameLogs"] = _enrich_game_logs(
             result["gameLogs"], team_games, team_name
+        )
+
+    # ── StatsAPI positional enrichment for BDL players (no dates from /stats) ─
+    # BDL /stats never includes dates or opponent info. For players with id < 100k,
+    # look them up in MLB Stats API by name and merge date/opponent/isHome/venue/won.
+    if player_id < _STATSAPI_THRESHOLD and result.get("gameLogs"):
+        result["gameLogs"] = await _statsapi_enrich_game_logs(
+            result["gameLogs"], req.playerName, position, req.season
         )
 
     bm = result.get("bayesianMetrics", {})
@@ -599,6 +668,7 @@ async def mlb_predict(req: MlbPredictRequest):
         rolling_k_rate     = bm.get("rollingKRate"),
         pitcher_role       = bm.get("pitcherRole", ""),
         pitch_traj_mult    = bm.get("pitchTrajMult", 1.0),
+        h2h_stats          = h2h_stats,
     ))
 
     # ── Build response (same shape as soccer predict for UI compatibility) ────
@@ -744,6 +814,67 @@ async def _fetch_mlb_data(player_id: int, season: int, team_id: int = 0):
         prev_stats = prev2_stats
 
     return game_logs, season_stats, prev_stats, team_games
+
+
+async def _statsapi_enrich_game_logs(game_logs: list, player_name: str, position: str, season: int) -> list:
+    """For BDL players (id < 100k) whose /stats records lack dates, fetch the
+    corresponding MLB Stats API per-game schedule and positionally merge
+    date / opponent / isHome / venue / won into the BDL logs.
+
+    Both BDL and StatsAPI return games newest-first, so position[i] in BDL
+    corresponds to position[i] in StatsAPI for the same season.  We fetch
+    current + prior season logs so backfilled prior-season entries also get
+    opponent labels.
+    """
+    if not game_logs or not player_name:
+        return game_logs
+    # Skip if logs already have dates (StatsAPI player or already enriched)
+    if any((gl.get("date") or "")[:4].isdigit() for gl in game_logs[:5]):
+        return game_logs
+    try:
+        _PITCHER_POSITIONS = {"SP", "RP", "P", "CL", "SU", "MR", "LR"}
+        group = "pitching" if (position or "").upper() in _PITCHER_POSITIONS else "hitting"
+
+        candidates = await mlb_client._statsapi_search_players(player_name, limit=3)
+        if not candidates:
+            return game_logs
+        sa_id = candidates[0]["id"]
+
+        import asyncio as _aio
+        sa_curr, sa_prev = await _aio.gather(
+            mlb_client._statsapi_game_logs(sa_id, season,     group=group),
+            mlb_client._statsapi_game_logs(sa_id, season - 1, group=group),
+            return_exceptions=True,
+        )
+        if isinstance(sa_curr, Exception): sa_curr = []
+        if isinstance(sa_prev, Exception): sa_prev = []
+        sa_all = list(sa_curr) + list(sa_prev)
+        if not sa_all:
+            return game_logs
+
+        log.info(f"[MLB ENRICH] StatsAPI positional-enrich: {len(sa_all)} logs for {player_name} (sa_id={sa_id})")
+
+        enriched = list(game_logs)
+        for i, gl in enumerate(enriched):
+            if i >= len(sa_all):
+                break
+            sa  = sa_all[i]
+            gl  = dict(gl)
+            gl["date"]     = sa.get("date") or gl.get("date", "")
+            gl["gameDate"] = gl["date"]
+            gl["opponent"] = sa.get("opponent") or gl.get("opponent")
+            if sa.get("isHome") is not None:
+                gl["isHome"] = sa["isHome"]
+                gl["venue"]  = sa.get("venue") or gl.get("venue")
+            if sa.get("won") is not None:
+                gl["won"] = sa["won"]
+            if sa.get("game_id"):
+                gl["game_id"] = sa["game_id"]
+            enriched[i] = gl
+        return enriched
+    except Exception as _e:
+        log.warning(f"[MLB ENRICH] StatsAPI positional-enrich failed for {player_name}: {_e}")
+        return game_logs
 
 
 def _enrich_game_logs(display_logs: list, team_games: list, player_team_name: str) -> list:

@@ -152,7 +152,64 @@ PARK_FACTORS: dict[str, dict[str, float]] = {
 PARK_BATTER_PROPS = {"hits", "home_runs", "rbi", "runs", "total_bases", "doubles", "hitter_fantasy_points"}
 PARK_PITCHER_PROPS = {"hits_allowed", "earned_runs"}
 
-# ── League-average priors ─────────────────────────────────────────────────────
+# ── H2H stat field mapping: prop_type → StatsAPI stat key ────────────────────
+# Keys must match what MLB Stats API returns inside split.stat for vsTeam calls.
+_H2H_STAT_FIELD: dict[str, str] = {
+    # Pitcher props
+    "pitcher_strikeouts":  "strikeOuts",
+    "innings_pitched":     "inningsPitched",
+    "pitching_outs":       "inningsPitched",   # converted to outs in _compute_h2h_mean
+    "hits_allowed":        "hits",
+    "walks_allowed":       "baseOnBalls",
+    "earned_runs":         "earnedRuns",
+    # Batter props
+    "hits":                "hits",
+    "home_runs":           "homeRuns",
+    "walks":               "baseOnBalls",
+    "strikeouts":          "strikeOuts",
+    "runs":                "runs",
+    "rbi":                 "rbi",
+    "total_bases":         "totalBases",
+    "stolen_bases":        "stolenBases",
+    "doubles":             "doubles",
+    "plate_appearances":   "plateAppearances",
+    "at_bats":             "atBats",
+}
+
+# H2H weight table: how much H2H nudges the posterior (scales with sample size)
+# 0% below 2 games (noise), ramps to 20% cap at 10+ games.
+_H2H_WEIGHT_TABLE: dict[int, float] = {
+    2: 0.05, 3: 0.08, 4: 0.10, 5: 0.12,
+    6: 0.14, 7: 0.16, 8: 0.18, 9: 0.19,
+}
+_H2H_WEIGHT_MAX = 0.20
+
+
+def _compute_h2h_mean(raw_stat: dict, prop_type: str, gp: int) -> Optional[float]:
+    """Return per-game H2H average for *prop_type* from StatsAPI vsTeam raw_stat dict.
+
+    Returns None when the field is absent or cannot be converted.
+    """
+    if not raw_stat or not gp or gp <= 0:
+        return None
+    field = _H2H_STAT_FIELD.get(prop_type)
+    if not field:
+        return None
+    val = raw_stat.get(field)
+    if val is None:
+        return None
+    try:
+        fval = float(val)
+        if prop_type == "pitching_outs":
+            # inningsPitched comes as "5.2" (decimal) — convert to outs
+            fval = (_ip_to_float(val) or fval) * 3
+        elif prop_type == "innings_pitched":
+            fval = _ip_to_float(val) or fval
+        return round(fval / gp, 3) if fval >= 0 else None
+    except (ValueError, TypeError):
+        return None
+
+
 _LEAGUE_PRIORS = {
     "hits": 1.05, "home_runs": 0.18, "rbi": 0.70, "walks": 0.38,
     "strikeouts": 0.90, "runs": 0.58, "total_bases": 1.60,
@@ -1068,6 +1125,8 @@ def compute_mlb_projection(
     # ── v3 parameters ────────────────────────────────────────────────────────
     umpire_name:        Optional[str]   = None, # home plate umpire full name (lowercase)
     rest_days:          Optional[int]   = None, # days since pitcher's last outing
+    # ── v4 parameters ────────────────────────────────────────────────────────
+    h2h_stats:          Optional[dict]  = None, # head-to-head stats vs opponent team
 ) -> dict:
     """
     v3 Ultra MLB Bayesian projection.
@@ -1283,6 +1342,51 @@ def compute_mlb_projection(
         capped_days = min(rest_days, 5)
         rest_mult   = rest_table.get(capped_days, 1.0)
         posterior_mean *= rest_mult
+
+    # ── LAYER 12: HEAD-TO-HEAD (H2H) ADJUSTMENT ──────────────────────────────
+    # Blends historical performance vs this specific opponent into the posterior.
+    # Uses venue-specific split (home/away) when available and large enough;
+    # falls back to the overall H2H aggregate.
+    # Weight scales with sample size (5% at 2 games → 20% at 10+ games).
+    h2h_mean_val   = None
+    h2h_weight_val = 0.0
+    h2h_gp         = 0
+    h2h_source     = None
+    h2h_venue_used = "overall"
+    if h2h_stats:
+        # Prefer venue-specific split when the player's venue is known
+        _venue_split = None
+        if venue == "home" and h2h_stats.get("homeSplit"):
+            _s = h2h_stats["homeSplit"]
+            if _s.get("gamesPlayed", 0) >= 2:
+                _venue_split = _s
+                h2h_venue_used = "home"
+        elif venue == "away" and h2h_stats.get("awaySplit"):
+            _s = h2h_stats["awaySplit"]
+            if _s.get("gamesPlayed", 0) >= 2:
+                _venue_split = _s
+                h2h_venue_used = "away"
+
+        _effective = _venue_split if _venue_split else h2h_stats
+        h2h_gp     = _effective.get("gamesPlayed", 0)
+        h2h_source = _effective.get("source") or h2h_stats.get("source")
+        raw        = _effective.get("rawStat", {})
+
+        if h2h_gp >= 2:
+            h2h_mean_val = _compute_h2h_mean(raw, prop_type, h2h_gp)
+            if h2h_mean_val is not None and h2h_mean_val >= 0:
+                h2h_weight_val = _H2H_WEIGHT_TABLE.get(min(h2h_gp, 9), _H2H_WEIGHT_MAX)
+                pre_h2h = posterior_mean
+                posterior_mean = (
+                    (1.0 - h2h_weight_val) * posterior_mean
+                    + h2h_weight_val       * h2h_mean_val
+                )
+                import logging as _log
+                _log.getLogger("mlb_engine").info(
+                    f"[H2H] venue={h2h_venue_used}, gp={h2h_gp} ({h2h_source}), "
+                    f"h2h_mean={h2h_mean_val:.2f}, weight={h2h_weight_val:.0%}, "
+                    f"{pre_h2h:.2f} → {posterior_mean:.2f}"
+                )
 
     # ── EFFECTIVE STD ────────────────────────────────────────────────────────
     posterior_std = math.sqrt(max(0.1, 1.0 / total_precision))
@@ -1536,6 +1640,13 @@ def compute_mlb_projection(
             "rollingBabip":       rolling_babip,
             "kRateMult":          round(krate_mult, 4),
             "rollingKRate":       rolling_k_rate,
+            # ── v4 H2H ────────────────────────────────────────────────────
+            "h2h": {
+                "gamesPlayed": h2h_gp,
+                "avgStat":     round(h2h_mean_val, 2) if h2h_mean_val is not None else None,
+                "weight":      round(h2h_weight_val, 3),
+                "source":      h2h_source,
+            } if h2h_stats else None,
         },
         "gameLogs":     display_logs,
         "sampleSize":   n_games,
