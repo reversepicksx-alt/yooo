@@ -477,9 +477,10 @@ async def get_player_h2h_stats(
             return None
         sa_id = candidates[0]["id"]
 
-    async def _fetch_split(stats_type: str, with_season: bool) -> Optional[dict]:
-        """Fetch one vsTeam* split and return (gp, source, rawStat) or None."""
-        params: dict = {"stats": stats_type, "group": group, "opposingTeamId": opp_team_id}
+    async def _fetch_vsTeam(with_season: bool) -> Optional[dict]:
+        """Fetch vsTeam aggregate stats. MLB Stats API only supports the overall
+        vsTeam type — vsTeamHome/vsTeamAway return 400, so we use one request."""
+        params: dict = {"stats": "vsTeam", "group": group, "opposingTeamId": opp_team_id}
         if with_season:
             params["season"] = season
         try:
@@ -499,51 +500,35 @@ async def get_player_h2h_stats(
                 "source": "season" if with_season else "career",
                 "rawStat": st}
 
-    # Fetch overall + venue splits concurrently (current season first, career fallback)
+    # Fetch current-season AND career in parallel; prefer season if it has data
     import asyncio as _aio
-    (overall_s, home_s, away_s,
-     overall_c, home_c, away_c) = await _aio.gather(
-        _fetch_split("vsTeam",     True),
-        _fetch_split("vsTeamHome", True),
-        _fetch_split("vsTeamAway", True),
-        _fetch_split("vsTeam",     False),
-        _fetch_split("vsTeamHome", False),
-        _fetch_split("vsTeamAway", False),
+    season_data, career_data = await _aio.gather(
+        _fetch_vsTeam(True),
+        _fetch_vsTeam(False),
         return_exceptions=True,
     )
     def _safe(x): return x if isinstance(x, dict) else None
 
-    # Best overall: season if usable (≥1 gp), else career
-    best_overall = _safe(overall_s) if (_safe(overall_s) or {}).get("gamesPlayed", 0) >= 1 \
-                   else _safe(overall_c)
-    if not best_overall:
+    best = _safe(season_data) if (_safe(season_data) or {}).get("gamesPlayed", 0) >= 1 \
+           else _safe(career_data)
+    if not best:
         log.debug(f"[H2H] No data for {player_name} vs {opp_name}")
         return None
 
-    # Best venue splits (prefer season, fall back to career)
-    def _best_split(season_split, career_split, label):
-        s = _safe(season_split)
-        c = _safe(career_split)
-        chosen = s if (s or {}).get("gamesPlayed", 0) >= 1 else c
-        if chosen:
-            log.info(f"[H2H] {player_name} vs {opp_name} {label} ({chosen['source']}): "
-                     f"{chosen['gamesPlayed']} games, teamId={opp_team_id}, sa_id={sa_id}")
-        return chosen
-
-    home_split = _best_split(home_s, home_c, "HOME")
-    away_split = _best_split(away_s, away_c, "AWAY")
-
-    gp = best_overall["gamesPlayed"]
-    log.info(f"[H2H] {player_name} vs {opp_name} overall ({best_overall['source']}): "
+    gp = best["gamesPlayed"]
+    log.info(f"[H2H] {player_name} vs {opp_name} ({best['source']}): "
              f"{gp} games, teamId={opp_team_id}, sa_id={sa_id}")
 
     return {
         "gamesPlayed": gp,
-        "source":      best_overall["source"],
-        "rawStat":     best_overall["rawStat"],
+        "source":      best["source"],
+        "rawStat":     best["rawStat"],
         "oppTeamId":   opp_team_id,
-        "homeSplit":   home_split,   # player's stats vs this team when at HOME
-        "awaySplit":   away_split,   # player's stats vs this team when AWAY
+        # MLB Stats API does not expose per-venue vsTeam splits (vsTeamHome/Away → 400).
+        # Venue-awareness is handled at the engine level by combining the overall H2H
+        # with the existing venue multiplier (Layer 3) that is already applied upstream.
+        "homeSplit":   None,
+        "awaySplit":   None,
     }
 
 
