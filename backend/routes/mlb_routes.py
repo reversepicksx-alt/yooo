@@ -328,6 +328,8 @@ async def get_game_context(
 # ── Predict ───────────────────────────────────────────────────────────────────
 
 class MlbPredictRequest(BaseModel):
+    email:             str = ""
+    token:             str = ""
     playerName:        str
     playerId:          Optional[int] = None
     teamName:          Optional[str] = ""
