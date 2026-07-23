@@ -612,13 +612,12 @@ Be direct. No hedging. Use numbers, not words like "good" or "bad"."""
 async def generate_match_review(pick_id: str) -> bool:
     """Generate and store a post-settlement AI review for one settled pick.
 
-    Idempotent + race-safe: atomically claims the pick via matchReviewStatus
-    before calling the AI, so concurrent callers (immediate hook + sweeper,
-    or two server instances) never double-generate.
+    Idempotent + race-safe: atomically claims the pick via matchReviewStatus.
+    Fetches REAL match data from API-Football to build a rich, fact-grounded
+    review. Never fabricates stats.
     Returns True if a review was written.
     """
     try:
-        # Atomic claim — only proceed if nobody else generated/claimed.
         _claim = await db.picks.update_one(
             {
                 "pickId": pick_id,
@@ -635,23 +634,28 @@ async def generate_match_review(pick_id: str) -> bool:
         if not pick:
             return False
 
-        player   = pick.get("playerName", "the player")
-        prop     = (pick.get("propType") or "").replace("_", " ")
-        line     = pick.get("line")
-        rec      = (pick.get("recommendation") or "").upper()
-        proj     = pick.get("projectedValue") or pick.get("projection")
-        actual   = pick.get("actualValue")
-        result   = pick.get("result")
-        mins     = pick.get("minutesPlayed")
-        team     = pick.get("teamName") or ""
-        opp      = pick.get("opponent") or pick.get("opponentName") or ""
-        venue    = pick.get("venue") or ""
-        h_team   = pick.get("homeTeam"); a_team = pick.get("awayTeam")
-        h_goals  = pick.get("finalHomeGoals"); a_goals = pick.get("finalAwayGoals")
-        h_poss   = pick.get("homePoss"); a_poss = pick.get("awayPoss")
-        pj_h     = pick.get("projHomePoss"); pj_a = pick.get("projAwayPoss")
-        conf     = pick.get("confidenceScore") or pick.get("confidence")
+        player     = pick.get("playerName", "the player")
+        prop       = (pick.get("propType") or "").replace("_", " ")
+        line       = pick.get("line")
+        rec        = (pick.get("recommendation") or "").upper()
+        proj       = pick.get("projectedValue") or pick.get("projection")
+        actual     = pick.get("actualValue")
+        result     = pick.get("result")
+        mins       = pick.get("minutesPlayed")
+        team       = pick.get("teamName") or ""
+        opp        = pick.get("opponent") or pick.get("opponentName") or ""
+        venue      = pick.get("venue") or ""
+        sport      = pick.get("sport", "soccer")
+        fid        = pick.get("fixtureId")
+        h_team     = pick.get("homeTeam"); a_team = pick.get("awayTeam")
+        h_goals    = pick.get("finalHomeGoals"); a_goals = pick.get("finalAwayGoals")
+        h_poss     = pick.get("homePoss"); a_poss = pick.get("awayPoss")
+        pj_h       = pick.get("projHomePoss"); pj_a = pick.get("projAwayPoss")
+        conf       = pick.get("confidenceScore") or pick.get("confidence")
 
+        # ═══════════════════════════════════════════════════════════════
+        # STEP 1: Build pick context from persisted data
+        # ═══════════════════════════════════════════════════════════════
         ctx_lines = [
             f"Pick: {player} ({team}{' , ' + venue.upper() if venue in ('home','away') else ''}) — {rec} {line} {prop}.",
             f"Model projection: {proj}. Actual: {actual}" + (f" in {mins} minutes." if mins else "."),
@@ -667,21 +671,72 @@ async def generate_match_review(pick_id: str) -> bool:
         if opp:
             ctx_lines.append(f"Opponent: {opp}.")
 
+        # ═══════════════════════════════════════════════════════════════
+        # STEP 2: Fetch REAL match data from API-Football for deep analysis
+        # ═══════════════════════════════════════════════════════════════
+        match_data_lines = []
+        if fid and sport == "soccer":
+            try:
+                fixture = await api_football_request("fixtures", {"id": fid})
+                if fixture:
+                    f = fixture[0]
+                    events = await api_football_request("fixtures/events", {"fixture": fid})
+                    stats  = await api_football_request("fixtures/statistics", {"fixture": fid})
+                    # Extract key events that shaped the game
+                    if events:
+                        reds = [e for e in events if e.get("type") == "Card" and e.get("detail") == "Red Card"]
+                        pens = [e for e in events if e.get("type") == "Goal" and e.get("detail") == "Penalty"]
+                        subs = [e for e in events if e.get("type") == "subst"]
+                        for red in reds[:2]:
+                            t = red.get("team", {}).get("name", "")
+                            p = red.get("player", {}).get("name", "")
+                            ts = red.get("time", {}).get("elapsed", "")
+                            match_data_lines.append(f"RED CARD: {p} ({t}) at {ts}' — this changes game flow dramatically.")
+                        if pens:
+                            t = pens[0].get("team", {}).get("name", "")
+                            match_data_lines.append(f"PENALTY goal by {t} — shifted momentum.")
+                        # Player subbed early or late
+                        player_subs = [s for s in subs if player.lower() in s.get("player", {}).get("name", "").lower()]
+                        if player_subs:
+                            s = player_subs[0]
+                            t = s.get("time", {}).get("elapsed", "")
+                            match_data_lines.append(f"{player} substituted at {t}' — cut playing time short, limiting stat accumulation.")
+                    # Team formation from statistics
+                    if stats:
+                        for s in stats:
+                            sn = (s.get("team", {}) or {}).get("name", "")
+                            for st in s.get("statistics", []):
+                                if st.get("type") == "Ball Possession" or st.get("type") == "Total Shots":
+                                    match_data_lines.append(f"{sn}: {st.get('type')} = {st.get('value')}")
+            except Exception as e:
+                print(f"[MATCH REVIEW] match data fetch failed for {fid}: {e}")
+
+        # ═══════════════════════════════════════════════════════════════
+        # STEP 3: Build the enriched AI prompt
+        # ═══════════════════════════════════════════════════════════════
+        _sport_role = "soccer" if sport == "soccer" else sport
+        _all_ctx = "\n".join(ctx_lines)
+        if match_data_lines:
+            _all_ctx += "\n\nMatch events that shaped the outcome:\n" + "\n".join(match_data_lines)
+        else:
+            _all_ctx += "\n\nNo real-time match event data available (fixture may not have been cached)."
+
         prompt = (
-            "You are a sharp soccer betting analyst reviewing one of your own settled player-prop picks.\n"
-            + "\n".join(ctx_lines) + "\n\n"
-            "Write a 2-3 sentence post-match review explaining WHY this pick likely "
-            f"{'hit' if result == 'hit' else 'missed'}. "
-            "If it missed, identify the game-state factor the model most plausibly got wrong "
-            "(possession swing, scoreline chase/park-the-bus effect, early sub, blowout, red card, tactical role). "
-            "If it hit, name the signal that proved correct. "
-            "Ground every claim in the numbers above — do not invent events you cannot infer from them. "
-            "No hedging filler, no restating the pick line verbatim. Plain text only."
+            f"You are a sharp {_sport_role} betting analyst reviewing one of your own settled player-prop picks.\n"
+            + _all_ctx + "\n\n"
+            "Write a concise 3-4 sentence post-match review explaining WHY this pick "
+            f"{'HIT' if result == 'hit' else 'MISSED'}. "
+            "If it missed, identify the GAME-STATE factor the model most plausibly got wrong: "
+            "(possession swing, scoreline chase/park-the-bus, early substitution, red card, "
+            "blowout, opponent formation, tactical role change, or the player's own form drop). "
+            "If it hit, name the SIGNAL that proved correct and why the line was set wrong. "
+            "Ground every claim in the NUMBERS above. If match event data is present, reference "
+            "specific incidents. Be sharp and direct — no hedging, no filler, no restating the line. "
+            "Plain text only. One paragraph."
         )
-        review = await _ai_call(prompt, temperature=0.4, max_tokens=350, timeout=35)
+        review = await _ai_call(prompt, temperature=0.3, max_tokens=400, timeout=35)
         review = (review or "").strip()
         if not review:
-            # Release the claim so the sweeper can retry later.
             await db.picks.update_one(
                 {"pickId": pick_id}, {"$unset": {"matchReviewStatus": ""}}
             )

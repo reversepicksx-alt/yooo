@@ -516,12 +516,16 @@ async def mlb_predict(req: MlbPredictRequest):
             gid = todays[0].get("id") if todays else None
             if gid:
                 odds = await mlb_client.get_game_odds(gid)
-                if odds and odds.get("gameTotal") is not None:
-                    effective_game_total = float(odds["gameTotal"])
-                    game_total_source    = "odds"
-                    log.info(f"[MLB PREDICT] Auto game total from odds: "
-                             f"O/U {effective_game_total} (game {gid}, "
-                             f"{odds.get('vendorCount', 0)} vendors)")
+                if odds:
+                    if odds.get("gameTotal") is not None:
+                        effective_game_total = float(odds["gameTotal"])
+                        game_total_source    = "odds"
+                        log.info(f"[MLB PREDICT] Auto game total from odds: "
+                                 f"O/U {effective_game_total} (game {gid}, "
+                                 f"{odds.get('vendorCount', 0)} vendors)")
+                    # Store moneyline so the UI can display it
+                    if odds.get("moneylineHome") is not None or odds.get("moneylineAway") is not None:
+                        log.info(f"[MLB PREDICT] Moneyline fetched for game {gid}")
         except Exception as e:
             log.warning(f"[MLB PREDICT] Auto game-total fetch failed (non-fatal): {e}")
 
@@ -615,6 +619,13 @@ async def mlb_predict(req: MlbPredictRequest):
         "gameTotalSource": game_total_source,
         "generatedAt":    datetime.now(timezone.utc).isoformat(),
     }
+
+    # Attach moneyline when we fetched odds
+    if odds and (odds.get("moneylineHome") is not None or odds.get("moneylineAway") is not None):
+        response["moneyline"] = {
+            "home": odds.get("moneylineHome"),
+            "away": odds.get("moneylineAway"),
+        }
 
     # Await AI result and merge into response — hard 12 s cap so a slow AI
     # never blocks the full predict response from reaching the user.
