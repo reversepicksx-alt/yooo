@@ -3227,4 +3227,22 @@ async def _settle_wta_pick(pick: dict) -> Optional[dict]:
     }
 
 
+@router.post("/picks/{pick_id}/review")
+async def on_demand_match_review(pick_id: str):
+    """Trigger on-demand post-match AI review for a settled pick.
+    Idempotent — returns existing review if already generated."""
+    from ai_engine import generate_match_review
+    pick = await db.picks.find_one({"pickId": pick_id})
+    if not pick:
+        raise HTTPException(status_code=404, detail="Pick not found")
+    if pick.get("matchReview"):
+        return {"ok": True, "matchReview": pick["matchReview"]}
+    await generate_match_review(pick_id)
+    updated = await db.picks.find_one({"pickId": pick_id}, {"matchReview": 1})
+    return {
+        "ok": bool(updated and updated.get("matchReview")),
+        "matchReview": updated.get("matchReview") if updated else None,
+    }
+
+
 # Basketball settlement removed — Soccer only

@@ -1983,6 +1983,12 @@ export default function ScanScreen() {
 
             {wtaResolvedPlayer && !wtaNextMatch?.found && !wtaNextMatchLoading && (
               <>
+                {wtaNextMatch !== null && (
+                  <View style={[styles.scanFillHint, { marginBottom: 8 }]}>
+                    <Ionicons name="information-circle-outline" size={13} color={Colors.textTertiary} />
+                    <Text style={[styles.scanFillHintText, { color: Colors.textTertiary }]}>No upcoming match found — enter opponent manually</Text>
+                  </View>
+                )}
                 <Text style={styles.fieldLabel}>Opponent</Text>
                 <FuzzySearchInput
                   searchType="wta_players"
@@ -2400,7 +2406,8 @@ export default function ScanScreen() {
                   autoCapitalize="words"
                   onSelectMlbPlayer={async (p) => {
                     setMlbResolvedPlayer(p);
-                    setMlbPlayerQuery(p.fullName || `${p.firstName || ''} ${p.lastName || ''}`.trim());
+                    const _mlbName = p.fullName || `${p.firstName || ''} ${p.lastName || ''}`.trim();
+                    if (_mlbName) setMlbPlayerQuery(_mlbName);
                     setMlbNextMatch(null);
                     setMlbOpponentQuery('');
                     Haptics.selectionAsync();

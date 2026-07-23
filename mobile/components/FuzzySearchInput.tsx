@@ -253,7 +253,9 @@ export default function FuzzySearchInput({
     onSelectNhlPlayer?.(p);
   };
   const handleSelectMlbPlayer = (p: MlbPlayer) => {
-    onChangeText(p.fullName || `${p.firstName} ${p.lastName}`.trim()); dismiss(); setResults([]);
+    const name = p.fullName || `${p.firstName || ''} ${p.lastName || ''}`.trim();
+    if (name) onChangeText(name);
+    dismiss(); setResults([]);
     onSelectMlbPlayer?.(p);
   };
   const handleSelectNflPlayer = (p: NflPlayer) => {

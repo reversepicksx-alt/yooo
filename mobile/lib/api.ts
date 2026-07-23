@@ -949,6 +949,18 @@ export async function fetchPickAnalysis(email: string, token: string, pickId: st
   return apiCall<{ found: boolean; analysis?: Record<string, unknown> }>(`/api/picks/analysis?${params.toString()}`);
 }
 
+export async function generateMatchReview(email: string, token: string, pickId: string): Promise<string | null> {
+  try {
+    const res = await apiCall<{ ok: boolean; matchReview?: string }>(
+      `/api/picks/${encodeURIComponent(pickId)}/review`,
+      { method: 'POST', headers: { 'x-user-email': email, 'x-user-token': token, 'Content-Type': 'application/json' }, body: JSON.stringify({}) }
+    );
+    return res?.matchReview ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export interface IntelDashboard {
   topPicks?: unknown[];
   insights?: string;

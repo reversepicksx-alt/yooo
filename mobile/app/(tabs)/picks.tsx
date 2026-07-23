@@ -21,7 +21,7 @@ import SwipeablePickRow from '@/components/SwipeablePickRow';
 import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import NotificationBell from '@/components/NotificationBell';
-import { listPicks, deletePick, fetchPickAnalysis, Pick } from '@/lib/api';
+import { listPicks, deletePick, fetchPickAnalysis, generateMatchReview, Pick } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 
 type Tab = 'live' | 'history';
@@ -703,7 +703,19 @@ export default function PicksScreen() {
     setAnalysisModal({ pick, data: null, loading: true });
     try {
       const result = await fetchPickAnalysis(session.email, session.token, id);
-      setAnalysisModal({ pick, data: result.found ? (result.analysis ?? null) : null, loading: false });
+      const analysis = result.found ? (result.analysis ?? null) : null;
+      setAnalysisModal({ pick, data: analysis, loading: false });
+      // Kick off on-demand review generation in background for settled picks without one
+      const isSettled = pick.status === 'settled' && (pick.result === 'hit' || pick.result === 'miss');
+      if (isSettled && !(pick as any).matchReview) {
+        generateMatchReview(session.email, session.token, id).then(rev => {
+          if (rev) {
+            setAnalysisModal(prev =>
+              prev?.pick === pick ? { ...prev, pick: { ...prev.pick, matchReview: rev } as any } : prev
+            );
+          }
+        }).catch(() => {});
+      }
     } catch {
       setAnalysisModal({ pick, data: null, loading: false });
     }

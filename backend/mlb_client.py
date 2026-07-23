@@ -432,6 +432,15 @@ async def search_players(query: str, limit: int = 15) -> list:
                     existing_ids.add(p["id"])
             players = players[:limit]
 
+    # Normalize: always populate full_name from first+last if BDL left it null
+    for p in players:
+        if not p.get("full_name"):
+            fn = (p.get("first_name") or "").strip()
+            ln = (p.get("last_name") or "").strip()
+            name = f"{fn} {ln}".strip()
+            if name:
+                p["full_name"] = name
+
     if players:
         await _cache_set(key, players)
     return players
