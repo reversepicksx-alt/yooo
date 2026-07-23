@@ -30,7 +30,7 @@ _DEFAULTS = [
     {"sport": "cs2",    "displayName": "CS2",         "icon": "game-controller",   "label": None,         "available": False, "hidden": True},
     {"sport": "wta",    "displayName": "WTA Tennis",  "icon": "tennisball",        "label": None,         "available": True,  "hidden": False},
 ]
-_SPORT_ORDER = ["soccer", "mlb", "nfl", "nba", "nhl", "cs2", "wta"]
+_SPORT_ORDER = ["soccer", "mlb", "wta", "nfl", "nba", "nhl", "cs2"]
 
 
 async def _ensure_seeded() -> None:

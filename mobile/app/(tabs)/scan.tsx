@@ -236,9 +236,10 @@ export default function ScanScreen() {
   // Sport picker modal + server-side sport config
   const [showSportPicker, setShowSportPicker] = useState(false);
   const [sportsConfig, setSportsConfig] = useState<SportConfig[]>([
-    { sport: 'soccer', displayName: 'Soccer',     icon: 'football',        label: null, available: true },
-    { sport: 'mlb',    displayName: 'MLB',         icon: 'baseball',        label: null, available: true },
-    { sport: 'wta',    displayName: 'WTA Tennis',  icon: 'tennisball',      label: null, available: true },
+    { sport: 'soccer', displayName: 'Soccer',     icon: 'football',        label: null,         available: true  },
+    { sport: 'mlb',    displayName: 'MLB',         icon: 'baseball',        label: null,         available: true  },
+    { sport: 'wta',    displayName: 'WTA Tennis',  icon: 'tennisball',      label: null,         available: true  },
+    { sport: 'nfl',    displayName: 'NFL',         icon: 'american-football', label: 'Off Season', available: false },
     { sport: 'nba',    displayName: 'NBA',         icon: 'basketball',      label: 'Off Season', available: false },
     { sport: 'nhl',    displayName: 'NHL',         icon: 'snow',            label: 'Off Season', available: false },
   ]);
@@ -5100,7 +5101,10 @@ export default function ScanScreen() {
         <TouchableOpacity style={styles.modalOverlay} onPress={() => setShowSportPicker(false)} activeOpacity={1}>
           <View style={[styles.modalSheet, { width: 300, gap: 0 }]}>
             <Text style={[styles.modalTitle, { marginBottom: 16 }]}>Select Sport</Text>
-            {sportsConfig.filter(s => !['cs2', 'nhl'].includes(s.sport)).map(s => (
+            {sportsConfig
+              .filter(s => !['cs2', 'nhl'].includes(s.sport))
+              .sort((a, b) => (b.available ? 1 : 0) - (a.available ? 1 : 0))
+              .map(s => (
               <TouchableOpacity
                 key={s.sport}
                 style={[styles.modalItem, sport === s.sport && styles.modalItemActive, { flexDirection: 'row', alignItems: 'center', gap: 12 }]}
