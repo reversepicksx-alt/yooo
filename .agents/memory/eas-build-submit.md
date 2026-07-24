@@ -45,6 +45,7 @@ appleTeamId: FDC3LJRAC7
 - Build 128 (2bd82434): first clean build after apple-auth removal → FINISHED, submitted to TestFlight
 - Build 129 (0ca0662d): all 7 auth polish improvements (Terms links, slide animations, Welcome back, Face ID, social proof, skeleton loaders, owner link behind 5 logo taps)
 - Build 182 (7e0a1c80): v1.2 — PIN gate, AI narrative polling fix, placeholder text filter → FINISHED, submitted to TestFlight (submission eb1f7a60)
+- Build bc4aafa8: v1.11 #194 — MLB H2H engine layer, game log opponent/date enrichment, H2H 400-error fix → FINISHED, submitted to TestFlight (submission e221ea88)
 
 ## Version bump rule
 Apple rejects `eas submit` with `SUBMISSION_SERVICE_IOS_OLD_APP_VERSION` if the CFBundleShortVersionString (= `version` in app.config.js) was already accepted for this app. Always increment `version` in `app.config.js` before building for a new submission. Build number auto-increments via `appVersionSource: "remote"` but version string does NOT.
