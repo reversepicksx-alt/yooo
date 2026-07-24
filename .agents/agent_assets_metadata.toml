@@ -599,3 +599,9 @@ id = "ZnC1jRnK9pCvQcuT_ZnIH"
 uri = "file://app_store_screenshots/6.7-inch (1284x2778)/05_game_log.png"
 type = "image"
 title = "05 — Game Log (6.7\" 1284×2778)"
+
+[[outputs]]
+id = "vOeLHexN_fzjisOMg8M--"
+uri = "file://reversepicks_source.tar.gz"
+type = "unspecified"
+title = "ReversePicks Full Source Code (tar.gz)"
