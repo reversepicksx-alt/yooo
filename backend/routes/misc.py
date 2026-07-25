@@ -150,12 +150,14 @@ async def team_next_match(team_id: int):
     """
     # ── Cache check ───────────────────────────────────────────────────────────
     now = datetime.now(timezone.utc)
+    _stale_cached_result = None  # saved for quota-exhausted fallback below
     try:
         cached = await db[COL_NEXT_MATCH_CACHE].find_one({"teamId": team_id})
         if cached:
             age_h = (now - cached["cachedAt"].replace(tzinfo=timezone.utc)
                      if cached["cachedAt"].tzinfo is None
                      else now - cached["cachedAt"]).total_seconds() / 3600
+            _stale_cached_result = cached["result"]  # save regardless of age
             if age_h < _NEXT_MATCH_TTL_H:
                 return cached["result"]
     except Exception:
@@ -309,6 +311,16 @@ async def team_next_match(team_id: int):
                     break
 
     if result is None:
+        # ── Quota-exhausted / API-down fallback: serve stale cache ────────────
+        # When every API call returns nothing (quota blown, transient error),
+        # returning {"found":false} breaks the UI for everyone.  A stale cached
+        # result from earlier today is almost always still correct — fixtures
+        # don't change minute-to-minute.  Mark it stale so callers know.
+        if _stale_cached_result and _stale_cached_result.get("found"):
+            print(f"[NEXT-MATCH STALE FALLBACK] team={team_id} serving cached result (API unavailable)")
+            stale = dict(_stale_cached_result)
+            stale["stale"] = True
+            return stale
         result = {"found": False}
 
     # ── Cache the result ──────────────────────────────────────────────────────
