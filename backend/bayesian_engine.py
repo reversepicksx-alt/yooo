@@ -24,6 +24,7 @@ import os
 import random
 import statistics as stats_mod
 from typing import Optional
+from sample_quality import magnitude_outlier_weights, magnitude_outlier_notes
 
 
 # Hard cap: Covariate can be at most this ratio of (Prior + Momentum)
@@ -259,9 +260,24 @@ def compute_bayesian_projection(
     # influence than games from 10+ fixtures ago, while keeping the
     # full sample for variance stability.
     # For n < 4 fall back to equal weights — too few games to decay reliably.
+    #
+    # BIDIRECTIONAL MAGNITUDE OUTLIER WEIGHTS
+    # Each game also receives a MAD-based outlier weight (0.25–1.0) that
+    # downweights statistical outliers in EITHER direction — a freak 107-pass
+    # game vs a relegated side and a 12-pass nightmare vs Atletico's press
+    # both get reduced influence on the prior, leaving the "normal range"
+    # games to dominate. Weights are multiplied into the recency decay so the
+    # two signals combine cleanly.
     _PRIOR_DECAY = 0.93
+    _mag_weights = magnitude_outlier_weights(all_vals, min_samples=4)
+    _mag_notes   = magnitude_outlier_notes(all_vals,   min_samples=4)
+    _flagged = [(i, all_vals[i], _mag_notes[i]) for i in range(n) if _mag_notes[i]]
+    if _flagged:
+        for _fi, _fv, _fn in _flagged:
+            print(f"[MAGNITUDE OUTLIER] game#{_fi+1} val={_fv:.1f} → {_fn} (weight={_mag_weights[_fi]:.2f})")
+
     if n >= 4:
-        _pw = [_PRIOR_DECAY ** i for i in range(n)]
+        _pw = [(_PRIOR_DECAY ** i) * _mag_weights[i] for i in range(n)]
         _pw_total = sum(_pw)
         prior_mean = sum(w * v for w, v in zip(_pw, all_vals)) / _pw_total
     else:

@@ -1,21 +1,114 @@
 """
-Sample-quality filtering ("luck strip") for Bayesian priors.
+Sample-quality filtering for Bayesian priors.
 
-Walters-inspired idea: not every historical game is equally informative.
-Games where game state ran away (blowouts) or where the player only made a
-short cameo in a distorted match should not weight equally with normal games.
+Two independent layers:
 
-The engine already normalizes to per-90, which handles minutes per se.
-What it does NOT handle is *game-state distortion* — when the team's playing
-style changed because of the score line.
+1. CONTEXTUAL FILTER ("luck strip") — drops games where the game-state itself
+   was distorted (blowouts, garbage-time cameos).  Binary: keep or drop.
 
-We are conservative on purpose: we only filter samples when we have plenty
-to spare. Below the abundance threshold every sample is preserved.
+2. MAGNITUDE FILTER ("outlier weights") — bidirectional continuous weights that
+   downweight any game whose stat is a statistical outlier relative to the
+   player's own distribution, regardless of whether it was an upside surprise
+   (freakish game vs weak opponent) or a downside collapse (horrible game vs
+   elite press).
+
+   A player who averaged 55 passes but had a 12-pass nightmare vs Atletico's
+   press, or a 107-pass carnival vs a relegated side, should not pull the prior
+   equally with his 50-60 normal games.  MAD-based z-scores are used because
+   MAD itself is resistant to the outliers being measured.
+
+Both layers are conservative: we never reduce the effective sample below the
+minimum floor, and borderline values are only softly discounted, not dropped.
 """
 from typing import List, Tuple
+import statistics as _stats
 
 
 _MIN_RETAINED = 6  # never drop a sample if it would leave fewer than this
+
+
+_MAD_SCALE = 1.4826   # makes MAD comparable to std-dev for normal distributions
+
+
+def magnitude_outlier_weights(values: List[float], min_samples: int = 4) -> List[float]:
+    """
+    Bidirectional outlier weights using MAD (Median Absolute Deviation).
+
+    For each value in the list, return a weight in (0.25, 1.0] reflecting how
+    representative that game is of the player's true level.  Values far from
+    the group median — in EITHER direction — receive a reduced weight.
+
+    Uses MAD rather than std-dev because MAD is itself resistant to the outliers
+    we are trying to detect (std-dev gets inflated by the very values we want to
+    downweight, masking other anomalies).
+
+    Weight table (z_mad = |value − median| / (1.4826 × MAD)):
+      z_mad < 1.5  → 1.00  (normal game — full weight)
+      1.5 ≤ z_mad < 2.0 → 0.70  (mild outlier)
+      2.0 ≤ z_mad < 2.5 → 0.45  (moderate outlier)
+      z_mad ≥ 2.5       → 0.25  (strong outlier — barely influences prior)
+
+    Returns all 1.0 weights when:
+      - Fewer than min_samples values (not enough data to judge)
+      - MAD = 0 (all values identical — nothing to flag)
+    """
+    n = len(values)
+    if n < min_samples:
+        return [1.0] * n
+
+    median = _stats.median(values)
+    deviations = [abs(v - median) for v in values]
+    mad = _stats.median(deviations)
+
+    if mad == 0:
+        return [1.0] * n
+
+    robust_std = _MAD_SCALE * mad
+    weights = []
+    for v in values:
+        z = abs(v - median) / robust_std
+        if z < 1.5:
+            weights.append(1.00)
+        elif z < 2.0:
+            weights.append(0.70)
+        elif z < 2.5:
+            weights.append(0.45)
+        else:
+            weights.append(0.25)
+
+    return weights
+
+
+def magnitude_outlier_notes(values: List[float], min_samples: int = 4) -> List[str]:
+    """
+    Returns a human-readable note for each game log value (parallel to values list).
+    Empty string means no flag; non-empty strings explain why the game was discounted.
+    Useful for log output / debugging.
+    """
+    n = len(values)
+    if n < min_samples:
+        return [""] * n
+
+    median = _stats.median(values)
+    deviations = [abs(v - median) for v in values]
+    mad = _stats.median(deviations)
+    if mad == 0:
+        return [""] * n
+
+    robust_std = _MAD_SCALE * mad
+    notes = []
+    for v in values:
+        z = abs(v - median) / robust_std
+        direction = "HIGH" if v > median else "LOW"
+        if z < 1.5:
+            notes.append("")
+        elif z < 2.0:
+            notes.append(f"mild-outlier({direction},z={z:.1f})")
+        elif z < 2.5:
+            notes.append(f"outlier({direction},z={z:.1f})")
+        else:
+            notes.append(f"strong-outlier({direction},z={z:.1f})")
+    return notes
 
 
 def _parse_score_margin(score: str) -> int:
