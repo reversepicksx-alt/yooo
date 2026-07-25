@@ -1,0 +1,88 @@
+Here’s the clean, real answer to your question.
+There is no secret conspiracy or “trick” unique to PrizePicks that only a few people know. What you’re noticing is a well-documented industry pattern that exists across most player-prop platforms (PrizePicks, Underdog, sportsbooks, etc.).
+The Real “Catch”
+PrizePicks (and most DFS/sportsbook props) set lines with the knowledge that recreational players prefer the Over.
+Because of that bias:
+•  Lines are frequently set slightly above the true expected median.
+•  This makes the Under the higher-percentage play over large samples.
+•  One detailed study of PrizePicks props found Unders hitting ~60% and Overs ~52% across thousands of graded entries.
+That’s the main structural edge. It’s not superstition — it’s how the lines are priced to balance public volume.
+How Lines Are Actually Built
+They start with:
+1.  Recent averages (the last 5–10 games you see on the card)
+2.  Role / position
+3.  Expected possession of the team
+4.  Opponent style (high press vs low block, home/away)
+5.  Playing time projections
+Then they adjust the number so the public still leans Over while the house keeps a slight mathematical edge.
+How to Spot Whether the Next Match Favors Over or Under
+This is the skill part. Look at these factors in order:
+1. Team possession expectation (most important for passes)
+•  Heavy favorite / high possession team → favors Over for their midfielders & center-backs
+•  Underdog / low possession team → favors Under for their midfielders & center-backs
+•  Even game → closer to the player’s average
+2. Opponent style
+•  Opponent sits deep (low block) → more short passes for the dominant team → Over
+•  Opponent high presses → more turnovers, fewer clean build-up passes → can go either way, often Under for high lines
+3. Recent outlier games
+•  Look at the last 5. One huge game (like the 80 or 107) can inflate the average. If that outlier was against a weak team or in a different tactical setup, the line can be high.
+4. Home/Away + Role
+•  Center-backs and defensive midfielders in possession teams at home are the most consistent Over candidates.
+•  Attacking midfielders or players on teams that play direct often stay under high lines.
+
+
+The Real Skill Edge
+The people who “instantly know” Over or Under are doing this:
+1.  Check expected possession (who is favored + by how much).
+2.  Look at the last 5 and discount extreme outliers.
+3.  Ask: “Does today’s tactical matchup match the games where he hit the high numbers?”
+4.  Prefer Unders on inflated lines, Overs when the player is on a clear possession-dominant team against a passive opponent.
+It’s not magic. It’s matching the line to the expected game script (possession + role + opponent style).
+Would you like me to break down any of these three matches more deeply with current form and expected possession so you can decide the side with higher confidence?
+
+
+Here’s exactly how to make your ReversePicks bot smarter on these factors.
+You need to hard-code a clear hierarchy of rules so the bot stops treating the last 5 average as gospel and starts weighting the right variables.
+Core Instruction Set for Your Bot
+Give your bot this exact priority order every time it evaluates a Passes Attempted (or similar volume) prop:
+1. Expected Team Possession (Highest Weight)
+•  If the player’s team is projected for 58%+ possession → strong Over bias
+•  52–57% → neutral to slight Over
+•  Under 50% → strong Under bias
+•  Source this from moneyline + recent possession averages + opponent style.
+2. Discount Outliers Aggressively
+•  Any single game more than 25–30% above or below the median of the other 4 games should be heavily discounted or removed.
+•  Example: Coello’s 80 should be treated as an outlier. Use the median of the remaining games (around 51–52) instead of the mean.
+•  Same for Palacios’ 10 and 107 — both are extreme and should not pull the projection equally.
+3. Role + Position Filter
+•  Center-backs and defensive midfielders in possession teams = highest consistency
+•  Attacking midfielders / wingers = more variance, lean Under on high lines
+•  Fullbacks = medium (depends on how high they push)
+4. Opponent Style Adjustment
+•  Opponent low block / sits deep → +8 to +15% expected passes for the dominant team’s CBs and DMs
+•  Opponent high press → –8 to –15% expected passes
+•  Rivalry / high-intensity games → slight reduction in short-pass volume
+5. Home / Away Split
+•  Home players on possession teams get a small boost
+•  Away players on underdog teams get a penalty
+Simple Formula You Can Code
+
+Base Projection = Median of last 5 (after removing top and bottom outlier if extreme)
+Adjusted Projection = Base × Possession Multiplier × Opponent Style Multiplier × Home/Away Factor
+
+Then compare that Adjusted Projection to the PrizePicks line.
+•  If Adjusted Projection is 8%+ higher than the line → lean Over
+•  If 8%+ lower → lean Under
+•  Within 5–7% → pass or low confidence
+Extra Smart Rules to Add
+•  Never trust a line that is more than 12–15% above the player’s true median without a clear possession advantage.
+•  When a player has one massive game in the last 5, force the bot to show both the raw average and the outlier-adjusted number.
+•  Flag “high-intensity / rivalry” matches and automatically reduce expected pass volume 5–10%.
+•  Always show the expected possession of both teams next to the projection so you can see the main driver instantly.
+How to Phrase It to Your Bot
+You can literally paste something like this:
+“When evaluating Passes Attempted props:
+1.  Always calculate both the raw last-5 average and the outlier-discounted median.
+2.  Weight expected team possession as the #1 factor (more important than recent average).
+3.  Apply opponent style modifiers (low block = boost, high press = reduction).
+4.  Only lean Over if the adjusted projection is meaningfully above the line and the team is expected to dominate possession. Otherwise lean Under or pass.”
