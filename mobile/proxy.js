@@ -154,7 +154,7 @@ function buildLoadingScreen() { return `
   </div>
 </div>
 <style>
-#rp-loading-screen{position:fixed;top:0;left:0;right:0;bottom:0;background:#050505;z-index:99999;display:flex;align-items:center;justify-content:center;animation:rpFadeOut .7s 3.5s forwards}
+#rp-loading-screen{position:fixed;top:0;left:0;right:0;bottom:0;background:#050505;z-index:99999;display:flex;align-items:center;justify-content:center}
 .rp-scene{display:flex;flex-direction:column;align-items:center}
 .rp-logo-outer{position:relative;display:flex;align-items:center;justify-content:center;margin-bottom:min(6vh,40px)}
 .rp-ring{position:absolute;top:50%;left:50%;width:min(52vw,220px);height:min(52vw,220px);border:2px solid #39FF14;border-radius:50%;opacity:0;transform:translate(-50%,-50%) scale(0.2);box-shadow:0 0 12px 3px #39FF14,inset 0 0 12px 3px rgba(57,255,20,.4);pointer-events:none}
@@ -174,7 +174,6 @@ function buildLoadingScreen() { return `
 .rp-b6{animation:bF .09s 1.19s,bF .09s 1.45s}
 .rp-b7{animation:bF .09s 1.22s,bF .09s 1.48s,bF .09s 1.74s}
 @keyframes bF{0%{opacity:0}12%{opacity:1}100%{opacity:0}}
-@keyframes rpFadeOut{0%{opacity:1;pointer-events:auto}100%{opacity:0;pointer-events:none}}
 .rp-logo-wrap{display:flex;align-items:center;justify-content:center;animation:logoSpin 1.5s linear 0s both}
 @keyframes logoSpin{
   0%  {opacity:0;transform:scale(.78) rotate(0deg);animation-timing-function:ease-in}
@@ -204,7 +203,7 @@ function buildLoadingScreen() { return `
   var e=document.getElementById('rp-loading-screen');
   function hide(){if(!e)return;e.style.opacity='0';e.style.pointerEvents='none';setTimeout(function(){if(e){e.style.display='none';if(e.parentNode)e.parentNode.removeChild(e);e=null;}},700);}
   window.__rpHideLoader=hide;
-  setTimeout(hide,12000);
+  setTimeout(hide,2500);
 })();
 </script>`; }
 
