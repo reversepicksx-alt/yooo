@@ -1487,28 +1487,27 @@ const styles = StyleSheet.create({
   confBadgeText: { fontSize: 9, fontWeight: '800', letterSpacing: 0.3 },
 
   trackBarOuter: {
-    height: 4,
+    height: 6.5,
     backgroundColor: Colors.cardSecondary,
-    borderRadius: 2,
+    borderRadius: 3.5,
     overflow: 'hidden',
     position: 'relative',
-    marginTop: 2,
+    marginTop: 3,
   },
   trackBarFill: {
     position: 'absolute',
     left: 0,
     top: 0,
-    height: '100%' as unknown as number,
-    borderRadius: 2,
+    bottom: 0,
+    borderRadius: 3.5,
   },
   trackBarMarker: {
     position: 'absolute',
-    left: '50%' as unknown as number,
+    left: '50%',
     top: 0,
-    width: 1,
-    height: '100%' as unknown as number,
+    bottom: 0,
+    width: 1.5,
     backgroundColor: 'rgba(255,255,255,0.55)',
-    transform: [{ translateX: -0.5 }],
   },
 
   matchCtxBlock: {
