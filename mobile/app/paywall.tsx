@@ -23,8 +23,33 @@ const FEATURES = [
 ];
 
 function getErrorMessage(e: unknown): string {
-  if (e instanceof Error) return e.message;
   if (typeof e === 'string') return e;
+
+  const err = e as any;
+  const code = err?.code ?? err?.errorCode ?? 0;
+  const msg = err?.message ?? err?.underlyingErrorMessage ?? '';
+
+  // RevenueCat / StoreKit decline codes
+  if (code === 4 || /not allowed|declined|not authorized/i.test(msg)) {
+    return 'Your payment method was declined.\n\nTry updating your Apple ID payment method in Settings, then return and try again.';
+  }
+  if (code === 5 || /invalid purchase|invalid identifier/i.test(msg)) {
+    return 'This subscription option is temporarily unavailable. Please try a different plan or try again later.';
+  }
+  if (code === 6 || /product.*not available|not available for purchase/i.test(msg)) {
+    return 'This subscription is not currently available. Please try again in a few minutes.';
+  }
+  if (code === 7 || /network|connection|offline/i.test(msg)) {
+    return 'Network issue. Please check your connection and try again.';
+  }
+  if (code === 10 || /pending/i.test(msg)) {
+    return 'This purchase is pending approval. You will be notified once it completes.';
+  }
+  if (code === 3 || /store.*problem|storekit/i.test(msg)) {
+    return 'Apple Store is experiencing issues. Please try again in a few minutes.';
+  }
+
+  if (e instanceof Error) return e.message;
   return 'Something went wrong. Please try again.';
 }
 
