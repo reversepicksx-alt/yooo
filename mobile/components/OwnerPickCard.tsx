@@ -171,17 +171,6 @@ export default function OwnerPickCard({
   const matchTime = !settled ? formatMatchTime(pick.fixtureDate) : '';
   const scriptType = dir ? `${dir} ${propLabel}` : propLabel;
 
-  // Game script for pending pre-match card.
-  const gs = pick.gameScript;
-  const hasGameScript = !!gs && !!gs.dominant && pending;
-  const gsColor = (gs?.color as string) || '#60A5FA';
-  const gsIconMap: Record<string, string> = {
-    low_scoring: 'shield', high_scoring: 'flame', open_close: 'analytics',
-    home_blowout: 'trending-up', away_blowout: 'trending-down',
-  };
-  const gsIcon = (gsIconMap[(gs?.dominant as string) || ''] || 'analytics') as any;
-  const gsScenarios = (gs?.scenarios as any[] | undefined) || [];
-
   const shareText = useMemo(() => {
     const dir = getRecDir(pick) ?? pick.recommendation ?? '';
     const venue = pick.venue === 'away' ? 'AWAY' : 'HOME';
@@ -383,33 +372,6 @@ export default function OwnerPickCard({
         <Text style={[styles.bottomText, { color: recColor, fontWeight: '800' }]}>{scriptType}</Text>
       </View>
 
-      {hasGameScript && (
-        <View style={[styles.gsBanner, { borderColor: gsColor + '44' }]}>
-          <View style={[styles.gsBannerStripe, { backgroundColor: gsColor }]} />
-          <View style={styles.gsBannerBody}>
-            <View style={styles.gsBannerHeader}>
-              <Ionicons name={gsIcon} size={13} color={gsColor} />
-              <Text style={[styles.gsBannerLabel, { color: gsColor }]}>GAME SCRIPT</Text>
-              <Text style={styles.gsBannerProb}>{Math.round(Number((gs as any)?.dominant_probability || 0) * 100)}%</Text>
-            </View>
-            <Text style={[styles.gsBannerTitle, { color: gsColor }]}>{(gs?.key_finding as string) || ''}</Text>
-            {gsScenarios.length > 1 && (
-              <View style={styles.gsBannerScenarios}>
-                {gsScenarios.slice(0, 3).map((s: any, i: number) => (
-                  <View key={i} style={styles.gsBannerChip}>
-                    <Text style={styles.gsBannerChipName}>{s.name}</Text>
-                    <Text style={[styles.gsBannerChipPct, { color: gsColor }]}>{Math.round((s.probability || 0) * 100)}%</Text>
-                  </View>
-                ))}
-              </View>
-            )}
-            {(gs as any)?.expected_total_goals != null && (
-              <Text style={styles.gsBannerSub}>Expected {(gs as any)?.expected_total_goals} total goals</Text>
-            )}
-          </View>
-        </View>
-      )}
-
       {live && !won && !lost && pick.sport === 'soccer' && onTrack && (
         <TouchableOpacity onPress={onTrack} style={styles.trackBtn} activeOpacity={0.7}>
           <Ionicons name="pulse" size={12} color={Colors.primary} />
@@ -432,14 +394,6 @@ export default function OwnerPickCard({
         </View>
       )}
 
-      {settled && (
-        <View style={styles.storyBlock}>
-          <View style={[styles.storyDot, { backgroundColor: won ? Colors.success : lost ? Colors.error : push ? Colors.push : Colors.dnp }]} />
-          <Text style={styles.storyText} numberOfLines={2}>
-            {buildSettledStory(pick, { won, lost, push, dnp })}
-          </Text>
-        </View>
-      )}
     </TouchableOpacity>
   );
 }
@@ -573,16 +527,16 @@ function renderShareableCardHTML(
 const styles = StyleSheet.create({
   card: {
     backgroundColor: '#0F0F0F',
-    borderRadius: 16,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: 'rgba(57,255,20,0.18)',
-    padding: 12,
-    marginBottom: 10,
+    padding: 6,
+    marginBottom: 5,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.35,
-    shadowRadius: 6,
-    elevation: 5,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 2,
   },
   cardWon: { borderColor: 'rgba(57,255,20,0.45)' },
   cardLost: { borderColor: 'rgba(255,59,48,0.35)' },
@@ -590,23 +544,23 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 10,
+    marginBottom: 4,
   },
   identity: { flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 10 },
   photo: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    borderWidth: 1.5,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 1,
     borderColor: 'rgba(57,255,20,0.35)',
     backgroundColor: '#1A1A1A',
   },
   photoPlaceholder: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     backgroundColor: '#1A1A1A',
-    borderWidth: 1.5,
+    borderWidth: 1,
     borderColor: 'rgba(57,255,20,0.35)',
     alignItems: 'center',
     justifyContent: 'center',
@@ -616,12 +570,12 @@ const styles = StyleSheet.create({
     left: 0,
     top: 0,
   },
-  photoInitial: { color: Colors.primary, fontSize: 18, fontWeight: '800' },
-  nameBlock: { marginLeft: 10, flex: 1 },
-  playerName: { color: '#fff', fontSize: 16, fontWeight: '800', letterSpacing: -0.3 },
-  teamRow: { flexDirection: 'row', alignItems: 'center', marginTop: 3 },
-  teamLogo: { width: 14, height: 14, marginRight: 5 },
-  teamVenue: { color: Colors.textSecondary, fontSize: 11.5, fontWeight: '600' },
+  photoInitial: { color: Colors.primary, fontSize: 12, fontWeight: '800' },
+  nameBlock: { marginLeft: 6, flex: 1 },
+  playerName: { color: '#fff', fontSize: 13, fontWeight: '800', letterSpacing: -0.2 },
+  teamRow: { flexDirection: 'row', alignItems: 'center' },
+  teamLogo: { width: 11, height: 11, marginRight: 3 },
+  teamVenue: { color: Colors.textSecondary, fontSize: 9, fontWeight: '600' },
   actions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   shareBtn: {
     width: 28,
@@ -660,23 +614,23 @@ const styles = StyleSheet.create({
   statsRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 4,
+    marginBottom: 2,
   },
   stat: { alignItems: 'center', flex: 1 },
   statLabel: {
     color: 'rgba(255,255,255,0.55)',
-    fontSize: 9,
+    fontSize: 8,
     fontWeight: '700',
     letterSpacing: 0.5,
-    marginBottom: 3,
+    marginBottom: 2,
   },
-  statValue: { fontSize: 18, fontWeight: '800', color: Colors.text },
+  statValue: { fontSize: 12, fontWeight: '800', color: Colors.text },
   trackBarOuter: {
     position: 'relative',
-    height: 6,
+    height: 4,
     backgroundColor: 'rgba(255,255,255,0.08)',
-    borderRadius: 3,
-    marginTop: 10,
+    borderRadius: 2,
+    marginTop: 6,
   },
   trackBarFill: {
     position: 'absolute',
@@ -696,116 +650,32 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 10,
+    marginTop: 4,
   },
   bottomItem: { flexDirection: 'row', alignItems: 'center' },
-  bottomText: { color: Colors.textTertiary, fontSize: 11, marginLeft: 4, fontWeight: '600' },
-  matchCtxBlock: { marginTop: 10 },
+  bottomText: { color: Colors.textTertiary, fontSize: 9, marginLeft: 3, fontWeight: '600' },
+  matchCtxBlock: { marginTop: 4 },
   matchCtxLine: {
     color: 'rgba(255,255,255,0.75)',
-    fontSize: 11,
+    fontSize: 9,
     fontWeight: '600',
-  },
-  storyBlock: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginTop: 10,
-  },
-  storyDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    marginTop: 5,
-    marginRight: 6,
-  },
-  storyText: {
-    color: 'rgba(255,255,255,0.80)',
-    fontSize: 11,
-    lineHeight: 16,
-    flex: 1,
   },
   trackBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 10,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderRadius: 8,
+    marginTop: 4,
+    paddingVertical: 3,
+    paddingHorizontal: 6,
+    borderRadius: 5,
     backgroundColor: 'rgba(57,255,20,0.10)',
     borderWidth: 1,
     borderColor: 'rgba(57,255,20,0.25)',
   },
   trackBtnText: {
     color: Colors.primary,
-    fontSize: 11,
+    fontSize: 9,
     fontWeight: '800',
-    marginLeft: 5,
-  },
-  gsBanner: {
-    flexDirection: 'row',
-    marginTop: 10,
-    borderRadius: 10,
-    borderWidth: 1,
-    backgroundColor: '#111',
-    overflow: 'hidden',
-  },
-  gsBannerStripe: {
-    width: 4,
-  },
-  gsBannerBody: {
-    flex: 1,
-    padding: 10,
-  },
-  gsBannerHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 4,
-  },
-  gsBannerLabel: {
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  gsBannerProb: {
-    color: 'rgba(255,255,255,0.55)',
-    fontSize: 10,
-    fontWeight: '800',
-    marginLeft: 'auto',
-  },
-  gsBannerTitle: {
-    fontSize: 13,
-    fontWeight: '800',
-    marginBottom: 5,
-  },
-  gsBannerScenarios: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginBottom: 5,
-  },
-  gsBannerChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: 5,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-  },
-  gsBannerChipName: {
-    color: 'rgba(255,255,255,0.65)',
-    fontSize: 10,
-    fontWeight: '600',
-  },
-  gsBannerChipPct: {
-    fontSize: 10,
-    fontWeight: '800',
-  },
-  gsBannerSub: {
-    color: 'rgba(255,255,255,0.55)',
-    fontSize: 10,
-    fontWeight: '600',
+    marginLeft: 3,
   },
 });
