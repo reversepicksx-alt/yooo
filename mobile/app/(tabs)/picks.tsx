@@ -116,6 +116,13 @@ function getRecDir(p: Pick): 'OVER' | 'UNDER' | null {
 
 type PickFilterKey = 'player' | 'position' | 'opponent' | 'prop' | 'sport' | 'result' | 'league' | 'venue' | 'recommendation';
 type FilterState = Record<PickFilterKey, string[]>;
+type FilterCategory = {
+  key: PickFilterKey;
+  label: string;
+  values: string[];
+  searchable: boolean;
+  formatValue?: (value: string) => string;
+};
 
 const EMPTY_FILTERS: FilterState = {
   player: [],
@@ -774,6 +781,8 @@ export default function PicksScreen() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterOpen, setFilterOpen] = useState(false);
+  const [filterCategory, setFilterCategory] = useState<PickFilterKey | null>(null);
+  const [filterSearch, setFilterSearch] = useState('');
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
   // Which sport sections are expanded in history (default: all collapsed so all 3 headers visible)
   const [expandedSports, setExpandedSports] = useState<Set<SportKey>>(new Set());
@@ -932,6 +941,27 @@ export default function PicksScreen() {
       leagues: uniq(picks.map(p => p.leagueName)),
     };
   }, [picks]);
+  const filterCategories = useMemo<FilterCategory[]>(() => ([
+    { key: 'player', label: 'Player', values: uniqueValues.players, searchable: true },
+    { key: 'position', label: 'Position', values: uniqueValues.positions, searchable: false },
+    { key: 'opponent', label: 'Opponent', values: uniqueValues.opponents, searchable: true },
+    { key: 'prop', label: 'Prop', values: uniqueValues.props, searchable: true, formatValue: (v) => PROP_LABELS[v] || v.replace(/_/g, ' ') },
+    { key: 'sport', label: 'Sport', values: ['soccer', 'mlb', 'cs2'], searchable: false, formatValue: (v) => SPORT_META[v as SportKey].label },
+    { key: 'result', label: 'Result', values: ['hit', 'miss', 'push', 'dnp', 'live'], searchable: false, formatValue: (v) => RESULT_LABELS[v] ?? v },
+    { key: 'league', label: 'League', values: uniqueValues.leagues, searchable: true },
+    { key: 'venue', label: 'Venue', values: ['home', 'away'], searchable: false, formatValue: (v) => v.charAt(0).toUpperCase() + v.slice(1) },
+    { key: 'recommendation', label: 'Recommendation', values: ['over', 'under'], searchable: false, formatValue: (v) => v.toUpperCase() },
+  ]), [uniqueValues]);
+  const activeFilterItems = useMemo(() => Object.entries(filters).flatMap(([key, values]) => {
+    const category = filterCategories.find((c) => c.key === key);
+    return values.map((value) => ({
+      key: `${key}:${value}`,
+      filterKey: key as PickFilterKey,
+      value,
+      label: `${category?.label ?? key}: ${category?.formatValue ? category.formatValue(value) : value}`,
+    }));
+  }), [filters, filterCategories]);
+  const activeFilterCategory = useMemo(() => filterCategories.find((c) => c.key === filterCategory) ?? null, [filterCategory, filterCategories]);
   const live = filteredPicks.filter(isLive);
   const history = filteredPicks.filter(isSettled);
 
@@ -1018,15 +1048,13 @@ export default function PicksScreen() {
             <TouchableOpacity onPress={() => setFilters(EMPTY_FILTERS)} style={styles.clearChip}>
               <Text style={styles.clearChipText}>Clear all</Text>
             </TouchableOpacity>
-            {Object.entries(filters).flatMap(([key, values]) =>
-              values.map((value) => (
-                <FilterChip
-                  key={`${key}:${value}`}
-                  label={`${key}: ${value}`}
-                  onRemove={() => setFilters((prev) => ({ ...prev, [key]: prev[key as PickFilterKey].filter((v) => v !== value) }))}
-                />
-              ))
-            )}
+            {activeFilterItems.map((item) => (
+              <FilterChip
+                key={item.key}
+                label={item.label}
+                onRemove={() => setFilters((prev) => ({ ...prev, [item.filterKey]: prev[item.filterKey].filter((v) => v !== item.value) }))}
+              />
+            ))}
           </ScrollView>
         )}
 
@@ -1512,45 +1540,146 @@ export default function PicksScreen() {
           <View style={styles.filterSheet}>
             <View style={styles.filterHeader}>
               <Text style={styles.filterTitle}>Filters</Text>
-              <TouchableOpacity onPress={() => setFilterOpen(false)}>
-                <Ionicons name="close" size={22} color={Colors.textSecondary} />
-              </TouchableOpacity>
+              <View style={styles.filterHeaderActions}>
+                <TouchableOpacity onPress={() => { setFilters(EMPTY_FILTERS); setFilterCategory(null); setFilterSearch(''); }}>
+                  <Text style={styles.filterHeaderActionText}>Reset</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setFilterOpen(false)}>
+                  <Ionicons name="close" size={22} color={Colors.textSecondary} />
+                </TouchableOpacity>
+              </View>
             </View>
-            <ScrollView>
-              {([
-                ['Player', 'player', uniqueValues.players],
-                ['Position', 'position', uniqueValues.positions],
-                ['Opponent', 'opponent', uniqueValues.opponents],
-                ['Prop', 'prop', uniqueValues.props],
-                ['Sport', 'sport', ['soccer', 'mlb', 'cs2']],
-                ['Result', 'result', ['hit', 'miss', 'push', 'dnp', 'live']],
-                ['League', 'league', uniqueValues.leagues],
-                ['Venue', 'venue', ['home', 'away']],
-                ['Recommendation', 'recommendation', ['over', 'under']],
-              ] as const).map(([label, key, values]) => (
-                <View key={key} style={styles.filterSection}>
-                  <Text style={styles.filterSectionTitle}>{label}</Text>
-                  <View style={styles.filterOptions}>
-                    {values.map((value) => {
-                      const selected = filters[key].includes(value);
-                      return (
-                        <TouchableOpacity
-                          key={value}
-                          onPress={() => setFilters(prev => ({
-                            ...prev,
-                            [key]: selected ? prev[key].filter(v => v !== value) : [...prev[key], value],
-                          }))}
-                          style={[styles.filterOption, selected && styles.filterOptionActive]}
-                        >
-                          <Text style={[styles.filterOptionText, selected && styles.filterOptionTextActive]}>
-                            {key === 'result' ? RESULT_LABELS[value] ?? value : value}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.filterSheetContent}>
+              {activeFilterItems.length > 0 && (
+                <View style={styles.filterActiveBlock}>
+                  <Text style={styles.filterSectionLabel}>Active filters</Text>
+                  <View style={styles.filterActiveChips}>
+                    {activeFilterItems.map((item) => (
+                      <FilterChip
+                        key={item.key}
+                        label={item.label}
+                        onRemove={() => setFilters((prev) => ({ ...prev, [item.filterKey]: prev[item.filterKey].filter((v) => v !== item.value) }))}
+                      />
+                    ))}
                   </View>
                 </View>
-              ))}
+              )}
+
+              <View style={styles.filterCategoryList}>
+                <Text style={styles.filterSectionLabel}>Categories</Text>
+                {filterCategories.map((category) => {
+                  const selectedCount = filters[category.key].length;
+                  return (
+                    <TouchableOpacity
+                      key={category.key}
+                      onPress={() => { setFilterCategory(category.key); setFilterSearch(''); }}
+                      style={styles.filterCategoryRow}
+                      activeOpacity={0.75}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.filterCategoryTitle}>{category.label}</Text>
+                        <Text style={styles.filterCategorySummary}>
+                          {selectedCount > 0 ? `${selectedCount} selected` : 'None'}
+                        </Text>
+                      </View>
+                      <Ionicons name="chevron-forward" size={16} color={Colors.textTertiary} />
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {activeFilterCategory && (
+                <View style={styles.filterSubView}>
+                  <View style={styles.filterSubHeader}>
+                    <TouchableOpacity onPress={() => { setFilterCategory(null); setFilterSearch(''); }} style={styles.filterBackBtn}>
+                      <Ionicons name="arrow-back" size={18} color={Colors.text} />
+                      <Text style={styles.filterBackText}>Back</Text>
+                    </TouchableOpacity>
+                    <Text style={styles.filterSubTitle}>{activeFilterCategory.label}</Text>
+                    <View style={{ width: 64 }} />
+                  </View>
+
+                  <View style={styles.filterSelectedWrap}>
+                    {filters[activeFilterCategory.key].length > 0 ? (
+                      <View style={styles.filterActiveChips}>
+                        {filters[activeFilterCategory.key].map((value) => (
+                          <FilterChip
+                            key={`${activeFilterCategory.key}:${value}`}
+                            label={activeFilterCategory.formatValue ? activeFilterCategory.formatValue(value) : value}
+                            onRemove={() => setFilters((prev) => ({
+                              ...prev,
+                              [activeFilterCategory.key]: prev[activeFilterCategory.key].filter((v) => v !== value),
+                            }))}
+                          />
+                        ))}
+                      </View>
+                    ) : (
+                      <Text style={styles.filterEmptySelected}>No selections yet</Text>
+                    )}
+                  </View>
+
+                  {activeFilterCategory.searchable && (
+                    <View style={styles.filterSearchBar}>
+                      <Ionicons name="search" size={16} color={Colors.textTertiary} />
+                      <TextInput
+                        value={filterSearch}
+                        onChangeText={setFilterSearch}
+                        placeholder={`Search ${activeFilterCategory.label.toLowerCase()}s`}
+                        placeholderTextColor={Colors.textTertiary}
+                        style={styles.filterSearchInput}
+                      />
+                      {filterSearch.length > 0 && (
+                        <TouchableOpacity onPress={() => setFilterSearch('')}>
+                          <Ionicons name="close-circle" size={16} color={Colors.textTertiary} />
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  )}
+
+                  <View style={styles.filterOptionsList}>
+                    {activeFilterCategory.values
+                      .filter((value) => !filterSearch || (activeFilterCategory.formatValue ? activeFilterCategory.formatValue(value) : value).toLowerCase().includes(filterSearch.trim().toLowerCase()))
+                      .map((value) => {
+                        const selected = filters[activeFilterCategory.key].includes(value);
+                        const display = activeFilterCategory.formatValue ? activeFilterCategory.formatValue(value) : value;
+                        return activeFilterCategory.searchable ? (
+                          <TouchableOpacity
+                            key={value}
+                            onPress={() => setFilters((prev) => ({
+                              ...prev,
+                              [activeFilterCategory.key]: selected
+                                ? prev[activeFilterCategory.key].filter((v) => v !== value)
+                                : [...prev[activeFilterCategory.key], value],
+                            }))}
+                            style={styles.filterCheckRow}
+                            activeOpacity={0.75}
+                          >
+                            <View style={[styles.filterCheckBox, selected && styles.filterCheckBoxActive]}>
+                              {selected && <Ionicons name="checkmark" size={12} color="#000" />}
+                            </View>
+                            <Text style={styles.filterCheckLabel}>{display}</Text>
+                          </TouchableOpacity>
+                        ) : (
+                          <TouchableOpacity
+                            key={value}
+                            onPress={() => setFilters((prev) => ({
+                              ...prev,
+                              [activeFilterCategory.key]: selected
+                                ? prev[activeFilterCategory.key].filter((v) => v !== value)
+                                : [...prev[activeFilterCategory.key], value],
+                            }))}
+                            style={[styles.filterChipOption, selected && styles.filterChipOptionActive]}
+                            activeOpacity={0.75}
+                          >
+                            <Text style={[styles.filterChipOptionText, selected && styles.filterChipOptionTextActive]}>
+                              {display}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                  </View>
+                </View>
+              )}
             </ScrollView>
           </View>
         </View>
@@ -1838,20 +1967,86 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.background,
     borderTopLeftRadius: Colors.radiusLg,
     borderTopRightRadius: Colors.radiusLg,
-    padding: 16,
+    paddingTop: 12,
+    paddingHorizontal: 16,
   },
-  filterHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
+  filterSheetContent: { paddingBottom: 24, gap: 18 },
+  filterHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: Colors.borderSubtle },
   filterTitle: { color: Colors.text, fontSize: 18, fontWeight: '800' },
-  filterSection: { marginBottom: 14 },
-  filterSectionTitle: { color: Colors.textSecondary, fontSize: 12, fontWeight: '700', marginBottom: 8, textTransform: 'uppercase' },
-  filterOptions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  filterOption: {
+  filterHeaderActions: { flexDirection: 'row', alignItems: 'center', gap: 16 },
+  filterHeaderActionText: { color: Colors.primary, fontSize: 13, fontWeight: '700' },
+  filterSectionLabel: { color: Colors.textSecondary, fontSize: 11, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 1 },
+  filterActiveBlock: { gap: 10 },
+  filterActiveChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  filterCategoryList: { gap: 10 },
+  filterCategoryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    borderRadius: 14,
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+  },
+  filterCategoryTitle: { color: Colors.text, fontSize: 15, fontWeight: '700' },
+  filterCategorySummary: { color: Colors.textSecondary, fontSize: 12, marginTop: 2 },
+  filterSubView: {
+    gap: 12,
+    paddingTop: 4,
+    borderTopWidth: 1,
+    borderTopColor: Colors.borderSubtle,
+  },
+  filterSubHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  filterBackBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, width: 64 },
+  filterBackText: { color: Colors.text, fontSize: 13, fontWeight: '700' },
+  filterSubTitle: { color: Colors.text, fontSize: 16, fontWeight: '800' },
+  filterSelectedWrap: { gap: 8 },
+  filterEmptySelected: { color: Colors.textTertiary, fontSize: 12 },
+  filterSearchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: Colors.card,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+  },
+  filterSearchInput: { flex: 1, color: Colors.text, fontSize: 14, padding: 0, height: 20 },
+  filterOptionsList: { gap: 8 },
+  filterCheckRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+  },
+  filterCheckBox: {
+    width: 20,
+    height: 20,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.cardSecondary,
+  },
+  filterCheckBoxActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
+  filterCheckLabel: { color: Colors.text, fontSize: 13, fontWeight: '600' },
+  filterChipOption: {
     paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999,
     backgroundColor: Colors.card, borderWidth: 1, borderColor: Colors.borderSubtle,
   },
-  filterOptionActive: { backgroundColor: Colors.primaryDim, borderColor: Colors.primary },
-  filterOptionText: { color: Colors.text, fontSize: 12, fontWeight: '600' },
-  filterOptionTextActive: { color: Colors.primary },
+  filterChipOptionActive: { backgroundColor: Colors.primaryDim, borderColor: Colors.primary },
+  filterChipOptionText: { color: Colors.text, fontSize: 12, fontWeight: '600' },
+  filterChipOptionTextActive: { color: Colors.primary },
   tabToggle: {
     flexDirection: 'row',
     backgroundColor: Colors.card,
