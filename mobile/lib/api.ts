@@ -2396,6 +2396,12 @@ export async function markDmRead(email: string, otherId: string): Promise<{ ok: 
   });
 }
 
+export async function deleteDmConversation(email: string, otherId: string): Promise<{ ok: boolean; deleted: number }> {
+  return apiCall(`/api/dm/conversation?email=${encodeURIComponent(email)}&other=${encodeURIComponent(otherId)}`, {
+    method: 'DELETE',
+  });
+}
+
 export interface LiveEvent {
   id?: string;
   time: string;

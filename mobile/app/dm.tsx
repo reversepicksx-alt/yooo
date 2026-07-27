@@ -8,7 +8,7 @@ import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
-import { getDmInbox, markDmRead, searchUsers, type DmConversation } from '@/lib/api';
+import { getDmInbox, markDmRead, searchUsers, deleteDmConversation, type DmConversation } from '@/lib/api';
 
 function timeAgo(ts: string): string {
   const now = Date.now();
@@ -78,6 +78,18 @@ export default function DmInboxScreen() {
     }, 280);
     return () => clearTimeout(timer);
   }, [searchQuery, composeOpen, session?.email]);
+
+  const handleDelete = async (conv: DmConversation) => {
+    if (!session?.email) return;
+    const confirmed = window.confirm(`Delete entire conversation with ${conv.otherName}? This cannot be undone.`);
+    if (!confirmed) return;
+    try {
+      await deleteDmConversation(session.email, conv.otherId);
+      setConversations(prev => prev.filter(c => c.otherId !== conv.otherId));
+    } catch (e: any) {
+      window.alert('Failed to delete conversation.');
+    }
+  };
 
   const handleOpen = (conv: DmConversation) => {
     if (session?.email) {
@@ -158,6 +170,15 @@ export default function DmInboxScreen() {
                 <View style={styles.unreadBadge}>
                   <Text style={styles.unreadText}>{item.unreadCount}</Text>
                 </View>
+              )}
+              {isOwner && (
+                <TouchableOpacity
+                  onPress={(e) => { e.stopPropagation(); handleDelete(item); }}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  style={styles.deleteBtn}
+                >
+                  <Ionicons name="trash-outline" size={17} color="rgba(255,59,48,0.6)" />
+                </TouchableOpacity>
               )}
             </TouchableOpacity>
           )}
@@ -298,4 +319,5 @@ const styles = StyleSheet.create({
   resultAvatarText: { fontSize: 16, fontWeight: '700', color: Colors.primary },
   resultName: { fontSize: 15, fontWeight: '600', color: Colors.text },
   resultSub: { fontSize: 12, color: Colors.textTertiary, marginTop: 2 },
+  deleteBtn: { padding: 6, marginLeft: 4 },
 });

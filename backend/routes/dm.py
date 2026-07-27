@@ -145,6 +145,22 @@ async def get_thread(
     return out
 
 
+@router.delete("/conversation")
+async def delete_conversation(email: str = Query(...), other: str = Query(...)):
+    """Owner-only: delete all messages in a conversation thread."""
+    email_lower = email.lower().strip()
+    if email_lower not in OWNER_EMAILS:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    other_lower = other.lower().strip()
+    result = await db.direct_messages.delete_many({
+        "$or": [
+            {"senderEmail": email_lower, "recipientEmail": other_lower},
+            {"senderEmail": other_lower, "recipientEmail": email_lower},
+        ]
+    })
+    return {"ok": True, "deleted": result.deleted_count}
+
+
 @router.patch("/read")
 async def mark_read(req: MarkReadRequest):
     email_lower = req.email.lower().strip()
