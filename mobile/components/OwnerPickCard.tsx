@@ -23,13 +23,14 @@ function isSettled(p: Pick) {
 function isLive(p: Pick) {
   // Settled picks are never live, even if stale fields say otherwise.
   if (isSettled(p)) return false;
+  // A pick is only live if there is concrete in-match evidence.
+  // Trusting backend status='live' alone caused false positives for future matches.
   const hasLiveSignal =
-    p.matchStatus === 'live'
-    || p.status === 'live'
+    (p.matchStatus === 'live' && ((p.elapsed != null && p.elapsed > 0) || p.currentValue != null || (p.pace != null && p.pace > 0)))
+    || (p.status === 'live' && ((p.elapsed != null && p.elapsed > 0) || p.currentValue != null || (p.pace != null && p.pace > 0)))
     || (p.elapsed != null && p.elapsed > 0)
     || (p.currentValue != null)
     || (p.pace != null && p.pace > 0);
-  // status === 'pending' without a live signal means the game has not started yet.
   return hasLiveSignal;
 }
 
@@ -94,7 +95,7 @@ export default function OwnerPickCard({
   // PACE only when actually live; otherwise PROJ (or DNP).
   const paceValue = live ? (livePace ?? projValue) : projValue;
   const paceLabel = dnp ? 'DNP' : settled ? 'PROJ' : live ? 'PACE' : 'PROJ';
-  const paceColor = live ? Colors.primary : Colors.textSecondary;
+  const paceColor = live ? Colors.primary : Colors.text;
 
   const hitPct = pick.hitPct ?? null;
 
@@ -138,6 +139,7 @@ export default function OwnerPickCard({
 
   // Share image generation
   const [sharing, setSharing] = useState(false);
+  const [photoFailed, setPhotoFailed] = useState(false);
   const webRef = useRef<HTMLDivElement | null>(null);
 
   const venueText = pick.venue === 'away' ? 'AWAY' : 'HOME';
@@ -245,9 +247,14 @@ export default function OwnerPickCard({
       <View style={styles.topRow}>
         <View style={styles.identity}>
           {pick.ownerPlayerPhoto ? (
-            <Image source={{ uri: pick.ownerPlayerPhoto }} style={styles.photo} />
-          ) : (
-            <View style={styles.photoPlaceholder}>
+            <Image
+              source={{ uri: pick.ownerPlayerPhoto }}
+              style={styles.photo}
+              onError={() => setPhotoFailed(true)}
+            />
+          ) : null}
+          {(!pick.ownerPlayerPhoto || photoFailed) && (
+            <View style={[styles.photoPlaceholder, pick.ownerPlayerPhoto && photoFailed ? styles.photoOverlay : null]}>
               <Text style={styles.photoInitial}>{pick.playerName?.charAt(0) || '?'}</Text>
             </View>
           )}
@@ -290,6 +297,12 @@ export default function OwnerPickCard({
           <Text style={styles.statLabel}>{paceLabel}</Text>
           <Text style={[styles.statValue, { color: paceColor }]}>{formatNumber(paceValue)}</Text>
         </View>
+        {live && projValue != null && (
+          <View style={styles.stat}>
+            <Text style={styles.statLabel}>PROJ</Text>
+            <Text style={[styles.statValue, { color: Colors.text }]}>{formatNumber(projValue)}</Text>
+          </View>
+        )}
         <View style={styles.stat}>
           <Text style={styles.statLabel}>HIT%</Text>
           <Text style={styles.statValue}>{hitPct != null ? `${Math.round(hitPct)}%` : '—'}</Text>
@@ -504,6 +517,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  photoOverlay: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+  },
   photoInitial: { color: Colors.primary, fontSize: 18, fontWeight: '800' },
   nameBlock: { marginLeft: 10, flex: 1 },
   playerName: { color: '#fff', fontSize: 16, fontWeight: '800', letterSpacing: -0.3 },
@@ -552,7 +570,7 @@ const styles = StyleSheet.create({
   },
   stat: { alignItems: 'center', flex: 1 },
   statLabel: {
-    color: Colors.textTertiary,
+    color: 'rgba(255,255,255,0.55)',
     fontSize: 9,
     fontWeight: '700',
     letterSpacing: 0.5,
@@ -590,7 +608,7 @@ const styles = StyleSheet.create({
   bottomText: { color: Colors.textTertiary, fontSize: 11, marginLeft: 4, fontWeight: '600' },
   matchCtxBlock: { marginTop: 10 },
   matchCtxLine: {
-    color: 'rgba(255,255,255,0.55)',
+    color: 'rgba(255,255,255,0.75)',
     fontSize: 11,
     fontWeight: '600',
   },
@@ -607,7 +625,7 @@ const styles = StyleSheet.create({
     marginRight: 6,
   },
   storyText: {
-    color: 'rgba(255,255,255,0.65)',
+    color: 'rgba(255,255,255,0.80)',
     fontSize: 11,
     lineHeight: 16,
     flex: 1,

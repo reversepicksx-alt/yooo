@@ -604,6 +604,7 @@ async def _enrich_owner_media(picks: list[dict], requester_email: str) -> None:
         return
     player_ids = {p.get("playerId") for p in picks if p.get("playerId")}
     team_ids = {p.get("teamId") for p in picks if p.get("teamId")}
+    opponent_ids = {p.get("opponentId") for p in picks if p.get("opponentId")}
     opponent_names = {p.get("opponentName") for p in picks if p.get("opponentName")}
 
     player_map: dict[int, str] = {}
@@ -620,6 +621,15 @@ async def _enrich_owner_media(picks: list[dict], requester_email: str) -> None:
     if team_ids:
         async for doc in db["cache_teams"].find(
             {"teamId": {"$in": list(team_ids)}},
+            {"_id": 0, "teamId": 1, "logo": 1},
+        ):
+            team_map.setdefault(doc.get("teamId"), doc.get("logo", "") or "")
+
+    # Opponent logos by name AND by opponentId (abbreviated names like "Gimnasia M."
+    # often miss cache_teams name matching, but the fixture opponentId is reliable).
+    if opponent_ids:
+        async for doc in db["cache_teams"].find(
+            {"teamId": {"$in": list(opponent_ids)}},
             {"_id": 0, "teamId": 1, "logo": 1},
         ):
             team_map.setdefault(doc.get("teamId"), doc.get("logo", "") or "")
@@ -642,19 +652,62 @@ async def _enrich_owner_media(picks: list[dict], requester_email: str) -> None:
     for p in picks:
         p["ownerPlayerPhoto"] = player_map.get(p.get("playerId"), "")
         p["ownerTeamLogo"] = team_map.get(p.get("teamId"), "")
-        p["ownerOpponentLogo"] = opp_map.get((p.get("opponentName") or "").lower(), "")
+        p["ownerOpponentLogo"] = (
+            team_map.get(p.get("opponentId"), "")
+            or opp_map.get((p.get("opponentName") or "").lower(), "")
+        )
 
-    # Backfill missing player photos in the background (owner-only, capped).
+    # Backfill missing player photos and team crests in the background (owner-only, capped).
     missing_photo_pids = [pid for pid, url in player_map.items() if not url]
-    if missing_photo_pids:
-        async def _backfill_photos(pids: list[int]):
-            from cache import refresh_player_cache
+    missing_team_ids = {tid for tid in (team_ids | opponent_ids) if tid and not team_map.get(tid)}
+    if missing_photo_pids or missing_team_ids:
+        async def _backfill_media(pids: list[int], team_ids_missing: set[int], teams: list[tuple[int, str, int]]):
+            from cache import refresh_player_cache, sync_squad
+            from utils import api_football_request, strip_accents
+
+            # Fetch missing team crests first.
+            for tid in list(team_ids_missing)[:15]:
+                try:
+                    data = await api_football_request("teams", {"id": tid})
+                    if data and data[0].get("team"):
+                        t = data[0]["team"]
+                        await db["cache_teams"].update_one(
+                            {"teamId": tid},
+                            {
+                                "$set": {
+                                    "teamId": tid,
+                                    "name": t.get("name", ""),
+                                    "nameLower": (t.get("name") or "").lower(),
+                                    "nameClean": strip_accents((t.get("name") or "").lower()),
+                                    "logo": t.get("logo", "") or "",
+                                    "country": t.get("country", ""),
+                                    "_dt": datetime.now(timezone.utc),
+                                }
+                            },
+                            upsert=True,
+                        )
+                except Exception:
+                    pass
+
+            # Refresh squads — populates photos for the whole team in one call.
+            seen_teams = set()
+            for team_id, team_name, league_id in teams:
+                if team_id and team_id not in seen_teams:
+                    seen_teams.add(team_id)
+                    try:
+                        await sync_squad(team_id, team_name or "", league_id or 0)
+                    except Exception:
+                        pass
+
+            # Individual fallback for any players still missing.
             for pid in pids[:10]:
                 try:
                     await refresh_player_cache(pid)
                 except Exception:
                     pass
-        aio.ensure_future(_backfill_photos(missing_photo_pids))
+
+        backfill_teams = [(p.get("teamId"), p.get("teamName"), p.get("leagueId")) for p in picks if p.get("teamId")]
+        aio.ensure_future(_backfill_media(missing_photo_pids, missing_team_ids, backfill_teams))
 
 
 @router.post("/picks/list")
