@@ -2215,8 +2215,21 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
             for p in team_data.get("players", []):
                 pid = p.get("player", {}).get("id")
                 api_name = strip_accents((p.get("player", {}).get("name") or "").lower())
-                name_match = player_name_key and (
-                    player_name_key in api_name or api_name in player_name_key
+
+                # Robust name matching: full/substring, last name (>=4 chars),
+                # and initial+last (e.g. "S. Montiel" matches "E. Montiel").
+                pname_parts = player_name_key.split()
+                pname_last = pname_parts[-1] if pname_parts else player_name_key
+                pname_initial = (pname_parts[0][0] + ".") if pname_parts else ""
+                name_match = bool(player_name_key) and (
+                    player_name_key in api_name
+                    or api_name in player_name_key
+                    or (pname_last and len(pname_last) >= 4 and pname_last in api_name)
+                    or (
+                        pname_initial and pname_last
+                        and (f"{pname_initial} {pname_last}" in api_name
+                             or (api_name.startswith(pname_initial) and pname_last in api_name))
+                    )
                 )
                 if pid == player_id or (not player_id and name_match):
                     stats = p.get("statistics", [{}])[0]

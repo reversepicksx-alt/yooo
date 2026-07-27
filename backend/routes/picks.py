@@ -1904,7 +1904,10 @@ async def _process_api_football_live(picks: list, email: str) -> list:
     For each tier, if no live match is found, also checks today's fixtures so picks
     transition to "final" immediately when the match ends.
     """
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = datetime.now(timezone.utc)
+    today_str = today.strftime("%Y-%m-%d")
+    yesterday_str = (today - timedelta(days=1)).strftime("%Y-%m-%d")
+    tomorrow_str = (today + timedelta(days=1)).strftime("%Y-%m-%d")
 
     # ── T0: direct lookup by stored fixtureId (most targeted, avoids T1/T2/T3) ──
     # Picks that already have a fixtureId skip team/league/all-live searches
@@ -1921,19 +1924,16 @@ async def _process_api_football_live(picks: list, email: str) -> list:
     unique_team_ids   = {p.get("teamId") or 0 for p in picks_no_fid} - {0}
     unique_league_ids = {p.get("leagueId") or 0 for p in picks_no_fid} - {0}
 
-    async def _by_team(tid: int) -> list:
-        live = await api_football_request("fixtures", {"team": tid, "live": "all"}) or []
-        if live:
-            return live
-        # API-Football "date" requires season for some leagues; try multiple
-        today_results = await aio.gather(
-            api_football_request("fixtures", {"team": tid, "date": today, "season": 2025}),
-            api_football_request("fixtures", {"team": tid, "date": today, "season": 2026}),
+    async def _team_window(tid: int, from_d: str, to_d: str) -> list:
+        """Fetch fixtures for a team across a date window, trying both seasons."""
+        window_results = await aio.gather(
+            api_football_request("fixtures", {"team": tid, "from": from_d, "to": to_d, "season": 2025}),
+            api_football_request("fixtures", {"team": tid, "from": from_d, "to": to_d, "season": 2026}),
             return_exceptions=True,
         )
         _seen: set = set()
         out = []
-        for batch in today_results:
+        for batch in window_results:
             for f in (batch if isinstance(batch, list) else []):
                 _fid = f.get("fixture", {}).get("id")
                 if _fid and _fid not in _seen:
@@ -1941,25 +1941,40 @@ async def _process_api_football_live(picks: list, email: str) -> list:
                     out.append(f)
         return out
 
-    async def _by_league(lid: int) -> list:
-        live = await api_football_request("fixtures", {"league": lid, "live": "all"}) or []
-        if live:
-            return live
-        # API-Football "date" requires season for some leagues; try multiple
-        today_results = await aio.gather(
-            api_football_request("fixtures", {"league": lid, "date": today, "season": 2025}),
-            api_football_request("fixtures", {"league": lid, "date": today, "season": 2026}),
+    async def _league_window(lid: int, from_d: str, to_d: str) -> list:
+        """Fetch fixtures for a league across a date window, trying both seasons."""
+        window_results = await aio.gather(
+            api_football_request("fixtures", {"league": lid, "from": from_d, "to": to_d, "season": 2025}),
+            api_football_request("fixtures", {"league": lid, "from": from_d, "to": to_d, "season": 2026}),
             return_exceptions=True,
         )
         _seen: set = set()
         out = []
-        for batch in today_results:
+        for batch in window_results:
             for f in (batch if isinstance(batch, list) else []):
                 _fid = f.get("fixture", {}).get("id")
                 if _fid and _fid not in _seen:
                     _seen.add(_fid)
                     out.append(f)
         return out
+
+    async def _by_team(tid: int) -> list:
+        # T1: live team lookup is most specific.
+        live = await api_football_request("fixtures", {"team": tid, "live": "all"}) or []
+        if live:
+            return live
+        # Fallback: 3-day window. South American / Mexican kickoffs often land
+        # on a different UTC date than the user's local calendar, and the exact
+        # "today" date in the API is unreliable. from/to covers yesterday/today/tomorrow.
+        return await _team_window(tid, yesterday_str, tomorrow_str)
+
+    async def _by_league(lid: int) -> list:
+        # T2: live league lookup.
+        live = await api_football_request("fixtures", {"league": lid, "live": "all"}) or []
+        if live:
+            return live
+        # Fallback: 3-day window for the same UTC-date reason.
+        return await _league_window(lid, yesterday_str, tomorrow_str)
 
     async def _all_live() -> list:
         return await api_football_request("fixtures", {"live": "all"}) or []
@@ -2108,24 +2123,25 @@ async def _process_api_football_live(picks: list, email: str) -> list:
 
         pick_fixtures.append((pick, fixture))
 
-    # ── Pass 1.5: NS pre-store ─────────────────────────────────────────────
-    # For picks whose match hasn't started yet (status=NS), persist the
-    # fixtureId now so T0 fires the instant the match goes live, and the
-    # MATCH badge appears on the card immediately.
-    _ns_statuses = {"NS", "TBD"}
-
-    async def _persist_ns_fid(pick: dict, fid: int) -> None:
+    # ── Pass 1.5: fixtureId pre-store ─────────────────────────────────────
+    # Persist the exact fixtureId for any pick that doesn't have one yet.
+    # This is the #1 permanent fix for tracking flakiness: once a fixtureId is
+    # stored, future calls use T0 (fixtures?id=X) instead of fuzzy team/league
+    # matching, which is fragile across UTC date boundaries and API rate-limits.
+    # We store fixtureIds for live/finished matches too, not just NS — the next
+    # poll will then settle or track via the bulletproof ID path.
+    async def _persist_fid(pick: dict, fid: int) -> None:
         try:
             await db.picks.update_one(
                 {"pickId": pick["pickId"], "email": email.lower()},
                 {"$set": {"fixtureId": fid}}
             )
             pick["fixtureId"] = fid  # reflect in-memory for MATCH badge
-            print(f"[NS-PRESTORE] pickId={pick.get('pickId')} fid={fid}")
+            print(f"[FID-PRESTORE] pickId={pick.get('pickId')} fid={fid}")
         except Exception:
             pass
 
-    _ns_tasks: list[tuple[dict, int]] = []
+    _prestore_tasks: list[tuple[dict, int]] = []
     for _pick, _fix in pick_fixtures:
         if _fix is not None or _pick.get("fixtureId"):
             continue
@@ -2135,8 +2151,8 @@ async def _process_api_football_live(picks: list, email: str) -> list:
         _opp   = (_pick.get("opponentName") or "").lower().strip()
 
         # Try team_fix_map first (most specific), then league_fix_map filtered by team.
-        # Apply youth + teamId filters here too — NS-PRESTORE must never latch onto
-        # a youth fixture just because the senior match hasn't kicked off yet.
+        # Apply youth + teamId filters here too — pre-store must never latch onto
+        # a youth fixture just because the senior match is hard to find.
         _candidates = [f for f in _strip_youth(team_fix_map.get(_tid, []))
                        if _team_id_matches(f, _tid)
                        and f.get("fixture", {}).get("id") not in _known_youth_fids]
@@ -2148,7 +2164,8 @@ async def _process_api_football_live(picks: list, email: str) -> list:
 
         for _cand in _candidates:
             _ss = _cand.get("fixture", {}).get("status", {}).get("short", "")
-            if _ss not in _ns_statuses:
+            # Reject cancelled/postponed fixtures that will never produce stats.
+            if _ss in {"CANC", "PST", "ABD", "AWD"}:
                 continue
             if _opp and _opp not in ("unknown", "tbd"):
                 _h = (_cand.get("teams", {}).get("home", {}).get("name") or "").lower()
@@ -2157,11 +2174,11 @@ async def _process_api_football_live(picks: list, email: str) -> list:
                     continue
             _fid = _cand.get("fixture", {}).get("id")
             if _fid:
-                _ns_tasks.append((_pick, _fid))
+                _prestore_tasks.append((_pick, _fid))
                 break  # one fixture per pick
 
-    if _ns_tasks:
-        await aio.gather(*[_persist_ns_fid(p, fid) for p, fid in _ns_tasks])
+    if _prestore_tasks:
+        await aio.gather(*[_persist_fid(p, fid) for p, fid in _prestore_tasks])
 
     # ── Pre-fetch fixtures/players once per unique fixture ID ─────────────
     # This avoids N separate API calls (one per pick) for the same match
@@ -2198,6 +2215,9 @@ async def _process_api_football_live(picks: list, email: str) -> list:
         # showing PENDING on a live card confuses the user and defeats tracking.
         _live_fallback = "live" if _db_status == "live" else "scheduled"
         if not fixture:
+            # Log the miss so we can see which picks/paths are still failing.
+            print(f"[LIVE-MISS] {pick.get('playerName','?')} teamId={pick.get('teamId')} leagueId={pick.get('leagueId')} "
+                  f"team='{pick.get('teamName','')}' opp='{pick.get('opponentName','')}' — no fixture found")
             results.append({"pickId": pick_id, "matchStatus": _live_fallback})
             continue
 
