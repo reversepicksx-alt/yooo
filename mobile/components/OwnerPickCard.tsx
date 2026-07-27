@@ -1,7 +1,21 @@
 import React, { useMemo, useRef, useState } from 'react';
 import {
-  View, Text, Image, TouchableOpacity, StyleSheet, Share, Platform, ActivityIndicator,
+  View, Text, Image, TouchableOpacity, StyleSheet, Share, Platform, ActivityIndicator, Modal,
 } from 'react-native';
+
+const APP_STORE_URL = 'https://apps.apple.com/app/id6781092173';
+
+async function fetchAsDataUri(url: string): Promise<string> {
+  try {
+    const resp = await fetch(url);
+    const blob = await resp.blob();
+    return await new Promise<string>(res => {
+      const reader = new FileReader();
+      reader.onload = () => res(reader.result as string);
+      reader.readAsDataURL(blob);
+    });
+  } catch { return ''; }
+}
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/colors';
 import { Pick } from '@/lib/api';
@@ -138,33 +152,33 @@ export default function OwnerPickCard({
 
   const [sharing, setSharing] = useState(false);
   const [photoFailed, setPhotoFailed] = useState(false);
+  const [shareSheetVisible, setShareSheetVisible] = useState(false);
+  const pendingBlobRef = useRef<Blob | null>(null);
 
-  const shareText = `${pick.playerName} ${dir ?? ''} ${pick.line} ${propLabel} · ${venueTag}\n${matchTime || (elapsed != null ? `${elapsed}'` : '')}\nvia @Reversepickss`;
+  const tweetText = `${pick.playerName} ${dir ?? ''} ${pick.line} ${propLabel} · ${venueTag}\n${matchTime || (elapsed != null ? `${elapsed}'` : '')}\n📲 ${APP_STORE_URL}\nvia @Reversepickss`;
+  const nativeShareText = `${pick.playerName} ${dir ?? ''} ${pick.line} ${propLabel} · ${venueTag}\n${matchTime || (elapsed != null ? `${elapsed}'` : '')}\n📲 Download Reverse Picks: ${APP_STORE_URL}\nvia @Reversepickss`;
 
   const handleShare = async () => {
     setSharing(true);
     try {
-      if (Platform.OS === 'web') await shareWebImage();
-      else await Share.share({ message: shareText, title: `${pick.playerName} pick` });
-    } catch { /* user cancelled */ } finally { setSharing(false); }
+      if (Platform.OS === 'web') {
+        await generateShareImage();
+        setShareSheetVisible(true);
+      } else {
+        await Share.share({ message: nativeShareText, title: `${pick.playerName} pick` });
+      }
+    } catch { /* cancelled */ } finally { setSharing(false); }
   };
 
-  const shareWebImage = async () => {
-    // Load logo as base64 so html2canvas can render it (local assets need data URI)
-    let logoDataUri = '';
-    try {
-      const logoSrc = (require('../assets/logo.png') as any);
-      const logoUrl = typeof logoSrc === 'string' ? logoSrc : logoSrc?.uri ?? '';
-      if (logoUrl) {
-        const resp = await fetch(logoUrl);
-        const blob = await resp.blob();
-        logoDataUri = await new Promise<string>(res => {
-          const reader = new FileReader();
-          reader.onload = () => res(reader.result as string);
-          reader.readAsDataURL(blob);
-        });
-      }
-    } catch { /* logo is optional */ }
+  const generateShareImage = async () => {
+    // Pre-fetch all images as base64 — API-Football blocks CORS so canvas would be blank otherwise
+    const logoSrc = (require('../assets/logo.png') as any);
+    const logoUrl = typeof logoSrc === 'string' ? logoSrc : logoSrc?.uri ?? '';
+    const [logoDataUri, photoDataUri, teamLogoDataUri] = await Promise.all([
+      logoUrl ? fetchAsDataUri(logoUrl) : Promise.resolve(''),
+      pick.ownerPlayerPhoto ? fetchAsDataUri(pick.ownerPlayerPhoto) : Promise.resolve(''),
+      pick.ownerTeamLogo ? fetchAsDataUri(pick.ownerTeamLogo) : Promise.resolve(''),
+    ]);
 
     const container = document.createElement('div');
     container.style.cssText = 'position:fixed;left:-9999px;top:0;width:380px;font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif';
@@ -174,30 +188,40 @@ export default function OwnerPickCard({
       nowValue, paceValue, paceLabel, hitPct, lineValue, progress,
       hasScore, finalHome, finalAway, homeTeamName, awayTeamName,
       hasActualPoss, hasProjPoss, showScoreLine, propLabel, elapsed,
-      venueTag, matchTime, dirLabel, logoDataUri,
+      venueTag, matchTime, dirLabel, logoDataUri, photoDataUri, teamLogoDataUri,
     });
-    await Promise.all(
-      Array.from(container.querySelectorAll('img')).map(
-        img => new Promise<void>(res => { img.onload = () => res(); img.onerror = () => res(); })
-      )
-    );
-    await new Promise(r => setTimeout(r, 180));
+    // Only wait for data-URI images (they load instantly; no CORS risk)
+    await new Promise(r => setTimeout(r, 120));
     const html2canvas = (await import('html2canvas')).default;
     const canvas = await html2canvas(container.firstElementChild as HTMLElement, {
-      scale: 3, backgroundColor: null, useCORS: true, logging: false,
+      scale: 3, backgroundColor: null, useCORS: false, allowTaint: false, logging: false,
     });
     document.body.removeChild(container);
     const blob = await new Promise<Blob | null>(res => canvas.toBlob(res, 'image/png'));
+    pendingBlobRef.current = blob;
+  };
+
+  const handleSaveImage = async () => {
+    setShareSheetVisible(false);
+    const blob = pendingBlobRef.current;
     if (!blob) return;
-    const file = new File([blob], `rp-${pick.pickId || 'pick'}.png`, { type: 'image/png' });
+    const fileName = `reversepicks-${pick.playerName?.replace(/\s+/g, '-') || 'pick'}.png`;
+    const file = new File([blob], fileName, { type: 'image/png' });
+    // iOS Safari: use share sheet so user can tap "Save Image"
     if ((navigator as any).canShare?.({ files: [file] })) {
-      await navigator.share({ files: [file], title: shareText });
-    } else {
-      const url = URL.createObjectURL(blob);
-      const a = Object.assign(document.createElement('a'), { href: url, download: file.name });
-      document.body.appendChild(a); a.click();
-      setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
+      try { await navigator.share({ files: [file] }); return; } catch {}
     }
+    // Desktop / Android fallback: direct download
+    const url = URL.createObjectURL(blob);
+    const a = Object.assign(document.createElement('a'), { href: url, download: fileName });
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
+  };
+
+  const handleShareToX = () => {
+    setShareSheetVisible(false);
+    const url = `https://twitter.com/intent/tweet?text=${encodeURIComponent(tweetText)}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
   };
 
   // ─── Render ────────────────────────────────────────────────────────────────
@@ -320,6 +344,28 @@ export default function OwnerPickCard({
           </TouchableOpacity>
         )}
       </View>
+
+      {/* ── Share sheet (web only) ──────────────────────────── */}
+      {Platform.OS === 'web' && (
+        <Modal visible={shareSheetVisible} transparent animationType="slide" onRequestClose={() => setShareSheetVisible(false)}>
+          <TouchableOpacity style={styles.ssOverlay} activeOpacity={1} onPress={() => setShareSheetVisible(false)}>
+            <View style={styles.ssSheet}>
+              <Text style={styles.ssTitle}>Share Pick</Text>
+              <TouchableOpacity style={styles.ssOption} onPress={handleSaveImage} activeOpacity={0.75}>
+                <Ionicons name="download-outline" size={20} color="#fff" />
+                <Text style={styles.ssOptionText}>Save Image to Device</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.ssOption} onPress={handleShareToX} activeOpacity={0.75}>
+                <Text style={styles.ssXIcon}>𝕏</Text>
+                <Text style={styles.ssOptionText}>Post to X (Twitter)</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.ssOption, styles.ssCancel]} onPress={() => setShareSheetVisible(false)} activeOpacity={0.75}>
+                <Text style={styles.ssCancelText}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </Modal>
+      )}
     </TouchableOpacity>
   );
 }
@@ -331,11 +377,12 @@ function buildShareHTML(pick: Pick, s: Record<string, any>): string {
     nowValue, paceValue, paceLabel, hitPct, lineValue, progress,
     hasScore, finalHome, finalAway, homeTeamName, awayTeamName,
     hasActualPoss, showScoreLine, propLabel, elapsed,
-    venueTag, matchTime, dirLabel, logoDataUri,
+    venueTag, matchTime, dirLabel, logoDataUri, photoDataUri, teamLogoDataUri,
   } = s;
 
-  const photoUrl = pick.ownerPlayerPhoto || '';
-  const teamLogo = pick.ownerTeamLogo || '';
+  // Use pre-fetched base64 data URIs — avoids CORS taint on html2canvas
+  const photoUrl = photoDataUri || '';
+  const teamLogo = teamLogoDataUri || '';
   const accent = accentColor;
 
   // Status label
@@ -397,12 +444,12 @@ function buildShareHTML(pick: Pick, s: Record<string, any>): string {
     <!-- Player identity -->
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;max-width:58%">
       ${photoUrl
-        ? `<img src="${photoUrl}" crossorigin="anonymous" style="width:44px;height:44px;border-radius:22px;object-fit:cover;border:2px solid ${accent};flex-shrink:0"/>`
+        ? `<img src="${photoUrl}" style="width:44px;height:44px;border-radius:22px;object-fit:cover;border:2px solid ${accent};flex-shrink:0"/>`
         : `<div style="width:44px;height:44px;border-radius:22px;background:#1A1A1A;border:2px solid ${accent};display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:900;color:${accent};flex-shrink:0">${pick.playerName?.charAt(0) || '?'}</div>`}
       <div style="min-width:0">
         <div style="font-size:20px;font-weight:900;color:#fff;line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${pick.playerName}</div>
         <div style="display:flex;align-items:center;gap:5px;margin-top:3px">
-          ${teamLogo ? `<img src="${teamLogo}" crossorigin="anonymous" style="width:13px;height:13px;object-fit:contain"/>` : ''}
+          ${teamLogo ? `<img src="${teamLogo}" style="width:13px;height:13px;object-fit:contain"/>` : ''}
           <span style="font-size:11px;font-weight:600;color:rgba(255,255,255,0.45)">${pick.teamName || ''}</span>
           <span style="font-size:11px;font-weight:800;color:${accent}">· ${venueTag}</span>
         </div>
@@ -425,9 +472,13 @@ function buildShareHTML(pick: Pick, s: Record<string, any>): string {
       <span style="font-size:10px;color:rgba(255,255,255,0.3);font-weight:600">${timeStr}</span>
     </div>
     ${ctxHTML}
-    <!-- Attribution -->
-    <div style="margin-top:6px">
-      <span style="font-size:9px;color:rgba(255,255,255,0.3);font-weight:500">Images © API-Football · informational use only</span>
+    <!-- Attribution + App Store -->
+    <div style="margin-top:8px;display:flex;align-items:center;justify-content:space-between">
+      <span style="font-size:9px;color:rgba(255,255,255,0.25);font-weight:500">Images © API-Football · informational use only</span>
+    </div>
+    <div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.06);display:flex;align-items:center;justify-content:space-between">
+      <span style="font-size:9px;color:rgba(255,255,255,0.35);font-weight:600;letter-spacing:0.3px">📲 Available on the App Store</span>
+      <span style="font-size:8px;color:rgba(255,255,255,0.2);font-weight:500">apps.apple.com/app/id6781092173</span>
     </div>
   </div>
 </div>`;
@@ -519,4 +570,19 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: 'rgba(57,255,20,0.2)',
   },
   liveBtnText: { color: Colors.primary, fontSize: 9, fontWeight: '800' },
+  // Share sheet
+  ssOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
+  ssSheet: {
+    backgroundColor: '#141414', borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    paddingTop: 20, paddingBottom: 32, paddingHorizontal: 16,
+  },
+  ssTitle: { fontSize: 16, fontWeight: '800', color: Colors.text, textAlign: 'center', marginBottom: 18 },
+  ssOption: {
+    flexDirection: 'row', alignItems: 'center', gap: 14,
+    backgroundColor: '#1E1E1E', borderRadius: 12, padding: 16, marginBottom: 10,
+  },
+  ssOptionText: { fontSize: 15, fontWeight: '600', color: Colors.text },
+  ssXIcon: { fontSize: 17, fontWeight: '900', color: Colors.text, width: 20, textAlign: 'center' },
+  ssCancel: { backgroundColor: 'transparent', justifyContent: 'center', marginTop: 4 },
+  ssCancelText: { fontSize: 15, fontWeight: '600', color: Colors.textSecondary, textAlign: 'center', flex: 1 },
 });
