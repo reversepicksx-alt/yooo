@@ -1033,13 +1033,19 @@ MATCHUPS_CACHE_TTL = 60
 
 
 async def _fetch_matchups_with_retry(email: str, token: str) -> dict:
-    """Fetch settled picks with a small retry loop to survive transient Atlas blips."""
+    """
+    Soccer-only matchups endpoint.
+    Returns one row per unique player+opponent+prop combo (no duplicate picks
+    from multiple users). Aggregates hit/miss/push/dnp counts, average line,
+    average actual, and most common venue.
+    """
     from config import OWNER_EMAIL
     session = await db.sessions.find_one({"email": email.lower(), "session_token": token}, {"_id": 0})
     if not session:
         raise HTTPException(status_code=401, detail="Invalid session")
 
-    query: dict = {"status": "settled"}
+    # ── SOCCER ONLY. This tab is for soccer matchups, period. ───────────────
+    query: dict = {"status": "settled", "sport": "soccer"}
     if email.lower() != OWNER_EMAIL:
         query["email"] = email.lower()
 
@@ -1080,34 +1086,123 @@ async def _fetch_matchups_with_retry(email: str, token: str) -> dict:
     else:
         raise HTTPException(status_code=503, detail=f"Database temporarily unavailable: {last_error}")
 
-    # Normalise result names for the UI
-    for p in picks:
-        res = p.get("result", "")
-        if res in ("hit", "won"):
-            p["result"] = "Hit"
-        elif res in ("miss", "lost"):
-            p["result"] = "Miss"
-        elif res == "push":
-            p["result"] = "Push"
-        elif res == "dnp":
-            p["result"] = "DNP"
+    def _norm_result(res: str) -> str:
+        r = (res or "").lower()
+        if r in ("hit", "won"): return "Hit"
+        if r in ("miss", "lost"): return "Miss"
+        if r == "push": return "Push"
+        if r == "dnp": return "DNP"
+        return "Pending"
 
     def _league_label(p: dict) -> str:
         return p.get("leagueName") or (f"League {p.get('leagueId')}" if p.get("leagueId") else "Unknown")
 
-    players = sorted({p.get("playerName", "").strip() for p in picks if p.get("playerName")})
-    opponents = sorted({p.get("opponentName", "").strip() for p in picks if p.get("opponentName")})
-    positions = sorted({p.get("position", "").strip() for p in picks if p.get("position")})
-    prop_types = sorted({p.get("propType", "").strip() for p in picks if p.get("propType")})
-    leagues = sorted({_league_label(p).strip() for p in picks if _league_label(p) != "Unknown"})
-    venues = sorted({
-        "Home" if p.get("playerIsHome") else "Away"
-        for p in picks
-        if p.get("playerIsHome") is not None
-    })
+    # ── Aggregate by unique matchup: player + opponent + prop ────────────────
+    groups: dict[tuple, dict] = {}
+    for p in picks:
+        player = (p.get("playerName") or "").strip()
+        opponent = (p.get("opponentName") or "").strip()
+        prop = (p.get("propType") or "").strip()
+        if not player or not opponent or not prop:
+            continue
+        key = (player, opponent, prop)
+        g = groups.setdefault(key, {
+            "playerName": player,
+            "opponentName": opponent,
+            "propType": prop,
+            "position": "",
+            "leagueName": "",
+            "leagueId": 0,
+            "matchScore": "",
+            "lines": [],
+            "actuals": [],
+            "projecteds": [],
+            "results": [],
+            "recommendations": [],
+            "venues": [],  # True=Home, False=Away
+            "count": 0,
+            "lastTs": None,
+        })
+        g["count"] += 1
+        g["lines"].append(p.get("line"))
+        if isinstance(p.get("actualValue"), (int, float)):
+            g["actuals"].append(p["actualValue"])
+        if isinstance(p.get("projectedValue"), (int, float)):
+            g["projecteds"].append(p["projectedValue"])
+        g["results"].append(_norm_result(p.get("result")))
+        rec = (p.get("recommendation") or "").upper()
+        if rec in ("OVER", "UNDER"):
+            g["recommendations"].append(rec)
+        if p.get("position"):
+            g["position"] = p["position"]
+        if _league_label(p) != "Unknown":
+            g["leagueName"] = _league_label(p)
+            g["leagueId"] = p.get("leagueId") or 0
+        if p.get("matchScore") and not g["matchScore"]:
+            g["matchScore"] = p["matchScore"]
+        if p.get("playerIsHome") is not None:
+            g["venues"].append(p["playerIsHome"])
+        ts = p.get("timestamp") or p.get("settledAt")
+        if ts and (g["lastTs"] is None or ts > g["lastTs"]):
+            g["lastTs"] = ts
+
+    matchups = []
+    for key, g in groups.items():
+        hits = sum(1 for r in g["results"] if r == "Hit")
+        misses = sum(1 for r in g["results"] if r == "Miss")
+        pushes = sum(1 for r in g["results"] if r == "Push")
+        dnps = sum(1 for r in g["results"] if r == "DNP")
+        settled = hits + misses
+
+        lines = [x for x in g["lines"] if isinstance(x, (int, float))]
+        actuals = [x for x in g["actuals"] if isinstance(x, (int, float))]
+        projecteds = [x for x in g["projecteds"] if isinstance(x, (int, float))]
+
+        avg_line = sum(lines) / len(lines) if lines else 0
+        avg_actual = sum(actuals) / len(actuals) if actuals else None
+        avg_projected = sum(projecteds) / len(projecteds) if projecteds else None
+
+        win_rate = round((hits / settled) * 100) if settled > 0 else 0
+        rec_mode = max(set(g["recommendations"]), key=g["recommendations"].count) if g["recommendations"] else ""
+        venue_mode = True if g["venues"].count(True) >= g["venues"].count(False) else False if g["venues"] else None
+
+        matchup = {
+            "pickId": f"mu-{'-'.join(str(k).replace(' ', '_') for k in key)}",
+            "playerName": g["playerName"],
+            "opponentName": g["opponentName"],
+            "propType": g["propType"],
+            "line": round(avg_line, 1),
+            "actualValue": round(avg_actual, 1) if avg_actual is not None else None,
+            "projectedValue": round(avg_projected, 1) if avg_projected is not None else None,
+            "recommendation": rec_mode,
+            "position": g["position"],
+            "leagueName": g["leagueName"],
+            "leagueId": g["leagueId"],
+            "matchScore": g["matchScore"],
+            "playerIsHome": venue_mode,
+            "sport": "soccer",
+            "result": "Hit" if win_rate > 50 else "Miss" if settled > 0 else "Pending",
+            "hits": hits,
+            "misses": misses,
+            "pushes": pushes,
+            "dnps": dnps,
+            "winRate": win_rate,
+            "count": g["count"],
+            "settledAt": g["lastTs"],
+        }
+        matchups.append(matchup)
+
+    matchups.sort(key=lambda x: x["playerName"].lower())
+
+    players = sorted({m["playerName"] for m in matchups})
+    opponents = sorted({m["opponentName"] for m in matchups})
+    positions = sorted({m["position"] for m in matchups if m["position"]})
+    prop_types = sorted({m["propType"] for m in matchups})
+    leagues = sorted({m["leagueName"] for m in matchups if m["leagueName"]})
+    venues = sorted({"Home" if m["playerIsHome"] else "Away" for m in matchups if m["playerIsHome"] is not None})
 
     return {
-        "picks": picks,
+        "picks": matchups,
         "options": {
             "players": players,
             "opponents": opponents,
@@ -1123,10 +1218,9 @@ async def _fetch_matchups_with_retry(email: str, token: str) -> dict:
 @router.post("/picks/matchups")
 async def get_matchups(req: GetPicksRequest):
     """
-    Fast, dedicated endpoint for the Matchups tab.
-    Returns only SETTLED picks plus pre-computed unique filter options.
-    No live-settle side effects, no repair passes, no projection backfill.
-    Cached in-memory for 60s to survive Atlas replica-set blips.
+    Soccer-only matchups tab endpoint.
+    Returns unique player+opponent+prop matchups (no per-user duplicate picks).
+    Cached in-memory for 60s.
     """
     cache_key = req.email.lower()
     now = _time_mod.monotonic()
@@ -1137,6 +1231,124 @@ async def get_matchups(req: GetPicksRequest):
     result = await _fetch_matchups_with_retry(req.email, req.token)
     _matchups_cache[cache_key] = {"ts": now, "result": result}
     return result
+
+
+@router.post("/picks/matchups/backfill-venues")
+async def backfill_venues(req: GetPicksRequest):
+    """
+    Backfill playerIsHome for all settled soccer picks that are missing it.
+    Uses stored fixtureId when available, otherwise falls back to team-fixture
+    matching. Runs in the background; returns immediately.
+    """
+    from config import OWNER_EMAIL
+    session = await db.sessions.find_one({"email": req.email.lower(), "session_token": req.token}, {"_id": 0})
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid session")
+    if req.email.lower() != OWNER_EMAIL:
+        raise HTTPException(status_code=403, detail="Owner only")
+
+    async def _run():
+        query = {"status": "settled", "sport": "soccer", "playerIsHome": {"$exists": False}}
+        cursor = db.picks.find(query, {"_id": 0, "pickId": 1, "email": 1, "fixtureId": 1, "teamId": 1,
+                                        "teamName": 1, "opponentName": 1, "leagueId": 1,
+                                        "timestamp": 1, "settledAt": 1})
+        picks_missing = await cursor.to_list(None)
+        if not picks_missing:
+            print("[VENUE BACKFILL] no picks need backfill")
+            return
+
+        # Build lookup maps
+        by_fixture: dict[int, list] = {}
+        by_team: dict[int, list] = {}
+        for p in picks_missing:
+            fid = p.get("fixtureId")
+            if fid:
+                by_fixture.setdefault(fid, []).append(p)
+            elif p.get("teamId"):
+                by_team.setdefault(p["teamId"], []).append(p)
+
+        fixture_cache: dict[int, dict] = {}
+
+        async def _fetch_fixture(fid: int) -> dict | None:
+            if fid in fixture_cache:
+                return fixture_cache[fid]
+            res = await api_football_request("fixtures", {"id": fid}) or []
+            f = res[0] if res else None
+            fixture_cache[fid] = f
+            return f
+
+        updated = 0
+        skipped = 0
+
+        # Pass 1: fixtureId direct lookups
+        for fid, plist in by_fixture.items():
+            fixture = await _fetch_fixture(fid)
+            if not fixture:
+                skipped += len(plist)
+                continue
+            home_name = fixture.get("teams", {}).get("home", {}).get("name", "")
+            away_name = fixture.get("teams", {}).get("away", {}).get("name", "")
+            for p in plist:
+                team_name = p.get("teamName", "")
+                player_is_home = bool(team_name and team_name in home_name)
+                await db.picks.update_one(
+                    {"pickId": p["pickId"], "email": p.get("email", "")},
+                    {"$set": {"playerIsHome": player_is_home, "homeTeam": home_name, "awayTeam": away_name}}
+                )
+                updated += 1
+
+        # Pass 2: team window lookups (grouped by unique team+date window)
+        team_window_cache: dict[tuple, list] = {}
+        for tid, plist in by_team.items():
+            for p in plist:
+                ts = p.get("settledAt") or p.get("timestamp") or datetime.now(timezone.utc).isoformat()
+                try:
+                    d = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+                except Exception:
+                    d = datetime.now(timezone.utc)
+                from_d = (d - timedelta(days=3)).strftime("%Y-%m-%d")
+                to_d = (d + timedelta(days=1)).strftime("%Y-%m-%d")
+                cache_key = (tid, from_d, to_d)
+                team_window_cache.setdefault(cache_key, []).append(p)
+
+        for (tid, from_d, to_d), plist in team_window_cache.items():
+            fixtures = []
+            for season in (CURRENT_SEASON, 2026, 2025):
+                res = await api_football_request(
+                    "fixtures", {"team": tid, "from": from_d, "to": to_d, "season": season}
+                ) or []
+                fixtures.extend(res)
+                if fixtures:
+                    break
+            if not fixtures:
+                skipped += len(plist)
+                continue
+            for p in plist:
+                team_name = p.get("teamName", "")
+                opp_name = p.get("opponentName", "")
+                fixture = None
+                for f in fixtures:
+                    home = f.get("teams", {}).get("home", {}).get("name", "")
+                    away = f.get("teams", {}).get("away", {}).get("name", "")
+                    if (team_name and team_name in home) or (opp_name and opp_name in away):
+                        fixture = f
+                        break
+                if not fixture:
+                    skipped += 1
+                    continue
+                home_name = fixture.get("teams", {}).get("home", {}).get("name", "")
+                away_name = fixture.get("teams", {}).get("away", {}).get("name", "")
+                player_is_home = bool(team_name and team_name in home_name)
+                await db.picks.update_one(
+                    {"pickId": p["pickId"], "email": p.get("email", "")},
+                    {"$set": {"playerIsHome": player_is_home, "homeTeam": home_name, "awayTeam": away_name}}
+                )
+                updated += 1
+
+        print(f"[VENUE BACKFILL] done: updated={updated} skipped={skipped}")
+
+    aio.create_task(_run())
+    return {"started": True, "message": "Venue backfill running in background"}
 
 
 @router.get("/picks/analysis")

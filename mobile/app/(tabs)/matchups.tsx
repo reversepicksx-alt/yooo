@@ -536,21 +536,20 @@ export default function MatchupsScreen() {
                     <View style={styles.groupHeader}>
                       <Text style={styles.groupTitle}>{player}</Text>
                       <Text style={styles.groupMeta}>
-                        {playerHits}H · {playerMisses}M
-                        {playerPushes > 0 ? ` · ${playerPushes}P` : ''}
-                        {playerDnps > 0 ? ` · ${playerDnps}DNP` : ''}
-                        {winRate != null ? `  ${winRate}%` : ''}
+                        {playerPicks.length} matchup{playerPicks.length !== 1 ? 's' : ''}
                       </Text>
                     </View>
 
-                    {/* Individual pick rows */}
+                    {/* Matchup rows — one per unique opponent+prop combo */}
                     {playerPicks.map((pick) => {
-                      const res = normalizeResult(pick);
                       const rec = recLabel(pick.recommendation);
                       const actual = typeof pick.actualValue === 'number' && pick.actualValue > 0 ? pick.actualValue : null;
-                      const resColor =
-                        res === 'Hit' ? Colors.success : res === 'Miss' ? Colors.error : Colors.textSecondary;
                       const venue = pick.playerIsHome ? 'Home' : pick.playerIsHome === false ? 'Away' : '';
+                      const count = pick.count || 1;
+                      const hits = pick.hits || 0;
+                      const misses = pick.misses || 0;
+                      const winRate = pick.winRate ?? (hits + misses > 0 ? Math.round((hits / (hits + misses)) * 100) : 0);
+                      const resColor = winRate > 50 ? Colors.success : winRate < 50 ? Colors.error : Colors.textSecondary;
 
                       return (
                         <View key={pick.pickId || `${player}-${pick.propType}-${pick.line}`} style={styles.pickRow}>
@@ -574,41 +573,23 @@ export default function MatchupsScreen() {
                                   <Text style={styles.recText}>{rec}</Text>
                                 </View>
                               ) : null}
-                              <Text style={[styles.pickResult, { color: resColor }]}>{res || 'Pending'}</Text>
+                              <Text style={[styles.pickResult, { color: resColor }]}>{winRate}%</Text>
                             </View>
                           </View>
                           <Text style={styles.pickMeta}>
-                            {propLabel(pick.propType || '')} · Line {pick.line ?? '—'}
-                            {actual != null ? `  →  Actual: ${actual}` : ''}
+                            {propLabel(pick.propType || '')} · Avg line {pick.line ?? '—'}
+                            {actual != null ? `  →  Avg actual: ${actual}` : ''}
                             {pick.position ? `  ·  ${pick.position}` : ''}
                             {getLeagueLabel(pick) !== 'Unknown' ? `  ·  ${getLeagueLabel(pick)}` : ''}
+                          </Text>
+                          <Text style={styles.matchupCount}>
+                            {count} pick{count !== 1 ? 's' : ''}: {hits}H · {misses}M
+                            {(pick.pushes || 0) > 0 ? ` · ${pick.pushes}P` : ''}
+                            {(pick.dnps || 0) > 0 ? ` · ${pick.dnps}DNP` : ''}
                           </Text>
                         </View>
                       );
                     })}
-
-                    {/* Per-prop aggregate */}
-                    {propAgg.size > 0 && (
-                      <View style={styles.aggSection}>
-                        {Array.from(propAgg.entries()).map(([rawProp, v]) => {
-                          const settledForProp = v.hits + (v.total - v.hits - (playerDnps > 0 ? 0 : 0));
-                          const pct = v.total > 0 ? Math.round((v.hits / v.total) * 100) : 0;
-                          const avgActual =
-                            v.actuals.length > 0
-                              ? (v.actuals.reduce((a, b) => a + b, 0) / v.actuals.length).toFixed(1)
-                              : null;
-                          return (
-                            <View key={rawProp} style={styles.aggRow}>
-                              <Text style={styles.aggProp}>{propLabel(rawProp)}</Text>
-                              <Text style={styles.aggStat}>
-                                {v.hits}/{v.total} ({pct}%)
-                                {avgActual ? `  avg ${avgActual}` : ''}
-                              </Text>
-                            </View>
-                          );
-                        })}
-                      </View>
-                    )}
                   </View>
                 );
               })
@@ -756,6 +737,7 @@ const styles = StyleSheet.create({
   pickScore: { color: Colors.textTertiary, fontSize: 11, marginTop: 2 },
   pickResult: { fontWeight: '800', fontSize: 13 },
   pickMeta: { color: Colors.textSecondary, marginTop: 5, lineHeight: 18, fontSize: 12 },
+  matchupCount: { color: Colors.textTertiary, marginTop: 3, fontSize: 11, fontWeight: '600' },
   recBadge: {
     paddingHorizontal: 7,
     paddingVertical: 3,

@@ -861,6 +861,12 @@ export interface Pick {
   playerIsHome?: boolean;
   homeTeam?: string;
   awayTeam?: string;
+  count?: number;
+  hits?: number;
+  misses?: number;
+  pushes?: number;
+  dnps?: number;
+  winRate?: number;
   trackingId?: string;
   position?: string;
   role?: string;
@@ -982,6 +988,12 @@ export async function getMatchups(email: string, token: string): Promise<{
     homeTeam: p.homeTeam as string,
     awayTeam: p.awayTeam as string,
     settledAt: (p.settledAt as string) || undefined,
+    count: (p.count as number) || 1,
+    hits: (p.hits as number) || 0,
+    misses: (p.misses as number) || 0,
+    pushes: (p.pushes as number) || 0,
+    dnps: (p.dnps as number) || 0,
+    winRate: (p.winRate as number) || 0,
   }));
   const options = resp.options || {};
   return {

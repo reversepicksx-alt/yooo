@@ -876,6 +876,7 @@ export default function PicksScreen() {
       ].filter(Boolean).join(' ').toLowerCase();
       if (!hay.includes(q)) return false;
     }
+    return true;
   }), [picks, searchQuery]);
   const live = filteredPicks.filter(isLive);
   const history = filteredPicks.filter(isSettled);
