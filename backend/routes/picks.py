@@ -552,19 +552,44 @@ async def save_pick(req: SavePickRequest):
         "correlationWarnings": correlation_warnings,
     }
 
+# ── Picks list in-memory cache ────────────────────────────────────────────
+# Caches the PROCESSED picks list per email for 20s.  This prevents the
+# owner account (which loads 5 000 docs from Atlas) from re-running the
+# entire pipeline on every poll cycle.
+_picks_list_cache: dict[str, dict] = {}   # email → {ts, picks}
+PICKS_LIST_CACHE_TTL = 20                 # seconds
+
+
 @router.post("/picks/list")
 async def list_picks(req: GetPicksRequest):
-    from config import OWNER_EMAIL
-    session = await db.sessions.find_one({"email": req.email.lower(), "session_token": req.token}, {"_id": 0})
+    from config import OWNER_EMAIL, OWNER_EMAILS
+    requester_email = req.email.lower()
+    session = await db.sessions.find_one({"email": requester_email, "session_token": req.token}, {"_id": 0})
     if not session:
         raise HTTPException(status_code=401, detail="Invalid session")
-    # Master account: see every pick from every user for total calibration visibility.
-    if req.email.lower() == OWNER_EMAIL:
-        picks = await db.picks.find({}, {"_id": 0}).sort("timestamp", -1).limit(5000).to_list(None)
-    else:
-        picks = await db.picks.find({"email": req.email.lower()}, {"_id": 0}).sort("timestamp", -1).to_list(None)
+
+    # ── Short-circuit: serve from cache if fresh enough ───────────────────
+    _now_mono = _time_mod.monotonic()
+    _cached = _picks_list_cache.get(requester_email)
+    if _cached and (_now_mono - _cached["ts"]) < PICKS_LIST_CACHE_TTL:
+        return {"picks": _cached["picks"]}
+
+    # Always fetch only the requester's own picks for the My Picks / Live / History UI.
+    # The owner's "see all users" calibration view is available in /picks/matchups.
+    # Fetching 5,000 large documents from Atlas takes 120+ seconds — unacceptable.
+    is_owner_view = requester_email in OWNER_EMAILS
+    picks = await db.picks.find({"email": requester_email}, {"_id": 0}).sort("timestamp", -1).to_list(None)
+
+    def _pick_email(p: dict) -> str:
+        return requester_email
+
+    def _should_process(_p: dict) -> bool:
+        return True
 
     for p in picks:
+        if not _should_process(p):
+            continue
+        pick_email = _pick_email(p)
         updates = {}
         if not p.get("trackingId"):
             tid = generate_tracking_id()
@@ -605,13 +630,20 @@ async def list_picks(req: GetPicksRequest):
             updates["recommendation"] = rec_raw.lower()
         if updates:
             await db.picks.update_one(
-                {"pickId": p["pickId"], "email": req.email.lower()},
+                {"pickId": p["pickId"], "email": pick_email},
                 {"$set": updates}
             )
 
     for p in picks:
         if p.get("status") != "settled":
             continue
+        if not _should_process(p):
+            # Still apply in-memory DNP coercion for display correctness
+            _sport = p.get("sport", "soccer")
+            if bool(p.get("voidReason")) or (_sport == "soccer" and (p.get("minutesPlayed") or 90) < 30):
+                p["result"] = "dnp"
+            continue
+        pick_email = _pick_email(p)
 
         # ── DNP / early-sub guard ────────────────────────────────────────────
         # Voided picks (voidReason set OR <30 min played) must always be DNP.
@@ -634,7 +666,7 @@ async def list_picks(req: GetPicksRequest):
                 )
                 print(f"[CONSISTENCY] DNP→dnp {p.get('playerName','')} {p.get('propType','')} ({void_label})")
                 await db.picks.update_one(
-                    {"pickId": p["pickId"], "email": req.email.lower()},
+                    {"pickId": p["pickId"], "email": pick_email},
                     {"$set": {"result": "dnp", "hitPct": 0,
                               "voidReason": p.get("voidReason") or void_label}}
                 )
@@ -647,24 +679,22 @@ async def list_picks(req: GetPicksRequest):
                 p["result"] = correct
                 print(f"[CONSISTENCY] Correcting {p.get('playerName','')} {p.get('propType','')} → {correct}")
                 await db.picks.update_one(
-                    {"pickId": p["pickId"], "email": req.email.lower()},
+                    {"pickId": p["pickId"], "email": pick_email},
                     {"$set": {"result": correct}}
                 )
 
-    # ── CS2 settled-pick data repair ────────────────────────────────────────────
-    # Some CS2 picks were settled with wrong actualValue (e.g., 1 or 4 instead
-    # of real kills) because the BDL API returned the match as "current" while
-    # the old code only scanned "finished" matches.  Re-settle any settled
-    # CS2 pick with a suspicious actualValue to fix the data.
+    # ── CS2 settled-pick data repair ─────────────────────────────────────────
+    # Only run for the requester's OWN picks (owner-view must not repair other
+    # users' picks — it causes 429 floods and multi-minute hangs).
     for p in picks:
+        if not _should_process(p):
+            continue
         if p.get("sport") != "cs2" or p.get("status") != "settled":
             continue
         prop = p.get("propType", "")
         actual = p.get("actualValue")
         if not (prop.startswith(("maps_1_2_", "map1_", "map3_")) and actual is not None):
             continue
-        # For kills/deaths/assists, actualValue < 5 is almost always wrong
-        # (no pro player has < 5 kills across 2 maps).  For ADR, < 30 is wrong.
         if prop in ("maps_1_2_kills", "maps_1_3_kills", "map1_kills", "map3_kills") and actual < 5:
             pass
         elif prop in ("maps_1_2_deaths", "maps_1_3_deaths", "map1_deaths", "map3_deaths") and actual < 5:
@@ -675,8 +705,9 @@ async def list_picks(req: GetPicksRequest):
             pass
         else:
             continue
+        pick_email = _pick_email(p)
         try:
-            settled = await _settle_cs2_pick({**p, "email": req.email.lower()})
+            settled = await _settle_cs2_pick({**p, "email": pick_email})
             if settled and settled.get("actualValue") is not None:
                 p["actualValue"] = settled["actualValue"]
                 p["result"]      = settled["result"]
@@ -684,9 +715,8 @@ async def list_picks(req: GetPicksRequest):
                 if settled.get("matchScore"):
                     p["matchScore"] = settled["matchScore"]
                 print(f"[CS2 REPAIR] {p.get('playerName','')} {prop}: actualValue {actual} → {settled['actualValue']}")
-                # CRITICAL: persist the fix so the pick stays correct forever
                 await db.picks.update_one(
-                    {"pickId": p["pickId"], "email": req.email.lower()},
+                    {"pickId": p["pickId"], "email": pick_email},
                     {"$set": {
                         "actualValue": settled["actualValue"],
                         "result":      settled["result"],
@@ -697,9 +727,11 @@ async def list_picks(req: GetPicksRequest):
         except Exception as e:
             print(f"[CS2 REPAIR] error for {p.get('playerName','')}: {e}")
 
-    needs_proj = [p for p in picks if not p.get("projectedValue")]
+    # Projection backfill — only for own picks to avoid 5000-query cascade
+    needs_proj = [p for p in picks if not p.get("projectedValue") and _should_process(p)]
     if needs_proj:
         for p in needs_proj:
+            pick_email = _pick_email(p)
             try:
                 pid = p.get("playerId")
                 pt = p.get("propType", "")
@@ -722,13 +754,14 @@ async def list_picks(req: GetPicksRequest):
                     if pred and pred.get("projectedValue"):
                         p["projectedValue"] = pred["projectedValue"]
                         await db.picks.update_one(
-                            {"pickId": p["pickId"], "email": req.email.lower()},
+                            {"pickId": p["pickId"], "email": pick_email},
                             {"$set": {"projectedValue": pred["projectedValue"]}}
                         )
             except Exception:
                 pass
 
-    live_picks = [p for p in picks if p.get("status") in ("live", "pending")]
+    # Live settle: ONLY process picks belonging to the requester's own email
+    live_picks = [p for p in picks if p.get("status") in ("live", "pending") and _should_process(p)]
     # MLB picks are handled by the mlb_live_loop background task which writes
     # currentValue / matchStatus directly to MongoDB — don't pass them to the
     # soccer pipeline or it will overwrite their matchStatus with "scheduled".
@@ -907,24 +940,24 @@ async def list_picks(req: GetPicksRequest):
             traceback.print_exc()
 
     # ── FINAL STAT REFRESH ─────────────────────────────────────────────────
-    # For picks settled within the last 8 hours, re-fetch from the fixture API
-    # to get the true final value (API data sometimes lags right after FT).
-    # Skip picks that were manually corrected.
+    # For own settled picks within the last 8 hours, re-fetch from the fixture
+    # API to get the true final value. Never run against other users' picks.
     try:
         now_utc = datetime.now(timezone.utc)
         recently_settled = [
             p for p in picks
-            if p.get("status") == "settled"
+            if _should_process(p)
+            and p.get("status") == "settled"
             and not p.get("correctedManually")
-            and not p.get("voidReason")  # never re-settle voided (DNP/early-sub) picks
+            and not p.get("voidReason")
             and p.get("settledAt")
             and (now_utc - datetime.fromisoformat(
                     p["settledAt"].replace("Z", "+00:00")
                  )).total_seconds() < 8 * 3600
         ]
         if recently_settled:
-            # Limit to 6 picks per refresh to avoid rate-limit hammering
             for p in recently_settled[:6]:
+                pick_email = _pick_email(p)
                 try:
                     team_id   = p.get("teamId") or 0
                     player_id = p.get("playerId") or 0
@@ -941,7 +974,6 @@ async def list_picks(req: GetPicksRequest):
                         old_val = p.get("actualValue")
                         meta_set = {}
 
-                        # DNP void from _settle_soccer_pick: propagate DNP + voidReason
                         if refreshed.get("voidReason"):
                             new_res = "dnp"
                             p["result"] = new_res
@@ -961,8 +993,6 @@ async def list_picks(req: GetPicksRequest):
                                     p[fld] = v
                             print(f"[FINAL REFRESH] {p.get('playerName')} {prop_type}: VOID/PUSH ({refreshed['voidReason']})")
                         else:
-                            # Always backfill any newly-available match metadata (score, teams, possession),
-                            # even if actualValue did not change.
                             for fld in ("homeTeam", "awayTeam", "finalHomeGoals", "finalAwayGoals",
                                          "homePoss", "awayPoss"):
                                 v = refreshed.get(fld)
@@ -982,7 +1012,7 @@ async def list_picks(req: GetPicksRequest):
 
                         if meta_set:
                             await db.picks.update_one(
-                                {"pickId": p["pickId"], "email": req.email.lower()},
+                                {"pickId": p["pickId"], "email": pick_email},
                                 {"$set": meta_set}
                             )
                 except Exception as _re:
@@ -991,6 +1021,8 @@ async def list_picks(req: GetPicksRequest):
         print(f"[FINAL REFRESH] Outer error: {_fe}")
     # ───────────────────────────────────────────────────────────────────────
 
+    # Cache the processed result so rapid re-polls skip the full pipeline
+    _picks_list_cache[requester_email] = {"ts": _time_mod.monotonic(), "picks": picks}
     return {"picks": picks}
 
 
