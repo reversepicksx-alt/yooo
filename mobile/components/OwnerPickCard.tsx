@@ -64,6 +64,22 @@ function propUnit(propType?: string) {
   return 'units';
 }
 
+function formatMatchTime(iso?: string): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const now = new Date();
+  const isToday = d.toDateString() === now.toDateString();
+  const tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const isTomorrow = d.toDateString() === tomorrow.toDateString();
+  const timeStr = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  if (isToday) return `Today, ${timeStr}`;
+  if (isTomorrow) return `Tomorrow, ${timeStr}`;
+  const dateStr = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return `${dateStr}, ${timeStr}`;
+}
+
 export default function OwnerPickCard({
   pick,
   onPress,
@@ -146,17 +162,20 @@ export default function OwnerPickCard({
   const teamVenue = `${pick.teamName || 'Team'} · ${venueText}`;
   const propLabel = PROP_LABELS[pick.propType] || pick.propType?.replace(/_/g, ' ').toUpperCase() || 'PROP';
   const elapsed = pick.elapsed ?? (pick as any).matchMinute ?? null;
+  const matchTime = !settled ? formatMatchTime(pick.fixtureDate) : '';
+  const scriptType = dir ? `${dir} ${propLabel}` : propLabel;
 
   const shareText = useMemo(() => {
     const dir = getRecDir(pick) ?? pick.recommendation ?? '';
     const venue = pick.venue === 'away' ? 'AWAY' : 'HOME';
     let text = `${pick.playerName} ${dir} ${pick.line} ${propLabel} (${venue})`;
+    if (matchTime) text += ` — ${matchTime}`;
     if (nowValue != null) text += ` — ${nowLabel} ${formatNumber(nowValue)}`;
     if (lineValue != null) text += ` / Line ${formatNumber(lineValue)}`;
     if (hitPct != null) text += ` · ${Math.round(hitPct)}% hit prob`;
     text += ' via Reverse Picks';
     return text;
-  }, [pick, nowValue, lineValue, hitPct, propLabel, nowLabel]);
+  }, [pick, nowValue, lineValue, hitPct, propLabel, nowLabel, matchTime]);
 
   const handleShare = async () => {
     setSharing(true);
@@ -196,6 +215,7 @@ export default function OwnerPickCard({
       nowValue, nowLabel, paceValue, paceLabel, paceColor, hitPct, lineValue,
       progress, hasScore, finalHome, finalAway, homeTeamName, awayTeamName,
       hasActualPoss, hasProjPoss, showScoreLine, propLabel, elapsed, venueText,
+      matchTime, scriptType,
     });
     container.innerHTML = cardHTML;
 
@@ -322,10 +342,12 @@ export default function OwnerPickCard({
 
       <View style={styles.bottomRow}>
         <View style={styles.bottomItem}>
-          <Ionicons name="time-outline" size={11} color={Colors.textTertiary} />
-          <Text style={styles.bottomText}>{elapsed != null ? `${elapsed}'` : (live ? 'LIVE' : '—')}</Text>
+          <Ionicons name={matchTime ? "calendar-outline" : "time-outline"} size={11} color={Colors.textTertiary} />
+          <Text style={styles.bottomText}>
+            {matchTime || (elapsed != null ? `${elapsed}'` : (live ? 'LIVE' : '—'))}
+          </Text>
         </View>
-        <Text style={styles.bottomText}>{propLabel}</Text>
+        <Text style={[styles.bottomText, { color: recColor, fontWeight: '800' }]}>{scriptType}</Text>
       </View>
 
       {showScoreLine && (
@@ -396,6 +418,7 @@ function renderShareableCardHTML(
     nowValue, nowLabel, paceValue, paceLabel, paceColor, hitPct, lineValue,
     progress, hasScore, finalHome, finalAway, homeTeamName, awayTeamName,
     hasActualPoss, hasProjPoss, showScoreLine, propLabel, elapsed, venueText,
+    matchTime, scriptType,
   } = state;
   const titleColor = won ? '#39FF14' : lost ? '#FF3B30' : '#FFFFFF';
   const badgeHTML = won
@@ -469,9 +492,9 @@ function renderShareableCardHTML(
       ${progressHTML}
       <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">
         <div style="display:flex;align-items:center;color:rgba(255,255,255,0.35);font-size:11px">
-          <span style="margin-right:4px">⏱</span>${elapsed != null ? `${elapsed}'` : (live ? 'LIVE' : '—')}
+          <span style="margin-right:4px">${matchTime ? '📅' : '⏱'}</span>${matchTime || (elapsed != null ? `${elapsed}'` : (live ? 'LIVE' : '—'))}
         </div>
-        <div style="color:rgba(255,255,255,0.5);font-size:11px;font-weight:700">${propLabel}</div>
+        <div style="color:${recColor || 'rgba(255,255,255,0.5)'};font-size:11px;font-weight:800">${scriptType || propLabel}</div>
       </div>
       ${matchCtxHTML}
       ${storyHTML}

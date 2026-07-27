@@ -333,6 +333,7 @@ async def save_pick(req: SavePickRequest):
         # live-tracking / settlement paths will still attempt to resolve it
         # by team name, but any future pick with this field is bulletproof.
         "fixtureId": pick.get("fixtureId") or None,
+        "fixtureDate": pick.get("fixtureDate") or pick.get("matchDate") or None,
         "propType": normalized_prop,
         "line": pick.get("line", 0),
         "recommendation": (pick.get("recommendation") or "over").lower(),
@@ -656,6 +657,30 @@ async def _enrich_owner_media(picks: list[dict], requester_email: str) -> None:
             team_map.get(p.get("opponentId"), "")
             or opp_map.get((p.get("opponentName") or "").lower(), "")
         )
+
+    # Fixture-date backfill for owner cards (kickoff time display).
+    fid_to_picks: dict[int, list] = {}
+    for p in picks:
+        if p.get("fixtureId") and not p.get("fixtureDate"):
+            fid_to_picks.setdefault(p["fixtureId"], []).append(p)
+    if fid_to_picks:
+        async def _backfill_fixture_dates(fids: list[int], pmap: dict[int, list]):
+            from utils import api_football_request
+            for fid in fids[:20]:
+                try:
+                    res = await api_football_request("fixtures", {"id": fid})
+                    if res:
+                        fd = res[0].get("fixture", {}).get("date", "")
+                        if fd:
+                            await db.picks.update_many(
+                                {"fixtureId": fid, "fixtureDate": {"$in": [None, ""]}},
+                                {"$set": {"fixtureDate": fd}},
+                            )
+                            for pp in pmap.get(fid, []):
+                                pp["fixtureDate"] = fd
+                except Exception:
+                    pass
+        aio.ensure_future(_backfill_fixture_dates(list(fid_to_picks.keys()), fid_to_picks))
 
     # Backfill missing player photos and team crests in the background (owner-only, capped).
     missing_photo_pids = [pid for pid, url in player_map.items() if not url]

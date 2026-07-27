@@ -854,6 +854,7 @@ export interface Pick {
   period?: string;
   matchStatus?: string;
   fixtureId?: number | null;
+  fixtureDate?: string;
   createdAt?: string;
   settledAt?: string;
   sport?: string;
@@ -928,6 +929,7 @@ export async function listPicks(email: string, token: string): Promise<Pick[]> {
     period: p.period as string,
     matchStatus: p.matchStatus as string,
     fixtureId: (p.fixtureId as number) ?? null,
+    fixtureDate: (p.fixtureDate as string) || undefined,
     leagueId: (p.leagueId as number) ?? undefined,
     createdAt: (p.timestamp as string) || (p.createdAt as string),
     sport: p.sport as string,
