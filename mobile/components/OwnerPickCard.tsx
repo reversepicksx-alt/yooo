@@ -472,13 +472,9 @@ function buildShareHTML(pick: Pick, s: Record<string, any>): string {
       <span style="font-size:10px;color:rgba(255,255,255,0.3);font-weight:600">${timeStr}</span>
     </div>
     ${ctxHTML}
-    <!-- Attribution + App Store -->
-    <div style="margin-top:8px;display:flex;align-items:center;justify-content:space-between">
+    <!-- Attribution -->
+    <div style="margin-top:8px">
       <span style="font-size:9px;color:rgba(255,255,255,0.25);font-weight:500">Images © API-Football · informational use only</span>
-    </div>
-    <div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.06);display:flex;align-items:center;justify-content:space-between">
-      <span style="font-size:9px;color:rgba(255,255,255,0.35);font-weight:600;letter-spacing:0.3px">📲 Available on the App Store</span>
-      <span style="font-size:8px;color:rgba(255,255,255,0.2);font-weight:500">apps.apple.com/app/id6781092173</span>
     </div>
   </div>
 </div>`;
