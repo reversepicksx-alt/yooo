@@ -387,7 +387,7 @@ function buildShareHTML(pick: Pick, s: Record<string, any>): string {
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
       <div style="display:flex;align-items:center;gap:7px">
         ${logoDataUri
-          ? `<img src="${logoDataUri}" style="width:22px;height:22px;object-fit:contain;border-radius:4px" />`
+          ? `<img src="${logoDataUri}" style="width:28px;height:28px;object-fit:contain;image-rendering:crisp-edges" />`
           : `<div style="width:8px;height:8px;border-radius:4px;background:${accent}"></div>`}
         <span style="font-size:10px;font-weight:900;letter-spacing:1.5px;color:rgba(255,255,255,0.5)">REVERSE PICKS</span>
       </div>
@@ -423,9 +423,12 @@ function buildShareHTML(pick: Pick, s: Record<string, any>): string {
     <!-- Footer -->
     <div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px">
       <span style="font-size:10px;color:rgba(255,255,255,0.3);font-weight:600">${timeStr}</span>
-      <span style="font-size:8px;color:rgba(255,255,255,0.15);font-weight:500">Images © API-Football · informational use only</span>
     </div>
     ${ctxHTML}
+    <!-- Attribution -->
+    <div style="margin-top:6px">
+      <span style="font-size:9px;color:rgba(255,255,255,0.3);font-weight:500">Images © API-Football · informational use only</span>
+    </div>
   </div>
 </div>`;
 }
