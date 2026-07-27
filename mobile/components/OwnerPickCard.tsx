@@ -150,6 +150,22 @@ export default function OwnerPickCard({
   };
 
   const shareWebImage = async () => {
+    // Load logo as base64 so html2canvas can render it (local assets need data URI)
+    let logoDataUri = '';
+    try {
+      const logoSrc = (require('../assets/logo.png') as any);
+      const logoUrl = typeof logoSrc === 'string' ? logoSrc : logoSrc?.uri ?? '';
+      if (logoUrl) {
+        const resp = await fetch(logoUrl);
+        const blob = await resp.blob();
+        logoDataUri = await new Promise<string>(res => {
+          const reader = new FileReader();
+          reader.onload = () => res(reader.result as string);
+          reader.readAsDataURL(blob);
+        });
+      }
+    } catch { /* logo is optional */ }
+
     const container = document.createElement('div');
     container.style.cssText = 'position:fixed;left:-9999px;top:0;width:380px;font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif';
     document.body.appendChild(container);
@@ -158,7 +174,7 @@ export default function OwnerPickCard({
       nowValue, paceValue, paceLabel, hitPct, lineValue, progress,
       hasScore, finalHome, finalAway, homeTeamName, awayTeamName,
       hasActualPoss, hasProjPoss, showScoreLine, propLabel, elapsed,
-      venueTag, matchTime, dirLabel,
+      venueTag, matchTime, dirLabel, logoDataUri,
     });
     await Promise.all(
       Array.from(container.querySelectorAll('img')).map(
@@ -315,7 +331,7 @@ function buildShareHTML(pick: Pick, s: Record<string, any>): string {
     nowValue, paceValue, paceLabel, hitPct, lineValue, progress,
     hasScore, finalHome, finalAway, homeTeamName, awayTeamName,
     hasActualPoss, showScoreLine, propLabel, elapsed,
-    venueTag, matchTime, dirLabel,
+    venueTag, matchTime, dirLabel, logoDataUri,
   } = s;
 
   const photoUrl = pick.ownerPlayerPhoto || '';
@@ -370,7 +386,9 @@ function buildShareHTML(pick: Pick, s: Record<string, any>): string {
     <!-- Top row: branding + status -->
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
       <div style="display:flex;align-items:center;gap:7px">
-        <div style="width:8px;height:8px;border-radius:4px;background:${accent}"></div>
+        ${logoDataUri
+          ? `<img src="${logoDataUri}" style="width:22px;height:22px;object-fit:contain;border-radius:4px" />`
+          : `<div style="width:8px;height:8px;border-radius:4px;background:${accent}"></div>`}
         <span style="font-size:10px;font-weight:900;letter-spacing:1.5px;color:rgba(255,255,255,0.5)">REVERSE PICKS</span>
       </div>
       ${statusLabel ? `<div style="background:${statusBg};color:${statusColor};padding:3px 10px;border-radius:20px;font-size:9px;font-weight:900;letter-spacing:0.8px">${statusLabel}</div>` : ''}
