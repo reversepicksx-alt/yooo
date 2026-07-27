@@ -464,6 +464,41 @@ async def save_pick(req: SavePickRequest):
         except Exception:
             pass
 
+    # ── Duplicate-pick guard ─────────────────────────────────────────────────
+    # Same user, same player, same opponent, same prop, same line, same match:
+    # do not store a second pick. Use fixtureId when available; otherwise fall back
+    # to a 7-day window around the pick timestamp so the same fixture can't be
+    # double-saved.
+    dup_query = {
+        "email": req.email.lower(),
+        "playerName": doc["playerName"],
+        "opponentName": doc["opponentName"],
+        "propType": doc["propType"],
+        "line": doc["line"],
+    }
+    if doc.get("fixtureId"):
+        dup_query["fixtureId"] = doc["fixtureId"]
+    else:
+        try:
+            ts = datetime.fromisoformat(doc["timestamp"].replace("Z", "+00:00"))
+            from_d = (ts - timedelta(days=7)).isoformat()
+            to_d = (ts + timedelta(days=1)).isoformat()
+            dup_query["timestamp"] = {"$gte": from_d, "$lte": to_d}
+        except Exception:
+            pass
+    dup_query["pickId"] = {"$ne": pick_id}
+    existing_dup = await db.picks.find_one(
+        dup_query, {"_id": 0, "pickId": 1, "timestamp": 1}
+    )
+    if existing_dup:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"You already saved a {doc['playerName']} {doc['propType']} ({doc['line']}) pick "
+                f"against {doc['opponentName']}. Delete it first if you want to re-pick."
+            )
+        )
+
     await db.picks.update_one({"pickId": pick_id, "email": req.email.lower()}, {"$set": doc}, upsert=True)
 
     # =============================================
@@ -1257,6 +1292,8 @@ async def backfill_venues(req: GetPicksRequest):
             print("[VENUE BACKFILL] no picks need backfill")
             return
 
+        print(f"[VENUE BACKFILL] starting: {len(picks_missing)} picks missing venue")
+
         # Build lookup maps
         by_fixture: dict[int, list] = {}
         by_team: dict[int, list] = {}
@@ -1297,53 +1334,70 @@ async def backfill_venues(req: GetPicksRequest):
                 )
                 updated += 1
 
-        # Pass 2: team window lookups (grouped by unique team+date window)
-        team_window_cache: dict[tuple, list] = {}
+        # Pass 2: team window lookups — one wide fetch per unique team
         for tid, plist in by_team.items():
-            for p in plist:
-                ts = p.get("settledAt") or p.get("timestamp") or datetime.now(timezone.utc).isoformat()
-                try:
-                    d = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
-                except Exception:
-                    d = datetime.now(timezone.utc)
-                from_d = (d - timedelta(days=3)).strftime("%Y-%m-%d")
-                to_d = (d + timedelta(days=1)).strftime("%Y-%m-%d")
-                cache_key = (tid, from_d, to_d)
-                team_window_cache.setdefault(cache_key, []).append(p)
+            try:
+                dates = []
+                for p in plist:
+                    ts = p.get("settledAt") or p.get("timestamp") or datetime.now(timezone.utc).isoformat()
+                    try:
+                        d = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+                    except Exception:
+                        d = datetime.now(timezone.utc)
+                    dates.append(d)
+                min_d = min(dates) - timedelta(days=3)
+                max_d = max(dates) + timedelta(days=1)
+                from_d = min_d.strftime("%Y-%m-%d")
+                to_d = max_d.strftime("%Y-%m-%d")
 
-        for (tid, from_d, to_d), plist in team_window_cache.items():
-            fixtures = []
-            for season in (CURRENT_SEASON, 2026, 2025):
-                res = await api_football_request(
-                    "fixtures", {"team": tid, "from": from_d, "to": to_d, "season": season}
-                ) or []
-                fixtures.extend(res)
-                if fixtures:
-                    break
-            if not fixtures:
-                skipped += len(plist)
-                continue
-            for p in plist:
-                team_name = p.get("teamName", "")
-                opp_name = p.get("opponentName", "")
-                fixture = None
+                fixtures = []
+                for season in (CURRENT_SEASON, 2026, 2025):
+                    res = await api_football_request(
+                        "fixtures", {"team": tid, "from": from_d, "to": to_d, "season": season}
+                    ) or []
+                    fixtures.extend(res)
+                    if fixtures:
+                        break
+                if not fixtures:
+                    skipped += len(plist)
+                    continue
+
+                # Build a lookup dict by team name substring for fast matching
+                fixture_map = {}
                 for f in fixtures:
                     home = f.get("teams", {}).get("home", {}).get("name", "")
                     away = f.get("teams", {}).get("away", {}).get("name", "")
-                    if (team_name and team_name in home) or (opp_name and opp_name in away):
-                        fixture = f
-                        break
-                if not fixture:
-                    skipped += 1
-                    continue
-                home_name = fixture.get("teams", {}).get("home", {}).get("name", "")
-                away_name = fixture.get("teams", {}).get("away", {}).get("name", "")
-                player_is_home = bool(team_name and team_name in home_name)
-                await db.picks.update_one(
-                    {"pickId": p["pickId"], "email": p.get("email", "")},
-                    {"$set": {"playerIsHome": player_is_home, "homeTeam": home_name, "awayTeam": away_name}}
-                )
-                updated += 1
+                    fixture_map[home.lower()] = f
+                    fixture_map[away.lower()] = f
+
+                for p in plist:
+                    team_name = (p.get("teamName") or "").lower()
+                    opp_name = (p.get("opponentName") or "").lower()
+                    fixture = None
+                    # Match by team name or opponent name
+                    for key in fixture_map:
+                        if team_name and team_name in key:
+                            fixture = fixture_map[key]
+                            break
+                        if opp_name and opp_name in key:
+                            fixture = fixture_map[key]
+                            break
+                    if not fixture:
+                        skipped += 1
+                        continue
+                    home_name = fixture.get("teams", {}).get("home", {}).get("name", "")
+                    away_name = fixture.get("teams", {}).get("away", {}).get("name", "")
+                    player_is_home = bool(p.get("teamName") and p.get("teamName") in home_name)
+                    await db.picks.update_one(
+                        {"pickId": p["pickId"], "email": p.get("email", "")},
+                        {"$set": {"playerIsHome": player_is_home, "homeTeam": home_name, "awayTeam": away_name}}
+                    )
+                    updated += 1
+
+                print(f"[VENUE BACKFILL] team {tid}: updated batch, total updated so far {updated}")
+            except Exception as e:
+                print(f"[VENUE BACKFILL] team {tid} failed: {e}")
+                skipped += len(plist)
 
         print(f"[VENUE BACKFILL] done: updated={updated} skipped={skipped}")
 
