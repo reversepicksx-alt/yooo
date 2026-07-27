@@ -945,6 +945,53 @@ export async function listPicks(email: string, token: string): Promise<Pick[]> {
   }));
 }
 
+export async function getMatchups(email: string, token: string): Promise<{
+  picks: Pick[];
+  options: {
+    players: string[];
+    opponents: string[];
+    positions: string[];
+    propTypes: string[];
+    leagues: string[];
+    results: string[];
+  };
+}> {
+  const resp = await apiCall<{ picks: Record<string, unknown>[]; options: Record<string, string[]> }>('/api/picks/matchups', {
+    method: 'POST',
+    body: JSON.stringify({ email, token }),
+  });
+  const picks = (resp.picks || []).map(p => ({
+    pickId: (p.pickId as string) || '',
+    playerName: (p.playerName as string) || '',
+    teamName: p.teamName as string,
+    opponentName: p.opponentName as string,
+    propType: (p.propType as string) || '',
+    line: (p.line as number) || 0,
+    position: (p.position as string) || undefined,
+    role: (p.role as string) || undefined,
+    recommendation: (p.recommendation as string) || undefined,
+    result: (p.result as string) || undefined,
+    actualValue: (p.actualValue as number) ?? null,
+    sport: p.sport as string,
+    leagueId: (p.leagueId as number) ?? undefined,
+    leagueName: p.leagueName as string,
+    matchScore: (p.matchScore as string) || undefined,
+    settledAt: (p.settledAt as string) || undefined,
+  }));
+  const options = resp.options || {};
+  return {
+    picks,
+    options: {
+      players: options.players || [],
+      opponents: options.opponents || [],
+      positions: options.positions || [],
+      propTypes: options.propTypes || [],
+      leagues: options.leagues || [],
+      results: options.results || ["Hit", "Miss", "Push", "DNP"],
+    },
+  };
+}
+
 export async function savePick(email: string, token: string, pick: Record<string, unknown>) {
   return apiCall('/api/picks/save', {
     method: 'POST',

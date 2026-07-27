@@ -994,6 +994,79 @@ async def list_picks(req: GetPicksRequest):
     return {"picks": picks}
 
 
+@router.post("/picks/matchups")
+async def get_matchups(req: GetPicksRequest):
+    """
+    Fast, dedicated endpoint for the Matchups tab.
+    Returns only SETTLED picks plus pre-computed unique filter options.
+    No live-settle side effects, no repair passes, no projection backfill.
+    """
+    session = await db.sessions.find_one({"email": req.email.lower(), "session_token": req.token}, {"_id": 0})
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid session")
+
+    from config import OWNER_EMAIL
+    query: dict = {"status": "settled"}
+    if req.email.lower() != OWNER_EMAIL:
+        query["email"] = req.email.lower()
+
+    projection = {
+        "_id": 0,
+        "pickId": 1,
+        "playerName": 1,
+        "teamName": 1,
+        "opponentName": 1,
+        "position": 1,
+        "role": 1,
+        "propType": 1,
+        "line": 1,
+        "recommendation": 1,
+        "result": 1,
+        "actualValue": 1,
+        "sport": 1,
+        "leagueId": 1,
+        "leagueName": 1,
+        "matchScore": 1,
+        "settledAt": 1,
+        "timestamp": 1,
+    }
+
+    picks = await db.picks.find(query, projection).sort("timestamp", -1).to_list(None)
+
+    # Normalise result names for the UI
+    for p in picks:
+        res = p.get("result", "")
+        if res in ("hit", "won"):
+            p["result"] = "Hit"
+        elif res in ("miss", "lost"):
+            p["result"] = "Miss"
+        elif res == "push":
+            p["result"] = "Push"
+        elif res == "dnp":
+            p["result"] = "DNP"
+
+    def _league_label(p: dict) -> str:
+        return p.get("leagueName") or (f"League {p.get('leagueId')}" if p.get("leagueId") else "Unknown")
+
+    players = sorted({p.get("playerName", "").strip() for p in picks if p.get("playerName")})
+    opponents = sorted({p.get("opponentName", "").strip() for p in picks if p.get("opponentName")})
+    positions = sorted({p.get("position", "").strip() for p in picks if p.get("position")})
+    prop_types = sorted({p.get("propType", "").strip() for p in picks if p.get("propType")})
+    leagues = sorted({_league_label(p).strip() for p in picks if _league_label(p) != "Unknown"})
+
+    return {
+        "picks": picks,
+        "options": {
+            "players": players,
+            "opponents": opponents,
+            "positions": positions,
+            "propTypes": prop_types,
+            "leagues": leagues,
+            "results": ["Hit", "Miss", "Push", "DNP"],
+        },
+    }
+
+
 @router.get("/picks/analysis")
 async def get_pick_analysis(email: str, token: str, pickId: str):
     """Fetch the original prediction analysis for a saved pick."""
