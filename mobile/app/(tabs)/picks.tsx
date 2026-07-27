@@ -969,56 +969,68 @@ export default function PicksScreen() {
     <View style={[styles.root, { paddingTop: topPad }]}>
       {/* Header */}
       <View style={styles.header}>
-        <View style={{ flex: 1, gap: 10 }}>
-          <View style={styles.searchRow}>
-            <View style={styles.searchBar}>
-              <Ionicons name="search" size={16} color={Colors.textTertiary} />
-              <TextInput
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-                placeholder="Search by player, opponent, prop..."
-                placeholderTextColor={Colors.textTertiary}
-                style={styles.searchInput}
-              />
-            </View>
-            <TouchableOpacity onPress={() => setFilterOpen(true)} style={styles.filterBtn}>
-              <Ionicons name="options" size={16} color={Colors.text} />
-              {Object.values(filters).some(arr => arr.length > 0) && <View style={styles.filterDot} />}
+        {/* Top row: title + actions */}
+        <View style={styles.headerTopRow}>
+          <Text style={styles.headerTitle}>My Picks</Text>
+          <View style={styles.headerActions}>
+            <TouchableOpacity onPress={() => setAnalyticsOpen(true)} style={styles.iconBtn} activeOpacity={0.75}>
+              <Ionicons name="stats-chart" size={18} color={Colors.primary} />
             </TouchableOpacity>
+            <TouchableOpacity onPress={() => setMenuOpen(true)} style={styles.iconBtn} activeOpacity={0.75}>
+              <Ionicons name="grid" size={18} color={Colors.text} />
+            </TouchableOpacity>
+            <NotificationBell />
           </View>
-          {activeFilterCount > 0 && (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
-              <TouchableOpacity onPress={() => setFilters(EMPTY_FILTERS)} style={styles.clearChip}>
-                <Text style={styles.clearChipText}>Clear all</Text>
-              </TouchableOpacity>
-              {Object.entries(filters).flatMap(([key, values]) =>
-                values.map((value) => (
-                  <FilterChip
-                    key={`${key}:${value}`}
-                    label={`${key}: ${value}`}
-                    onRemove={() => setFilters((prev) => ({ ...prev, [key]: prev[key as PickFilterKey].filter((v) => v !== value) }))}
-                  />
-                ))
-              )}
-            </ScrollView>
-          )}
         </View>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-        <TouchableOpacity
-          onPress={() => setAnalyticsOpen(true)}
-          style={styles.insightsBtn}
-          activeOpacity={0.75}
-        >
-          <Ionicons name="stats-chart" size={14} color={Colors.primary} />
-          <Text style={styles.insightsBtnText}>Insights</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => setMenuOpen(true)}
-          style={styles.menuBtn}
-          activeOpacity={0.75}
-        >
-          <Ionicons name="grid" size={14} color={Colors.text} />
-        </TouchableOpacity>
+
+        {/* Search + filter */}
+        <View style={styles.searchRow}>
+          <View style={styles.searchBar}>
+            <Ionicons name="search" size={16} color={Colors.textTertiary} />
+            <TextInput
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              placeholder="Search by player, opponent, prop..."
+              placeholderTextColor={Colors.textTertiary}
+              style={styles.searchInput}
+              returnKeyType="search"
+              clearButtonMode="while-editing"
+            />
+            {searchQuery.length > 0 && (
+              <TouchableOpacity onPress={() => setSearchQuery('')}>
+                <Ionicons name="close-circle" size={16} color={Colors.textTertiary} />
+              </TouchableOpacity>
+            )}
+          </View>
+          <TouchableOpacity onPress={() => setFilterOpen(true)} style={styles.filterBtn} activeOpacity={0.75}>
+            <Ionicons name="options" size={18} color={Colors.text} />
+            {activeFilterCount > 0 && (
+              <View style={styles.filterBadge}>
+                <Text style={styles.filterBadgeText}>{activeFilterCount}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        </View>
+
+        {/* Active filter chips */}
+        {activeFilterCount > 0 && (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+            <TouchableOpacity onPress={() => setFilters(EMPTY_FILTERS)} style={styles.clearChip}>
+              <Text style={styles.clearChipText}>Clear all</Text>
+            </TouchableOpacity>
+            {Object.entries(filters).flatMap(([key, values]) =>
+              values.map((value) => (
+                <FilterChip
+                  key={`${key}:${value}`}
+                  label={`${key}: ${value}`}
+                  onRemove={() => setFilters((prev) => ({ ...prev, [key]: prev[key as PickFilterKey].filter((v) => v !== value) }))}
+                />
+              ))
+            )}
+          </ScrollView>
+        )}
+
+        {/* Live / History tabs */}
         <View style={styles.tabToggle}>
           {(['live', 'history'] as Tab[]).map(t => (
             <TouchableOpacity
@@ -1034,8 +1046,6 @@ export default function PicksScreen() {
               </Text>
             </TouchableOpacity>
           ))}
-        </View>
-        <NotificationBell />
         </View>
       </View>
 
@@ -1747,31 +1757,73 @@ const mStyles = StyleSheet.create({
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.background },
   header: {
-    paddingHorizontal: 20, paddingBottom: 12,
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 8,
+    paddingBottom: 14,
+    gap: 12,
+    backgroundColor: Colors.background,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.borderSubtle,
+  },
+  headerTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
   headerTitle: { fontSize: 28, fontWeight: '800', color: Colors.text },
-  searchRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  iconBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  searchRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   searchBar: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 10,
     backgroundColor: Colors.card,
     borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     borderWidth: 1,
     borderColor: Colors.borderSubtle,
   },
-  searchInput: { flex: 1, color: Colors.text, fontSize: 14, padding: 0 },
+  searchInput: { flex: 1, color: Colors.text, fontSize: 15, padding: 0, height: 20 },
   filterBtn: {
-    width: 42, height: 42, borderRadius: 12,
-    backgroundColor: Colors.card, borderWidth: 1, borderColor: Colors.borderSubtle,
-    alignItems: 'center', justifyContent: 'center',
+    width: 46,
+    height: 46,
+    borderRadius: 12,
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  filterDot: { position: 'absolute', right: 8, top: 8, width: 8, height: 8, borderRadius: 4, backgroundColor: Colors.primary },
-  chipRow: { gap: 8, paddingTop: 2 },
+  filterBadge: {
+    position: 'absolute',
+    right: -6,
+    top: -6,
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: Colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+  },
+  filterBadgeText: { color: Colors.background, fontSize: 11, fontWeight: '800' },
+  chipRow: { gap: 8, paddingVertical: 2 },
   clearChip: { backgroundColor: Colors.primaryDim, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6 },
   clearChipText: { color: Colors.primary, fontWeight: '700', fontSize: 12 },
   filterChip: {
@@ -1801,12 +1853,26 @@ const styles = StyleSheet.create({
   filterOptionText: { color: Colors.text, fontSize: 12, fontWeight: '600' },
   filterOptionTextActive: { color: Colors.primary },
   tabToggle: {
-    flexDirection: 'row', backgroundColor: Colors.card,
-    borderRadius: 10, borderWidth: 1, borderColor: Colors.border, padding: 3,
+    flexDirection: 'row',
+    backgroundColor: Colors.card,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+    padding: 3,
+    alignSelf: 'stretch',
   },
-  toggle: { paddingVertical: 7, paddingHorizontal: 14, borderRadius: 8, flexDirection: 'row', alignItems: 'center', gap: 5 },
+  toggle: {
+    flex: 1,
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
   toggleActive: { backgroundColor: Colors.primary },
-  toggleText: { fontSize: 13, fontWeight: '600', color: Colors.textSecondary },
+  toggleText: { fontSize: 14, fontWeight: '600', color: Colors.textSecondary },
   toggleTextActive: { color: '#000' },
   tabDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: Colors.primary },
   progressWrap: { gap: 6, marginTop: 2 },
@@ -2023,31 +2089,7 @@ const styles = StyleSheet.create({
     lineHeight: 15,
   },
 
-  insightsBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-    borderRadius: 6,
-    backgroundColor: 'rgba(57,255,20,0.10)',
-  },
-  insightsBtnText: {
-    fontSize: 11,
-    color: Colors.primary,
-    fontWeight: '700',
-  },
-  menuBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    backgroundColor: Colors.card,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
+
   menuOverlay: { flex: 1, justifyContent: 'flex-start', alignItems: 'flex-end' },
   menuBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.6)' },
   menuSheet: {
