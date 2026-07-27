@@ -1055,6 +1055,7 @@ async def _fetch_matchups_with_retry(email: str, token: str) -> dict:
         "recommendation": 1,
         "result": 1,
         "actualValue": 1,
+        "projectedValue": 1,
         "sport": 1,
         "leagueId": 1,
         "leagueName": 1,

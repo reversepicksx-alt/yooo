@@ -17,6 +17,78 @@ import Colors from '@/constants/colors';
 import { getMatchups, Pick } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 
+// ── Human-readable prop type labels ──────────────────────────────────────────
+const PROP_LABELS: Record<string, string> = {
+  // Soccer
+  pass_attempts: 'Pass Attempts',
+  passes: 'Passes',
+  key_passes: 'Key Passes',
+  shots: 'Shots',
+  shots_on_target: 'Shots on Target',
+  goals: 'Goals',
+  assists: 'Assists',
+  tackles: 'Tackles',
+  interceptions: 'Interceptions',
+  clearances: 'Clearances',
+  dribbles: 'Dribbles',
+  fouls: 'Fouls',
+  yellow_cards: 'Yellow Cards',
+  minutes_played: 'Minutes Played',
+  saves: 'Saves',
+  goals_conceded: 'Goals Conceded',
+  possession_pct: 'Possession %',
+  // MLB
+  hits: 'Hits',
+  home_runs: 'Home Runs',
+  rbi: 'RBI',
+  runs: 'Runs',
+  walks: 'Walks',
+  strikeouts: 'Strikeouts',
+  total_bases: 'Total Bases',
+  stolen_bases: 'Stolen Bases',
+  doubles: 'Doubles',
+  plate_appearances: 'Plate Appearances',
+  hits_allowed: 'Hits Allowed',
+  hits_runs_rbis: 'H+R+RBI',
+  hitter_fantasy_points: 'Fantasy Pts (Hitter)',
+  pitcher_fantasy_points: 'Fantasy Pts (Pitcher)',
+  earned_runs: 'Earned Runs',
+  innings_pitched: 'Innings Pitched',
+  pitching_strikeouts: 'Strikeouts (Pitcher)',
+  // CS2
+  map1_kills: 'Kills (Map 1)',
+  map1_deaths: 'Deaths (Map 1)',
+  map1_assists: 'Assists (Map 1)',
+  map1_adr: 'ADR (Map 1)',
+  map1_rating: 'Rating (Map 1)',
+  map1_first_kills: 'First Kills (Map 1)',
+  map1_headshot_pct: 'HS% (Map 1)',
+  map3_kills: 'Kills (Map 3)',
+  map3_deaths: 'Deaths (Map 3)',
+  map3_assists: 'Assists (Map 3)',
+  map3_headshots: 'Headshots (Map 3)',
+  map3_adr: 'ADR (Map 3)',
+  maps_1_2_kills: 'Kills (Maps 1-2)',
+  maps_1_2_deaths: 'Deaths (Maps 1-2)',
+  maps_1_2_assists: 'Assists (Maps 1-2)',
+  maps_1_2_headshots: 'Headshots (Maps 1-2)',
+  maps_1_3_kills: 'Kills (Maps 1-3)',
+  // WTA
+  aces: 'Aces',
+  double_faults: 'Double Faults',
+  service_games_won: 'Service Games Won',
+  games_won: 'Games Won',
+};
+
+function propLabel(raw: string): string {
+  return PROP_LABELS[raw] || raw.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+// Strip accents so "Moisés" and "Moises" group together
+function normalizeAccents(s: string): string {
+  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+}
+
 type FilterKey = 'player' | 'opponent' | 'position' | 'propType' | 'league' | 'result';
 
 interface FilterState {
@@ -50,24 +122,27 @@ function getLeagueLabel(p: Pick) {
   return p.leagueName || (p.leagueId ? `League ${p.leagueId}` : 'Unknown');
 }
 
-function normalizeResult(p: Pick) {
-  const r = p.result || '';
-  if (r === 'hit' || r === 'won' || r === 'Hit') return 'Hit';
-  if (r === 'miss' || r === 'lost' || r === 'Miss') return 'Miss';
-  if (r === 'push' || r === 'Push') return 'Push';
-  if (r === 'dnp' || r === 'DNP') return 'DNP';
+function normalizeResult(p: Pick): string {
+  const r = (p.result || '').toLowerCase();
+  if (r === 'hit' || r === 'won') return 'Hit';
+  if (r === 'miss' || r === 'lost') return 'Miss';
+  if (r === 'push') return 'Push';
+  if (r === 'dnp') return 'DNP';
   return '';
 }
 
-function getOptionCount(picks: Pick[], key: FilterKey, value: string) {
-  return picks.filter((p) => {
-    if (key === 'player') return p.playerName === value;
-    if (key === 'opponent') return p.opponentName === value;
-    if (key === 'position') return p.position === value;
-    if (key === 'propType') return p.propType === value;
-    if (key === 'league') return getLeagueLabel(p) === value;
-    return normalizeResult(p) === value;
-  }).length;
+function recLabel(rec?: string): string {
+  if (!rec) return '';
+  const u = rec.toUpperCase();
+  if (u === 'OVER') return 'OVER';
+  if (u === 'UNDER') return 'UNDER';
+  return u;
+}
+
+// Build a canonical display name from a set of names that normalise to same key
+function canonicalName(names: string[]): string {
+  // Prefer the one with the most characters (usually the accented version)
+  return names.reduce((a, b) => (a.length >= b.length ? a : b));
 }
 
 export default function MatchupsScreen() {
@@ -75,50 +150,122 @@ export default function MatchupsScreen() {
   const { session } = useAuth();
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['matchups', session?.email],
-    queryFn: async () => (session ? getMatchups(session.email, session.token) : { picks: [], options: { players: [], opponents: [], positions: [], propTypes: [], leagues: [], results: [] } }),
+    queryFn: async () =>
+      session
+        ? getMatchups(session.email, session.token)
+        : { picks: [], options: { players: [], opponents: [], positions: [], propTypes: [], leagues: [], results: [] } },
     enabled: !!session,
     staleTime: 60000,
     retry: 3,
     retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),
   });
 
-  const picks = data?.picks || [];
-  const options = data?.options || { players: [], opponents: [], positions: [], propTypes: [], leagues: [], results: [] };
+  const allPicks = data?.picks || [];
+
+  // ── Normalize + deduplicate player names by accent-stripped key ────────────
+  const { normalizedPicks, playerDisplayMap } = useMemo(() => {
+    // Map accent-normalised key → canonical display name
+    const keyToNames = new Map<string, string[]>();
+    for (const p of allPicks) {
+      const name = (p.playerName || '').trim();
+      if (!name) continue;
+      const key = normalizeAccents(name);
+      const arr = keyToNames.get(key) || [];
+      if (!arr.includes(name)) arr.push(name);
+      keyToNames.set(key, arr);
+    }
+    const displayMap = new Map<string, string>(); // any variant → canonical
+    for (const [, names] of keyToNames) {
+      const canonical = canonicalName(names);
+      for (const n of names) displayMap.set(n, canonical);
+    }
+    // Replace each pick's playerName with its canonical form
+    const normalized = allPicks.map((p) => ({
+      ...p,
+      playerName: displayMap.get(p.playerName || '') || p.playerName,
+    }));
+    return { normalizedPicks: normalized, playerDisplayMap: displayMap };
+  }, [allPicks]);
 
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
   const [openDropdown, setOpenDropdown] = useState<FilterKey | null>(null);
   const [dropdownSearch, setDropdownSearch] = useState('');
   const [reviewed, setReviewed] = useState(false);
 
-  const optionLists: Record<FilterKey, string[]> = {
-    player: ['All', ...options.players],
-    opponent: ['All', ...options.opponents],
-    position: ['All', ...options.positions],
-    propType: ['All', ...options.propTypes],
-    league: ['All', ...options.leagues],
-    result: ['All', ...options.results],
-  };
+  // ── Picks matching all filters EXCEPT the one currently open ─────────────
+  // This makes each dropdown show options that are still reachable given
+  // the other active filters (so CS2 props disappear when opponent=Liverpool).
+  const picksForDropdown = useCallback(
+    (excludeKey: FilterKey): Pick[] => {
+      return normalizedPicks.filter((p) => {
+        const checks: Record<FilterKey, boolean> = {
+          player: filters.player === 'All' || p.playerName === filters.player,
+          opponent: filters.opponent === 'All' || p.opponentName === filters.opponent,
+          position: filters.position === 'All' || p.position === filters.position,
+          propType: filters.propType === 'All' || p.propType === filters.propType,
+          league: filters.league === 'All' || getLeagueLabel(p) === filters.league,
+          result: filters.result === 'All' || normalizeResult(p) === filters.result,
+        };
+        // Exclude the current dropdown's own filter so it shows all available options
+        return Object.entries(checks)
+          .filter(([k]) => k !== excludeKey)
+          .every(([, v]) => v);
+      });
+    },
+    [normalizedPicks, filters]
+  );
+
+  // ── Compute option lists dynamically based on other active filters ────────
+  const optionLists = useMemo((): Record<FilterKey, string[]> => {
+    const forKey = (key: FilterKey) => {
+      const subset = picksForDropdown(key);
+      let values: string[] = [];
+      if (key === 'player') values = [...new Set(subset.map((p) => p.playerName || '').filter(Boolean))].sort();
+      else if (key === 'opponent') values = [...new Set(subset.map((p) => p.opponentName || '').filter(Boolean))].sort();
+      else if (key === 'position') values = [...new Set(subset.map((p) => p.position || '').filter(Boolean))].sort();
+      else if (key === 'propType')
+        values = [...new Set(subset.map((p) => p.propType || '').filter(Boolean))].sort((a, b) =>
+          propLabel(a).localeCompare(propLabel(b))
+        );
+      else if (key === 'league') values = [...new Set(subset.map((p) => getLeagueLabel(p)).filter((l) => l !== 'Unknown'))].sort();
+      else values = ['Hit', 'Miss', 'Push', 'DNP'];
+      return ['All', ...values];
+    };
+    return {
+      player: forKey('player'),
+      opponent: forKey('opponent'),
+      position: forKey('position'),
+      propType: forKey('propType'),
+      league: forKey('league'),
+      result: forKey('result'),
+    };
+  }, [picksForDropdown]);
 
   const filteredOptions = useMemo(() => {
     if (!openDropdown || !dropdownSearch.trim()) return optionLists;
     const term = dropdownSearch.trim().toLowerCase();
     return {
       ...optionLists,
-      [openDropdown]: optionLists[openDropdown].filter((o) => o.toLowerCase().includes(term)),
+      [openDropdown]: optionLists[openDropdown].filter((o) => {
+        if (o === 'All') return true;
+        const display = openDropdown === 'propType' ? propLabel(o) : o;
+        return display.toLowerCase().includes(term);
+      }),
     };
   }, [optionLists, openDropdown, dropdownSearch]);
 
   const filteredPicks = useMemo(() => {
-    return picks.filter((p) => {
-      const playerMatch = filters.player === 'All' || p.playerName === filters.player;
-      const oppMatch = filters.opponent === 'All' || p.opponentName === filters.opponent;
-      const posMatch = filters.position === 'All' || p.position === filters.position;
-      const propMatch = filters.propType === 'All' || p.propType === filters.propType;
-      const leagueMatch = filters.league === 'All' || getLeagueLabel(p) === filters.league;
-      const resMatch = filters.result === 'All' || normalizeResult(p) === filters.result;
-      return playerMatch && oppMatch && posMatch && propMatch && leagueMatch && resMatch;
+    return normalizedPicks.filter((p) => {
+      return (
+        (filters.player === 'All' || p.playerName === filters.player) &&
+        (filters.opponent === 'All' || p.opponentName === filters.opponent) &&
+        (filters.position === 'All' || p.position === filters.position) &&
+        (filters.propType === 'All' || p.propType === filters.propType) &&
+        (filters.league === 'All' || getLeagueLabel(p) === filters.league) &&
+        (filters.result === 'All' || normalizeResult(p) === filters.result)
+      );
     });
-  }, [picks, filters]);
+  }, [normalizedPicks, filters]);
 
   const stats = useMemo(() => {
     const total = filteredPicks.length;
@@ -126,11 +273,13 @@ export default function MatchupsScreen() {
     const misses = filteredPicks.filter((p) => normalizeResult(p) === 'Miss').length;
     const pushes = filteredPicks.filter((p) => normalizeResult(p) === 'Push').length;
     const dnps = filteredPicks.filter((p) => normalizeResult(p) === 'DNP').length;
-    const settled = hits + misses + pushes + dnps;
+    const settled = hits + misses;
     const winRate = settled > 0 ? Math.round((hits / settled) * 100) : null;
     const lines = filteredPicks.map((p) => p.line).filter((v): v is number => typeof v === 'number');
     const averageLine = lines.length ? lines.reduce((a, b) => a + b, 0) / lines.length : null;
-    return { total, hits, misses, pushes, dnps, winRate, averageLine };
+    const actuals = filteredPicks.map((p) => p.actualValue).filter((v): v is number => typeof v === 'number' && v > 0);
+    const averageActual = actuals.length ? actuals.reduce((a, b) => a + b, 0) / actuals.length : null;
+    return { total, hits, misses, pushes, dnps, winRate, averageLine, averageActual };
   }, [filteredPicks]);
 
   const grouped = useMemo(() => {
@@ -145,8 +294,12 @@ export default function MatchupsScreen() {
   const activeSummary = useMemo(
     () =>
       Object.entries(filters)
-        .filter(([_, v]) => v !== 'All')
-        .map(([k, v]) => `${FILTER_LABELS[k as FilterKey]}: ${v}`),
+        .filter(([, v]) => v !== 'All')
+        .map(([k, v]) => {
+          const label = FILTER_LABELS[k as FilterKey];
+          const display = k === 'propType' ? propLabel(v) : v;
+          return `${label}: ${display}`;
+        }),
     [filters]
   );
 
@@ -174,19 +327,19 @@ export default function MatchupsScreen() {
     const isOpen = openDropdown === key;
     const values = filteredOptions[key];
     const selected = filters[key];
-    const hasSearch = key === 'player' || key === 'opponent' || key === 'league';
+    const hasSearch = key === 'player' || key === 'opponent' || key === 'league' || key === 'propType';
+    const selectedDisplay = selected === 'All' ? 'All' : key === 'propType' ? propLabel(selected) : selected;
 
     return (
       <View key={key} style={styles.dropdownSection}>
-        <TouchableOpacity
-          onPress={() => handleOpenDropdown(key)}
-          style={styles.dropdownBtn}
-          activeOpacity={0.75}
-        >
+        <TouchableOpacity onPress={() => handleOpenDropdown(key)} style={styles.dropdownBtn} activeOpacity={0.75}>
           <Text style={styles.dropdownLabel}>{FILTER_LABELS[key]}</Text>
           <View style={styles.dropdownRight}>
-            <Text style={[styles.dropdownValue, selected !== 'All' && styles.dropdownValueActive]} numberOfLines={1}>
-              {selected}
+            <Text
+              style={[styles.dropdownValue, selected !== 'All' && styles.dropdownValueActive]}
+              numberOfLines={1}
+            >
+              {selectedDisplay}
             </Text>
             <Ionicons name={isOpen ? 'chevron-up' : 'chevron-down'} size={18} color={Colors.textTertiary} />
           </View>
@@ -213,7 +366,20 @@ export default function MatchupsScreen() {
               ) : (
                 values.map((value) => {
                   const isSelected = selected === value;
-                  const count = value === 'All' ? picks.length : getOptionCount(picks, key, value);
+                  const display = value === 'All' ? 'All' : key === 'propType' ? propLabel(value) : value;
+                  // Count picks matching this option + all other active filters
+                  const subsetForCount = picksForDropdown(key);
+                  const count =
+                    value === 'All'
+                      ? subsetForCount.length
+                      : subsetForCount.filter((p) => {
+                          if (key === 'player') return p.playerName === value;
+                          if (key === 'opponent') return p.opponentName === value;
+                          if (key === 'position') return p.position === value;
+                          if (key === 'propType') return p.propType === value;
+                          if (key === 'league') return getLeagueLabel(p) === value;
+                          return normalizeResult(p) === value;
+                        }).length;
                   return (
                     <TouchableOpacity
                       key={value}
@@ -222,11 +388,16 @@ export default function MatchupsScreen() {
                       activeOpacity={0.75}
                     >
                       <View style={styles.dropdownOptionLeft}>
-                        <Text style={[styles.dropdownOptionText, isSelected && styles.dropdownOptionTextActive]} numberOfLines={1}>
-                          {value}
+                        <Text
+                          style={[styles.dropdownOptionText, isSelected && styles.dropdownOptionTextActive]}
+                          numberOfLines={1}
+                        >
+                          {display}
                         </Text>
                         {value !== 'All' && (
-                          <Text style={styles.dropdownOptionCount}>{count} pick{count !== 1 ? 's' : ''}</Text>
+                          <Text style={styles.dropdownOptionCount}>
+                            {count} pick{count !== 1 ? 's' : ''}
+                          </Text>
                         )}
                       </View>
                       {isSelected && <Ionicons name="checkmark" size={18} color={Colors.primary} />}
@@ -267,7 +438,7 @@ export default function MatchupsScreen() {
         {isLoading && (
           <View style={styles.loadingWrap}>
             <ActivityIndicator color={Colors.primary} />
-            <Text style={styles.loadingText}>Loading settled picks...</Text>
+            <Text style={styles.loadingText}>Loading settled picks…</Text>
           </View>
         )}
 
@@ -284,21 +455,24 @@ export default function MatchupsScreen() {
 
         {!isLoading && !error && reviewed && (
           <View style={styles.results}>
-            <View style={styles.summaryCard}>
-              <Text style={styles.summaryTitle}>Active filters</Text>
-              <Text style={styles.summaryText}>
-                {activeSummary.length ? activeSummary.join(' · ') : 'No filters selected'}
-              </Text>
-            </View>
+            {/* Active filter summary */}
+            {activeSummary.length > 0 && (
+              <View style={styles.summaryCard}>
+                <Text style={styles.summaryTitle}>Active filters</Text>
+                <Text style={styles.summaryText}>{activeSummary.join(' · ')}</Text>
+              </View>
+            )}
 
+            {/* Stats grid */}
             <View style={styles.statsGrid}>
               <StatTile label="Total" value={String(stats.total)} />
               <StatTile label="Hits" value={String(stats.hits)} accent={Colors.success} />
               <StatTile label="Misses" value={String(stats.misses)} accent={Colors.error} />
-              <StatTile label="Pushes" value={String(stats.pushes)} accent={Colors.push} />
-              <StatTile label="DNPs" value={String(stats.dnps)} accent={Colors.dnp} />
-              <StatTile label="Win rate" value={stats.winRate != null ? `${stats.winRate}%` : '—'} accent={Colors.primary} />
-              <StatTile label="Avg line" value={stats.averageLine != null ? stats.averageLine.toFixed(1) : '—'} accent={Colors.accent} />
+              <StatTile label="Hit rate" value={stats.winRate != null ? `${stats.winRate}%` : '—'} accent={Colors.primary} />
+              {stats.pushes > 0 && <StatTile label="Pushes" value={String(stats.pushes)} accent={Colors.push} />}
+              {stats.dnps > 0 && <StatTile label="DNPs" value={String(stats.dnps)} accent={Colors.dnp} />}
+              {stats.averageLine != null && <StatTile label="Avg line" value={stats.averageLine.toFixed(1)} accent={Colors.accent} />}
+              {stats.averageActual != null && <StatTile label="Avg actual" value={stats.averageActual.toFixed(1)} accent={Colors.textSecondary} />}
             </View>
 
             {filteredPicks.length === 0 ? (
@@ -313,53 +487,91 @@ export default function MatchupsScreen() {
                 const playerMisses = playerPicks.filter((p) => normalizeResult(p) === 'Miss').length;
                 const playerPushes = playerPicks.filter((p) => normalizeResult(p) === 'Push').length;
                 const playerDnps = playerPicks.filter((p) => normalizeResult(p) === 'DNP').length;
-                const propAgg = new Map<string, { hits: number; total: number }>();
+                const settled = playerHits + playerMisses;
+                const winRate = settled > 0 ? Math.round((playerHits / settled) * 100) : null;
+
+                // Per-prop breakdown
+                const propAgg = new Map<string, { hits: number; total: number; actuals: number[] }>();
                 for (const p of playerPicks) {
                   const key = p.propType || 'Unknown';
-                  const curr = propAgg.get(key) || { hits: 0, total: 0 };
+                  const curr = propAgg.get(key) || { hits: 0, total: 0, actuals: [] };
                   curr.total += 1;
                   if (normalizeResult(p) === 'Hit') curr.hits += 1;
+                  if (typeof p.actualValue === 'number' && p.actualValue > 0) curr.actuals.push(p.actualValue);
                   propAgg.set(key, curr);
                 }
+
                 return (
                   <View key={player} style={styles.groupCard}>
+                    {/* Player header */}
                     <View style={styles.groupHeader}>
                       <Text style={styles.groupTitle}>{player}</Text>
                       <Text style={styles.groupMeta}>
-                        {playerHits}H · {playerMisses}M · {playerPushes}P · {playerDnps}DNP · {playerPicks.length} picks
+                        {playerHits}H · {playerMisses}M
+                        {playerPushes > 0 ? ` · ${playerPushes}P` : ''}
+                        {playerDnps > 0 ? ` · ${playerDnps}DNP` : ''}
+                        {winRate != null ? `  ${winRate}%` : ''}
                       </Text>
                     </View>
-                    {playerPicks.map((pick) => (
-                      <View key={pick.pickId || `${player}-${pick.propType}-${pick.line}`} style={styles.pickRow}>
-                        <View style={styles.pickRowTop}>
-                          <Text style={styles.pickOpponent}>{pick.opponentName || 'Opponent unknown'}</Text>
-                          <Text
-                            style={[
-                              styles.pickResult,
-                              {
-                                color:
-                                  normalizeResult(pick) === 'Hit'
-                                    ? Colors.success
-                                    : normalizeResult(pick) === 'Miss'
-                                    ? Colors.error
-                                    : Colors.textSecondary,
-                              },
-                            ]}
-                          >
-                            {normalizeResult(pick) || 'Pending'}
+
+                    {/* Individual pick rows */}
+                    {playerPicks.map((pick) => {
+                      const res = normalizeResult(pick);
+                      const rec = recLabel(pick.recommendation);
+                      const actual = typeof pick.actualValue === 'number' && pick.actualValue > 0 ? pick.actualValue : null;
+                      const resColor =
+                        res === 'Hit' ? Colors.success : res === 'Miss' ? Colors.error : Colors.textSecondary;
+
+                      return (
+                        <View key={pick.pickId || `${player}-${pick.propType}-${pick.line}`} style={styles.pickRow}>
+                          <View style={styles.pickRowTop}>
+                            <View style={styles.pickRowLeft}>
+                              <Text style={styles.pickOpponent}>{pick.opponentName || 'Opponent unknown'}</Text>
+                              {pick.matchScore ? (
+                                <Text style={styles.pickScore}>{pick.matchScore}</Text>
+                              ) : null}
+                            </View>
+                            <View style={styles.pickRowRight}>
+                              {rec ? (
+                                <View style={[styles.recBadge, rec === 'OVER' ? styles.recOver : styles.recUnder]}>
+                                  <Text style={styles.recText}>{rec}</Text>
+                                </View>
+                              ) : null}
+                              <Text style={[styles.pickResult, { color: resColor }]}>{res || 'Pending'}</Text>
+                            </View>
+                          </View>
+                          <Text style={styles.pickMeta}>
+                            {propLabel(pick.propType || '')} · Line {pick.line ?? '—'}
+                            {actual != null ? `  →  Actual: ${actual}` : ''}
+                            {pick.position ? `  ·  ${pick.position}` : ''}
+                            {getLeagueLabel(pick) !== 'Unknown' ? `  ·  ${getLeagueLabel(pick)}` : ''}
                           </Text>
                         </View>
-                        <Text style={styles.pickMeta}>
-                          Line {pick.line ?? '—'} · {pick.propType || 'Prop'} · {pick.position || '—'} · {getLeagueLabel(pick)}
-                          {pick.matchScore ? ` · ${pick.matchScore}` : ''}
-                        </Text>
+                      );
+                    })}
+
+                    {/* Per-prop aggregate */}
+                    {propAgg.size > 0 && (
+                      <View style={styles.aggSection}>
+                        {Array.from(propAgg.entries()).map(([rawProp, v]) => {
+                          const settledForProp = v.hits + (v.total - v.hits - (playerDnps > 0 ? 0 : 0));
+                          const pct = v.total > 0 ? Math.round((v.hits / v.total) * 100) : 0;
+                          const avgActual =
+                            v.actuals.length > 0
+                              ? (v.actuals.reduce((a, b) => a + b, 0) / v.actuals.length).toFixed(1)
+                              : null;
+                          return (
+                            <View key={rawProp} style={styles.aggRow}>
+                              <Text style={styles.aggProp}>{propLabel(rawProp)}</Text>
+                              <Text style={styles.aggStat}>
+                                {v.hits}/{v.total} ({pct}%)
+                                {avgActual ? `  avg ${avgActual}` : ''}
+                              </Text>
+                            </View>
+                          );
+                        })}
                       </View>
-                    ))}
-                    <Text style={styles.aggText}>
-                      {Array.from(propAgg.entries())
-                        .map(([k, v]) => `${k}: ${v.hits}/${v.total}`)
-                        .join(' · ') || '—'}
-                    </Text>
+                    )}
                   </View>
                 );
               })
@@ -367,11 +579,13 @@ export default function MatchupsScreen() {
           </View>
         )}
 
-        {!isLoading && !error && !reviewed && picks.length > 0 && (
+        {!isLoading && !error && !reviewed && allPicks.length > 0 && (
           <View style={styles.emptyState}>
             <Ionicons name="options-outline" size={40} color={Colors.textTertiary} />
-            <Text style={styles.emptyTitle}>Select filters and tap Review</Text>
-            <Text style={styles.emptyBody}>{picks.length} settled pick{picks.length !== 1 ? 's' : ''} available to search.</Text>
+            <Text style={styles.emptyTitle}>Set filters and tap Review</Text>
+            <Text style={styles.emptyBody}>
+              {allPicks.length} settled pick{allPicks.length !== 1 ? 's' : ''} available to search.
+            </Text>
           </View>
         )}
       </ScrollView>
@@ -395,11 +609,23 @@ const styles = StyleSheet.create({
   subtitle: { color: Colors.textSecondary, marginTop: 6, lineHeight: 20 },
   scroll: { flex: 1 },
   scrollContent: { padding: 16, paddingBottom: 40 },
-  dropdownCard: { marginBottom: 12, padding: 14, borderRadius: 16, backgroundColor: Colors.card, borderWidth: 1, borderColor: Colors.border },
+  dropdownCard: {
+    marginBottom: 12,
+    padding: 14,
+    borderRadius: 16,
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
   dropdownSection: { borderBottomWidth: 1, borderBottomColor: Colors.borderSubtle, paddingVertical: 10 },
-  dropdownSectionLast: { borderBottomWidth: 0 },
   dropdownBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  dropdownLabel: { color: Colors.textSecondary, fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 },
+  dropdownLabel: {
+    color: Colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
   dropdownRight: { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 1, justifyContent: 'flex-end' },
   dropdownValue: { color: Colors.text, fontWeight: '700', fontSize: 15, maxWidth: 180, textAlign: 'right' },
   dropdownValueActive: { color: Colors.primary },
@@ -415,7 +641,15 @@ const styles = StyleSheet.create({
     borderBottomColor: Colors.borderSubtle,
   },
   dropdownSearchInput: { flex: 1, color: Colors.text, fontSize: 14, paddingVertical: 4 },
-  dropdownOption: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: Colors.borderSubtle },
+  dropdownOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.borderSubtle,
+  },
   dropdownOptionActive: { backgroundColor: Colors.primaryDim },
   dropdownOptionText: { color: Colors.text, fontSize: 14, flexShrink: 1 },
   dropdownOptionTextActive: { color: Colors.primary, fontWeight: '700' },
@@ -425,26 +659,81 @@ const styles = StyleSheet.create({
   actions: { flexDirection: 'row', gap: 10, marginBottom: 16 },
   reviewBtn: { flex: 1, backgroundColor: Colors.primary, borderRadius: 14, paddingVertical: 14, alignItems: 'center' },
   reviewBtnText: { color: '#000', fontWeight: '900', fontSize: 15 },
-  resetBtn: { paddingHorizontal: 18, borderRadius: 14, backgroundColor: Colors.card, borderWidth: 1, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center' },
+  resetBtn: {
+    paddingHorizontal: 18,
+    borderRadius: 14,
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   resetBtnText: { color: Colors.text, fontWeight: '700', fontSize: 14 },
   results: { marginTop: 4 },
-  summaryCard: { marginBottom: 14, padding: 14, borderRadius: 16, backgroundColor: Colors.card, borderWidth: 1, borderColor: Colors.border },
+  summaryCard: {
+    marginBottom: 14,
+    padding: 14,
+    borderRadius: 16,
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
   summaryTitle: { color: Colors.text, fontWeight: '800', marginBottom: 6, fontSize: 14 },
   summaryText: { color: Colors.textSecondary, lineHeight: 20, fontSize: 13 },
   statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 10 },
-  statTile: { width: '31%', minWidth: 100, padding: 12, backgroundColor: Colors.card, borderRadius: 14, borderWidth: 1, borderColor: Colors.border },
+  statTile: {
+    width: '31%',
+    minWidth: 100,
+    padding: 12,
+    backgroundColor: Colors.card,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
   statValue: { fontSize: 18, fontWeight: '900' },
   statLabel: { color: Colors.textSecondary, fontSize: 11, marginTop: 4 },
-  groupCard: { marginTop: 12, padding: 14, borderRadius: 16, backgroundColor: Colors.card, borderWidth: 1, borderColor: Colors.border },
-  groupHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
+  groupCard: {
+    marginTop: 12,
+    padding: 14,
+    borderRadius: 16,
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  groupHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
   groupTitle: { color: Colors.text, fontSize: 16, fontWeight: '800', flex: 1, marginRight: 8 },
   groupMeta: { color: Colors.textSecondary, fontSize: 12, fontWeight: '600' },
   pickRow: { paddingVertical: 10, borderTopWidth: 1, borderTopColor: Colors.borderSubtle },
   pickRowTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  pickOpponent: { color: Colors.text, fontWeight: '700', fontSize: 14, flex: 1, marginRight: 8 },
+  pickRowLeft: { flex: 1, marginRight: 8 },
+  pickRowRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  pickOpponent: { color: Colors.text, fontWeight: '700', fontSize: 14 },
+  pickScore: { color: Colors.textTertiary, fontSize: 11, marginTop: 2 },
   pickResult: { fontWeight: '800', fontSize: 13 },
-  pickMeta: { color: Colors.textSecondary, marginTop: 4, lineHeight: 18, fontSize: 12 },
-  aggText: { color: Colors.textSecondary, marginTop: 10, fontSize: 12, lineHeight: 18 },
+  pickMeta: { color: Colors.textSecondary, marginTop: 5, lineHeight: 18, fontSize: 12 },
+  recBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  recOver: { backgroundColor: 'rgba(16, 185, 129, 0.2)' },
+  recUnder: { backgroundColor: 'rgba(99, 102, 241, 0.2)' },
+  recText: { fontSize: 11, fontWeight: '800', color: Colors.text },
+  aggSection: {
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: Colors.borderSubtle,
+    gap: 6,
+  },
+  aggRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  aggProp: { color: Colors.textSecondary, fontSize: 12, flex: 1 },
+  aggStat: { color: Colors.text, fontSize: 12, fontWeight: '700' },
   emptyState: { alignItems: 'center', marginTop: 30, padding: 20 },
   emptyTitle: { color: Colors.text, fontSize: 16, fontWeight: '800', marginTop: 12 },
   emptyBody: { color: Colors.textSecondary, fontSize: 13, marginTop: 6, textAlign: 'center' },
