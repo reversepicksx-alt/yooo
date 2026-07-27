@@ -62,6 +62,20 @@ const SPORT_META: Record<SportKey, { label: string; icon: string }> = {
   cs2:    { label: 'CS2',    icon: '🎮' },
 };
 
+const LEAGUE_LABELS: Record<number, string> = {
+  39: 'Premier League', 40: 'Championship', 140: 'La Liga', 141: 'La Liga 2',
+  135: 'Serie A', 136: 'Serie B', 78: 'Bundesliga', 79: 'Bundesliga 2',
+  61: 'Ligue 1', 62: 'Ligue 2', 71: 'Brasileirão', 128: 'Liga Profesional',
+  253: 'MLS', 262: 'Liga MX', 254: 'NWSL', 2: 'Champions League', 3: 'Europa League',
+  848: 'NWSL', 1: 'World Cup', 5: 'Nations League', 307: 'Saudi Pro',
+  88: 'Eredivisie', 94: 'Primeira Liga', 144: 'Belgian Pro', 203: 'Süper Lig',
+};
+
+function getLeagueLabel(id?: number | null) {
+  if (!id) return null;
+  return LEAGUE_LABELS[id] || `League ${id}`;
+}
+
 function isLive(p: Pick) {
   return p.matchStatus === 'live' || p.status === 'live' || p.status === 'pending' || (!p.status && !['hit','miss','push','won','lost','dnp'].includes(p.result ?? ''));
 }
@@ -112,6 +126,7 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete?: () => void }) {
   const posLabel = cardSport === 'soccer'
     ? [pick.position, pick.role].filter(Boolean).join(' · ')
     : '';
+  const leagueLabel = getLeagueLabel(pick.leagueId);
 
   const settled = won || lost || push;
   const nowValue = settled
@@ -296,7 +311,7 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete?: () => void }) {
       <View style={styles.cardRow2}>
         <View style={styles.cardRow2Left}>
           <Text style={styles.cardMeta} numberOfLines={1}>
-            {[pick.teamName, posLabel || null, pick.opponentName
+            {[leagueLabel, pick.teamName, posLabel || null, pick.opponentName
               ? (pick.venue === 'away' ? `@ ${pick.opponentName}` : `vs ${pick.opponentName}`)
               : null]
               .filter(Boolean).join(' · ')}
@@ -413,6 +428,20 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete?: () => void }) {
         </View>
       )}
 
+      {/* Live possession bar — mini pitch visualization for live soccer */}
+      {live && !won && !lost && cardSport === 'soccer' && hasActualPoss && (
+        <View style={styles.possBarBlock}>
+          <View style={styles.possBarTrack}>
+            <View style={[styles.possBarHome, { width: `${homePoss as number}%`, backgroundColor: Colors.primary }]} />
+            <View style={[styles.possBarAway, { flex: 1, backgroundColor: Colors.textTertiary }]} />
+          </View>
+          <View style={styles.possBarLabels}>
+            <Text style={styles.possBarLabel}>{homeTeamName || 'Home'} {homePoss}%</Text>
+            <Text style={styles.possBarLabel}>{awayTeamName || 'Away'} {awayPoss}%</Text>
+          </View>
+        </View>
+      )}
+
       {/* Live pace-divergence warning — fires when the in-match trend is running
           strongly against the pick's recommendation (e.g. opponent parks the bus
           after an early goal and the subject's pass volume balloons past a
@@ -425,8 +454,218 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete?: () => void }) {
         </View>
       )}
 
+      {/* Settled pick story — adds color and narrative for soccer results */}
+      {settled && cardSport === 'soccer' && (
+        <SettledStory pick={pick} won={won} lost={lost} push={push} dnp={dnp} />
+      )}
 
     </View>
+  );
+}
+
+function SettledStory({
+  pick,
+  won,
+  lost,
+  push,
+  dnp,
+}: {
+  pick: Pick;
+  won: boolean;
+  lost: boolean;
+  push: boolean;
+  dnp: boolean;
+}) {
+  const line = typeof pick.line === 'number' ? pick.line : null;
+  const actual = pick.actualValue ?? (pick as any).currentValue ?? null;
+  const proj = pick.projection ?? pick.projectedValue ?? null;
+  const poss = pick.homePoss != null && pick.awayPoss != null
+    ? `${Math.round(pick.homePoss)}%/${Math.round(pick.awayPoss)}%`
+    : null;
+
+  let narrative = '';
+  if (dnp) {
+    narrative = `Did not play — voided.`;
+  } else if (push) {
+    narrative = `Finished exactly on the line.`;
+  } else if (won && actual != null && line != null) {
+    const margin = Math.abs(actual - line);
+    narrative = `Beat the line by ${margin.toFixed(1)} ${propUnit(pick.propType)}.`;
+  } else if (lost && actual != null && line != null) {
+    const margin = Math.abs(actual - line);
+    narrative = `Fell short by ${margin.toFixed(1)} ${propUnit(pick.propType)}.`;
+  } else if (proj != null && line != null) {
+    const edge = Math.abs(proj - line);
+    narrative = `Pre-game edge was ${edge.toFixed(1)} ${propUnit(pick.propType)}.`;
+  }
+
+  if (poss && (won || lost)) {
+    narrative += ` Match possession: ${poss}.`;
+  }
+
+  const color = won ? Colors.success : lost ? Colors.error : push ? Colors.push : Colors.dnp;
+  return (
+    <View style={styles.storyBlock}>
+      <View style={[styles.storyDot, { backgroundColor: color }]} />
+      <Text style={styles.storyText} numberOfLines={2}>{narrative}</Text>
+    </View>
+  );
+}
+
+function propUnit(propType?: string) {
+  if (!propType) return '';
+  if (['pass_attempts', 'passes', 'tackles', 'clearances', 'duels_won', 'saves', 'goalie_saves'].includes(propType)) return 'passes';
+  if (['shots', 'shots_on_target'].includes(propType)) return 'shots';
+  if (['goals', 'assists'].includes(propType)) return '';
+  return 'units';
+}
+
+function computeAnalytics(picks: Pick[]) {
+  const settled = picks.filter(p => ['hit', 'miss', 'push'].includes(p.result || ''));
+  const results = settled.filter(p => p.result === 'hit' || p.result === 'miss');
+  const hits = results.filter(p => p.result === 'hit').length;
+  const total = results.length;
+  const winRate = total > 0 ? Math.round((hits / total) * 100) : 0;
+
+  const sorted = [...settled].sort((a, b) =>
+    new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+  );
+  let currentStreak = 0;
+  let longestStreak = 0;
+  let running = 0;
+  for (const p of sorted) {
+    if (p.result === 'hit') {
+      running++;
+      longestStreak = Math.max(longestStreak, running);
+    } else if (p.result === 'miss') {
+      running = 0;
+    }
+  }
+  running = 0;
+  for (const p of sorted) {
+    if (p.result === 'hit') {
+      running++;
+      currentStreak = running;
+    } else if (p.result === 'miss') {
+      break;
+    }
+  }
+
+  const byDimension = (key: keyof Pick) => {
+    const buckets: Record<string, { hit: number; miss: number; total: number; rate: number }> = {};
+    for (const p of settled) {
+      const val = (p[key] || 'unknown') as string;
+      if (!val || val === 'unknown') continue;
+      if (!buckets[val]) buckets[val] = { hit: 0, miss: 0, total: 0, rate: 0 };
+      if (p.result === 'hit') buckets[val].hit++;
+      if (p.result === 'miss') buckets[val].miss++;
+      if (p.result === 'hit' || p.result === 'miss') buckets[val].total++;
+    }
+    return Object.entries(buckets)
+      .map(([k, v]) => ({ label: k, ...v, rate: v.total > 0 ? Math.round((v.hit / v.total) * 100) : 0 }))
+      .filter(v => v.total >= 3)
+      .sort((a, b) => b.total - a.total);
+  };
+
+  const margins = results.map(p => {
+    const actual = p.actualValue ?? (p as any).currentValue ?? null;
+    return actual != null && p.line ? Math.abs(actual - p.line) : 0;
+  }).filter(m => m > 0);
+  const avgWinMargin = margins.length > 0 ? (margins.reduce((a, b) => a + b, 0) / margins.length).toFixed(1) : '—';
+
+  return {
+    totalPicks: picks.length,
+    settled: settled.length,
+    hits,
+    misses: results.filter(p => p.result === 'miss').length,
+    winRate,
+    currentStreak,
+    longestStreak,
+    avgWinMargin,
+    byLeague: byDimension('leagueId').map(x => ({ ...x, label: getLeagueLabel(Number(x.label)) || x.label })),
+    byProp: byDimension('propType'),
+    byPosition: byDimension('position'),
+    byRole: byDimension('role'),
+  };
+}
+
+function AnalyticsModal({ visible, picks, onClose }: { visible: boolean; picks: Pick[]; onClose: () => void }) {
+  const stats = React.useMemo(() => computeAnalytics(picks), [picks]);
+  const insets = useSafeAreaInsets();
+
+  const Section = ({ title, rows }: { title: string; rows: { label: string; rate: number; total: number }[] }) => {
+    if (!rows.length) return null;
+    return (
+      <View style={aStyles.section}>
+        <Text style={aStyles.sectionTitle}>{title}</Text>
+        {rows.map((row, i) => (
+          <View key={i} style={aStyles.row}>
+            <Text style={aStyles.rowLabel} numberOfLines={1}>{row.label}</Text>
+            <View style={aStyles.rowBarTrack}>
+              <View style={[aStyles.rowBarFill, { width: `${Math.max(4, Math.min(100, row.rate))}%`, backgroundColor: row.rate >= 60 ? Colors.success : row.rate >= 50 ? Colors.primary : Colors.error }]} />
+            </View>
+            <Text style={aStyles.rowRate}>{row.rate}%</Text>
+            <Text style={aStyles.rowN}>({row.total})</Text>
+          </View>
+        ))}
+      </View>
+    );
+  };
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+      <View style={[aStyles.backdrop, { paddingTop: insets.top + 40 }]}>
+        <View style={aStyles.sheet}>
+          <View style={aStyles.sheetHeader}>
+            <Text style={aStyles.sheetTitle}>Pick Insights</Text>
+            <TouchableOpacity onPress={onClose} style={aStyles.closeBtn}>
+              <Ionicons name="close" size={18} color={Colors.text} />
+            </TouchableOpacity>
+          </View>
+
+          <View style={aStyles.summaryRow}>
+            <View style={aStyles.summaryCell}>
+              <Text style={aStyles.summaryNum}>{stats.totalPicks}</Text>
+              <Text style={aStyles.summaryLbl}>TOTAL</Text>
+            </View>
+            <View style={aStyles.summaryCell}>
+              <Text style={[aStyles.summaryNum, { color: Colors.success }]}>{stats.hits}</Text>
+              <Text style={aStyles.summaryLbl}>HITS</Text>
+            </View>
+            <View style={aStyles.summaryCell}>
+              <Text style={[aStyles.summaryNum, { color: Colors.error }]}>{stats.misses}</Text>
+              <Text style={aStyles.summaryLbl}>MISSES</Text>
+            </View>
+            <View style={aStyles.summaryCell}>
+              <Text style={[aStyles.summaryNum, { color: Colors.primary }]}>{stats.winRate}%</Text>
+              <Text style={aStyles.summaryLbl}>WIN RATE</Text>
+            </View>
+          </View>
+
+          <View style={aStyles.summaryRow}>
+            <View style={aStyles.summaryCell}>
+              <Text style={[aStyles.summaryNum, { color: Colors.accent }]}>{stats.currentStreak}W</Text>
+              <Text style={aStyles.summaryLbl}>CURRENT STREAK</Text>
+            </View>
+            <View style={aStyles.summaryCell}>
+              <Text style={[aStyles.summaryNum, { color: Colors.success }]}>{stats.longestStreak}W</Text>
+              <Text style={aStyles.summaryLbl}>BEST STREAK</Text>
+            </View>
+            <View style={aStyles.summaryCell}>
+              <Text style={aStyles.summaryNum}>{stats.avgWinMargin}</Text>
+              <Text style={aStyles.summaryLbl}>AVG MARGIN</Text>
+            </View>
+          </View>
+
+          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
+            <Section title="By League" rows={stats.byLeague} />
+            <Section title="By Prop" rows={stats.byProp} />
+            <Section title="By Position" rows={stats.byPosition} />
+            <Section title="By Role" rows={stats.byRole} />
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -612,6 +851,7 @@ export default function PicksScreen() {
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const [activeTab, setActiveTab] = useState<Tab>('live');
   const [analysisModal, setAnalysisModal] = useState<{ pick: Pick; data: Record<string, unknown> | null; loading: boolean } | null>(null);
+  const [analyticsOpen, setAnalyticsOpen] = useState(false);
   // Which sport sections are expanded in history (default: all collapsed so all 3 headers visible)
   const [expandedSports, setExpandedSports] = useState<Set<SportKey>>(new Set());
   const toggleSport = useCallback((sport: SportKey) => {
@@ -760,6 +1000,14 @@ export default function PicksScreen() {
       <View style={styles.header}>
         <Text style={styles.headerTitle}>My Picks</Text>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+        <TouchableOpacity
+          onPress={() => setAnalyticsOpen(true)}
+          style={styles.insightsBtn}
+          activeOpacity={0.75}
+        >
+          <Ionicons name="stats-chart" size={14} color={Colors.primary} />
+          <Text style={styles.insightsBtnText}>Insights</Text>
+        </TouchableOpacity>
         <View style={styles.tabToggle}>
           {(['live', 'history'] as Tab[]).map(t => (
             <TouchableOpacity
@@ -892,6 +1140,13 @@ export default function PicksScreen() {
           showsVerticalScrollIndicator={false}
         />
       )}
+
+      {/* ── Analytics Modal ── */}
+      <AnalyticsModal
+        visible={analyticsOpen}
+        picks={picks}
+        onClose={() => setAnalyticsOpen(false)}
+      />
 
       {/* ── Analysis Modal ── */}
       <Modal
@@ -1553,4 +1808,175 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   tapHintText: { fontSize: 9, color: Colors.primary, fontWeight: '600', letterSpacing: 0.3 },
+
+  // Settled story styles
+  storyBlock: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 6,
+  },
+  storyDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    marginRight: 8,
+  },
+  storyText: {
+    flex: 1,
+    fontSize: 11,
+    color: Colors.textSecondary,
+    fontWeight: '500',
+    lineHeight: 15,
+  },
+
+  insightsBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 6,
+    backgroundColor: 'rgba(57,255,20,0.10)',
+  },
+  insightsBtnText: {
+    fontSize: 11,
+    color: Colors.primary,
+    fontWeight: '700',
+  },
+
+  // Live possession bar
+  possBarBlock: {
+    marginTop: 8,
+  },
+  possBarTrack: {
+    height: 8,
+    borderRadius: 4,
+    flexDirection: 'row',
+    overflow: 'hidden',
+    backgroundColor: Colors.cardSecondary,
+  },
+  possBarHome: {
+    height: 8,
+  },
+  possBarAway: {
+    height: 8,
+  },
+  possBarLabels: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 4,
+  },
+  possBarLabel: {
+    fontSize: 10,
+    color: Colors.textTertiary,
+    fontWeight: '500',
+  },
+});
+
+const aStyles = StyleSheet.create({
+  backdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    justifyContent: 'flex-end',
+  },
+  sheet: {
+    flex: 1,
+    backgroundColor: Colors.background,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    padding: 16,
+  },
+  sheetHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  sheetTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: Colors.text,
+  },
+  closeBtn: {
+    padding: 6,
+    borderRadius: 14,
+    backgroundColor: Colors.cardSecondary,
+  },
+  summaryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 18,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    backgroundColor: Colors.card,
+    borderRadius: 10,
+  },
+  summaryCell: {
+    alignItems: 'center',
+    minWidth: 60,
+  },
+  summaryNum: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: Colors.text,
+  },
+  summaryLbl: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: Colors.textTertiary,
+    marginTop: 2,
+    letterSpacing: 0.5,
+  },
+  section: {
+    marginBottom: 16,
+  },
+  sectionTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.textSecondary,
+    marginBottom: 8,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  rowLabel: {
+    width: 110,
+    fontSize: 12,
+    color: Colors.text,
+    fontWeight: '600',
+  },
+  rowBarTrack: {
+    flex: 1,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: Colors.cardSecondary,
+    marginRight: 10,
+    overflow: 'hidden',
+  },
+  rowBarFill: {
+    height: 6,
+    borderRadius: 3,
+  },
+  rowRate: {
+    width: 36,
+    fontSize: 12,
+    fontWeight: '700',
+    color: Colors.text,
+    textAlign: 'right',
+  },
+  rowN: {
+    width: 36,
+    fontSize: 11,
+    color: Colors.textTertiary,
+    textAlign: 'right',
+    marginLeft: 4,
+  },
 });

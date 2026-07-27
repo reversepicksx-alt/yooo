@@ -7420,6 +7420,9 @@ Analyze ALL data thoroughly. Return JSON only."""
             _er_margin = 0
 
         # ── Safety: pull from live DB-derived cache ───────────────────────────
+        # Hierarchical v2: league-aware + position-aware. Falls back to global
+        # prop+direction when the child bucket is too thin.
+        _er_position = prediction.get("player", {}).get("position") or prediction.get("position") or ""
         if _er_rec == "PASS":
             _safety_rating = "AVOID"
             _er_hit_rate   = None
@@ -7429,7 +7432,7 @@ Analyze ALL data thoroughly. Return JSON only."""
             _er_hit_rate   = None
             _er_n          = 0
         else:
-            _ps = _get_prop_safety(_er_prop, _er_rec)
+            _ps = _get_prop_safety(_er_prop, _er_rec, league_id=req.leagueId, position=_er_position)
             if _ps:
                 _safety_rating = _ps["safety"]
                 _er_hit_rate   = _ps["hitRate"]
@@ -8237,6 +8240,9 @@ Analyze ALL data thoroughly. Return JSON only."""
                     float(_raw_conf),
                     prediction.get("recommendation", "").upper() or None,
                     line=req.line,
+                    league_id=req.leagueId,
+                    position=prediction.get("player", {}).get("position") or prediction.get("position") or None,
+                    role=prediction.get("player", {}).get("role") or prediction.get("role") or None,
                 )
                 if _calibrated is not None:
                     _calibrated_rounded = round(_calibrated)

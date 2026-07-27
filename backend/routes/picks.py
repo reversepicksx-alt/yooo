@@ -554,10 +554,15 @@ async def save_pick(req: SavePickRequest):
 
 @router.post("/picks/list")
 async def list_picks(req: GetPicksRequest):
+    from config import OWNER_EMAIL
     session = await db.sessions.find_one({"email": req.email.lower(), "session_token": req.token}, {"_id": 0})
     if not session:
         raise HTTPException(status_code=401, detail="Invalid session")
-    picks = await db.picks.find({"email": req.email.lower()}, {"_id": 0}).sort("timestamp", -1).to_list(None)
+    # Master account: see every pick from every user for total calibration visibility.
+    if req.email.lower() == OWNER_EMAIL:
+        picks = await db.picks.find({}, {"_id": 0}).sort("timestamp", -1).limit(5000).to_list(None)
+    else:
+        picks = await db.picks.find({"email": req.email.lower()}, {"_id": 0}).sort("timestamp", -1).to_list(None)
 
     for p in picks:
         updates = {}

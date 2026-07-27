@@ -854,6 +854,8 @@ export interface Pick {
   trackingId?: string;
   position?: string;
   role?: string;
+  leagueId?: number;
+  leagueName?: string;
   coinFlip?: boolean;
   matchScore?: string;
   finalHomeGoals?: number | null;
@@ -907,6 +909,7 @@ export async function listPicks(email: string, token: string): Promise<Pick[]> {
     period: p.period as string,
     matchStatus: p.matchStatus as string,
     fixtureId: (p.fixtureId as number) ?? null,
+    leagueId: (p.leagueId as number) ?? undefined,
     createdAt: (p.timestamp as string) || (p.createdAt as string),
     sport: p.sport as string,
     venue: p.venue as string,
