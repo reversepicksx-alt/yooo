@@ -2208,6 +2208,7 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
 
         actual_value = None
         minutes_played = None
+        _player_found = False
         from config import STAT_LAMBDA_MAP
         stat_fn = STAT_LAMBDA_MAP.get(prop_type)
 
@@ -2231,12 +2232,15 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
                              or (api_name.startswith(pname_initial) and pname_last in api_name))
                     )
                 )
-                if pid == player_id or (not player_id and name_match):
+                if pid == player_id or name_match:
+                    _player_found = True
                     stats = p.get("statistics", [{}])[0]
                     minutes_played = stats.get("games", {}).get("minutes") or 0
                     if stat_fn:
                         actual_value = stat_fn(stats)
-                    if actual_value is not None and not player_id and pid:
+                    # If we matched by name but the pick lacks a playerId, store it
+                    # so future lookups are ID-based and more reliable.
+                    if _player_found and pid and pid != player_id:
                         await db.picks.update_one(
                             {"pickId": pick["pickId"]},
                             {"$set": {"playerId": pid}}
@@ -2244,6 +2248,14 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
                     break
             if actual_value is not None or minutes_played is not None:
                 break
+
+        # DNP / not-in-squad settlement: if the match is finished and the player
+        # does not appear in the fixtures/players response, they did not make the
+        # matchday squad (injured, rested, transferred, etc.). Settle as push/DNP
+        # so the pick does not stay stuck in "live" forever.
+        if not _player_found:
+            print(f"[AUTO-SETTLE-DNP] {pick.get('playerName','?')} not in finished fixture {fid} squad — settling as push/DNP")
+            return await _settle_dnp_push(pick, matched, "Player not in matchday squad")
 
         if actual_value is None:
             return False
@@ -2393,6 +2405,73 @@ async def _try_settle_soccer(pick: dict, fixtures: list) -> bool:
         return True
     except Exception as e:
         print(f"[AUTO-SETTLE] Error settling {pick.get('playerName','')}: {e}")
+        return False
+
+
+async def _settle_dnp_push(pick: dict, matched: dict, void_reason: str) -> bool:
+    """Settle a pick as push/DNP when the player did not participate.
+
+    Used when a finished fixture's player-stats response does not include the
+    player (not in matchday squad), or when minutes < 30 and no stat evidence.
+    """
+    try:
+        home_goals = matched.get("goals", {}).get("home", 0) or 0
+        away_goals = matched.get("goals", {}).get("away", 0) or 0
+        _venue = (pick.get("venue") or "home").lower()
+        _player_goals = home_goals if _venue == "home" else away_goals
+        _opp_goals    = away_goals if _venue == "home" else home_goals
+        home_team_name = matched.get("teams", {}).get("home", {}).get("name", "") or ""
+        away_team_name = matched.get("teams", {}).get("away", {}).get("name", "") or ""
+        home_team_id   = matched.get("teams", {}).get("home", {}).get("id")
+        away_team_id   = matched.get("teams", {}).get("away", {}).get("id")
+        fid = matched.get("fixture", {}).get("id")
+        home_poss, away_poss = None, None
+        if fid:
+            try:
+                from routes.picks import _fetch_fixture_possession
+                home_poss, away_poss = await _fetch_fixture_possession(fid, home_team_id, away_team_id)
+            except Exception:
+                pass
+        try:
+            from game_script_engine import bucket_from_final_score
+            _scen_bucket = bucket_from_final_score(home_goals, away_goals)
+        except Exception:
+            _scen_bucket = None
+        _push_set = {
+            "status": "settled",
+            "result": "push",
+            "actualValue": None,
+            "minutesPlayed": 0,
+            "matchScore": f"{_player_goals}-{_opp_goals}",
+            "finalHomeGoals": home_goals,
+            "finalAwayGoals": away_goals,
+            "homeTeam": home_team_name,
+            "awayTeam": away_team_name,
+            "scenarioBucket": _scen_bucket,
+            "settledAt": datetime.now(timezone.utc).isoformat(),
+            "settledBy": "auto_soccer_dnp",
+            "voidReason": void_reason,
+        }
+        if home_poss is not None:
+            _push_set["homePoss"] = home_poss
+        if away_poss is not None:
+            _push_set["awayPoss"] = away_poss
+        _upd = await db.picks.update_one(
+            {"pickId": pick["pickId"], "status": {"$ne": "settled"}},
+            {"$set": _push_set}
+        )
+        if _upd.modified_count == 0:
+            print(f"[AUTO-SETTLE-DNP] {pick.get('playerName','')} already settled — skipping duplicate")
+            return True
+        try:
+            from routes.push import _notify_pick_settled
+            await _notify_pick_settled(pick, "push")
+        except Exception as _pe:
+            print(f"[AUTO-SETTLE-DNP] push error: {_pe}")
+        print(f"[AUTO-SETTLE-DNP] {pick.get('playerName','')} → push ({void_reason})")
+        return True
+    except Exception as e:
+        print(f"[AUTO-SETTLE-DNP] Error settling {pick.get('playerName','')}: {e}")
         return False
 
 

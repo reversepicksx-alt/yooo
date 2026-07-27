@@ -2652,6 +2652,48 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
             update["matchStatus"] = "final"
             return update
 
+        # DNP / not-in-squad settlement: the match is finished and the player
+        # does not appear in the fixtures/players response. They did not make the
+        # matchday squad — settle as push/DNP immediately instead of leaving
+        # the pick stuck in "live".
+        if not _player_found_in_api:
+            print(f"[SETTLE-DNP] {pick.get('playerName','')} {pick.get('propType','')} — not in finished fixture squad")
+            update["result"] = "dnp"
+            update["actualValue"] = None
+            update["minutesPlayed"] = 0
+            update["hitPct"] = 0
+            update["voidReason"] = "Player not in matchday squad"
+            # Persist the settlement so the card moves out of the Live tab
+            _persist_settlement = {
+                "status": "settled",
+                "result": "dnp",
+                "actualValue": None,
+                "hitPct": 0,
+                "matchScore": match_score,
+                "minutesPlayed": 0,
+                "finalHomeGoals": home_goals,
+                "finalAwayGoals": away_goals,
+                "homeTeam": home_team_name,
+                "awayTeam": away_team_name,
+                "settledAt": datetime.now(timezone.utc).isoformat(),
+                "settledBy": "live_dnp",
+                "voidReason": "Player not in matchday squad",
+            }
+            if home_poss is not None:
+                _persist_settlement["homePoss"] = home_poss
+            if away_poss is not None:
+                _persist_settlement["awayPoss"] = away_poss
+            await db.picks.update_one(
+                {"pickId": pick["pickId"], "status": {"$ne": "settled"}},
+                {"$set": _persist_settlement}
+            )
+            try:
+                from routes.push import _notify_pick_settled
+                await _notify_pick_settled(pick, "dnp")
+            except Exception as _pe:
+                print(f"[SETTLE-DNP] push error: {_pe}")
+            return update
+
         # If stat came back as None (API didn't return the field), defer to background loop
         if not _stat_available and minutes_played >= 30:
             print(f"[SETTLE-DEFER] {pick.get('playerName','')} {pick.get('propType','')} — stat unavailable despite {minutes_played} min played; deferring to background loop")
@@ -2676,14 +2718,6 @@ async def _build_soccer_update(pick: dict, fixture: dict, email: str, prefetched
         # DNP / early-sub void guard — industry standard: < 30 min = DNP
         _DNP_THRESHOLD = 30
         if minutes_played < _DNP_THRESHOLD:
-            # If the player wasn't found in fixtures/players at all, the API
-            # data isn't populated yet.  Defer to the background loop rather
-            # than incorrectly settling as DNP/push.
-            if not _player_found_in_api:
-                print(f"[SETTLE-DEFER] {pick.get('playerName','')} {pick.get('propType','')} "
-                      f"— not in fixtures/players response yet; deferring")
-                update["matchStatus"] = "final"
-                return update
             # Some leagues (e.g. NWSL) return minutes=None for players who played
             # the full game.  The `or 0` above converts that to 0, which would
             # incorrectly trip this DNP guard.  A non-zero stat value is definitive

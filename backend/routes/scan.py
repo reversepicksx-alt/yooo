@@ -1,6 +1,7 @@
 import json
 import uuid
 import traceback
+from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
 
@@ -11,7 +12,7 @@ from config import (
 )
 from models import ScanPropRequest
 from utils import api_football_request, strip_accents
-from cache import get_national_team_id, get_player_by_name, get_team_by_name, get_team_info
+from cache import get_national_team_id, get_player_by_name, get_team_by_name, get_team_info, db, COL_PLAYERS
 
 router = APIRouter(prefix="/api", tags=["scan"])
 
@@ -1336,6 +1337,23 @@ async def scan_prop(req: ScanPropRequest):
                                         if live_league_id:
                                             league_id = live_league_id
                                             league_name = live_league_name
+                                        # PERSIST the transfer so the player cache is permanently updated
+                                        # and future lookups/picks do not reuse the old club.
+                                        try:
+                                            _now = datetime.now(timezone.utc)
+                                            await db[COL_PLAYERS].update_one(
+                                                {"playerId": pid},
+                                                {"$set": {
+                                                    "teamId": live_team_id,
+                                                    "teamName": live_team_name,
+                                                    "leagueId": live_league_id,
+                                                    "_dt": _now,
+                                                    "_cachedAt": _now.timestamp(),
+                                                }},
+                                            )
+                                            print(f"[TEAM REFRESH-DB] {resolved_player['playerName']}: updated player cache → {live_team_name}")
+                                        except Exception as _dbe:
+                                            print(f"[TEAM REFRESH-DB] Failed to persist transfer for {resolved_player['playerName']}: {_dbe}")
                                     else:
                                         print(f"[TEAM REFRESH] {resolved_player['playerName']}: team confirmed '{live_team_name}'")
                 except Exception as _te:
