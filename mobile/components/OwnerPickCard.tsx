@@ -520,6 +520,7 @@ function renderShareableCardHTML(
       ${matchCtxHTML}
       ${storyHTML}
       <div style="margin-top:12px;text-align:center;color:rgba(255,255,255,0.3);font-size:10px;font-weight:700;letter-spacing:0.5px">REVERSE PICKS</div>
+      <div style="margin-top:4px;text-align:center;color:rgba(255,255,255,0.15);font-size:8px;font-weight:500">Player &amp; team images © API-Football / respective rights holders · for informational use only</div>
     </div>
   `;
 }

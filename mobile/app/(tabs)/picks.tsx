@@ -234,8 +234,31 @@ export default function PicksScreen() {
   const [aiOpen, setAiOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [imageDisclaimerVisible, setImageDisclaimerVisible] = useState(false);
   const sessionErrCount = useRef(0);
   const picksRef = useRef<Pick[]>([]);
+
+  // One-time owner-only image-use disclaimer (shown once per device install)
+  const isOwner = session?.accessType === 'Owner';
+  React.useEffect(() => {
+    if (!isOwner) return;
+    const key = 'rp_image_disclaimer_v1';
+    if (Platform.OS === 'web') {
+      if (!localStorage.getItem(key)) setImageDisclaimerVisible(true);
+    } else {
+      import('expo-secure-store').then(m => m.getItemAsync(key)).then(v => {
+        if (!v) setImageDisclaimerVisible(true);
+      });
+    }
+  }, [isOwner]);
+
+  const dismissImageDisclaimer = React.useCallback(() => {
+    const key = 'rp_image_disclaimer_v1';
+    if (Platform.OS === 'web') localStorage.setItem(key, '1');
+    else import('expo-secure-store').then(m => m.setItemAsync(key, '1'));
+    setImageDisclaimerVisible(false);
+  }, []);
+
   const { data: picks = [], isLoading, refetch, isRefetching, error } = useQuery({
     queryKey: ['picks', session?.email],
     queryFn: async () => {
@@ -367,6 +390,28 @@ export default function PicksScreen() {
 
   return (
     <View style={[styles.root, { paddingTop: topPad }]}>
+
+      {/* Owner-only image-use disclaimer (shown once per device) */}
+      <Modal visible={imageDisclaimerVisible} transparent animationType="fade" onRequestClose={dismissImageDisclaimer}>
+        <Pressable style={disclaimerStyles.overlay} onPress={dismissImageDisclaimer}>
+          <Pressable style={disclaimerStyles.sheet} onPress={e => e.stopPropagation()}>
+            <View style={disclaimerStyles.iconRow}>
+              <Ionicons name="shield-checkmark" size={28} color={Colors.primary} />
+            </View>
+            <Text style={disclaimerStyles.title}>Image Use Notice</Text>
+            <Text style={disclaimerStyles.body}>
+              Player photos and team crests displayed on your account are sourced from API-Football and are the property of their respective rights holders.{'\n\n'}
+              These images are shown <Text style={disclaimerStyles.bold}>exclusively on your owner account</Text> for personal, non-commercial, informational purposes — they are never displayed to subscribers or third parties.{'\n\n'}
+              This use is consistent with fair use under 17 U.S.C. § 107 (informational, non-commercial, personal). By continuing, you acknowledge that you will not use these images in any commercial context.{'\n\n'}
+              <Text style={disclaimerStyles.small}>API-Football · api-football.com · Data licensed per your API subscription agreement.</Text>
+            </Text>
+            <TouchableOpacity style={disclaimerStyles.btn} onPress={dismissImageDisclaimer} activeOpacity={0.85}>
+              <Text style={disclaimerStyles.btnText}>I UNDERSTAND — CONTINUE</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
       {/* Header */}
       <View style={styles.header}>
         {/* Top row: title + actions */}
@@ -1490,6 +1535,54 @@ const styles = StyleSheet.create({
     color: Colors.primary,
     fontWeight: '800',
     letterSpacing: 0.3,
+  },
+});
+
+const disclaimerStyles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+  },
+  sheet: {
+    backgroundColor: '#111',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(57,255,20,0.25)',
+    padding: 24,
+    width: '100%',
+    maxWidth: 400,
+  },
+  iconRow: { alignItems: 'center', marginBottom: 12 },
+  title: {
+    color: Colors.primary,
+    fontSize: 16,
+    fontWeight: '800',
+    textAlign: 'center',
+    letterSpacing: 0.5,
+    marginBottom: 14,
+  },
+  body: {
+    color: 'rgba(255,255,255,0.75)',
+    fontSize: 13,
+    lineHeight: 20,
+    marginBottom: 20,
+  },
+  bold: { fontWeight: '800', color: Colors.text },
+  small: { color: 'rgba(255,255,255,0.35)', fontSize: 11 },
+  btn: {
+    backgroundColor: Colors.primary,
+    borderRadius: 10,
+    paddingVertical: 13,
+    alignItems: 'center',
+  },
+  btnText: {
+    color: '#000',
+    fontWeight: '900',
+    fontSize: 13,
+    letterSpacing: 0.5,
   },
 });
 
