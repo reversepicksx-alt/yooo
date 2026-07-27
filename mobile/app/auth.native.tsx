@@ -203,6 +203,16 @@ export default function AuthScreen() {
           router.replace('/(tabs)/scan');
           return;
         }
+        // Server requires PIN — show PIN screen instead of erroring
+        if (result.owner_pin_required) {
+          setEmail(trimmed);
+          setOwnerPin('');
+          setError('');
+          setStep('owner_pin');
+          setLoading(false);
+          setBioLoading(false);
+          return;
+        }
         setError(result.message || 'Access not granted.');
       } catch (e: unknown) {
         setError(e instanceof Error ? e.message : 'Login failed. Please try again.');
