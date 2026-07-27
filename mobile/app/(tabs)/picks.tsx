@@ -1,8 +1,9 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
   ActivityIndicator, Alert, Platform, RefreshControl,
   Modal, ScrollView, Pressable,
+  TextInput,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
@@ -112,6 +113,23 @@ function getRecDir(p: Pick): 'OVER' | 'UNDER' | null {
   }
   return null;
 }
+
+type PickFilterKey = 'player' | 'position' | 'opponent' | 'prop' | 'sport' | 'result' | 'league' | 'venue' | 'recommendation';
+type FilterState = Record<PickFilterKey, string[]>;
+
+const EMPTY_FILTERS: FilterState = {
+  player: [],
+  position: [],
+  opponent: [],
+  prop: [],
+  sport: [],
+  result: [],
+  league: [],
+  venue: [],
+  recommendation: [],
+};
+
+const RESULT_LABELS: Record<string, string> = { hit: 'Hit', miss: 'Miss', push: 'Push', dnp: 'DNP', live: 'Live' };
 
 function PulsingDot() {
   const opacity = useSharedValue(1);
@@ -621,6 +639,15 @@ function RecordBar({ picks }: { picks: Pick[] }) {
   );
 }
 
+function FilterChip({ label, onRemove }: { label: string; onRemove: () => void }) {
+  return (
+    <TouchableOpacity onPress={onRemove} style={styles.filterChip}>
+      <Text style={styles.filterChipText}>{label}</Text>
+      <Ionicons name="close" size={12} color={Colors.primary} />
+    </TouchableOpacity>
+  );
+}
+
 function renderAnalysisBlocks(text: string, rec: string) {
   const isOver = rec === 'OVER';
   const isUnder = rec === 'UNDER';
@@ -745,6 +772,9 @@ export default function PicksScreen() {
   const [alertsOpen, setAlertsOpen] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
   // Which sport sections are expanded in history (default: all collapsed so all 3 headers visible)
   const [expandedSports, setExpandedSports] = useState<Set<SportKey>>(new Set());
   const toggleSport = useCallback((sport: SportKey) => {
@@ -864,8 +894,46 @@ export default function PicksScreen() {
     }
   }, [session]);
 
-  const live = picks.filter(isLive);
-  const history = picks.filter(isSettled);
+  const filteredPicks = useMemo(() => picks.filter((p) => {
+    const q = searchQuery.trim().toLowerCase();
+    if (q) {
+      const hay = [
+        p.playerName, p.opponentName, p.propType, p.leagueName, p.teamName,
+        p.position, p.role, p.venue, p.result, getRecDir(p), getLeagueLabel(p.leagueId) ?? '',
+      ].filter(Boolean).join(' ').toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    const matches = (key: PickFilterKey, value: string) => filters[key].length === 0 || filters[key].includes(value);
+    const sport = getSport(p);
+    const result = p.result === 'hit' || p.result === 'won' ? 'hit'
+      : p.result === 'miss' || p.result === 'lost' ? 'miss'
+      : p.result === 'push' ? 'push'
+      : p.result === 'dnp' ? 'dnp'
+      : isLive(p) ? 'live'
+      : '';
+    return matches('player', p.playerName || '')
+      && matches('position', p.position || '')
+      && matches('opponent', p.opponentName || '')
+      && matches('prop', p.propType || '')
+      && matches('sport', sport)
+      && matches('result', result)
+      && matches('league', p.leagueName || getLeagueLabel(p.leagueId) || '')
+      && matches('venue', (p.venue || '').toLowerCase())
+      && matches('recommendation', (getRecDir(p) || '').toLowerCase());
+  }), [picks, searchQuery, filters]);
+  const activeFilterCount = Object.values(filters).reduce((sum, arr) => sum + arr.length, 0);
+  const uniqueValues = useMemo(() => {
+    const uniq = (vals: Array<string | null | undefined>) => [...new Set(vals.map(v => v?.trim()).filter(Boolean) as string[])].sort((a, b) => a.localeCompare(b));
+    return {
+      players: uniq(picks.map(p => p.playerName)),
+      positions: uniq(picks.map(p => p.position)),
+      opponents: uniq(picks.map(p => p.opponentName)),
+      props: uniq(picks.map(p => p.propType)),
+      leagues: uniq(picks.map(p => p.leagueName)),
+    };
+  }, [picks]);
+  const live = filteredPicks.filter(isLive);
+  const history = filteredPicks.filter(isSettled);
 
   // Split history into sport buckets (Soccer → MLB → CS2 order)
   const SPORT_ORDER: SportKey[] = ['soccer', 'mlb', 'cs2'];
@@ -901,7 +969,40 @@ export default function PicksScreen() {
     <View style={[styles.root, { paddingTop: topPad }]}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>My Picks</Text>
+        <View style={{ flex: 1, gap: 10 }}>
+          <View style={styles.searchRow}>
+            <View style={styles.searchBar}>
+              <Ionicons name="search" size={16} color={Colors.textTertiary} />
+              <TextInput
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                placeholder="Search by player, opponent, prop..."
+                placeholderTextColor={Colors.textTertiary}
+                style={styles.searchInput}
+              />
+            </View>
+            <TouchableOpacity onPress={() => setFilterOpen(true)} style={styles.filterBtn}>
+              <Ionicons name="options" size={16} color={Colors.text} />
+              {Object.values(filters).some(arr => arr.length > 0) && <View style={styles.filterDot} />}
+            </TouchableOpacity>
+          </View>
+          {activeFilterCount > 0 && (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+              <TouchableOpacity onPress={() => setFilters(EMPTY_FILTERS)} style={styles.clearChip}>
+                <Text style={styles.clearChipText}>Clear all</Text>
+              </TouchableOpacity>
+              {Object.entries(filters).flatMap(([key, values]) =>
+                values.map((value) => (
+                  <FilterChip
+                    key={`${key}:${value}`}
+                    label={`${key}: ${value}`}
+                    onRemove={() => setFilters((prev) => ({ ...prev, [key]: prev[key as PickFilterKey].filter((v) => v !== value) }))}
+                  />
+                ))
+              )}
+            </ScrollView>
+          )}
+        </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
         <TouchableOpacity
           onPress={() => setAnalyticsOpen(true)}
@@ -939,7 +1040,7 @@ export default function PicksScreen() {
       </View>
 
       {/* Record bar — always show if any picks exist */}
-      {picks.length > 0 && <RecordBar picks={picks} />}
+      {filteredPicks.length > 0 && <RecordBar picks={filteredPicks} />}
 
       {error && (error as Error).message === 'SESSION_INVALID' ? (
         <View style={styles.center}>
@@ -1395,6 +1496,56 @@ export default function PicksScreen() {
         </View>
       </Modal>
 
+      <Modal visible={filterOpen} animationType="slide" transparent onRequestClose={() => setFilterOpen(false)}>
+        <View style={styles.filterOverlay}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setFilterOpen(false)} />
+          <View style={styles.filterSheet}>
+            <View style={styles.filterHeader}>
+              <Text style={styles.filterTitle}>Filters</Text>
+              <TouchableOpacity onPress={() => setFilterOpen(false)}>
+                <Ionicons name="close" size={22} color={Colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView>
+              {([
+                ['Player', 'player', uniqueValues.players],
+                ['Position', 'position', uniqueValues.positions],
+                ['Opponent', 'opponent', uniqueValues.opponents],
+                ['Prop', 'prop', uniqueValues.props],
+                ['Sport', 'sport', ['soccer', 'mlb', 'cs2']],
+                ['Result', 'result', ['hit', 'miss', 'push', 'dnp', 'live']],
+                ['League', 'league', uniqueValues.leagues],
+                ['Venue', 'venue', ['home', 'away']],
+                ['Recommendation', 'recommendation', ['over', 'under']],
+              ] as const).map(([label, key, values]) => (
+                <View key={key} style={styles.filterSection}>
+                  <Text style={styles.filterSectionTitle}>{label}</Text>
+                  <View style={styles.filterOptions}>
+                    {values.map((value) => {
+                      const selected = filters[key].includes(value);
+                      return (
+                        <TouchableOpacity
+                          key={value}
+                          onPress={() => setFilters(prev => ({
+                            ...prev,
+                            [key]: selected ? prev[key].filter(v => v !== value) : [...prev[key], value],
+                          }))}
+                          style={[styles.filterOption, selected && styles.filterOptionActive]}
+                        >
+                          <Text style={[styles.filterOptionText, selected && styles.filterOptionTextActive]}>
+                            {key === 'result' ? RESULT_LABELS[value] ?? value : value}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
       {/* ── Live Match Tracker ── */}
       {liveTrackerPick && (
         <LiveMatchTracker pick={liveTrackerPick} visible={!!liveTrackerPick} onClose={() => setLiveTrackerPick(null)} />
@@ -1600,6 +1751,55 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
   },
   headerTitle: { fontSize: 28, fontWeight: '800', color: Colors.text },
+  searchRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  searchBar: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: Colors.card,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+  },
+  searchInput: { flex: 1, color: Colors.text, fontSize: 14, padding: 0 },
+  filterBtn: {
+    width: 42, height: 42, borderRadius: 12,
+    backgroundColor: Colors.card, borderWidth: 1, borderColor: Colors.borderSubtle,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  filterDot: { position: 'absolute', right: 8, top: 8, width: 8, height: 8, borderRadius: 4, backgroundColor: Colors.primary },
+  chipRow: { gap: 8, paddingTop: 2 },
+  clearChip: { backgroundColor: Colors.primaryDim, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6 },
+  clearChipText: { color: Colors.primary, fontWeight: '700', fontSize: 12 },
+  filterChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: Colors.card, borderRadius: 999,
+    paddingHorizontal: 12, paddingVertical: 6, borderWidth: 1, borderColor: Colors.borderSubtle,
+  },
+  filterChipText: { color: Colors.text, fontSize: 12, fontWeight: '600' },
+  filterOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: Colors.overlay },
+  filterSheet: {
+    maxHeight: '80%',
+    backgroundColor: Colors.background,
+    borderTopLeftRadius: Colors.radiusLg,
+    borderTopRightRadius: Colors.radiusLg,
+    padding: 16,
+  },
+  filterHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
+  filterTitle: { color: Colors.text, fontSize: 18, fontWeight: '800' },
+  filterSection: { marginBottom: 14 },
+  filterSectionTitle: { color: Colors.textSecondary, fontSize: 12, fontWeight: '700', marginBottom: 8, textTransform: 'uppercase' },
+  filterOptions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  filterOption: {
+    paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999,
+    backgroundColor: Colors.card, borderWidth: 1, borderColor: Colors.borderSubtle,
+  },
+  filterOptionActive: { backgroundColor: Colors.primaryDim, borderColor: Colors.primary },
+  filterOptionText: { color: Colors.text, fontSize: 12, fontWeight: '600' },
+  filterOptionTextActive: { color: Colors.primary },
   tabToggle: {
     flexDirection: 'row', backgroundColor: Colors.card,
     borderRadius: 10, borderWidth: 1, borderColor: Colors.border, padding: 3,

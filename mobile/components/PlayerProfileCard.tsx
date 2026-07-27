@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useCallback } from 'react';
+import React, { useMemo } from 'react';
 import {
   View,
   Text,
@@ -6,12 +6,11 @@ import {
   Modal,
   TouchableOpacity,
   ScrollView,
-  TextInput,
   ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/colors';
-import { Pick, searchPlayers, PlayerSearchResult, getPlayerAdvancedStats, PlayerAdvancedStats } from '@/lib/api';
+import { Pick, getPlayerAdvancedStats } from '@/lib/api';
 
 interface PlayerProfileCardProps {
   visible: boolean;
@@ -220,16 +219,8 @@ export default function PlayerProfileCard({
   playerName,
   picks,
 }: PlayerProfileCardProps) {
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<PlayerSearchResult[]>([]);
-  const [searchLoading, setSearchLoading] = useState(false);
-  const [selectedPlayer, setSelectedPlayer] = useState<{ name: string; picks: Pick[]; playerId?: number; leagueId?: number } | null>(null);
-  const [advancedStats, setAdvancedStats] = useState<PlayerAdvancedStats | null>(null);
-  const [statsLoading, setStatsLoading] = useState(false);
-
-  const activePlayer = selectedPlayer?.name || playerName;
-  const activePicks = selectedPlayer?.picks || picks;
+  const [advancedStats, setAdvancedStats] = React.useState<Awaited<ReturnType<typeof getPlayerAdvancedStats>> | null>(null);
+  const [statsLoading, setStatsLoading] = React.useState(false);
 
   const {
     playerPicks,
@@ -243,9 +234,7 @@ export default function PlayerProfileCard({
     propBreakdown,
     overUnder,
   } = useMemo(() => {
-    const pPicks = activePicks.filter(
-      (p) => p.playerName?.trim().toLowerCase() === activePlayer.trim().toLowerCase()
-    );
+    const pPicks = picks.filter((p) => p.playerName?.trim().toLowerCase() === playerName.trim().toLowerCase());
 
     const settled = pPicks.filter(
       (p) => isHit(p.result) || isMiss(p.result) || isPush(p.result) || isDnp(p.result)
@@ -331,47 +320,18 @@ export default function PlayerProfileCard({
       propBreakdown: propsList,
       overUnder,
     };
-  }, [activePicks, activePlayer]);
-
-  const runSearch = useCallback(async () => {
-    if (!searchQuery.trim()) return;
-    setSearchLoading(true);
-    try {
-      const res: any = await searchPlayers(searchQuery.trim());
-      const raw = res.players || res.results || [];
-      setSearchResults(raw.map((p: any) => ({
-        playerId: p.id ?? p.playerId,
-        playerName: p.name ?? p.playerName,
-        teamId: p.teamId,
-        teamName: p.teamName,
-        leagueId: p.leagueId,
-        position: p.position,
-      })));
-    } catch (e) {
-      setSearchResults([]);
-    } finally {
-      setSearchLoading(false);
-    }
-  }, [searchQuery]);
-
-  const selectPlayer = useCallback((player: PlayerSearchResult) => {
-    // For a searched player from outside the user's picks, we only show general info + empty history
-    const matchingPicks = picks.filter((p) => p.playerName?.trim().toLowerCase() === player.playerName.trim().toLowerCase());
-    setSelectedPlayer({ name: player.playerName, picks: matchingPicks, playerId: player.playerId, leagueId: player.leagueId });
-    setSearchOpen(false);
-    setSearchQuery('');
-    setSearchResults([]);
-  }, [picks]);
+  }, [picks, playerName]);
 
   // Fetch advanced stats whenever the active player has a known ID
   React.useEffect(() => {
     let cancelled = false;
-    const playerId = selectedPlayer?.playerId;
+    setStatsLoading(true);
+    const playerId = (picks.find((p) => p.playerName?.trim().toLowerCase() === playerName.trim().toLowerCase()) as Pick & { playerId?: number } | undefined)?.playerId;
     if (!playerId) {
       setAdvancedStats(null);
+      setStatsLoading(false);
       return;
     }
-    setStatsLoading(true);
     getPlayerAdvancedStats(playerId)
       .then((stats) => {
         if (!cancelled) setAdvancedStats(stats);
@@ -383,13 +343,7 @@ export default function PlayerProfileCard({
         if (!cancelled) setStatsLoading(false);
       });
     return () => { cancelled = true; };
-  }, [selectedPlayer?.playerId]);
-
-  const close = useCallback(() => {
-    setSelectedPlayer(null);
-    setSearchOpen(false);
-    onClose();
-  }, [onClose]);
+  }, [picks, playerName]);
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={close}>
@@ -397,15 +351,10 @@ export default function PlayerProfileCard({
         <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={close} />
         <View style={styles.modalContent}>
           <View style={styles.header}>
-            <Text style={styles.playerName} numberOfLines={1}>{activePlayer}</Text>
-            <View style={styles.headerActions}>
-              <TouchableOpacity onPress={() => setSearchOpen(true)} style={styles.iconBtn}>
-                <Ionicons name="search" size={20} color={Colors.text} />
-              </TouchableOpacity>
-              <TouchableOpacity onPress={close} style={styles.iconBtn}>
-                <Ionicons name="close" size={24} color={Colors.textSecondary} />
-              </TouchableOpacity>
-            </View>
+            <Text style={styles.playerName} numberOfLines={1}>{playerName}</Text>
+            <TouchableOpacity onPress={onClose} style={styles.iconBtn}>
+              <Ionicons name="close" size={24} color={Colors.textSecondary} />
+            </TouchableOpacity>
           </View>
 
           <ScrollView
@@ -568,54 +517,6 @@ export default function PlayerProfileCard({
         </View>
       </View>
 
-      {/* Player Search Modal */}
-      <Modal visible={searchOpen} transparent animationType="fade" onRequestClose={() => setSearchOpen(false)}>
-        <View style={styles.searchOverlay}>
-          <View style={styles.searchSheet}>
-            <View style={styles.searchHeader}>
-              <Text style={styles.searchTitle}>Search any player</Text>
-              <TouchableOpacity onPress={() => setSearchOpen(false)}>
-                <Ionicons name="close" size={24} color={Colors.text} />
-              </TouchableOpacity>
-            </View>
-            <View style={styles.searchInputRow}>
-              <TextInput
-                style={styles.searchInput}
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-                placeholder="Type a player name..."
-                placeholderTextColor={Colors.textTertiary}
-                returnKeyType="search"
-                onSubmitEditing={runSearch}
-                autoFocus
-              />
-              <TouchableOpacity onPress={runSearch} style={styles.searchBtn}>
-                {searchLoading ? <ActivityIndicator size="small" color={Colors.background} /> : <Ionicons name="search" size={18} color={Colors.background} />}
-              </TouchableOpacity>
-            </View>
-            <ScrollView style={styles.searchResults}>
-              {searchResults.map((player) => (
-                <TouchableOpacity
-                  key={player.playerId}
-                  style={styles.searchResultRow}
-                  onPress={() => selectPlayer(player)}
-                >
-                  <View>
-                    <Text style={styles.searchResultName}>{player.playerName}</Text>
-                    <Text style={styles.searchResultMeta}>
-                      {player.teamName}{player.teamName && player.position ? ' • ' : ''}{player.position}
-                    </Text>
-                  </View>
-                  <Ionicons name="chevron-forward" size={18} color={Colors.textSecondary} />
-                </TouchableOpacity>
-              ))}
-              {searchResults.length === 0 && !searchLoading && searchQuery.length > 1 && (
-                <Text style={styles.searchEmpty}>No players found. Try a different name.</Text>
-              )}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
     </Modal>
   );
 }
@@ -640,10 +541,6 @@ const styles = StyleSheet.create({
     padding: 20,
     borderBottomWidth: 1,
     borderBottomColor: Colors.borderSubtle,
-  },
-  headerActions: {
-    flexDirection: 'row',
-    gap: 8,
   },
   iconBtn: {
     padding: 6,
@@ -967,86 +864,6 @@ const styles = StyleSheet.create({
   emptyStateText: {
     color: Colors.textSecondary,
     fontSize: 14,
-  },
-  searchOverlay: {
-    flex: 1,
-    backgroundColor: Colors.overlay,
-    justifyContent: 'flex-end',
-  },
-  searchSheet: {
-    backgroundColor: Colors.background,
-    borderTopLeftRadius: Colors.radiusLg,
-    borderTopRightRadius: Colors.radiusLg,
-    padding: 20,
-    paddingBottom: 40,
-    maxHeight: '80%',
-    borderWidth: 1,
-    borderColor: Colors.borderSubtle,
-    borderBottomWidth: 0,
-  },
-  searchHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  searchTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: Colors.text,
-  },
-  searchInputRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginBottom: 16,
-  },
-  searchInput: {
-    flex: 1,
-    backgroundColor: Colors.card,
-    color: Colors.text,
-    fontSize: 15,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 24,
-    borderWidth: 1,
-    borderColor: Colors.borderSubtle,
-  },
-  searchBtn: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: Colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  searchResults: {
-    maxHeight: 400,
-  },
-  searchResultRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: Colors.card,
-    borderRadius: Colors.radius,
-    padding: 14,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: Colors.borderSubtle,
-  },
-  searchResultName: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: Colors.text,
-    marginBottom: 2,
-  },
-  searchResultMeta: {
-    fontSize: 12,
-    color: Colors.textSecondary,
-  },
-  searchEmpty: {
-    textAlign: 'center',
-    color: Colors.textSecondary,
-    padding: 20,
   },
   advStatsGrid: {
     flexDirection: 'row',
