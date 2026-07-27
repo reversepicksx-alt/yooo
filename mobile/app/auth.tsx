@@ -126,6 +126,15 @@ export default function AuthScreen() {
           router.replace('/(tabs)/scan');
           return;
         }
+        // If the backend requires the owner PIN, drop into the PIN screen so the
+        // user can actually type the code instead of getting stuck on the email step.
+        if (result.owner_pin_required) {
+          setStep('pin');
+          setOwnerPin('');
+          setError('');
+          setLoading(false);
+          return;
+        }
         setError(result.message || 'Access not granted.');
       } catch (e: unknown) {
         setError(e instanceof Error ? e.message : 'Login failed. Please try again.');
