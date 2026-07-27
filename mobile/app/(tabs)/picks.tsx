@@ -21,6 +21,14 @@ import SwipeablePickRow from '@/components/SwipeablePickRow';
 import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import NotificationBell from '@/components/NotificationBell';
+import AnalyticsDashboard from '@/components/AnalyticsDashboard';
+import LiveMatchTracker from '@/components/LiveMatchTracker';
+import StreaksAchievements from '@/components/StreaksAchievements';
+import PicksCalendar from '@/components/PicksCalendar';
+import SocialFeed from '@/components/SocialFeed';
+import PlayerProfileCard from '@/components/PlayerProfileCard';
+import CustomAlerts from '@/components/CustomAlerts';
+import AIAssistant from '@/components/AIAssistant';
 import { listPicks, deletePick, fetchPickAnalysis, generateMatchReview, Pick } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -108,7 +116,7 @@ function PulsingDot() {
 }
 
 
-function PickCard({ pick, onDelete }: { pick: Pick; onDelete?: () => void }) {
+function PickCard({ pick, onDelete, onTrack }: { pick: Pick; onDelete?: () => void; onTrack?: () => void }) {
   const won = pickWon(pick);
   const lost = pickLost(pick);
   const live = isLive(pick);
@@ -251,7 +259,17 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete?: () => void }) {
     <View style={[styles.card, won && styles.cardWon, lost && styles.cardLost]}>
       {/* Row 1: player name left | [trash] [badge] right — all inline */}
       <View style={styles.cardTopRow}>
-        <Text style={styles.cardPlayer} numberOfLines={1}>{pick.playerName}</Text>
+        <TouchableOpacity
+          activeOpacity={0.7}
+          onPress={() => {
+            const all = (picksRef.current || []);
+            const playerPicks = all.filter(p => p.playerName === pick.playerName);
+            setProfilePlayer({ name: pick.playerName, picks: playerPicks });
+          }}
+          style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}
+        >
+          <Text style={styles.cardPlayer} numberOfLines={1}>{pick.playerName}</Text>
+        </TouchableOpacity>
         <View style={styles.cardRight}>
           {/* WEB-ONLY trash — inline with badge so it adds ZERO extra rows */}
           {Platform.OS === 'web' && onDelete && (
@@ -442,6 +460,14 @@ function PickCard({ pick, onDelete }: { pick: Pick; onDelete?: () => void }) {
         </View>
       )}
 
+      {/* Live track button — open full match tracker for live soccer */}
+      {live && !won && !lost && cardSport === 'soccer' && onTrack && (
+        <TouchableOpacity onPress={onTrack} style={styles.trackBtn} activeOpacity={0.7}>
+          <Ionicons name="radial" size={12} color={Colors.primary} />
+          <Text style={styles.trackBtnText}>Track Live</Text>
+        </TouchableOpacity>
+      )}
+
       {/* Live pace-divergence warning — fires when the in-match trend is running
           strongly against the pick's recommendation (e.g. opponent parks the bus
           after an early goal and the subject's pass volume balloons past a
@@ -518,155 +544,6 @@ function propUnit(propType?: string) {
   if (['shots', 'shots_on_target'].includes(propType)) return 'shots';
   if (['goals', 'assists'].includes(propType)) return '';
   return 'units';
-}
-
-function computeAnalytics(picks: Pick[]) {
-  const settled = picks.filter(p => ['hit', 'miss', 'push'].includes(p.result || ''));
-  const results = settled.filter(p => p.result === 'hit' || p.result === 'miss');
-  const hits = results.filter(p => p.result === 'hit').length;
-  const total = results.length;
-  const winRate = total > 0 ? Math.round((hits / total) * 100) : 0;
-
-  const sorted = [...settled].sort((a, b) =>
-    new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
-  );
-  let currentStreak = 0;
-  let longestStreak = 0;
-  let running = 0;
-  for (const p of sorted) {
-    if (p.result === 'hit') {
-      running++;
-      longestStreak = Math.max(longestStreak, running);
-    } else if (p.result === 'miss') {
-      running = 0;
-    }
-  }
-  running = 0;
-  for (const p of sorted) {
-    if (p.result === 'hit') {
-      running++;
-      currentStreak = running;
-    } else if (p.result === 'miss') {
-      break;
-    }
-  }
-
-  const byDimension = (key: keyof Pick) => {
-    const buckets: Record<string, { hit: number; miss: number; total: number; rate: number }> = {};
-    for (const p of settled) {
-      const val = (p[key] || 'unknown') as string;
-      if (!val || val === 'unknown') continue;
-      if (!buckets[val]) buckets[val] = { hit: 0, miss: 0, total: 0, rate: 0 };
-      if (p.result === 'hit') buckets[val].hit++;
-      if (p.result === 'miss') buckets[val].miss++;
-      if (p.result === 'hit' || p.result === 'miss') buckets[val].total++;
-    }
-    return Object.entries(buckets)
-      .map(([k, v]) => ({ label: k, ...v, rate: v.total > 0 ? Math.round((v.hit / v.total) * 100) : 0 }))
-      .filter(v => v.total >= 3)
-      .sort((a, b) => b.total - a.total);
-  };
-
-  const margins = results.map(p => {
-    const actual = p.actualValue ?? (p as any).currentValue ?? null;
-    return actual != null && p.line ? Math.abs(actual - p.line) : 0;
-  }).filter(m => m > 0);
-  const avgWinMargin = margins.length > 0 ? (margins.reduce((a, b) => a + b, 0) / margins.length).toFixed(1) : '—';
-
-  return {
-    totalPicks: picks.length,
-    settled: settled.length,
-    hits,
-    misses: results.filter(p => p.result === 'miss').length,
-    winRate,
-    currentStreak,
-    longestStreak,
-    avgWinMargin,
-    byLeague: byDimension('leagueId').map(x => ({ ...x, label: getLeagueLabel(Number(x.label)) || x.label })),
-    byProp: byDimension('propType'),
-    byPosition: byDimension('position'),
-    byRole: byDimension('role'),
-  };
-}
-
-function AnalyticsModal({ visible, picks, onClose }: { visible: boolean; picks: Pick[]; onClose: () => void }) {
-  const stats = React.useMemo(() => computeAnalytics(picks), [picks]);
-  const insets = useSafeAreaInsets();
-
-  const Section = ({ title, rows }: { title: string; rows: { label: string; rate: number; total: number }[] }) => {
-    if (!rows.length) return null;
-    return (
-      <View style={aStyles.section}>
-        <Text style={aStyles.sectionTitle}>{title}</Text>
-        {rows.map((row, i) => (
-          <View key={i} style={aStyles.row}>
-            <Text style={aStyles.rowLabel} numberOfLines={1}>{row.label}</Text>
-            <View style={aStyles.rowBarTrack}>
-              <View style={[aStyles.rowBarFill, { width: `${Math.max(4, Math.min(100, row.rate))}%`, backgroundColor: row.rate >= 60 ? Colors.success : row.rate >= 50 ? Colors.primary : Colors.error }]} />
-            </View>
-            <Text style={aStyles.rowRate}>{row.rate}%</Text>
-            <Text style={aStyles.rowN}>({row.total})</Text>
-          </View>
-        ))}
-      </View>
-    );
-  };
-
-  return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <View style={[aStyles.backdrop, { paddingTop: insets.top + 40 }]}>
-        <View style={aStyles.sheet}>
-          <View style={aStyles.sheetHeader}>
-            <Text style={aStyles.sheetTitle}>Pick Insights</Text>
-            <TouchableOpacity onPress={onClose} style={aStyles.closeBtn}>
-              <Ionicons name="close" size={18} color={Colors.text} />
-            </TouchableOpacity>
-          </View>
-
-          <View style={aStyles.summaryRow}>
-            <View style={aStyles.summaryCell}>
-              <Text style={aStyles.summaryNum}>{stats.totalPicks}</Text>
-              <Text style={aStyles.summaryLbl}>TOTAL</Text>
-            </View>
-            <View style={aStyles.summaryCell}>
-              <Text style={[aStyles.summaryNum, { color: Colors.success }]}>{stats.hits}</Text>
-              <Text style={aStyles.summaryLbl}>HITS</Text>
-            </View>
-            <View style={aStyles.summaryCell}>
-              <Text style={[aStyles.summaryNum, { color: Colors.error }]}>{stats.misses}</Text>
-              <Text style={aStyles.summaryLbl}>MISSES</Text>
-            </View>
-            <View style={aStyles.summaryCell}>
-              <Text style={[aStyles.summaryNum, { color: Colors.primary }]}>{stats.winRate}%</Text>
-              <Text style={aStyles.summaryLbl}>WIN RATE</Text>
-            </View>
-          </View>
-
-          <View style={aStyles.summaryRow}>
-            <View style={aStyles.summaryCell}>
-              <Text style={[aStyles.summaryNum, { color: Colors.accent }]}>{stats.currentStreak}W</Text>
-              <Text style={aStyles.summaryLbl}>CURRENT STREAK</Text>
-            </View>
-            <View style={aStyles.summaryCell}>
-              <Text style={[aStyles.summaryNum, { color: Colors.success }]}>{stats.longestStreak}W</Text>
-              <Text style={aStyles.summaryLbl}>BEST STREAK</Text>
-            </View>
-            <View style={aStyles.summaryCell}>
-              <Text style={aStyles.summaryNum}>{stats.avgWinMargin}</Text>
-              <Text style={aStyles.summaryLbl}>AVG MARGIN</Text>
-            </View>
-          </View>
-
-          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
-            <Section title="By League" rows={stats.byLeague} />
-            <Section title="By Prop" rows={stats.byProp} />
-            <Section title="By Position" rows={stats.byPosition} />
-            <Section title="By Role" rows={stats.byRole} />
-          </ScrollView>
-        </View>
-      </View>
-    </Modal>
-  );
 }
 
 function RecordBar({ picks }: { picks: Pick[] }) {
@@ -852,6 +729,14 @@ export default function PicksScreen() {
   const [activeTab, setActiveTab] = useState<Tab>('live');
   const [analysisModal, setAnalysisModal] = useState<{ pick: Pick; data: Record<string, unknown> | null; loading: boolean } | null>(null);
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
+  const [liveTrackerPick, setLiveTrackerPick] = useState<Pick | null>(null);
+  const [streaksOpen, setStreaksOpen] = useState(false);
+  const [calendarOpen, setCalendarOpen] = useState(false);
+  const [socialOpen, setSocialOpen] = useState(false);
+  const [profilePlayer, setProfilePlayer] = useState<{ name: string; picks: Pick[] } | null>(null);
+  const [alertsOpen, setAlertsOpen] = useState(false);
+  const [aiOpen, setAiOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   // Which sport sections are expanded in history (default: all collapsed so all 3 headers visible)
   const [expandedSports, setExpandedSports] = useState<Set<SportKey>>(new Set());
   const toggleSport = useCallback((sport: SportKey) => {
@@ -864,6 +749,7 @@ export default function PicksScreen() {
   }, []);
 
   const sessionErrCount = useRef(0);
+  const picksRef = useRef<Pick[]>([]);
   const { data: picks = [], isLoading, refetch, isRefetching, error } = useQuery({
     queryKey: ['picks', session?.email],
     queryFn: async () => {
@@ -909,6 +795,10 @@ export default function PicksScreen() {
       // on every 15s boundary → list flicker and navigation glitches.
     }, [refetch])
   );
+
+  React.useEffect(() => {
+    picksRef.current = picks;
+  }, [picks]);
 
   const deleteMutation = useMutation({
     mutationFn: (pickId: string) => {
@@ -1008,6 +898,13 @@ export default function PicksScreen() {
           <Ionicons name="stats-chart" size={14} color={Colors.primary} />
           <Text style={styles.insightsBtnText}>Insights</Text>
         </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => setMenuOpen(true)}
+          style={styles.menuBtn}
+          activeOpacity={0.75}
+        >
+          <Ionicons name="grid" size={14} color={Colors.text} />
+        </TouchableOpacity>
         <View style={styles.tabToggle}>
           {(['live', 'history'] as Tab[]).map(t => (
             <TouchableOpacity
@@ -1086,10 +983,10 @@ export default function PicksScreen() {
                 }}
                 style={({ pressed }) => [{ opacity: pressed ? 0.88 : 1 }]}
               >
-                <PickCard pick={item} onDelete={onDeleteForItem} />
+                <PickCard pick={item} onDelete={onDeleteForItem} onTrack={() => setLiveTrackerPick(item)} />
               </Pressable>
             ) : (
-              <PickCard pick={item} onDelete={onDeleteForItem} />
+              <PickCard pick={item} onDelete={onDeleteForItem} onTrack={() => setLiveTrackerPick(item)} />
             );
             return <SwipeablePickRow onDelete={onDeleteForItem}>{card}</SwipeablePickRow>;
           }}
@@ -1130,7 +1027,7 @@ export default function PicksScreen() {
                   onPress={() => handlePickPress(pickItem)}
                   style={({ pressed }) => [{ opacity: pressed ? 0.92 : 1 }]}
                 >
-                  <PickCard pick={pickItem} onDelete={onDeleteForItem} />
+                  <PickCard pick={pickItem} onDelete={onDeleteForItem} onTrack={() => setLiveTrackerPick(pickItem)} />
                 </Pressable>
               </SwipeablePickRow>
             );
@@ -1141,8 +1038,8 @@ export default function PicksScreen() {
         />
       )}
 
-      {/* ── Analytics Modal ── */}
-      <AnalyticsModal
+      {/* ── Analytics Dashboard ── */}
+      <AnalyticsDashboard
         visible={analyticsOpen}
         picks={picks}
         onClose={() => setAnalyticsOpen(false)}
@@ -1467,7 +1364,87 @@ export default function PicksScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* ── Feature Menu ── */}
+      <Modal visible={menuOpen} animationType="fade" transparent onRequestClose={() => setMenuOpen(false)}>
+        <View style={styles.menuOverlay}>
+          <Pressable style={styles.menuBackdrop} onPress={() => setMenuOpen(false)} />
+          <View style={styles.menuSheet}>
+            <Text style={styles.menuTitle}>More</Text>
+            <View style={styles.menuGrid}>
+              <MenuItem icon="calendar" label="Calendar" onPress={() => { setMenuOpen(false); setCalendarOpen(true); }} />
+              <MenuItem icon="people" label="Social Feed" onPress={() => { setMenuOpen(false); setSocialOpen(true); }} />
+              <MenuItem icon="chatbubbles" label="AI Assistant" onPress={() => { setMenuOpen(false); setAiOpen(true); }} />
+              <MenuItem icon="notifications" label="Alerts" onPress={() => { setMenuOpen(false); setAlertsOpen(true); }} />
+              <MenuItem icon="trophy" label="Streaks" onPress={() => { setMenuOpen(false); setStreaksOpen(true); }} />
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── Live Match Tracker ── */}
+      {liveTrackerPick && (
+        <LiveMatchTracker pick={liveTrackerPick} visible={!!liveTrackerPick} onClose={() => setLiveTrackerPick(null)} />
+      )}
+
+      {/* ── Streaks & Achievements ── */}
+      <StreaksAchievements
+        visible={streaksOpen}
+        onClose={() => setStreaksOpen(false)}
+        picks={picks.map((p, i) => ({
+          id: p.pickId || p._id || p.id || String(i),
+          status: ((p.result || 'pending') as any),
+          sport: getSport(p),
+          type: getRecDir(p)?.toLowerCase() as any,
+          date: p.createdAt || p.settledAt || new Date().toISOString(),
+        }))}
+      />
+
+      {/* ── Calendar ── */}
+      <PicksCalendar visible={calendarOpen} picks={picks} onClose={() => setCalendarOpen(false)} />
+
+      {/* ── Social Feed ── */}
+      <Modal visible={socialOpen} animationType="slide" transparent onRequestClose={() => setSocialOpen(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.socialSheet}>
+            <View style={styles.socialHeader}>
+              <Text style={styles.socialTitle}>Social Feed</Text>
+              <TouchableOpacity onPress={() => setSocialOpen(false)} style={styles.closeBtn}>
+                <Ionicons name="close" size={18} color={Colors.text} />
+              </TouchableOpacity>
+            </View>
+            <SocialFeed picks={picks} />
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── Player Profile ── */}
+      {profilePlayer && (
+        <PlayerProfileCard
+          visible={!!profilePlayer}
+          onClose={() => setProfilePlayer(null)}
+          playerName={profilePlayer.name}
+          picks={profilePlayer.picks}
+        />
+      )}
+
+      {/* ── Custom Alerts ── */}
+      <CustomAlerts visible={alertsOpen} onClose={() => setAlertsOpen(false)} />
+
+      {/* ── AI Assistant ── */}
+      <AIAssistant visible={aiOpen} onClose={() => setAiOpen(false)} />
     </View>
+  );
+}
+
+function MenuItem({ icon, label, onPress }: { icon: any; label: string; onPress: () => void }) {
+  return (
+    <TouchableOpacity onPress={onPress} style={styles.menuItem} activeOpacity={0.7}>
+      <View style={styles.menuIconWrap}>
+        <Ionicons name={icon} size={22} color={Colors.primary} />
+      </View>
+      <Text style={styles.menuItemLabel}>{label}</Text>
+    </TouchableOpacity>
   );
 }
 
@@ -1847,6 +1824,56 @@ const styles = StyleSheet.create({
     color: Colors.primary,
     fontWeight: '700',
   },
+  menuBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  menuOverlay: { flex: 1, justifyContent: 'flex-start', alignItems: 'flex-end' },
+  menuBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.6)' },
+  menuSheet: {
+    width: 220,
+    marginTop: 90,
+    marginRight: 16,
+    backgroundColor: Colors.card,
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.35, shadowRadius: 16, elevation: 10,
+  },
+  menuTitle: { fontSize: 13, fontWeight: '800', color: Colors.text, marginBottom: 12, marginLeft: 4 },
+  menuGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  menuItem: { width: 84, alignItems: 'center', gap: 6, paddingVertical: 8 },
+  menuIconWrap: {
+    width: 42, height: 42, borderRadius: 12,
+    backgroundColor: 'rgba(57,255,20,0.08)',
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: 'rgba(57,255,20,0.15)',
+  },
+  menuItemLabel: { fontSize: 10, fontWeight: '700', color: Colors.text },
+  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'flex-end' },
+  socialSheet: {
+    flex: 1,
+    backgroundColor: Colors.background,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingTop: 16,
+  },
+  socialHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    marginBottom: 10,
+  },
+  socialTitle: { fontSize: 18, fontWeight: '800', color: Colors.text },
 
   // Live possession bar
   possBarBlock: {
@@ -1875,108 +1902,24 @@ const styles = StyleSheet.create({
     color: Colors.textTertiary,
     fontWeight: '500',
   },
+  trackBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 5,
+    marginTop: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    backgroundColor: 'rgba(57,255,20,0.10)',
+    borderWidth: 1,
+    borderColor: 'rgba(57,255,20,0.25)',
+  },
+  trackBtnText: {
+    fontSize: 10,
+    color: Colors.primary,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
 });
 
-const aStyles = StyleSheet.create({
-  backdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.75)',
-    justifyContent: 'flex-end',
-  },
-  sheet: {
-    flex: 1,
-    backgroundColor: Colors.background,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    padding: 16,
-  },
-  sheetHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 14,
-  },
-  sheetTitle: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: Colors.text,
-  },
-  closeBtn: {
-    padding: 6,
-    borderRadius: 14,
-    backgroundColor: Colors.cardSecondary,
-  },
-  summaryRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 18,
-    paddingVertical: 12,
-    paddingHorizontal: 10,
-    backgroundColor: Colors.card,
-    borderRadius: 10,
-  },
-  summaryCell: {
-    alignItems: 'center',
-    minWidth: 60,
-  },
-  summaryNum: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: Colors.text,
-  },
-  summaryLbl: {
-    fontSize: 9,
-    fontWeight: '700',
-    color: Colors.textTertiary,
-    marginTop: 2,
-    letterSpacing: 0.5,
-  },
-  section: {
-    marginBottom: 16,
-  },
-  sectionTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: Colors.textSecondary,
-    marginBottom: 8,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  rowLabel: {
-    width: 110,
-    fontSize: 12,
-    color: Colors.text,
-    fontWeight: '600',
-  },
-  rowBarTrack: {
-    flex: 1,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: Colors.cardSecondary,
-    marginRight: 10,
-    overflow: 'hidden',
-  },
-  rowBarFill: {
-    height: 6,
-    borderRadius: 3,
-  },
-  rowRate: {
-    width: 36,
-    fontSize: 12,
-    fontWeight: '700',
-    color: Colors.text,
-    textAlign: 'right',
-  },
-  rowN: {
-    width: 36,
-    fontSize: 11,
-    color: Colors.textTertiary,
-    textAlign: 'right',
-    marginLeft: 4,
-  },
-});
