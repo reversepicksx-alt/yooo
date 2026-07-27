@@ -336,6 +336,7 @@ async def save_pick(req: SavePickRequest):
         "propType": normalized_prop,
         "line": pick.get("line", 0),
         "recommendation": (pick.get("recommendation") or "over").lower(),
+        "playerIsHome": pick.get("playerIsHome") if pick.get("playerIsHome") is not None else (pick.get("venue") == "home"),
         "projectedValue": pick.get("projectedValue") or pick.get("projection") or 0,
         "projection":     pick.get("projection") or pick.get("projectedValue") or 0,
         "confidenceScore": pick.get("confidenceScore") or pick.get("confidence") or 50,
@@ -1060,6 +1061,9 @@ async def _fetch_matchups_with_retry(email: str, token: str) -> dict:
         "leagueId": 1,
         "leagueName": 1,
         "matchScore": 1,
+        "playerIsHome": 1,
+        "homeTeam": 1,
+        "awayTeam": 1,
         "settledAt": 1,
         "timestamp": 1,
     }
@@ -1096,12 +1100,18 @@ async def _fetch_matchups_with_retry(email: str, token: str) -> dict:
     positions = sorted({p.get("position", "").strip() for p in picks if p.get("position")})
     prop_types = sorted({p.get("propType", "").strip() for p in picks if p.get("propType")})
     leagues = sorted({_league_label(p).strip() for p in picks if _league_label(p) != "Unknown"})
+    venues = sorted({
+        "Home" if p.get("playerIsHome") else "Away"
+        for p in picks
+        if p.get("playerIsHome") is not None
+    })
 
     return {
         "picks": picks,
         "options": {
             "players": players,
             "opponents": opponents,
+            "venues": venues if venues else ["Home", "Away"],
             "positions": positions,
             "propTypes": prop_types,
             "leagues": leagues,

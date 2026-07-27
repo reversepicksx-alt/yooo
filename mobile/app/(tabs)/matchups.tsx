@@ -89,11 +89,12 @@ function normalizeAccents(s: string): string {
   return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
 }
 
-type FilterKey = 'player' | 'opponent' | 'position' | 'propType' | 'league' | 'result';
+type FilterKey = 'player' | 'opponent' | 'venue' | 'position' | 'propType' | 'league' | 'result';
 
 interface FilterState {
   player: string;
   opponent: string;
+  venue: string;
   position: string;
   propType: string;
   league: string;
@@ -103,6 +104,7 @@ interface FilterState {
 const FILTER_LABELS: Record<FilterKey, string> = {
   player: 'Player',
   opponent: 'Opponent',
+  venue: 'Venue',
   position: 'Position',
   propType: 'Prop Type',
   league: 'League',
@@ -112,6 +114,7 @@ const FILTER_LABELS: Record<FilterKey, string> = {
 const DEFAULT_FILTERS: FilterState = {
   player: 'All',
   opponent: 'All',
+  venue: 'All',
   position: 'All',
   propType: 'All',
   league: 'All',
@@ -179,12 +182,19 @@ export default function MatchupsScreen() {
       const canonical = canonicalName(names);
       for (const n of names) displayMap.set(n, canonical);
     }
-    // Replace each pick's playerName with its canonical form
-    const normalized = allPicks.map((p) => ({
-      ...p,
-      playerName: displayMap.get(p.playerName || '') || p.playerName,
-    }));
-    return { normalizedPicks: normalized, playerDisplayMap: displayMap };
+    // Replace each pick's playerName with its canonical form and deduplicate by pickId
+    const deduped = [];
+    const seenPickIds = new Set<string>();
+    for (const p of allPicks) {
+      const id = (p.pickId || '').toString();
+      if (id && seenPickIds.has(id)) continue;
+      if (id) seenPickIds.add(id);
+      deduped.push({
+        ...p,
+        playerName: displayMap.get(p.playerName || '') || p.playerName,
+      });
+    }
+    return { normalizedPicks: deduped, playerDisplayMap: displayMap };
   }, [allPicks]);
 
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
@@ -198,9 +208,11 @@ export default function MatchupsScreen() {
   const picksForDropdown = useCallback(
     (excludeKey: FilterKey): Pick[] => {
       return normalizedPicks.filter((p) => {
+        const venue = p.playerIsHome ? 'Home' : p.playerIsHome === false ? 'Away' : '';
         const checks: Record<FilterKey, boolean> = {
           player: filters.player === 'All' || p.playerName === filters.player,
           opponent: filters.opponent === 'All' || p.opponentName === filters.opponent,
+          venue: filters.venue === 'All' || venue === filters.venue,
           position: filters.position === 'All' || p.position === filters.position,
           propType: filters.propType === 'All' || p.propType === filters.propType,
           league: filters.league === 'All' || getLeagueLabel(p) === filters.league,
@@ -228,12 +240,20 @@ export default function MatchupsScreen() {
           propLabel(a).localeCompare(propLabel(b))
         );
       else if (key === 'league') values = [...new Set(subset.map((p) => getLeagueLabel(p)).filter((l) => l !== 'Unknown'))].sort();
-      else values = ['Hit', 'Miss', 'Push', 'DNP'];
+      else if (key === 'venue') {
+        const venueSet = new Set<string>();
+        for (const p of subset) {
+          const v = p.playerIsHome ? 'Home' : p.playerIsHome === false ? 'Away' : '';
+          if (v) venueSet.add(v);
+        }
+        values = [...venueSet].sort();
+      } else values = ['Hit', 'Miss', 'Push', 'DNP'];
       return ['All', ...values];
     };
     return {
       player: forKey('player'),
       opponent: forKey('opponent'),
+      venue: forKey('venue'),
       position: forKey('position'),
       propType: forKey('propType'),
       league: forKey('league'),
@@ -256,9 +276,11 @@ export default function MatchupsScreen() {
 
   const filteredPicks = useMemo(() => {
     return normalizedPicks.filter((p) => {
+      const venue = p.playerIsHome ? 'Home' : p.playerIsHome === false ? 'Away' : '';
       return (
         (filters.player === 'All' || p.playerName === filters.player) &&
         (filters.opponent === 'All' || p.opponentName === filters.opponent) &&
+        (filters.venue === 'All' || venue === filters.venue) &&
         (filters.position === 'All' || p.position === filters.position) &&
         (filters.propType === 'All' || p.propType === filters.propType) &&
         (filters.league === 'All' || getLeagueLabel(p) === filters.league) &&
@@ -357,6 +379,9 @@ export default function MatchupsScreen() {
                   placeholderTextColor={Colors.textTertiary}
                   style={styles.dropdownSearchInput}
                   autoFocus={false}
+                  autoCorrect={false}
+                  autoCapitalize="none"
+                  spellCheck={false}
                 />
               </View>
             )}
@@ -375,6 +400,10 @@ export default function MatchupsScreen() {
                       : subsetForCount.filter((p) => {
                           if (key === 'player') return p.playerName === value;
                           if (key === 'opponent') return p.opponentName === value;
+                          if (key === 'venue') {
+                            const v = p.playerIsHome ? 'Home' : p.playerIsHome === false ? 'Away' : '';
+                            return v === value;
+                          }
                           if (key === 'position') return p.position === value;
                           if (key === 'propType') return p.propType === value;
                           if (key === 'league') return getLeagueLabel(p) === value;
@@ -416,7 +445,7 @@ export default function MatchupsScreen() {
     <KeyboardAvoidingView style={styles.root} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
         <Text style={styles.title}>Matchups</Text>
-        <Text style={styles.subtitle}>Search every settled pick by player, opponent, position, prop, league, and result.</Text>
+        <Text style={styles.subtitle}>Search every settled pick by player, opponent, venue, position, prop, league, and result.</Text>
       </View>
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
@@ -521,12 +550,20 @@ export default function MatchupsScreen() {
                       const actual = typeof pick.actualValue === 'number' && pick.actualValue > 0 ? pick.actualValue : null;
                       const resColor =
                         res === 'Hit' ? Colors.success : res === 'Miss' ? Colors.error : Colors.textSecondary;
+                      const venue = pick.playerIsHome ? 'Home' : pick.playerIsHome === false ? 'Away' : '';
 
                       return (
                         <View key={pick.pickId || `${player}-${pick.propType}-${pick.line}`} style={styles.pickRow}>
                           <View style={styles.pickRowTop}>
                             <View style={styles.pickRowLeft}>
-                              <Text style={styles.pickOpponent}>{pick.opponentName || 'Opponent unknown'}</Text>
+                              <Text style={styles.pickOpponent}>
+                                {pick.opponentName || 'Opponent unknown'}
+                                {venue ? (
+                                  <Text style={[styles.venueBadge, venue === 'Home' ? styles.venueHome : styles.venueAway]}>
+                                    {' '}{venue}
+                                  </Text>
+                                ) : null}
+                              </Text>
                               {pick.matchScore ? (
                                 <Text style={styles.pickScore}>{pick.matchScore}</Text>
                               ) : null}
@@ -640,7 +677,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: Colors.borderSubtle,
   },
-  dropdownSearchInput: { flex: 1, color: Colors.text, fontSize: 14, paddingVertical: 4 },
+  dropdownSearchInput: { flex: 1, color: Colors.text, fontSize: 16, paddingVertical: 4 },
   dropdownOption: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -713,6 +750,9 @@ const styles = StyleSheet.create({
   pickRowLeft: { flex: 1, marginRight: 8 },
   pickRowRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   pickOpponent: { color: Colors.text, fontWeight: '700', fontSize: 14 },
+  venueBadge: { fontSize: 10, fontWeight: '800', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4, overflow: 'hidden' },
+  venueHome: { backgroundColor: 'rgba(16, 185, 129, 0.25)', color: Colors.success },
+  venueAway: { backgroundColor: 'rgba(99, 102, 241, 0.25)', color: '#818cf8' },
   pickScore: { color: Colors.textTertiary, fontSize: 11, marginTop: 2 },
   pickResult: { fontWeight: '800', fontSize: 13 },
   pickMeta: { color: Colors.textSecondary, marginTop: 5, lineHeight: 18, fontSize: 12 },

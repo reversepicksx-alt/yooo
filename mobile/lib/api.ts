@@ -858,6 +858,9 @@ export interface Pick {
   settledAt?: string;
   sport?: string;
   venue?: string;
+  playerIsHome?: boolean;
+  homeTeam?: string;
+  awayTeam?: string;
   trackingId?: string;
   position?: string;
   role?: string;
@@ -867,8 +870,6 @@ export interface Pick {
   matchScore?: string;
   finalHomeGoals?: number | null;
   finalAwayGoals?: number | null;
-  homeTeam?: string;
-  awayTeam?: string;
   homePoss?: number | null;
   awayPoss?: number | null;
   projHomePoss?: number | null;
@@ -950,6 +951,7 @@ export async function getMatchups(email: string, token: string): Promise<{
   options: {
     players: string[];
     opponents: string[];
+    venues: string[];
     positions: string[];
     propTypes: string[];
     leagues: string[];
@@ -976,6 +978,9 @@ export async function getMatchups(email: string, token: string): Promise<{
     leagueId: (p.leagueId as number) ?? undefined,
     leagueName: p.leagueName as string,
     matchScore: (p.matchScore as string) || undefined,
+    playerIsHome: p.playerIsHome as boolean | undefined,
+    homeTeam: p.homeTeam as string,
+    awayTeam: p.awayTeam as string,
     settledAt: (p.settledAt as string) || undefined,
   }));
   const options = resp.options || {};
@@ -984,6 +989,7 @@ export async function getMatchups(email: string, token: string): Promise<{
     options: {
       players: options.players || [],
       opponents: options.opponents || [],
+      venues: options.venues || ["Home", "Away"],
       positions: options.positions || [],
       propTypes: options.propTypes || [],
       leagues: options.leagues || [],
